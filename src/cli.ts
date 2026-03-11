@@ -8,6 +8,7 @@ import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
 import { ensureGitignore } from './gitignore.js';
 import { startServer } from './server.js';
 import { initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
+import { checkForUpdates } from './update-check.js';
 
 function printUsage() {
   console.log(`
@@ -17,9 +18,10 @@ Usage:
   hotsheet [options]
 
 Options:
-  --port <number>     Port to run on (default: 4174)
-  --data-dir <path>   Store data in an alternative location (default: .hotsheet/)
-  --help              Show this help message
+  --port <number>          Port to run on (default: 4174)
+  --data-dir <path>        Store data in an alternative location (default: .hotsheet/)
+  --check-for-updates      Check for new versions now
+  --help                   Show this help message
 
 Examples:
   hotsheet
@@ -28,11 +30,12 @@ Examples:
 `);
 }
 
-function parseArgs(argv: string[]): { port: number; dataDir: string; demo: number | null } | null {
+function parseArgs(argv: string[]): { port: number; dataDir: string; demo: number | null; forceUpdateCheck: boolean } | null {
   const args = argv.slice(2);
   let port = 4174;
   let dataDir = join(process.cwd(), '.hotsheet');
   let demo: number | null = null;
+  let forceUpdateCheck = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -60,6 +63,9 @@ function parseArgs(argv: string[]): { port: number; dataDir: string; demo: numbe
       case '--data-dir':
         dataDir = resolve(args[++i]);
         break;
+      case '--check-for-updates':
+        forceUpdateCheck = true;
+        break;
       default:
         console.error(`Unknown option: ${arg}`);
         printUsage();
@@ -67,7 +73,7 @@ function parseArgs(argv: string[]): { port: number; dataDir: string; demo: numbe
     }
   }
 
-  return { port, dataDir, demo };
+  return { port, dataDir, demo, forceUpdateCheck };
 }
 
 async function main() {
@@ -77,8 +83,10 @@ async function main() {
     process.exit(1);
   }
 
-  const { port, demo } = parsed;
+  const { port, demo, forceUpdateCheck } = parsed;
   let { dataDir } = parsed;
+
+  await checkForUpdates(forceUpdateCheck);
 
   // Demo mode: use a fresh temp directory
   if (demo !== null) {
