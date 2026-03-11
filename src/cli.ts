@@ -119,12 +119,6 @@ async function main() {
     await seedDemoData(demo);
   }
 
-  // Initialize markdown sync
-  initMarkdownSync(dataDir, port);
-
-  // Run initial sync
-  scheduleAllSync();
-
   if (demo === null) {
     // Clean up old attachments only for real projects
     await cleanupAttachments();
@@ -132,7 +126,11 @@ async function main() {
 
   console.log(`  Data directory: ${dataDir}`);
 
-  await startServer(port, dataDir);
+  const actualPort = await startServer(port, dataDir);
+
+  // Initialize markdown sync with the actual port (may differ if requested port was in use)
+  initMarkdownSync(dataDir, actualPort);
+  scheduleAllSync();
 }
 
 main().catch((err: unknown) => {

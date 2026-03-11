@@ -50,6 +50,7 @@ pageRoutes.get('/', (c) => {
             <div className="sidebar-section">
               <div className="sidebar-label">Views</div>
               <button className="sidebar-item active" data-view="all">All Tickets</button>
+              <button className="sidebar-item" data-view="non-verified">Non-Verified</button>
               <button className="sidebar-item" data-view="up-next">Up Next</button>
               <button className="sidebar-item" data-view="open">Open</button>
               <button className="sidebar-item" data-view="completed">Completed</button>

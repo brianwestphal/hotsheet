@@ -30,7 +30,7 @@ export interface Attachment {
 export interface TicketFilters {
   category?: TicketCategory;
   priority?: TicketPriority;
-  status?: TicketStatus | 'open';
+  status?: TicketStatus | 'open' | 'non_verified';
   up_next?: boolean;
   search?: string;
   sort_by?: 'created' | 'priority' | 'category' | 'status' | 'ticket_number';

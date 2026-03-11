@@ -19,7 +19,7 @@ function tryServe(fetch: Hono['fetch'], port: number): Promise<number> {
   });
 }
 
-export async function startServer(port: number, dataDir: string) {
+export async function startServer(port: number, dataDir: string): Promise<number> {
   const app = new Hono<AppEnv>();
 
   // Inject context
@@ -74,4 +74,6 @@ export async function startServer(port: number, dataDir: string) {
     : process.platform === 'win32' ? 'start'
     : 'xdg-open';
   exec(`${openCmd} ${url}`);
+
+  return actualPort;
 }

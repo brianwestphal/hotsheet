@@ -56,7 +56,8 @@ function restoreFocus(ticketId: number | 'draft' | null) {
 
 export function canUseColumnView(): boolean {
   const view = state.view;
-  return view !== 'completed' && view !== 'verified' && view !== 'trash';
+  return view !== 'completed' && view !== 'verified' && view !== 'trash'
+    && view !== 'up-next' && view !== 'open';
 }
 
 function getColumnsForView(): { status: string; label: string }[] {
@@ -64,6 +65,13 @@ function getColumnsForView(): { status: string; label: string }[] {
     return [
       { status: 'not_started', label: 'Not Started' },
       { status: 'started', label: 'Started' },
+    ];
+  }
+  if (state.view === 'non-verified') {
+    return [
+      { status: 'not_started', label: 'Not Started' },
+      { status: 'started', label: 'Started' },
+      { status: 'completed', label: 'Completed' },
     ];
   }
   return [
@@ -228,11 +236,30 @@ function createColumnCard(ticket: Ticket): HTMLElement {
     e.dataTransfer!.effectAllowed = 'move';
   });
 
-  // Click to select
-  card.addEventListener('click', () => {
-    state.selectedIds.clear();
-    state.selectedIds.add(ticket.id);
-    state.lastClickedId = ticket.id;
+  // Click to select (with multi-select support)
+  card.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey) {
+      // Toggle individual selection
+      if (state.selectedIds.has(ticket.id)) state.selectedIds.delete(ticket.id);
+      else state.selectedIds.add(ticket.id);
+      state.lastClickedId = ticket.id;
+    } else if (e.shiftKey && state.lastClickedId != null) {
+      // Range select
+      const ids = state.tickets.map(t => t.id);
+      const anchorIdx = ids.indexOf(state.lastClickedId);
+      const targetIdx = ids.indexOf(ticket.id);
+      if (anchorIdx !== -1 && targetIdx !== -1) {
+        const from = Math.min(anchorIdx, targetIdx);
+        const to = Math.max(anchorIdx, targetIdx);
+        state.selectedIds.clear();
+        for (let i = from; i <= to; i++) state.selectedIds.add(ids[i]);
+      }
+    } else {
+      // Single select
+      state.selectedIds.clear();
+      state.selectedIds.add(ticket.id);
+      state.lastClickedId = ticket.id;
+    }
     updateColumnSelectionClasses();
     updateBatchToolbar();
   });
@@ -853,6 +880,8 @@ export async function loadTickets() {
     params.set('status', 'open');
   } else if (state.view === 'completed') {
     params.set('status', 'completed');
+  } else if (state.view === 'non-verified') {
+    params.set('status', 'non_verified');
   } else if (state.view === 'verified') {
     params.set('status', 'verified');
   } else if (state.view.startsWith('category:')) {

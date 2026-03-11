@@ -131,6 +131,8 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
   // By default, exclude deleted tickets
   if (filters.status === 'open') {
     conditions.push(`status != 'deleted' AND status != 'completed' AND status != 'verified'`);
+  } else if (filters.status === 'non_verified') {
+    conditions.push(`status != 'deleted' AND status != 'verified'`);
   } else if (filters.status) {
     conditions.push(`status = $${paramIdx}`);
     values.push(filters.status);
