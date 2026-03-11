@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.release-state.json
 .glassbox/
 .hotsheet/
 *.map
+.DS_Store
