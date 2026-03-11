@@ -54,7 +54,32 @@ function restoreFocus(ticketId: number | 'draft' | null) {
 
 // --- List rendering ---
 
+export function canUseColumnView(): boolean {
+  const view = state.view;
+  return view !== 'completed' && view !== 'verified' && view !== 'trash';
+}
+
+function getColumnsForView(): { status: string; label: string }[] {
+  if (state.view === 'open') {
+    return [
+      { status: 'not_started', label: 'Not Started' },
+      { status: 'started', label: 'Started' },
+    ];
+  }
+  return [
+    { status: 'not_started', label: 'Not Started' },
+    { status: 'started', label: 'Started' },
+    { status: 'completed', label: 'Completed' },
+    { status: 'verified', label: 'Verified' },
+  ];
+}
+
 export function renderTicketList() {
+  if (state.layout === 'columns' && canUseColumnView()) {
+    renderColumnView();
+    return;
+  }
+
   const isTrash = state.view === 'trash';
   const focusedId = getFocusedTicketId();
 
@@ -67,6 +92,7 @@ export function renderTicketList() {
 
   const container = document.getElementById('ticket-list')!;
   container.innerHTML = '';
+  container.classList.remove('ticket-list-columns');
 
   if (!isTrash) {
     container.appendChild(createDraftRow());
@@ -91,6 +117,138 @@ export function renderTicketList() {
   restoreFocus(focusedId);
   updateBatchToolbar();
   void updateStats();
+}
+
+function renderColumnView() {
+  const container = document.getElementById('ticket-list')!;
+  container.innerHTML = '';
+  container.classList.add('ticket-list-columns');
+
+  container.appendChild(createDraftRow());
+
+  const columns = getColumnsForView();
+  const columnsContainer = toElement(<div className="columns-container"></div>);
+
+  for (const col of columns) {
+    const colTickets = state.tickets.filter(t => t.status === col.status);
+    const column = toElement(
+      <div className="column" data-status={col.status}>
+        <div className="column-header">
+          <span className="column-title">{col.label}</span>
+          <span className="column-count">{String(colTickets.length)}</span>
+        </div>
+        <div className="column-body"></div>
+      </div>
+    );
+
+    const body = column.querySelector('.column-body')!;
+    for (const ticket of colTickets) {
+      body.appendChild(createColumnCard(ticket));
+    }
+
+    // Drop target for status changes
+    body.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      (e as DragEvent).dataTransfer!.dropEffect = 'move';
+      column.classList.add('column-drop-target');
+    });
+    body.addEventListener('dragleave', (e) => {
+      const related = (e as DragEvent).relatedTarget as Node | null;
+      if (!related || !body.contains(related)) {
+        column.classList.remove('column-drop-target');
+      }
+    });
+    body.addEventListener('drop', (e) => {
+      e.preventDefault();
+      column.classList.remove('column-drop-target');
+      const data = (e as DragEvent).dataTransfer!.getData('application/hotsheet-tickets');
+      if (!data) return;
+      const ids: number[] = JSON.parse(data);
+      void api('/tickets/batch', {
+        method: 'POST',
+        body: { ids, action: 'status', value: col.status },
+      }).then(() => void loadTickets());
+    });
+
+    columnsContainer.appendChild(column);
+  }
+
+  container.appendChild(columnsContainer);
+  updateBatchToolbar();
+  void updateStats();
+}
+
+function createColumnCard(ticket: Ticket): HTMLElement {
+  const isSelected = state.selectedIds.has(ticket.id);
+
+  const card = toElement(
+    <div
+      className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}`}
+      data-id={String(ticket.id)}
+    >
+      <div className="column-card-header">
+        <span className="ticket-category-badge" style={`background-color:${getCategoryColor(ticket.category)}`}>
+          {getCategoryLabel(ticket.category)}
+        </span>
+        <span className="ticket-number">{ticket.ticket_number}</span>
+        <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`}>
+          {getPriorityIcon(ticket.priority)}
+        </span>
+        <button className={`ticket-star${ticket.up_next ? ' active' : ''}`} title={ticket.up_next ? 'Remove from Up Next' : 'Add to Up Next'}>
+          {ticket.up_next ? '\u2605' : '\u2606'}
+        </button>
+      </div>
+      <div className="column-card-title">{ticket.title}</div>
+    </div>
+  );
+
+  // Priority menu
+  const priSpan = card.querySelector('.ticket-priority-indicator') as HTMLElement;
+  priSpan.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showPriorityMenu(priSpan, ticket);
+  });
+
+  // Star toggle
+  card.querySelector('.ticket-star')!.addEventListener('click', (e) => {
+    e.stopPropagation();
+    void toggleUpNext(ticket);
+  });
+
+  // Draggable
+  card.draggable = true;
+  card.addEventListener('dragstart', (e) => {
+    let ids: number[];
+    if (state.selectedIds.has(ticket.id) && state.selectedIds.size > 1) {
+      ids = Array.from(state.selectedIds);
+    } else {
+      ids = [ticket.id];
+    }
+    e.dataTransfer!.setData('application/hotsheet-tickets', JSON.stringify(ids));
+    e.dataTransfer!.effectAllowed = 'move';
+  });
+
+  // Click to select
+  card.addEventListener('click', () => {
+    state.selectedIds.clear();
+    state.selectedIds.add(ticket.id);
+    state.lastClickedId = ticket.id;
+    updateColumnSelectionClasses();
+    updateBatchToolbar();
+  });
+
+  return card;
+}
+
+function updateColumnSelectionClasses() {
+  document.querySelectorAll('.column-card[data-id]').forEach(card => {
+    const id = parseInt((card as HTMLElement).dataset.id!, 10);
+    if (state.selectedIds.has(id)) {
+      card.classList.add('selected');
+    } else {
+      card.classList.remove('selected');
+    }
+  });
 }
 
 // --- Draft row ---
@@ -231,6 +389,26 @@ function createTicketRow(ticket: Ticket): HTMLElement {
       </button>
     </div>
   );
+
+  // Drag support — enable only when not interacting with inputs/buttons
+  row.addEventListener('mousedown', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName !== 'INPUT' && target.tagName !== 'BUTTON') {
+      row.draggable = true;
+    }
+  });
+  row.addEventListener('mouseup', () => { row.draggable = false; });
+  row.addEventListener('dragend', () => { row.draggable = false; });
+  row.addEventListener('dragstart', (e) => {
+    let ids: number[];
+    if (state.selectedIds.has(ticket.id) && state.selectedIds.size > 1) {
+      ids = Array.from(state.selectedIds);
+    } else {
+      ids = [ticket.id];
+    }
+    e.dataTransfer!.setData('application/hotsheet-tickets', JSON.stringify(ids));
+    e.dataTransfer!.effectAllowed = 'move';
+  });
 
   // Row-level modifier click for selection
   row.addEventListener('mousedown', (e) => {

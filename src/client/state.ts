@@ -46,6 +46,7 @@ export interface AppState {
   lastClickedId: number | null;
   activeTicketId: number | null;
   view: string;
+  layout: 'list' | 'columns';
   sortBy: string;
   sortDir: string;
   search: string;
@@ -58,6 +59,7 @@ export const state: AppState = {
   lastClickedId: null,
   activeTicketId: null,
   view: 'all',
+  layout: 'list',
   sortBy: 'created',
   sortDir: 'desc',
   search: '',

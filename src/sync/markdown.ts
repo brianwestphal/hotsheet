@@ -105,15 +105,15 @@ async function syncWorklist(): Promise<void> {
     sections.push('');
     sections.push('## Workflow');
     sections.push('');
-    sections.push(`The Hot Sheet API is available at http://localhost:${port}/api. Use it to update ticket status as you work:`);
+    sections.push(`The Hot Sheet API is available at http://localhost:${port}/api. **You MUST update ticket status** as you work — this is required, not optional.`);
     sections.push('');
-    sections.push('- **When you start working on a ticket**, set its status to "started":');
+    sections.push('- **BEFORE starting work on a ticket**, set its status to "started":');
     sections.push(`  \`curl -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json" -d '{"status": "started"}'\``);
     sections.push('');
-    sections.push('- **When you finish working on a ticket**, set its status to "completed" and add notes describing what was done:');
+    sections.push('- **AFTER completing work on a ticket**, set its status to "completed" and add notes describing what was done:');
     sections.push(`  \`curl -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json" -d '{"status": "completed", "notes": "Description of work completed"}'\``);
     sections.push('');
-    sections.push('Do NOT set tickets to "verified" — that status is reserved for human review.');
+    sections.push('**IMPORTANT:** Always update status for EVERY ticket — set to "started" when you begin, and "completed" when you finish. Do NOT skip status updates. Do NOT set tickets to "verified" — that status is reserved for human review.');
     sections.push('');
 
     if (tickets.length === 0) {

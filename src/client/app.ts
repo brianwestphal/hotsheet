@@ -2,12 +2,14 @@ import { api, apiUpload } from './api.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, updateStats } from './detail.js';
 import type { AppSettings, Ticket } from './state.js';
 import { state } from './state.js';
-import { focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
+import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 
 async function init() {
   await loadSettings();
   await loadTickets();
   bindSidebar();
+  bindLayoutToggle();
+  bindDetailPositionToggle();
   bindSortControls();
   bindSearchInput();
   bindBatchToolbar();
@@ -35,6 +37,7 @@ async function loadSettings() {
     if (settings.detail_height) state.settings.detail_height = parseInt(settings.detail_height, 10) || 300;
     if (settings.trash_cleanup_days) state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || 3;
     if (settings.verified_cleanup_days) state.settings.verified_cleanup_days = parseInt(settings.verified_cleanup_days, 10) || 30;
+    if (settings.layout === 'list' || settings.layout === 'columns') state.layout = settings.layout;
   } catch { /* use defaults */ }
 
   applyDetailPosition(state.settings.detail_position);
@@ -48,7 +51,6 @@ function bindSettingsDialog() {
 
   settingsBtn.addEventListener('click', () => {
     // Populate fields with current values
-    (document.getElementById('settings-detail-position') as HTMLSelectElement).value = state.settings.detail_position;
     (document.getElementById('settings-trash-days') as HTMLInputElement).value = String(state.settings.trash_cleanup_days);
     (document.getElementById('settings-verified-days') as HTMLInputElement).value = String(state.settings.verified_cleanup_days);
     overlay.style.display = 'flex';
@@ -62,15 +64,6 @@ function bindSettingsDialog() {
     if (e.target === overlay) {
       overlay.style.display = 'none';
     }
-  });
-
-  // Detail position
-  const posSelect = document.getElementById('settings-detail-position') as HTMLSelectElement;
-  posSelect.addEventListener('change', () => {
-    state.settings.detail_position = posSelect.value as AppSettings['detail_position'];
-    applyDetailPosition(state.settings.detail_position);
-    applyDetailSize();
-    void api('/settings', { method: 'PATCH', body: { detail_position: posSelect.value } });
   });
 
   // Trash cleanup days
@@ -130,7 +123,85 @@ function bindCopyPrompt() {
   });
 }
 
+// --- Layout toggle ---
+
+function updateLayoutToggle() {
+  const toggle = document.getElementById('layout-toggle')!;
+  const canColumn = canUseColumnView();
+  const columnsBtn = toggle.querySelector('[data-layout="columns"]') as HTMLButtonElement;
+  columnsBtn.disabled = !canColumn;
+  columnsBtn.style.opacity = canColumn ? '' : '0.3';
+
+  // Show effective layout: list when columns unavailable, otherwise user preference
+  const effectiveLayout = (state.layout === 'columns' && !canColumn) ? 'list' : state.layout;
+  toggle.querySelectorAll('.layout-btn').forEach(btn => {
+    btn.classList.toggle('active', (btn as HTMLElement).dataset.layout === effectiveLayout);
+  });
+}
+
+function bindLayoutToggle() {
+  const toggle = document.getElementById('layout-toggle')!;
+  toggle.querySelectorAll('.layout-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const layout = (btn as HTMLElement).dataset.layout as 'list' | 'columns';
+      if (layout === 'columns' && !canUseColumnView()) return;
+      state.layout = layout;
+      updateLayoutToggle();
+      renderTicketList();
+      void api('/settings', { method: 'PATCH', body: { layout } });
+    });
+  });
+  updateLayoutToggle();
+}
+
+// --- Detail position toggle ---
+
+function updateDetailPositionToggle() {
+  const toggle = document.getElementById('detail-position-toggle')!;
+  toggle.querySelectorAll('.layout-btn').forEach(btn => {
+    btn.classList.toggle('active', (btn as HTMLElement).dataset.position === state.settings.detail_position);
+  });
+}
+
+function bindDetailPositionToggle() {
+  const toggle = document.getElementById('detail-position-toggle')!;
+  toggle.querySelectorAll('.layout-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const position = (btn as HTMLElement).dataset.position as AppSettings['detail_position'];
+      state.settings.detail_position = position;
+      applyDetailPosition(position);
+      applyDetailSize();
+      updateDetailPositionToggle();
+      void api('/settings', { method: 'PATCH', body: { detail_position: position } });
+    });
+  });
+  updateDetailPositionToggle();
+}
+
 // --- Sidebar navigation ---
+
+function getDropAction(view: string): { action: string; value: unknown } | null {
+  if (view === 'up-next') return { action: 'up_next', value: true };
+  if (view === 'open') return { action: 'status', value: 'not_started' };
+  if (view === 'completed') return { action: 'status', value: 'completed' };
+  if (view === 'verified') return { action: 'status', value: 'verified' };
+  if (view === 'trash') return { action: 'delete', value: null };
+  if (view.startsWith('category:')) return { action: 'category', value: view.split(':')[1] };
+  if (view.startsWith('priority:')) return { action: 'priority', value: view.split(':')[1] };
+  return null;
+}
+
+async function applyDropAction(view: string, ids: number[]) {
+  const drop = getDropAction(view);
+  if (!drop) return;
+
+  if (drop.action === 'delete') {
+    await api('/tickets/batch', { method: 'POST', body: { ids, action: 'delete' } });
+  } else {
+    await api('/tickets/batch', { method: 'POST', body: { ids, action: drop.action, value: drop.value } });
+  }
+  void loadTickets();
+}
 
 function bindSidebar() {
   const items = document.querySelectorAll('.sidebar-item[data-view]');
@@ -140,7 +211,31 @@ function bindSidebar() {
       item.classList.add('active');
       state.view = (item as HTMLElement).dataset.view!;
       state.selectedIds.clear();
+      updateLayoutToggle();
       void loadTickets();
+    });
+
+    // Drop target support
+    const view = (item as HTMLElement).dataset.view!;
+    if (!getDropAction(view)) return;
+
+    item.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      (e as DragEvent).dataTransfer!.dropEffect = 'move';
+      item.classList.add('drop-target');
+    });
+
+    item.addEventListener('dragleave', () => {
+      item.classList.remove('drop-target');
+    });
+
+    item.addEventListener('drop', (e) => {
+      e.preventDefault();
+      item.classList.remove('drop-target');
+      const data = (e as DragEvent).dataTransfer!.getData('application/hotsheet-tickets');
+      if (!data) return;
+      const ids: number[] = JSON.parse(data);
+      void applyDropAction(view, ids);
     });
   });
 }

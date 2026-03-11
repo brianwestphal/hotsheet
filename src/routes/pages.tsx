@@ -18,6 +18,10 @@ pageRoutes.get('/', (c) => {
             <div className="search-box">
               <input type="text" id="search-input" placeholder="Search tickets..." />
             </div>
+            <div className="layout-toggle" id="layout-toggle">
+              <button className="layout-btn active" data-layout="list" title="List view">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>')}</button>
+              <button className="layout-btn" data-layout="columns" title="Column view">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="5" height="18" rx="1"/></svg>')}</button>
+            </div>
             <div className="sort-controls">
               <select id="sort-select">
                 <option value="created:desc">Newest First</option>
@@ -26,6 +30,10 @@ pageRoutes.get('/', (c) => {
                 <option value="category:asc">Category</option>
                 <option value="status:asc">Status</option>
               </select>
+            </div>
+            <div className="layout-toggle" id="detail-position-toggle">
+              <button className="layout-btn active" data-position="side" title="Detail panel on side">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>')}</button>
+              <button className="layout-btn" data-position="bottom" title="Detail panel on bottom">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="15" x2="21" y2="15"/></svg>')}</button>
             </div>
             <button className="settings-btn" id="settings-btn" title="Settings">{raw('&#9881;')}</button>
           </div>
@@ -209,13 +217,6 @@ pageRoutes.get('/', (c) => {
             <button className="detail-close" id="settings-close">{raw('&times;')}</button>
           </div>
           <div className="settings-body">
-            <div className="settings-field">
-              <label>Detail Panel Position</label>
-              <select id="settings-detail-position">
-                <option value="side">Side</option>
-                <option value="bottom">Bottom</option>
-              </select>
-            </div>
             <div className="settings-field">
               <label>Auto-clear trash after (days)</label>
               <input type="number" id="settings-trash-days" min="1" value="3" />
