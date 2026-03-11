@@ -63,13 +63,19 @@ The loop stays tight because the AI always knows what to work on next.
   <img src="docs/demo-3.png" alt="Sidebar filtering by Bug category" width="900">
 </p>
 
-**Batch operations** — select multiple tickets to bulk-update category, priority, status, or Up Next.
+**Column view** — switch to a kanban-style board grouped by status. Drag tickets between columns to change status, or drag onto sidebar items to set category, priority, or view.
+
+<p align="center">
+  <img src="docs/demo-7.png" alt="Column view showing tickets organized by status in a kanban board" width="900">
+</p>
+
+**Batch operations** — select multiple tickets to bulk-update category, priority, status, or Up Next. Multi-select works in both list and column views.
 
 <p align="center">
   <img src="docs/demo-5.png" alt="Multiple tickets selected with the batch toolbar visible" width="900">
 </p>
 
-**Detail panel** — side or bottom orientation, resizable, with fields for title, details, attachments, and timestamped notes. Auto-shows when you select a ticket.
+**Detail panel** — side or bottom orientation (toggle in the toolbar), resizable, with fields for title, details, attachments, and timestamped notes. Auto-shows when you select a ticket.
 
 <p align="center">
   <img src="docs/demo-6.png" alt="Detail panel in bottom orientation showing ticket details and notes" width="900">
@@ -78,12 +84,13 @@ The loop stays tight because the AI always knows what to work on next.
 **Also includes:**
 - **Five priority levels** — Highest to Lowest, sortable and filterable
 - **Up Next flag** — star tickets to add them to the AI worklist
+- **Drag and drop** — drag tickets onto sidebar views to change category, priority, or status
 - **Search** — full-text search across ticket titles and details
-- **Keyboard-driven** — `Enter` to create, `Cmd+I/B/F/R/K/G` for categories, `Alt+1-5` for priority, `Cmd+D` for Up Next
+- **Keyboard-driven** — `Enter` to create, `Cmd+I/B/F/R/K/G` for categories, `Alt+1-5` for priority, `Cmd+D` for Up Next, `Cmd+C` to copy
+- **Copy for commits** — `Cmd+C` copies selected ticket info (number + title) for use in commit messages
 - **File attachments** — attach files to any ticket
 - **Markdown sync** — `worklist.md` and `open-tickets.md` auto-generated on every change
 - **Auto-cleanup** — configurable auto-deletion of old trash and verified items
-- **Settings** — detail panel position, cleanup intervals, all persisted
 - **Fully local** — embedded PostgreSQL (PGLite), no network calls, no accounts, no telemetry
 
 ---
@@ -189,6 +196,7 @@ hotsheet --data-dir ~/projects/my-app/.hotsheet
 | `Cmd+G` | Set category: Investigation |
 | `Alt+1-5` | Set priority (Highest to Lowest) |
 | `Cmd+D` | Toggle Up Next |
+| `Cmd+C` | Copy ticket info (number + title) |
 | `Cmd+A` | Select all |
 | `Escape` | Clear selection / close |
 

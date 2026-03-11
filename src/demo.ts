@@ -14,6 +14,7 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
   { id: 4, label: 'AI worklist — Up Next tickets with notes' },
   { id: 5, label: 'Batch operations — multi-select toolbar' },
   { id: 6, label: 'Detail panel — bottom orientation with notes' },
+  { id: 7, label: 'Column view — kanban board by status' },
 ];
 
 // --- Ticket data model ---
@@ -410,6 +411,77 @@ const SCENARIO_6: DemoTicket[] = [
   },
 ];
 
+// --- Scenario 7: Column view — kanban board with good spread across statuses ---
+
+const SCENARIO_7: DemoTicket[] = [
+  {
+    title: 'Implement product search autocomplete',
+    details: 'Add typeahead suggestions to the search bar using the product name index. Show top 5 matches with thumbnails.',
+    category: 'feature', priority: 'highest', status: 'not_started', up_next: true,
+    notes: '', days_ago: 2, updated_ago: 2,
+  },
+  {
+    title: 'Fix broken password reset flow for SSO users',
+    details: 'SSO users who try to reset their password get a generic error. Should redirect them to their identity provider instead.',
+    category: 'bug', priority: 'high', status: 'not_started', up_next: true,
+    notes: '', days_ago: 3, updated_ago: 3,
+  },
+  {
+    title: 'Add support for gift cards at checkout',
+    details: 'Customers should be able to apply gift card codes during checkout. Support partial redemption and balance tracking.',
+    category: 'feature', priority: 'default', status: 'not_started', up_next: false,
+    notes: '', days_ago: 5, updated_ago: 5,
+  },
+  {
+    title: 'Investigate slow query on order history page',
+    details: 'The order history page takes 4+ seconds for users with 200+ orders. Profile the query and add proper indexing.',
+    category: 'investigation', priority: 'high', status: 'not_started', up_next: false,
+    notes: '', days_ago: 4, updated_ago: 4,
+  },
+  {
+    title: 'Refactor authentication middleware to support API keys',
+    details: 'Third-party integrations need API key auth in addition to session cookies. Extract auth into a strategy pattern.',
+    category: 'task', priority: 'high', status: 'started', up_next: true,
+    notes: notesJson([{ text: 'Created the AuthStrategy interface and migrated session auth to use it. Working on the API key strategy next.', days_ago: 0.5 }]),
+    days_ago: 4, updated_ago: 0.5,
+  },
+  {
+    title: 'Fix cart not clearing after successful checkout',
+    details: 'After a successful order placement, the cart retains all items. The clearCart() call is inside a catch block by mistake.',
+    category: 'bug', priority: 'highest', status: 'started', up_next: true,
+    notes: notesJson([{ text: 'Found the issue — clearCart() was moved into the catch block during a refactor. Fixing and adding a test.', days_ago: 0.3 }]),
+    days_ago: 1, updated_ago: 0.3,
+  },
+  {
+    title: 'Update shipping rate calculation for oversized items',
+    details: 'Dimensional weight pricing is required for packages over 1 cubic foot. Current flat-rate calculation undercharges.',
+    category: 'requirement_change', priority: 'default', status: 'started', up_next: false,
+    notes: notesJson([{ text: 'Implemented dim weight formula. Comparing rates against the carrier API to validate accuracy.', days_ago: 1 }]),
+    days_ago: 6, updated_ago: 1,
+  },
+  {
+    title: 'Add end-to-end tests for the checkout flow',
+    details: 'Write Playwright tests covering: add to cart, apply coupon, enter shipping, pay, and confirm. Cover happy path and key error cases.',
+    category: 'task', priority: 'default', status: 'completed', up_next: false,
+    notes: notesJson([{ text: 'Wrote 8 E2E tests covering the full checkout flow including coupon application and payment decline handling.', days_ago: 1 }]),
+    days_ago: 8, updated_ago: 1, completed_ago: 1,
+  },
+  {
+    title: 'Fix product image carousel swipe on mobile',
+    details: 'Swipe gestures on the product image carousel conflict with the browser back gesture. Use a swipe threshold to disambiguate.',
+    category: 'bug', priority: 'default', status: 'completed', up_next: false,
+    notes: notesJson([{ text: 'Added a 30px horizontal threshold before initiating carousel swipe. Tested on iOS Safari and Chrome Android.', days_ago: 2 }]),
+    days_ago: 7, updated_ago: 2, completed_ago: 2,
+  },
+  {
+    title: 'Set up log aggregation with structured JSON logging',
+    details: 'Replace console.log calls with a structured logger (pino). Send logs to a central aggregation service for search and alerting.',
+    category: 'task', priority: 'low', status: 'completed', up_next: false,
+    notes: notesJson([{ text: 'Replaced all console.log calls with pino. Configured log shipping to the aggregation service. Alert rules set for error-level logs.', days_ago: 3 }]),
+    days_ago: 10, updated_ago: 3, completed_ago: 3,
+  },
+];
+
 // --- Scenario data lookup ---
 
 const SCENARIO_DATA: Record<number, DemoTicket[]> = {
@@ -419,6 +491,7 @@ const SCENARIO_DATA: Record<number, DemoTicket[]> = {
   4: SCENARIO_4,
   5: SCENARIO_5,
   6: SCENARIO_6,
+  7: SCENARIO_7,
 };
 
 // --- Seeding ---
@@ -449,5 +522,8 @@ export async function seedDemoData(scenario: number): Promise<void> {
   if (scenario === 6) {
     await db.query(`UPDATE settings SET value = 'bottom' WHERE key = 'detail_position'`);
     await db.query(`UPDATE settings SET value = '280' WHERE key = 'detail_height'`);
+  }
+  if (scenario === 7) {
+    await db.query(`INSERT INTO settings (key, value) VALUES ('layout', 'columns') ON CONFLICT (key) DO UPDATE SET value = 'columns'`);
   }
 }
