@@ -1,6 +1,6 @@
 import { api, apiUpload } from './api.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, updateStats } from './detail.js';
-import type { AppSettings } from './state.js';
+import type { AppSettings, Ticket } from './state.js';
 import { state } from './state.js';
 import { focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 
@@ -352,6 +352,38 @@ function bindDetailPanel() {
   });
 }
 
+// --- Clipboard formatting ---
+
+function parseNotes(raw: string): { text: string; created_at: string }[] {
+  if (!raw || raw === '') return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+  } catch { /* not JSON */ }
+  if (raw.trim()) return [{ text: raw, created_at: '' }];
+  return [];
+}
+
+function formatTicketForClipboard(ticket: Ticket): string {
+  const lines: string[] = [];
+  lines.push(`${ticket.ticket_number}: ${ticket.title}`);
+
+  if (ticket.details.trim()) {
+    lines.push('');
+    lines.push(ticket.details.trim());
+  }
+
+  const notes = parseNotes(ticket.notes);
+  if (notes.length > 0) {
+    lines.push('');
+    for (const note of notes) {
+      lines.push(`- ${note.text}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 // --- Global keyboard shortcuts ---
 
 function bindKeyboardShortcuts() {
@@ -415,6 +447,19 @@ function bindKeyboardShortcuts() {
         }).then(() => void loadTickets());
       }
       return;
+    }
+
+    // Cmd/Ctrl+C: copy selected ticket(s) formatted for git commit messages
+    if ((e.metaKey || e.ctrlKey) && e.key === 'c' && state.selectedIds.size > 0) {
+      // Only intercept if no text is selected in an input
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.toString().trim() === '') {
+        e.preventDefault();
+        const selected = state.tickets.filter(t => state.selectedIds.has(t.id));
+        const text = selected.map(formatTicketForClipboard).join('\n\n');
+        void navigator.clipboard.writeText(text);
+        return;
+      }
     }
 
     // Cmd/Ctrl+N: focus draft input (works everywhere)

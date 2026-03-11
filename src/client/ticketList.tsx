@@ -9,6 +9,7 @@ import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let suppressFocusSelect = false;
 let draftCategory: string | null = null;
+let draftTitle = '';
 
 const CATEGORY_SHORTCUTS: { key: string; value: string; label: string }[] = [
   { key: 'i', value: 'issue', label: 'Issue' },
@@ -57,6 +58,13 @@ export function renderTicketList() {
   const isTrash = state.view === 'trash';
   const focusedId = getFocusedTicketId();
 
+  // Preserve in-progress title edits for existing tickets (HS-199)
+  let editingValue: string | null = null;
+  if (focusedId != null && focusedId !== 'draft') {
+    const input = document.querySelector<HTMLInputElement>(`.ticket-row[data-id="${focusedId}"] .ticket-title-input`);
+    if (input) editingValue = input.value;
+  }
+
   const container = document.getElementById('ticket-list')!;
   container.innerHTML = '';
 
@@ -70,6 +78,14 @@ export function renderTicketList() {
 
   for (const ticket of state.tickets) {
     container.appendChild(isTrash ? createTrashRow(ticket) : createTicketRow(ticket));
+  }
+
+  // Restore in-progress title edit if the user was editing (HS-199)
+  if (focusedId != null && focusedId !== 'draft' && editingValue != null) {
+    const input = document.querySelector<HTMLInputElement>(`.ticket-row[data-id="${focusedId}"] .ticket-title-input`);
+    if (input && input.value !== editingValue) {
+      input.value = editingValue;
+    }
   }
 
   restoreFocus(focusedId);
@@ -94,7 +110,7 @@ function createDraftRow(): HTMLElement {
         {getCategoryLabel(draftCat)}
       </span>
       <span className="ticket-number draft-number"></span>
-      <input type="text" className="ticket-title-input draft-input" placeholder="New ticket..." />
+      <input type="text" className="ticket-title-input draft-input" placeholder="New ticket..." value={draftTitle} />
       <span className="ticket-priority-indicator draft-placeholder"></span>
       <span className="ticket-star draft-placeholder"></span>
     </div>
@@ -109,17 +125,25 @@ function createDraftRow(): HTMLElement {
   }
 
   const titleInput = row.querySelector('.draft-input') as HTMLInputElement;
+  titleInput.addEventListener('input', () => {
+    draftTitle = titleInput.value;
+  });
   titleInput.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter' && titleInput.value.trim()) {
       e.preventDefault();
       const title = titleInput.value.trim();
+      draftTitle = '';
       titleInput.value = '';
       const defaults = getDefaultsFromView();
       if (draftCategory && !state.view.startsWith('category:')) {
         defaults.category = draftCategory;
       }
-      await api<Ticket>('/tickets', { method: 'POST', body: { title, defaults } });
-      draftCategory = null;
+      const created = await api<Ticket>('/tickets', { method: 'POST', body: { title, defaults } });
+      // Auto-select the newly created ticket (HS-202)
+      if (created) {
+        state.selectedIds.clear();
+        state.selectedIds.add(created.id);
+      }
       await loadTickets();
       focusDraftInput();
     } else if (e.key === 'ArrowDown') {

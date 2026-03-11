@@ -6,14 +6,16 @@ import type { Ticket, TicketCategory } from '../types.js';
 import { CATEGORY_DESCRIPTIONS } from '../types.js';
 
 let dataDir: string;
+let port: number;
 let worklistTimeout: ReturnType<typeof setTimeout> | null = null;
 let openTicketsTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const WORKLIST_DEBOUNCE = 500;
 const OPEN_TICKETS_DEBOUNCE = 5000;
 
-export function initMarkdownSync(dir: string) {
+export function initMarkdownSync(dir: string, serverPort: number) {
   dataDir = dir;
+  port = serverPort;
 }
 
 export function scheduleWorklistSync() {
@@ -103,13 +105,13 @@ async function syncWorklist(): Promise<void> {
     sections.push('');
     sections.push('## Workflow');
     sections.push('');
-    sections.push('The Hot Sheet API is available at http://localhost:4174/api. Use it to update ticket status as you work:');
+    sections.push(`The Hot Sheet API is available at http://localhost:${port}/api. Use it to update ticket status as you work:`);
     sections.push('');
     sections.push('- **When you start working on a ticket**, set its status to "started":');
-    sections.push('  `curl -X PATCH http://localhost:4174/api/tickets/{id} -H "Content-Type: application/json" -d \'{"status": "started"}\'`');
+    sections.push(`  \`curl -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json" -d '{"status": "started"}'\``);
     sections.push('');
     sections.push('- **When you finish working on a ticket**, set its status to "completed" and add notes describing what was done:');
-    sections.push('  `curl -X PATCH http://localhost:4174/api/tickets/{id} -H "Content-Type: application/json" -d \'{"status": "completed", "notes": "Description of work completed"}\'`');
+    sections.push(`  \`curl -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json" -d '{"status": "completed", "notes": "Description of work completed"}'\``);
     sections.push('');
     sections.push('Do NOT set tickets to "verified" — that status is reserved for human review.');
     sections.push('');

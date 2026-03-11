@@ -120,7 +120,7 @@ async function main() {
   }
 
   // Initialize markdown sync
-  initMarkdownSync(dataDir);
+  initMarkdownSync(dataDir, port);
 
   // Run initial sync
   scheduleAllSync();
