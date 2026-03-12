@@ -544,16 +544,22 @@ function bindKeyboardShortcuts() {
       return;
     }
 
-    // Cmd/Ctrl+C: copy selected ticket(s) formatted for git commit messages
+    // Cmd/Ctrl+C: copy selected ticket(s) info to clipboard
+    // Opt+Cmd/Ctrl+C: force ticket copy even when in a text field
     if ((e.metaKey || e.ctrlKey) && e.key === 'c' && state.selectedIds.size > 0) {
-      // Only intercept if no text is selected in an input
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || sel.toString().trim() === '') {
-        e.preventDefault();
-        const selected = state.tickets.filter(t => state.selectedIds.has(t.id));
-        const text = selected.map(formatTicketForClipboard).join('\n\n');
-        void navigator.clipboard.writeText(text);
-        return;
+      // Let native copy work in text fields (unless Alt/Option forces ticket copy)
+      if (isInput && !e.altKey) { /* native copy */ }
+      else {
+        // Also let native copy work when text is selected on the page
+        const sel = !e.altKey && window.getSelection();
+        if (sel && !sel.isCollapsed && sel.toString().trim() !== '') { /* native copy */ }
+        else {
+          e.preventDefault();
+          const selected = state.tickets.filter(t => state.selectedIds.has(t.id));
+          const text = selected.map(formatTicketForClipboard).join('\n\n');
+          void navigator.clipboard.writeText(text);
+          return;
+        }
       }
     }
 
