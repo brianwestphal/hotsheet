@@ -1,5 +1,8 @@
 name: Release Desktop App
 
+permissions:
+  contents: write
+
 on:
   push:
     tags:
@@ -13,8 +16,6 @@ on:
 
 jobs:
   release:
-    permissions:
-      contents: write
 
     strategy:
       fail-fast: false
