@@ -1,0 +1,54 @@
+#!/bin/bash
+# CLI launcher for Hot Sheet desktop app.
+# Symlink this to your PATH:
+#   ln -sf "/Applications/Hot Sheet.app/Contents/Resources/resources/hotsheet" /usr/local/bin/hotsheet
+
+set -e
+
+# Resolve the app bundle from this script's location
+# Script lives at: Hot Sheet.app/Contents/Resources/resources/hotsheet
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
+CONTENTS_DIR="$(dirname "$(dirname "$(dirname "$SCRIPT_PATH")")")"
+NODE_BIN="$CONTENTS_DIR/MacOS/hotsheet-node"
+CLI_JS="$CONTENTS_DIR/Resources/server/cli.js"
+APP_BUNDLE="$(dirname "$CONTENTS_DIR")"
+
+DATA_DIR="$(pwd)/.hotsheet"
+BROWSER_MODE=false
+PASSTHROUGH_ARGS=()
+
+# Parse args
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --data-dir)
+      DATA_DIR="$2"
+      PASSTHROUGH_ARGS+=("$1" "$2")
+      shift 2
+      ;;
+    --browser)
+      BROWSER_MODE=true
+      shift
+      ;;
+    --demo:*)
+      # Demo mode runs the server directly (needs fresh temp DB)
+      BROWSER_MODE=true
+      PASSTHROUGH_ARGS+=("$1")
+      shift
+      ;;
+    *)
+      PASSTHROUGH_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+HOTSHEET_BIN="$CONTENTS_DIR/MacOS/hotsheet"
+
+if [ "$BROWSER_MODE" = true ]; then
+  # Run the Node server directly — opens in browser
+  exec "$NODE_BIN" "$CLI_JS" "${PASSTHROUGH_ARGS[@]}"
+else
+  # Launch the desktop app directly with the data directory
+  "$HOTSHEET_BIN" --data-dir "$DATA_DIR" "${PASSTHROUGH_ARGS[@]}" &>/dev/null &
+  disown
+fi

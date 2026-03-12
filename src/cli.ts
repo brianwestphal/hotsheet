@@ -30,12 +30,14 @@ Examples:
 `);
 }
 
-function parseArgs(argv: string[]): { port: number; dataDir: string; demo: number | null; forceUpdateCheck: boolean } | null {
+function parseArgs(argv: string[]): { port: number; dataDir: string; demo: number | null; forceUpdateCheck: boolean; noOpen: boolean; strictPort: boolean } | null {
   const args = argv.slice(2);
   let port = 4174;
   let dataDir = join(process.cwd(), '.hotsheet');
   let demo: number | null = null;
   let forceUpdateCheck = false;
+  let noOpen = false;
+  let strictPort = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -66,6 +68,12 @@ function parseArgs(argv: string[]): { port: number; dataDir: string; demo: numbe
       case '--check-for-updates':
         forceUpdateCheck = true;
         break;
+      case '--no-open':
+        noOpen = true;
+        break;
+      case '--strict-port':
+        strictPort = true;
+        break;
       default:
         console.error(`Unknown option: ${arg}`);
         printUsage();
@@ -73,7 +81,7 @@ function parseArgs(argv: string[]): { port: number; dataDir: string; demo: numbe
     }
   }
 
-  return { port, dataDir, demo, forceUpdateCheck };
+  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort };
 }
 
 async function main() {
@@ -83,7 +91,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { port, demo, forceUpdateCheck } = parsed;
+  const { port, demo, forceUpdateCheck, noOpen, strictPort } = parsed;
   let { dataDir } = parsed;
 
   await checkForUpdates(forceUpdateCheck);
@@ -126,7 +134,7 @@ async function main() {
 
   console.log(`  Data directory: ${dataDir}`);
 
-  const actualPort = await startServer(port, dataDir);
+  const actualPort = await startServer(port, dataDir, { noOpen, strictPort });
 
   // Initialize markdown sync with the actual port (may differ if requested port was in use)
   initMarkdownSync(dataDir, actualPort);

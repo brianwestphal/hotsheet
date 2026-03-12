@@ -5,3 +5,8 @@ dist/
 .hotsheet/
 *.map
 .DS_Store
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/binaries/
+src-tauri/server/

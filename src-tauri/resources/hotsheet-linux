@@ -1,0 +1,55 @@
+#!/bin/bash
+# CLI launcher for Hot Sheet desktop app (Linux).
+# Symlink this to your PATH:
+#   ln -sf /path/to/hotsheet-linux ~/.local/bin/hotsheet
+
+set -e
+
+SCRIPT_PATH="$(readlink -f "$0")"
+RESOURCES_DIR="$(dirname "$SCRIPT_PATH")"
+APP_DIR="$(dirname "$RESOURCES_DIR")"
+NODE_BIN="$APP_DIR/bin/hotsheet-node"
+CLI_JS="$RESOURCES_DIR/cli.js"
+
+# Fallback: look for node binary in common locations
+if [ ! -f "$NODE_BIN" ]; then
+  NODE_BIN="$RESOURCES_DIR/../bin/hotsheet-node"
+fi
+
+DATA_DIR="$(pwd)/.hotsheet"
+BROWSER_MODE=false
+PASSTHROUGH_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --data-dir)
+      DATA_DIR="$2"
+      PASSTHROUGH_ARGS+=("$1" "$2")
+      shift 2
+      ;;
+    --browser)
+      BROWSER_MODE=true
+      shift
+      ;;
+    --demo:*)
+      BROWSER_MODE=true
+      PASSTHROUGH_ARGS+=("$1")
+      shift
+      ;;
+    *)
+      PASSTHROUGH_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ "$BROWSER_MODE" = true ]; then
+  exec "$NODE_BIN" "$CLI_JS" "${PASSTHROUGH_ARGS[@]}"
+else
+  # Find the Tauri binary
+  TAURI_BIN="$APP_DIR/bin/hotsheet"
+  if [ ! -f "$TAURI_BIN" ]; then
+    TAURI_BIN="$APP_DIR/hotsheet"
+  fi
+  exec "$TAURI_BIN" --data-dir "$DATA_DIR" "${PASSTHROUGH_ARGS[@]}"
+fi

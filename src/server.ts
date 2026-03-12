@@ -19,7 +19,7 @@ function tryServe(fetch: Hono['fetch'], port: number): Promise<number> {
   });
 }
 
-export async function startServer(port: number, dataDir: string): Promise<number> {
+export async function startServer(port: number, dataDir: string, options?: { noOpen?: boolean; strictPort?: boolean }): Promise<number> {
   const app = new Hono<AppEnv>();
 
   // Inject context
@@ -55,8 +55,17 @@ export async function startServer(port: number, dataDir: string): Promise<number
       actualPort = await tryServe(app.fetch, port + attempt);
       break;
     } catch (err: unknown) {
-      if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EADDRINUSE' && attempt < 19) {
-        continue;
+      if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+        if (options?.strictPort) {
+          // In strict port mode (Tauri dev), the Tauri window connects to the exact port
+          // configured in tauri.conf.json's devUrl, so we can't silently switch ports.
+          console.error(`\n  Error: Port ${port} is already in use.`);
+          console.error(`  In --strict-port mode, the server must start on the requested port`);
+          console.error(`  because the Tauri dev window is configured to connect to it.`);
+          console.error(`  Stop whatever is using port ${port} and try again.\n`);
+          process.exit(1);
+        }
+        if (attempt < 19) continue;
       }
       throw err;
     }
@@ -69,11 +78,13 @@ export async function startServer(port: number, dataDir: string): Promise<number
   const url = `http://localhost:${actualPort}`;
   console.log(`\n  Hot Sheet running at ${url}\n`);
 
-  // Open browser
-  const openCmd = process.platform === 'darwin' ? 'open'
-    : process.platform === 'win32' ? 'start'
-    : 'xdg-open';
-  exec(`${openCmd} ${url}`);
+  // Open browser (unless suppressed for Tauri sidecar mode)
+  if (!options?.noOpen) {
+    const openCmd = process.platform === 'darwin' ? 'open'
+      : process.platform === 'win32' ? 'start'
+      : 'xdg-open';
+    exec(`${openCmd} ${url}`);
+  }
 
   return actualPort;
 }
