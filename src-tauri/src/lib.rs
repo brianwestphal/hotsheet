@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+#[cfg(not(debug_assertions))]
+use serde::Deserialize;
 use serde::Serialize;
 use tauri::Manager;
 
@@ -81,6 +83,41 @@ fn manual_install_command(source: &PathBuf, dest: &PathBuf) -> String {
             dest.display()
         )
     }
+}
+
+#[cfg(not(debug_assertions))]
+#[derive(Deserialize, Default)]
+struct DataDirSettings {
+    #[serde(default, alias = "App Name")]
+    #[serde(rename = "appName")]
+    app_name: Option<String>,
+}
+
+#[cfg(not(debug_assertions))]
+/// Determines the window title from .hotsheet/settings.json or the parent folder name.
+fn resolve_window_title(data_dir: &str) -> String {
+    let data_path = std::path::Path::new(data_dir);
+
+    // Try reading settings.json from the data directory
+    let settings_path = data_path.join("settings.json");
+    if let Ok(contents) = std::fs::read_to_string(&settings_path) {
+        if let Ok(settings) = serde_json::from_str::<DataDirSettings>(&contents) {
+            if let Some(name) = settings.app_name {
+                if !name.is_empty() {
+                    return name;
+                }
+            }
+        }
+    }
+
+    // Fall back to the parent folder name (e.g., .hotsheet's parent = project dir)
+    if let Some(project_dir) = data_path.parent() {
+        if let Some(name) = project_dir.file_name() {
+            return format!("Hot Sheet — {}", name.to_string_lossy());
+        }
+    }
+
+    "Hot Sheet".to_string()
 }
 
 #[derive(Serialize)]
@@ -250,6 +287,17 @@ pub fn run() {
                     return Ok(());
                 }
 
+                // Set window title from settings or project folder name
+                let window = app
+                    .get_webview_window("main")
+                    .expect("main window not found");
+                if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
+                    if let Some(dir) = app_args.get(i + 1) {
+                        let title = resolve_window_title(dir);
+                        let _ = window.set_title(&title);
+                    }
+                }
+
                 // Resolve the server bundle path from Tauri resources
                 let resource_dir = app
                     .path()
@@ -283,10 +331,6 @@ pub fn run() {
                     .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
 
                 // Navigate to the server once it's ready
-                let window = app
-                    .get_webview_window("main")
-                    .expect("main window not found");
-
                 tauri::async_runtime::spawn(async move {
                     let _child = child; // Keep handle alive so sidecar isn't dropped
                     let mut navigated = false;

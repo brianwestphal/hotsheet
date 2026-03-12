@@ -12,15 +12,32 @@ No cloud. No logins. No JIRA. Just tickets and a tight feedback loop.
 
 <br>
 
+**Desktop app** (recommended) — download from [GitHub Releases](https://github.com/brianwestphal/hotsheet/releases):
+
+| Platform | Download |
+|----------|----------|
+| macOS (Apple Silicon) | `.dmg` (arm64) |
+| macOS (Intel) | `.dmg` (x64) |
+| Linux | `.AppImage` / `.deb` |
+| Windows | `.msi` / `.exe` |
+
+After installing, open the app and click **Install CLI** to add the `hotsheet` command to your PATH.
+
+**Or install via npm:**
+
 ```bash
 npm install -g hotsheet
 ```
+
+Then, from any project directory:
 
 ```bash
 hotsheet
 ```
 
-That's it. Opens in your browser. Data stays local.
+That's it. Data stays local.
+
+> **Note:** We're actively developing and testing on macOS. Linux and Windows builds are provided but less tested — if you run into issues on those platforms, we'd love your help! Please [open an issue](https://github.com/brianwestphal/hotsheet/issues).
 
 </div>
 
@@ -154,6 +171,28 @@ TICKET HS-15:
 
 ## Install
 
+### Desktop app (recommended)
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/brianwestphal/hotsheet/releases).
+
+On first launch, the app will prompt you to install the `hotsheet` CLI command. This creates a symlink so you can launch the desktop app from any project directory. You can also install it manually:
+
+**macOS:**
+```bash
+sudo ln -sf "/Applications/Hot Sheet.app/Contents/Resources/resources/hotsheet" /usr/local/bin/hotsheet
+```
+
+**Linux:**
+```bash
+ln -sf /path/to/hotsheet/resources/hotsheet-linux ~/.local/bin/hotsheet
+```
+
+The desktop app includes automatic updates — new versions are downloaded and applied in the background.
+
+### npm
+
+Alternatively, install via npm (runs in your browser instead of a native window):
+
 ```bash
 npm install -g hotsheet
 ```
@@ -165,14 +204,17 @@ Requires **Node.js 20+**.
 ## Usage
 
 ```bash
-# Start with defaults (port 4174, data in .hotsheet/)
+# Start from your project directory
 hotsheet
 
-# Custom port
+# Custom port (npm version only)
 hotsheet --port 8080
 
 # Custom data directory
 hotsheet --data-dir ~/projects/my-app/.hotsheet
+
+# Force browser mode (desktop app)
+hotsheet --browser
 ```
 
 ### Options
@@ -181,7 +223,20 @@ hotsheet --data-dir ~/projects/my-app/.hotsheet
 |------|-------------|
 | `--port <number>` | Port to run on (default: 4174) |
 | `--data-dir <path>` | Data directory (default: `.hotsheet/`) |
+| `--browser` | Open in browser instead of desktop window |
 | `--help` | Show help |
+
+### Customizing the window title
+
+When running multiple instances, you can customize the window title to tell them apart. Create `.hotsheet/settings.json` in your project:
+
+```json
+{
+  "appName": "HS - My Project"
+}
+```
+
+Without a settings file, the window title defaults to the project folder name.
 
 ### Keyboard shortcuts
 
@@ -206,6 +261,7 @@ hotsheet --data-dir ~/projects/my-app/.hotsheet
 
 | Layer | Technology |
 |-------|-----------|
+| Desktop | Tauri v2 (native window, auto-updates) |
 | CLI | TypeScript, Node.js |
 | Server | Hono |
 | Database | PGLite (embedded PostgreSQL) |
