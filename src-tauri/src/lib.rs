@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 #[cfg(not(debug_assertions))]
 use serde::Deserialize;
@@ -11,6 +12,9 @@ use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 #[cfg(not(debug_assertions))]
 use tauri_plugin_updater::UpdaterExt;
+
+/// Holds the sidecar PID so it can be killed on app exit.
+struct SidecarPid(Mutex<Option<u32>>);
 
 /// Returns the expected symlink/install path for the CLI on this platform.
 fn cli_install_path() -> PathBuf {
@@ -94,9 +98,10 @@ struct DataDirSettings {
 }
 
 #[cfg(not(debug_assertions))]
-/// Determines the window title from .hotsheet/settings.json or the parent folder name.
-fn resolve_window_title(data_dir: &str) -> String {
-    let data_path = std::path::Path::new(data_dir);
+/// Determines the app/window title from .hotsheet/settings.json or the parent folder name.
+fn resolve_app_name(data_dir: &str) -> String {
+    let data_path = std::fs::canonicalize(data_dir)
+        .unwrap_or_else(|_| std::path::PathBuf::from(data_dir));
 
     // Try reading settings.json from the data directory
     let settings_path = data_path.join("settings.json");
@@ -254,6 +259,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .manage(SidecarPid(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![check_cli_installed, install_cli])
         .setup(|_app| {
             #[allow(unused_variables)]
@@ -293,63 +299,77 @@ pub fn run() {
                     .expect("main window not found");
                 if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
                     if let Some(dir) = app_args.get(i + 1) {
-                        let title = resolve_window_title(dir);
-                        let _ = window.set_title(&title);
+                        let name = resolve_app_name(dir);
+                        let _ = window.set_title(&name);
                     }
                 }
 
-                // Resolve the server bundle path from Tauri resources
-                let resource_dir = app
-                    .path()
-                    .resource_dir()
-                    .map_err(|e| format!("Failed to get resource dir: {e}"))?;
-                let cli_js = resource_dir.join("server").join("cli.js");
-
-                // Build sidecar args: always pass the CLI script and --no-open,
-                // and forward --data-dir if provided to the Tauri app
-                let mut sidecar_args = vec![
-                    cli_js.to_string_lossy().to_string(),
-                    "--no-open".to_string(),
-                ];
-                if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
-                    if let Some(dir) = app_args.get(i + 1) {
-                        sidecar_args.push("--data-dir".to_string());
-                        sidecar_args.push(dir.clone());
+                // Check if the CLI launcher already started the server
+                if let Ok(server_url) = std::env::var("HOTSHEET_SERVER_URL") {
+                    // Navigate directly to the pre-started server
+                    if let Ok(parsed) = server_url.parse() {
+                        let _ = window.navigate(parsed);
                     }
-                }
 
-                // Spawn Node.js sidecar with the server bundle
-                let sidecar = app
-                    .shell()
-                    .sidecar("hotsheet-node")
-                    .map_err(|e| format!("Failed to create sidecar command: {e}"))?;
+                    // Store the pre-started server PID for cleanup on exit
+                    if let Ok(pid_str) = std::env::var("HOTSHEET_SIDECAR_PID") {
+                        if let Ok(pid) = pid_str.parse::<u32>() {
+                            *app.state::<SidecarPid>().0.lock().unwrap() = Some(pid);
+                        }
+                    }
+                } else {
+                    // No pre-started server — spawn sidecar ourselves
+                    let resource_dir = app
+                        .path()
+                        .resource_dir()
+                        .map_err(|e| format!("Failed to get resource dir: {e}"))?;
+                    let cli_js = resource_dir.join("server").join("cli.js");
 
-                let args_refs: Vec<&str> = sidecar_args.iter().map(|s| s.as_str()).collect();
-                let (mut rx, child) = sidecar
-                    .args(&args_refs)
-                    .spawn()
-                    .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
+                    let mut sidecar_args = vec![
+                        cli_js.to_string_lossy().to_string(),
+                        "--no-open".to_string(),
+                    ];
+                    if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
+                        if let Some(dir) = app_args.get(i + 1) {
+                            sidecar_args.push("--data-dir".to_string());
+                            sidecar_args.push(dir.clone());
+                        }
+                    }
 
-                // Navigate to the server once it's ready
-                tauri::async_runtime::spawn(async move {
-                    let _child = child; // Keep handle alive so sidecar isn't dropped
-                    let mut navigated = false;
-                    while let Some(event) = rx.recv().await {
-                        if let CommandEvent::Stdout(line) = event {
-                            if !navigated {
-                                let line_str = String::from_utf8_lossy(&line);
-                                if let Some(idx) = line_str.find("running at ") {
-                                    let url =
-                                        line_str[idx + "running at ".len()..].trim();
-                                    if let Ok(parsed) = url.parse() {
-                                        let _ = window.navigate(parsed);
-                                        navigated = true;
+                    let sidecar = app
+                        .shell()
+                        .sidecar("hotsheet-node")
+                        .map_err(|e| format!("Failed to create sidecar command: {e}"))?;
+
+                    let args_refs: Vec<&str> = sidecar_args.iter().map(|s| s.as_str()).collect();
+                    let (mut rx, child) = sidecar
+                        .args(&args_refs)
+                        .spawn()
+                        .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
+
+                    let sidecar_pid = child.pid();
+                    *app.state::<SidecarPid>().0.lock().unwrap() = Some(sidecar_pid);
+
+                    tauri::async_runtime::spawn(async move {
+                        let _child = child;
+                        let mut navigated = false;
+                        while let Some(event) = rx.recv().await {
+                            if let CommandEvent::Stdout(line) = event {
+                                if !navigated {
+                                    let line_str = String::from_utf8_lossy(&line);
+                                    if let Some(idx) = line_str.find("running at ") {
+                                        let url =
+                                            line_str[idx + "running at ".len()..].trim();
+                                        if let Ok(parsed) = url.parse() {
+                                            let _ = window.navigate(parsed);
+                                            navigated = true;
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                });
+                    });
+                }
 
                 // Check for updates in the background
                 let handle = app.handle().clone();
@@ -368,6 +388,24 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Kill the sidecar process on app exit
+                if let Some(pid) = app_handle.state::<SidecarPid>().0.lock().unwrap().take() {
+                    #[cfg(unix)]
+                    {
+                        // Kill the sidecar and its child processes
+                        unsafe { libc::kill(-(pid as i32), libc::SIGTERM); }
+                    }
+                    #[cfg(windows)]
+                    {
+                        let _ = std::process::Command::new("taskkill")
+                            .args(["/PID", &pid.to_string(), "/T", "/F"])
+                            .status();
+                    }
+                }
+            }
+        });
 }

@@ -12,6 +12,8 @@ CONTENTS_DIR="$(dirname "$(dirname "$(dirname "$SCRIPT_PATH")")")"
 NODE_BIN="$CONTENTS_DIR/MacOS/hotsheet-node"
 CLI_JS="$CONTENTS_DIR/Resources/server/cli.js"
 APP_BUNDLE="$(dirname "$CONTENTS_DIR")"
+HOTSHEET_BIN="$CONTENTS_DIR/MacOS/hotsheet"
+MAIN_ICON="$CONTENTS_DIR/Resources/icon.icns"
 
 DATA_DIR="$(pwd)/.hotsheet"
 BROWSER_MODE=false
@@ -42,13 +44,144 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-HOTSHEET_BIN="$CONTENTS_DIR/MacOS/hotsheet"
-
 if [ "$BROWSER_MODE" = true ]; then
   # Run the Node server directly — opens in browser
   exec "$NODE_BIN" "$CLI_JS" "${PASSTHROUGH_ARGS[@]}"
-else
-  # Launch the desktop app directly with the data directory
-  "$HOTSHEET_BIN" --data-dir "$DATA_DIR" "${PASSTHROUGH_ARGS[@]}" &>/dev/null &
-  disown
 fi
+
+# --- Resolve app name from settings.json or folder name ---
+DATA_DIR_ABS="$(cd "$(dirname "$DATA_DIR")" 2>/dev/null && pwd)/$(basename "$DATA_DIR")"
+APP_NAME=""
+
+# Try reading appName from settings.json
+SETTINGS_FILE="$DATA_DIR_ABS/settings.json"
+if [[ -f "$SETTINGS_FILE" ]]; then
+  # Use node for reliable JSON parsing (it's bundled as the sidecar)
+  APP_NAME=$("$NODE_BIN" -e "
+    try {
+      const s = JSON.parse(require('fs').readFileSync('$SETTINGS_FILE', 'utf8'));
+      const n = s.appName || s['App Name'] || '';
+      if (n) process.stdout.write(n);
+    } catch(e) {}
+  " 2>/dev/null || true)
+fi
+
+# Fall back to parent folder name
+if [[ -z "$APP_NAME" ]]; then
+  PROJECT_DIR="$(dirname "$DATA_DIR_ABS")"
+  FOLDER_NAME="$(basename "$PROJECT_DIR")"
+  APP_NAME="Hot Sheet — $FOLDER_NAME"
+fi
+
+# --- Create/update stub .app for unique Dock/Cmd+Tab identity ---
+ensure_stub_app() {
+  local stub_path="$DATA_DIR_ABS/$APP_NAME.app"
+  local plist_path="$stub_path/Contents/Info.plist"
+
+  # Remove old stubs with different names
+  for old in "$DATA_DIR_ABS/"*.app; do
+    [[ -d "$old" ]] && [[ "$old" != "$stub_path" ]] && rm -rf "$old"
+  done
+
+  # Check if already up to date (name matches AND launcher uses /tmp info file)
+  local launcher_path="$stub_path/Contents/MacOS/launcher"
+  if [[ -f "$plist_path" ]] && grep -q "<string>$APP_NAME</string>" "$plist_path" 2>/dev/null \
+     && [[ -f "$launcher_path" ]] && grep -q "/tmp/hotsheet-server" "$launcher_path" 2>/dev/null; then
+    return
+  fi
+
+  # Create stub structure
+  mkdir -p "$stub_path/Contents/MacOS" "$stub_path/Contents/Resources"
+
+  # Generate safe bundle identifier
+  local safe_id
+  safe_id=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+
+  # Write Info.plist
+  cat > "$plist_path" << PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.brianwestphal.hotsheet.$safe_id</string>
+    <key>CFBundleExecutable</key>
+    <string>launcher</string>
+    <key>CFBundleIconFile</key>
+    <string>icon.icns</string>
+</dict>
+</plist>
+PLIST
+
+  # Write launcher script — reads pre-started server info from /tmp, then execs to Tauri.
+  # The Node server is started by the CLI script (in the terminal context) because macOS
+  # restricts WASM/JIT and filesystem access for apps launched via open -a.
+  local info_hash
+  info_hash=$(echo "$DATA_DIR_ABS" | shasum -a 256 | cut -c1-12)
+  cat > "$stub_path/Contents/MacOS/launcher" << LAUNCHER
+#!/bin/bash
+HOTSHEET_BIN="$HOTSHEET_BIN"
+
+# Read server URL and PID from the info file written by the CLI launcher
+INFO_FILE="/tmp/hotsheet-server-${info_hash}.info"
+if [ -f "\$INFO_FILE" ]; then
+  read -r SERVER_URL NODE_PID < "\$INFO_FILE"
+  rm -f "\$INFO_FILE"
+  export HOTSHEET_SERVER_URL="\$SERVER_URL"
+  export HOTSHEET_SIDECAR_PID="\$NODE_PID"
+fi
+
+exec "\$HOTSHEET_BIN" --data-dir "$DATA_DIR_ABS" "\$@"
+LAUNCHER
+  chmod +x "$stub_path/Contents/MacOS/launcher"
+
+  # Symlink the icon from the main app
+  ln -sf "$MAIN_ICON" "$stub_path/Contents/Resources/icon.icns"
+}
+
+# Ensure data directory exists before creating the stub
+mkdir -p "$DATA_DIR_ABS"
+ensure_stub_app
+
+# --- Start the Node server in the terminal context (WASM/JIT works here) ---
+LOGFILE="/tmp/hotsheet-node-$$.log"
+"$NODE_BIN" "$CLI_JS" --no-open --data-dir "$DATA_DIR_ABS" > "$LOGFILE" 2>&1 &
+NODE_PID=$!
+
+# Wait for the server to print its URL (up to 15 seconds)
+SERVER_URL=""
+for i in $(seq 1 150); do
+  if [ -f "$LOGFILE" ]; then
+    LINE=$(grep "running at " "$LOGFILE" 2>/dev/null || true)
+    if [ -n "$LINE" ]; then
+      SERVER_URL=$(echo "$LINE" | sed 's/.*running at //' | tr -d '[:space:]')
+      break
+    fi
+  fi
+  if ! kill -0 $NODE_PID 2>/dev/null; then
+    echo "Error: Server failed to start" >&2
+    cat "$LOGFILE" >&2
+    rm -f "$LOGFILE"
+    exit 1
+  fi
+  sleep 0.1
+done
+rm -f "$LOGFILE"
+
+if [ -z "$SERVER_URL" ]; then
+  echo "Error: Server did not respond within 15 seconds" >&2
+  kill $NODE_PID 2>/dev/null
+  exit 1
+fi
+
+# Write server info to /tmp (stub apps can't access ~/Documents due to macOS privacy)
+SERVER_INFO="/tmp/hotsheet-server-$(echo "$DATA_DIR_ABS" | shasum -a 256 | cut -c1-12).info"
+echo "$SERVER_URL $NODE_PID" > "$SERVER_INFO"
+
+# Launch the stub app (gives us the custom Dock/Cmd+Tab name)
+STUB_APP="$DATA_DIR_ABS/$APP_NAME.app"
+open -a "$STUB_APP"
