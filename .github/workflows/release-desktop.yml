@@ -75,5 +75,5 @@ jobs:
           tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseName: 'Hot Sheet ${{ github.event_name == ''workflow_dispatch'' && inputs.tag || github.ref_name }}'
           releaseBody: 'See the assets below to download and install.'
-          releaseDraft: true
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.ref_name != 'main' }}
           args: --target ${{ matrix.target }}
