@@ -118,14 +118,6 @@ async function startPreview(tier: string, filename: string, createdAt: string): 
 async function cancelPreview(): Promise<void> {
   const banner = document.getElementById('backup-preview-banner')!;
   banner.style.display = 'none';
-  // Reset restore confirmation state
-  restoreConfirmPending = false;
-  if (restoreConfirmTimer) clearTimeout(restoreConfirmTimer);
-  const btn = document.getElementById('backup-restore-btn') as HTMLButtonElement;
-  btn.textContent = 'Restore This Backup';
-  btn.disabled = false;
-  btn.classList.remove('btn-confirm-pending');
-  // Exit preview mode
   state.backupPreview = null;
   state.selectedIds.clear();
   state.activeTicketId = null;
@@ -133,34 +125,12 @@ async function cancelPreview(): Promise<void> {
   void loadTickets();
 }
 
-let restoreConfirmPending = false;
-let restoreConfirmTimer: ReturnType<typeof setTimeout> | null = null;
-
 async function confirmRestore(): Promise<void> {
   if (!state.backupPreview) return;
 
   const btn = document.getElementById('backup-restore-btn') as HTMLButtonElement;
-
-  // First click: show confirmation state
-  if (!restoreConfirmPending) {
-    restoreConfirmPending = true;
-    btn.textContent = 'Click again to confirm';
-    btn.classList.add('btn-confirm-pending');
-    // Reset after 4 seconds if not confirmed
-    restoreConfirmTimer = setTimeout(() => {
-      restoreConfirmPending = false;
-      btn.textContent = 'Restore This Backup';
-      btn.classList.remove('btn-confirm-pending');
-    }, 4000);
-    return;
-  }
-
-  // Second click: proceed with restore
-  restoreConfirmPending = false;
-  if (restoreConfirmTimer) clearTimeout(restoreConfirmTimer);
   btn.textContent = 'Restoring...';
   btn.disabled = true;
-  btn.classList.remove('btn-confirm-pending');
 
   try {
     await api('/backups/restore', {

@@ -804,18 +804,15 @@ async function cycleStatus(ticket: Ticket) {
 
 async function toggleUpNext(ticket: Ticket) {
   if (!ticket.up_next && (ticket.status === 'completed' || ticket.status === 'verified')) {
-    if (!confirm('This ticket is already done. Would you like to reopen it and add it to Up Next?')) return;
-    const updated = await api<Ticket>(`/tickets/${ticket.id}`, {
+    // Reopen done ticket and add to Up Next
+    await api(`/tickets/${ticket.id}`, {
       method: 'PATCH',
       body: { status: 'not_started', up_next: true },
     });
-    Object.assign(ticket, updated);
-    renderTicketList();
-    return;
+  } else {
+    await api(`/tickets/${ticket.id}/up-next`, { method: 'POST' });
   }
-  const updated = await api<Ticket>(`/tickets/${ticket.id}/up-next`, { method: 'POST' });
-  Object.assign(ticket, updated);
-  renderTicketList();
+  void loadTickets();
 }
 
 async function setTicketField(ticket: Ticket, field: string, value: string) {
@@ -957,7 +954,6 @@ function updateBatchToolbar() {
     if (!emptyBtn) {
       emptyBtn = toElement(<button id="batch-empty-trash" className="btn btn-sm btn-danger">Empty Trash</button>) as HTMLButtonElement;
       emptyBtn.addEventListener('click', async () => {
-        if (!confirm('Permanently delete all items in trash? This cannot be undone.')) return;
         await api('/trash/empty', { method: 'POST' });
         state.selectedIds.clear();
         void loadTickets();

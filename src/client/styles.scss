@@ -416,6 +416,7 @@ input, select, textarea {
   }
 }
 
+
 // --- Ticket List ---
 
 .ticket-list {
@@ -970,17 +971,6 @@ input, select, textarea {
   gap: 8px;
   flex-shrink: 0;
 
-  .btn-confirm-pending {
-    background: var(--danger);
-    color: #fff;
-    border-color: var(--danger);
-    animation: pulse-confirm 0.8s ease-in-out infinite alternate;
-  }
-}
-
-@keyframes pulse-confirm {
-  from { opacity: 1; }
-  to { opacity: 0.7; }
 }
 
 // --- Backup List in Settings ---

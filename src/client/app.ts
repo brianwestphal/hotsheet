@@ -338,10 +338,9 @@ function bindBatchToolbar() {
     const settingUpNext = !allUpNext;
 
     if (settingUpNext) {
+      // Reopen any done tickets so they can be added to Up Next
       const doneTickets = selectedTickets.filter(t => t.status === 'completed' || t.status === 'verified');
       if (doneTickets.length > 0) {
-        if (!confirm('Some selected tickets are already done. Would you like to reopen them and add them to Up Next?')) return;
-        // Reopen the done tickets
         await api('/tickets/batch', {
           method: 'POST',
           body: { ids: doneTickets.map(t => t.id), action: 'status', value: 'not_started' },
@@ -357,8 +356,6 @@ function bindBatchToolbar() {
   });
 
   document.getElementById('batch-delete')!.addEventListener('click', async () => {
-    const count = state.selectedIds.size;
-    if (!confirm(`Delete ${count} ticket(s)?`)) return;
     await api('/tickets/batch', {
       method: 'POST',
       body: { ids: Array.from(state.selectedIds), action: 'delete' },
@@ -425,12 +422,8 @@ function bindDetailPanel() {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
     const checkbox = document.getElementById('detail-upnext') as HTMLInputElement;
-    // If trying to add a completed/verified ticket to Up Next, confirm reopening
+    // If adding a completed/verified ticket to Up Next, reopen it
     if (checkbox.checked && ticket && (ticket.status === 'completed' || ticket.status === 'verified')) {
-      if (!confirm('This ticket is already done. Would you like to reopen it and add it to Up Next?')) {
-        checkbox.checked = false;
-        return;
-      }
       await api(`/tickets/${state.activeTicketId}`, {
         method: 'PATCH',
         body: { status: 'not_started', up_next: true },
@@ -543,7 +536,6 @@ function bindKeyboardShortcuts() {
         if (settingUpNext) {
           const doneTickets = selectedTickets.filter(t => t.status === 'completed' || t.status === 'verified');
           if (doneTickets.length > 0) {
-            if (!confirm('Some selected tickets are already done. Would you like to reopen them and add them to Up Next?')) return;
             void api('/tickets/batch', {
               method: 'POST',
               body: { ids: doneTickets.map(t => t.id), action: 'status', value: 'not_started' },
