@@ -22,7 +22,7 @@ import {
   updateSetting,
   updateTicket,
 } from '../db/queries.js';
-import { ensureSkills } from '../skills.js';
+import { consumeSkillsCreatedFlag, ensureSkills } from '../skills.js';
 import { scheduleAllSync } from '../sync/markdown.js';
 import type { AppEnv, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
 
@@ -322,9 +322,10 @@ apiRoutes.get('/worklist-info', (c) => {
   const prompt = `Read ${worklistRel} for current work items.`;
 
   // Ensure skills are up-to-date (version/port changes)
-  const updatedPlatforms = ensureSkills();
+  ensureSkills();
+  const skillCreated = consumeSkillsCreatedFlag();
 
-  return c.json({ prompt, skillCreated: updatedPlatforms.length > 0 });
+  return c.json({ prompt, skillCreated });
 });
 
 // --- Gitignore ---

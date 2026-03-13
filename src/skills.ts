@@ -246,6 +246,11 @@ function ensureWindsurfRules(cwd: string): boolean {
 
 // --- Public API ---
 
+// Tracks whether skills were created/updated in this server session.
+// Consumed once by the UI endpoint so the banner shows even though
+// cli.ts already called ensureSkills() before the page loaded.
+let pendingCreatedFlag = false;
+
 export function ensureSkills(): string[] {
   const cwd = process.cwd();
   const platforms: string[] = [];
@@ -270,5 +275,15 @@ export function ensureSkills(): string[] {
     if (ensureWindsurfRules(cwd)) platforms.push('Windsurf');
   }
 
+  if (platforms.length > 0) {
+    pendingCreatedFlag = true;
+  }
+
   return platforms;
+}
+
+export function consumeSkillsCreatedFlag(): boolean {
+  const result = pendingCreatedFlag;
+  pendingCreatedFlag = false;
+  return result;
 }
