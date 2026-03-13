@@ -89,11 +89,52 @@ function mainSkillBody(): string {
   ].join('\n');
 }
 
+// --- Claude Code permissions (.claude/settings.json) ---
+
+// Static patterns covering ports 4170-4189 (default 4174 + nearby auto-selected ports)
+const HOTSHEET_ALLOW_PATTERNS = [
+  'Bash(curl * http://localhost:417*/api/*)',
+  'Bash(curl * http://localhost:418*/api/*)',
+];
+
+// Matches any old dynamic or current static Hot Sheet curl patterns
+const HOTSHEET_CURL_RE = /^Bash\(curl \* http:\/\/localhost:\d+\/api\/\*\)$|^Bash\(curl \* http:\/\/localhost:41[78]\*\/api\/\*\)$/;
+
+function ensureClaudePermissions(cwd: string): boolean {
+  // Only configure if port is in the expected range
+  if (skillPort < 4170 || skillPort > 4189) return false;
+
+  const settingsPath = join(cwd, '.claude', 'settings.json');
+
+  let settings: { permissions?: { allow?: string[] }; [key: string]: unknown } = {};
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    } catch { /* corrupt file, overwrite */ }
+  }
+
+  if (!settings.permissions) settings.permissions = {};
+  if (!settings.permissions.allow) settings.permissions.allow = [];
+
+  const allow = settings.permissions.allow;
+  if (HOTSHEET_ALLOW_PATTERNS.every(p => allow.includes(p))) return false;
+
+  // Remove any old Hot Sheet curl patterns, add the static ones
+  settings.permissions.allow = allow.filter(p => !HOTSHEET_CURL_RE.test(p));
+  settings.permissions.allow.push(...HOTSHEET_ALLOW_PATTERNS);
+
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+  return true;
+}
+
 // --- Claude Code (.claude/skills/*/SKILL.md) ---
 
 function ensureClaudeSkills(cwd: string): boolean {
   let updated = false;
   const skillsDir = join(cwd, '.claude', 'skills');
+
+  // Ensure curl permissions for Hot Sheet API calls
+  if (ensureClaudePermissions(cwd)) updated = true;
 
   // Main skill
   const mainDir = join(skillsDir, 'hotsheet');
