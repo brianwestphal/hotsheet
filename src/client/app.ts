@@ -7,6 +7,7 @@ import { canUseColumnView, draggedTicketIds, focusDraftInput, loadTickets, rende
 
 async function init() {
   await loadSettings();
+  void loadAppName();
   await loadTickets();
   bindSidebar();
   bindLayoutToggle();
@@ -47,6 +48,17 @@ async function loadSettings() {
   applyDetailSize();
 }
 
+async function loadAppName() {
+  try {
+    const fs = await api<{ appName?: string }>('/file-settings');
+    if (fs.appName) {
+      document.title = fs.appName;
+      const h1 = document.querySelector('.app-title h1');
+      if (h1) h1.textContent = fs.appName;
+    }
+  } catch { /* ignore */ }
+}
+
 function bindSettingsDialog() {
   const overlay = document.getElementById('settings-overlay')!;
   const closeBtn = document.getElementById('settings-close')!;
@@ -58,8 +70,9 @@ function bindSettingsDialog() {
     (document.getElementById('settings-verified-days') as HTMLInputElement).value = String(state.settings.verified_cleanup_days);
     overlay.style.display = 'flex';
     void loadBackupList();
-    // Load file-based settings (backup dir)
-    void api<{ backupDir?: string }>('/file-settings').then((fs) => {
+    // Load file-based settings (app name, backup dir)
+    void api<{ appName?: string; backupDir?: string }>('/file-settings').then((fs) => {
+      (document.getElementById('settings-app-name') as HTMLInputElement).value = fs.appName || '';
       (document.getElementById('settings-backup-dir') as HTMLInputElement).value = fs.backupDir || '';
     });
   });
@@ -98,6 +111,24 @@ function bindSettingsDialog() {
       state.settings.verified_cleanup_days = val;
       void api('/settings', { method: 'PATCH', body: { verified_cleanup_days: String(val) } });
     }, 500);
+  });
+
+  // App name (file-based setting)
+  const appNameInput = document.getElementById('settings-app-name') as HTMLInputElement;
+  const appNameHint = document.getElementById('settings-app-name-hint')!;
+  let appNameTimeout: ReturnType<typeof setTimeout> | null = null;
+  appNameInput.addEventListener('input', () => {
+    if (appNameTimeout) clearTimeout(appNameTimeout);
+    appNameTimeout = setTimeout(() => {
+      const val = appNameInput.value.trim();
+      void api('/file-settings', { method: 'PATCH', body: { appName: val } }).then(() => {
+        const displayName = val || 'Hot Sheet';
+        document.title = displayName;
+        const h1 = document.querySelector('.app-title h1');
+        if (h1) h1.textContent = displayName;
+        appNameHint.textContent = val ? 'Saved. Restart the desktop app to update the title bar.' : 'Using default name.';
+      });
+    }, 800);
   });
 
   // Backup directory (file-based setting)

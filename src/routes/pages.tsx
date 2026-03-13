@@ -240,6 +240,11 @@ pageRoutes.get('/', (c) => {
           </div>
           <div className="settings-body">
             <div className="settings-field">
+              <label>App name</label>
+              <input type="text" id="settings-app-name" placeholder="Hot Sheet" />
+              <span className="settings-hint" id="settings-app-name-hint">Custom name shown in the title bar. Leave empty for default.</span>
+            </div>
+            <div className="settings-field">
               <label>Auto-clear trash after (days)</label>
               <input type="number" id="settings-trash-days" min="1" value="3" />
             </div>
