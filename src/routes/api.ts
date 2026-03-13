@@ -322,9 +322,9 @@ apiRoutes.get('/worklist-info', (c) => {
   const prompt = `Read ${worklistRel} for current work items.`;
 
   // Ensure skills are up-to-date (version/port changes)
-  const skillCreated = ensureSkills();
+  const updatedPlatforms = ensureSkills();
 
-  return c.json({ prompt, skillCreated });
+  return c.json({ prompt, skillCreated: updatedPlatforms.length > 0 });
 });
 
 // --- Gitignore ---

@@ -47,6 +47,11 @@ pageRoutes.get('/', (c) => {
           </div>
         </div>
 
+        <div id="skills-banner" className="skills-banner" style="display:none">
+          <span>AI tool skills created. Restart your AI tool to use the new ticket creation skills (hs-bug, hs-feature, etc.).</span>
+          <button id="skills-banner-dismiss" className="btn btn-sm">Dismiss</button>
+        </div>
+
         <div className="app-body">
           <nav className="sidebar">
             <div className="sidebar-copy-prompt" id="copy-prompt-section" style="display:none">

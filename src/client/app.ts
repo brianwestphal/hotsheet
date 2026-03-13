@@ -114,6 +114,16 @@ function bindSettingsDialog() {
   });
 }
 
+// --- Skills notification ---
+
+function showSkillsBanner() {
+  const banner = document.getElementById('skills-banner');
+  if (!banner) return;
+  banner.style.display = 'flex';
+  const dismissBtn = document.getElementById('skills-banner-dismiss');
+  dismissBtn?.addEventListener('click', () => { banner.style.display = 'none'; });
+}
+
 // --- Copy AI prompt ---
 
 function bindCopyPrompt() {
@@ -127,7 +137,7 @@ function bindCopyPrompt() {
     prompt = info.prompt;
     section.style.display = '';
     if (info.skillCreated) {
-      console.log('Hot Sheet: Created /hotsheet skill in .claude/skills/hotsheet/');
+      showSkillsBanner();
     }
   });
 

@@ -145,9 +145,13 @@ async function main() {
   initMarkdownSync(dataDir, actualPort);
   scheduleAllSync();
 
-  // Initialize and sync Claude Code skills
+  // Initialize and sync AI tool skills/rules
   initSkills(actualPort, dataDir);
-  ensureSkills();
+  const updatedPlatforms = ensureSkills();
+  if (updatedPlatforms.length > 0) {
+    console.log(`\n  AI tool skills created/updated for: ${updatedPlatforms.join(', ')}`);
+    console.log('  Restart your AI tool to pick up the new ticket creation skills.\n');
+  }
 
   if (demo === null) {
     initBackupScheduler(dataDir);
