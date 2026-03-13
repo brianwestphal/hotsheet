@@ -21,6 +21,7 @@ async function init() {
   bindCopyPrompt();
   initResize();
   startLongPoll();
+  void checkForUpdate();
   // Re-render when detail panel dispatches close event
   document.addEventListener('hotsheet:render', () => renderTicketList());
   // Auto-focus the draft input on load
@@ -111,6 +112,56 @@ function bindSettingsDialog() {
         backupDirHint.textContent = val ? 'Saved. New backups will use this location.' : 'Using default location inside the data directory.';
       });
     }, 800);
+  });
+}
+
+// --- Tauri update notification ---
+
+async function checkForUpdate() {
+  // Only runs inside the Tauri desktop app
+  const tauri = (window as Record<string, unknown>).__TAURI__ as
+    | { core?: { invoke: (cmd: string) => Promise<unknown> } }
+    | undefined;
+  if (!tauri?.core?.invoke) return;
+
+  try {
+    const version = (await tauri.core.invoke('get_pending_update')) as string | null;
+    if (version) showUpdateBanner(version);
+  } catch {
+    // Not in Tauri or command not available
+  }
+}
+
+function showUpdateBanner(version: string) {
+  const banner = document.getElementById('update-banner');
+  if (!banner) return;
+
+  const label = document.getElementById('update-banner-label');
+  if (label) label.textContent = `Update available: v${version}`;
+
+  banner.style.display = 'flex';
+
+  const installBtn = document.getElementById('update-install-btn') as HTMLButtonElement | null;
+  installBtn?.addEventListener('click', async () => {
+    if (!installBtn) return;
+    installBtn.textContent = 'Installing...';
+    installBtn.disabled = true;
+    try {
+      const tauri = (window as Record<string, unknown>).__TAURI__ as
+        | { core?: { invoke: (cmd: string) => Promise<unknown> } }
+        | undefined;
+      await tauri?.core?.invoke('install_update');
+      if (label) label.textContent = 'Update installed! Restart the app to apply.';
+      installBtn.style.display = 'none';
+    } catch {
+      installBtn.textContent = 'Install Failed';
+      installBtn.disabled = false;
+    }
+  });
+
+  const dismissBtn = document.getElementById('update-banner-dismiss');
+  dismissBtn?.addEventListener('click', () => {
+    banner.style.display = 'none';
   });
 }
 

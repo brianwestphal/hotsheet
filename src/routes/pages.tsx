@@ -52,6 +52,14 @@ pageRoutes.get('/', (c) => {
           <button id="skills-banner-dismiss" className="btn btn-sm">Dismiss</button>
         </div>
 
+        <div id="update-banner" className="update-banner" style="display:none">
+          <span id="update-banner-label">Update available</span>
+          <div className="update-banner-actions">
+            <button id="update-install-btn" className="btn btn-sm btn-accent">Install Update</button>
+            <button id="update-banner-dismiss" className="btn btn-sm">Later</button>
+          </div>
+        </div>
+
         <div className="app-body">
           <nav className="sidebar">
             <div className="sidebar-copy-prompt" id="copy-prompt-section" style="display:none">
