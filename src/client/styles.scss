@@ -269,6 +269,12 @@ input, select, textarea {
   }
 }
 
+.sidebar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 16px;
+}
+
 .cat-dot {
   display: inline-block;
   width: 8px;

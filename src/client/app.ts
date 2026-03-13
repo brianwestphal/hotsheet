@@ -298,6 +298,8 @@ function getDropAction(view: string): { action: string; value: unknown } | null 
   if (view === 'open') return { action: 'status', value: 'not_started' };
   if (view === 'completed') return { action: 'status', value: 'completed' };
   if (view === 'verified') return { action: 'status', value: 'verified' };
+  if (view === 'backlog') return { action: 'status', value: 'backlog' };
+  if (view === 'archive') return { action: 'status', value: 'archive' };
   if (view === 'trash') return { action: 'delete', value: null };
   if (view.startsWith('category:')) return { action: 'category', value: view.split(':')[1] };
   if (view.startsWith('priority:')) return { action: 'priority', value: view.split(':')[1] };

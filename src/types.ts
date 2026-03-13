@@ -1,6 +1,6 @@
 export type TicketCategory = 'issue' | 'bug' | 'feature' | 'requirement_change' | 'task' | 'investigation';
 export type TicketPriority = 'highest' | 'high' | 'default' | 'low' | 'lowest';
-export type TicketStatus = 'not_started' | 'started' | 'completed' | 'verified' | 'deleted';
+export type TicketStatus = 'not_started' | 'started' | 'completed' | 'verified' | 'backlog' | 'archive' | 'deleted';
 
 export interface Ticket {
   id: number;
@@ -30,7 +30,7 @@ export interface Attachment {
 export interface TicketFilters {
   category?: TicketCategory;
   priority?: TicketPriority;
-  status?: TicketStatus | 'open' | 'non_verified';
+  status?: TicketStatus | 'open' | 'non_verified' | 'active';
   up_next?: boolean;
   search?: string;
   sort_by?: 'created' | 'priority' | 'category' | 'status' | 'ticket_number';
@@ -59,6 +59,8 @@ export const STATUSES: { value: TicketStatus; label: string }[] = [
   { value: 'started', label: 'Started' },
   { value: 'completed', label: 'Completed' },
   { value: 'verified', label: 'Verified' },
+  { value: 'backlog', label: 'Backlog' },
+  { value: 'archive', label: 'Archive' },
 ];
 
 export const CATEGORY_DESCRIPTIONS: Record<TicketCategory, string> = {

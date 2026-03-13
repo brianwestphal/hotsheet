@@ -99,6 +99,11 @@ export async function updateTicket(id: number, updates: Partial<{
     sets.push('up_next = FALSE');
   } else if (updates.status === 'deleted') {
     sets.push('deleted_at = NOW()');
+  } else if (updates.status === 'backlog' || updates.status === 'archive') {
+    sets.push('up_next = FALSE');
+    sets.push('completed_at = NULL');
+    sets.push('verified_at = NULL');
+    sets.push('deleted_at = NULL');
   } else if (updates.status === 'not_started' || updates.status === 'started') {
     sets.push('completed_at = NULL');
     sets.push('verified_at = NULL');
@@ -130,17 +135,21 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
   const values: unknown[] = [];
   let paramIdx = 1;
 
-  // By default, exclude deleted tickets
+  // By default, exclude deleted/backlog/archive tickets from main views
   if (filters.status === 'open') {
-    conditions.push(`status != 'deleted' AND status != 'completed' AND status != 'verified'`);
+    conditions.push(`status IN ('not_started', 'started')`);
   } else if (filters.status === 'non_verified') {
-    conditions.push(`status != 'deleted' AND status != 'verified'`);
+    conditions.push(`status IN ('not_started', 'started', 'completed')`);
+  } else if (filters.status === 'active') {
+    // "All Tickets" — excludes deleted, backlog, archive
+    conditions.push(`status NOT IN ('deleted', 'backlog', 'archive')`);
   } else if (filters.status) {
     conditions.push(`status = $${paramIdx}`);
     values.push(filters.status);
     paramIdx++;
   } else {
-    conditions.push(`status != 'deleted'`);
+    // Default: exclude deleted, backlog, archive (same as 'active')
+    conditions.push(`status NOT IN ('deleted', 'backlog', 'archive')`);
   }
 
   if (filters.category) {
@@ -182,7 +191,8 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
       break;
     case 'status':
       orderBy = `CASE status
-        WHEN 'started' THEN 1 WHEN 'not_started' THEN 2 WHEN 'completed' THEN 3 WHEN 'verified' THEN 4 END`;
+        WHEN 'started' THEN 1 WHEN 'not_started' THEN 2 WHEN 'completed' THEN 3
+        WHEN 'verified' THEN 4 WHEN 'backlog' THEN 5 WHEN 'archive' THEN 6 END`;
       break;
     case 'ticket_number':
       orderBy = 'id';
@@ -338,16 +348,16 @@ export async function getTicketStats(): Promise<{
   const db = await getDb();
 
   const totalResult = await db.query<{ count: string }>(
-    `SELECT COUNT(*) as count FROM tickets WHERE status != 'deleted'`
+    `SELECT COUNT(*) as count FROM tickets WHERE status NOT IN ('deleted', 'backlog', 'archive')`
   );
   const openResult = await db.query<{ count: string }>(
-    `SELECT COUNT(*) as count FROM tickets WHERE status != 'deleted' AND status != 'completed' AND status != 'verified'`
+    `SELECT COUNT(*) as count FROM tickets WHERE status IN ('not_started', 'started')`
   );
   const upNextResult = await db.query<{ count: string }>(
-    `SELECT COUNT(*) as count FROM tickets WHERE up_next = true AND status != 'deleted'`
+    `SELECT COUNT(*) as count FROM tickets WHERE up_next = true AND status NOT IN ('deleted', 'backlog', 'archive')`
   );
   const byCategoryResult = await db.query<{ category: string; count: string }>(
-    `SELECT category, COUNT(*) as count FROM tickets WHERE status != 'deleted' GROUP BY category`
+    `SELECT category, COUNT(*) as count FROM tickets WHERE status NOT IN ('deleted', 'backlog', 'archive') GROUP BY category`
   );
   const byStatusResult = await db.query<{ status: string; count: string }>(
     `SELECT status, COUNT(*) as count FROM tickets WHERE status != 'deleted' GROUP BY status`

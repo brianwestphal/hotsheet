@@ -60,7 +60,7 @@ function restoreFocus(ticketId: number | 'draft' | null) {
 
 export function canUseColumnView(): boolean {
   const view = state.view;
-  return view !== 'completed' && view !== 'verified' && view !== 'trash';
+  return view !== 'completed' && view !== 'verified' && view !== 'trash' && view !== 'backlog' && view !== 'archive';
 }
 
 function getColumnsForView(): { status: string; label: string }[] {
@@ -520,6 +520,8 @@ function getDefaultsFromView(): Record<string, unknown> {
   if (view === 'up-next') return { up_next: true };
   if (view === 'open') return {};
   if (view === 'completed') return { status: 'completed' };
+  if (view === 'backlog') return { status: 'backlog' };
+  if (view === 'archive') return { status: 'archive' };
   if (view.startsWith('category:')) return { category: view.split(':')[1] };
   if (view.startsWith('priority:')) return { priority: view.split(':')[1] };
   return {};
@@ -827,6 +829,8 @@ async function cycleStatus(ticket: Ticket) {
     started: 'completed',
     completed: 'verified',
     verified: 'not_started',
+    backlog: 'not_started',
+    archive: 'not_started',
   };
   const newStatus = cycle[ticket.status] || 'not_started';
   const updated = await api<Ticket>(`/tickets/${ticket.id}`, {
@@ -1052,10 +1056,17 @@ export async function loadTickets() {
     params.set('status', 'non_verified');
   } else if (state.view === 'verified') {
     params.set('status', 'verified');
+  } else if (state.view === 'backlog') {
+    params.set('status', 'backlog');
+  } else if (state.view === 'archive') {
+    params.set('status', 'archive');
   } else if (state.view.startsWith('category:')) {
     params.set('category', state.view.split(':')[1]);
   } else if (state.view.startsWith('priority:')) {
     params.set('priority', state.view.split(':')[1]);
+  } else {
+    // 'all' view — exclude backlog, archive, deleted
+    params.set('status', 'active');
   }
 
   if (state.search) params.set('search', state.search);
@@ -1081,18 +1092,22 @@ function loadPreviewTickets() {
   } else if (state.view === 'completed') {
     tickets = tickets.filter(t => t.status === 'completed');
   } else if (state.view === 'non-verified') {
-    tickets = tickets.filter(t => t.status !== 'verified' && t.status !== 'deleted');
+    tickets = tickets.filter(t => t.status !== 'verified' && t.status !== 'deleted' && t.status !== 'backlog' && t.status !== 'archive');
   } else if (state.view === 'verified') {
     tickets = tickets.filter(t => t.status === 'verified');
+  } else if (state.view === 'backlog') {
+    tickets = tickets.filter(t => t.status === 'backlog');
+  } else if (state.view === 'archive') {
+    tickets = tickets.filter(t => t.status === 'archive');
   } else if (state.view.startsWith('category:')) {
     const cat = state.view.split(':')[1];
-    tickets = tickets.filter(t => t.category === cat && t.status !== 'deleted');
+    tickets = tickets.filter(t => t.category === cat && t.status !== 'deleted' && t.status !== 'backlog' && t.status !== 'archive');
   } else if (state.view.startsWith('priority:')) {
     const pri = state.view.split(':')[1];
-    tickets = tickets.filter(t => t.priority === pri && t.status !== 'deleted');
+    tickets = tickets.filter(t => t.priority === pri && t.status !== 'deleted' && t.status !== 'backlog' && t.status !== 'archive');
   } else {
-    // 'all' view
-    tickets = tickets.filter(t => t.status !== 'deleted');
+    // 'all' view — exclude backlog, archive, deleted
+    tickets = tickets.filter(t => t.status !== 'deleted' && t.status !== 'backlog' && t.status !== 'archive');
   }
 
   // Apply search

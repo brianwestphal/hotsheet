@@ -67,7 +67,7 @@ apiRoutes.get('/tickets', async (c) => {
   if (priority !== undefined && priority !== '') filters.priority = priority as TicketPriority;
 
   const status = c.req.query('status');
-  if (status !== undefined && status !== '') filters.status = status as TicketStatus | 'open' | 'non_verified';
+  if (status !== undefined && status !== '') filters.status = status as TicketStatus | 'open' | 'non_verified' | 'active';
 
   const upNext = c.req.query('up_next');
   if (upNext !== undefined) filters.up_next = upNext === 'true';
