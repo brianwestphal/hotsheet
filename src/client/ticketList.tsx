@@ -11,6 +11,10 @@ let suppressFocusSelect = false;
 let draftCategory: string | null = null;
 let draftTitle = '';
 
+// Module-level drag state — avoids reliance on dataTransfer custom MIME types
+// which can be silently stripped by WebKit/WKWebView
+export let draggedTicketIds: number[] = [];
+
 const CATEGORY_SHORTCUTS: { key: string; value: string; label: string }[] = [
   { key: 'i', value: 'issue', label: 'Issue' },
   { key: 'b', value: 'bug', label: 'Bug' },
@@ -56,12 +60,11 @@ function restoreFocus(ticketId: number | 'draft' | null) {
 
 export function canUseColumnView(): boolean {
   const view = state.view;
-  return view !== 'completed' && view !== 'verified' && view !== 'trash'
-    && view !== 'up-next' && view !== 'open';
+  return view !== 'completed' && view !== 'verified' && view !== 'trash';
 }
 
 function getColumnsForView(): { status: string; label: string }[] {
-  if (state.view === 'open') {
+  if (state.view === 'up-next' || state.view === 'open') {
     return [
       { status: 'not_started', label: 'Not Started' },
       { status: 'started', label: 'Started' },
@@ -83,13 +86,16 @@ function getColumnsForView(): { status: string; label: string }[] {
 }
 
 export function renderTicketList() {
+  const isPreview = !!state.backupPreview?.active;
+
   if (state.layout === 'columns' && canUseColumnView()) {
+    if (isPreview) { renderPreviewColumnView(); return; }
     renderColumnView();
     return;
   }
 
   const isTrash = state.view === 'trash';
-  const focusedId = getFocusedTicketId();
+  const focusedId = isPreview ? null : getFocusedTicketId();
 
   // Preserve in-progress title edits for existing tickets (HS-199)
   let editingValue: string | null = null;
@@ -102,29 +108,155 @@ export function renderTicketList() {
   container.innerHTML = '';
   container.classList.remove('ticket-list-columns');
 
-  if (!isTrash) {
+  if (!isTrash && !isPreview) {
     container.appendChild(createDraftRow());
   }
 
-  if (isTrash && state.tickets.length === 0) {
-    container.appendChild(toElement(<div className="ticket-list-empty">Trash is empty</div>));
+  if (state.tickets.length === 0) {
+    const emptyMsg = isTrash ? 'Trash is empty' : isPreview ? 'No tickets match this view' : '';
+    if (emptyMsg) container.appendChild(toElement(<div className="ticket-list-empty">{emptyMsg}</div>));
   }
 
   for (const ticket of state.tickets) {
-    container.appendChild(isTrash ? createTrashRow(ticket) : createTicketRow(ticket));
-  }
-
-  // Restore in-progress title edit if the user was editing (HS-199)
-  if (focusedId != null && focusedId !== 'draft' && editingValue != null) {
-    const input = document.querySelector<HTMLInputElement>(`.ticket-row[data-id="${focusedId}"] .ticket-title-input`);
-    if (input && input.value !== editingValue) {
-      input.value = editingValue;
+    if (isPreview) {
+      container.appendChild(createPreviewRow(ticket));
+    } else if (isTrash) {
+      container.appendChild(createTrashRow(ticket));
+    } else {
+      container.appendChild(createTicketRow(ticket));
     }
   }
 
-  restoreFocus(focusedId);
-  updateBatchToolbar();
+  if (isPreview) {
+    // Hide batch toolbar in preview mode
+    const toolbar = document.getElementById('batch-toolbar');
+    if (toolbar) toolbar.style.display = 'none';
+    updateSelectionClasses();
+    syncDetailPanel();
+  } else {
+    const toolbar = document.getElementById('batch-toolbar');
+    if (toolbar) toolbar.style.display = '';
+    // Restore in-progress title edit if the user was editing (HS-199)
+    if (focusedId != null && focusedId !== 'draft' && editingValue != null) {
+      const input = document.querySelector<HTMLInputElement>(`.ticket-row[data-id="${focusedId}"] .ticket-title-input`);
+      if (input && input.value !== editingValue) {
+        input.value = editingValue;
+      }
+    }
+    restoreFocus(focusedId);
+    updateBatchToolbar();
+  }
   void updateStats();
+}
+
+function createPreviewRow(ticket: Ticket): HTMLElement {
+  const isSelected = state.selectedIds.has(ticket.id);
+  const isDone = ticket.status === 'completed' || ticket.status === 'verified';
+  const isVerified = ticket.status === 'verified';
+
+  const row = toElement(
+    <div
+      className={`ticket-row${isSelected ? ' selected' : ''}${isDone ? ' completed' : ''}${ticket.up_next ? ' up-next' : ''}`}
+      data-id={String(ticket.id)}
+    >
+      <span className="ticket-checkbox-spacer"></span>
+      <span className={`ticket-status-btn${isVerified ? ' verified' : ''}`} style="cursor:default">
+        {isVerified ? raw(VERIFIED_SVG) : getStatusIcon(ticket.status)}
+      </span>
+      <span className="ticket-category-badge" style={`background-color:${getCategoryColor(ticket.category)};cursor:default`} title={ticket.category}>
+        {getCategoryLabel(ticket.category)}
+      </span>
+      <span className="ticket-number">{ticket.ticket_number}</span>
+      <span className="ticket-title-input" style="cursor:default">{ticket.title}</span>
+      <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)};cursor:default`} title={ticket.priority}>
+        {getPriorityIcon(ticket.priority)}
+      </span>
+      <span className={`ticket-star${ticket.up_next ? ' active' : ''}`} style="cursor:default">
+        {ticket.up_next ? '\u2605' : '\u2606'}
+      </span>
+    </div>
+  );
+
+  // Click to select for detail panel inspection (single select only)
+  row.addEventListener('click', () => {
+    state.selectedIds.clear();
+    state.selectedIds.add(ticket.id);
+    state.lastClickedId = ticket.id;
+    updateSelectionClasses();
+    syncDetailPanel();
+  });
+
+  return row;
+}
+
+function renderPreviewColumnView() {
+  const container = document.getElementById('ticket-list')!;
+  container.innerHTML = '';
+  container.classList.add('ticket-list-columns');
+
+  const columns = getColumnsForView();
+  const columnsContainer = toElement(<div className="columns-container"></div>);
+
+  for (const col of columns) {
+    const colTickets = state.tickets.filter(t => t.status === col.status);
+    const column = toElement(
+      <div className="column" data-status={col.status}>
+        <div className="column-header">
+          <span className="column-title">{col.label}</span>
+          <span className="column-count">{String(colTickets.length)}</span>
+        </div>
+        <div className="column-body"></div>
+      </div>
+    );
+
+    const body = column.querySelector('.column-body')!;
+    for (const ticket of colTickets) {
+      body.appendChild(createPreviewColumnCard(ticket));
+    }
+
+    columnsContainer.appendChild(column);
+  }
+
+  container.appendChild(columnsContainer);
+
+  const toolbar = document.getElementById('batch-toolbar');
+  if (toolbar) toolbar.style.display = 'none';
+  void updateStats();
+}
+
+function createPreviewColumnCard(ticket: Ticket): HTMLElement {
+  const isSelected = state.selectedIds.has(ticket.id);
+
+  const card = toElement(
+    <div
+      className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}`}
+      data-id={String(ticket.id)}
+    >
+      <div className="column-card-header">
+        <span className="ticket-category-badge" style={`background-color:${getCategoryColor(ticket.category)}`}>
+          {getCategoryLabel(ticket.category)}
+        </span>
+        <span className="ticket-number">{ticket.ticket_number}</span>
+        <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)};cursor:default`}>
+          {getPriorityIcon(ticket.priority)}
+        </span>
+        <span className={`ticket-star${ticket.up_next ? ' active' : ''}`} style="cursor:default">
+          {ticket.up_next ? '\u2605' : '\u2606'}
+        </span>
+      </div>
+      <div className="column-card-title">{ticket.title}</div>
+    </div>
+  );
+
+  card.addEventListener('click', () => {
+    state.selectedIds.clear();
+    state.selectedIds.add(ticket.id);
+    state.lastClickedId = ticket.id;
+    updateColumnSelectionClasses();
+    syncDetailPanel();
+  });
+
+  return card;
 }
 
 function renderColumnView() {
@@ -169,9 +301,9 @@ function renderColumnView() {
     body.addEventListener('drop', (e) => {
       e.preventDefault();
       column.classList.remove('column-drop-target');
-      const data = (e as DragEvent).dataTransfer!.getData('application/hotsheet-tickets');
-      if (!data) return;
-      const ids: number[] = JSON.parse(data);
+      const ids = draggedTicketIds;
+      draggedTicketIds = [];
+      if (ids.length === 0) return;
       void api('/tickets/batch', {
         method: 'POST',
         body: { ids, action: 'status', value: col.status },
@@ -226,15 +358,15 @@ function createColumnCard(ticket: Ticket): HTMLElement {
   // Draggable
   card.draggable = true;
   card.addEventListener('dragstart', (e) => {
-    let ids: number[];
     if (state.selectedIds.has(ticket.id) && state.selectedIds.size > 1) {
-      ids = Array.from(state.selectedIds);
+      draggedTicketIds = Array.from(state.selectedIds);
     } else {
-      ids = [ticket.id];
+      draggedTicketIds = [ticket.id];
     }
-    e.dataTransfer!.setData('application/hotsheet-tickets', JSON.stringify(ids));
+    e.dataTransfer!.setData('text/plain', JSON.stringify(draggedTicketIds));
     e.dataTransfer!.effectAllowed = 'move';
   });
+  card.addEventListener('dragend', () => { draggedTicketIds = []; });
 
   // Click to select (with multi-select support)
   card.addEventListener('click', (e) => {
@@ -425,15 +557,14 @@ function createTicketRow(ticket: Ticket): HTMLElement {
     }
   });
   row.addEventListener('mouseup', () => { row.draggable = false; });
-  row.addEventListener('dragend', () => { row.draggable = false; });
+  row.addEventListener('dragend', () => { row.draggable = false; draggedTicketIds = []; });
   row.addEventListener('dragstart', (e) => {
-    let ids: number[];
     if (state.selectedIds.has(ticket.id) && state.selectedIds.size > 1) {
-      ids = Array.from(state.selectedIds);
+      draggedTicketIds = Array.from(state.selectedIds);
     } else {
-      ids = [ticket.id];
+      draggedTicketIds = [ticket.id];
     }
-    e.dataTransfer!.setData('application/hotsheet-tickets', JSON.stringify(ids));
+    e.dataTransfer!.setData('text/plain', JSON.stringify(draggedTicketIds));
     e.dataTransfer!.effectAllowed = 'move';
   });
 
@@ -870,6 +1001,12 @@ function updateBatchToolbar() {
 // --- Data loading ---
 
 export async function loadTickets() {
+  // In preview mode, filter backup tickets locally instead of querying the API
+  if (state.backupPreview?.active) {
+    loadPreviewTickets();
+    return;
+  }
+
   const params = new URLSearchParams();
 
   if (state.view === 'trash') {
@@ -897,5 +1034,46 @@ export async function loadTickets() {
 
   const query = params.toString();
   state.tickets = await api<Ticket[]>(`/tickets${query ? '?' + query : ''}`);
+  renderTicketList();
+}
+
+function loadPreviewTickets() {
+  let tickets = [...(state.backupPreview?.tickets || [])];
+
+  // Apply view filters
+  if (state.view === 'trash') {
+    tickets = tickets.filter(t => t.status === 'deleted');
+  } else if (state.view === 'up-next') {
+    tickets = tickets.filter(t => t.up_next && t.status !== 'deleted');
+  } else if (state.view === 'open') {
+    tickets = tickets.filter(t => t.status === 'not_started' || t.status === 'started');
+  } else if (state.view === 'completed') {
+    tickets = tickets.filter(t => t.status === 'completed');
+  } else if (state.view === 'non-verified') {
+    tickets = tickets.filter(t => t.status !== 'verified' && t.status !== 'deleted');
+  } else if (state.view === 'verified') {
+    tickets = tickets.filter(t => t.status === 'verified');
+  } else if (state.view.startsWith('category:')) {
+    const cat = state.view.split(':')[1];
+    tickets = tickets.filter(t => t.category === cat && t.status !== 'deleted');
+  } else if (state.view.startsWith('priority:')) {
+    const pri = state.view.split(':')[1];
+    tickets = tickets.filter(t => t.priority === pri && t.status !== 'deleted');
+  } else {
+    // 'all' view
+    tickets = tickets.filter(t => t.status !== 'deleted');
+  }
+
+  // Apply search
+  if (state.search) {
+    const q = state.search.toLowerCase();
+    tickets = tickets.filter(t =>
+      t.title.toLowerCase().includes(q) ||
+      t.ticket_number.toLowerCase().includes(q) ||
+      (t.details && t.details.toLowerCase().includes(q))
+    );
+  }
+
+  state.tickets = tickets;
   renderTicketList();
 }

@@ -2,8 +2,10 @@ import { mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
+import { initBackupScheduler } from './backup.js';
 import { cleanupAttachments } from './cleanup.js';
 import { getDb, setDataDir } from './db/connection.js';
+import { acquireLock } from './lock.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
 import { ensureGitignore } from './gitignore.js';
 import { startServer } from './server.js';
@@ -115,6 +117,8 @@ async function main() {
   mkdirSync(dataDir, { recursive: true });
 
   if (demo === null) {
+    // Prevent multiple instances from corrupting the database
+    acquireLock(dataDir);
     // Check .gitignore only for real projects
     ensureGitignore(process.cwd());
   }
@@ -139,6 +143,10 @@ async function main() {
   // Initialize markdown sync with the actual port (may differ if requested port was in use)
   initMarkdownSync(dataDir, actualPort);
   scheduleAllSync();
+
+  if (demo === null) {
+    initBackupScheduler(dataDir);
+  }
 }
 
 main().catch((err: unknown) => {

@@ -39,6 +39,14 @@ pageRoutes.get('/', (c) => {
           </div>
         </header>
 
+        <div id="backup-preview-banner" className="backup-preview-banner" style="display:none">
+          <span id="backup-preview-label">Previewing backup...</span>
+          <div className="backup-preview-actions">
+            <button id="backup-restore-btn" className="btn btn-sm btn-danger">Restore This Backup</button>
+            <button id="backup-cancel-btn" className="btn btn-sm">Cancel Preview</button>
+          </div>
+        </div>
+
         <div className="app-body">
           <nav className="sidebar">
             <div className="sidebar-copy-prompt" id="copy-prompt-section" style="display:none">
@@ -225,6 +233,18 @@ pageRoutes.get('/', (c) => {
             <div className="settings-field">
               <label>Auto-clear verified after (days)</label>
               <input type="number" id="settings-verified-days" min="1" value="30" />
+            </div>
+            <div className="settings-section">
+              <div className="settings-section-header">
+                <h3>Database Backups</h3>
+                <button className="btn btn-sm" id="backup-now-btn">Backup Now</button>
+              </div>
+              <div className="settings-field">
+                <label>Backup storage location</label>
+                <input type="text" id="settings-backup-dir" placeholder="Default: .hotsheet/backups" />
+                <span className="settings-hint" id="settings-backup-dir-hint">Leave empty to use the default location inside the data directory.</span>
+              </div>
+              <div id="backup-list" className="backup-list">Loading backups...</div>
             </div>
           </div>
         </div>

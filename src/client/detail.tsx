@@ -21,6 +21,7 @@ export function closeDetail() {
 
 export function syncDetailPanel() {
   const isTrash = state.view === 'trash';
+  const isPreview = !!state.backupPreview?.active;
   const panel = document.getElementById('detail-panel')!;
   const handle = document.getElementById('detail-resize-handle');
 
@@ -30,7 +31,11 @@ export function syncDetailPanel() {
     if (handle) handle.style.display = '';
     if (state.activeTicketId !== id) {
       state.activeTicketId = id;
-      void loadDetail(id);
+      if (isPreview) {
+        loadPreviewDetail(id);
+      } else {
+        void loadDetail(id);
+      }
     }
   } else {
     if (state.activeTicketId != null) {
@@ -41,11 +46,78 @@ export function syncDetailPanel() {
   }
 }
 
+function setDetailReadOnly(readOnly: boolean) {
+  const titleInput = document.getElementById('detail-title') as HTMLInputElement;
+  const detailsArea = document.getElementById('detail-details') as HTMLTextAreaElement;
+  const catSelect = document.getElementById('detail-category') as HTMLSelectElement;
+  const priSelect = document.getElementById('detail-priority') as HTMLSelectElement;
+  const statusSelect = document.getElementById('detail-status') as HTMLSelectElement;
+  const upnextCheckbox = document.getElementById('detail-upnext') as HTMLInputElement;
+  const uploadBtn = document.querySelector('.upload-btn') as HTMLElement | null;
+
+  titleInput.readOnly = readOnly;
+  detailsArea.readOnly = readOnly;
+  catSelect.disabled = readOnly;
+  priSelect.disabled = readOnly;
+  statusSelect.disabled = readOnly;
+  upnextCheckbox.disabled = readOnly;
+  if (uploadBtn) uploadBtn.style.display = readOnly ? 'none' : '';
+}
+
+function loadPreviewDetail(id: number) {
+  const ticket = state.backupPreview?.tickets.find(t => t.id === id);
+  if (!ticket || state.activeTicketId !== id) return;
+
+  (document.getElementById('detail-ticket-number') as HTMLElement).textContent = ticket.ticket_number;
+  (document.getElementById('detail-title') as HTMLInputElement).value = ticket.title;
+  (document.getElementById('detail-category') as HTMLSelectElement).value = ticket.category;
+  (document.getElementById('detail-priority') as HTMLSelectElement).value = ticket.priority;
+  (document.getElementById('detail-status') as HTMLSelectElement).value = ticket.status;
+  (document.getElementById('detail-upnext') as HTMLInputElement).checked = ticket.up_next;
+  (document.getElementById('detail-details') as HTMLTextAreaElement).value = ticket.details;
+
+  setDetailReadOnly(true);
+
+  // No attachments in backup preview
+  document.getElementById('detail-attachments')!.innerHTML = '';
+
+  // Render notes
+  const notesSection = document.getElementById('detail-notes-section')!;
+  const notesContainer = document.getElementById('detail-notes')!;
+  const notes = parseNotesJson(ticket.notes);
+  if (notes.length > 0) {
+    notesSection.style.display = '';
+    notesContainer.innerHTML = (<>
+      {notes.map(note =>
+        <div className="note-entry">
+          {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
+          <div className="note-text">{note.text}</div>
+        </div>
+      )}
+    </>).toString();
+  } else {
+    notesSection.style.display = 'none';
+    notesContainer.innerHTML = '';
+  }
+
+  // Meta info
+  const meta = document.getElementById('detail-meta')!;
+  meta.innerHTML = (<>
+    <div>Created: {new Date(ticket.created_at).toLocaleString()}</div>
+    <div>Updated: {new Date(ticket.updated_at).toLocaleString()}</div>
+    {ticket.completed_at ? <div>Completed: {new Date(ticket.completed_at).toLocaleString()}</div> : null}
+    {ticket.verified_at ? <div>Verified: {new Date(ticket.verified_at).toLocaleString()}</div> : null}
+  </>).toString();
+}
+
 async function loadDetail(id: number) {
   const ticket = await api<Ticket & { attachments: { id: number; original_filename: string; stored_path: string }[] }>(
     `/tickets/${id}`
   );
   if (state.activeTicketId !== id) return;
+
+  // Restore inputs to editable (in case we were in preview mode before)
+  setDetailReadOnly(false);
 
   (document.getElementById('detail-ticket-number') as HTMLElement).textContent = ticket.ticket_number;
   (document.getElementById('detail-title') as HTMLInputElement).value = ticket.title;

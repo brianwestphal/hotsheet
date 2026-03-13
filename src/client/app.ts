@@ -1,8 +1,9 @@
 import { api, apiUpload } from './api.js';
+import { bindBackupsUI, loadBackupList } from './backups.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, updateStats } from './detail.js';
 import type { AppSettings, Ticket } from './state.js';
 import { state } from './state.js';
-import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
+import { canUseColumnView, draggedTicketIds, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 
 async function init() {
   await loadSettings();
@@ -16,6 +17,7 @@ async function init() {
   bindDetailPanel();
   bindKeyboardShortcuts();
   bindSettingsDialog();
+  bindBackupsUI();
   bindCopyPrompt();
   initResize();
   startLongPoll();
@@ -54,6 +56,11 @@ function bindSettingsDialog() {
     (document.getElementById('settings-trash-days') as HTMLInputElement).value = String(state.settings.trash_cleanup_days);
     (document.getElementById('settings-verified-days') as HTMLInputElement).value = String(state.settings.verified_cleanup_days);
     overlay.style.display = 'flex';
+    void loadBackupList();
+    // Load file-based settings (backup dir)
+    void api<{ backupDir?: string }>('/file-settings').then((fs) => {
+      (document.getElementById('settings-backup-dir') as HTMLInputElement).value = fs.backupDir || '';
+    });
   });
 
   closeBtn.addEventListener('click', () => {
@@ -90,6 +97,20 @@ function bindSettingsDialog() {
       state.settings.verified_cleanup_days = val;
       void api('/settings', { method: 'PATCH', body: { verified_cleanup_days: String(val) } });
     }, 500);
+  });
+
+  // Backup directory (file-based setting)
+  const backupDirInput = document.getElementById('settings-backup-dir') as HTMLInputElement;
+  const backupDirHint = document.getElementById('settings-backup-dir-hint')!;
+  let backupDirTimeout: ReturnType<typeof setTimeout> | null = null;
+  backupDirInput.addEventListener('input', () => {
+    if (backupDirTimeout) clearTimeout(backupDirTimeout);
+    backupDirTimeout = setTimeout(() => {
+      const val = backupDirInput.value.trim();
+      void api('/file-settings', { method: 'PATCH', body: { backupDir: val } }).then(() => {
+        backupDirHint.textContent = val ? 'Saved. New backups will use this location.' : 'Using default location inside the data directory.';
+      });
+    }, 800);
   });
 }
 
@@ -232,9 +253,8 @@ function bindSidebar() {
     item.addEventListener('drop', (e) => {
       e.preventDefault();
       item.classList.remove('drop-target');
-      const data = (e as DragEvent).dataTransfer!.getData('application/hotsheet-tickets');
-      if (!data) return;
-      const ids: number[] = JSON.parse(data);
+      const ids = [...draggedTicketIds];
+      if (ids.length === 0) return;
       void applyDropAction(view, ids);
     });
   });
@@ -596,7 +616,7 @@ function startLongPoll() {
       const result = await api<{ version: number }>(`/poll?version=${pollVersion}`);
       if (result.version > pollVersion) {
         pollVersion = result.version;
-        void loadTickets();
+        if (!state.backupPreview?.active) void loadTickets();
       }
     } catch {
       // Server down — wait longer before retry

@@ -883,8 +883,10 @@ input, select, textarea {
   background: var(--bg);
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
-  width: 380px;
+  width: 480px;
   max-width: 90vw;
+  max-height: 85vh;
+  overflow-y: auto;
 }
 
 .settings-header {
@@ -919,7 +921,7 @@ input, select, textarea {
     margin-bottom: 6px;
   }
 
-  select, input[type="number"] {
+  select, input[type="number"], input[type="text"] {
     width: 100%;
     padding: 6px 10px;
     border: 1px solid var(--border);
@@ -931,6 +933,122 @@ input, select, textarea {
       border-color: var(--accent);
     }
   }
+}
+
+.settings-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+// --- Backup Preview Banner ---
+
+.backup-preview-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 20px;
+  background: #fef3c7;
+  border-bottom: 2px solid #f59e0b;
+  font-size: 13px;
+  font-weight: 500;
+  color: #92400e;
+  flex-shrink: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .backup-preview-banner {
+    background: #451a03;
+    border-bottom-color: #d97706;
+    color: #fbbf24;
+  }
+}
+
+.backup-preview-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+
+  .btn-confirm-pending {
+    background: var(--danger);
+    color: #fff;
+    border-color: var(--danger);
+    animation: pulse-confirm 0.8s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes pulse-confirm {
+  from { opacity: 1; }
+  to { opacity: 0.7; }
+}
+
+// --- Backup List in Settings ---
+
+.settings-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+
+  h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  h3 { margin-bottom: 0; }
+  margin-bottom: 12px;
+}
+
+.backup-list {
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.backup-tier-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 0 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+
+  &:first-child {
+    padding-top: 0;
+  }
+}
+
+.backup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.backup-row-time {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.backup-row-meta {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 // --- Footer ---

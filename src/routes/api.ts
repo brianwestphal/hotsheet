@@ -296,6 +296,22 @@ apiRoutes.patch('/settings', async (c) => {
   return c.json({ ok: true });
 });
 
+// --- File-based settings (settings.json) ---
+
+apiRoutes.get('/file-settings', async (c) => {
+  const { readFileSettings } = await import('../file-settings.js');
+  const dataDir = c.get('dataDir');
+  return c.json(readFileSettings(dataDir));
+});
+
+apiRoutes.patch('/file-settings', async (c) => {
+  const { writeFileSettings } = await import('../file-settings.js');
+  const dataDir = c.get('dataDir');
+  const body = await c.req.json<Record<string, string>>();
+  const updated = writeFileSettings(dataDir, body);
+  return c.json(updated);
+});
+
 // --- Worklist info & Claude skill ---
 
 apiRoutes.get('/worklist-info', (c) => {

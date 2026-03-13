@@ -12,6 +12,17 @@ export function setDataDir(dataDir: string) {
   currentDbPath = dbDir;
 }
 
+export async function closeDb(): Promise<void> {
+  if (db) {
+    await db.close();
+    db = null;
+  }
+}
+
+export function adoptDb(instance: PGlite): void {
+  db = instance;
+}
+
 export async function getDb(): Promise<PGlite> {
   if (db !== null) return db;
   if (currentDbPath === null) throw new Error('Data directory not set. Call setDataDir() first.');

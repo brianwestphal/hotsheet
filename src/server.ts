@@ -6,6 +6,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 import { apiRoutes } from './routes/api.js';
+import { backupRoutes } from './routes/backups.js';
 import { pageRoutes } from './routes/pages.js';
 import type { AppEnv } from './types.js';
 
@@ -45,6 +46,7 @@ export async function startServer(port: number, dataDir: string, options?: { noO
 
   // API routes
   app.route('/api', apiRoutes);
+  app.route('/api/backups', backupRoutes);
 
   // Page routes
   app.route('/', pageRoutes);

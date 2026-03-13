@@ -51,6 +51,13 @@ export interface AppState {
   sortDir: string;
   search: string;
   settings: AppSettings;
+  backupPreview: {
+    active: boolean;
+    tickets: Ticket[];
+    timestamp: string;
+    tier: string;
+    filename: string;
+  } | null;
 }
 
 export const state: AppState = {
@@ -64,6 +71,7 @@ export const state: AppState = {
   sortDir: 'desc',
   search: '',
   settings: { ...DEFAULT_SETTINGS },
+  backupPreview: null,
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
