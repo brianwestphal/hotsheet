@@ -11,6 +11,7 @@ import {
   deleteAttachment,
   deleteTicket,
   emptyTrash,
+  getAttachment,
   getAttachments,
   getSettings,
   getTicket,
@@ -247,6 +248,26 @@ apiRoutes.delete('/attachments/:id', async (c) => {
   try { rmSync(attachment.stored_path, { force: true }); } catch { /* ignore */ }
 
   scheduleAllSync(); notifyChange();
+  return c.json({ ok: true });
+});
+
+// Reveal attachment in OS file manager
+apiRoutes.post('/attachments/:id/reveal', async (c) => {
+  const id = parseInt(c.req.param('id'), 10);
+  const attachment = await getAttachment(id);
+  if (!attachment) return c.json({ error: 'Not found' }, 404);
+  if (!existsSync(attachment.stored_path)) return c.json({ error: 'File not found on disk' }, 404);
+
+  const { execFile } = await import('child_process');
+  const { dirname } = await import('path');
+  const platform = process.platform;
+  if (platform === 'darwin') {
+    execFile('open', ['-R', attachment.stored_path]);
+  } else if (platform === 'win32') {
+    execFile('explorer', ['/select,', attachment.stored_path]);
+  } else {
+    execFile('xdg-open', [dirname(attachment.stored_path)]);
+  }
   return c.json({ ok: true });
 });
 

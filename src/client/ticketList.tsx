@@ -105,6 +105,7 @@ export function renderTicketList() {
   }
 
   const container = document.getElementById('ticket-list')!;
+  const scrollTop = container.scrollTop;
   container.innerHTML = '';
   container.classList.remove('ticket-list-columns');
 
@@ -126,6 +127,8 @@ export function renderTicketList() {
       container.appendChild(createTicketRow(ticket));
     }
   }
+
+  container.scrollTop = scrollTop;
 
   if (isPreview) {
     // Hide batch toolbar in preview mode
@@ -189,8 +192,37 @@ function createPreviewRow(ticket: Ticket): HTMLElement {
   return row;
 }
 
+function saveColumnScrollState(container: HTMLElement): { scrollLeft: number; columns: Record<string, number> } {
+  const result = { scrollLeft: 0, columns: {} as Record<string, number> };
+  const columnsContainer = container.querySelector('.columns-container');
+  if (columnsContainer) {
+    result.scrollLeft = columnsContainer.scrollLeft;
+    columnsContainer.querySelectorAll('.column[data-status]').forEach(col => {
+      const status = (col as HTMLElement).dataset.status!;
+      const body = col.querySelector('.column-body');
+      if (body) result.columns[status] = body.scrollTop;
+    });
+  }
+  return result;
+}
+
+function restoreColumnScrollState(container: HTMLElement, saved: { scrollLeft: number; columns: Record<string, number> }) {
+  const columnsContainer = container.querySelector('.columns-container');
+  if (columnsContainer) {
+    columnsContainer.scrollLeft = saved.scrollLeft;
+    columnsContainer.querySelectorAll('.column[data-status]').forEach(col => {
+      const status = (col as HTMLElement).dataset.status!;
+      const body = col.querySelector('.column-body');
+      if (body && saved.columns[status] != null) {
+        body.scrollTop = saved.columns[status];
+      }
+    });
+  }
+}
+
 function renderPreviewColumnView() {
   const container = document.getElementById('ticket-list')!;
+  const savedScrolls = saveColumnScrollState(container);
   container.innerHTML = '';
   container.classList.add('ticket-list-columns');
 
@@ -218,6 +250,7 @@ function renderPreviewColumnView() {
   }
 
   container.appendChild(columnsContainer);
+  restoreColumnScrollState(container, savedScrolls);
 
   const toolbar = document.getElementById('batch-toolbar');
   if (toolbar) toolbar.style.display = 'none';
@@ -261,6 +294,7 @@ function createPreviewColumnCard(ticket: Ticket): HTMLElement {
 
 function renderColumnView() {
   const container = document.getElementById('ticket-list')!;
+  const savedScrolls = saveColumnScrollState(container);
   container.innerHTML = '';
   container.classList.add('ticket-list-columns');
 
@@ -314,6 +348,7 @@ function renderColumnView() {
   }
 
   container.appendChild(columnsContainer);
+  restoreColumnScrollState(container, savedScrolls);
   updateBatchToolbar();
   void updateStats();
 }

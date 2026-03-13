@@ -119,7 +119,7 @@ function bindSettingsDialog() {
 
 async function checkForUpdate() {
   // Only runs inside the Tauri desktop app
-  const tauri = (window as Record<string, unknown>).__TAURI__ as
+  const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
     | { core?: { invoke: (cmd: string) => Promise<unknown> } }
     | undefined;
   if (!tauri?.core?.invoke) return;
@@ -147,7 +147,7 @@ function showUpdateBanner(version: string) {
     installBtn.textContent = 'Installing...';
     installBtn.disabled = true;
     try {
-      const tauri = (window as Record<string, unknown>).__TAURI__ as
+      const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
         | { core?: { invoke: (cmd: string) => Promise<unknown> } }
         | undefined;
       await tauri?.core?.invoke('install_update');
@@ -507,12 +507,22 @@ function bindDetailPanel() {
     void loadTickets();
   });
 
-  // Attachment delete (event delegation)
+  // Attachment actions (event delegation)
   document.getElementById('detail-attachments')!.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
-    const btn: HTMLElement | null = target.closest('.attachment-delete');
-    if (btn === null) return;
-    const attId = btn.dataset['attId'];
+
+    // Reveal in file manager
+    const revealBtn: HTMLElement | null = target.closest('.attachment-reveal');
+    if (revealBtn) {
+      const attId = revealBtn.dataset['attId'];
+      if (attId) void api(`/attachments/${attId}/reveal`, { method: 'POST' });
+      return;
+    }
+
+    // Delete
+    const deleteBtn: HTMLElement | null = target.closest('.attachment-delete');
+    if (deleteBtn === null) return;
+    const attId = deleteBtn.dataset['attId'];
     if (attId === undefined || attId === '') return;
     await api(`/attachments/${attId}`, { method: 'DELETE' });
     if (state.activeTicketId != null) {
