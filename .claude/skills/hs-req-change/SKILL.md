@@ -3,7 +3,7 @@ name: hs-req-change
 description: Create a new requirement change ticket in Hot Sheet
 allowed-tools: Bash
 ---
-<!-- hotsheet-skill-version: 1 port: 4174 -->
+<!-- hotsheet-skill-version: 2 -->
 
 Create a new Hot Sheet **requirement change** ticket. Changes to existing requirements.
 

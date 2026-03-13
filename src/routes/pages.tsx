@@ -271,6 +271,13 @@ pageRoutes.get('/', (c) => {
               </div>
               <div id="backup-list" className="backup-list">Loading backups...</div>
             </div>
+            <div className="settings-section" id="settings-updates-section" style="display:none">
+              <div className="settings-section-header">
+                <h3>Software Updates</h3>
+                <button className="btn btn-sm" id="check-updates-btn">Check for Updates</button>
+              </div>
+              <div className="settings-hint" id="check-updates-status"></div>
+            </div>
           </div>
         </div>
       </div>

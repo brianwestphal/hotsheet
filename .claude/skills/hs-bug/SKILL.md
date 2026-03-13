@@ -3,7 +3,7 @@ name: hs-bug
 description: Create a new bug ticket in Hot Sheet
 allowed-tools: Bash
 ---
-<!-- hotsheet-skill-version: 1 port: 4174 -->
+<!-- hotsheet-skill-version: 2 -->
 
 Create a new Hot Sheet **bug** ticket. Bugs that should be fixed in the codebase.
 

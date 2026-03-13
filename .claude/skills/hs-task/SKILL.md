@@ -3,7 +3,7 @@ name: hs-task
 description: Create a new task ticket in Hot Sheet
 allowed-tools: Bash
 ---
-<!-- hotsheet-skill-version: 1 port: 4174 -->
+<!-- hotsheet-skill-version: 2 -->
 
 Create a new Hot Sheet **task** ticket. General tasks to complete.
 

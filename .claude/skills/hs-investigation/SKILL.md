@@ -3,7 +3,7 @@ name: hs-investigation
 description: Create a new investigation ticket in Hot Sheet
 allowed-tools: Bash
 ---
-<!-- hotsheet-skill-version: 1 port: 4174 -->
+<!-- hotsheet-skill-version: 2 -->
 
 Create a new Hot Sheet **investigation** ticket. Items requiring research or analysis.
 

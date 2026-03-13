@@ -131,6 +131,30 @@ function bindSettingsDialog() {
     }, 800);
   });
 
+  // Check for Updates button
+  const checkUpdatesBtn = document.getElementById('check-updates-btn') as HTMLButtonElement;
+  const checkUpdatesStatus = document.getElementById('check-updates-status')!;
+  checkUpdatesBtn.addEventListener('click', async () => {
+    const invoke = getTauriInvoke();
+    if (!invoke) return;
+    checkUpdatesBtn.disabled = true;
+    checkUpdatesBtn.textContent = 'Checking...';
+    checkUpdatesStatus.textContent = '';
+    try {
+      const version = (await invoke('check_for_update')) as string | null;
+      if (version) {
+        checkUpdatesStatus.textContent = `Update available: v${version}`;
+        showUpdateBanner(version);
+      } else {
+        checkUpdatesStatus.textContent = 'Your software is up to date.';
+      }
+    } catch {
+      checkUpdatesStatus.textContent = 'Could not check for updates.';
+    }
+    checkUpdatesBtn.textContent = 'Check for Updates';
+    checkUpdatesBtn.disabled = false;
+  });
+
   // Backup directory (file-based setting)
   const backupDirInput = document.getElementById('settings-backup-dir') as HTMLInputElement;
   const backupDirHint = document.getElementById('settings-backup-dir-hint')!;
@@ -149,18 +173,35 @@ function bindSettingsDialog() {
 // --- Tauri update notification ---
 
 async function checkForUpdate() {
-  // Only runs inside the Tauri desktop app
+  const invoke = getTauriInvoke();
+  if (!invoke) return;
+
+  // Show the "Check for Updates" section in settings
+  const section = document.getElementById('settings-updates-section');
+  if (section) section.style.display = '';
+
+  // The Rust update check is async and may not have completed yet.
+  // Poll a few times with increasing delays to catch it.
+  const delays = [0, 3000, 10000];
+  for (const delay of delays) {
+    if (delay > 0) await new Promise(r => setTimeout(r, delay));
+    try {
+      const version = (await invoke('get_pending_update')) as string | null;
+      if (version) {
+        showUpdateBanner(version);
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
+}
+
+function getTauriInvoke(): ((cmd: string) => Promise<unknown>) | null {
   const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
     | { core?: { invoke: (cmd: string) => Promise<unknown> } }
     | undefined;
-  if (!tauri?.core?.invoke) return;
-
-  try {
-    const version = (await tauri.core.invoke('get_pending_update')) as string | null;
-    if (version) showUpdateBanner(version);
-  } catch {
-    // Not in Tauri or command not available
-  }
+  return tauri?.core?.invoke ?? null;
 }
 
 function showUpdateBanner(version: string) {
@@ -178,10 +219,8 @@ function showUpdateBanner(version: string) {
     installBtn.textContent = 'Installing...';
     installBtn.disabled = true;
     try {
-      const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
-        | { core?: { invoke: (cmd: string) => Promise<unknown> } }
-        | undefined;
-      await tauri?.core?.invoke('install_update');
+      const invoke = getTauriInvoke();
+      await invoke?.('install_update');
       if (label) label.textContent = 'Update installed! Restart the app to apply.';
       installBtn.style.display = 'none';
     } catch {
