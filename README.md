@@ -107,6 +107,7 @@ The loop stays tight because the AI always knows what to work on next.
 - **Copy for commits** — `Cmd+C` copies selected ticket info (number + title) for use in commit messages
 - **File attachments** — attach files to any ticket
 - **Markdown sync** — `worklist.md` and `open-tickets.md` auto-generated on every change
+- **Automatic backups** — tiered snapshots (every 5 min, hourly, daily) with preview-before-restore recovery
 - **Auto-cleanup** — configurable auto-deletion of old trash and verified items
 - **Fully local** — embedded PostgreSQL (PGLite), no network calls, no accounts, no telemetry
 
@@ -169,6 +170,46 @@ TICKET HS-15:
 
 ---
 
+## Backups & Data Safety
+
+Hot Sheet automatically protects your data with tiered backups and instance locking.
+
+### Automatic backups
+
+Backups run on three schedules, each keeping a rolling window of snapshots:
+
+| Tier | Frequency | Retention |
+|------|-----------|-----------|
+| Recent | Every 5 minutes | Last hour (up to 12) |
+| Hourly | Every hour | Last 12 hours (up to 12) |
+| Daily | Every day | Last 7 days (up to 7) |
+
+You can also trigger a manual backup at any time from the settings panel with the **Backup Now** button.
+
+### Recovering from a backup
+
+Open the settings panel (gear icon) to see all available recovery points grouped by tier. Click any backup to enter **preview mode** — the app switches to a read-only view of the backup's data. You can navigate views, filter by category/priority, switch to column layout, and inspect individual tickets to verify it's the right recovery point.
+
+If it looks correct, click **Restore This Backup** to replace the current database. A safety snapshot of your current data is automatically created before the restore, so you can always go back.
+
+### Configurable backup location
+
+By default, backups are stored in `.hotsheet/backups/`. To store them elsewhere — for example, a folder synced by iCloud, Google Drive, or Dropbox — set the `backupDir` in `.hotsheet/settings.json`:
+
+```json
+{
+  "backupDir": "/Users/you/Library/Mobile Documents/com~apple~CloudDocs/hotsheet-backups"
+}
+```
+
+This can also be changed from the settings panel UI.
+
+### Instance locking
+
+Only one Hot Sheet instance can use a data directory at a time. If you accidentally start a second instance pointing at the same `.hotsheet/` folder, it will exit with a clear error instead of risking database corruption. The lock is automatically cleaned up when the app stops.
+
+---
+
 ## Install
 
 ### Desktop app (recommended)
@@ -226,17 +267,23 @@ hotsheet --browser
 | `--browser` | Open in browser instead of desktop window |
 | `--help` | Show help |
 
-### Customizing the window title
+### Settings file
 
-When running multiple instances, you can customize the window title to tell them apart. Create `.hotsheet/settings.json` in your project:
+Create `.hotsheet/settings.json` to configure per-project options:
 
 ```json
 {
-  "appName": "HS - My Project"
+  "appName": "HS - My Project",
+  "backupDir": "/path/to/backup/location"
 }
 ```
 
-Without a settings file, the window title defaults to the project folder name.
+| Key | Description |
+|-----|-------------|
+| `appName` | Custom window title (defaults to the project folder name) |
+| `backupDir` | Backup storage path (defaults to `.hotsheet/backups/`) |
+
+Both settings can also be changed from the settings panel UI.
 
 ### Keyboard shortcuts
 
