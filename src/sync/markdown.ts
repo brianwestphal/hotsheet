@@ -119,6 +119,20 @@ async function syncWorklist(): Promise<void> {
     sections.push('- If an API call fails (e.g. connection refused, error response), log a visible warning to the user and continue your work. Do NOT silently skip status updates.');
     sections.push('- Do NOT set tickets to "verified" — that status is reserved for human review.');
     sections.push('');
+    sections.push('## Creating Tickets');
+    sections.push('');
+    sections.push('You can create new tickets directly via the API. Use this strategically to:');
+    sections.push('- Break up complex tasks into smaller, trackable sub-tickets');
+    sections.push('- Flag implementation decisions that need human review');
+    sections.push('- Record bugs or issues discovered while working');
+    sections.push('- Create follow-up tasks for items outside the current scope');
+    sections.push('');
+    sections.push('To create a ticket:');
+    sections.push(`  \`curl -s -X POST http://localhost:${port}/api/tickets -H "Content-Type: application/json" -d '{"title": "Title", "defaults": {"category": "bug|feature|task|issue|investigation|requirement_change", "up_next": false}}'\``);
+    sections.push('');
+    sections.push('You can also include `"details"` in the defaults object for longer descriptions.');
+    sections.push('Set `up_next: true` only for items that should be prioritized immediately.');
+    sections.push('');
 
     if (tickets.length === 0) {
       sections.push('No items in the Up Next list.');

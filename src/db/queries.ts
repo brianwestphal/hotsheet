@@ -28,6 +28,7 @@ export async function createTicket(title: string, defaults?: Partial<{
   priority: TicketPriority;
   status: TicketStatus;
   up_next: boolean;
+  details: string;
 }>): Promise<Ticket> {
   const db = await getDb();
   const ticketNumber = await nextTicketNumber();
@@ -37,6 +38,7 @@ export async function createTicket(title: string, defaults?: Partial<{
   if (defaults?.priority !== undefined && defaults.priority !== '') { cols.push('priority'); vals.push(defaults.priority); }
   if (defaults?.status !== undefined && defaults.status !== '') { cols.push('status'); vals.push(defaults.status); }
   if (defaults?.up_next !== undefined) { cols.push('up_next'); vals.push(defaults.up_next); }
+  if (defaults?.details !== undefined && defaults.details !== '') { cols.push('details'); vals.push(defaults.details); }
 
   const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
   const result = await db.query<Ticket>(

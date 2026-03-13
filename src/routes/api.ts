@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, rmSync } from 'fs';
 import { Hono } from 'hono';
 import { basename, extname, join, relative } from 'path';
 
@@ -22,6 +22,7 @@ import {
   updateSetting,
   updateTicket,
 } from '../db/queries.js';
+import { ensureSkills } from '../skills.js';
 import { scheduleAllSync } from '../sync/markdown.js';
 import type { AppEnv, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
 
@@ -320,36 +321,8 @@ apiRoutes.get('/worklist-info', (c) => {
   const worklistRel = relative(cwd, join(dataDir, 'worklist.md'));
   const prompt = `Read ${worklistRel} for current work items.`;
 
-  // Detect .claude/ in cwd and auto-create skill if needed
-  const claudeDir = join(cwd, '.claude');
-  let skillCreated = false;
-  if (existsSync(claudeDir)) {
-    const skillDir = join(claudeDir, 'skills', 'hotsheet');
-    const skillFile = join(skillDir, 'SKILL.md');
-    if (!existsSync(skillFile)) {
-      mkdirSync(skillDir, { recursive: true });
-      const skillContent = [
-        '---',
-        'name: hotsheet',
-        'description: Read the Hot Sheet worklist and work through the current priority items',
-        'allowed-tools: Read, Grep, Glob, Edit, Write, Bash',
-        '---',
-        '',
-        `Read \`${worklistRel}\` and work through the tickets in priority order.`,
-        '',
-        'For each ticket:',
-        '1. Read the ticket details carefully',
-        '2. Implement the work described',
-        '3. When complete, mark it done via the Hot Sheet UI',
-        '',
-        'Work through them in order of priority, where reasonable.',
-        '',
-      ].join('\n');
-      // Note: worklist.md itself now contains detailed API workflow instructions
-      writeFileSync(skillFile, skillContent, 'utf-8');
-      skillCreated = true;
-    }
-  }
+  // Ensure skills are up-to-date (version/port changes)
+  const skillCreated = ensureSkills();
 
   return c.json({ prompt, skillCreated });
 });

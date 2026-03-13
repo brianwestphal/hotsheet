@@ -9,6 +9,7 @@ import { acquireLock } from './lock.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
 import { ensureGitignore } from './gitignore.js';
 import { startServer } from './server.js';
+import { initSkills, ensureSkills } from './skills.js';
 import { initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
 import { checkForUpdates } from './update-check.js';
 
@@ -143,6 +144,10 @@ async function main() {
   // Initialize markdown sync with the actual port (may differ if requested port was in use)
   initMarkdownSync(dataDir, actualPort);
   scheduleAllSync();
+
+  // Initialize and sync Claude Code skills
+  initSkills(actualPort, dataDir);
+  ensureSkills();
 
   if (demo === null) {
     initBackupScheduler(dataDir);
