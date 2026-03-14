@@ -4,7 +4,7 @@ import { join, relative } from 'path';
 import type { TicketCategory } from './types.js';
 import { CATEGORY_DESCRIPTIONS } from './types.js';
 
-const SKILL_VERSION = 2;
+export const SKILL_VERSION = 2;
 
 let skillPort: number;
 let skillDataDir: string;
@@ -35,14 +35,14 @@ function versionHeader(): string {
   return `<!-- hotsheet-skill-version: ${SKILL_VERSION} -->`;
 }
 
-function parseVersionHeader(content: string): number | null {
+export function parseVersionHeader(content: string): number | null {
   // Match current format and legacy format with port
   const match = content.match(/<!-- hotsheet-skill-version: (\d+)(?: port: \d+)? -->/);
   if (!match) return null;
   return parseInt(match[1], 10);
 }
 
-function updateFile(path: string, content: string): boolean {
+export function updateFile(path: string, content: string): boolean {
   if (existsSync(path)) {
     const existing = readFileSync(path, 'utf-8');
     const version = parseVersionHeader(existing);

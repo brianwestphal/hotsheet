@@ -5,6 +5,7 @@ dist/
 .hotsheet/
 *.map
 .DS_Store
+coverage/
 
 # Tauri / Rust
 src-tauri/target/
