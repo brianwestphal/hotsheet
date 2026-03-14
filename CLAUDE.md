@@ -103,6 +103,26 @@ The build produces:
 - Server-rendered HTML for initial page load; client JS for interactivity
 - Client CSS and JS are built separately and served as static files
 
+### Requirements Documentation
+
+The `docs/` folder contains numbered requirements documents that describe the application's features and behavior. These are the source of truth for what the app does and should do.
+
+- **Keep docs up to date** — when implementing a feature, fixing a bug, or changing behavior, update the relevant requirements document to reflect the change. If a requirement is added, removed, or modified in code, the corresponding doc must be updated in the same change.
+- **Create new documents** — when a new major functional area is added that doesn't fit naturally into an existing document, create a new numbered document following the naming convention (`N-area-name.md`). Renumber subsequent files if needed to maintain a logical reading order.
+- **Reading order** — documents are numbered for linear reading, from high-level overview to specific subsystems:
+  1. `1-overview.md` — Tech stack, architecture, non-functional requirements
+  2. `2-data-storage.md` — Database, settings, lock file, gitignore
+  3. `3-ticket-management.md` — Core domain model, CRUD, statuses, batch ops
+  4. `4-user-interface.md` — Views, layouts, detail panel, keyboard shortcuts
+  5. `5-attachments.md` — File upload, serving, reveal in finder
+  6. `6-markdown-sync.md` — Worklist export, AI tool skill generation
+  7. `7-backup-restore.md` — Auto-backup, preview, restore
+  8. `8-cli-server.md` — CLI args, startup, demo mode
+  9. `9-api.md` — REST API endpoint reference
+  10. `10-desktop-app.md` — Tauri wrapper, updater, CLI installer
+- **Section numbering** — each document uses `N.X` section numbers matching its file number (e.g., `3-ticket-management.md` uses §3.1, §3.2, etc.)
+- **Cross-references** — use relative markdown links between docs (e.g., `[3-ticket-management.md](3-ticket-management.md) §3.7`)
+
 ### Code Organization
 
 - **One primary export per file** — each file should have one main exported function/concept, with supporting private (non-exported) functions as needed
