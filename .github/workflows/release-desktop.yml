@@ -58,6 +58,18 @@ jobs:
         run: bash scripts/build-sidecar.sh ${{ matrix.target }}
         shell: bash
 
+      - name: Get release notes from tag
+        id: tag-notes
+        shell: bash
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          echo "body<<RELEASE_NOTES_EOF" >> "$GITHUB_OUTPUT"
+          git for-each-ref --format='%(contents)' "refs/tags/$TAG" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "---" >> "$GITHUB_OUTPUT"
+          echo "**npm:** \`npm install -g hotsheet@${TAG#v}\`" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_NOTES_EOF" >> "$GITHUB_OUTPUT"
+
       - name: Build Tauri app and publish release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -75,6 +87,6 @@ jobs:
         with:
           tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseName: 'Hot Sheet ${{ github.event_name == ''workflow_dispatch'' && inputs.tag || github.ref_name }}'
-          releaseBody: 'See the assets below to download and install.'
+          releaseBody: ${{ steps.tag-notes.outputs.body }}
           releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.ref_name != 'main' }}
           args: --target ${{ matrix.target }}

@@ -251,6 +251,40 @@ step_release_notes() {
   ask_multiline "release_notes" "Enter release notes (changelog entries):"
 }
 
+step_update_changelog() {
+  local version
+  version=$(get_state "version")
+  local notes
+  notes=$(get_state "release_notes")
+  local date
+  date=$(date +%Y-%m-%d)
+
+  info "Updating CHANGELOG.md..."
+
+  # Format the release notes as a changelog entry
+  local entry
+  entry="## [${version}] - ${date}\n\n${notes}"
+
+  # Insert after the header (after the "The format is based on..." line)
+  node -e "
+    const fs = require('fs');
+    const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
+    const marker = changelog.indexOf('\n## [');
+    if (marker === -1) {
+      // No existing entries — append after the header
+      const headerEnd = changelog.lastIndexOf('\n\n') + 2;
+      const updated = changelog.slice(0, headerEnd) + process.argv[1] + '\n\n';
+      fs.writeFileSync('CHANGELOG.md', updated);
+    } else {
+      // Insert before the first existing entry
+      const updated = changelog.slice(0, marker) + '\n' + process.argv[1] + '\n' + changelog.slice(marker);
+      fs.writeFileSync('CHANGELOG.md', updated);
+    }
+  " "$(echo -e "$entry")"
+
+  success "CHANGELOG.md updated"
+}
+
 step_review() {
   local version
   version=$(get_state "version")
@@ -316,7 +350,7 @@ step_git_tag() {
 
   info "Creating git commit and tag ${BOLD}${tag}${RESET}..."
 
-  git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml 2>/dev/null || git add package.json
+  git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml CHANGELOG.md 2>/dev/null || git add package.json CHANGELOG.md
   git commit -m "release: v${version}" --allow-empty
 
   # Create annotated tag with release notes
@@ -361,7 +395,7 @@ main() {
   local resume_step
   resume_step=$(get_step)
   if [[ -n "$resume_step" && "$resume_step" -gt 0 ]]; then
-    warn "Found saved progress (step ${resume_step}/8)."
+    warn "Found saved progress (step ${resume_step}/9)."
     if confirm "Resume from where you left off?"; then
       echo ""
     else
@@ -411,23 +445,29 @@ main() {
     set_step 5
   fi
 
-  # Step 6: Build
+  # Step 6: Update CHANGELOG.md
   if ! past_step 6; then
-    echo ""
-    step_build
+    step_update_changelog
     set_step 6
   fi
 
-  # Step 7: Git commit + tag
+  # Step 7: Build
   if ! past_step 7; then
-    step_git_tag
+    echo ""
+    step_build
     set_step 7
   fi
 
-  # Step 8: Publish
+  # Step 8: Git commit + tag
   if ! past_step 8; then
-    step_publish
+    step_git_tag
     set_step 8
+  fi
+
+  # Step 9: Publish
+  if ! past_step 9; then
+    step_publish
+    set_step 9
   fi
 
   # Step 9: Push (optional, not tracked)
