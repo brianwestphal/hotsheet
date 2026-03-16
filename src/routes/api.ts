@@ -349,6 +349,34 @@ apiRoutes.get('/worklist-info', (c) => {
   return c.json({ prompt, skillCreated });
 });
 
+// --- Glassbox integration ---
+
+let glassboxAvailable: boolean | null = null;
+
+apiRoutes.get('/glassbox/status', async (c) => {
+  if (glassboxAvailable === null) {
+    const { execFileSync } = await import('child_process');
+    try {
+      execFileSync('which', ['glassbox'], { stdio: 'ignore' });
+      glassboxAvailable = true;
+    } catch {
+      glassboxAvailable = false;
+    }
+  }
+  return c.json({ available: glassboxAvailable });
+});
+
+apiRoutes.post('/glassbox/launch', async (c) => {
+  if (!glassboxAvailable) return c.json({ error: 'Glassbox not available' }, 404);
+  const { spawn } = await import('child_process');
+  spawn('glassbox', [], {
+    cwd: process.cwd(),
+    detached: true,
+    stdio: 'ignore',
+  }).unref();
+  return c.json({ ok: true });
+});
+
 // --- Gitignore ---
 
 apiRoutes.get('/gitignore/status', async (c) => {

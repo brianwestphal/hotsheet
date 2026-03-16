@@ -159,6 +159,26 @@ input, select, textarea {
   }
 }
 
+.glassbox-btn {
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  flex-shrink: 0;
+  cursor: pointer;
+  overflow: hidden;
+  line-height: 0;
+
+  img {
+    height: 28px;
+    width: 28px;
+    display: block;
+  }
+
+  &:hover {
+    border-color: var(--accent);
+  }
+}
+
 // --- App Body (sidebar + content area) ---
 
 .app-body {

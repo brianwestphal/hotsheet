@@ -76,6 +76,9 @@ cp dist/cli.js "$SERVER_DIR/"
 mkdir -p "$SERVER_DIR/client"
 cp dist/client/app.global.js "$SERVER_DIR/client/"
 cp dist/client/styles.css "$SERVER_DIR/client/"
+if [ -d dist/client/assets ]; then
+  cp -R dist/client/assets "$SERVER_DIR/client/"
+fi
 
 # Copy only the external runtime dependencies (PGLite, Hono, @hono)
 for pkg in @electric-sql/pglite hono @hono/node-server; do

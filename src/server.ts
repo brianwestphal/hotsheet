@@ -43,6 +43,15 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     const js = readFileSync(join(distDir, 'app.global.js'), 'utf-8');
     return c.text(js, 200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' });
   });
+  app.get('/static/assets/:filename', (c) => {
+    const filename = c.req.param('filename');
+    const filePath = join(distDir, 'assets', filename);
+    if (!existsSync(filePath)) return c.notFound();
+    const content = readFileSync(filePath);
+    const ext = filename.split('.').pop();
+    const mimeTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', svg: 'image/svg+xml' };
+    return new Response(content, { headers: { 'Content-Type': mimeTypes[ext || ''] || 'application/octet-stream', 'Cache-Control': 'max-age=86400' } });
+  });
 
   // API routes
   app.route('/api', apiRoutes);

@@ -46,6 +46,7 @@ export default defineConfig([
       };
     },
     onSuccess: async () => {
+      execSync('mkdir -p dist/client/assets && cp src/client/assets/* dist/client/assets/', { stdio: 'inherit' });
       execSync('npx sass src/client/styles.scss dist/client/styles.css --style compressed --no-source-map', { stdio: 'inherit' });
     },
   },

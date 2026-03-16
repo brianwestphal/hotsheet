@@ -6,6 +6,7 @@ dist/
 *.map
 .DS_Store
 coverage/
+scheduled_tasks.lock
 
 # Tauri / Rust
 src-tauri/target/
