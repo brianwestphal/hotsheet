@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use serde::Deserialize;
 use serde::Serialize;
 use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 
 #[cfg(not(debug_assertions))]
 use tauri_plugin_shell::ShellExt;
@@ -309,6 +310,61 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(SidecarPid(Mutex::new(None)))
         .manage(PendingUpdate(Mutex::new(None)))
+        .menu(|app| {
+            // Custom Undo/Redo items that route to JavaScript instead of native WebView undo.
+            // Predefined Undo/Redo would intercept Cmd+Z before the WebView sees it.
+            let undo_item = MenuItemBuilder::new("Undo")
+                .id("app-undo")
+                .accelerator("CmdOrCtrl+Z")
+                .build(app)?;
+            let redo_item = MenuItemBuilder::new("Redo")
+                .id("app-redo")
+                .accelerator("CmdOrCtrl+Shift+Z")
+                .build(app)?;
+
+            let app_menu = SubmenuBuilder::new(app, "Hot Sheet")
+                .about(None)
+                .separator()
+                .services()
+                .separator()
+                .hide()
+                .hide_others()
+                .show_all()
+                .separator()
+                .quit()
+                .build()?;
+            let edit_menu = SubmenuBuilder::new(app, "Edit")
+                .item(&undo_item)
+                .item(&redo_item)
+                .separator()
+                .cut()
+                .copy()
+                .paste()
+                .select_all()
+                .build()?;
+            let window_menu = SubmenuBuilder::new(app, "Window")
+                .minimize()
+                .separator()
+                .close_window()
+                .build()?;
+            MenuBuilder::new(app)
+                .item(&app_menu)
+                .item(&edit_menu)
+                .item(&window_menu)
+                .build()
+        })
+        .on_menu_event(|app, event| {
+            let id = event.id().0.as_str();
+            if id == "app-undo" || id == "app-redo" {
+                if let Some(window) = app.get_webview_window("main") {
+                    let js_event = if id == "app-undo" { "app:undo" } else { "app:redo" };
+                    let _ = window.eval(&format!(
+                        "window.dispatchEvent(new Event('{}'))",
+                        js_event
+                    ));
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             check_cli_installed,
             install_cli,
@@ -319,6 +375,62 @@ pub fn run() {
         .setup(|_app| {
             #[allow(unused_variables)]
             let app = _app;
+
+            // --- Dev mode: spawn Node server directly via tsx ---
+            #[cfg(debug_assertions)]
+            {
+                let window = app
+                    .get_webview_window("main")
+                    .expect("main window not found");
+
+                let app_args: Vec<String> = std::env::args().collect();
+                let mut server_args = vec![
+                    "tsx".to_string(),
+                    "--tsconfig".to_string(),
+                    "tsconfig.json".to_string(),
+                    "src/cli.ts".to_string(),
+                    "--no-open".to_string(),
+                ];
+                if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
+                    if let Some(dir) = app_args.get(i + 1) {
+                        server_args.push("--data-dir".to_string());
+                        server_args.push(dir.clone());
+                    }
+                }
+
+                // The Rust binary runs from src-tauri/, so set cwd to the project root
+                let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+                let mut child = std::process::Command::new("npx")
+                    .args(&server_args)
+                    .current_dir(project_root)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::inherit())
+                    .spawn()
+                    .expect("Failed to start dev server (is npx/tsx installed?)");
+
+                *app.state::<SidecarPid>().0.lock().unwrap() = Some(child.id());
+
+                let stdout = child.stdout.take().expect("Failed to capture stdout");
+                std::thread::spawn(move || {
+                    use std::io::{BufRead, BufReader};
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines() {
+                        let Ok(line) = line else { break };
+                        println!("{}", line);
+                        if let Some(idx) = line.find("running at ") {
+                            let url = line[idx + "running at ".len()..].trim().to_string();
+                            if let Ok(parsed) = url.parse() {
+                                let _ = window.navigate(parsed);
+                            }
+                            break;
+                        }
+                    }
+                    // Keep child alive until app exits
+                    let _ = child.wait();
+                });
+            }
+
+            // --- Production mode: spawn sidecar or connect to pre-started server ---
             #[cfg(not(debug_assertions))]
             {
                 let app_args: Vec<String> = std::env::args().collect();

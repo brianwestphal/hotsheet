@@ -5,8 +5,13 @@ import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, VERIFIED_SVG, state } from './state.js';
+import { recordTextChange, trackedBatch, trackedDelete, trackedPatch, trackedRestore } from './undo/actions.js';
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+
+export function cancelPendingSave() {
+  if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; }
+}
 let suppressFocusSelect = false;
 let draftCategory: string | null = null;
 let draftTitle = '';
@@ -338,10 +343,12 @@ function renderColumnView() {
       const ids = draggedTicketIds;
       draggedTicketIds = [];
       if (ids.length === 0) return;
-      void api('/tickets/batch', {
-        method: 'POST',
-        body: { ids, action: 'status', value: col.status },
-      }).then(() => void loadTickets());
+      const affected = state.tickets.filter(t => ids.includes(t.id));
+      void trackedBatch(
+        affected,
+        { ids, action: 'status', value: col.status },
+        'Change status',
+      ).then(() => void loadTickets());
     });
 
     columnsContainer.appendChild(column);
@@ -648,6 +655,7 @@ function createTicketRow(ticket: Ticket): HTMLElement {
     updateBatchToolbar();
   });
   titleInput.addEventListener('input', () => {
+    recordTextChange(ticket, 'title', titleInput.value);
     debouncedSave(ticket.id, { title: titleInput.value });
   });
   titleInput.addEventListener('keydown', (e) => {
@@ -718,7 +726,7 @@ function createTrashRow(ticket: Ticket): HTMLElement {
 
   row.querySelector('.btn')!.addEventListener('click', async (e) => {
     e.stopPropagation();
-    await api(`/tickets/${ticket.id}/restore`, { method: 'POST' });
+    await trackedRestore(ticket);
     void loadTickets();
   });
 
@@ -833,10 +841,7 @@ async function cycleStatus(ticket: Ticket) {
     archive: 'not_started',
   };
   const newStatus = cycle[ticket.status] || 'not_started';
-  const updated = await api<Ticket>(`/tickets/${ticket.id}`, {
-    method: 'PATCH',
-    body: { status: newStatus },
-  });
+  const updated = await trackedPatch(ticket, { status: newStatus }, 'Change status');
   Object.assign(ticket, updated);
   renderTicketList();
 }
@@ -844,28 +849,27 @@ async function cycleStatus(ticket: Ticket) {
 async function toggleUpNext(ticket: Ticket) {
   if (!ticket.up_next && (ticket.status === 'completed' || ticket.status === 'verified')) {
     // Reopen done ticket and add to Up Next
-    await api(`/tickets/${ticket.id}`, {
-      method: 'PATCH',
-      body: { status: 'not_started', up_next: true },
-    });
+    await trackedPatch(ticket, { status: 'not_started', up_next: true }, 'Toggle up next');
   } else {
-    await api(`/tickets/${ticket.id}/up-next`, { method: 'POST' });
+    await trackedPatch(ticket, { up_next: !ticket.up_next }, 'Toggle up next');
   }
   void loadTickets();
 }
 
 async function setTicketField(ticket: Ticket, field: string, value: string) {
-  const updated = await api<Ticket>(`/tickets/${ticket.id}`, {
-    method: 'PATCH',
-    body: { [field]: value },
-  });
+  const updated = await trackedPatch(ticket, { [field]: value }, `Change ${field}`);
   Object.assign(ticket, updated);
   renderTicketList();
 }
 
 async function deleteTicketAndFocus(id: number) {
   const idx = state.tickets.findIndex(t => t.id === id);
-  await api(`/tickets/${id}`, { method: 'DELETE' });
+  const ticket = state.tickets.find(t => t.id === id);
+  if (ticket) {
+    await trackedDelete(ticket);
+  } else {
+    await api(`/tickets/${id}`, { method: 'DELETE' });
+  }
   state.tickets = state.tickets.filter(t => t.id !== id);
   state.selectedIds.delete(id);
   renderTicketList();
@@ -899,10 +903,7 @@ function showCategoryMenu(anchor: HTMLElement, ticket: Ticket) {
     color: getCategoryColor(s.value),
     active: ticket.category === s.value,
     action: async () => {
-      const updated = await api<Ticket>(`/tickets/${ticket.id}`, {
-        method: 'PATCH',
-        body: { category: s.value },
-      });
+      const updated = await trackedPatch(ticket, { category: s.value }, 'Change category');
       Object.assign(ticket, updated);
       renderTicketList();
     },
@@ -921,10 +922,7 @@ function showPriorityMenu(anchor: HTMLElement, ticket: Ticket) {
     color: getPriorityColor(s.value),
     active: ticket.priority === s.value,
     action: async () => {
-      const updated = await api<Ticket>(`/tickets/${ticket.id}`, {
-        method: 'PATCH',
-        body: { priority: s.value },
-      });
+      const updated = await trackedPatch(ticket, { priority: s.value }, 'Change priority');
       Object.assign(ticket, updated);
       renderTicketList();
     },

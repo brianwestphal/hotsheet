@@ -106,6 +106,8 @@ The interface is divided into:
 
 | Shortcut | Action |
 |----------|--------|
+| Cmd/Ctrl+Z | Undo last change |
+| Cmd/Ctrl+Shift+Z | Redo last undone change |
 | N (or Cmd/Ctrl+N) | Focus draft input to create a new ticket |
 | Cmd/Ctrl+F | Focus search input |
 | Cmd/Ctrl+A | Select all visible tickets |
@@ -167,7 +169,19 @@ The interface is divided into:
 - Input debouncing (200-800ms depending on field) prevents excessive API calls.
 - Long-poll minimizes unnecessary network traffic compared to interval polling.
 
-### 4.16 Responsiveness
+### 4.16 Undo / Redo
+
+- **Cmd/Ctrl+Z** undoes the last change; **Cmd/Ctrl+Shift+Z** redoes.
+- Works globally, including when focused in text input fields.
+- **Supported operations**: field changes (category, priority, status, up_next, title, details), ticket deletion, trash restore, batch operations (bulk field changes, bulk delete), drag-and-drop (sidebar drops, column drops).
+- **Not supported**: ticket creation, file attachments, settings changes.
+- **Text field coalescing**: Rapid edits to the same text field (title or details) are merged into a single undo step. A new undo entry is created every 5 seconds of continuous editing (rate limit, not debounce).
+- **Stack depth**: Maximum 1000 entries. Oldest entries are discarded when the limit is exceeded.
+- **In-memory only**: The undo stack is not persisted across page reloads.
+- Any new change clears the redo stack (standard undo/redo behavior).
+- Pending debounced saves are cancelled when undo/redo is triggered.
+
+### 4.17 Responsiveness
 
 - Minimum window size: 800x500.
 - Detail panel is resizable in both orientations.

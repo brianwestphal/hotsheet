@@ -4,8 +4,7 @@
   "version": "0.2.7",
   "identifier": "com.brianwestphal.hotsheet",
   "build": {
-    "beforeDevCommand": "npm run dev:server",
-    "devUrl": "http://localhost:4174",
+    "beforeDevCommand": "npm run build:client",
     "frontendDist": "loading"
   },
   "app": {

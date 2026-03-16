@@ -110,6 +110,13 @@ function loadPreviewDetail(id: number) {
   </>).toString();
 }
 
+/** Force-reload the detail panel for the currently active ticket. */
+export function refreshDetail() {
+  if (state.activeTicketId != null) {
+    void loadDetail(state.activeTicketId);
+  }
+}
+
 async function loadDetail(id: number) {
   const ticket = await api<Ticket & { attachments: { id: number; original_filename: string; stored_path: string }[] }>(
     `/tickets/${id}`

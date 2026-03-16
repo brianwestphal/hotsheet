@@ -3,7 +3,8 @@ import { bindBackupsUI, loadBackupList } from './backups.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, updateStats } from './detail.js';
 import type { AppSettings, Ticket } from './state.js';
 import { state } from './state.js';
-import { canUseColumnView, draggedTicketIds, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
+import { cancelPendingSave, canUseColumnView, draggedTicketIds, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
+import { canRedo, canUndo, performRedo, performUndo, recordTextChange, trackedBatch, trackedCompoundBatch, trackedPatch } from './undo/actions.js';
 
 async function init() {
   await loadSettings();
@@ -368,11 +369,12 @@ function getDropAction(view: string): { action: string; value: unknown } | null 
 async function applyDropAction(view: string, ids: number[]) {
   const drop = getDropAction(view);
   if (!drop) return;
+  const affected = state.tickets.filter(t => ids.includes(t.id));
 
   if (drop.action === 'delete') {
-    await api('/tickets/batch', { method: 'POST', body: { ids, action: 'delete' } });
+    await trackedBatch(affected, { ids, action: 'delete' }, 'Delete tickets');
   } else {
-    await api('/tickets/batch', { method: 'POST', body: { ids, action: drop.action, value: drop.value } });
+    await trackedBatch(affected, { ids, action: drop.action, value: drop.value }, `Change ${drop.action}`);
   }
   void loadTickets();
 }
@@ -454,10 +456,9 @@ function bindBatchToolbar() {
   const batchCategory = document.getElementById('batch-category') as HTMLSelectElement;
   batchCategory.addEventListener('change', async () => {
     if (!batchCategory.value) return;
-    await api('/tickets/batch', {
-      method: 'POST',
-      body: { ids: Array.from(state.selectedIds), action: 'category', value: batchCategory.value },
-    });
+    const ids = Array.from(state.selectedIds);
+    const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+    await trackedBatch(affected, { ids, action: 'category', value: batchCategory.value }, 'Batch change category');
     batchCategory.value = '';
     void loadTickets();
   });
@@ -465,10 +466,9 @@ function bindBatchToolbar() {
   const batchPriority = document.getElementById('batch-priority') as HTMLSelectElement;
   batchPriority.addEventListener('change', async () => {
     if (!batchPriority.value) return;
-    await api('/tickets/batch', {
-      method: 'POST',
-      body: { ids: Array.from(state.selectedIds), action: 'priority', value: batchPriority.value },
-    });
+    const ids = Array.from(state.selectedIds);
+    const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+    await trackedBatch(affected, { ids, action: 'priority', value: batchPriority.value }, 'Batch change priority');
     batchPriority.value = '';
     void loadTickets();
   });
@@ -476,43 +476,40 @@ function bindBatchToolbar() {
   const batchStatus = document.getElementById('batch-status') as HTMLSelectElement;
   batchStatus.addEventListener('change', async () => {
     if (!batchStatus.value) return;
-    await api('/tickets/batch', {
-      method: 'POST',
-      body: { ids: Array.from(state.selectedIds), action: 'status', value: batchStatus.value },
-    });
+    const ids = Array.from(state.selectedIds);
+    const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+    await trackedBatch(affected, { ids, action: 'status', value: batchStatus.value }, 'Batch change status');
     batchStatus.value = '';
     void loadTickets();
   });
 
   document.getElementById('batch-upnext')!.addEventListener('click', async () => {
     const selectedTickets = state.tickets.filter(t => state.selectedIds.has(t.id));
-    // Toggle: if any selected ticket is NOT up_next, set all to true; otherwise set all to false
     const allUpNext = selectedTickets.every(t => t.up_next);
     const settingUpNext = !allUpNext;
+    const ids = Array.from(state.selectedIds);
 
     if (settingUpNext) {
-      // Reopen any done tickets so they can be added to Up Next
       const doneTickets = selectedTickets.filter(t => t.status === 'completed' || t.status === 'verified');
       if (doneTickets.length > 0) {
-        await api('/tickets/batch', {
-          method: 'POST',
-          body: { ids: doneTickets.map(t => t.id), action: 'status', value: 'not_started' },
-        });
+        const ops = [
+          { ids: doneTickets.map(t => t.id), action: 'status', value: 'not_started' },
+          { ids, action: 'up_next', value: true },
+        ];
+        await trackedCompoundBatch(selectedTickets, ops, 'Batch toggle up next');
+      } else {
+        await trackedBatch(selectedTickets, { ids, action: 'up_next', value: true }, 'Batch toggle up next');
       }
+    } else {
+      await trackedBatch(selectedTickets, { ids, action: 'up_next', value: false }, 'Batch toggle up next');
     }
-
-    await api('/tickets/batch', {
-      method: 'POST',
-      body: { ids: Array.from(state.selectedIds), action: 'up_next', value: settingUpNext },
-    });
     void loadTickets();
   });
 
   document.getElementById('batch-delete')!.addEventListener('click', async () => {
-    await api('/tickets/batch', {
-      method: 'POST',
-      body: { ids: Array.from(state.selectedIds), action: 'delete' },
-    });
+    const ids = Array.from(state.selectedIds);
+    const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+    await trackedBatch(affected, { ids, action: 'delete' }, 'Batch delete');
     state.selectedIds.clear();
     void loadTickets();
   });
@@ -543,6 +540,12 @@ function bindDetailPanel() {
   for (const fieldId of fields) {
     const el = document.getElementById(fieldId) as HTMLInputElement | HTMLTextAreaElement;
     el.addEventListener('input', () => {
+      // Record text change for undo (coalesces rapid edits)
+      const ticket = state.tickets.find(t => t.id === state.activeTicketId);
+      if (ticket) {
+        const key = fieldId.replace('detail-', '');
+        recordTextChange(ticket, key, el.value);
+      }
       if (detailSaveTimeout) clearTimeout(detailSaveTimeout);
       detailSaveTimeout = setTimeout(() => {
         if (state.activeTicketId == null) return;
@@ -561,11 +564,16 @@ function bindDetailPanel() {
     const el = document.getElementById(selId) as HTMLSelectElement;
     el.addEventListener('change', async () => {
       if (state.activeTicketId == null) return;
+      const ticket = state.tickets.find(t => t.id === state.activeTicketId);
       const key = selId.replace('detail-', '');
-      await api(`/tickets/${state.activeTicketId}`, {
-        method: 'PATCH',
-        body: { [key]: el.value },
-      });
+      if (ticket) {
+        await trackedPatch(ticket, { [key]: el.value }, `Change ${key}`);
+      } else {
+        await api(`/tickets/${state.activeTicketId}`, {
+          method: 'PATCH',
+          body: { [key]: el.value },
+        });
+      }
       void loadTickets();
     });
   }
@@ -575,12 +583,12 @@ function bindDetailPanel() {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
     const checkbox = document.getElementById('detail-upnext') as HTMLInputElement;
-    // If adding a completed/verified ticket to Up Next, reopen it
-    if (checkbox.checked && ticket && (ticket.status === 'completed' || ticket.status === 'verified')) {
-      await api(`/tickets/${state.activeTicketId}`, {
-        method: 'PATCH',
-        body: { status: 'not_started', up_next: true },
-      });
+    if (ticket) {
+      if (checkbox.checked && (ticket.status === 'completed' || ticket.status === 'verified')) {
+        await trackedPatch(ticket, { status: 'not_started', up_next: true }, 'Toggle up next');
+      } else {
+        await trackedPatch(ticket, { up_next: !ticket.up_next }, 'Toggle up next');
+      }
     } else {
       await api(`/tickets/${state.activeTicketId}/up-next`, { method: 'POST' });
     }
@@ -657,7 +665,38 @@ function formatTicketForClipboard(ticket: Ticket): string {
 
 // --- Global keyboard shortcuts ---
 
+function triggerUndo() {
+  console.log('[undo] triggerUndo called, canUndo:', canUndo());
+  if (detailSaveTimeout) { clearTimeout(detailSaveTimeout); detailSaveTimeout = null; }
+  cancelPendingSave();
+  performUndo().then(() => console.log('[undo] performUndo completed')).catch((e) => console.error('[undo] performUndo error:', e));
+}
+
+function triggerRedo() {
+  console.log('[undo] triggerRedo called, canRedo:', canRedo());
+  if (detailSaveTimeout) { clearTimeout(detailSaveTimeout); detailSaveTimeout = null; }
+  cancelPendingSave();
+  performRedo().then(() => console.log('[undo] performRedo completed')).catch((e) => console.error('[undo] performRedo error:', e));
+}
+
 function bindKeyboardShortcuts() {
+  // Tauri menu events for Undo/Redo (native menu captures Cmd+Z before the WebView)
+  window.addEventListener('app:undo', triggerUndo);
+  window.addEventListener('app:redo', triggerRedo);
+
+  // Keyboard fallback for browser mode (non-Tauri) — capture phase
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.shiftKey) {
+        triggerRedo();
+      } else {
+        triggerUndo();
+      }
+    }
+  }, true);
+
   document.addEventListener('keydown', (e) => {
     // Ignore if typing in an input/textarea (except specific shortcuts)
     const tag = (e.target as HTMLElement).tagName;
@@ -696,25 +735,22 @@ function bindKeyboardShortcuts() {
         const selectedTickets = state.tickets.filter(t => state.selectedIds.has(t.id));
         const allUpNext = selectedTickets.every(t => t.up_next);
         const settingUpNext = !allUpNext;
+        const ids = Array.from(state.selectedIds);
         if (settingUpNext) {
           const doneTickets = selectedTickets.filter(t => t.status === 'completed' || t.status === 'verified');
           if (doneTickets.length > 0) {
-            void api('/tickets/batch', {
-              method: 'POST',
-              body: { ids: doneTickets.map(t => t.id), action: 'status', value: 'not_started' },
-            }).then(() =>
-              api('/tickets/batch', {
-                method: 'POST',
-                body: { ids: Array.from(state.selectedIds), action: 'up_next', value: true },
-              })
-            ).then(() => void loadTickets());
+            void trackedCompoundBatch(selectedTickets, [
+              { ids: doneTickets.map(t => t.id), action: 'status', value: 'not_started' },
+              { ids, action: 'up_next', value: true },
+            ], 'Toggle up next').then(() => void loadTickets());
             return;
           }
         }
-        void api('/tickets/batch', {
-          method: 'POST',
-          body: { ids: Array.from(state.selectedIds), action: 'up_next', value: settingUpNext },
-        }).then(() => void loadTickets());
+        void trackedBatch(
+          selectedTickets,
+          { ids, action: 'up_next', value: settingUpNext },
+          'Toggle up next',
+        ).then(() => void loadTickets());
       }
       return;
     }
