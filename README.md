@@ -335,6 +335,12 @@ npm link                 # Symlink for global 'hotsheet' command
 
 ---
 
+## See Also
+
+- **[Glassbox](https://github.com/brianwestphal/glassbox)** — AI-powered code review tool. Runs locally, reviews your changes, and posts inline annotations. Pairs well with Hot Sheet for a complete local dev workflow.
+
+---
+
 ## License
 
 MIT

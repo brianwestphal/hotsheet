@@ -145,6 +145,8 @@ function bindSettingsDialog() {
       const version = (await invoke('check_for_update')) as string | null;
       if (version) {
         checkUpdatesStatus.textContent = `Update available: v${version}`;
+        // Close settings panel so the update banner is visible
+        document.getElementById('settings-overlay')!.style.display = 'none';
         showUpdateBanner(version);
       } else {
         checkUpdatesStatus.textContent = 'Your software is up to date.';
