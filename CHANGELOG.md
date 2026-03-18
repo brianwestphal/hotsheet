@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.10] - 2026-03-18
+
+- Fixed an issue with using the shift key for multiple item selection in column mode
+- No longer hiding the details panel when nothing or multiple items are selected
+
 ## [0.2.9] - 2026-03-16
 
 ### Fixed

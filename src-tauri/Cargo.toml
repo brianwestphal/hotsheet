@@ -1,6 +1,6 @@
 [package]
 name = "hotsheet"
-version = "0.2.9"
+version = "0.2.10"
 description = "Hot Sheet desktop app"
 edition = "2021"
 
