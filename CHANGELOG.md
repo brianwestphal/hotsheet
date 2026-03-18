@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.11] - 2026-03-18
+
+- Fixed release script
+
 ## [0.2.10] - 2026-03-18
 
 - Fixed an issue with using the shift key for multiple item selection in column mode
