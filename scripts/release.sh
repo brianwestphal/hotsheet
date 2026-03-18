@@ -102,7 +102,7 @@ ask_multiline() {
 
   while true; do
     info "${prompt} ${DIM}(opening ${editor##*/})${RESET}"
-    "$editor" "$tmpfile"
+    $editor "$tmpfile"
 
     # Read back, strip trailing blank lines
     REPLY=$(sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$tmpfile")
