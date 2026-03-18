@@ -682,6 +682,22 @@ input, select, textarea {
   border-top: 1px solid var(--border);
 }
 
+.detail-panel.detail-disabled {
+  background: var(--bg-secondary);
+}
+
+.detail-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+.detail-placeholder-text {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
 .detail-header {
   display: flex;
   align-items: center;

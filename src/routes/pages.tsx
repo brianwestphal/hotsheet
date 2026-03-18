@@ -154,14 +154,17 @@ pageRoutes.get('/', (c) => {
               </div>
             </main>
 
-            <div className="detail-resize-handle" id="detail-resize-handle" style="display:none"></div>
+            <div className="detail-resize-handle" id="detail-resize-handle"></div>
 
-            <aside className="detail-panel" id="detail-panel" style="display:none">
-              <div className="detail-header">
+            <aside className="detail-panel detail-disabled" id="detail-panel">
+              <div className="detail-placeholder" id="detail-placeholder">
+                <span className="detail-placeholder-text" id="detail-placeholder-text">Nothing selected</span>
+              </div>
+              <div className="detail-header" id="detail-header" style="display:none">
                 <span className="detail-ticket-number" id="detail-ticket-number"></span>
                 <button className="detail-close" id="detail-close" title="Close">{raw('&times;')}</button>
               </div>
-              <div className="detail-body">
+              <div className="detail-body" id="detail-body" style="display:none">
                 <div className="detail-fields-row">
                   <div className="detail-field">
                     <label>Category</label>

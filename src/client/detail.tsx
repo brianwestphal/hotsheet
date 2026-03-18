@@ -14,7 +14,8 @@ export function openDetail(id: number) {
 export function closeDetail() {
   state.selectedIds.clear();
   state.activeTicketId = null;
-  // Trigger re-render via import
+  syncDetailPanel();
+  // Trigger re-render for selection classes
   const event = new CustomEvent('hotsheet:render');
   document.dispatchEvent(event);
 }
@@ -24,11 +25,29 @@ export function syncDetailPanel() {
   const isPreview = !!state.backupPreview?.active;
   const panel = document.getElementById('detail-panel')!;
   const handle = document.getElementById('detail-resize-handle');
+  const header = document.getElementById('detail-header')!;
+  const body = document.getElementById('detail-body')!;
+  const placeholder = document.getElementById('detail-placeholder')!;
+  const placeholderText = document.getElementById('detail-placeholder-text')!;
 
-  if (state.selectedIds.size === 1 && !isTrash) {
+  if (isTrash) {
+    panel.style.display = 'none';
+    if (handle) handle.style.display = 'none';
+    state.activeTicketId = null;
+    return;
+  }
+
+  // Always show the panel
+  panel.style.display = 'flex';
+  if (handle) handle.style.display = '';
+
+  if (state.selectedIds.size === 1) {
     const id = Array.from(state.selectedIds)[0];
-    panel.style.display = 'flex';
-    if (handle) handle.style.display = '';
+    // Show ticket detail
+    panel.classList.remove('detail-disabled');
+    header.style.display = '';
+    body.style.display = '';
+    placeholder.style.display = 'none';
     if (state.activeTicketId !== id) {
       state.activeTicketId = id;
       if (isPreview) {
@@ -38,11 +57,17 @@ export function syncDetailPanel() {
       }
     }
   } else {
-    if (state.activeTicketId != null) {
-      state.activeTicketId = null;
+    // Disabled placeholder state
+    state.activeTicketId = null;
+    panel.classList.add('detail-disabled');
+    header.style.display = 'none';
+    body.style.display = 'none';
+    placeholder.style.display = '';
+    if (state.selectedIds.size === 0) {
+      placeholderText.textContent = 'Nothing selected';
+    } else {
+      placeholderText.textContent = `${state.selectedIds.size} items selected`;
     }
-    panel.style.display = 'none';
-    if (handle) handle.style.display = 'none';
   }
 }
 

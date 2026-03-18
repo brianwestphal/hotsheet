@@ -418,15 +418,24 @@ function createColumnCard(ticket: Ticket): HTMLElement {
       else state.selectedIds.add(ticket.id);
       state.lastClickedId = ticket.id;
     } else if (e.shiftKey && state.lastClickedId != null) {
-      // Range select
-      const ids = state.tickets.map(t => t.id);
-      const anchorIdx = ids.indexOf(state.lastClickedId);
-      const targetIdx = ids.indexOf(ticket.id);
-      if (anchorIdx !== -1 && targetIdx !== -1) {
-        const from = Math.min(anchorIdx, targetIdx);
-        const to = Math.max(anchorIdx, targetIdx);
+      // Range select — only within the same column (same status)
+      const anchorTicket = state.tickets.find(t => t.id === state.lastClickedId);
+      if (anchorTicket && anchorTicket.status === ticket.status) {
+        const colTickets = state.tickets.filter(t => t.status === ticket.status);
+        const colIds = colTickets.map(t => t.id);
+        const anchorIdx = colIds.indexOf(state.lastClickedId!);
+        const targetIdx = colIds.indexOf(ticket.id);
+        if (anchorIdx !== -1 && targetIdx !== -1) {
+          const from = Math.min(anchorIdx, targetIdx);
+          const to = Math.max(anchorIdx, targetIdx);
+          state.selectedIds.clear();
+          for (let i = from; i <= to; i++) state.selectedIds.add(colIds[i]);
+        }
+      } else {
+        // Cross-column shift-click — treat as single select
         state.selectedIds.clear();
-        for (let i = from; i <= to; i++) state.selectedIds.add(ids[i]);
+        state.selectedIds.add(ticket.id);
+        state.lastClickedId = ticket.id;
       }
     } else {
       // Single select
