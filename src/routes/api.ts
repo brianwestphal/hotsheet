@@ -10,6 +10,7 @@ import {
   createTicket,
   deleteAttachment,
   deleteTicket,
+  duplicateTickets,
   emptyTrash,
   getAttachment,
   getAttachments,
@@ -168,6 +169,15 @@ apiRoutes.post('/tickets/batch', async (c) => {
 
   scheduleAllSync(); notifyChange();
   return c.json({ ok: true });
+});
+
+// --- Duplicate ---
+
+apiRoutes.post('/tickets/duplicate', async (c) => {
+  const body = await c.req.json<{ ids: number[] }>();
+  const created = await duplicateTickets(body.ids);
+  scheduleAllSync(); notifyChange();
+  return c.json(created, 201);
 });
 
 // --- Restore from trash ---

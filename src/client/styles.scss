@@ -409,6 +409,13 @@ input, select, textarea {
   background: none;
 }
 
+.batch-more-btn.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+}
+
 .batch-count {
   font-size: 12px;
   color: var(--text-muted);

@@ -1,6 +1,7 @@
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI, loadBackupList } from './backups.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, updateStats } from './detail.js';
+import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { AppSettings, Ticket } from './state.js';
 import { state } from './state.js';
 import { cancelPendingSave, canUseColumnView, draggedTicketIds, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
@@ -512,6 +513,54 @@ function bindBatchToolbar() {
     await trackedBatch(affected, { ids, action: 'delete' }, 'Batch delete');
     state.selectedIds.clear();
     void loadTickets();
+  });
+
+  // More actions menu
+  const batchMore = document.getElementById('batch-more')!;
+  batchMore.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAllMenus();
+    const menu = createDropdown(batchMore, [
+      {
+        label: 'Duplicate',
+        key: 'd',
+        action: async () => {
+          const ids = Array.from(state.selectedIds);
+          const created = await api<Ticket[]>('/tickets/duplicate', {
+            method: 'POST',
+            body: { ids },
+          });
+          state.selectedIds.clear();
+          for (const t of created) state.selectedIds.add(t.id);
+          void loadTickets();
+        },
+      },
+      {
+        label: 'Move to Backlog',
+        key: 'b',
+        action: async () => {
+          const ids = Array.from(state.selectedIds);
+          const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+          await trackedBatch(affected, { ids, action: 'status', value: 'backlog' }, 'Move to backlog');
+          state.selectedIds.clear();
+          void loadTickets();
+        },
+      },
+      {
+        label: 'Archive',
+        key: 'a',
+        action: async () => {
+          const ids = Array.from(state.selectedIds);
+          const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+          await trackedBatch(affected, { ids, action: 'status', value: 'archive' }, 'Archive');
+          state.selectedIds.clear();
+          void loadTickets();
+        },
+      },
+    ]);
+    document.body.appendChild(menu);
+    positionDropdown(menu, batchMore);
+    menu.style.visibility = '';
   });
 
   // Select-all checkbox

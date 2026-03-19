@@ -969,7 +969,7 @@ function updateBatchToolbar() {
 
   document.getElementById('batch-count')!.textContent = hasSelection ? `${count} selected` : '';
 
-  const normalControls = ['batch-category', 'batch-priority', 'batch-status', 'batch-upnext', 'batch-delete'];
+  const normalControls = ['batch-category', 'batch-priority', 'batch-status', 'batch-upnext', 'batch-delete', 'batch-more'];
   for (const id of normalControls) {
     const el = document.getElementById(id) as HTMLElement;
     el.style.display = isTrash ? 'none' : '';

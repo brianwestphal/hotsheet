@@ -212,6 +212,40 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
   return result.rows;
 }
 
+// --- Duplicate ---
+
+export async function duplicateTickets(ids: number[]): Promise<Ticket[]> {
+  const db = await getDb();
+  // Get all non-deleted titles for conflict detection
+  const allTitles = await db.query<{ title: string }>(`SELECT title FROM tickets WHERE status != 'deleted'`);
+  const existingTitles = new Set(allTitles.rows.map(r => r.title));
+  const created: Ticket[] = [];
+
+  for (const id of ids) {
+    const ticket = await getTicket(id);
+    if (!ticket) continue;
+
+    const baseTitle = ticket.title;
+    let copyTitle = `${baseTitle} - Copy`;
+    if (existingTitles.has(copyTitle)) {
+      let n = 2;
+      while (existingTitles.has(`${baseTitle} - Copy ${n}`)) n++;
+      copyTitle = `${baseTitle} - Copy ${n}`;
+    }
+    existingTitles.add(copyTitle);
+
+    const newTicket = await createTicket(copyTitle, {
+      category: ticket.category as TicketCategory,
+      priority: ticket.priority as TicketPriority,
+      details: ticket.details,
+      up_next: ticket.up_next,
+    });
+    created.push(newTicket);
+  }
+
+  return created;
+}
+
 // --- Batch operations ---
 
 export async function batchUpdateTickets(
