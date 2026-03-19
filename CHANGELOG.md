@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.12] - 2026-03-19
+
+- Added ... menu in selected items toolbar, with:
+  - Duplicate
+  - Archive
+  - Move to Backlog
+
 ## [0.2.11] - 2026-03-18
 
 - Fixed release script
