@@ -122,7 +122,9 @@ jobs:
           args: --target ${{ matrix.target }}
 
   # Rename installer assets to human-friendly names.
-  # Updater artifacts (.tar.gz, .sig, latest.json) are left untouched.
+  # Only .dmg files are safe to rename — the updater's latest.json references
+  # .exe, .msi, .deb, .AppImage, and .rpm by their original filenames.
+  # macOS updates use .app.tar.gz instead, so .dmg renames are safe.
   rename-assets:
     needs: [create-release, build]
     runs-on: ubuntu-latest
@@ -139,20 +141,14 @@ jobs:
               per_page: 100,
             });
 
-            // Map Tauri's arch/platform suffixes to friendly names
             const renames = [
               [/_aarch64\.dmg$/, '-macOS-Apple-Silicon.dmg'],
               [/_x64\.dmg$/, '-macOS-Intel.dmg'],
-              [/_x64-setup\.exe$/, '-Windows-x64-setup.exe'],
-              [/_x64_en-US\.msi$/, '-Windows-x64.msi'],
-              [/_amd64\.deb$/, '-Linux-x64.deb'],
-              [/_amd64\.AppImage$/, '-Linux-x64.AppImage'],
             ];
 
             for (const asset of assets) {
               for (const [pattern, suffix] of renames) {
                 if (pattern.test(asset.name)) {
-                  // Replace "Hot.Sheet_0.2.12_..." with "HotSheet-0.2.12-..."
                   const newName = asset.name
                     .replace(/^Hot\.Sheet_/, 'HotSheet-')
                     .replace(pattern, suffix);
