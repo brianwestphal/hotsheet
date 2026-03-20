@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.13] - 2026-03-20
+
+- cli install script now creates /use/local/bin if needed
+- Release script now gives installable artifacts more human-readable names
+
 ## [0.2.12] - 2026-03-19
 
 - Added ... menu in selected items toolbar, with:
