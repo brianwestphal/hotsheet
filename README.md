@@ -220,7 +220,7 @@ On first launch, the app will prompt you to install the `hotsheet` CLI command. 
 
 **macOS:**
 ```bash
-sudo ln -sf "/Applications/Hot Sheet.app/Contents/Resources/resources/hotsheet" /usr/local/bin/hotsheet
+sudo sh -c 'mkdir -p /usr/local/bin && ln -sf "/Applications/Hot Sheet.app/Contents/Resources/resources/hotsheet" /usr/local/bin/hotsheet'
 ```
 
 **Linux:**
