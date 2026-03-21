@@ -117,32 +117,9 @@ pageRoutes.get('/', (c) => {
             <main className="main-content">
               <div className="batch-toolbar" id="batch-toolbar">
                 <input type="checkbox" id="batch-select-all" className="batch-select-all" title="Select all / none" />
-                <select id="batch-category" title="Set category" disabled>
-                  <option value="">Category...</option>
-                  <option value="issue">Issue</option>
-                  <option value="bug">Bug</option>
-                  <option value="feature">Feature</option>
-                  <option value="requirement_change">Req Change</option>
-                  <option value="task">Task</option>
-                  <option value="investigation">Investigation</option>
-                </select>
-                <select id="batch-priority" title="Set priority" disabled>
-                  <option value="">Priority...</option>
-                  <option value="highest">Highest</option>
-                  <option value="high">High</option>
-                  <option value="default">Default</option>
-                  <option value="low">Low</option>
-                  <option value="lowest">Lowest</option>
-                </select>
-                <select id="batch-status" title="Set status" disabled>
-                  <option value="">Status...</option>
-                  <option value="not_started">Not Started</option>
-                  <option value="started">Started</option>
-                  <option value="completed">Completed</option>
-                  <option value="verified">Verified</option>
-                  <option value="backlog">Backlog</option>
-                  <option value="archive">Archive</option>
-                </select>
+                <button id="batch-category" className="btn btn-sm batch-dropdown-btn" title="Set category" disabled>Category</button>
+                <button id="batch-priority" className="btn btn-sm batch-dropdown-btn" title="Set priority" disabled>Priority</button>
+                <button id="batch-status" className="btn btn-sm batch-dropdown-btn" title="Set status" disabled>Status</button>
                 <button id="batch-upnext" className="batch-star-btn" title="Toggle Up Next" disabled><span className="batch-star-icon">{'\u2606'}</span></button>
                 <button id="batch-delete" className="btn btn-sm btn-danger batch-delete-btn" title="Delete selected" disabled><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
                 <button id="batch-more" className="btn btn-sm batch-more-btn" title="More actions" disabled><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
@@ -168,39 +145,19 @@ pageRoutes.get('/', (c) => {
                 <div className="detail-fields-row">
                   <div className="detail-field">
                     <label>Category</label>
-                    <select id="detail-category">
-                      <option value="issue">Issue</option>
-                      <option value="bug">Bug</option>
-                      <option value="feature">Feature</option>
-                      <option value="requirement_change">Req Change</option>
-                      <option value="task">Task</option>
-                      <option value="investigation">Investigation</option>
-                    </select>
+                    <button id="detail-category" className="detail-dropdown-btn" data-value="issue">Issue</button>
                   </div>
                   <div className="detail-field">
                     <label>Priority</label>
-                    <select id="detail-priority">
-                      <option value="highest">Highest</option>
-                      <option value="high">High</option>
-                      <option value="default">Default</option>
-                      <option value="low">Low</option>
-                      <option value="lowest">Lowest</option>
-                    </select>
+                    <button id="detail-priority" className="detail-dropdown-btn" data-value="default">Default</button>
                   </div>
                   <div className="detail-field">
                     <label>Status</label>
-                    <select id="detail-status">
-                      <option value="not_started">Not Started</option>
-                      <option value="started">Started</option>
-                      <option value="completed">Completed</option>
-                      <option value="verified">Verified</option>
-                      <option value="backlog">Backlog</option>
-                      <option value="archive">Archive</option>
-                    </select>
+                    <button id="detail-status" className="detail-dropdown-btn" data-value="not_started">Not Started</button>
                   </div>
                   <div className="detail-field">
                     <label className="detail-upnext-label">
-                      <input type="checkbox" id="detail-upnext" />
+                      <button className="ticket-star detail-upnext-star" id="detail-upnext" type="button">{'\u2606'}</button>
                       Up Next
                     </label>
                   </div>

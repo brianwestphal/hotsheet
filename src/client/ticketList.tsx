@@ -1,9 +1,10 @@
+import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { Ticket } from './state.js';
-import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, VerifiedIcon, state } from './state.js';
+import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, VERIFIED_SVG, state } from './state.js';
 import { recordTextChange, trackedBatch, trackedDelete, trackedPatch, trackedRestore } from './undo/actions.js';
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -163,7 +164,7 @@ function createPreviewRow(ticket: Ticket): HTMLElement {
     >
       <span className="ticket-checkbox-spacer"></span>
       <span className={`ticket-status-btn${isVerified ? ' verified' : ''}`} style="cursor:default">
-        {isVerified ? <VerifiedIcon /> : getStatusIcon(ticket.status)}
+        {raw(isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status))}
       </span>
       <span className="ticket-category-badge" style={`background-color:${getCategoryColor(ticket.category)};cursor:default`} title={ticket.category}>
         {getCategoryLabel(ticket.category)}
@@ -171,7 +172,7 @@ function createPreviewRow(ticket: Ticket): HTMLElement {
       <span className="ticket-number">{ticket.ticket_number}</span>
       <span className="ticket-title-input" style="cursor:default">{ticket.title}</span>
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)};cursor:default`} title={ticket.priority}>
-        {getPriorityIcon(ticket.priority)}
+        {raw(getPriorityIcon(ticket.priority))}
       </span>
       <span className={`ticket-star${ticket.up_next ? ' active' : ''}`} style="cursor:default">
         {ticket.up_next ? '\u2605' : '\u2606'}
@@ -270,7 +271,7 @@ function createPreviewColumnCard(ticket: Ticket): HTMLElement {
         </span>
         <span className="ticket-number">{ticket.ticket_number}</span>
         <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)};cursor:default`}>
-          {getPriorityIcon(ticket.priority)}
+          {raw(getPriorityIcon(ticket.priority))}
         </span>
         <span className={`ticket-star${ticket.up_next ? ' active' : ''}`} style="cursor:default">
           {ticket.up_next ? '\u2605' : '\u2606'}
@@ -368,7 +369,7 @@ function createColumnCard(ticket: Ticket): HTMLElement {
         </span>
         <span className="ticket-number">{ticket.ticket_number}</span>
         <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`}>
-          {getPriorityIcon(ticket.priority)}
+          {raw(getPriorityIcon(ticket.priority))}
         </span>
         <button className={`ticket-star${ticket.up_next ? ' active' : ''}`} title={ticket.up_next ? 'Remove from Up Next' : 'Add to Up Next'}>
           {ticket.up_next ? '\u2605' : '\u2606'}
@@ -377,6 +378,13 @@ function createColumnCard(ticket: Ticket): HTMLElement {
       <div className="column-card-title">{ticket.title}</div>
     </div>
   );
+
+  // Category menu
+  const catBadge = card.querySelector('.ticket-category-badge') as HTMLElement;
+  catBadge.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showCategoryMenu(catBadge, ticket);
+  });
 
   // Priority menu
   const priSpan = card.querySelector('.ticket-priority-indicator') as HTMLElement;
@@ -580,7 +588,7 @@ function createTicketRow(ticket: Ticket): HTMLElement {
     >
       <input type="checkbox" className="ticket-checkbox" checked={isSelected} />
       <button className={`ticket-status-btn${isVerified ? ' verified' : ''}`} title={ticket.status.replace('_', ' ')}>
-        {isVerified ? <VerifiedIcon /> : getStatusIcon(ticket.status)}
+        {raw(isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status))}
       </button>
       <span className="ticket-category-badge" style={`background-color:${getCategoryColor(ticket.category)}`} title={ticket.category}>
         {getCategoryLabel(ticket.category)}
@@ -588,7 +596,7 @@ function createTicketRow(ticket: Ticket): HTMLElement {
       <span className="ticket-number">{ticket.ticket_number}</span>
       <input type="text" className="ticket-title-input" value={ticket.title} />
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`} title={ticket.priority}>
-        {getPriorityIcon(ticket.priority)}
+        {raw(getPriorityIcon(ticket.priority))}
       </span>
       <button className={`ticket-star${ticket.up_next ? ' active' : ''}`} title={ticket.up_next ? 'Remove from Up Next' : 'Add to Up Next'}>
         {ticket.up_next ? '\u2605' : '\u2606'}
@@ -922,7 +930,8 @@ function showPriorityMenu(anchor: HTMLElement, ticket: Ticket) {
     label: s.label,
     key: s.key,
     shortcut: `Alt+${s.key}`,
-    color: getPriorityColor(s.value),
+    icon: getPriorityIcon(s.value),
+    iconColor: getPriorityColor(s.value),
     active: ticket.priority === s.value,
     action: async () => {
       const updated = await trackedPatch(ticket, { priority: s.value }, 'Change priority');

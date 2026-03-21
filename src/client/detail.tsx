@@ -1,7 +1,38 @@
 import { api } from './api.js';
 import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
-import { state } from './state.js';
+import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
+
+// --- Detail field button helpers ---
+
+const STATUS_LABELS: Record<string, string> = {
+  not_started: 'Not Started', started: 'Started', completed: 'Completed',
+  verified: 'Verified', backlog: 'Backlog', archive: 'Archive',
+};
+
+const PRIORITY_LABELS: Record<string, string> = {
+  highest: 'Highest', high: 'High', default: 'Default', low: 'Low', lowest: 'Lowest',
+};
+
+export function updateDetailCategory(value: string) {
+  const btn = document.getElementById('detail-category') as HTMLButtonElement;
+  btn.dataset.value = value;
+  const cat = state.categories.find(c => c.id === value);
+  const color = getCategoryColor(value);
+  btn.innerHTML = `<span class="cat-dot" style="background:${color}"></span> ${cat?.label || value}`;
+}
+
+export function updateDetailPriority(value: string) {
+  const btn = document.getElementById('detail-priority') as HTMLButtonElement;
+  btn.dataset.value = value;
+  btn.innerHTML = `<span class="dropdown-icon" style="color:${getPriorityColor(value)}">${getPriorityIcon(value)}</span> ${PRIORITY_LABELS[value] || value}`;
+}
+
+export function updateDetailStatus(value: string) {
+  const btn = document.getElementById('detail-status') as HTMLButtonElement;
+  btn.dataset.value = value;
+  btn.innerHTML = `<span class="dropdown-icon">${getStatusIcon(value)}</span> ${STATUS_LABELS[value] || value}`;
+}
 
 // --- Detail panel ---
 
@@ -73,18 +104,18 @@ export function syncDetailPanel() {
 function setDetailReadOnly(readOnly: boolean) {
   const titleInput = document.getElementById('detail-title') as HTMLInputElement;
   const detailsArea = document.getElementById('detail-details') as HTMLTextAreaElement;
-  const catSelect = document.getElementById('detail-category') as HTMLSelectElement;
-  const priSelect = document.getElementById('detail-priority') as HTMLSelectElement;
-  const statusSelect = document.getElementById('detail-status') as HTMLSelectElement;
-  const upnextCheckbox = document.getElementById('detail-upnext') as HTMLInputElement;
+  const catBtn = document.getElementById('detail-category') as HTMLButtonElement;
+  const priBtn = document.getElementById('detail-priority') as HTMLButtonElement;
+  const statusBtn = document.getElementById('detail-status') as HTMLButtonElement;
+  const upnextBtn = document.getElementById('detail-upnext') as HTMLButtonElement;
   const uploadBtn = document.querySelector('.upload-btn') as HTMLElement | null;
 
   titleInput.readOnly = readOnly;
   detailsArea.readOnly = readOnly;
-  catSelect.disabled = readOnly;
-  priSelect.disabled = readOnly;
-  statusSelect.disabled = readOnly;
-  upnextCheckbox.disabled = readOnly;
+  catBtn.disabled = readOnly;
+  priBtn.disabled = readOnly;
+  statusBtn.disabled = readOnly;
+  upnextBtn.disabled = readOnly;
   if (uploadBtn) uploadBtn.style.display = readOnly ? 'none' : '';
 }
 
@@ -94,10 +125,12 @@ function loadPreviewDetail(id: number) {
 
   (document.getElementById('detail-ticket-number') as HTMLElement).textContent = ticket.ticket_number;
   (document.getElementById('detail-title') as HTMLInputElement).value = ticket.title;
-  (document.getElementById('detail-category') as HTMLSelectElement).value = ticket.category;
-  (document.getElementById('detail-priority') as HTMLSelectElement).value = ticket.priority;
-  (document.getElementById('detail-status') as HTMLSelectElement).value = ticket.status;
-  (document.getElementById('detail-upnext') as HTMLInputElement).checked = ticket.up_next;
+  updateDetailCategory(ticket.category);
+  updateDetailPriority(ticket.priority);
+  updateDetailStatus(ticket.status);
+  const upnextBtn = document.getElementById('detail-upnext') as HTMLButtonElement;
+  upnextBtn.textContent = ticket.up_next ? '\u2605' : '\u2606';
+  upnextBtn.classList.toggle('active', ticket.up_next);
   (document.getElementById('detail-details') as HTMLTextAreaElement).value = ticket.details;
 
   setDetailReadOnly(true);
@@ -152,10 +185,12 @@ async function loadDetail(id: number) {
 
   (document.getElementById('detail-ticket-number') as HTMLElement).textContent = ticket.ticket_number;
   (document.getElementById('detail-title') as HTMLInputElement).value = ticket.title;
-  (document.getElementById('detail-category') as HTMLSelectElement).value = ticket.category;
-  (document.getElementById('detail-priority') as HTMLSelectElement).value = ticket.priority;
-  (document.getElementById('detail-status') as HTMLSelectElement).value = ticket.status;
-  (document.getElementById('detail-upnext') as HTMLInputElement).checked = ticket.up_next;
+  updateDetailCategory(ticket.category);
+  updateDetailPriority(ticket.priority);
+  updateDetailStatus(ticket.status);
+  const upnextBtn = document.getElementById('detail-upnext') as HTMLButtonElement;
+  upnextBtn.textContent = ticket.up_next ? '\u2605' : '\u2606';
+  upnextBtn.classList.toggle('active', ticket.up_next);
   (document.getElementById('detail-details') as HTMLTextAreaElement).value = ticket.details;
 
   // Render attachments via JSX

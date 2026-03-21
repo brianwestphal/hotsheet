@@ -1,9 +1,9 @@
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI, loadBackupList } from './backups.js';
-import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, updateStats } from './detail.js';
+import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { AppSettings, CategoryDef, Ticket } from './state.js';
-import { getCategoryColor, state } from './state.js';
+import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
 import { cancelPendingSave, canUseColumnView, draggedTicketIds, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { canRedo, canUndo, performRedo, performUndo, recordTextChange, trackedBatch, trackedCompoundBatch, trackedPatch } from './undo/actions.js';
 
@@ -92,28 +92,10 @@ function rebuildCategoryUI() {
     }
   }
 
-  // Rebuild batch toolbar category dropdown
-  const batchCat = document.getElementById('batch-category') as HTMLSelectElement | null;
-  if (batchCat) {
-    batchCat.innerHTML = '<option value="">Category...</option>';
-    for (const cat of state.categories) {
-      const opt = document.createElement('option');
-      opt.value = cat.id;
-      opt.textContent = cat.label;
-      batchCat.appendChild(opt);
-    }
-  }
-
-  // Rebuild detail panel category dropdown
-  const detailCat = document.getElementById('detail-category') as HTMLSelectElement | null;
-  if (detailCat) {
-    detailCat.innerHTML = '';
-    for (const cat of state.categories) {
-      const opt = document.createElement('option');
-      opt.value = cat.id;
-      opt.textContent = cat.label;
-      detailCat.appendChild(opt);
-    }
+  // Refresh detail panel category button if a ticket is active
+  if (state.activeTicketId != null) {
+    const ticket = state.tickets.find(t => t.id === state.activeTicketId);
+    if (ticket) updateDetailCategory(ticket.category);
   }
 }
 
@@ -669,37 +651,87 @@ function bindSearchInput() {
   });
 }
 
+// --- Shared dropdown items ---
+
+const PRIORITY_ITEMS = [
+  { key: '1', value: 'highest', label: 'Highest' },
+  { key: '2', value: 'high', label: 'High' },
+  { key: '3', value: 'default', label: 'Default' },
+  { key: '4', value: 'low', label: 'Low' },
+  { key: '5', value: 'lowest', label: 'Lowest' },
+];
+
+const STATUS_ITEMS = [
+  { key: 'n', value: 'not_started', label: 'Not Started' },
+  { key: 's', value: 'started', label: 'Started' },
+  { key: 'c', value: 'completed', label: 'Completed' },
+  { key: 'v', value: 'verified', label: 'Verified' },
+  { key: 'b', value: 'backlog', label: 'Backlog' },
+  { key: 'a', value: 'archive', label: 'Archive' },
+];
+
 // --- Batch toolbar ---
 
 function bindBatchToolbar() {
-  const batchCategory = document.getElementById('batch-category') as HTMLSelectElement;
-  batchCategory.addEventListener('change', async () => {
-    if (!batchCategory.value) return;
-    const ids = Array.from(state.selectedIds);
-    const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
-    await trackedBatch(affected, { ids, action: 'category', value: batchCategory.value }, 'Batch change category');
-    batchCategory.value = '';
-    void loadTickets();
+  const batchCategory = document.getElementById('batch-category') as HTMLButtonElement;
+  batchCategory.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAllMenus();
+    const menu = createDropdown(batchCategory, state.categories.map(c => ({
+      label: c.label,
+      key: c.shortcutKey,
+      color: c.color,
+      action: async () => {
+        const ids = Array.from(state.selectedIds);
+        const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+        await trackedBatch(affected, { ids, action: 'category', value: c.id }, 'Batch change category');
+        void loadTickets();
+      },
+    })));
+    document.body.appendChild(menu);
+    positionDropdown(menu, batchCategory);
+    menu.style.visibility = '';
   });
 
-  const batchPriority = document.getElementById('batch-priority') as HTMLSelectElement;
-  batchPriority.addEventListener('change', async () => {
-    if (!batchPriority.value) return;
-    const ids = Array.from(state.selectedIds);
-    const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
-    await trackedBatch(affected, { ids, action: 'priority', value: batchPriority.value }, 'Batch change priority');
-    batchPriority.value = '';
-    void loadTickets();
+  const batchPriority = document.getElementById('batch-priority') as HTMLButtonElement;
+  batchPriority.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAllMenus();
+    const menu = createDropdown(batchPriority, PRIORITY_ITEMS.map(p => ({
+      label: p.label,
+      key: p.key,
+      icon: getPriorityIcon(p.value),
+      iconColor: getPriorityColor(p.value),
+      action: async () => {
+        const ids = Array.from(state.selectedIds);
+        const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+        await trackedBatch(affected, { ids, action: 'priority', value: p.value }, 'Batch change priority');
+        void loadTickets();
+      },
+    })));
+    document.body.appendChild(menu);
+    positionDropdown(menu, batchPriority);
+    menu.style.visibility = '';
   });
 
-  const batchStatus = document.getElementById('batch-status') as HTMLSelectElement;
-  batchStatus.addEventListener('change', async () => {
-    if (!batchStatus.value) return;
-    const ids = Array.from(state.selectedIds);
-    const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
-    await trackedBatch(affected, { ids, action: 'status', value: batchStatus.value }, 'Batch change status');
-    batchStatus.value = '';
-    void loadTickets();
+  const batchStatus = document.getElementById('batch-status') as HTMLButtonElement;
+  batchStatus.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAllMenus();
+    const menu = createDropdown(batchStatus, STATUS_ITEMS.map(s => ({
+      label: s.label,
+      key: s.key,
+      icon: getStatusIcon(s.value),
+      action: async () => {
+        const ids = Array.from(state.selectedIds);
+        const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+        await trackedBatch(affected, { ids, action: 'status', value: s.value }, 'Batch change status');
+        void loadTickets();
+      },
+    })));
+    document.body.appendChild(menu);
+    positionDropdown(menu, batchStatus);
+    menu.style.visibility = '';
   });
 
   document.getElementById('batch-upnext')!.addEventListener('click', async () => {
@@ -825,33 +857,80 @@ function bindDetailPanel() {
     });
   }
 
-  // Dropdowns save immediately
-  const selects = ['detail-category', 'detail-priority', 'detail-status'];
-  for (const selId of selects) {
-    const el = document.getElementById(selId) as HTMLSelectElement;
-    el.addEventListener('change', async () => {
-      if (state.activeTicketId == null) return;
-      const ticket = state.tickets.find(t => t.id === state.activeTicketId);
-      const key = selId.replace('detail-', '');
-      if (ticket) {
-        await trackedPatch(ticket, { [key]: el.value }, `Change ${key}`);
-      } else {
-        await api(`/tickets/${state.activeTicketId}`, {
-          method: 'PATCH',
-          body: { [key]: el.value },
-        });
-      }
-      void loadTickets();
-    });
-  }
-
-  // Up Next checkbox
-  document.getElementById('detail-upnext')!.addEventListener('change', async () => {
+  // Detail dropdown buttons
+  async function applyDetailChange(key: string, value: string) {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
-    const checkbox = document.getElementById('detail-upnext') as HTMLInputElement;
     if (ticket) {
-      if (checkbox.checked && (ticket.status === 'completed' || ticket.status === 'verified')) {
+      await trackedPatch(ticket, { [key]: value }, `Change ${key}`);
+    } else {
+      await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { [key]: value } });
+    }
+    void loadTickets();
+    openDetail(state.activeTicketId);
+  }
+
+  document.getElementById('detail-category')!.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget as HTMLButtonElement;
+    if (btn.disabled) return;
+    closeAllMenus();
+    const current = btn.dataset.value || '';
+    const menu = createDropdown(btn, state.categories.map(c => ({
+      label: c.label,
+      key: c.shortcutKey,
+      color: c.color,
+      active: c.id === current,
+      action: () => { updateDetailCategory(c.id); void applyDetailChange('category', c.id); },
+    })));
+    document.body.appendChild(menu);
+    positionDropdown(menu, btn);
+    menu.style.visibility = '';
+  });
+
+  document.getElementById('detail-priority')!.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget as HTMLButtonElement;
+    if (btn.disabled) return;
+    closeAllMenus();
+    const current = btn.dataset.value || '';
+    const menu = createDropdown(btn, PRIORITY_ITEMS.map(p => ({
+      label: p.label,
+      key: p.key,
+      icon: getPriorityIcon(p.value),
+      iconColor: getPriorityColor(p.value),
+      active: p.value === current,
+      action: () => { updateDetailPriority(p.value); void applyDetailChange('priority', p.value); },
+    })));
+    document.body.appendChild(menu);
+    positionDropdown(menu, btn);
+    menu.style.visibility = '';
+  });
+
+  document.getElementById('detail-status')!.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget as HTMLButtonElement;
+    if (btn.disabled) return;
+    closeAllMenus();
+    const current = btn.dataset.value || '';
+    const menu = createDropdown(btn, STATUS_ITEMS.map(s => ({
+      label: s.label,
+      key: s.key,
+      icon: getStatusIcon(s.value),
+      active: s.value === current,
+      action: () => { updateDetailStatus(s.value); void applyDetailChange('status', s.value); },
+    })));
+    document.body.appendChild(menu);
+    positionDropdown(menu, btn);
+    menu.style.visibility = '';
+  });
+
+  // Up Next star button
+  document.getElementById('detail-upnext')!.addEventListener('click', async () => {
+    if (state.activeTicketId == null) return;
+    const ticket = state.tickets.find(t => t.id === state.activeTicketId);
+    if (ticket) {
+      if (!ticket.up_next && (ticket.status === 'completed' || ticket.status === 'verified')) {
         await trackedPatch(ticket, { status: 'not_started', up_next: true }, 'Toggle up next');
       } else {
         await trackedPatch(ticket, { up_next: !ticket.up_next }, 'Toggle up next');

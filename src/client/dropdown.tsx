@@ -1,3 +1,4 @@
+import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 
 export interface DropdownItem {
@@ -5,6 +6,8 @@ export interface DropdownItem {
   key: string;
   shortcut?: string;
   color?: string;
+  icon?: string;
+  iconColor?: string;
   active?: boolean;
   action: () => void;
 }
@@ -33,6 +36,7 @@ export function createDropdown(_anchor: HTMLElement, items: DropdownItem[]): HTM
       {items.map(item =>
         <button className={`dropdown-item${item.active ? ' active' : ''}`} data-key={item.key}>
           {item.color ? <span className="dropdown-dot" style={`background-color:${item.color}`}></span> : null}
+          {item.icon ? <span className="dropdown-icon" style={item.iconColor ? `color:${item.iconColor}` : ''}>{raw(item.icon)}</span> : null}
           <span className="dropdown-label">{item.label}</span>
           {item.shortcut ? <kbd className="dropdown-kbd">{item.shortcut}</kbd> : null}
         </button>

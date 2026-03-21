@@ -793,19 +793,43 @@ input, select, textarea {
   }
 }
 
+.detail-dropdown-btn {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  text-align: left;
+  font-size: inherit;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}
+
+.batch-dropdown-btn.btn {
+  font-size: 12px;
+}
+
 .detail-upnext-label {
   display: flex !important;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   cursor: pointer;
   font-size: 14px !important;
   font-weight: 400 !important;
   color: var(--text) !important;
+}
 
-  input[type="checkbox"] {
-    width: auto;
-    accent-color: var(--star);
-  }
+.detail-upnext-star {
+  font-size: 18px;
+  padding: 0;
 }
 
 .detail-attachments {
@@ -905,6 +929,20 @@ input, select, textarea {
   &.active {
     color: var(--accent);
     font-weight: 500;
+  }
+}
+
+.dropdown-icon {
+  font-size: 12px;
+  min-width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  svg {
+    vertical-align: middle;
   }
 }
 
@@ -1418,6 +1456,7 @@ input, select, textarea {
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;
+  overflow: hidden;
 }
 
 .column-card-title {
