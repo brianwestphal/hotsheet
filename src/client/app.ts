@@ -133,6 +133,19 @@ function bindSettingsDialog() {
   const closeBtn = document.getElementById('settings-close')!;
   const settingsBtn = document.getElementById('settings-btn')!;
 
+  // Tab switching
+  const tabs = document.querySelectorAll('.settings-tab');
+  const panels = document.querySelectorAll('.settings-tab-panel');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = (tab as HTMLElement).dataset.tab;
+      tabs.forEach(t => t.classList.remove('active'));
+      panels.forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelector(`.settings-tab-panel[data-panel="${target}"]`)?.classList.add('active');
+    });
+  });
+
   settingsBtn.addEventListener('click', () => {
     // Populate fields with current values
     (document.getElementById('settings-trash-days') as HTMLInputElement).value = String(state.settings.trash_cleanup_days);
@@ -384,9 +397,11 @@ async function checkForUpdate() {
   const invoke = getTauriInvoke();
   if (!invoke) return;
 
-  // Show the "Check for Updates" section in settings
+  // Show the "Updates" tab and panel in settings
   const section = document.getElementById('settings-updates-section');
   if (section) section.style.display = '';
+  const updatesTab = document.getElementById('settings-tab-updates');
+  if (updatesTab) updatesTab.style.display = '';
 
   // The Rust update check is async and may not have completed yet.
   // Poll a few times with increasing delays to catch it.

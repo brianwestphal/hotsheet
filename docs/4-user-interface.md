@@ -141,12 +141,12 @@ The interface is divided into:
 ### 4.12 Settings Dialog
 
 - Opened via the gear icon in the header.
-- Fields:
-  - App name (file-based setting, updates title bar and document title)
-  - Auto-clear trash after N days (default: 3)
-  - Auto-clear verified after N days (default: 30)
-- Backup section (see [7-backup-restore.md](7-backup-restore.md))
-- Software Updates section (Tauri desktop app only): "Check for Updates" button with status feedback.
+- Uses a tabbed layout with Lucide icons and labels for each section:
+  - **General** (SlidersHorizontal icon) — App name, auto-clear trash/verified days.
+  - **Categories** (Tag icon) — Category management with inline editing and preset selector (see [3-ticket-management.md](3-ticket-management.md) §3.1).
+  - **Backups** (HardDrive icon) — Backup location, backup list (see [7-backup-restore.md](7-backup-restore.md)).
+  - **Updates** (Download icon) — Software updates, shown only in the Tauri desktop app.
+- Tabs persist their selection while the dialog is open; resets to General when reopened.
 - Closed via X button, clicking the overlay, or pressing Escape.
 
 ### 4.13 Live Updates

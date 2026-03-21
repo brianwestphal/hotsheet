@@ -249,33 +249,41 @@ pageRoutes.get('/', (c) => {
             <h2>Settings</h2>
             <button className="detail-close" id="settings-close">{'\u00d7'}</button>
           </div>
+          <div className="settings-tabs" id="settings-tabs">
+            <button className="settings-tab active" data-tab="general">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>
+              <span>General</span>
+            </button>
+            <button className="settings-tab" data-tab="categories">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+              <span>Categories</span>
+            </button>
+            <button className="settings-tab" data-tab="backups">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>
+              <span>Backups</span>
+            </button>
+            <button className="settings-tab" data-tab="updates" id="settings-tab-updates" style="display:none">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+              <span>Updates</span>
+            </button>
+          </div>
           <div className="settings-body">
-            <div className="settings-field">
-              <label>App name</label>
-              <input type="text" id="settings-app-name" placeholder="Hot Sheet" />
-              <span className="settings-hint" id="settings-app-name-hint">Custom name shown in the title bar. Leave empty for default.</span>
-            </div>
-            <div className="settings-field">
-              <label>Auto-clear trash after (days)</label>
-              <input type="number" id="settings-trash-days" min="1" value="3" />
-            </div>
-            <div className="settings-field">
-              <label>Auto-clear verified after (days)</label>
-              <input type="number" id="settings-verified-days" min="1" value="30" />
-            </div>
-            <div className="settings-section">
-              <div className="settings-section-header">
-                <h3>Database Backups</h3>
-                <button className="btn btn-sm" id="backup-now-btn">Backup Now</button>
+            <div className="settings-tab-panel active" data-panel="general">
+              <div className="settings-field">
+                <label>App name</label>
+                <input type="text" id="settings-app-name" placeholder="Hot Sheet" />
+                <span className="settings-hint" id="settings-app-name-hint">Custom name shown in the title bar. Leave empty for default.</span>
               </div>
               <div className="settings-field">
-                <label>Backup storage location</label>
-                <input type="text" id="settings-backup-dir" placeholder="Default: .hotsheet/backups" />
-                <span className="settings-hint" id="settings-backup-dir-hint">Leave empty to use the default location inside the data directory.</span>
+                <label>Auto-clear trash after (days)</label>
+                <input type="number" id="settings-trash-days" min="1" value="3" />
               </div>
-              <div id="backup-list" className="backup-list">Loading backups...</div>
+              <div className="settings-field">
+                <label>Auto-clear verified after (days)</label>
+                <input type="number" id="settings-verified-days" min="1" value="30" />
+              </div>
             </div>
-            <div className="settings-section">
+            <div className="settings-tab-panel" data-panel="categories">
               <div className="settings-section-header">
                 <h3>Categories</h3>
                 <div className="category-preset-controls">
@@ -287,7 +295,19 @@ pageRoutes.get('/', (c) => {
               <div id="category-list" className="category-list"></div>
               <button id="category-add-btn" className="btn btn-sm" style="margin-top:8px">Add Category</button>
             </div>
-            <div className="settings-section" id="settings-updates-section" style="display:none">
+            <div className="settings-tab-panel" data-panel="backups">
+              <div className="settings-section-header">
+                <h3>Database Backups</h3>
+                <button className="btn btn-sm" id="backup-now-btn">Backup Now</button>
+              </div>
+              <div className="settings-field">
+                <label>Backup storage location</label>
+                <input type="text" id="settings-backup-dir" placeholder="Default: .hotsheet/backups" />
+                <span className="settings-hint" id="settings-backup-dir-hint">Leave empty to use the default location inside the data directory.</span>
+              </div>
+              <div id="backup-list" className="backup-list">Loading backups...</div>
+            </div>
+            <div className="settings-tab-panel" data-panel="updates" id="settings-updates-section" style="display:none">
               <div className="settings-section-header">
                 <h3>Software Updates</h3>
                 <button className="btn btn-sm" id="check-updates-btn">Check for Updates</button>
