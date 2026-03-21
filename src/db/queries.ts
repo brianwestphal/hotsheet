@@ -1,4 +1,5 @@
-import type { Attachment, Ticket, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
+import type { Attachment, CategoryDef, Ticket, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
+import { DEFAULT_CATEGORIES } from '../types.js';
 import { getDb } from './connection.js';
 
 // --- Notes parsing ---
@@ -326,6 +327,23 @@ export async function getTicketsForCleanup(verifiedDays = 30, trashDays = 3): Pr
        OR (status = 'deleted' AND deleted_at < NOW() - INTERVAL '1 day' * $2)
   `, [verifiedDays, trashDays]);
   return result.rows;
+}
+
+// --- Categories ---
+
+export async function getCategories(): Promise<CategoryDef[]> {
+  const settings = await getSettings();
+  if (settings.categories) {
+    try {
+      const parsed = JSON.parse(settings.categories);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch { /* invalid JSON, use defaults */ }
+  }
+  return DEFAULT_CATEGORIES;
+}
+
+export async function saveCategories(categories: CategoryDef[]): Promise<void> {
+  await updateSetting('categories', JSON.stringify(categories));
 }
 
 // --- Settings ---

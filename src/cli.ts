@@ -5,11 +5,12 @@ import { join, resolve } from 'path';
 import { initBackupScheduler } from './backup.js';
 import { cleanupAttachments } from './cleanup.js';
 import { getDb, setDataDir } from './db/connection.js';
+import { getCategories } from './db/queries.js';
 import { acquireLock } from './lock.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
 import { ensureGitignore } from './gitignore.js';
 import { startServer } from './server.js';
-import { initSkills, ensureSkills } from './skills.js';
+import { initSkills, ensureSkills, setSkillCategories } from './skills.js';
 import { initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
 import { checkForUpdates } from './update-check.js';
 
@@ -147,6 +148,7 @@ async function main() {
 
   // Initialize and sync AI tool skills/rules
   initSkills(actualPort, dataDir);
+  setSkillCategories(await getCategories());
   const updatedPlatforms = ensureSkills();
   if (updatedPlatforms.length > 0) {
     console.log(`\n  AI tool skills created/updated for: ${updatedPlatforms.join(', ')}`);

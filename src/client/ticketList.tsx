@@ -1,10 +1,9 @@
-import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { Ticket } from './state.js';
-import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, VERIFIED_SVG, state } from './state.js';
+import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, VerifiedIcon, state } from './state.js';
 import { recordTextChange, trackedBatch, trackedDelete, trackedPatch, trackedRestore } from './undo/actions.js';
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -20,14 +19,9 @@ let draftTitle = '';
 // which can be silently stripped by WebKit/WKWebView
 export let draggedTicketIds: number[] = [];
 
-const CATEGORY_SHORTCUTS: { key: string; value: string; label: string }[] = [
-  { key: 'i', value: 'issue', label: 'Issue' },
-  { key: 'b', value: 'bug', label: 'Bug' },
-  { key: 'f', value: 'feature', label: 'Feature' },
-  { key: 'r', value: 'requirement_change', label: 'Req Change' },
-  { key: 'k', value: 'task', label: 'Task' },
-  { key: 'g', value: 'investigation', label: 'Investigation' },
-];
+function getCategoryShortcuts(): { key: string; value: string; label: string }[] {
+  return state.categories.map(c => ({ key: c.shortcutKey, value: c.id, label: c.label }));
+}
 
 const PRIORITY_SHORTCUTS: { key: string; value: string; label: string }[] = [
   { key: '1', value: 'highest', label: 'Highest' },
@@ -169,7 +163,7 @@ function createPreviewRow(ticket: Ticket): HTMLElement {
     >
       <span className="ticket-checkbox-spacer"></span>
       <span className={`ticket-status-btn${isVerified ? ' verified' : ''}`} style="cursor:default">
-        {isVerified ? raw(VERIFIED_SVG) : getStatusIcon(ticket.status)}
+        {isVerified ? <VerifiedIcon /> : getStatusIcon(ticket.status)}
       </span>
       <span className="ticket-category-badge" style={`background-color:${getCategoryColor(ticket.category)};cursor:default`} title={ticket.category}>
         {getCategoryLabel(ticket.category)}
@@ -555,7 +549,7 @@ function showDraftCategoryMenu(anchor: HTMLElement) {
   const isMac = navigator.platform.includes('Mac');
   const mod = isMac ? '\u2318' : 'Ctrl+';
   const currentCat = getDraftCategory();
-  const menu = createDropdown(anchor, CATEGORY_SHORTCUTS.map(s => ({
+  const menu = createDropdown(anchor, getCategoryShortcuts().map(s => ({
     label: s.label,
     key: s.key,
     shortcut: `${mod}${s.key.toUpperCase()}`,
@@ -586,7 +580,7 @@ function createTicketRow(ticket: Ticket): HTMLElement {
     >
       <input type="checkbox" className="ticket-checkbox" checked={isSelected} />
       <button className={`ticket-status-btn${isVerified ? ' verified' : ''}`} title={ticket.status.replace('_', ' ')}>
-        {isVerified ? raw(VERIFIED_SVG) : getStatusIcon(ticket.status)}
+        {isVerified ? <VerifiedIcon /> : getStatusIcon(ticket.status)}
       </button>
       <span className="ticket-category-badge" style={`background-color:${getCategoryColor(ticket.category)}`} title={ticket.category}>
         {getCategoryLabel(ticket.category)}
@@ -791,9 +785,9 @@ function handleTicketKeydown(e: KeyboardEvent, ticket: Ticket, input: HTMLInputE
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
     focusPrevTicket(ticket.id);
-  } else if ((e.metaKey || e.ctrlKey) && !e.altKey && CATEGORY_SHORTCUTS.some(s => s.key === e.key)) {
+  } else if ((e.metaKey || e.ctrlKey) && !e.altKey && getCategoryShortcuts().some(s => s.key === e.key)) {
     e.preventDefault();
-    const cat = CATEGORY_SHORTCUTS.find(s => s.key === e.key)!;
+    const cat = getCategoryShortcuts().find(s => s.key === e.key)!;
     void setTicketField(ticket, 'category', cat.value);
   } else if (e.altKey && !e.metaKey && !e.ctrlKey && PRIORITY_SHORTCUTS.some(s => s.key === e.key)) {
     e.preventDefault();
@@ -905,7 +899,7 @@ function showCategoryMenu(anchor: HTMLElement, ticket: Ticket) {
   closeAllMenus();
   const isMac = navigator.platform.includes('Mac');
   const mod = isMac ? '\u2318' : 'Ctrl+';
-  const menu = createDropdown(anchor, CATEGORY_SHORTCUTS.map(s => ({
+  const menu = createDropdown(anchor, getCategoryShortcuts().map(s => ({
     label: s.label,
     key: s.key,
     shortcut: `${mod}${s.key.toUpperCase()}`,

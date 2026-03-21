@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 
 function showErrorPopup(message: string) {
@@ -8,7 +7,7 @@ function showErrorPopup(message: string) {
       <div className="error-popup-content">
         <strong>Connection Error</strong>
         <p>{message}</p>
-        <button>{raw('Dismiss')}</button>
+        <button>Dismiss</button>
       </div>
     </div>
   );

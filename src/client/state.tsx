@@ -24,6 +24,15 @@ export interface Attachment {
   created_at: string;
 }
 
+export interface CategoryDef {
+  id: string;
+  label: string;
+  shortLabel: string;
+  color: string;
+  shortcutKey: string;
+  description: string;
+}
+
 export interface AppSettings {
   detail_position: 'side' | 'bottom';
   detail_width: number;
@@ -42,6 +51,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 export interface AppState {
   tickets: Ticket[];
+  categories: CategoryDef[];
   selectedIds: Set<number>;
   lastClickedId: number | null;
   activeTicketId: number | null;
@@ -62,6 +72,14 @@ export interface AppState {
 
 export const state: AppState = {
   tickets: [],
+  categories: [
+    { id: 'issue', label: 'Issue', shortLabel: 'ISS', color: '#6b7280', shortcutKey: 'i', description: '' },
+    { id: 'bug', label: 'Bug', shortLabel: 'BUG', color: '#ef4444', shortcutKey: 'b', description: '' },
+    { id: 'feature', label: 'Feature', shortLabel: 'FEA', color: '#22c55e', shortcutKey: 'f', description: '' },
+    { id: 'requirement_change', label: 'Req Change', shortLabel: 'REQ', color: '#f97316', shortcutKey: 'r', description: '' },
+    { id: 'task', label: 'Task', shortLabel: 'TSK', color: '#3b82f6', shortcutKey: 'k', description: '' },
+    { id: 'investigation', label: 'Investigation', shortLabel: 'INV', color: '#8b5cf6', shortcutKey: 'g', description: '' },
+  ],
   selectedIds: new Set(),
   lastClickedId: null,
   activeTicketId: null,
@@ -72,24 +90,6 @@ export const state: AppState = {
   search: '',
   settings: { ...DEFAULT_SETTINGS },
   backupPreview: null,
-};
-
-const CATEGORY_COLORS: Record<string, string> = {
-  issue: '#6b7280',
-  bug: '#ef4444',
-  feature: '#22c55e',
-  requirement_change: '#f97316',
-  task: '#3b82f6',
-  investigation: '#8b5cf6',
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-  issue: 'ISS',
-  bug: 'BUG',
-  feature: 'FEA',
-  requirement_change: 'REQ',
-  task: 'TSK',
-  investigation: 'INV',
 };
 
 const PRIORITY_ICONS: Record<string, string> = {
@@ -117,14 +117,27 @@ const STATUS_ICONS: Record<string, string> = {
   archive: '\u25A0',
 };
 
-export const VERIFIED_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-9.5 9.5-2-2"/></svg>';
+import type { SafeHtml } from '../jsx-runtime.js';
+
+export function VerifiedIcon(): SafeHtml {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 6 7 17l-5-5" />
+      <path d="m22 10-9.5 9.5-2-2" />
+    </svg>
+  );
+}
+
+export const VERIFIED_SVG = VerifiedIcon().toString();
 
 export function getCategoryColor(cat: string): string {
-  return CATEGORY_COLORS[cat] || '#6b7280';
+  const def = state.categories.find(c => c.id === cat);
+  return def?.color || '#6b7280';
 }
 
 export function getCategoryLabel(cat: string): string {
-  return CATEGORY_LABELS[cat] || 'ISS';
+  const def = state.categories.find(c => c.id === cat);
+  return def?.shortLabel || cat.slice(0, 3).toUpperCase();
 }
 
 export function getPriorityIcon(pri: string): string {

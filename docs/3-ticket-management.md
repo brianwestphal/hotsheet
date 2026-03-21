@@ -9,13 +9,9 @@ Each ticket has the following properties:
 - **Ticket number** — Auto-assigned, sequential, prefixed with `HS-` (e.g., HS-1). Never reused.
 - **Title** — Short summary (required at creation).
 - **Details** — Longer description (optional).
-- **Category** — One of six types:
-  - Issue (grey) — General issues that need attention
-  - Bug (red) — Bugs that should be fixed in the codebase
-  - Feature (green) — New features to be implemented
-  - Requirement Change (orange) — Changes to existing requirements
-  - Task (blue) — General tasks to complete
-  - Investigation (purple) — Items requiring research or analysis
+- **Category** — Configurable categories. Each has an id, display label, short label (badge), color, keyboard shortcut, and description. Defaults to a Software Development set (Issue, Bug, Feature, Req Change, Task, Investigation). Users can customize categories or load from presets (Design/Creative, Product Management, Marketing, Personal) via Settings.
+  - Categories are stored as JSON in the `settings` table (key: `categories`).
+  - API: `GET /api/categories`, `PUT /api/categories`, `GET /api/category-presets`.
 - **Priority** — One of five levels: Highest, High, Default, Low, Lowest.
 - **Status** — One of seven states (see 2.3).
 - **Up Next** — Boolean flag marking the ticket as a priority work item.

@@ -14,19 +14,22 @@ import {
   emptyTrash,
   getAttachment,
   getAttachments,
+  getCategories,
   getSettings,
   getTicket,
   getTickets,
   getTicketStats,
   hardDeleteTicket,
   restoreTicket,
+  saveCategories,
   toggleUpNext,
   updateSetting,
   updateTicket,
 } from '../db/queries.js';
 import { consumeSkillsCreatedFlag, ensureSkills } from '../skills.js';
 import { scheduleAllSync } from '../sync/markdown.js';
-import type { AppEnv, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
+import type { AppEnv, CategoryDef, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
+import { CATEGORY_PRESETS } from '../types.js';
 
 export const apiRoutes = new Hono<AppEnv>();
 
@@ -304,6 +307,24 @@ apiRoutes.get('/attachments/file/*', async (c) => {
   return new Response(content, {
     headers: { 'Content-Type': contentType },
   });
+});
+
+// --- Categories ---
+
+apiRoutes.get('/categories', async (c) => {
+  const categories = await getCategories();
+  return c.json(categories);
+});
+
+apiRoutes.put('/categories', async (c) => {
+  const categories = await c.req.json<CategoryDef[]>();
+  await saveCategories(categories);
+  scheduleAllSync(); notifyChange();
+  return c.json(categories);
+});
+
+apiRoutes.get('/category-presets', (c) => {
+  return c.json(CATEGORY_PRESETS);
 });
 
 // --- Stats ---

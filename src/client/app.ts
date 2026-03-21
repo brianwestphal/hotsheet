@@ -2,13 +2,22 @@ import { api, apiUpload } from './api.js';
 import { bindBackupsUI, loadBackupList } from './backups.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, updateStats } from './detail.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
-import type { AppSettings, Ticket } from './state.js';
-import { state } from './state.js';
+import type { AppSettings, CategoryDef, Ticket } from './state.js';
+import { getCategoryColor, state } from './state.js';
 import { cancelPendingSave, canUseColumnView, draggedTicketIds, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { canRedo, canUndo, performRedo, performUndo, recordTextChange, trackedBatch, trackedCompoundBatch, trackedPatch } from './undo/actions.js';
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 async function init() {
   await loadSettings();
+  await loadCategories();
   void loadAppName();
   await loadTickets();
   bindSidebar();
@@ -49,6 +58,63 @@ async function loadSettings() {
 
   applyDetailPosition(state.settings.detail_position);
   applyDetailSize();
+}
+
+async function loadCategories() {
+  try {
+    const categories = await api<CategoryDef[]>('/categories');
+    if (categories.length > 0) state.categories = categories;
+  } catch { /* use defaults */ }
+  rebuildCategoryUI();
+}
+
+function rebuildCategoryUI() {
+  // Rebuild sidebar category buttons
+  const sidebarSection = document.querySelector('.sidebar-section:nth-child(3)');
+  if (sidebarSection) {
+    const label = sidebarSection.querySelector('.sidebar-label');
+    sidebarSection.innerHTML = '';
+    if (label) sidebarSection.appendChild(label);
+    for (const cat of state.categories) {
+      const btn = document.createElement('button');
+      btn.className = 'sidebar-item';
+      btn.dataset.view = `category:${cat.id}`;
+      btn.innerHTML = `<span class="cat-dot" style="background:${cat.color}"></span> ${escapeHtml(cat.label)}`;
+      if (state.view === `category:${cat.id}`) btn.classList.add('active');
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+        btn.classList.add('active');
+        state.view = `category:${cat.id}`;
+        state.selectedIds.clear();
+        void loadTickets();
+      });
+      sidebarSection.appendChild(btn);
+    }
+  }
+
+  // Rebuild batch toolbar category dropdown
+  const batchCat = document.getElementById('batch-category') as HTMLSelectElement | null;
+  if (batchCat) {
+    batchCat.innerHTML = '<option value="">Category...</option>';
+    for (const cat of state.categories) {
+      const opt = document.createElement('option');
+      opt.value = cat.id;
+      opt.textContent = cat.label;
+      batchCat.appendChild(opt);
+    }
+  }
+
+  // Rebuild detail panel category dropdown
+  const detailCat = document.getElementById('detail-category') as HTMLSelectElement | null;
+  if (detailCat) {
+    detailCat.innerHTML = '';
+    for (const cat of state.categories) {
+      const opt = document.createElement('option');
+      opt.value = cat.id;
+      opt.textContent = cat.label;
+      detailCat.appendChild(opt);
+    }
+  }
 }
 
 async function loadAppName() {
@@ -172,6 +238,143 @@ function bindSettingsDialog() {
         backupDirHint.textContent = val ? 'Saved. New backups will use this location.' : 'Using default location inside the data directory.';
       });
     }, 800);
+  });
+
+  // --- Category management ---
+  bindCategorySettings();
+}
+
+function renderCategoryList() {
+  const container = document.getElementById('category-list')!;
+  container.innerHTML = '';
+
+  for (let i = 0; i < state.categories.length; i++) {
+    const cat = state.categories[i];
+    const row = document.createElement('div');
+    row.className = 'category-row';
+    row.innerHTML = `<input type="color" class="category-color-input" value="${cat.color}" title="Color" />`
+      + `<input type="text" class="category-label-input" value="${escapeAttr(cat.label)}" placeholder="Label" title="Display name" />`
+      + `<input type="text" class="category-short-input" value="${escapeAttr(cat.shortLabel)}" placeholder="ABR" title="Short label (3 chars)" maxlength="4" />`
+      + `<input type="text" class="category-key-input" value="${escapeAttr(cat.shortcutKey)}" placeholder="k" title="Keyboard shortcut" maxlength="1" />`
+      + `<input type="text" class="category-desc-input" value="${escapeAttr(cat.description)}" placeholder="Description..." title="Description (for AI tools)" />`
+      + `<button class="category-delete-btn" title="Remove">&times;</button>`;
+
+    const inputs = row.querySelectorAll('input');
+    const [colorInput, labelInput, shortInput, keyInput, descInput] = inputs as unknown as HTMLInputElement[];
+
+    const scheduleSync = () => {
+      debouncedCategorySync();
+    };
+
+    colorInput.addEventListener('input', () => { state.categories[i].color = colorInput.value; scheduleSync(); });
+    labelInput.addEventListener('input', () => {
+      state.categories[i].label = labelInput.value;
+      // Auto-generate ID from label for new categories
+      if (!cat.id || cat.id === '') {
+        state.categories[i].id = labelInput.value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+      }
+      scheduleSync();
+    });
+    shortInput.addEventListener('input', () => { state.categories[i].shortLabel = shortInput.value.toUpperCase(); scheduleSync(); });
+    keyInput.addEventListener('input', () => {
+      const key = keyInput.value.toLowerCase().slice(0, 1);
+      keyInput.value = key;
+      state.categories[i].shortcutKey = key;
+      checkShortcutConflicts();
+      scheduleSync();
+    });
+    descInput.addEventListener('input', () => { state.categories[i].description = descInput.value; scheduleSync(); });
+
+    row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
+      state.categories.splice(i, 1);
+      renderCategoryList();
+      debouncedCategorySync();
+    });
+
+    container.appendChild(row);
+  }
+
+  checkShortcutConflicts();
+}
+
+function checkShortcutConflicts() {
+  const keyInputs = document.querySelectorAll('.category-key-input');
+  const seen = new Map<string, number[]>();
+
+  state.categories.forEach((cat, i) => {
+    if (cat.shortcutKey) {
+      const key = cat.shortcutKey.toLowerCase();
+      if (!seen.has(key)) seen.set(key, []);
+      seen.get(key)!.push(i);
+    }
+  });
+
+  keyInputs.forEach((input, i) => {
+    const key = state.categories[i]?.shortcutKey?.toLowerCase();
+    if (key && seen.get(key)!.length > 1) {
+      input.classList.add('category-key-conflict');
+    } else {
+      input.classList.remove('category-key-conflict');
+    }
+  });
+}
+
+let categorySyncTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function debouncedCategorySync() {
+  if (categorySyncTimeout) clearTimeout(categorySyncTimeout);
+  categorySyncTimeout = setTimeout(async () => {
+    await api('/categories', { method: 'PUT', body: state.categories });
+    rebuildCategoryUI();
+  }, 500);
+}
+
+function bindCategorySettings() {
+  // Add button
+  document.getElementById('category-add-btn')!.addEventListener('click', () => {
+    state.categories.push({
+      id: '',
+      label: '',
+      shortLabel: '',
+      color: '#6b7280',
+      shortcutKey: '',
+      description: '',
+    });
+    renderCategoryList();
+    // Focus the label input of the new row
+    const rows = document.querySelectorAll('.category-row');
+    const last = rows[rows.length - 1];
+    (last?.querySelector('.category-label-input') as HTMLInputElement)?.focus();
+  });
+
+  // Preset selector
+  const presetSelect = document.getElementById('category-preset-select') as HTMLSelectElement;
+  void api<{ id: string; name: string }[]>('/category-presets').then(presets => {
+    for (const p of presets) {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      presetSelect.appendChild(opt);
+    }
+  });
+
+  presetSelect.addEventListener('change', async () => {
+    if (!presetSelect.value) return;
+    const presets = await api<{ id: string; name: string; categories: CategoryDef[] }[]>('/category-presets');
+    const preset = presets.find(p => p.id === presetSelect.value);
+    if (preset) {
+      state.categories = [...preset.categories];
+      await api('/categories', { method: 'PUT', body: state.categories });
+      renderCategoryList();
+      rebuildCategoryUI();
+    }
+    presetSelect.value = '';
+  });
+
+  // Render initial list when settings dialog opens
+  const settingsBtn = document.getElementById('settings-btn')!;
+  settingsBtn.addEventListener('click', () => {
+    renderCategoryList();
   });
 }
 

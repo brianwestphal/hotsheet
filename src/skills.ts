@@ -1,33 +1,39 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, relative } from 'path';
 
-import type { TicketCategory } from './types.js';
-import { CATEGORY_DESCRIPTIONS } from './types.js';
+import type { CategoryDef } from './types.js';
+import { DEFAULT_CATEGORIES } from './types.js';
 
-export const SKILL_VERSION = 2;
+export const SKILL_VERSION = 3;
 
 let skillPort: number;
 let skillDataDir: string;
+let skillCategories: CategoryDef[] = DEFAULT_CATEGORIES;
 
 export function initSkills(port: number, dataDir: string) {
   skillPort = port;
   skillDataDir = dataDir;
 }
 
-interface SkillDef {
-  name: string;
-  category: TicketCategory;
-  label: string;
+export function setSkillCategories(categories: CategoryDef[]) {
+  skillCategories = categories;
 }
 
-const TICKET_SKILLS: SkillDef[] = [
-  { name: 'hs-bug', category: 'bug', label: 'bug' },
-  { name: 'hs-feature', category: 'feature', label: 'feature' },
-  { name: 'hs-task', category: 'task', label: 'task' },
-  { name: 'hs-issue', category: 'issue', label: 'issue' },
-  { name: 'hs-investigation', category: 'investigation', label: 'investigation' },
-  { name: 'hs-req-change', category: 'requirement_change', label: 'requirement change' },
-];
+interface SkillDef {
+  name: string;
+  category: string;
+  label: string;
+  description: string;
+}
+
+function buildTicketSkills(): SkillDef[] {
+  return skillCategories.map(cat => ({
+    name: `hs-${cat.id.replace(/_/g, '-')}`,
+    category: cat.id,
+    label: cat.label.toLowerCase(),
+    description: cat.description,
+  }));
+}
 
 // --- Version tracking ---
 
@@ -57,9 +63,8 @@ export function updateFile(path: string, content: string): boolean {
 // --- Shared content ---
 
 function ticketSkillBody(skill: SkillDef): string {
-  const desc = CATEGORY_DESCRIPTIONS[skill.category];
   return [
-    `Create a new Hot Sheet **${skill.label}** ticket. ${desc}.`,
+    `Create a new Hot Sheet **${skill.label}** ticket. ${skill.description}.`,
     '',
     '**Parsing the input:**',
     '- If the input starts with "next", "up next", or "do next" (case-insensitive), set `up_next` to `true` and use the remaining text as the title',
@@ -154,7 +159,7 @@ function ensureClaudeSkills(cwd: string): boolean {
   if (updateFile(join(mainDir, 'SKILL.md'), mainContent)) updated = true;
 
   // Per-type skills
-  for (const skill of TICKET_SKILLS) {
+  for (const skill of buildTicketSkills()) {
     const dir = join(skillsDir, skill.name);
     mkdirSync(dir, { recursive: true });
     const content = [
@@ -195,7 +200,7 @@ function ensureCursorRules(cwd: string): boolean {
   if (updateFile(join(rulesDir, 'hotsheet.mdc'), mainContent)) updated = true;
 
   // Per-type rules
-  for (const skill of TICKET_SKILLS) {
+  for (const skill of buildTicketSkills()) {
     const content = [
       '---',
       `description: Create a new ${skill.label} ticket in Hot Sheet`,
@@ -232,7 +237,7 @@ function ensureCopilotPrompts(cwd: string): boolean {
   if (updateFile(join(promptsDir, 'hotsheet.prompt.md'), mainContent)) updated = true;
 
   // Per-type prompts
-  for (const skill of TICKET_SKILLS) {
+  for (const skill of buildTicketSkills()) {
     const content = [
       '---',
       `description: Create a new ${skill.label} ticket in Hot Sheet`,
@@ -269,7 +274,7 @@ function ensureWindsurfRules(cwd: string): boolean {
   if (updateFile(join(rulesDir, 'hotsheet.md'), mainContent)) updated = true;
 
   // Per-type rules
-  for (const skill of TICKET_SKILLS) {
+  for (const skill of buildTicketSkills()) {
     const content = [
       '---',
       'trigger: manual',

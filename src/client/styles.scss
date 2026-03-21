@@ -1126,6 +1126,69 @@ input, select, textarea {
   margin-bottom: 12px;
 }
 
+// --- Category Management ---
+
+.category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.category-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+
+  input[type="text"] {
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    font-size: 12px;
+    outline: none;
+
+    &:focus { border-color: var(--accent); }
+  }
+}
+
+.category-color-input {
+  width: 28px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  padding: 1px;
+  flex-shrink: 0;
+}
+
+.category-label-input { width: 100px; flex-shrink: 0; }
+.category-short-input { width: 42px; flex-shrink: 0; }
+.category-key-input { width: 28px; text-align: center; flex-shrink: 0; }
+.category-desc-input { flex: 1; min-width: 0; }
+
+.category-delete-btn {
+  color: var(--text-muted);
+  font-size: 16px;
+  padding: 0 4px;
+  flex-shrink: 0;
+
+  &:hover { color: var(--danger); }
+}
+
+.category-preset-controls {
+  select {
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+}
+
+.category-key-conflict {
+  border-color: var(--danger) !important;
+}
+
 .backup-list {
   max-height: 300px;
   overflow-y: auto;

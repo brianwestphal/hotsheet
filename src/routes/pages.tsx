@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 
 import { Layout } from '../components/layout.js';
-import { raw } from '../jsx-runtime.js';
 import type { AppEnv } from '../types.js';
 
 export const pageRoutes = new Hono<AppEnv>();
@@ -19,8 +18,8 @@ pageRoutes.get('/', (c) => {
               <input type="text" id="search-input" placeholder="Search tickets..." />
             </div>
             <div className="layout-toggle" id="layout-toggle">
-              <button className="layout-btn active" data-layout="list" title="List view">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>')}</button>
-              <button className="layout-btn" data-layout="columns" title="Column view">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>')}</button>
+              <button className="layout-btn active" data-layout="list" title="List view"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></button>
+              <button className="layout-btn" data-layout="columns" title="Column view"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg></button>
             </div>
             <div className="sort-controls">
               <select id="sort-select">
@@ -32,11 +31,11 @@ pageRoutes.get('/', (c) => {
               </select>
             </div>
             <div className="layout-toggle" id="detail-position-toggle">
-              <button className="layout-btn active" data-position="side" title="Detail panel on side">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>')}</button>
-              <button className="layout-btn" data-position="bottom" title="Detail panel on bottom">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="15" x2="21" y2="15"/></svg>')}</button>
+              <button className="layout-btn active" data-position="side" title="Detail panel on side"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg></button>
+              <button className="layout-btn" data-position="bottom" title="Detail panel on bottom"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="15" x2="21" y2="15"/></svg></button>
             </div>
-            <button className="glassbox-btn" id="glassbox-btn" title="Open Glassbox" style="display:none">{raw('<img id="glassbox-icon" alt="Glassbox" />')}</button>
-            <button className="settings-btn" id="settings-btn" title="Settings">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>')}</button>
+            <button className="glassbox-btn" id="glassbox-btn" title="Open Glassbox" style="display:none"><img id="glassbox-icon" alt="Glassbox" /></button>
+            <button className="settings-btn" id="settings-btn" title="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
           </div>
         </header>
 
@@ -65,7 +64,7 @@ pageRoutes.get('/', (c) => {
           <nav className="sidebar">
             <div className="sidebar-copy-prompt" id="copy-prompt-section" style="display:none">
               <button className="copy-prompt-btn" id="copy-prompt-btn" title="Copy worklist prompt to clipboard">
-                <span className="copy-prompt-icon" id="copy-prompt-icon">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>')}</span>
+                <span className="copy-prompt-icon" id="copy-prompt-icon"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
                 <span id="copy-prompt-label">Copy AI prompt</span>
               </button>
             </div>
@@ -144,14 +143,14 @@ pageRoutes.get('/', (c) => {
                   <option value="backlog">Backlog</option>
                   <option value="archive">Archive</option>
                 </select>
-                <button id="batch-upnext" className="batch-star-btn" title="Toggle Up Next" disabled>{raw('<span class="batch-star-icon">&#9734;</span>')}</button>
-                <button id="batch-delete" className="btn btn-sm btn-danger batch-delete-btn" title="Delete selected" disabled>{raw('<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>')}</button>
-                <button id="batch-more" className="btn btn-sm batch-more-btn" title="More actions" disabled>{raw('<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>')}</button>
+                <button id="batch-upnext" className="batch-star-btn" title="Toggle Up Next" disabled><span className="batch-star-icon">{'\u2606'}</span></button>
+                <button id="batch-delete" className="btn btn-sm btn-danger batch-delete-btn" title="Delete selected" disabled><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+                <button id="batch-more" className="btn btn-sm batch-more-btn" title="More actions" disabled><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
                 <span className="batch-count" id="batch-count"></span>
               </div>
 
               <div className="ticket-list" id="ticket-list">
-                {raw('<div class="ticket-list-loading">Loading...</div>')}
+                <div className="ticket-list-loading">Loading...</div>
               </div>
             </main>
 
@@ -163,7 +162,7 @@ pageRoutes.get('/', (c) => {
               </div>
               <div className="detail-header" id="detail-header" style="display:none">
                 <span className="detail-ticket-number" id="detail-ticket-number"></span>
-                <button className="detail-close" id="detail-close" title="Close">{raw('&times;')}</button>
+                <button className="detail-close" id="detail-close" title="Close">{'\u00d7'}</button>
               </div>
               <div className="detail-body" id="detail-body" style="display:none">
                 <div className="detail-fields-row">
@@ -235,9 +234,9 @@ pageRoutes.get('/', (c) => {
         <footer className="app-footer">
           <div className="keyboard-hints">
             <span><kbd>Enter</kbd> new ticket</span>
-            <span><kbd>{raw('&#8984;')}I/B/F/R/K/G</kbd> category</span>
+            <span><kbd>{'\u2318'}I/B/F/R/K/G</kbd> category</span>
             <span><kbd>Alt+1-5</kbd> priority</span>
-            <span><kbd>{raw('&#8984;')}D</kbd> up next</span>
+            <span><kbd>{'\u2318'}D</kbd> up next</span>
             <span><kbd>Esc</kbd> close</span>
           </div>
           <div id="status-bar" className="status-bar"></div>
@@ -248,7 +247,7 @@ pageRoutes.get('/', (c) => {
         <div className="settings-dialog">
           <div className="settings-header">
             <h2>Settings</h2>
-            <button className="detail-close" id="settings-close">{raw('&times;')}</button>
+            <button className="detail-close" id="settings-close">{'\u00d7'}</button>
           </div>
           <div className="settings-body">
             <div className="settings-field">
@@ -275,6 +274,18 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint" id="settings-backup-dir-hint">Leave empty to use the default location inside the data directory.</span>
               </div>
               <div id="backup-list" className="backup-list">Loading backups...</div>
+            </div>
+            <div className="settings-section">
+              <div className="settings-section-header">
+                <h3>Categories</h3>
+                <div className="category-preset-controls">
+                  <select id="category-preset-select" className="btn btn-sm">
+                    <option value="">Load preset...</option>
+                  </select>
+                </div>
+              </div>
+              <div id="category-list" className="category-list"></div>
+              <button id="category-add-btn" className="btn btn-sm" style="margin-top:8px">Add Category</button>
             </div>
             <div className="settings-section" id="settings-updates-section" style="display:none">
               <div className="settings-section-header">

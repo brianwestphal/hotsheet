@@ -1,9 +1,8 @@
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 
-import { getAttachments, getTickets } from '../db/queries.js';
-import type { Ticket, TicketCategory } from '../types.js';
-import { CATEGORY_DESCRIPTIONS } from '../types.js';
+import { getAttachments, getCategories, getTickets } from '../db/queries.js';
+import type { Ticket } from '../types.js';
 
 let dataDir: string;
 let port: number;
@@ -85,10 +84,12 @@ async function formatTicket(ticket: Ticket): Promise<string> {
   return lines.join('\n');
 }
 
-function formatCategoryDescriptions(categories: Set<TicketCategory>): string {
+async function formatCategoryDescriptions(usedCategories: Set<string>): Promise<string> {
+  const allCategories = await getCategories();
+  const descMap = Object.fromEntries(allCategories.map(c => [c.id, c.description]));
   const lines: string[] = ['Ticket Types:'];
-  for (const cat of categories) {
-    lines.push(`- ${cat} - ${CATEGORY_DESCRIPTIONS[cat]}`);
+  for (const cat of usedCategories) {
+    lines.push(`- ${cat} - ${descMap[cat] || cat}`);
   }
   return lines.join('\n');
 }
@@ -96,7 +97,7 @@ function formatCategoryDescriptions(categories: Set<TicketCategory>): string {
 async function syncWorklist(): Promise<void> {
   try {
     const tickets = await getTickets({ up_next: true, sort_by: 'priority', sort_dir: 'asc' });
-    const categories = new Set<TicketCategory>();
+    const categories = new Set<string>();
 
     const sections: string[] = [];
     sections.push('# Hot Sheet - Up Next');
@@ -128,7 +129,9 @@ async function syncWorklist(): Promise<void> {
     sections.push('- Create follow-up tasks for items outside the current scope');
     sections.push('');
     sections.push('To create a ticket:');
-    sections.push(`  \`curl -s -X POST http://localhost:${port}/api/tickets -H "Content-Type: application/json" -d '{"title": "Title", "defaults": {"category": "bug|feature|task|issue|investigation|requirement_change", "up_next": false}}'\``);
+    const allCats = await getCategories();
+    const catIds = allCats.map(c => c.id).join('|');
+    sections.push(`  \`curl -s -X POST http://localhost:${port}/api/tickets -H "Content-Type: application/json" -d '{"title": "Title", "defaults": {"category": "${catIds}", "up_next": false}}'\``);
     sections.push('');
     sections.push('You can also include `"details"` in the defaults object for longer descriptions.');
     sections.push('Set `up_next: true` only for items that should be prioritized immediately.');
@@ -148,7 +151,7 @@ async function syncWorklist(): Promise<void> {
 
       sections.push('---');
       sections.push('');
-      sections.push(formatCategoryDescriptions(categories));
+      sections.push(await formatCategoryDescriptions(categories));
     }
 
     sections.push('');
@@ -161,7 +164,7 @@ async function syncWorklist(): Promise<void> {
 async function syncOpenTickets(): Promise<void> {
   try {
     const tickets = await getTickets({ status: 'open', sort_by: 'priority', sort_dir: 'asc' });
-    const categories = new Set<TicketCategory>();
+    const categories = new Set<string>();
 
     const sections: string[] = [];
     sections.push('# Hot Sheet - Open Tickets');
@@ -200,7 +203,7 @@ async function syncOpenTickets(): Promise<void> {
     } else {
       sections.push('---');
       sections.push('');
-      sections.push(formatCategoryDescriptions(categories));
+      sections.push(await formatCategoryDescriptions(categories));
     }
 
     sections.push('');
