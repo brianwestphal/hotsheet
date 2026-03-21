@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.0] - 2026-03-21
+
+- Organized Settings dialog
+- Added support for custom categories / different category presets (see Settings dialog)
+- General UI improvements
+- Code cleanup
+
 ## [0.2.14] - 2026-03-20
 
 - Fixed release script
