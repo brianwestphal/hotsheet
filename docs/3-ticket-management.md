@@ -15,6 +15,10 @@ Each ticket has the following properties:
 - **Priority** — One of five levels: Highest, High, Default, Low, Lowest.
 - **Status** — One of seven states (see 2.3).
 - **Up Next** — Boolean flag marking the ticket as a priority work item.
+- **Tags** — User-defined tags stored as a JSON array of strings in the `tags` column (default `[]`). Tags are free-form text. The full list of available tags is derived from all non-deleted tickets.
+  - Detail panel: displays tags as removable chips with an input to add new tags by pressing Enter.
+  - Batch toolbar "..." menu: "Tags..." opens a dialog with check/uncheck/mixed-state checkboxes for all known tags. Mixed state means some selected tickets have the tag and others don't — mixed tags are left unchanged on save.
+  - API: `GET /api/tags` returns all unique tags, ticket PATCH accepts `tags` (JSON string).
 - **Notes** — Append-only timestamped entries stored as a JSON array.
 - **Timestamps** — created_at, updated_at, completed_at, verified_at, deleted_at.
 

@@ -9,6 +9,7 @@ export interface DropdownItem {
   icon?: string;
   iconColor?: string;
   active?: boolean;
+  separator?: boolean;
   action: () => void;
 }
 
@@ -34,21 +35,24 @@ export function createDropdown(_anchor: HTMLElement, items: DropdownItem[]): HTM
   const menu = toElement(
     <div className="dropdown-menu" style="visibility:hidden;top:0;left:0">
       {items.map(item =>
-        <button className={`dropdown-item${item.active ? ' active' : ''}`} data-key={item.key}>
-          {item.color ? <span className="dropdown-dot" style={`background-color:${item.color}`}></span> : null}
-          {item.icon ? <span className="dropdown-icon" style={item.iconColor ? `color:${item.iconColor}` : ''}>{raw(item.icon)}</span> : null}
-          <span className="dropdown-label">{item.label}</span>
-          {item.shortcut ? <kbd className="dropdown-kbd">{item.shortcut}</kbd> : null}
-        </button>
+        item.separator
+          ? <div className="dropdown-separator"></div>
+          : <button className={`dropdown-item${item.active ? ' active' : ''}`} data-key={item.key}>
+              {item.color ? <span className="dropdown-dot" style={`background-color:${item.color}`}></span> : null}
+              {item.icon ? <span className="dropdown-icon" style={item.iconColor ? `color:${item.iconColor}` : ''}>{raw(item.icon)}</span> : null}
+              <span className="dropdown-label">{item.label}</span>
+              {item.shortcut ? <kbd className="dropdown-kbd">{item.shortcut}</kbd> : null}
+            </button>
       )}
     </div>
   );
 
-  // Bind click handlers to each button
+  // Bind click handlers to each button (skip separators)
+  const actionItems = items.filter(i => !i.separator);
   const buttons = menu.querySelectorAll('.dropdown-item');
   buttons.forEach((btn, i) => {
     btn.addEventListener('click', () => {
-      items[i].action();
+      actionItems[i].action();
       menu.remove();
     });
   });

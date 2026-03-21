@@ -32,6 +32,7 @@ export interface Ticket {
   verified_at: string | null;
   deleted_at: string | null;
   notes: string;
+  tags: string;
 }
 
 export interface Attachment {
@@ -116,6 +117,21 @@ export const CATEGORY_PRESETS: CategoryPreset[] = [
     ],
   },
 ];
+
+// --- Custom Views ---
+
+export interface CustomViewCondition {
+  field: 'category' | 'priority' | 'status' | 'title' | 'details' | 'up_next' | 'tags';
+  operator: 'equals' | 'not_equals' | 'contains' | 'not_contains';
+  value: string;
+}
+
+export interface CustomView {
+  id: string;
+  name: string;
+  logic: 'all' | 'any';
+  conditions: CustomViewCondition[];
+}
 
 // Legacy compat aliases used by server-rendered pages and older code
 export const CATEGORIES = DEFAULT_CATEGORIES.map(c => ({ value: c.id, label: c.label, color: c.color }));

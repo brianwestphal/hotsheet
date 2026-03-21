@@ -149,7 +149,24 @@ The interface is divided into:
 - Tabs persist their selection while the dialog is open; resets to General when reopened.
 - Closed via X button, clicking the overlay, or pressing Escape.
 
-### 4.13 Live Updates
+### 4.13 Custom Views
+
+- Users can create custom views with live-updating queries.
+- Custom views appear in a "Custom Views" sidebar section below priorities.
+- The "+" button in the section header opens the view editor.
+- Right-click a custom view for Edit/Delete options.
+- **View editor dialog:**
+  - Name field for the view.
+  - "All of" / "Any of" logic toggle (AND vs OR).
+  - List of conditions, each with: field selector, operator selector, value input/selector.
+  - Supported fields: Category, Priority, Status, Title, Details, Up Next, Tags.
+  - Operators vary by field type: equals/not equals (select fields), contains/not contains (text fields).
+  - Add/remove conditions dynamically.
+- Custom views are stored as JSON in the settings table (key: `custom_views`).
+- API: `POST /api/tickets/query` accepts `{ logic, conditions, sort_by, sort_dir }` and returns matching tickets via parameterized SQL.
+- Custom views support both list and column layouts.
+
+### 4.14 Live Updates
 
 - The UI uses long-polling to detect data changes.
 - When a change is detected (from another tab, API call, or AI tool), the ticket list automatically refreshes.

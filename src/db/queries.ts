@@ -59,6 +59,7 @@ export async function updateTicket(id: number, updates: Partial<{
   title: string;
   details: string;
   notes: string;
+  tags: string;
   category: TicketCategory;
   priority: TicketPriority;
   status: TicketStatus;
@@ -327,6 +328,106 @@ export async function getTicketsForCleanup(verifiedDays = 30, trashDays = 3): Pr
        OR (status = 'deleted' AND deleted_at < NOW() - INTERVAL '1 day' * $2)
   `, [verifiedDays, trashDays]);
   return result.rows;
+}
+
+// --- Custom View Query ---
+
+const QUERYABLE_FIELDS = new Set(['category', 'priority', 'status', 'title', 'details', 'up_next', 'tags']);
+
+export async function queryTickets(
+  logic: 'all' | 'any',
+  conditions: { field: string; operator: string; value: string }[],
+  sortBy?: string,
+  sortDir?: string,
+): Promise<Ticket[]> {
+  const db = await getDb();
+  const where: string[] = [];
+  const values: unknown[] = [];
+  let paramIdx = 1;
+
+  // Always exclude deleted
+  where.push(`status != 'deleted'`);
+
+  for (const cond of conditions) {
+    if (!QUERYABLE_FIELDS.has(cond.field)) continue;
+    const field = cond.field;
+
+    if (field === 'up_next') {
+      where.push(`up_next = $${paramIdx}`);
+      values.push(cond.value === 'true');
+      paramIdx++;
+      continue;
+    }
+
+    switch (cond.operator) {
+      case 'equals':
+        where.push(`${field} = $${paramIdx}`);
+        values.push(cond.value);
+        paramIdx++;
+        break;
+      case 'not_equals':
+        where.push(`${field} != $${paramIdx}`);
+        values.push(cond.value);
+        paramIdx++;
+        break;
+      case 'contains':
+        where.push(`${field} ILIKE $${paramIdx}`);
+        values.push(`%${cond.value}%`);
+        paramIdx++;
+        break;
+      case 'not_contains':
+        where.push(`${field} NOT ILIKE $${paramIdx}`);
+        values.push(`%${cond.value}%`);
+        paramIdx++;
+        break;
+    }
+  }
+
+  const joiner = logic === 'any' ? ' OR ' : ' AND ';
+  // The first condition (status != deleted) is always AND'd; user conditions are grouped
+  const userConditions = where.slice(1);
+  let whereClause = where[0];
+  if (userConditions.length > 0) {
+    whereClause += ` AND (${userConditions.join(joiner)})`;
+  }
+
+  let orderBy: string;
+  switch (sortBy) {
+    case 'priority':
+      orderBy = `CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'default' THEN 3 WHEN 'low' THEN 4 WHEN 'lowest' THEN 5 END`;
+      break;
+    case 'category': orderBy = 'category'; break;
+    case 'status':
+      orderBy = `CASE status WHEN 'backlog' THEN 1 WHEN 'not_started' THEN 2 WHEN 'started' THEN 3 WHEN 'completed' THEN 4 WHEN 'verified' THEN 5 WHEN 'archive' THEN 6 END`;
+      break;
+    default: orderBy = 'created_at'; break;
+  }
+  const dir = sortDir === 'asc' ? 'ASC' : 'DESC';
+
+  const result = await db.query<Ticket>(
+    `SELECT * FROM tickets WHERE ${whereClause} ORDER BY ${orderBy} ${dir}, id DESC`,
+    values,
+  );
+  return result.rows;
+}
+
+// --- Tags ---
+
+export async function getAllTags(): Promise<string[]> {
+  const db = await getDb();
+  const result = await db.query<{ tags: string }>(`SELECT DISTINCT tags FROM tickets WHERE tags != '[]' AND status != 'deleted'`);
+  const tagSet = new Set<string>();
+  for (const row of result.rows) {
+    try {
+      const parsed = JSON.parse(row.tags);
+      if (Array.isArray(parsed)) {
+        for (const tag of parsed) {
+          if (typeof tag === 'string' && tag.trim()) tagSet.add(tag.trim());
+        }
+      }
+    } catch { /* ignore bad JSON */ }
+  }
+  return Array.from(tagSet).sort();
 }
 
 // --- Categories ---

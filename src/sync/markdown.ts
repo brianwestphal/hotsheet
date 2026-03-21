@@ -57,6 +57,14 @@ async function formatTicket(ticket: Ticket): Promise<string> {
   lines.push(`- Status: ${ticket.status.replace('_', ' ')}`);
   lines.push(`- Title: ${ticket.title}`);
 
+  // Tags
+  try {
+    const tags = JSON.parse(ticket.tags);
+    if (Array.isArray(tags) && tags.length > 0) {
+      lines.push(`- Tags: ${tags.join(', ')}`);
+    }
+  } catch { /* ignore */ }
+
   if (ticket.details.trim()) {
     const detailLines = ticket.details.split('\n');
     lines.push(`- Details: ${detailLines[0]}`);

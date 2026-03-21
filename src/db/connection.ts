@@ -97,5 +97,6 @@ async function initSchema(db: PGlite): Promise<void> {
   await db.exec(`
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]';
   `).catch(() => { /* columns may already exist */ });
 }

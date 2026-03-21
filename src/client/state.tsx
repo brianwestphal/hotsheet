@@ -13,6 +13,7 @@ export interface Ticket {
   verified_at: string | null;
   deleted_at: string | null;
   notes: string;
+  tags: string;
   attachments?: Attachment[];
 }
 
@@ -31,6 +32,19 @@ export interface CategoryDef {
   color: string;
   shortcutKey: string;
   description: string;
+}
+
+export interface CustomViewCondition {
+  field: 'category' | 'priority' | 'status' | 'title' | 'details' | 'up_next' | 'tags';
+  operator: 'equals' | 'not_equals' | 'contains' | 'not_contains';
+  value: string;
+}
+
+export interface CustomView {
+  id: string;
+  name: string;
+  logic: 'all' | 'any';
+  conditions: CustomViewCondition[];
 }
 
 export interface AppSettings {
@@ -52,6 +66,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export interface AppState {
   tickets: Ticket[];
   categories: CategoryDef[];
+  customViews: CustomView[];
   selectedIds: Set<number>;
   lastClickedId: number | null;
   activeTicketId: number | null;
@@ -72,6 +87,7 @@ export interface AppState {
 
 export const state: AppState = {
   tickets: [],
+  customViews: [],
   categories: [
     { id: 'issue', label: 'Issue', shortLabel: 'ISS', color: '#6b7280', shortcutKey: 'i', description: '' },
     { id: 'bug', label: 'Bug', shortLabel: 'BUG', color: '#ef4444', shortcutKey: 'b', description: '' },

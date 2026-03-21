@@ -14,12 +14,14 @@ import {
   emptyTrash,
   getAttachment,
   getAttachments,
+  getAllTags,
   getCategories,
   getSettings,
   getTicket,
   getTickets,
   getTicketStats,
   hardDeleteTicket,
+  queryTickets,
   restoreTicket,
   saveCategories,
   toggleUpNext,
@@ -110,6 +112,7 @@ apiRoutes.patch('/tickets/:id', async (c) => {
     title: string;
     details: string;
     notes: string;
+    tags: string;
     category: TicketCategory;
     priority: TicketPriority;
     status: TicketStatus;
@@ -307,6 +310,26 @@ apiRoutes.get('/attachments/file/*', async (c) => {
   return new Response(content, {
     headers: { 'Content-Type': contentType },
   });
+});
+
+// --- Custom view query ---
+
+apiRoutes.post('/tickets/query', async (c) => {
+  const body = await c.req.json<{
+    logic: 'all' | 'any';
+    conditions: { field: string; operator: string; value: string }[];
+    sort_by?: string;
+    sort_dir?: string;
+  }>();
+  const tickets = await queryTickets(body.logic, body.conditions, body.sort_by, body.sort_dir);
+  return c.json(tickets);
+});
+
+// --- Tags ---
+
+apiRoutes.get('/tags', async (c) => {
+  const tags = await getAllTags();
+  return c.json(tags);
 });
 
 // --- Categories ---

@@ -3,6 +3,43 @@ import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
 
+// --- Tags helpers ---
+
+export function parseTags(raw: string): string[] {
+  if (!raw || raw === '[]') return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((t: unknown) => typeof t === 'string' && t.trim());
+  } catch { /* ignore */ }
+  return [];
+}
+
+export function renderDetailTags(tags: string[], readOnly: boolean) {
+  const container = document.getElementById('detail-tags')!;
+  container.innerHTML = '';
+  for (const tag of tags) {
+    const chip = toElement(
+      <span className="tag-chip">
+        {tag}
+        {readOnly ? null : <button className="tag-chip-remove" data-tag={tag} title="Remove tag">{'\u00d7'}</button>}
+      </span>
+    );
+    if (!readOnly) {
+      chip.querySelector('.tag-chip-remove')!.addEventListener('click', async () => {
+        if (state.activeTicketId == null) return;
+        const ticket = state.tickets.find(t => t.id === state.activeTicketId);
+        if (!ticket) return;
+        const currentTags = parseTags(ticket.tags);
+        const updated = currentTags.filter(t => t !== tag);
+        await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { tags: JSON.stringify(updated) } });
+        ticket.tags = JSON.stringify(updated);
+        renderDetailTags(updated, false);
+      });
+    }
+    container.appendChild(chip);
+  }
+}
+
 // --- Detail field button helpers ---
 
 const STATUS_LABELS: Record<string, string> = {
@@ -138,6 +175,9 @@ function loadPreviewDetail(id: number) {
   // No attachments in backup preview
   document.getElementById('detail-attachments')!.innerHTML = '';
 
+  // Tags (read-only in preview)
+  renderDetailTags(parseTags(ticket.tags), true);
+
   // Render notes
   const notesSection = document.getElementById('detail-notes-section')!;
   const notesContainer = document.getElementById('detail-notes')!;
@@ -208,6 +248,9 @@ async function loadDetail(id: number) {
   } else {
     attContainer.innerHTML = '';
   }
+
+  // Render tags
+  renderDetailTags(parseTags(ticket.tags), false);
 
   // Render notes (read-only, timestamped entries)
   const notesSection = document.getElementById('detail-notes-section')!;

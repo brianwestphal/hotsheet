@@ -61,6 +61,7 @@ function restoreFocus(ticketId: number | 'draft' | null) {
 
 export function canUseColumnView(): boolean {
   const view = state.view;
+  if (view.startsWith('custom:')) return true;
   return view !== 'completed' && view !== 'verified' && view !== 'trash' && view !== 'backlog' && view !== 'archive';
 }
 
@@ -1054,6 +1055,22 @@ export async function loadTickets() {
   // In preview mode, filter backup tickets locally instead of querying the API
   if (state.backupPreview?.active) {
     loadPreviewTickets();
+    return;
+  }
+
+  // Custom view: use the query endpoint
+  if (state.view.startsWith('custom:')) {
+    const viewId = state.view.slice(7);
+    const view = state.customViews.find(v => v.id === viewId);
+    if (view) {
+      state.tickets = await api<Ticket[]>('/tickets/query', {
+        method: 'POST',
+        body: { logic: view.logic, conditions: view.conditions, sort_by: state.sortBy, sort_dir: state.sortDir },
+      });
+    } else {
+      state.tickets = [];
+    }
+    renderTicketList();
     return;
   }
 
