@@ -1,3 +1,4 @@
+import { suppressAnimation } from './animate.js';
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI, loadBackupList } from './backups.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
@@ -12,6 +13,7 @@ async function init() {
   await loadSettings();
   await loadCategories();
   void loadAppName();
+  suppressAnimation();
   await loadTickets();
   bindSidebar();
   bindLayoutToggle();
@@ -79,6 +81,7 @@ function rebuildCategoryUI() {
         btn.classList.add('active');
         state.view = `category:${cat.id}`;
         state.selectedIds.clear();
+        suppressAnimation();
         void loadTickets();
       });
       sidebarSection.appendChild(btn);
@@ -512,6 +515,7 @@ function bindLayoutToggle() {
       const layout = (btn as HTMLElement).dataset.layout as 'list' | 'columns';
       if (layout === 'columns' && !canUseColumnView()) return;
       state.layout = layout;
+      suppressAnimation();
       updateLayoutToggle();
       renderTicketList();
       void api('/settings', { method: 'PATCH', body: { layout } });
@@ -569,6 +573,7 @@ async function applyDropAction(view: string, ids: number[]) {
   } else {
     await trackedBatch(affected, { ids, action: drop.action, value: drop.value }, `Change ${drop.action}`);
   }
+  suppressAnimation();
   void loadTickets();
 }
 
@@ -580,6 +585,7 @@ function bindSidebar() {
       item.classList.add('active');
       state.view = (item as HTMLElement).dataset.view!;
       state.selectedIds.clear();
+      suppressAnimation();
       updateLayoutToggle();
       void loadTickets();
     });
@@ -616,6 +622,7 @@ function bindSortControls() {
     const [sortBy, sortDir] = select.value.split(':');
     state.sortBy = sortBy;
     state.sortDir = sortDir;
+    suppressAnimation();
     void loadTickets();
   });
 }
@@ -630,6 +637,7 @@ function bindSearchInput() {
     if (searchTimeout) clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
       state.search = input.value;
+      suppressAnimation();
       void loadTickets();
     }, 200);
   });
@@ -638,6 +646,7 @@ function bindSearchInput() {
     if (e.key === 'Escape') {
       input.value = '';
       state.search = '';
+      suppressAnimation();
       void loadTickets();
     }
   });

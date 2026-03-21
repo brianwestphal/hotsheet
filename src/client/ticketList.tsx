@@ -1,4 +1,5 @@
 import { raw } from '../jsx-runtime.js';
+import { captureSnapshot, flipAnimate, suppressAnimation } from './animate.js';
 import { api } from './api.js';
 import { syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
@@ -86,11 +87,13 @@ function getColumnsForView(): { status: string; label: string }[] {
 }
 
 export function renderTicketList() {
+  const snapshot = captureSnapshot();
   const isPreview = !!state.backupPreview?.active;
 
   if (state.layout === 'columns' && canUseColumnView()) {
-    if (isPreview) { renderPreviewColumnView(); return; }
+    if (isPreview) { renderPreviewColumnView(); flipAnimate(snapshot); return; }
     renderColumnView();
+    flipAnimate(snapshot);
     return;
   }
 
@@ -150,6 +153,7 @@ export function renderTicketList() {
     updateBatchToolbar();
   }
   void updateStats();
+  flipAnimate(snapshot);
 }
 
 function createPreviewRow(ticket: Ticket): HTMLElement {
@@ -339,6 +343,7 @@ function renderColumnView() {
       draggedTicketIds = [];
       if (ids.length === 0) return;
       const affected = state.tickets.filter(t => ids.includes(t.id));
+      suppressAnimation();
       void trackedBatch(
         affected,
         { ids, action: 'status', value: col.status },

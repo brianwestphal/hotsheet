@@ -192,8 +192,8 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
       break;
     case 'status':
       orderBy = `CASE status
-        WHEN 'started' THEN 1 WHEN 'not_started' THEN 2 WHEN 'completed' THEN 3
-        WHEN 'verified' THEN 4 WHEN 'backlog' THEN 5 WHEN 'archive' THEN 6 END`;
+        WHEN 'backlog' THEN 1 WHEN 'not_started' THEN 2 WHEN 'started' THEN 3
+        WHEN 'completed' THEN 4 WHEN 'verified' THEN 5 WHEN 'archive' THEN 6 END`;
       break;
     case 'ticket_number':
       orderBy = 'id';
