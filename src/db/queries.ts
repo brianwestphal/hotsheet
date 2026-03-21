@@ -334,6 +334,24 @@ export async function getTicketsForCleanup(verifiedDays = 30, trashDays = 3): Pr
 
 const QUERYABLE_FIELDS = new Set(['category', 'priority', 'status', 'title', 'details', 'up_next', 'tags']);
 
+const PRIORITY_ORD = `CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'default' THEN 3 WHEN 'low' THEN 4 WHEN 'lowest' THEN 5 ELSE 3 END`;
+const STATUS_ORD = `CASE status WHEN 'backlog' THEN 1 WHEN 'not_started' THEN 2 WHEN 'started' THEN 3 WHEN 'completed' THEN 4 WHEN 'verified' THEN 5 WHEN 'archive' THEN 6 ELSE 2 END`;
+
+const PRIORITY_RANK: Record<string, number> = { highest: 1, high: 2, default: 3, low: 4, lowest: 5 };
+const STATUS_RANK: Record<string, number> = { backlog: 1, not_started: 2, started: 3, completed: 4, verified: 5, archive: 6 };
+
+function ordinalExpr(field: string): string | null {
+  if (field === 'priority') return PRIORITY_ORD;
+  if (field === 'status') return STATUS_ORD;
+  return null;
+}
+
+function ordinalValue(field: string, value: string): number | null {
+  if (field === 'priority') return PRIORITY_RANK[value] ?? null;
+  if (field === 'status') return STATUS_RANK[value] ?? null;
+  return null;
+}
+
 export async function queryTickets(
   logic: 'all' | 'any',
   conditions: { field: string; operator: string; value: string }[],
@@ -355,6 +373,17 @@ export async function queryTickets(
     if (field === 'up_next') {
       where.push(`up_next = $${paramIdx}`);
       values.push(cond.value === 'true');
+      paramIdx++;
+      continue;
+    }
+
+    // Handle ordinal comparisons for priority and status
+    const ordExpr = ordinalExpr(field);
+    const ordVal = ordExpr ? ordinalValue(field, cond.value) : null;
+    if (ordExpr && ordVal !== null && ['lt', 'lte', 'gt', 'gte'].includes(cond.operator)) {
+      const op = cond.operator === 'lt' ? '<' : cond.operator === 'lte' ? '<=' : cond.operator === 'gt' ? '>' : '>=';
+      where.push(`(${ordExpr}) ${op} $${paramIdx}`);
+      values.push(ordVal);
       paramIdx++;
       continue;
     }

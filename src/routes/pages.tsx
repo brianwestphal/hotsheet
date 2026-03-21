@@ -157,10 +157,8 @@ pageRoutes.get('/', (c) => {
                     <button id="detail-status" className="detail-dropdown-btn" data-value="not_started">Not Started</button>
                   </div>
                   <div className="detail-field">
-                    <label className="detail-upnext-label">
-                      <button className="ticket-star detail-upnext-star" id="detail-upnext" type="button">{'\u2606'}</button>
-                      Up Next
-                    </label>
+                    <label>Up Next</label>
+                    <button className="ticket-star detail-upnext-star" id="detail-upnext" type="button">{'\u2606'}</button>
                   </div>
                 </div>
                 <div className="detail-field detail-field-full">
@@ -172,17 +170,17 @@ pageRoutes.get('/', (c) => {
                   <textarea id="detail-details" rows={6} placeholder="Add details..."></textarea>
                 </div>
                 <div className="detail-field detail-field-full">
+                  <label>Tags</label>
+                  <div id="detail-tags" className="detail-tags"></div>
+                  <input type="text" id="detail-tag-input" className="detail-tag-input" placeholder="Add tag..." />
+                </div>
+                <div className="detail-field detail-field-full">
                   <label>Attachments</label>
                   <div id="detail-attachments" className="detail-attachments"></div>
                   <label className="btn btn-sm upload-btn">
                     Attach File
                     <input type="file" id="detail-file-input" style="display:none" />
                   </label>
-                </div>
-                <div className="detail-field detail-field-full">
-                  <label>Tags</label>
-                  <div id="detail-tags" className="detail-tags"></div>
-                  <input type="text" id="detail-tag-input" className="detail-tag-input" placeholder="Add tag..." />
                 </div>
                 <div className="detail-field detail-field-full" id="detail-notes-section" style="display:none">
                   <label>Notes</label>

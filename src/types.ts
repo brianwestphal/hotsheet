@@ -122,7 +122,7 @@ export const CATEGORY_PRESETS: CategoryPreset[] = [
 
 export interface CustomViewCondition {
   field: 'category' | 'priority' | 'status' | 'title' | 'details' | 'up_next' | 'tags';
-  operator: 'equals' | 'not_equals' | 'contains' | 'not_contains';
+  operator: 'equals' | 'not_equals' | 'contains' | 'not_contains' | 'lt' | 'lte' | 'gt' | 'gte';
   value: string;
 }
 

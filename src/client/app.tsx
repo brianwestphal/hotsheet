@@ -2,7 +2,7 @@ import { suppressAnimation } from './animate.js';
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI, loadBackupList } from './backups.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
-import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, parseTags, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
+import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, parseTags, refreshDetail, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { AppSettings, CategoryDef, Ticket } from './state.js';
@@ -584,7 +584,7 @@ function bindSidebar() {
   const items = document.querySelectorAll('.sidebar-item[data-view]');
   items.forEach(item => {
     item.addEventListener('click', () => {
-      items.forEach(i => { i.classList.remove('active'); });
+      document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
       item.classList.add('active');
       state.view = (item as HTMLElement).dataset.view!;
       state.selectedIds.clear();
@@ -986,11 +986,52 @@ function bindDetailPanel() {
     }
   });
 
-  // Tag input (add tags by typing and pressing Enter)
+  // Tag input with autocomplete
   const tagInput = document.getElementById('detail-tag-input') as HTMLInputElement;
-  tagInput.addEventListener('keydown', async (e) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
+  let acDropdown: HTMLElement | null = null;
+  let acIndex = -1;
+  let allKnownTags: string[] = [];
+
+  // Load known tags
+  void api<string[]>('/tags').then(tags => { allKnownTags = tags; });
+
+  function closeAutocomplete() {
+    acDropdown?.remove();
+    acDropdown = null;
+    acIndex = -1;
+  }
+
+  function showAutocomplete() {
+    closeAutocomplete();
+    const query = tagInput.value.trim().toLowerCase();
+    if (!query) return;
+    const ticket = state.tickets.find(t => t.id === state.activeTicketId);
+    const currentTags = ticket ? parseTags(ticket.tags) : [];
+    const matches = allKnownTags.filter(t => t.toLowerCase().includes(query) && !currentTags.includes(t));
+    if (matches.length === 0) return;
+
+    acDropdown = toElement(<div className="tag-autocomplete"></div>);
+    for (let i = 0; i < matches.length; i++) {
+      const item = toElement(<div className="tag-autocomplete-item">{matches[i]}</div>);
+      item.addEventListener('mousedown', (ev) => {
+        ev.preventDefault();
+        tagInput.value = matches[i];
+        closeAutocomplete();
+        void addCurrentTag();
+      });
+      acDropdown.appendChild(item);
+    }
+
+    // Position below the input
+    const rect = tagInput.getBoundingClientRect();
+    acDropdown.style.position = 'fixed';
+    acDropdown.style.left = `${rect.left}px`;
+    acDropdown.style.top = `${rect.bottom + 2}px`;
+    acDropdown.style.width = `${rect.width}px`;
+    document.body.appendChild(acDropdown);
+  }
+
+  async function addCurrentTag() {
     const value = tagInput.value.trim();
     if (!value || state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
@@ -999,9 +1040,38 @@ function bindDetailPanel() {
     if (currentTags.includes(value)) { tagInput.value = ''; return; }
     const updated = [...currentTags, value];
     tagInput.value = '';
+    closeAutocomplete();
     await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { tags: JSON.stringify(updated) } });
     ticket.tags = JSON.stringify(updated);
     renderDetailTags(updated, false);
+    // Add to known tags if new
+    if (!allKnownTags.includes(value)) allKnownTags.push(value);
+  }
+
+  tagInput.addEventListener('input', () => { showAutocomplete(); });
+  tagInput.addEventListener('blur', () => { closeAutocomplete(); });
+  tagInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (acDropdown && acIndex >= 0) {
+        const items = acDropdown.querySelectorAll('.tag-autocomplete-item');
+        tagInput.value = items[acIndex]?.textContent || tagInput.value;
+      }
+      closeAutocomplete();
+      void addCurrentTag();
+    } else if (e.key === 'Escape') {
+      closeAutocomplete();
+    } else if (e.key === 'ArrowDown' && acDropdown) {
+      e.preventDefault();
+      const items = acDropdown.querySelectorAll('.tag-autocomplete-item');
+      acIndex = Math.min(acIndex + 1, items.length - 1);
+      items.forEach((el, i) => el.classList.toggle('active', i === acIndex));
+    } else if (e.key === 'ArrowUp' && acDropdown) {
+      e.preventDefault();
+      const items = acDropdown.querySelectorAll('.tag-autocomplete-item');
+      acIndex = Math.max(acIndex - 1, 0);
+      items.forEach((el, i) => el.classList.toggle('active', i === acIndex));
+    }
   });
 }
 
@@ -1062,10 +1132,10 @@ async function showTagsDialog() {
     for (const tag of allTags) {
       const st = currentStates.get(tag)!;
       const row = toElement(
-        <div className="tags-dialog-row">
+        <label className="tags-dialog-row">
           <input type="checkbox" checked={st === 'checked'} />
           <span>{tag}</span>
-        </div>
+        </label>
       );
       const cb = row.querySelector('input') as HTMLInputElement;
       if (st === 'mixed') cb.indeterminate = true;
@@ -1127,6 +1197,7 @@ async function showTagsDialog() {
         }
       }
       void loadTickets();
+      refreshDetail();
     }
 
     close();

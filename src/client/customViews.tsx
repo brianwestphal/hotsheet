@@ -130,12 +130,12 @@ async function deleteView(id: string) {
 
 // --- Field/operator configuration ---
 
-type FieldDef = { value: CustomViewCondition['field']; label: string; type: 'select' | 'text' | 'boolean' };
+type FieldDef = { value: CustomViewCondition['field']; label: string; type: 'select' | 'ordinal' | 'text' | 'boolean' };
 
 const FIELDS: FieldDef[] = [
   { value: 'category', label: 'Category', type: 'select' },
-  { value: 'priority', label: 'Priority', type: 'select' },
-  { value: 'status', label: 'Status', type: 'select' },
+  { value: 'priority', label: 'Priority', type: 'ordinal' },
+  { value: 'status', label: 'Status', type: 'ordinal' },
   { value: 'title', label: 'Title', type: 'text' },
   { value: 'details', label: 'Details', type: 'text' },
   { value: 'up_next', label: 'Up Next', type: 'boolean' },
@@ -143,6 +143,14 @@ const FIELDS: FieldDef[] = [
 ];
 
 function getOperators(fieldType: string): { value: CustomViewCondition['operator']; label: string }[] {
+  if (fieldType === 'ordinal') return [
+    { value: 'equals', label: '=' },
+    { value: 'not_equals', label: '\u2260' },
+    { value: 'lt', label: '<' },
+    { value: 'lte', label: '\u2264' },
+    { value: 'gt', label: '>' },
+    { value: 'gte', label: '\u2265' },
+  ];
   if (fieldType === 'select') return [
     { value: 'equals', label: 'is' },
     { value: 'not_equals', label: 'is not' },
@@ -311,8 +319,12 @@ function showViewEditor(existing?: CustomView) {
     }
 
     await saveViews();
-    // If we're editing the currently active view, refresh
-    if (state.view === `custom:${view.id}`) loadTicketsFn();
+    // Select the new/edited view
+    document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+    state.view = `custom:${view.id}`;
+    state.selectedIds.clear();
+    renderSidebarViews();
+    loadTicketsFn();
     close();
   });
 }
