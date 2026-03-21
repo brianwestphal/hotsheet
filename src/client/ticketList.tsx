@@ -163,13 +163,13 @@ function createPreviewRow(ticket: Ticket): HTMLElement {
       data-id={String(ticket.id)}
     >
       <span className="ticket-checkbox-spacer"></span>
-      <span className={`ticket-status-btn${isVerified ? ' verified' : ''}`} style="cursor:default">
-        {raw(isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status))}
-      </span>
       <span className="ticket-category-badge" style={`background-color:${getCategoryColor(ticket.category)};cursor:default`} title={ticket.category}>
         {getCategoryLabel(ticket.category)}
       </span>
       <span className="ticket-number">{ticket.ticket_number}</span>
+      <span className={`ticket-status-btn${isVerified ? ' verified' : ''}`} style="cursor:default">
+        {raw(isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status))}
+      </span>
       <span className="ticket-title-input" style="cursor:default">{ticket.title}</span>
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)};cursor:default`} title={ticket.priority}>
         {raw(getPriorityIcon(ticket.priority))}
@@ -587,13 +587,13 @@ function createTicketRow(ticket: Ticket): HTMLElement {
       data-id={String(ticket.id)}
     >
       <input type="checkbox" className="ticket-checkbox" checked={isSelected} />
-      <button className={`ticket-status-btn${isVerified ? ' verified' : ''}`} title={ticket.status.replace('_', ' ')}>
-        {raw(isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status))}
-      </button>
       <span className="ticket-category-badge" style={`background-color:${getCategoryColor(ticket.category)}`} title={ticket.category}>
         {getCategoryLabel(ticket.category)}
       </span>
       <span className="ticket-number">{ticket.ticket_number}</span>
+      <button className={`ticket-status-btn${isVerified ? ' verified' : ''}`} title={ticket.status.replace('_', ' ')}>
+        {raw(isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status))}
+      </button>
       <input type="text" className="ticket-title-input" value={ticket.title} />
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`} title={ticket.priority}>
         {raw(getPriorityIcon(ticket.priority))}
