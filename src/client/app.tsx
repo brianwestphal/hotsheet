@@ -1,19 +1,12 @@
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI, loadBackupList } from './backups.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
+import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { AppSettings, CategoryDef, Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
 import { cancelPendingSave, canUseColumnView, draggedTicketIds, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { canRedo, canUndo, performRedo, performUndo, recordTextChange, trackedBatch, trackedCompoundBatch, trackedPatch } from './undo/actions.js';
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function escapeAttr(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 async function init() {
   await loadSettings();
@@ -76,11 +69,11 @@ function rebuildCategoryUI() {
     sidebarSection.innerHTML = '';
     if (label) sidebarSection.appendChild(label);
     for (const cat of state.categories) {
-      const btn = document.createElement('button');
-      btn.className = 'sidebar-item';
-      btn.dataset.view = `category:${cat.id}`;
-      btn.innerHTML = `<span class="cat-dot" style="background:${cat.color}"></span> ${escapeHtml(cat.label)}`;
-      if (state.view === `category:${cat.id}`) btn.classList.add('active');
+      const btn = toElement(
+        <button className={`sidebar-item${state.view === `category:${cat.id}` ? ' active' : ''}`} data-view={`category:${cat.id}`}>
+          <span className="cat-dot" style={`background:${cat.color}`}></span> {cat.label}
+        </button>
+      );
       btn.addEventListener('click', () => {
         document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
         btn.classList.add('active');
@@ -245,14 +238,16 @@ function renderCategoryList() {
 
   for (let i = 0; i < state.categories.length; i++) {
     const cat = state.categories[i];
-    const row = document.createElement('div');
-    row.className = 'category-row';
-    row.innerHTML = `<input type="color" class="category-color-input" value="${cat.color}" title="Color" />`
-      + `<input type="text" class="category-label-input" value="${escapeAttr(cat.label)}" placeholder="Label" title="Display name" />`
-      + `<input type="text" class="category-short-input" value="${escapeAttr(cat.shortLabel)}" placeholder="ABR" title="Short label (3 chars)" maxlength="4" />`
-      + `<input type="text" class="category-key-input" value="${escapeAttr(cat.shortcutKey)}" placeholder="k" title="Keyboard shortcut" maxlength="1" />`
-      + `<input type="text" class="category-desc-input" value="${escapeAttr(cat.description)}" placeholder="Description..." title="Description (for AI tools)" />`
-      + `<button class="category-delete-btn" title="Remove">&times;</button>`;
+    const row = toElement(
+      <div className="category-row">
+        <input type="color" className="category-color-input" value={cat.color} title="Color" />
+        <input type="text" className="category-label-input" value={cat.label} placeholder="Label" title="Display name" />
+        <input type="text" className="category-short-input" value={cat.shortLabel} placeholder="ABR" title="Short label (3 chars)" maxlength="4" />
+        <input type="text" className="category-key-input" value={cat.shortcutKey} placeholder="k" title="Keyboard shortcut" maxlength="1" />
+        <input type="text" className="category-desc-input" value={cat.description} placeholder="Description..." title="Description (for AI tools)" />
+        <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
+      </div>
+    );
 
     const inputs = row.querySelectorAll('input');
     const [colorInput, labelInput, shortInput, keyInput, descInput] = inputs as unknown as HTMLInputElement[];
@@ -346,10 +341,7 @@ function bindCategorySettings() {
   const presetSelect = document.getElementById('category-preset-select') as HTMLSelectElement;
   void api<{ id: string; name: string }[]>('/category-presets').then(presets => {
     for (const p of presets) {
-      const opt = document.createElement('option');
-      opt.value = p.id;
-      opt.textContent = p.name;
-      presetSelect.appendChild(opt);
+      presetSelect.appendChild(toElement(<option value={p.id}>{p.name}</option>));
     }
   });
 
