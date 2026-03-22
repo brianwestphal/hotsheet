@@ -1,6 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { captureSnapshot, flipAnimate, suppressAnimation } from './animate.js';
 import { api } from './api.js';
+import { showTicketContextMenu } from './contextMenu.js';
 import { syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
@@ -405,6 +406,9 @@ function createColumnCard(ticket: Ticket): HTMLElement {
     void toggleUpNext(ticket);
   });
 
+  // Context menu
+  card.addEventListener('contextmenu', (e) => { showTicketContextMenu(e, ticket); });
+
   // Draggable
   card.draggable = true;
   card.addEventListener('dragstart', (e) => {
@@ -619,6 +623,7 @@ function createTicketRow(ticket: Ticket): HTMLElement {
   });
   row.addEventListener('mouseup', () => { row.draggable = false; });
   row.addEventListener('dragend', () => { row.draggable = false; draggedTicketIds = []; });
+  row.addEventListener('contextmenu', (e) => { showTicketContextMenu(e, ticket); });
   row.addEventListener('dragstart', (e) => {
     if (state.selectedIds.has(ticket.id) && state.selectedIds.size > 1) {
       draggedTicketIds = Array.from(state.selectedIds);

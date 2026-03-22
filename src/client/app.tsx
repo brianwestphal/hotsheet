@@ -35,6 +35,8 @@ async function init() {
   void checkForUpdate();
   // Re-render when detail panel dispatches close event
   document.addEventListener('hotsheet:render', () => renderTicketList());
+  // Tags dialog triggered from context menu
+  document.addEventListener('hotsheet:show-tags-dialog', () => { void showTagsDialog(); });
   // Auto-focus the draft input on load
   focusDraftInput();
 }
