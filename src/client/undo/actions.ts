@@ -5,8 +5,8 @@ import { loadTickets } from '../ticketList.js';
 import { undoStack } from './stack.js';
 import type { TicketSnapshot, UndoEntry } from './types.js';
 
-export function snapshot(ticket: Ticket): TicketSnapshot {
-  return {
+export function snapshot(ticket: Ticket, includeNotes = false): TicketSnapshot {
+  const s: TicketSnapshot = {
     id: ticket.id,
     title: ticket.title,
     details: ticket.details,
@@ -15,6 +15,8 @@ export function snapshot(ticket: Ticket): TicketSnapshot {
     status: ticket.status,
     up_next: ticket.up_next,
   };
+  if (includeNotes) s.notes = ticket.notes;
+  return s;
 }
 
 /** Record and apply a single-ticket field change. */
@@ -57,7 +59,7 @@ export async function trackedBatch(
   batchBody: { ids: number[]; action: string; value?: unknown },
   label: string,
 ): Promise<void> {
-  const befores = tickets.map(snapshot);
+  const befores = tickets.map(t => snapshot(t));
 
   await api('/tickets/batch', { method: 'POST', body: batchBody });
 
@@ -81,7 +83,7 @@ export async function trackedCompoundBatch(
   operations: Array<{ ids: number[]; action: string; value?: unknown }>,
   label: string,
 ): Promise<void> {
-  const befores = tickets.map(snapshot);
+  const befores = tickets.map(t => snapshot(t));
 
   for (const op of operations) {
     await api('/tickets/batch', { method: 'POST', body: op });
@@ -139,6 +141,10 @@ async function applySnapshots(snapshots: TicketSnapshot[]): Promise<void> {
           up_next: s.up_next,
         },
       });
+      // Restore notes if snapshot includes them
+      if (s.notes !== undefined) {
+        await api(`/tickets/${s.id}/notes-bulk`, { method: 'PUT', body: { notes: s.notes } });
+      }
     }
   }
 }
@@ -156,7 +162,8 @@ export async function performUndo(): Promise<void> {
     await applySnapshots(entry.before);
     console.log('[undo] applySnapshots done, reloading tickets');
     await loadTickets();
-    refreshDetail();
+    // Force detail panel to re-fetch after the render cycle settles
+    setTimeout(() => refreshDetail(), 50);
   } finally {
     undoRedoInFlight = false;
   }
@@ -173,10 +180,17 @@ export async function performRedo(): Promise<void> {
     await applySnapshots(entry.after);
     console.log('[undo] applySnapshots done, reloading tickets');
     await loadTickets();
-    refreshDetail();
+    setTimeout(() => refreshDetail(), 50);
   } finally {
     undoRedoInFlight = false;
   }
+}
+
+/** Push a notes-only undo entry. Call before modifying notes. */
+export function pushNotesUndo(ticket: Ticket, label: string, afterNotes: string) {
+  const before = snapshot(ticket, true);
+  const after = { ...snapshot(ticket, true), notes: afterNotes };
+  undoStack.push({ label, timestamp: Date.now(), before: [before], after: [after] });
 }
 
 export function canUndo(): boolean {

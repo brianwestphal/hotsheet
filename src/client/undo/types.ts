@@ -6,6 +6,7 @@ export interface TicketSnapshot {
   priority: string;
   status: string;
   up_next: boolean;
+  notes?: string;
 }
 
 export interface UndoEntry {

@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
+import { pushNotesUndo } from './undo/actions.js';
 
 // --- Tags helpers ---
 
@@ -264,6 +265,11 @@ async function loadDetail(id: number) {
 
 type NoteEntry = { id?: string; text: string; created_at: string };
 
+function syncNotesToState(ticketId: number, notes: NoteEntry[]) {
+  const ticket = state.tickets.find(t => t.id === ticketId);
+  if (ticket) ticket.notes = JSON.stringify(notes);
+}
+
 function renderNotes(ticketId: number, notes: NoteEntry[]) {
   const container = document.getElementById('detail-notes')!;
   container.innerHTML = '';
@@ -297,8 +303,12 @@ function renderNotes(ticketId: number, notes: NoteEntry[]) {
         const save = async () => {
           const newText = textarea.value.trim();
           if (newText && newText !== note.text) {
+            const ticket = state.tickets.find(t => t.id === ticketId);
+            const afterNotes = notes.map(n => n.id === note.id ? { ...n, text: newText } : n);
+            if (ticket) pushNotesUndo(ticket, 'Edit note', JSON.stringify(afterNotes));
             await api(`/tickets/${ticketId}/notes/${note.id}`, { method: 'PATCH', body: { text: newText } });
             note.text = newText;
+            syncNotesToState(ticketId, notes);
           }
           renderNotes(ticketId, notes);
         };
@@ -325,9 +335,13 @@ function renderNotes(ticketId: number, notes: NoteEntry[]) {
         menu.querySelector('.context-menu-item')!.addEventListener('click', async (ev) => {
           ev.stopPropagation();
           menu.remove();
+          const ticket = state.tickets.find(t => t.id === ticketId);
+          const afterNotes = notes.filter(n => n.id !== note.id);
+          if (ticket) pushNotesUndo(ticket, 'Delete note', JSON.stringify(afterNotes));
           await api(`/tickets/${ticketId}/notes/${note.id}`, { method: 'DELETE' });
           const idx = notes.indexOf(note);
           if (idx >= 0) notes.splice(idx, 1);
+          syncNotesToState(ticketId, notes);
           renderNotes(ticketId, notes);
         });
         document.body.appendChild(menu);

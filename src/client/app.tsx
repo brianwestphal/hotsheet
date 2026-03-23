@@ -10,7 +10,7 @@ import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { AppSettings, CategoryDef, Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
 import { cancelPendingSave, canUseColumnView, draggedTicketIds, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
-import { canRedo, canUndo, performRedo, performUndo, recordTextChange, trackedBatch, trackedCompoundBatch, trackedPatch } from './undo/actions.js';
+import { canRedo, canUndo, performRedo, performUndo, pushNotesUndo, recordTextChange, trackedBatch, trackedCompoundBatch, trackedPatch } from './undo/actions.js';
 
 async function init() {
   await loadSettings();
@@ -1025,11 +1025,19 @@ function bindDetailPanel() {
   // Add note
   document.getElementById('detail-add-note-btn')!.addEventListener('click', async () => {
     if (state.activeTicketId == null) return;
-    // Add a new empty note entry
-    await api(`/tickets/${state.activeTicketId}`, {
-      method: 'PATCH',
-      body: { notes: '(new note)' },
-    });
+    const ticket = state.tickets.find(t => t.id === state.activeTicketId);
+    if (ticket) {
+      // Snapshot before for undo (after will be computed once we know the new note)
+      const beforeNotes = ticket.notes;
+      await api(`/tickets/${state.activeTicketId}`, {
+        method: 'PATCH',
+        body: { notes: '(new note)' },
+      });
+      // Fetch the updated ticket to get the after-state notes with the new ID
+      const updated = await api<{ notes: string }>(`/tickets/${state.activeTicketId}`);
+      pushNotesUndo({ ...ticket, notes: beforeNotes } as Ticket, 'Add note', updated.notes);
+      ticket.notes = updated.notes;
+    }
     openDetail(state.activeTicketId);
   });
 
@@ -1459,6 +1467,18 @@ function bindKeyboardShortcuts() {
     if (e.key === 'n' && !isInput) {
       e.preventDefault();
       focusDraftInput();
+      return;
+    }
+
+    // Delete/Backspace: delete selected tickets (when not in an input)
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !isInput && state.selectedIds.size > 0) {
+      e.preventDefault();
+      const ids = Array.from(state.selectedIds);
+      const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+      void trackedBatch(affected, { ids, action: 'delete' }, 'Delete').then(() => {
+        state.selectedIds.clear();
+        void loadTickets();
+      });
       return;
     }
   });

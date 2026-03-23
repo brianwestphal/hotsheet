@@ -138,6 +138,19 @@ apiRoutes.delete('/tickets/:id', async (c) => {
 
 // --- Notes ---
 
+apiRoutes.put('/tickets/:id/notes-bulk', async (c) => {
+  const id = parseInt(c.req.param('id'), 10);
+  const body = await c.req.json<{ notes: string }>();
+  const db = await import('../db/connection.js').then(m => m.getDb());
+  const result = await (await db).query(
+    `UPDATE tickets SET notes = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
+    [body.notes, id]
+  );
+  if (result.rows.length === 0) return c.json({ error: 'Not found' }, 404);
+  scheduleAllSync(); notifyChange();
+  return c.json({ ok: true });
+});
+
 apiRoutes.patch('/tickets/:id/notes/:noteId', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
   const noteId = c.req.param('noteId');
