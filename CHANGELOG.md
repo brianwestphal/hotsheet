@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.0] - 2026-03-23
+
+- Tagging
+- Custom views (smart search)
+- Ticket reordering is now animated for better user feedback
+- More powerful notes: allows multiple notes as well as editing / deleting
+- Added stats dashboard
+- Added support for printing (sort of)
+- General UI improvements
+
 ## [0.3.0] - 2026-03-21
 
 - Organized Settings dialog
