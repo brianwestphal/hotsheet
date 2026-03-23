@@ -166,7 +166,22 @@ The interface is divided into:
 - API: `POST /api/tickets/query` accepts `{ logic, conditions, sort_by, sort_dir }` and returns matching tickets via parameterized SQL.
 - Custom views support both list and column layouts.
 
-### 4.14 Live Updates
+### 4.14 Dashboard
+
+- **Sidebar widget**: Always-visible compact widget below the stats bar showing a 7-day throughput spark chart, weekly completion count with trend arrow, and WIP count. Clicking it opens the full dashboard.
+- **Full dashboard view**: Replaces the ticket list with an analytics page containing:
+  - **Time range toggle**: 7, 30, or 90 days
+  - **KPI cards** (top row): Completed this week (with % change), Median cycle time, In progress (WIP), Completed/Created ratio
+  - **Throughput chart**: Bar chart of completions per day over the selected period
+  - **Created vs Completed**: Dual-line chart showing inflow vs outflow
+  - **Cumulative Flow Diagram**: Stacked area chart by status (not_started, started, completed, verified) — the gold standard for continuous workflows
+  - **Category Breakdown**: Donut chart of open tickets by category
+  - **Cycle Time Scatter**: Dot plot with 50th/85th percentile lines
+- Charts rendered as inline SVG (no external library).
+- Historical data stored in `stats_snapshots` table (daily status counts). Backfilled from ticket history on server start.
+- API: `GET /api/dashboard?days=30`
+
+### 4.15 Live Updates
 
 - The UI uses long-polling to detect data changes.
 - When a change is detected (from another tab, API call, or AI tool), the ticket list automatically refreshes.

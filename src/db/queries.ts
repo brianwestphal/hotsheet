@@ -140,8 +140,6 @@ export async function updateTicket(id: number, updates: Partial<{
     sets.push('deleted_at = NOW()');
   } else if (updates.status === 'backlog' || updates.status === 'archive') {
     sets.push('up_next = FALSE');
-    sets.push('completed_at = NULL');
-    sets.push('verified_at = NULL');
     sets.push('deleted_at = NULL');
   } else if (updates.status === 'not_started' || updates.status === 'started') {
     sets.push('completed_at = NULL');

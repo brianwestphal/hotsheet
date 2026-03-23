@@ -155,6 +155,12 @@ async function main() {
     console.log('  Restart your AI tool to pick up the new ticket creation skills.\n');
   }
 
+  // Record daily stats snapshot and backfill any missing days
+  import('./db/stats.js').then(async ({ recordDailySnapshot, backfillSnapshots }) => {
+    await backfillSnapshots();
+    await recordDailySnapshot();
+  }).catch(() => { /* non-critical */ });
+
   if (demo === null) {
     initBackupScheduler(dataDir);
   }

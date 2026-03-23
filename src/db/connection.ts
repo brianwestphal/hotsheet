@@ -93,6 +93,14 @@ async function initSchema(db: PGlite): Promise<void> {
     INSERT INTO settings (key, value) VALUES ('verified_cleanup_days', '30') ON CONFLICT DO NOTHING;
   `);
 
+  // Stats snapshots table for historical charts
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS stats_snapshots (
+      date TEXT PRIMARY KEY,
+      data TEXT NOT NULL DEFAULT '{}'
+    );
+  `);
+
   // Migrations for existing databases
   await db.exec(`
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';

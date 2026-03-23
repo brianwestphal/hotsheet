@@ -2,6 +2,7 @@ import { suppressAnimation } from './animate.js';
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI, loadBackupList } from './backups.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
+import { renderDashboard, renderSidebarWidget } from './dashboard.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, parseTags, refreshDetail, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
@@ -37,6 +38,8 @@ async function init() {
   document.addEventListener('hotsheet:render', () => renderTicketList());
   // Tags dialog triggered from context menu
   document.addEventListener('hotsheet:show-tags-dialog', () => { void showTagsDialog(); });
+  // Dashboard sidebar widget
+  void initDashboardWidget();
   // Auto-focus the draft input on load
   focusDraftInput();
 }
@@ -86,6 +89,7 @@ function rebuildCategoryUI() {
         btn.classList.add('active');
         state.view = `category:${cat.id}`;
         state.selectedIds.clear();
+        restoreTicketList();
         suppressAnimation();
         void loadTickets();
       });
@@ -590,6 +594,8 @@ function bindSidebar() {
       item.classList.add('active');
       state.view = (item as HTMLElement).dataset.view!;
       state.selectedIds.clear();
+      // Restore ticket list if coming from dashboard
+      restoreTicketList();
       suppressAnimation();
       updateLayoutToggle();
       void loadTickets();
@@ -655,6 +661,65 @@ function bindSearchInput() {
       void loadTickets();
     }
   });
+}
+
+// --- Dashboard ---
+
+function restoreTicketList() {
+  const dashContainer = document.getElementById('dashboard-container');
+  if (dashContainer) {
+    dashContainer.id = 'ticket-list';
+    dashContainer.innerHTML = '';
+    exitDashboardMode();
+  }
+}
+
+const DASHBOARD_HIDDEN_IDS = ['search-input', 'layout-toggle', 'sort-select', 'detail-position-toggle', 'glassbox-btn'];
+
+function enterDashboardMode() {
+  state.view = 'dashboard';
+  document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+  // Hide toolbar elements
+  for (const id of DASHBOARD_HIDDEN_IDS) {
+    const el = document.getElementById(id);
+    if (el) {
+      const container = el.closest('.search-box, .layout-toggle, .sort-controls') || el;
+      (container as HTMLElement).style.display = 'none';
+    }
+  }
+  // Hide batch toolbar and detail panel
+  const batchToolbar = document.getElementById('batch-toolbar');
+  if (batchToolbar) batchToolbar.style.display = 'none';
+  const detailPanel = document.getElementById('detail-panel');
+  if (detailPanel) detailPanel.style.display = 'none';
+  const resizeHandle = document.getElementById('detail-resize-handle');
+  if (resizeHandle) resizeHandle.style.display = 'none';
+
+  const ticketList = document.getElementById('ticket-list')!;
+  ticketList.innerHTML = '';
+  ticketList.id = 'dashboard-container';
+  ticketList.classList.remove('ticket-list-columns');
+  void renderDashboard(ticketList);
+}
+
+function exitDashboardMode() {
+  // Restore toolbar elements
+  for (const id of DASHBOARD_HIDDEN_IDS) {
+    const el = document.getElementById(id);
+    if (el) {
+      const container = el.closest('.search-box, .layout-toggle, .sort-controls') || el;
+      (container as HTMLElement).style.display = '';
+    }
+  }
+  restoreTicketList();
+  // Detail panel and resize handle are restored by syncDetailPanel on next render
+}
+
+async function initDashboardWidget() {
+  const widget = await renderSidebarWidget();
+  const statsBar = document.getElementById('stats-bar');
+  if (statsBar) statsBar.after(widget);
+  widget.addEventListener('click', () => enterDashboardMode());
 }
 
 // --- Shared dropdown items ---

@@ -152,6 +152,7 @@ input, select, textarea {
   padding: 4px;
   border-radius: var(--radius);
   flex-shrink: 0;
+  margin-left: auto;
 
   &:hover {
     color: var(--text);
@@ -311,7 +312,6 @@ input, select, textarea {
   font-size: 12px;
   color: var(--text-muted);
   border-top: 1px solid var(--border);
-  margin-top: 8px;
 }
 
 // --- Main Content ---
@@ -1651,6 +1651,235 @@ input, select, textarea {
   vertical-align: middle;
 
   &:hover { color: var(--accent); }
+}
+
+// --- Dashboard ---
+
+.dashboard-loading {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.dashboard {
+  padding: 20px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.dashboard-range-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+
+  .btn.active {
+    background: var(--bg-selected);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+}
+
+.dashboard-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.dashboard-kpi-card {
+  padding: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+.kpi-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.kpi-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.kpi-trend {
+  font-size: 12px;
+  margin-top: 4px;
+
+  &.up { color: #22c55e; }
+  &.down { color: #ef4444; }
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.dashboard-chart-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.dashboard-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dashboard-chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dashboard-info-btn {
+  color: var(--text-muted);
+  padding: 2px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+
+  &:hover { color: var(--accent); background: var(--bg-hover); }
+}
+
+.dashboard-chart-info {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  line-height: 1.5;
+}
+
+.dashboard-chart-body {
+  padding: 12px;
+}
+
+.dashboard-svg {
+  width: 100%;
+  height: auto;
+  color: var(--text);
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 0 0 8px;
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.chart-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chart-hover {
+  transition: opacity 0.15s;
+
+  &:hover {
+    opacity: 1 !important;
+    filter: brightness(1.1);
+  }
+}
+
+.chart-cursor {
+  position: absolute;
+  width: 1px;
+  background: #000;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 2;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px 10px;
+  pointer-events: none;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.chart-tooltip-date {
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: var(--text);
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+
+  b { color: var(--text); font-weight: 600; }
+}
+
+.chart-empty {
+  padding: 30px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+// --- Sidebar Dashboard Widget ---
+
+.sidebar-dashboard-widget {
+  padding: 8px 16px 12px;
+  cursor: pointer;
+
+  &:hover { background: var(--bg-hover); }
+}
+
+.sidebar-widget-spark {
+  margin-bottom: 4px;
+}
+
+.sidebar-widget-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.sidebar-widget-value {
+  font-weight: 500;
+}
+
+.sidebar-widget-trend {
+  font-size: 11px;
+  &.up { color: #22c55e; }
+  &.down { color: #ef4444; }
+}
+
+.sidebar-widget-wip {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
 // --- Footer ---

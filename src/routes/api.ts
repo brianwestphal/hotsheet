@@ -383,6 +383,16 @@ apiRoutes.get('/stats', async (c) => {
   return c.json(stats);
 });
 
+apiRoutes.get('/dashboard', async (c) => {
+  const { getDashboardStats, getSnapshots } = await import('../db/stats.js');
+  const days = parseInt(c.req.query('days') || '30', 10);
+  const [stats, snapshots] = await Promise.all([
+    getDashboardStats(days),
+    getSnapshots(days),
+  ]);
+  return c.json({ ...stats, snapshots });
+});
+
 // --- Settings ---
 
 apiRoutes.get('/settings', async (c) => {
