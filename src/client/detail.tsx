@@ -178,12 +178,10 @@ function loadPreviewDetail(id: number) {
   // Tags (read-only in preview)
   renderDetailTags(parseTags(ticket.tags), true);
 
-  // Render notes
-  const notesSection = document.getElementById('detail-notes-section')!;
+  // Render notes (read-only in preview)
   const notesContainer = document.getElementById('detail-notes')!;
   const notes = parseNotesJson(ticket.notes);
   if (notes.length > 0) {
-    notesSection.style.display = '';
     notesContainer.innerHTML = (<>
       {notes.map(note =>
         <div className="note-entry">
@@ -193,7 +191,6 @@ function loadPreviewDetail(id: number) {
       )}
     </>).toString();
   } else {
-    notesSection.style.display = 'none';
     notesContainer.innerHTML = '';
   }
 
@@ -252,24 +249,8 @@ async function loadDetail(id: number) {
   // Render tags
   renderDetailTags(parseTags(ticket.tags), false);
 
-  // Render notes (read-only, timestamped entries)
-  const notesSection = document.getElementById('detail-notes-section')!;
-  const notesContainer = document.getElementById('detail-notes')!;
-  const notes = parseNotesJson(ticket.notes);
-  if (notes.length > 0) {
-    notesSection.style.display = '';
-    notesContainer.innerHTML = (<>
-      {notes.map(note =>
-        <div className="note-entry">
-          {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
-          <div className="note-text">{note.text}</div>
-        </div>
-      )}
-    </>).toString();
-  } else {
-    notesSection.style.display = 'none';
-    notesContainer.innerHTML = '';
-  }
+  // Render notes (editable)
+  renderNotes(ticket.id, parseNotesJson(ticket.notes));
 
   // Meta info
   const meta = document.getElementById('detail-meta')!;
@@ -281,13 +262,102 @@ async function loadDetail(id: number) {
   </>).toString();
 }
 
-function parseNotesJson(raw: string): { text: string; created_at: string }[] {
+type NoteEntry = { id?: string; text: string; created_at: string };
+
+function renderNotes(ticketId: number, notes: NoteEntry[]) {
+  const container = document.getElementById('detail-notes')!;
+  container.innerHTML = '';
+
+  if (notes.length === 0) {
+    container.innerHTML = '<div class="notes-empty">No notes added</div>';
+    return;
+  }
+
+  for (const note of notes) {
+    const entry = toElement(
+      <div className="note-entry">
+        {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
+        <div className="note-text">{note.text}</div>
+      </div>
+    );
+
+    // Click to edit
+    {
+      entry.addEventListener('click', () => {
+        const textEl = entry.querySelector('.note-text') as HTMLElement;
+        if (entry.querySelector('.note-edit-area')) return;
+        const textarea = document.createElement('textarea');
+        textarea.className = 'note-edit-area';
+        textarea.value = note.text;
+        textarea.rows = 3;
+        textEl.style.display = 'none';
+        entry.appendChild(textarea);
+        textarea.focus();
+
+        const save = async () => {
+          const newText = textarea.value.trim();
+          if (newText && newText !== note.text) {
+            await api(`/tickets/${ticketId}/notes/${note.id}`, { method: 'PATCH', body: { text: newText } });
+            note.text = newText;
+          }
+          renderNotes(ticketId, notes);
+        };
+
+        textarea.addEventListener('blur', () => { void save(); });
+        textarea.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void save(); }
+          if (e.key === 'Escape') { e.stopPropagation(); textarea.blur(); }
+        });
+      });
+
+      // Right-click to delete
+      entry.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        document.querySelectorAll('.note-context-menu').forEach(m => m.remove());
+
+        const menu = toElement(
+          <div className="note-context-menu context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}>
+            <div className="context-menu-item danger">
+              <span className="context-menu-label">Delete Note</span>
+            </div>
+          </div>
+        );
+        menu.querySelector('.context-menu-item')!.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          menu.remove();
+          await api(`/tickets/${ticketId}/notes/${note.id}`, { method: 'DELETE' });
+          const idx = notes.indexOf(note);
+          if (idx >= 0) notes.splice(idx, 1);
+          renderNotes(ticketId, notes);
+        });
+        document.body.appendChild(menu);
+        setTimeout(() => {
+          const close = () => { menu.remove(); document.removeEventListener('click', close); };
+          document.addEventListener('click', close);
+        }, 0);
+      });
+    }
+
+    container.appendChild(entry);
+  }
+}
+
+let noteIdCounter = 0;
+function clientNoteId(): string { return `cn_${Date.now().toString(36)}_${(noteIdCounter++).toString(36)}`; }
+
+function parseNotesJson(raw: string): NoteEntry[] {
   if (!raw || raw === '') return [];
   try {
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed)) {
+      return parsed.map((n: { id?: string; text: string; created_at: string }) => ({
+        id: n.id || clientNoteId(),
+        text: n.text,
+        created_at: n.created_at,
+      }));
+    }
   } catch { /* not JSON */ }
-  if (raw.trim()) return [{ text: raw, created_at: '' }];
+  if (raw.trim()) return [{ id: clientNoteId(), text: raw, created_at: '' }];
   return [];
 }
 

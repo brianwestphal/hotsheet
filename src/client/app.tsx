@@ -954,6 +954,17 @@ function bindDetailPanel() {
     openDetail(state.activeTicketId);
   });
 
+  // Add note
+  document.getElementById('detail-add-note-btn')!.addEventListener('click', async () => {
+    if (state.activeTicketId == null) return;
+    // Add a new empty note entry
+    await api(`/tickets/${state.activeTicketId}`, {
+      method: 'PATCH',
+      body: { notes: '(new note)' },
+    });
+    openDetail(state.activeTicketId);
+  });
+
   // File upload
   document.getElementById('detail-file-input')!.addEventListener('change', async (e) => {
     const input = e.target as HTMLInputElement;
@@ -1285,6 +1296,12 @@ function bindKeyboardShortcuts() {
     }
 
     if (e.key === 'Escape') {
+      // If editing a field in the detail panel, just blur it
+      const active = document.activeElement as HTMLElement | null;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active.closest('.detail-panel, .detail-body')) {
+        active.blur();
+        return;
+      }
       if (state.selectedIds.size > 0) {
         state.selectedIds.clear();
         renderTicketList();

@@ -9,8 +9,11 @@ import {
   batchUpdateTickets,
   createTicket,
   deleteAttachment,
+  deleteNote,
   deleteTicket,
+  parseNotes,
   duplicateTickets,
+  editNote,
   emptyTrash,
   getAttachment,
   getAttachments,
@@ -103,7 +106,9 @@ apiRoutes.get('/tickets/:id', async (c) => {
   const ticket = await getTicket(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   const attachments = await getAttachments(id);
-  return c.json({ ...ticket, attachments });
+  // Normalize notes to ensure IDs are present
+  const notes = parseNotes(ticket.notes);
+  return c.json({ ...ticket, notes: JSON.stringify(notes), attachments });
 });
 
 apiRoutes.patch('/tickets/:id', async (c) => {
@@ -129,6 +134,27 @@ apiRoutes.delete('/tickets/:id', async (c) => {
   await deleteTicket(id);
   scheduleAllSync(); notifyChange();
   return c.json({ ok: true });
+});
+
+// --- Notes ---
+
+apiRoutes.patch('/tickets/:id/notes/:noteId', async (c) => {
+  const id = parseInt(c.req.param('id'), 10);
+  const noteId = c.req.param('noteId');
+  const body = await c.req.json<{ text: string }>();
+  const notes = await editNote(id, noteId, body.text);
+  if (!notes) return c.json({ error: 'Not found' }, 404);
+  scheduleAllSync(); notifyChange();
+  return c.json(notes);
+});
+
+apiRoutes.delete('/tickets/:id/notes/:noteId', async (c) => {
+  const id = parseInt(c.req.param('id'), 10);
+  const noteId = c.req.param('noteId');
+  const notes = await deleteNote(id, noteId);
+  if (!notes) return c.json({ error: 'Not found' }, 404);
+  scheduleAllSync(); notifyChange();
+  return c.json(notes);
 });
 
 apiRoutes.delete('/tickets/:id/hard', async (c) => {

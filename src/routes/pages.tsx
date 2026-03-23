@@ -182,8 +182,8 @@ pageRoutes.get('/', (c) => {
                     <input type="file" id="detail-file-input" style="display:none" />
                   </label>
                 </div>
-                <div className="detail-field detail-field-full" id="detail-notes-section" style="display:none">
-                  <label>Notes</label>
+                <div className="detail-field detail-field-full" id="detail-notes-section">
+                  <div className="detail-notes-label"><span>Notes</span> <button className="sidebar-add-view-btn" id="detail-add-note-btn" title="Add note"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
                   <div id="detail-notes" className="detail-notes"></div>
                 </div>
                 <div className="detail-meta detail-field-full" id="detail-meta"></div>

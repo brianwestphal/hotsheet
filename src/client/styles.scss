@@ -1883,6 +1883,39 @@ input, select, textarea {
   background: var(--bg-secondary);
   border-radius: var(--radius);
   border-left: 3px solid var(--accent);
+  cursor: pointer;
+
+  &:hover { background: var(--bg-hover); }
+}
+
+.notes-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
+
+.note-edit-area {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 50px;
+  outline: none;
+  margin-top: 4px;
+}
+
+.detail-notes-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
 }
 
 .note-timestamp {
