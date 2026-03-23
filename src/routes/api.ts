@@ -481,3 +481,28 @@ apiRoutes.post('/gitignore/add', async (c) => {
   ensureGitignore(process.cwd());
   return c.json({ ok: true });
 });
+
+// --- Print (Tauri) ---
+
+apiRoutes.post('/print', async (c) => {
+  const { html } = await c.req.json<{ html: string }>();
+  const { writeFileSync } = await import('fs');
+  const { tmpdir } = await import('os');
+  const { join: pathJoin } = await import('path');
+  const { execFile } = await import('child_process');
+
+  const tmpPath = pathJoin(tmpdir(), `hotsheet-print-${Date.now()}.html`);
+  writeFileSync(tmpPath, html, 'utf-8');
+
+  // Open in default browser
+  const platform = process.platform;
+  if (platform === 'darwin') {
+    execFile('open', [tmpPath]);
+  } else if (platform === 'win32') {
+    execFile('start', ['', tmpPath], { shell: true });
+  } else {
+    execFile('xdg-open', [tmpPath]);
+  }
+
+  return c.json({ ok: true, path: tmpPath });
+});

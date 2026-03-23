@@ -3,6 +3,7 @@ import { api, apiUpload } from './api.js';
 import { bindBackupsUI, loadBackupList } from './backups.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { renderDashboard, renderSidebarWidget } from './dashboard.js';
+import { showPrintDialog } from './print.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, parseTags, refreshDetail, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
@@ -38,6 +39,8 @@ async function init() {
   document.addEventListener('hotsheet:render', () => renderTicketList());
   // Tags dialog triggered from context menu
   document.addEventListener('hotsheet:show-tags-dialog', () => { void showTagsDialog(); });
+  // Print button
+  document.getElementById('print-btn')!.addEventListener('click', showPrintDialog);
   // Dashboard sidebar widget
   void initDashboardWidget();
   // Auto-focus the draft input on load
@@ -1435,6 +1438,13 @@ function bindKeyboardShortcuts() {
     if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
       e.preventDefault();
       focusDraftInput();
+      return;
+    }
+
+    // Cmd/Ctrl+P: print
+    if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+      e.preventDefault();
+      showPrintDialog();
       return;
     }
 
