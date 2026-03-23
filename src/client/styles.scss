@@ -1791,7 +1791,20 @@ input, select, textarea {
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;
-  overflow: hidden;
+
+  .ticket-number {
+    flex: 1;
+  }
+}
+
+.column-card {
+  container-type: inline-size;
+}
+
+@container (max-width: 150px) {
+  .column-card-header .ticket-priority-indicator {
+    display: none;
+  }
 }
 
 .column-card-title {
