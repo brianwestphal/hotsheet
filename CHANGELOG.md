@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.0] - 2026-03-24
+
+- Added experimental support for Claude channels
+- Added support for using delete key to delete items 
+- Fixed undo/redo support for notes
+
 ## [0.4.0] - 2026-03-23
 
 - Tagging
