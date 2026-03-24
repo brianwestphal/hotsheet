@@ -71,8 +71,9 @@ echo "Bundling server resources..."
 rm -rf "$SERVER_DIR"
 mkdir -p "$SERVER_DIR"
 
-# Copy the built server bundle and client assets
+# Copy the built server bundle, channel server, and client assets
 cp dist/cli.js "$SERVER_DIR/"
+cp dist/channel.js "$SERVER_DIR/"
 mkdir -p "$SERVER_DIR/client"
 cp dist/client/app.global.js "$SERVER_DIR/client/"
 cp dist/client/styles.css "$SERVER_DIR/client/"
