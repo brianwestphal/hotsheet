@@ -29,6 +29,7 @@ export default defineConfig([
     },
   },
   // Channel server (MCP server for Claude Code integration)
+  // Bundle everything including @modelcontextprotocol/sdk so it's fully self-contained
   {
     entry: ['src/channel.ts'],
     format: 'esm',
@@ -38,10 +39,7 @@ export default defineConfig([
     splitting: false,
     clean: false,
     sourcemap: false,
-    noExternal: [/^(?!@modelcontextprotocol)/],
-    banner: {
-      js: '#!/usr/bin/env node',
-    },
+    noExternal: [/.*/],
   },
   // Client bundle (browser JS + SCSS)
   {
