@@ -495,6 +495,74 @@ apiRoutes.post('/gitignore/add', async (c) => {
   return c.json({ ok: true });
 });
 
+// --- Claude Channel ---
+
+apiRoutes.get('/channel/claude-check', async (c) => {
+  const { execFileSync } = await import('child_process');
+  try {
+    const version = execFileSync('claude', ['--version'], { timeout: 5000, encoding: 'utf-8' }).trim();
+    // Version string like "Claude Code v2.1.85" or just "2.1.85"
+    const match = version.match(/(\d+\.\d+\.\d+)/);
+    const versionNum = match ? match[1] : null;
+    const parts = versionNum ? versionNum.split('.').map(Number) : [];
+    // Requires v2.1.80+
+    const meetsMinimum = parts.length === 3 && (
+      parts[0] > 2 || (parts[0] === 2 && parts[1] > 1) || (parts[0] === 2 && parts[1] === 1 && parts[2] >= 80)
+    );
+    return c.json({ installed: true, version: versionNum, meetsMinimum });
+  } catch {
+    return c.json({ installed: false, version: null, meetsMinimum: false });
+  }
+});
+
+let channelDoneFlag = false;
+
+apiRoutes.get('/channel/status', async (c) => {
+  const { isChannelAlive, getChannelPort } = await import('../channel-config.js');
+  const dataDir = c.get('dataDir');
+  const settings = await getSettings();
+  const enabled = settings.channel_enabled === 'true';
+  const port = getChannelPort(dataDir);
+  const alive = enabled ? await isChannelAlive(dataDir) : false;
+  // Consume the done flag (read once, then clear)
+  const done = channelDoneFlag;
+  if (done) channelDoneFlag = false;
+  return c.json({ enabled, alive, port, done });
+});
+
+apiRoutes.post('/channel/trigger', async (c) => {
+  const { triggerChannel } = await import('../channel-config.js');
+  const dataDir = c.get('dataDir');
+  const serverPort = parseInt(new URL(c.req.url).port || '4174', 10);
+  const body = await c.req.json<{ message?: string }>().catch(() => ({ message: undefined }));
+  channelDoneFlag = false; // Reset done flag on new trigger
+  const ok = await triggerChannel(dataDir, serverPort, body.message);
+  return c.json({ ok });
+});
+
+apiRoutes.post('/channel/done', async (_c) => {
+  channelDoneFlag = true;
+  notifyChange(); // Triggers long-poll so client picks up the done state
+  return _c.json({ ok: true });
+});
+
+apiRoutes.post('/channel/enable', async (c) => {
+  const { registerChannel } = await import('../channel-config.js');
+  const dataDir = c.get('dataDir');
+  await updateSetting('channel_enabled', 'true');
+  registerChannel(dataDir);
+  notifyChange();
+  return c.json({ ok: true });
+});
+
+apiRoutes.post('/channel/disable', async (c) => {
+  const { unregisterChannel } = await import('../channel-config.js');
+  await updateSetting('channel_enabled', 'false');
+  unregisterChannel();
+  notifyChange();
+  return c.json({ ok: true });
+});
+
 // --- Print (Tauri) ---
 
 apiRoutes.post('/print', async (c) => {

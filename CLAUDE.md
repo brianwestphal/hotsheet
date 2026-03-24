@@ -120,6 +120,7 @@ The `docs/` folder contains numbered requirements documents that describe the ap
   8. `8-cli-server.md` — CLI args, startup, demo mode
   9. `9-api.md` — REST API endpoint reference
   10. `10-desktop-app.md` — Tauri wrapper, updater, CLI installer
+  12. `12-claude-channel.md` — Claude Channel integration, play button, auto mode
 - **Section numbering** — each document uses `N.X` section numbers matching its file number (e.g., `3-ticket-management.md` uses §3.1, §3.2, etc.)
 - **Cross-references** — use relative markdown links between docs (e.g., `[3-ticket-management.md](3-ticket-management.md) §3.7`)
 

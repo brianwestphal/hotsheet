@@ -28,6 +28,21 @@ export default defineConfig([
       js: '#!/usr/bin/env node',
     },
   },
+  // Channel server (MCP server for Claude Code integration)
+  {
+    entry: ['src/channel.ts'],
+    format: 'esm',
+    outDir: 'dist',
+    target: 'node20',
+    platform: 'node',
+    splitting: false,
+    clean: false,
+    sourcemap: false,
+    noExternal: [/^(?!@modelcontextprotocol)/],
+    banner: {
+      js: '#!/usr/bin/env node',
+    },
+  },
   // Client bundle (browser JS + SCSS)
   {
     entry: ['src/client/app.tsx'],

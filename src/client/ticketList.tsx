@@ -876,6 +876,7 @@ async function toggleUpNext(ticket: Ticket) {
     await trackedPatch(ticket, { up_next: !ticket.up_next }, 'Toggle up next');
   }
   void loadTickets();
+  document.dispatchEvent(new CustomEvent('hotsheet:upnext-changed'));
 }
 
 async function setTicketField(ticket: Ticket, field: string, value: string) {

@@ -219,6 +219,102 @@ input, select, textarea {
   padding: 8px 0;
 }
 
+// --- Channel Play Button ---
+
+.sidebar-channel-play {
+  padding: 8px 10px 4px;
+}
+
+.channel-play-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 8px;
+  background: #22c55e;
+  color: white;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s;
+  position: relative;
+
+  &:hover { background: #16a34a; }
+  &:active { background: #15803d; }
+
+  &.pulsing {
+    animation: play-pulse 0.6s ease-out;
+  }
+
+  &.auto-mode {
+    background: #16a34a;
+  }
+}
+
+.channel-play-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.channel-auto-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@keyframes play-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(0.95); opacity: 0.7; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.settings-checkbox-label {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px !important;
+
+  input[type="checkbox"] {
+    width: auto;
+    accent-color: var(--accent);
+  }
+}
+
+.settings-experimental-heading {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-channel-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+
+  code {
+    flex: 1;
+    font-size: 11px;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    word-break: break-all;
+    color: var(--text);
+  }
+}
+
 .sidebar-copy-prompt {
   padding: 8px 10px 4px;
 }
@@ -1956,8 +2052,35 @@ input, select, textarea {
   }
 }
 
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .status-bar {
   font-size: 12px;
+}
+
+.channel-status-indicator {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+
+  &.busy {
+    color: var(--accent);
+  }
+
+  svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  &.busy svg {
+    animation: spin 1.2s linear infinite;
+  }
 }
 
 // --- Column View ---

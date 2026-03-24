@@ -16,7 +16,8 @@ export function parseTags(raw: string): string[] {
 }
 
 export function renderDetailTags(tags: string[], readOnly: boolean) {
-  const container = document.getElementById('detail-tags')!;
+  const container = document.getElementById('detail-tags');
+  if (!container) return;
   container.innerHTML = '';
   for (const tag of tags) {
     const chip = toElement(
@@ -271,7 +272,8 @@ function syncNotesToState(ticketId: number, notes: NoteEntry[]) {
 }
 
 function renderNotes(ticketId: number, notes: NoteEntry[]) {
-  const container = document.getElementById('detail-notes')!;
+  const container = document.getElementById('detail-notes');
+  if (!container) return;
   container.innerHTML = '';
 
   if (notes.length === 0) {

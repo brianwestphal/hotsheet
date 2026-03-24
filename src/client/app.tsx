@@ -13,6 +13,7 @@ import { cancelPendingSave, canUseColumnView, draggedTicketIds, focusDraftInput,
 import { canRedo, canUndo, performRedo, performUndo, pushNotesUndo, recordTextChange, trackedBatch, trackedCompoundBatch, trackedPatch } from './undo/actions.js';
 
 async function init() {
+  try {
   await loadSettings();
   await loadCategories();
   await loadCustomViews();
@@ -39,12 +40,21 @@ async function init() {
   document.addEventListener('hotsheet:render', () => renderTicketList());
   // Tags dialog triggered from context menu
   document.addEventListener('hotsheet:show-tags-dialog', () => { void showTagsDialog(); });
+  // Channel auto-trigger on up_next changes
+  document.addEventListener('hotsheet:upnext-changed', () => channelAutoTrigger());
   // Print button
-  document.getElementById('print-btn')!.addEventListener('click', showPrintDialog);
+  document.getElementById('print-btn')?.addEventListener('click', showPrintDialog);
+  // Claude Channel
+  void initChannel();
   // Dashboard sidebar widget
   void initDashboardWidget();
   // Auto-focus the draft input on load
   focusDraftInput();
+  } catch (err) {
+    console.error('Hot Sheet init failed:', err);
+    const el = document.getElementById('ticket-list');
+    if (el) el.innerHTML = `<div style="padding:20px;color:red">Init error: ${err}</div>`;
+  }
 }
 
 // --- Settings ---
@@ -241,6 +251,61 @@ function bindSettingsDialog() {
         backupDirHint.textContent = val ? 'Saved. New backups will use this location.' : 'Using default location inside the data directory.';
       });
     }, 800);
+  });
+
+  // --- Channel toggle ---
+  const channelSection = document.getElementById('settings-channel-section') as HTMLElement;
+  const channelCheckbox = document.getElementById('settings-channel-enabled') as HTMLInputElement;
+  const channelHint = document.getElementById('settings-channel-hint')!;
+  const channelInstructions = document.getElementById('settings-channel-instructions') as HTMLElement;
+  const channelCopyBtn = document.getElementById('settings-channel-copy-btn');
+  const channelCmd = document.getElementById('settings-channel-cmd');
+
+  // Check Claude CLI availability when settings open
+  const settingsBtnForChannel = document.getElementById('settings-btn')!;
+  settingsBtnForChannel.addEventListener('click', () => {
+    fetch('/api/channel/claude-check').then(r => r.ok ? r.json() : null).then((check: { installed: boolean; version: string | null; meetsMinimum: boolean } | null) => {
+      if (!check || !check.installed) {
+        channelSection.style.display = 'none';
+        return;
+      }
+      channelSection.style.display = '';
+      if (!check.meetsMinimum) {
+        channelHint.textContent = `Claude Code ${check.version || 'unknown'} detected but v2.1.80+ is required. Please upgrade Claude Code.`;
+        channelCheckbox.disabled = true;
+      } else {
+        channelHint.textContent = 'Push worklist events to a running Claude Code session via MCP channels.';
+        channelCheckbox.disabled = false;
+      }
+    }).catch(() => { channelSection.style.display = 'none'; });
+  });
+
+  fetch('/api/channel/status').then(r => r.ok ? r.json() : null).then(s => {
+    if (s) {
+      channelCheckbox.checked = s.enabled;
+      if (s.enabled) channelInstructions.style.display = '';
+    }
+  }).catch(() => {});
+  channelCheckbox.addEventListener('change', async () => {
+    if (channelCheckbox.checked) {
+      await api('/channel/enable', { method: 'POST' });
+      channelInstructions.style.display = '';
+    } else {
+      await api('/channel/disable', { method: 'POST' });
+      channelInstructions.style.display = 'none';
+    }
+    void initChannel();
+  });
+
+  // Copy command button
+  channelCopyBtn?.addEventListener('click', () => {
+    const text = channelCmd?.textContent || '';
+    void navigator.clipboard.writeText(text).then(() => {
+      if (channelCopyBtn) {
+        channelCopyBtn.textContent = 'Copied!';
+        setTimeout(() => { channelCopyBtn.textContent = 'Copy'; }, 1500);
+      }
+    });
   });
 
   // --- Category management ---
@@ -666,6 +731,113 @@ function bindSearchInput() {
   });
 }
 
+// --- Claude Channel ---
+
+let channelAutoMode = false;
+let channelDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
+let channelBusy = false;
+
+function setChannelBusy(busy: boolean) {
+  channelBusy = busy;
+  const indicator = document.getElementById('channel-status-indicator');
+  if (!indicator) return;
+  const channelSection = document.getElementById('channel-play-section');
+  if (!channelSection || channelSection.style.display === 'none') {
+    indicator.style.display = 'none';
+    return;
+  }
+  if (busy) {
+    indicator.style.display = '';
+    indicator.className = 'channel-status-indicator busy';
+    indicator.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Claude working';
+  } else {
+    indicator.style.display = '';
+    indicator.className = 'channel-status-indicator';
+    indicator.innerHTML = '\u2713 Claude idle';
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+      if (!channelBusy && indicator) indicator.style.display = 'none';
+    }, 5000);
+  }
+}
+
+let channelBusyTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function triggerChannelAndMarkBusy() {
+  setChannelBusy(true);
+  void api('/channel/trigger', { method: 'POST', body: {} });
+  // Timeout fallback: clear busy after 120s if Claude never calls /done
+  if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
+  channelBusyTimeout = setTimeout(() => {
+    if (channelBusy) setChannelBusy(false);
+  }, 120000);
+}
+
+async function initChannel() {
+  let status = { enabled: false, alive: false };
+  try {
+    const res = await fetch('/api/channel/status');
+    if (res.ok) status = await res.json();
+  } catch { /* endpoint may not exist yet */ }
+  const section = document.getElementById('channel-play-section')!;
+  const btn = document.getElementById('channel-play-btn')!;
+  const playIcon = document.getElementById('channel-play-icon')!;
+  const autoIcon = document.getElementById('channel-auto-icon')!;
+
+  if (!status.enabled) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+
+  let clickTimer: ReturnType<typeof setTimeout> | null = null;
+
+  btn.addEventListener('click', () => {
+    if (clickTimer) {
+      // Double click detected
+      clearTimeout(clickTimer);
+      clickTimer = null;
+      toggleAutoMode(btn, playIcon, autoIcon);
+    } else {
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        if (channelAutoMode) {
+          // Single click while in auto mode: turn off
+          toggleAutoMode(btn, playIcon, autoIcon);
+        } else {
+          // Single click: on-demand trigger
+          btn.classList.add('pulsing');
+          setTimeout(() => btn.classList.remove('pulsing'), 600);
+          triggerChannelAndMarkBusy();
+        }
+      }, 250);
+    }
+  });
+}
+
+function toggleAutoMode(btn: HTMLElement, playIcon: HTMLElement, autoIcon: HTMLElement) {
+  channelAutoMode = !channelAutoMode;
+  if (channelAutoMode) {
+    btn.classList.add('auto-mode');
+    playIcon.style.display = 'none';
+    autoIcon.style.display = '';
+  } else {
+    btn.classList.remove('auto-mode');
+    playIcon.style.display = '';
+    autoIcon.style.display = 'none';
+  }
+}
+
+/** Called when a ticket's up_next changes. Debounces and triggers channel in auto mode. */
+function channelAutoTrigger() {
+  if (!channelAutoMode) return;
+  if (channelDebounceTimeout) clearTimeout(channelDebounceTimeout);
+  channelDebounceTimeout = setTimeout(() => {
+    channelDebounceTimeout = null;
+    triggerChannelAndMarkBusy();
+  }, 5000);
+}
+
 // --- Dashboard ---
 
 function restoreTicketList() {
@@ -829,6 +1001,7 @@ function bindBatchToolbar() {
       await trackedBatch(selectedTickets, { ids, action: 'up_next', value: false }, 'Batch toggle up next');
     }
     void loadTickets();
+    channelAutoTrigger();
   });
 
   document.getElementById('batch-delete')!.addEventListener('click', async () => {
@@ -1019,11 +1192,12 @@ function bindDetailPanel() {
       await api(`/tickets/${state.activeTicketId}/up-next`, { method: 'POST' });
     }
     void loadTickets();
+    channelAutoTrigger();
     openDetail(state.activeTicketId);
   });
 
   // Add note
-  document.getElementById('detail-add-note-btn')!.addEventListener('click', async () => {
+  document.getElementById('detail-add-note-btn')?.addEventListener('click', async () => {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
     if (ticket) {
@@ -1495,6 +1669,15 @@ function startLongPoll() {
       if (result.version > pollVersion) {
         pollVersion = result.version;
         if (!state.backupPreview?.active) void loadTickets();
+        // Check if Claude signaled done via /channel/done
+        if (channelBusy) {
+          fetch('/api/channel/status').then(r => r.ok ? r.json() : null).then(s => {
+            if (s?.done) {
+              setChannelBusy(false);
+              if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
+            }
+          }).catch(() => {});
+        }
       }
     } catch {
       // Server down — wait longer before retry

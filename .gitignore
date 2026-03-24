@@ -7,6 +7,7 @@ dist/
 .DS_Store
 coverage/
 scheduled_tasks.lock
+.mcp.json
 
 # Tauri / Rust
 src-tauri/target/

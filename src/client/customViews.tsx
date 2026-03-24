@@ -28,7 +28,8 @@ export async function loadCustomViews() {
 }
 
 export function renderSidebarViews() {
-  const container = document.getElementById('custom-views-container')!;
+  const container = document.getElementById('custom-views-container');
+  if (!container) return;
   container.innerHTML = '';
 
   if (state.customViews.length === 0) return;
