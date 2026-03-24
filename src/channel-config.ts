@@ -1,25 +1,27 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 const MCP_SERVER_KEY = 'hotsheet-channel';
 
-/** Get the path to the channel server and the command to run it */
+/** Get the path to the channel server and the command to run it.
+ *  channel-config.ts and channel.ts are siblings in src/ (dev) and dist/ (production). */
 function getChannelServerPath(): { command: string; args: string[] } {
-  const cwd = process.cwd();
+  const thisDir = dirname(fileURLToPath(import.meta.url));
 
-  // Production: dist/channel.js exists (npm install / built package)
-  const distPath = resolve(cwd, 'dist', 'channel.js');
+  // Production: this file is dist/channel-config.js, sibling is dist/channel.js
+  const distPath = resolve(thisDir, 'channel.js');
   if (existsSync(distPath)) {
     return { command: 'node', args: [distPath] };
   }
 
-  // Dev mode: src/channel.ts exists, run via tsx
-  const srcPath = resolve(cwd, 'src', 'channel.ts');
+  // Dev mode: this file is src/channel-config.ts, sibling is src/channel.ts
+  const srcPath = resolve(thisDir, 'channel.ts');
   if (existsSync(srcPath)) {
     return { command: 'npx', args: ['tsx', srcPath] };
   }
 
-  // Fallback: assume dist
+  // Fallback
   return { command: 'node', args: [distPath] };
 }
 
