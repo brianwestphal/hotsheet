@@ -89,7 +89,7 @@ pageRoutes.get('/', (c) => {
               <button className="sidebar-item" data-view="archive">Archive</button>
               <button className="sidebar-item" data-view="trash">Trash</button>
             </div>
-            <div className="sidebar-section">
+            <div className="sidebar-section" id="sidebar-categories">
               <div className="sidebar-label">Category</div>
               <button className="sidebar-item" data-view="category:issue">
                 <span className="cat-dot" style="background:#6b7280"></span> Issue

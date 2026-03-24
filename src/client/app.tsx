@@ -86,7 +86,7 @@ async function loadCategories() {
 
 function rebuildCategoryUI() {
   // Rebuild sidebar category buttons
-  const sidebarSection = document.querySelector('.sidebar-section:nth-child(3)');
+  const sidebarSection = document.getElementById('sidebar-categories');
   if (sidebarSection) {
     const label = sidebarSection.querySelector('.sidebar-label');
     sidebarSection.innerHTML = '';

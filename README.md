@@ -74,10 +74,10 @@ The loop stays tight because the AI always knows what to work on next.
   <img src="docs/demo-2.png" alt="Quick ticket entry with the bullet-list input row" width="900">
 </p>
 
-**Six ticket categories** — Issue, Bug, Feature, Requirement Change, Task, Investigation — each with a distinct color. **Sidebar filtering** lets you drill down by view, category, or priority.
+**Customizable categories** — defaults to a software development set (Issue, Bug, Feature, Req Change, Task, Investigation), with built-in presets for Design, Product Management, Marketing, and Personal workflows. Each category has a color, badge label, and keyboard shortcut — all configurable in Settings.
 
 <p align="center">
-  <img src="docs/demo-3.png" alt="Sidebar filtering by Bug category" width="900">
+  <img src="docs/demo-3.png" alt="Sidebar with custom views and category filtering" width="900">
 </p>
 
 **Column view** — switch to a kanban-style board grouped by status. Drag tickets between columns to change status, or drag onto sidebar items to set category, priority, or view.
@@ -86,26 +86,38 @@ The loop stays tight because the AI always knows what to work on next.
   <img src="docs/demo-7.png" alt="Column view showing tickets organized by status in a kanban board" width="900">
 </p>
 
-**Batch operations** — select multiple tickets to bulk-update category, priority, status, or Up Next. Multi-select works in both list and column views.
+**Batch operations** — select multiple tickets to bulk-update category, priority, status, or Up Next. The overflow menu (⋯) provides duplicate, tags, move to backlog, and archive actions. Right-click any ticket for a full context menu with submenus.
 
 <p align="center">
-  <img src="docs/demo-5.png" alt="Multiple tickets selected with the batch toolbar visible" width="900">
+  <img src="docs/demo-5.png" alt="Multiple tickets selected with the batch toolbar and context menu" width="900">
 </p>
 
-**Detail panel** — side or bottom orientation (toggle in the toolbar), resizable, with fields for title, details, attachments, and timestamped notes. Auto-shows when you select a ticket.
+**Detail panel** — side or bottom orientation (toggle in the toolbar), resizable. Shows category, priority, status, and Up Next in a compact grid, plus title, details, tags, attachments, and editable notes. Click a note to edit inline; right-click to delete.
 
 <p align="center">
-  <img src="docs/demo-6.png" alt="Detail panel in bottom orientation showing ticket details and notes" width="900">
+  <img src="docs/demo-6.png" alt="Detail panel in bottom orientation showing ticket details, tags, and notes" width="900">
+</p>
+
+**Stats dashboard** — click the sidebar widget to open a full analytics page with throughput charts, created-vs-completed trends, cumulative flow diagram, category breakdown, and cycle time scatter plot. Hover any chart for detailed tooltips.
+
+<p align="center">
+  <img src="docs/demo-8.png" alt="Stats dashboard showing throughput, flow, and cycle time charts" width="900">
 </p>
 
 **Also includes:**
+- **Tags** — free-form tags on tickets, with autocomplete and a batch tag dialog for multi-select
+- **Custom views** — create filtered views with an interactive query builder (field + operator + value conditions, AND/OR logic)
 - **Five priority levels** — Highest to Lowest, sortable and filterable
 - **Up Next flag** — star tickets to add them to the AI worklist
-- **Drag and drop** — drag tickets onto sidebar views to change category, priority, or status
-- **Search** — full-text search across ticket titles and details
-- **Keyboard-driven** — `Enter` to create, `Cmd+I/B/F/R/K/G` for categories, `Alt+1-5` for priority, `Cmd+D` for Up Next, `Cmd+C` to copy
-- **Copy for commits** — `Cmd+C` copies selected ticket info (number + title) for use in commit messages
-- **File attachments** — attach files to any ticket
+- **Drag and drop** — drag tickets onto sidebar views to change category, priority, or status; reorder custom views
+- **Right-click context menus** — full context menu on tickets with category/priority/status submenus, tags, duplicate, delete
+- **Search** — full-text search across ticket titles, details, and ticket numbers
+- **Print** — print the dashboard, all tickets, selected tickets, or individual tickets in checklist, summary, or full-detail format
+- **Keyboard-driven** — `Enter` to create, `Cmd+I/B/F/R/K/G` for categories, `Alt+1-5` for priority, `Cmd+D` for Up Next, `Delete` to trash, `Cmd+P` to print, `Cmd+Z/Shift+Z` for undo/redo
+- **Undo/redo** — `Cmd+Z` and `Cmd+Shift+Z` for all operations including notes, batch changes, and deletions
+- **Animated transitions** — smooth FLIP animations when tickets reorder after property changes
+- **Copy for commits** — `Cmd+C` copies selected ticket info (number + title + details + notes) for use in commit messages
+- **File attachments** — attach files to any ticket, reveal in file manager
 - **Markdown sync** — `worklist.md` and `open-tickets.md` auto-generated on every change
 - **Automatic backups** — tiered snapshots (every 5 min, hourly, daily) with preview-before-restore recovery
 - **Auto-cleanup** — configurable auto-deletion of old trash and verified items
@@ -136,6 +148,18 @@ Or add it to your `CLAUDE.md`:
 ```markdown
 Read .hotsheet/worklist.md for current work items.
 ```
+
+Hot Sheet automatically generates skill files for Claude Code (as well as Cursor, GitHub Copilot, and Windsurf) so your AI tool can create tickets directly. Run `/hotsheet` in Claude Code to process the worklist.
+
+### Claude Channel Integration (Experimental)
+
+Hot Sheet can push events directly to a running Claude Code session via MCP channels. Enable it in Settings → General → Experimental:
+
+- **Play button** — appears in the sidebar. Single-click sends the worklist to Claude on demand.
+- **Auto mode** — double-click the play button to enable automatic mode. When you star a ticket for Up Next, Claude is notified after a 5-second debounce and picks up the work automatically.
+- **Status indicator** — shows "Claude working" / "Claude idle" in the footer.
+
+Requires Claude Code v2.1.80+ with channel support. See [docs/12-claude-channel.md](docs/12-claude-channel.md) for setup details.
 
 ### Other AI Tools
 
@@ -290,17 +314,18 @@ Both settings can also be changed from the settings panel UI.
 | Shortcut | Action |
 |----------|--------|
 | `Enter` | Create new ticket |
-| `Cmd+I` | Set category: Issue |
-| `Cmd+B` | Set category: Bug |
-| `Cmd+F` | Set category: Feature |
-| `Cmd+R` | Set category: Req Change |
-| `Cmd+K` | Set category: Task |
-| `Cmd+G` | Set category: Investigation |
+| `Cmd+I/B/F/R/K/G` | Set category (customizable) |
 | `Alt+1-5` | Set priority (Highest to Lowest) |
 | `Cmd+D` | Toggle Up Next |
-| `Cmd+C` | Copy ticket info (number + title) |
+| `Delete` / `Backspace` | Delete selected tickets |
+| `Cmd+C` | Copy ticket info |
 | `Cmd+A` | Select all |
-| `Escape` | Clear selection / close |
+| `Cmd+Z` | Undo |
+| `Cmd+Shift+Z` | Redo |
+| `Cmd+P` | Print |
+| `Cmd+F` | Focus search |
+| `Cmd+N` / `N` | Focus new ticket input |
+| `Escape` | Blur field / clear selection / close |
 
 ---
 
@@ -313,6 +338,7 @@ Both settings can also be changed from the settings panel UI.
 | Server | Hono |
 | Database | PGLite (embedded PostgreSQL) |
 | UI | Custom server-side JSX (no React), vanilla client JS |
+| Charts | Inline SVG (no external chart library) |
 | Build | tsup (single-file bundle) |
 | Storage | `.hotsheet/` in your project directory |
 
