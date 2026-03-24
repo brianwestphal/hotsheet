@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.3] - 2026-03-24
+
+- Fixed Tauri config for working with Claude channels
+
 ## [0.5.2] - 2026-03-24
 
 - Fixed missing release artifact needed for Claude channels when using Tauri
