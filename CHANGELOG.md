@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.1] - 2026-03-24
+
+- Fixed incorrect path in generted .mcp.json files
+
 ## [0.5.0] - 2026-03-24
 
 - Added experimental support for Claude channels
