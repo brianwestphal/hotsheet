@@ -153,10 +153,11 @@ Hot Sheet automatically generates skill files for Claude Code (as well as Cursor
 
 ### Claude Channel Integration (Experimental)
 
-Hot Sheet can push events directly to a running Claude Code session via MCP channels. Enable it in Settings → General → Experimental:
+Hot Sheet can push events directly to a running Claude Code session via MCP channels. Enable it in Settings → Experimental (the tab only appears when Claude Code is detected on your system):
 
 - **Play button** — appears in the sidebar. Single-click sends the worklist to Claude on demand.
 - **Auto mode** — double-click the play button to enable automatic mode. When you star a ticket for Up Next, Claude is notified after a 5-second debounce and picks up the work automatically.
+- **Custom commands** — create named buttons that send custom prompts to Claude. For example, a "Commit Changes" button that tells Claude to generate a commit message from recently completed tickets and commit. Configure in Settings → Experimental → Custom Commands.
 - **Status indicator** — shows "Claude working" / "Claude idle" in the footer.
 
 Requires Claude Code v2.1.80+ with channel support. See [docs/12-claude-channel.md](docs/12-claude-channel.md) for setup details.
