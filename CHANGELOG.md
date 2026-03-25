@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.3] - 2026-03-25
+
+- Custom command button styling, icon picker, color palette, drag reorder
+- Redesigned search field with pill shape, icon, and animated expansion
+
 ## [0.6.2] - 2026-03-25
 
 - Improved permission overlay detail
