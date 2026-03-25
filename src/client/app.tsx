@@ -1860,7 +1860,10 @@ function startLongPoll() {
       const result = await api<{ version: number }>(`/poll?version=${pollVersion}`);
       if (result.version > pollVersion) {
         pollVersion = result.version;
-        if (!state.backupPreview?.active) void loadTickets();
+        if (!state.backupPreview?.active) {
+          void loadTickets();
+          refreshDetail();
+        }
         // Check if Claude signaled done via /channel/done
         if (channelBusy) {
           fetch('/api/channel/status').then(r => r.ok ? r.json() : null).then(s => {
