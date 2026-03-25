@@ -108,10 +108,13 @@ A green play button (Lucide "play" icon) appears in the sidebar above the "Copy 
 
 When automatic mode is active:
 
-1. Hot Sheet watches for `up_next` changes on tickets.
-2. Changes are debounced for 5 seconds.
-3. After the debounce, a channel event is sent to Claude.
-4. The event content tells Claude to run `/hotsheet` to process the current Up Next items.
+1. **Initial debounce** — When entering automatic mode (double-click), a 5-second debounce starts before any trigger is sent.
+2. **Up Next watching** — Hot Sheet watches for `up_next` changes on tickets. Each change restarts the 5-second debounce.
+3. **Trigger after debounce** — After the debounce expires, Hot Sheet checks for Up Next items and whether Claude is idle:
+   - If Claude is idle and Up Next items exist, a channel event is sent immediately.
+   - If Claude is busy, Hot Sheet retries every 5 seconds until Claude becomes idle, then triggers.
+4. **Re-trigger on completion** — When Claude signals done (`/channel/done`), if automatic mode is still active, a new 5-second debounce starts to check for remaining or newly added Up Next items.
+5. The event content tells Claude to run `/hotsheet` to process the current Up Next items.
 
 ## 12.9 Channel Communication
 

@@ -206,7 +206,8 @@ function loadPreviewDetail(id: number) {
   </>).toString();
 }
 
-/** Force-reload the detail panel for the currently active ticket. */
+/** Force-reload the detail panel for the currently active ticket.
+ *  Skips updating text fields that currently have focus to avoid cursor disruption. */
 export function refreshDetail() {
   if (state.activeTicketId != null) {
     void loadDetail(state.activeTicketId);
@@ -223,14 +224,22 @@ async function loadDetail(id: number) {
   setDetailReadOnly(false);
 
   (document.getElementById('detail-ticket-number') as HTMLElement).textContent = ticket.ticket_number;
-  (document.getElementById('detail-title') as HTMLInputElement).value = ticket.title;
+
+  // Skip updating text fields that are currently focused to avoid cursor disruption (HS-1454)
+  const titleInput = document.getElementById('detail-title') as HTMLInputElement;
+  if (document.activeElement !== titleInput) {
+    titleInput.value = ticket.title;
+  }
   updateDetailCategory(ticket.category);
   updateDetailPriority(ticket.priority);
   updateDetailStatus(ticket.status);
   const upnextBtn = document.getElementById('detail-upnext') as HTMLButtonElement;
   upnextBtn.textContent = ticket.up_next ? '\u2605' : '\u2606';
   upnextBtn.classList.toggle('active', ticket.up_next);
-  (document.getElementById('detail-details') as HTMLTextAreaElement).value = ticket.details;
+  const detailsArea = document.getElementById('detail-details') as HTMLTextAreaElement;
+  if (document.activeElement !== detailsArea) {
+    detailsArea.value = ticket.details;
+  }
 
   // Render attachments via JSX
   const attContainer = document.getElementById('detail-attachments')!;
@@ -251,8 +260,12 @@ async function loadDetail(id: number) {
   // Render tags
   renderDetailTags(parseTags(ticket.tags), false);
 
-  // Render notes (editable)
-  renderNotes(ticket.id, parseNotesJson(ticket.notes));
+  // Skip re-rendering notes if a note is currently being edited (HS-1454)
+  const notesContainer = document.getElementById('detail-notes');
+  const noteBeingEdited = notesContainer?.querySelector('.note-edit-area') as HTMLElement | null;
+  if (!noteBeingEdited || document.activeElement !== noteBeingEdited) {
+    renderNotes(ticket.id, parseNotesJson(ticket.notes));
+  }
 
   // Meta info
   const meta = document.getElementById('detail-meta')!;

@@ -102,11 +102,17 @@ export function renderTicketList() {
   const isTrash = state.view === 'trash';
   const focusedId = isPreview ? null : getFocusedTicketId();
 
-  // Preserve in-progress title edits for existing tickets (HS-199)
+  // Preserve in-progress title edits and cursor position for existing tickets (HS-199, HS-1454)
   let editingValue: string | null = null;
+  let editingSelStart: number | null = null;
+  let editingSelEnd: number | null = null;
   if (focusedId != null && focusedId !== 'draft') {
     const input = document.querySelector<HTMLInputElement>(`.ticket-row[data-id="${focusedId}"] .ticket-title-input`);
-    if (input) editingValue = input.value;
+    if (input) {
+      editingValue = input.value;
+      editingSelStart = input.selectionStart;
+      editingSelEnd = input.selectionEnd;
+    }
   }
 
   const container = document.getElementById('ticket-list')!;
@@ -144,14 +150,21 @@ export function renderTicketList() {
   } else {
     const toolbar = document.getElementById('batch-toolbar');
     if (toolbar) toolbar.style.display = '';
-    // Restore in-progress title edit if the user was editing (HS-199)
+    // Restore in-progress title edit and cursor position if the user was editing (HS-199, HS-1454)
     if (focusedId != null && focusedId !== 'draft' && editingValue != null) {
       const input = document.querySelector<HTMLInputElement>(`.ticket-row[data-id="${focusedId}"] .ticket-title-input`);
       if (input && input.value !== editingValue) {
         input.value = editingValue;
       }
+      restoreFocus(focusedId);
+      // Restore cursor position after focus is set
+      if (input && editingSelStart != null) {
+        input.selectionStart = editingSelStart;
+        input.selectionEnd = editingSelEnd;
+      }
+    } else {
+      restoreFocus(focusedId);
     }
-    restoreFocus(focusedId);
     updateBatchToolbar();
   }
   void updateStats();

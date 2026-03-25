@@ -1118,6 +1118,10 @@ function setChannelBusy(busy: boolean) {
     setTimeout(() => {
       if (!channelBusy && indicator) indicator.style.display = 'none';
     }, 5000);
+    // In auto mode, check for more up-next items when Claude becomes idle (HS-1453)
+    if (channelAutoMode) {
+      channelAutoTrigger();
+    }
   }
 }
 
@@ -1204,27 +1208,66 @@ async function initChannel() {
   });
 }
 
+let channelAutoRetryInterval: ReturnType<typeof setInterval> | null = null;
+
 function toggleAutoMode(btn: HTMLElement, playIcon: HTMLElement, autoIcon: HTMLElement) {
   channelAutoMode = !channelAutoMode;
   if (channelAutoMode) {
     btn.classList.add('auto-mode');
     playIcon.style.display = 'none';
     autoIcon.style.display = '';
+    // Start initial 5-second debounce when entering auto mode (HS-1453)
+    channelAutoTrigger();
   } else {
     btn.classList.remove('auto-mode');
     playIcon.style.display = '';
     autoIcon.style.display = 'none';
+    // Clear pending debounce and retry when leaving auto mode
+    if (channelDebounceTimeout) { clearTimeout(channelDebounceTimeout); channelDebounceTimeout = null; }
+    if (channelAutoRetryInterval) { clearInterval(channelAutoRetryInterval); channelAutoRetryInterval = null; }
   }
 }
 
-/** Called when a ticket's up_next changes. Debounces and triggers channel in auto mode. */
+/** Called when entering auto mode or when a ticket's up_next changes.
+ *  Debounces for 5s, then attempts to trigger. Restarts debounce on new up-next items. (HS-1453) */
 function channelAutoTrigger() {
   if (!channelAutoMode) return;
+  // Restart the debounce (new up-next items restart the timer)
   if (channelDebounceTimeout) clearTimeout(channelDebounceTimeout);
+  // Clear any existing retry interval — fresh debounce takes priority
+  if (channelAutoRetryInterval) { clearInterval(channelAutoRetryInterval); channelAutoRetryInterval = null; }
+
   channelDebounceTimeout = setTimeout(() => {
     channelDebounceTimeout = null;
-    triggerChannelAndMarkBusy();
+    void attemptAutoTrigger();
   }, 5000);
+}
+
+/** After debounce, try to trigger Claude. If busy, retry every 5s until idle. (HS-1453) */
+async function attemptAutoTrigger() {
+  if (!channelAutoMode) return;
+
+  // Check if there are up-next items
+  try {
+    const stats = await api<{ up_next: number }>('/stats');
+    if (stats.up_next === 0) return;
+  } catch { /* proceed anyway */ }
+
+  if (!channelBusy) {
+    // Claude is idle — trigger now
+    if (channelAutoRetryInterval) { clearInterval(channelAutoRetryInterval); channelAutoRetryInterval = null; }
+    triggerChannelAndMarkBusy();
+  } else if (!channelAutoRetryInterval) {
+    // Claude is busy — start retrying every 5 seconds
+    channelAutoRetryInterval = setInterval(() => {
+      if (!channelAutoMode) {
+        clearInterval(channelAutoRetryInterval!);
+        channelAutoRetryInterval = null;
+        return;
+      }
+      void attemptAutoTrigger();
+    }, 5000);
+  }
 }
 
 // --- Dashboard ---
