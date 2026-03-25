@@ -174,13 +174,18 @@ When the Claude Channel is enabled, users can create custom command buttons that
 
 In Settings → Experimental → Custom Commands:
 - Click "Add Command" to create a new command
-- Each command has a **name** (button label) and a **prompt** (text sent to Claude)
+- Each command has:
+  - **Color** — chosen from a dropdown palette of 9 colors (Neutral, Blue, Green, Orange, Red, Purple, Pink, Teal, Gray). Defaults to Neutral (#e5e7eb). Text/icon color auto-computed for contrast.
+  - **Icon** — chosen from a picker with all 1693 Lucide icons. 24 featured action icons shown at top, with search to find any icon by name.
+  - **Name** — button label text
+  - **Prompt** — text sent to Claude when clicked
+- Commands can be reordered by dragging the hamburger handle
 - Commands are stored as JSON in the `custom_commands` settings key
 
 ### UI
 
 - Custom command buttons appear in the sidebar below the play button
-- Each button is a full-width row with the command name
+- Each button shows icon + left-aligned name on a colored background
 - Clicking a button sends the configured prompt to Claude via the channel
 - The completion signal (`/channel/done`) is automatically appended to all prompts
 

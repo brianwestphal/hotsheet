@@ -304,18 +304,21 @@ input, select, textarea {
 .channel-command-btn {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
   width: 100%;
-  padding: 6px 8px;
+  padding: 6px 10px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: var(--radius);
   cursor: pointer;
   font-size: 12px;
-  transition: background 0.15s;
+  transition: opacity 0.15s;
+  text-align: left;
 
-  &:hover { background: var(--bg-hover); border-color: var(--accent); }
+  svg { flex-shrink: 0; }
+
+  &:hover { opacity: 0.85; }
 }
 
 #channel-commands-container {
@@ -342,10 +345,47 @@ input, select, textarea {
   border-radius: var(--radius);
   border: 1px solid var(--border);
 
+  &.dragging { opacity: 0.4; }
+  &.drop-target { outline: 2px dashed var(--accent); outline-offset: -2px; }
+
   .settings-command-row-header {
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .command-drag-handle {
+    cursor: grab;
+    color: var(--text-muted);
+    font-size: 14px;
+    padding: 0 2px;
+    flex-shrink: 0;
+    &:hover { color: var(--text); }
+  }
+
+  .command-icon-picker-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    cursor: pointer;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    &:hover { border-color: var(--accent); color: var(--text); }
+  }
+
+  .command-color-dropdown-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    cursor: pointer;
+    flex-shrink: 0;
+    &:hover { border-color: var(--accent); }
   }
 
   input[type="text"] {
@@ -377,6 +417,90 @@ input, select, textarea {
     font-size: 11px;
     color: var(--text-muted);
   }
+}
+
+// --- Color Dropdown ---
+
+.color-dropdown-popup {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  min-width: 140px;
+}
+
+.color-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+
+  &:hover { background: var(--bg-hover); }
+  &.active { font-weight: 500; color: var(--accent); }
+
+  .command-color-swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.1);
+    flex-shrink: 0;
+  }
+}
+
+// --- Icon Picker ---
+
+.icon-picker-popup {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  width: 240px;
+  padding: 8px;
+}
+
+.icon-picker-search {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  font-size: 12px;
+  outline: none;
+  margin-bottom: 6px;
+  &:focus { border-color: var(--accent); }
+}
+
+.icon-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.icon-picker-separator {
+  grid-column: 1 / -1;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.icon-picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  cursor: pointer;
+  &:hover { background: var(--bg-hover); color: var(--text); }
+  &.active { background: var(--bg-selected); color: var(--accent); }
 }
 
 @keyframes play-pulse {

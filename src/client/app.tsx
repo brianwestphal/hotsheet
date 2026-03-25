@@ -1,3 +1,4 @@
+import { raw } from '../jsx-runtime.js';
 import { suppressAnimation } from './animate.js';
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI, loadBackupList } from './backups.js';
@@ -684,6 +685,39 @@ function bindSearchInput() {
 interface CustomCommand {
   name: string;
   prompt: string;
+  icon?: string;
+  color?: string;
+}
+
+// Predefined color palette for command buttons
+const CMD_COLORS = [
+  { value: '#e5e7eb', label: 'Neutral' },
+  { value: '#3b82f6', label: 'Blue' },
+  { value: '#22c55e', label: 'Green' },
+  { value: '#f97316', label: 'Orange' },
+  { value: '#ef4444', label: 'Red' },
+  { value: '#8b5cf6', label: 'Purple' },
+  { value: '#ec4899', label: 'Pink' },
+  { value: '#14b8a6', label: 'Teal' },
+  { value: '#6b7280', label: 'Gray' },
+];
+
+// All Lucide icons loaded from generated JSON
+import ALL_LUCIDE_ICONS from './lucide-icons.json';
+const CMD_ICONS: { name: string; svg: string }[] = Object.entries(ALL_LUCIDE_ICONS as Record<string, string>).map(([name, svg]) => ({ name, svg }));
+
+
+function renderIconSvg(svgPath: string, size = 14, color = 'currentColor'): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${svgPath}</svg>`;
+}
+
+function contrastColor(hex: string): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  // Relative luminance
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? '#1a1a1a' : '#ffffff';
 }
 
 let customCommands: CustomCommand[] = [];
@@ -772,6 +806,121 @@ function bindExperimentalSettings() {
   });
 }
 
+function showColorDropdown(anchor: HTMLElement, cmdIndex: number) {
+  document.querySelectorAll('.color-dropdown-popup').forEach(p => p.remove());
+  const popup = toElement(
+    <div className="color-dropdown-popup">
+      {CMD_COLORS.map(c =>
+        <button className={`color-dropdown-item${(customCommands[cmdIndex].color || CMD_COLORS[0].value) === c.value ? ' active' : ''}`} data-color={c.value}>
+          <span className="command-color-swatch" style={`background:${c.value}`}></span>
+          <span>{c.label}</span>
+        </button>
+      )}
+    </div>
+  );
+  popup.querySelectorAll('.color-dropdown-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const color = (item as HTMLElement).dataset.color!;
+      customCommands[cmdIndex] = { ...customCommands[cmdIndex], color };
+      anchor.style.background = color;
+      popup.remove();
+      void saveCustomCommands();
+    });
+  });
+  const rect = anchor.getBoundingClientRect();
+  popup.style.position = 'fixed';
+  popup.style.zIndex = '3000';
+  document.body.appendChild(popup);
+  // Clamp to viewport
+  const popupRect = popup.getBoundingClientRect();
+  let top = rect.bottom + 4;
+  if (top + popupRect.height > window.innerHeight - 8) top = rect.top - popupRect.height - 4;
+  popup.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - popupRect.width - 8))}px`;
+  popup.style.top = `${Math.max(8, top)}px`;
+  setTimeout(() => {
+    const close = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node)) { popup.remove(); document.removeEventListener('click', close); }
+    };
+    document.addEventListener('click', close);
+  }, 0);
+}
+
+function showIconPicker(anchor: HTMLElement, cmdIndex: number) {
+  // Remove any existing picker
+  document.querySelectorAll('.icon-picker-popup').forEach(p => p.remove());
+
+  const popup = toElement(
+    <div className="icon-picker-popup">
+      <input type="text" className="icon-picker-search" placeholder="Search icons..." />
+      <div className="icon-picker-grid"></div>
+    </div>
+  );
+
+  const grid = popup.querySelector('.icon-picker-grid') as HTMLElement;
+  const searchInput = popup.querySelector('.icon-picker-search') as HTMLInputElement;
+
+  const FEATURED = ['terminal', 'git-commit', 'git-branch', 'git-pull-request', 'code', 'play', 'send', 'upload', 'download', 'refresh-cw', 'check', 'save', 'rocket', 'zap', 'search', 'file-text', 'clipboard', 'trash', 'edit', 'settings', 'bug', 'test-tube', 'database', 'lock'];
+
+  function renderIcons(filter = '') {
+    grid.innerHTML = '';
+    let icons: typeof CMD_ICONS;
+    if (filter) {
+      icons = CMD_ICONS.filter(ic => ic.name.includes(filter.toLowerCase()));
+    } else {
+      // Show featured icons first, then a separator, then all
+      const featured = FEATURED.map(name => CMD_ICONS.find(ic => ic.name === name)).filter(Boolean) as typeof CMD_ICONS;
+      const sep = document.createElement('div');
+      sep.className = 'icon-picker-separator';
+      addIconButtons(featured);
+      grid.appendChild(sep);
+      icons = CMD_ICONS.filter(ic => !FEATURED.includes(ic.name));
+    }
+    addIconButtons(icons);
+  }
+
+  function addIconButtons(icons: typeof CMD_ICONS) {
+    for (const ic of icons) {
+      const btn = toElement(
+        <button className={`icon-picker-item${customCommands[cmdIndex].icon === ic.name ? ' active' : ''}`} title={ic.name}>
+          {raw(renderIconSvg(ic.svg, 18))}
+        </button>
+      );
+      btn.addEventListener('click', () => {
+        customCommands[cmdIndex] = { ...customCommands[cmdIndex], icon: ic.name };
+        anchor.innerHTML = renderIconSvg(ic.svg, 16);
+        popup.remove();
+        void saveCustomCommands();
+      });
+      grid.appendChild(btn);
+    }
+  }
+
+  renderIcons();
+  searchInput.addEventListener('input', () => renderIcons(searchInput.value));
+
+  // Position below anchor, clamped to viewport
+  const rect = anchor.getBoundingClientRect();
+  popup.style.position = 'fixed';
+  popup.style.zIndex = '3000';
+  document.body.appendChild(popup);
+  const popupRect = popup.getBoundingClientRect();
+  let top = rect.bottom + 4;
+  if (top + popupRect.height > window.innerHeight - 8) top = rect.top - popupRect.height - 4;
+  popup.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - popupRect.width - 8))}px`;
+  popup.style.top = `${Math.max(8, top)}px`;
+  searchInput.focus();
+
+  // Close on outside click
+  setTimeout(() => {
+    const close = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node)) { popup.remove(); document.removeEventListener('click', close); }
+    };
+    document.addEventListener('click', close);
+  }, 0);
+}
+
+let draggedCmdIndex: number | null = null;
+
 function renderCustomCommandSettings() {
   const list = document.getElementById('settings-commands-list');
   if (!list) return;
@@ -779,9 +928,15 @@ function renderCustomCommandSettings() {
 
   for (let i = 0; i < customCommands.length; i++) {
     const cmd = customCommands[i];
+    const currentIcon = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
+    const currentColor = cmd.color || CMD_COLORS[0].value;
+
     const row = toElement(
-      <div className="settings-command-row">
+      <div className="settings-command-row" draggable="true" data-cmd-index={String(i)}>
         <div className="settings-command-row-header">
+          <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
+          <button className="command-color-dropdown-btn" title="Choose color" style={`background:${currentColor}`}></button>
+          <button className="command-icon-picker-btn" title="Choose icon">{raw(renderIconSvg(currentIcon.svg, 16))}</button>
           <input type="text" value={cmd.name} placeholder="Button label..." />
           <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
         </div>
@@ -790,19 +945,58 @@ function renderCustomCommandSettings() {
       </div>
     );
 
-    const nameInput = row.querySelector('input') as HTMLInputElement;
+    const nameInput = row.querySelector('input[type="text"]') as HTMLInputElement;
     const promptArea = row.querySelector('textarea') as HTMLTextAreaElement;
 
     const save = () => {
-      customCommands[i] = { name: nameInput.value, prompt: promptArea.value };
+      customCommands[i] = { ...customCommands[i], name: nameInput.value, prompt: promptArea.value };
       void saveCustomCommands();
     };
 
     nameInput.addEventListener('input', save);
     promptArea.addEventListener('input', save);
 
+    // Color dropdown
+    const colorBtn = row.querySelector('.command-color-dropdown-btn') as HTMLElement;
+    colorBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showColorDropdown(colorBtn, i);
+    });
+
+    // Icon picker
+    row.querySelector('.command-icon-picker-btn')!.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showIconPicker(row.querySelector('.command-icon-picker-btn') as HTMLElement, i);
+    });
+
     row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
       customCommands.splice(i, 1);
+      renderCustomCommandSettings();
+      void saveCustomCommands();
+    });
+
+    // Drag and drop reordering
+    row.addEventListener('dragstart', (e) => {
+      draggedCmdIndex = i;
+      e.dataTransfer!.setData('text/plain', String(i));
+      e.dataTransfer!.effectAllowed = 'move';
+      setTimeout(() => row.classList.add('dragging'), 0);
+    });
+    row.addEventListener('dragend', () => { row.classList.remove('dragging'); draggedCmdIndex = null; });
+    row.addEventListener('dragover', (e) => {
+      if (draggedCmdIndex === null) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = 'move';
+      row.classList.add('drop-target');
+    });
+    row.addEventListener('dragleave', () => { row.classList.remove('drop-target'); });
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      row.classList.remove('drop-target');
+      if (draggedCmdIndex === null || draggedCmdIndex === i) return;
+      const [moved] = customCommands.splice(draggedCmdIndex, 1);
+      customCommands.splice(i, 0, moved);
+      draggedCmdIndex = null;
       renderCustomCommandSettings();
       void saveCustomCommands();
     });
@@ -827,8 +1021,11 @@ function renderChannelCommands() {
 
   for (const cmd of customCommands) {
     if (!cmd.name.trim() || !cmd.prompt.trim()) continue;
+    const color = cmd.color || CMD_COLORS[0].value;
+    const textColor = contrastColor(color);
+    const iconDef = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
     const btn = toElement(
-      <button className="channel-command-btn">{cmd.name}</button>
+      <button className="channel-command-btn" style={`background:${color};color:${textColor}`}>{raw(renderIconSvg(iconDef.svg, 14, textColor))}<span>{cmd.name}</span></button>
     );
     btn.addEventListener('click', () => {
       triggerChannelAndMarkBusy(cmd.prompt);
