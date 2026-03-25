@@ -262,6 +262,29 @@ input, select, textarea {
   justify-content: center;
 }
 
+.no-upnext-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 4px 10px;
+  padding: 6px 10px;
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: #92400e;
+  animation: permission-fade-in 0.2s ease-out;
+}
+
+.no-upnext-dismiss {
+  color: #92400e;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+  &:hover { color: #78350f; }
+}
+
 // --- Custom command buttons ---
 
 .channel-command-btn {
@@ -1388,6 +1411,25 @@ input, select, textarea {
   color: rgba(255, 255, 255, 0.7);
   margin-bottom: 24px;
   line-height: 1.5;
+}
+
+.permission-tool {
+  margin-bottom: 12px;
+}
+
+.permission-preview {
+  text-align: left;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .permission-overlay-actions {

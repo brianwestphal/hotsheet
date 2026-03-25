@@ -847,7 +847,7 @@ function startPermissionPolling() {
     try {
       const res = await fetch('/api/channel/permission');
       if (!res.ok) return;
-      const data = await res.json() as { pending: { request_id: string; tool_name: string; description: string } | null };
+      const data = await res.json() as { pending: { request_id: string; tool_name: string; description: string; input_preview?: string } | null };
       if (data.pending) {
         showPermissionOverlay(data.pending);
       }
@@ -859,12 +859,18 @@ function stopPermissionPolling() {
   if (permissionPollInterval) { clearInterval(permissionPollInterval); permissionPollInterval = null; }
 }
 
-function showPermissionOverlay(perm: { request_id: string; tool_name: string; description: string }) {
+function showPermissionOverlay(perm: { request_id: string; tool_name: string; description: string; input_preview?: string }) {
   const overlay = document.getElementById('permission-overlay');
   if (!overlay || overlay.style.display !== 'none') return;
 
   const detail = document.getElementById('permission-overlay-detail');
-  if (detail) detail.textContent = `${perm.tool_name}: ${perm.description}`;
+  if (detail) {
+    let html = `<div class="permission-tool">${perm.tool_name}: ${perm.description}</div>`;
+    if (perm.input_preview) {
+      html += `<pre class="permission-preview">${perm.input_preview.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`;
+    }
+    detail.innerHTML = html;
+  }
 
   overlay.style.display = '';
 
@@ -930,6 +936,34 @@ function triggerChannelAndMarkBusy(message?: string) {
   }, 120000);
 }
 
+async function checkAndTrigger(btn: HTMLElement) {
+  try {
+    const stats = await api<{ up_next: number }>('/stats');
+    if (stats.up_next === 0) {
+      showNoUpNextAlert();
+      return;
+    }
+  } catch { /* proceed anyway if stats fail */ }
+  btn.classList.add('pulsing');
+  setTimeout(() => btn.classList.remove('pulsing'), 600);
+  triggerChannelAndMarkBusy();
+}
+
+function showNoUpNextAlert() {
+  const existing = document.getElementById('no-upnext-alert');
+  if (existing) existing.remove();
+  const alert = toElement(
+    <div id="no-upnext-alert" className="no-upnext-alert">
+      <span>No Up Next items to process</span>
+      <button className="no-upnext-dismiss">{'\u00d7'}</button>
+    </div>
+  );
+  alert.querySelector('.no-upnext-dismiss')!.addEventListener('click', () => alert.remove());
+  setTimeout(() => alert.remove(), 4000);
+  const playSection = document.getElementById('channel-play-section');
+  if (playSection) playSection.after(alert);
+}
+
 async function initChannel() {
   let status = { enabled: false, alive: false };
   try {
@@ -965,10 +999,8 @@ async function initChannel() {
           // Single click while in auto mode: turn off
           toggleAutoMode(btn, playIcon, autoIcon);
         } else {
-          // Single click: on-demand trigger
-          btn.classList.add('pulsing');
-          setTimeout(() => btn.classList.remove('pulsing'), 600);
-          triggerChannelAndMarkBusy();
+          // Single click: on-demand trigger — check for up-next items first
+          void checkAndTrigger(btn);
         }
       }, 250);
     }
