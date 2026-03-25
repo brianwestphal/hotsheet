@@ -100,7 +100,7 @@ A green play button (Lucide "play" icon) appears in the sidebar above the "Copy 
 
 ### Behavior
 
-- **Single click**: Sends a one-time event to Claude to process the Up Next worklist. Button pulses briefly.
+- **Single click**: Checks for Up Next items first. If none, shows a yellow warning alert "No Up Next items to process" (auto-dismisses after 4 seconds). If items exist, sends a one-time event to Claude. Button pulses briefly.
 - **Double click**: Toggles automatic mode. The play icon swaps to a fast-forward icon.
 - **Single click while in auto mode**: Turns off automatic mode, restores play icon.
 
@@ -156,7 +156,7 @@ When Claude needs approval to run a tool (Bash, Write, Edit, etc.), the channel 
 
 ### Overlay
 
-A dark, blurred overlay with large white text: "Claude is waiting for permission". Below it shows the tool name and description. Three buttons:
+A dark, blurred overlay with large white text: "Claude is waiting for permission". Below it shows the tool name, description, and the `input_preview` (the actual command or file path being requested) in a monospace code block. Three buttons:
 
 - **Allow** — sends `behavior: 'allow'` back to Claude Code, tool proceeds
 - **Deny** — sends `behavior: 'deny'`, tool is rejected

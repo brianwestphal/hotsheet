@@ -19,7 +19,7 @@ Each ticket has the following properties:
   - Detail panel: displays tags as removable chips with an input to add new tags by pressing Enter.
   - Batch toolbar "..." menu: "Tags..." opens a dialog with check/uncheck/mixed-state checkboxes for all known tags. Mixed state means some selected tickets have the tag and others don't — mixed tags are left unchanged on save.
   - API: `GET /api/tags` returns all unique tags, ticket PATCH accepts `tags` (JSON string).
-- **Notes** — Append-only timestamped entries stored as a JSON array.
+- **Notes** — Timestamped entries stored as a JSON array. Each note has a unique ID, text, and created_at timestamp. Notes can be added, edited, and deleted.
 - **Timestamps** — created_at, updated_at, completed_at, verified_at, deleted_at.
 
 ### 3.2 CRUD Operations
@@ -61,8 +61,13 @@ Tickets progress through these statuses:
 
 ### 3.5 Notes
 
-- Notes are append-only: each note is a timestamped `{ text, created_at }` entry added to a JSON array.
-- Legacy plain-text notes (from before the JSON format) are transparently wrapped as a single entry.
+- Each note is a `{ id, text, created_at }` entry stored in a JSON array in the `notes` column.
+- Note IDs are auto-generated server-side (`n_<timestamp>_<counter>`). Legacy notes without IDs get auto-assigned on read.
+- **Add**: Via the + button in the detail panel (appends a new note), or via ticket PATCH `notes` field (append-only, for AI tool compatibility).
+- **Edit**: Click a note in the detail panel to inline-edit. Saves on blur or Cmd+Enter. API: `PATCH /api/tickets/:id/notes/:noteId`.
+- **Delete**: Right-click a note for "Delete Note" context menu. API: `DELETE /api/tickets/:id/notes/:noteId`.
+- **Bulk replace**: `PUT /api/tickets/:id/notes-bulk` replaces the entire notes array (used by undo system).
+- All note operations are tracked in the undo stack.
 - Notes are displayed in the detail panel and included in markdown exports.
 
 ### 3.6 Batch Operations

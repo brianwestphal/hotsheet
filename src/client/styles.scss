@@ -74,18 +74,32 @@ input, select, textarea {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex: 1;
-  max-width: 500px;
 }
 
 .search-box {
-  flex: 1;
+  width: 200px;
+  min-width: 120px;
+  position: relative;
+  transition: width 0.3s ease;
+
+  &:focus-within {
+    width: 50vw;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    pointer-events: none;
+  }
 
   input {
     width: 100%;
-    padding: 6px 12px;
+    padding: 6px 12px 6px 30px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: 20px;
     background: var(--bg-secondary);
     outline: none;
 

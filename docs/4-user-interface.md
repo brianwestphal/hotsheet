@@ -85,6 +85,8 @@ The interface is divided into:
 
 ### 4.7 Search
 
+- Pill-shaped search input with a Lucide search icon, right-aligned in the toolbar.
+- Default width 200px; animates to 50vw on focus (0.3s ease transition), shrinks back on blur.
 - Text search across ticket title, details, and ticket number (case-insensitive).
 - Input debounced at 200ms.
 - Escape key clears the search field.
@@ -145,6 +147,7 @@ The interface is divided into:
   - **General** (SlidersHorizontal icon) — App name, auto-clear trash/verified days.
   - **Categories** (Tag icon) — Category management with inline editing and preset selector (see [3-ticket-management.md](3-ticket-management.md) §3.1).
   - **Backups** (HardDrive icon) — Backup location, backup list (see [7-backup-restore.md](7-backup-restore.md)).
+  - **Experimental** (Flask icon) — Claude Channel integration and custom commands. Only shown when `claude` CLI is detected on the system (see [12-claude-channel.md](12-claude-channel.md)).
   - **Updates** (Download icon) — Software updates, shown only in the Tauri desktop app.
 - Tabs persist their selection while the dialog is open; resets to General when reopened.
 - Closed via X button, clicking the overlay, or pressing Escape.

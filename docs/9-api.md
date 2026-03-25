@@ -42,7 +42,25 @@ Request body: `{ ids: number[], action: string, value?: string | boolean }`
 
 Supported actions: `delete`, `restore`, `category`, `priority`, `status`, `up_next`.
 
-### 9.3 Attachment Endpoints
+### 9.3 Note Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| PATCH | `/api/tickets/:id/notes/:noteId` | Edit an individual note's text |
+| DELETE | `/api/tickets/:id/notes/:noteId` | Delete an individual note |
+| PUT | `/api/tickets/:id/notes-bulk` | Replace the entire notes array (used by undo) |
+
+Notes can also be appended via the ticket PATCH endpoint's `notes` field (append-only, for AI tool compatibility).
+
+### 9.4 Duplicate Endpoint
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/tickets/duplicate` | Duplicate selected tickets (`{ ids: number[] }`) |
+
+Copies are created with " - Copy" suffix (incrementing if conflicts exist).
+
+### 9.5 Attachment Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -51,19 +69,35 @@ Supported actions: `delete`, `restore`, `category`, `priority`, `status`, `up_ne
 | POST | `/api/attachments/:id/reveal` | Reveal file in OS file manager |
 | GET | `/api/attachments/file/*` | Serve an attachment file |
 
-### 9.4 Trash Endpoint
+### 9.6 Trash Endpoint
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/trash/empty` | Hard-delete all trashed tickets |
 
-### 9.5 Stats Endpoint
+### 9.7 Stats & Dashboard Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/stats` | Ticket counts: total, open, up_next, by_category, by_status |
+| GET | `/api/dashboard?days=N` | Dashboard data: throughput, cycle time, CFD snapshots, category breakdown, KPIs |
 
-### 9.6 Settings Endpoints
+### 9.8 Tags & Categories Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/tags` | List all unique tags across tickets |
+| GET | `/api/categories` | Get current category definitions |
+| PUT | `/api/categories` | Replace category definitions |
+| GET | `/api/category-presets` | List available category presets |
+
+### 9.9 Custom View Query
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/tickets/query` | Query tickets with custom view conditions (`{ logic, conditions, sort_by, sort_dir }`) |
+
+### 9.10 Settings Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -72,7 +106,7 @@ Supported actions: `delete`, `restore`, `category`, `priority`, `status`, `up_ne
 | GET | `/api/file-settings` | Get file-based settings (appName, backupDir) |
 | PATCH | `/api/file-settings` | Update file-based settings |
 
-### 9.7 Backup Endpoints
+### 9.11 Backup Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -83,7 +117,7 @@ Supported actions: `delete`, `restore`, `category`, `priority`, `status`, `up_ne
 | POST | `/api/backups/preview/cleanup` | Clean up preview database |
 | POST | `/api/backups/restore` | Restore from a backup |
 
-### 9.8 Utility Endpoints
+### 9.12 Utility Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -91,15 +125,32 @@ Supported actions: `delete`, `restore`, `category`, `priority`, `status`, `up_ne
 | GET | `/api/worklist-info` | Get AI prompt text and skillCreated flag |
 | GET | `/api/gitignore/status` | Check if .hotsheet is in .gitignore |
 | POST | `/api/gitignore/add` | Add .hotsheet to .gitignore |
+| POST | `/api/print` | Generate a print HTML file and open in browser |
 
-### 9.9 Change Notification
+### 9.13 Claude Channel Endpoints
+
+See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel API reference.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/channel/claude-check` | Check Claude CLI availability and version |
+| GET | `/api/channel/status` | Channel state, port, and done flag |
+| POST | `/api/channel/trigger` | Send event to Claude via channel |
+| POST | `/api/channel/done` | Claude signals completion |
+| POST | `/api/channel/enable` | Enable channel, register in `.mcp.json` |
+| POST | `/api/channel/disable` | Disable channel, remove from `.mcp.json` |
+| GET | `/api/channel/permission` | Check pending permission requests |
+| POST | `/api/channel/permission/respond` | Respond to a permission request |
+| POST | `/api/channel/permission/dismiss` | Dismiss permission overlay |
+
+### 9.14 Change Notification
 
 - All mutation endpoints (create, update, delete, batch, attachment, settings) increment an internal change version counter.
 - The `/api/poll` endpoint returns when the change version exceeds the client's known version, enabling long-poll live updates.
 
 ## Non-Functional Requirements
 
-### 9.10 Consistency
+### 9.15 Consistency
 
 - All mutation endpoints trigger markdown sync and change notification.
 - The API is the single source of truth; the UI and markdown exports are derived views.
