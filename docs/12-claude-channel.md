@@ -142,7 +142,31 @@ Claude communicates back using:
 - The done flag is consumed on read (one-shot) and reset on each new trigger.
 - A 120-second timeout fallback clears the busy state if Claude never signals completion.
 
-## 12.10 Custom Commands
+## 12.10 Permission Relay
+
+When Claude needs approval to run a tool (Bash, Write, Edit, etc.), the channel server receives a permission request notification and forwards it to Hot Sheet.
+
+### How it works
+
+1. The channel server declares `claude/channel/permission` capability
+2. When Claude calls a tool that needs approval, Claude Code sends `notifications/claude/channel/permission_request` to the channel server
+3. The channel server stores the pending request and exposes it via `GET /permission`
+4. Hot Sheet polls `/api/channel/permission` every 2 seconds when the channel is enabled
+5. When a pending permission is detected, a full-screen overlay appears
+
+### Overlay
+
+A dark, blurred overlay with large white text: "Claude is waiting for permission". Below it shows the tool name and description. Three buttons:
+
+- **Allow** — sends `behavior: 'allow'` back to Claude Code, tool proceeds
+- **Deny** — sends `behavior: 'deny'`, tool is rejected
+- **Dismiss** — closes the overlay without responding (the terminal dialog remains open for the user to handle there)
+
+The overlay auto-expires after 120 seconds if not acted on (matching the channel server's expiry).
+
+Note: The local terminal dialog stays open in parallel. Whichever is answered first (Hot Sheet or terminal) takes effect.
+
+## 12.11 Custom Commands
 
 When the Claude Channel is enabled, users can create custom command buttons that appear below the play button in the sidebar.
 
@@ -165,7 +189,7 @@ In Settings → Experimental → Custom Commands:
 Name: `Commit Changes`
 Prompt: `Make a commit message for the recently completed tickets, without wrapping long lines. Add all unstaged changes to the git commit. Git commit with the message you generated but don't push.`
 
-## 12.11 API Endpoints
+## 12.12 API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -175,6 +199,9 @@ Prompt: `Make a commit message for the recently completed tickets, without wrapp
 | `/api/channel/done` | POST | Called by Claude to signal it has finished processing |
 | `/api/channel/enable` | POST | Enable the channel and register in `.mcp.json` |
 | `/api/channel/disable` | POST | Disable the channel and remove from `.mcp.json` |
+| `/api/channel/permission` | GET | Check for pending permission requests from Claude |
+| `/api/channel/permission/respond` | POST | Respond to a permission request (`{ request_id, behavior }`) |
+| `/api/channel/permission/dismiss` | POST | Dismiss a pending permission overlay without responding |
 
 ## 12.11 Requirements
 

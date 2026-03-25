@@ -540,6 +540,49 @@ apiRoutes.post('/channel/trigger', async (c) => {
   return c.json({ ok });
 });
 
+apiRoutes.get('/channel/permission', async (c) => {
+  const { getChannelPort } = await import('../channel-config.js');
+  const dataDir = c.get('dataDir');
+  const port = getChannelPort(dataDir);
+  if (!port) return c.json({ pending: null });
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/permission`);
+    const data = await res.json();
+    return c.json(data);
+  } catch {
+    return c.json({ pending: null });
+  }
+});
+
+apiRoutes.post('/channel/permission/respond', async (c) => {
+  const { getChannelPort } = await import('../channel-config.js');
+  const dataDir = c.get('dataDir');
+  const port = getChannelPort(dataDir);
+  if (!port) return c.json({ error: 'Channel not available' }, 503);
+  const body = await c.req.json<{ request_id: string; behavior: 'allow' | 'deny' }>();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/permission/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return c.json(await res.json());
+  } catch {
+    return c.json({ error: 'Failed to reach channel server' }, 503);
+  }
+});
+
+apiRoutes.post('/channel/permission/dismiss', async (c) => {
+  const { getChannelPort } = await import('../channel-config.js');
+  const dataDir = c.get('dataDir');
+  const port = getChannelPort(dataDir);
+  if (!port) return c.json({ ok: true });
+  try {
+    await fetch(`http://127.0.0.1:${port}/permission/dismiss`, { method: 'POST' });
+  } catch { /* ignore */ }
+  return c.json({ ok: true });
+});
+
 apiRoutes.post('/channel/done', async (_c) => {
   channelDoneFlag = true;
   notifyChange(); // Triggers long-poll so client picks up the done state

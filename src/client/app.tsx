@@ -837,6 +837,57 @@ function renderChannelCommands() {
   }
 }
 
+// --- Permission Overlay ---
+
+let permissionPollInterval: ReturnType<typeof setInterval> | null = null;
+
+function startPermissionPolling() {
+  if (permissionPollInterval) return;
+  permissionPollInterval = setInterval(async () => {
+    try {
+      const res = await fetch('/api/channel/permission');
+      if (!res.ok) return;
+      const data = await res.json() as { pending: { request_id: string; tool_name: string; description: string } | null };
+      if (data.pending) {
+        showPermissionOverlay(data.pending);
+      }
+    } catch { /* ignore */ }
+  }, 2000);
+}
+
+function stopPermissionPolling() {
+  if (permissionPollInterval) { clearInterval(permissionPollInterval); permissionPollInterval = null; }
+}
+
+function showPermissionOverlay(perm: { request_id: string; tool_name: string; description: string }) {
+  const overlay = document.getElementById('permission-overlay');
+  if (!overlay || overlay.style.display !== 'none') return;
+
+  const detail = document.getElementById('permission-overlay-detail');
+  if (detail) detail.textContent = `${perm.tool_name}: ${perm.description}`;
+
+  overlay.style.display = '';
+
+  function respond(behavior: 'allow' | 'deny') {
+    void fetch('/api/channel/permission/respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_id: perm.request_id, behavior }),
+    });
+    overlay!.style.display = 'none';
+  }
+
+  function dismiss() {
+    void fetch('/api/channel/permission/dismiss', { method: 'POST' });
+    overlay!.style.display = 'none';
+  }
+
+  // Use one-time click handlers via { once: true }
+  document.getElementById('permission-allow-btn')?.addEventListener('click', () => respond('allow'), { once: true });
+  document.getElementById('permission-deny-btn')?.addEventListener('click', () => respond('deny'), { once: true });
+  document.getElementById('permission-dismiss-btn')?.addEventListener('click', dismiss, { once: true });
+}
+
 // --- Claude Channel ---
 
 let channelAutoMode = false;
@@ -892,10 +943,12 @@ async function initChannel() {
 
   if (!status.enabled) {
     section.style.display = 'none';
+    stopPermissionPolling();
     return;
   }
   section.style.display = '';
   renderChannelCommands();
+  startPermissionPolling();
 
   let clickTimer: ReturnType<typeof setTimeout> | null = null;
 

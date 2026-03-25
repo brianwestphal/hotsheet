@@ -6,8 +6,9 @@
  */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
 import { createServer } from 'http';
-import { writeFileSync, unlinkSync } from 'fs';
+import { writeFileSync, unlinkSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 // Parse --data-dir argument
@@ -27,7 +28,10 @@ const mcp = new Server(
   { name: 'hotsheet-channel', version: '0.1.0' },
   {
     capabilities: {
-      experimental: { 'claude/channel': {} },
+      experimental: {
+        'claude/channel': {},
+        'claude/channel/permission': {},
+      },
     },
     instructions: [
       'Events from the hotsheet-channel arrive as <channel source="hotsheet-channel">.',
@@ -39,8 +43,40 @@ const mcp = new Server(
   },
 );
 
+// Track pending permission requests
+interface PendingPermission {
+  request_id: string;
+  tool_name: string;
+  description: string;
+  input_preview: string;
+  timestamp: number;
+}
+let pendingPermission: PendingPermission | null = null;
+
 // Connect to Claude Code over stdio
 await mcp.connect(new StdioServerTransport());
+
+// Handle permission requests from Claude Code
+const PermissionRequestSchema = z.object({
+  method: z.literal('notifications/claude/channel/permission_request'),
+  params: z.object({
+    request_id: z.string(),
+    tool_name: z.string(),
+    description: z.string(),
+    input_preview: z.string(),
+  }),
+});
+
+mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
+  pendingPermission = {
+    request_id: params.request_id,
+    tool_name: params.tool_name,
+    description: params.description,
+    input_preview: params.input_preview,
+    timestamp: Date.now(),
+  };
+  process.stderr.write(`Permission request: ${params.tool_name} — ${params.description}\n`);
+});
 
 // Start HTTP server for Hot Sheet to POST commands
 const httpServer = createServer(async (req, res) => {
@@ -56,6 +92,44 @@ const httpServer = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/permission') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    // Auto-expire after 120 seconds
+    if (pendingPermission && Date.now() - pendingPermission.timestamp > 120000) {
+      pendingPermission = null;
+    }
+    res.end(JSON.stringify({ pending: pendingPermission }));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/permission/respond') {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    try {
+      const { request_id, behavior } = JSON.parse(body) as { request_id: string; behavior: 'allow' | 'deny' };
+      await mcp.notification({
+        method: 'notifications/claude/channel/permission',
+        params: { request_id, behavior },
+      });
+      if (pendingPermission?.request_id === request_id) {
+        pendingPermission = null;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/permission/dismiss') {
+    pendingPermission = null;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
     return;

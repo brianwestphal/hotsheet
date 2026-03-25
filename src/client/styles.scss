@@ -1349,6 +1349,83 @@ input, select, textarea {
   border-top: 1px solid var(--border);
 }
 
+// --- Permission Overlay ---
+
+.permission-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  backdrop-filter: blur(12px) saturate(120%);
+  animation: permission-fade-in 0.3s ease-out;
+}
+
+@keyframes permission-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.permission-overlay-content {
+  text-align: center;
+  max-width: 480px;
+  padding: 40px;
+}
+
+.permission-overlay-text {
+  font-size: 28px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 12px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.permission-overlay-detail {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.permission-overlay-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.permission-overlay-btn {
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  transition: all 0.15s;
+
+  &.permission-allow {
+    background: #22c55e;
+    color: white;
+    border-color: #22c55e;
+    &:hover { background: #16a34a; }
+  }
+
+  &.permission-deny {
+    background: #ef4444;
+    color: white;
+    border-color: #ef4444;
+    &:hover { background: #dc2626; }
+  }
+
+  &.permission-dismiss {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+    &:hover { background: rgba(255, 255, 255, 0.2); }
+  }
+}
+
 // --- Context Menu ---
 
 .context-menu {
