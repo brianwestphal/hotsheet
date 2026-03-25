@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.2] - 2026-03-25
+
+- Improved permission overlay detail
+- Added empty worklist alert
+- Fixed detail panel not auto-refreshing on external changes
+
 ## [0.6.1] - 2026-03-25
 
 - Added permission relay overlay for Claude Channel integration
