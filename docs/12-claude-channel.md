@@ -40,7 +40,9 @@ Instructions tell Claude: when a hotsheet channel event arrives, run `/hotsheet`
 
 ## 12.4 Settings
 
-- **Claude Channel**: Enable/disable toggle in the General settings tab, under an "Experimental" heading. Disabled by default.
+The Claude Channel and custom commands are configured in the **Experimental** settings tab (Lucide Flask icon). This tab only appears when the `claude` CLI is detected on the system.
+
+- **Claude Channel**: Enable/disable toggle. Disabled by default.
 - The toggle is only shown if `claude` CLI is detected on the system (`GET /api/channel/claude-check`).
 - If Claude Code is installed but below v2.1.80, the toggle is disabled with a message to upgrade.
 - When enabled: registers the channel server in `.mcp.json` (merging with existing entries) and shows launch instructions with a copyable command.
@@ -140,7 +142,30 @@ Claude communicates back using:
 - The done flag is consumed on read (one-shot) and reset on each new trigger.
 - A 120-second timeout fallback clears the busy state if Claude never signals completion.
 
-## 12.10 API Endpoints
+## 12.10 Custom Commands
+
+When the Claude Channel is enabled, users can create custom command buttons that appear below the play button in the sidebar.
+
+### Configuration
+
+In Settings → Experimental → Custom Commands:
+- Click "Add Command" to create a new command
+- Each command has a **name** (button label) and a **prompt** (text sent to Claude)
+- Commands are stored as JSON in the `custom_commands` settings key
+
+### UI
+
+- Custom command buttons appear in the sidebar below the play button
+- Each button is a full-width row with the command name
+- Clicking a button sends the configured prompt to Claude via the channel
+- The completion signal (`/channel/done`) is automatically appended to all prompts
+
+### Example
+
+Name: `Commit Changes`
+Prompt: `Make a commit message for the recently completed tickets, without wrapping long lines. Add all unstaged changes to the git commit. Git commit with the message you generated but don't push.`
+
+## 12.11 API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|

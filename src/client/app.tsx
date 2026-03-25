@@ -253,60 +253,8 @@ function bindSettingsDialog() {
     }, 800);
   });
 
-  // --- Channel toggle ---
-  const channelSection = document.getElementById('settings-channel-section') as HTMLElement;
-  const channelCheckbox = document.getElementById('settings-channel-enabled') as HTMLInputElement;
-  const channelHint = document.getElementById('settings-channel-hint')!;
-  const channelInstructions = document.getElementById('settings-channel-instructions') as HTMLElement;
-  const channelCopyBtn = document.getElementById('settings-channel-copy-btn');
-  const channelCmd = document.getElementById('settings-channel-cmd');
-
-  // Check Claude CLI availability when settings open
-  const settingsBtnForChannel = document.getElementById('settings-btn')!;
-  settingsBtnForChannel.addEventListener('click', () => {
-    fetch('/api/channel/claude-check').then(r => r.ok ? r.json() : null).then((check: { installed: boolean; version: string | null; meetsMinimum: boolean } | null) => {
-      if (!check || !check.installed) {
-        channelSection.style.display = 'none';
-        return;
-      }
-      channelSection.style.display = '';
-      if (!check.meetsMinimum) {
-        channelHint.textContent = `Claude Code ${check.version || 'unknown'} detected but v2.1.80+ is required. Please upgrade Claude Code.`;
-        channelCheckbox.disabled = true;
-      } else {
-        channelHint.textContent = 'Push worklist events to a running Claude Code session via MCP channels.';
-        channelCheckbox.disabled = false;
-      }
-    }).catch(() => { channelSection.style.display = 'none'; });
-  });
-
-  fetch('/api/channel/status').then(r => r.ok ? r.json() : null).then(s => {
-    if (s) {
-      channelCheckbox.checked = s.enabled;
-      if (s.enabled) channelInstructions.style.display = '';
-    }
-  }).catch(() => {});
-  channelCheckbox.addEventListener('change', async () => {
-    if (channelCheckbox.checked) {
-      await api('/channel/enable', { method: 'POST' });
-      channelInstructions.style.display = '';
-    } else {
-      await api('/channel/disable', { method: 'POST' });
-      channelInstructions.style.display = 'none';
-    }
-    void initChannel();
-  });
-
-  // Copy command button
-  channelCopyBtn?.addEventListener('click', () => {
-    const text = channelCmd?.textContent || '';
-    void navigator.clipboard.writeText(text).then(() => {
-      if (channelCopyBtn) {
-        channelCopyBtn.textContent = 'Copied!';
-        setTimeout(() => { channelCopyBtn.textContent = 'Copy'; }, 1500);
-      }
-    });
-  });
+  // --- Experimental tab (channel + custom commands) ---
+  bindExperimentalSettings();
 
   // --- Category management ---
   bindCategorySettings();
@@ -731,6 +679,164 @@ function bindSearchInput() {
   });
 }
 
+// --- Experimental Settings (Channel + Custom Commands) ---
+
+interface CustomCommand {
+  name: string;
+  prompt: string;
+}
+
+let customCommands: CustomCommand[] = [];
+
+function bindExperimentalSettings() {
+  const experimentalTab = document.getElementById('settings-tab-experimental') as HTMLElement;
+  const experimentalPanel = document.getElementById('settings-experimental-panel') as HTMLElement;
+  const channelCheckbox = document.getElementById('settings-channel-enabled') as HTMLInputElement;
+  const channelHint = document.getElementById('settings-channel-hint')!;
+  const channelInstructions = document.getElementById('settings-channel-instructions') as HTMLElement;
+  const channelCopyBtn = document.getElementById('settings-channel-copy-btn');
+  const channelCmd = document.getElementById('settings-channel-cmd');
+  const customCommandsSection = document.getElementById('settings-custom-commands-section') as HTMLElement;
+
+  // Check Claude CLI when settings open
+  document.getElementById('settings-btn')!.addEventListener('click', () => {
+    fetch('/api/channel/claude-check').then(r => r.ok ? r.json() : null).then((check: { installed: boolean; version: string | null; meetsMinimum: boolean } | null) => {
+      if (!check || !check.installed) {
+        experimentalTab.style.display = 'none';
+        experimentalPanel.style.display = 'none';
+        return;
+      }
+      experimentalTab.style.display = '';
+      experimentalPanel.style.display = '';
+      if (!check.meetsMinimum) {
+        channelHint.textContent = `Claude Code ${check.version || 'unknown'} detected but v2.1.80+ is required. Please upgrade Claude Code.`;
+        channelCheckbox.disabled = true;
+      } else {
+        channelHint.textContent = 'Push worklist events to a running Claude Code session via MCP channels.';
+        channelCheckbox.disabled = false;
+      }
+      renderCustomCommandSettings();
+    }).catch(() => {
+      experimentalTab.style.display = 'none';
+      experimentalPanel.style.display = 'none';
+    });
+  });
+
+  // Load channel status and custom commands
+  fetch('/api/channel/status').then(r => r.ok ? r.json() : null).then(s => {
+    if (s) {
+      channelCheckbox.checked = s.enabled;
+      if (s.enabled) {
+        channelInstructions.style.display = '';
+        customCommandsSection.style.display = '';
+      }
+    }
+  }).catch(() => {});
+
+  // Load custom commands from settings
+  void api<Record<string, string>>('/settings').then(settings => {
+    if (settings.custom_commands) {
+      try { customCommands = JSON.parse(settings.custom_commands); } catch { /* ignore */ }
+    }
+    renderChannelCommands();
+  });
+
+  channelCheckbox.addEventListener('change', async () => {
+    if (channelCheckbox.checked) {
+      await api('/channel/enable', { method: 'POST' });
+      channelInstructions.style.display = '';
+      customCommandsSection.style.display = '';
+    } else {
+      await api('/channel/disable', { method: 'POST' });
+      channelInstructions.style.display = 'none';
+      customCommandsSection.style.display = 'none';
+    }
+    void initChannel();
+    renderChannelCommands();
+  });
+
+  channelCopyBtn?.addEventListener('click', () => {
+    const text = channelCmd?.textContent || '';
+    void navigator.clipboard.writeText(text).then(() => {
+      if (channelCopyBtn) {
+        channelCopyBtn.textContent = 'Copied!';
+        setTimeout(() => { channelCopyBtn.textContent = 'Copy'; }, 1500);
+      }
+    });
+  });
+
+  // Add command button
+  document.getElementById('settings-add-command-btn')?.addEventListener('click', () => {
+    customCommands.push({ name: '', prompt: '' });
+    renderCustomCommandSettings();
+  });
+}
+
+function renderCustomCommandSettings() {
+  const list = document.getElementById('settings-commands-list');
+  if (!list) return;
+  list.innerHTML = '';
+
+  for (let i = 0; i < customCommands.length; i++) {
+    const cmd = customCommands[i];
+    const row = toElement(
+      <div className="settings-command-row">
+        <div className="settings-command-row-header">
+          <input type="text" value={cmd.name} placeholder="Button label..." />
+          <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
+        </div>
+        <label>Prompt sent to Claude:</label>
+        <textarea placeholder="Tell Claude what to do...">{cmd.prompt}</textarea>
+      </div>
+    );
+
+    const nameInput = row.querySelector('input') as HTMLInputElement;
+    const promptArea = row.querySelector('textarea') as HTMLTextAreaElement;
+
+    const save = () => {
+      customCommands[i] = { name: nameInput.value, prompt: promptArea.value };
+      void saveCustomCommands();
+    };
+
+    nameInput.addEventListener('input', save);
+    promptArea.addEventListener('input', save);
+
+    row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
+      customCommands.splice(i, 1);
+      renderCustomCommandSettings();
+      void saveCustomCommands();
+    });
+
+    list.appendChild(row);
+  }
+}
+
+async function saveCustomCommands() {
+  await api('/settings', { method: 'PATCH', body: { custom_commands: JSON.stringify(customCommands) } });
+  renderChannelCommands();
+}
+
+function renderChannelCommands() {
+  const container = document.getElementById('channel-commands-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  // Only show if channel is enabled and there are commands
+  const channelSection = document.getElementById('channel-play-section');
+  if (!channelSection || channelSection.style.display === 'none') return;
+
+  for (const cmd of customCommands) {
+    if (!cmd.name.trim() || !cmd.prompt.trim()) continue;
+    const btn = toElement(
+      <button className="channel-command-btn">{cmd.name}</button>
+    );
+    btn.addEventListener('click', () => {
+      triggerChannelAndMarkBusy(cmd.prompt);
+    });
+    container.appendChild(btn);
+  }
+}
+
 // --- Claude Channel ---
 
 let channelAutoMode = false;
@@ -763,9 +869,9 @@ function setChannelBusy(busy: boolean) {
 
 let channelBusyTimeout: ReturnType<typeof setTimeout> | null = null;
 
-function triggerChannelAndMarkBusy() {
+function triggerChannelAndMarkBusy(message?: string) {
   setChannelBusy(true);
-  void api('/channel/trigger', { method: 'POST', body: {} });
+  void api('/channel/trigger', { method: 'POST', body: { message } });
   // Timeout fallback: clear busy after 120s if Claude never calls /done
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
   channelBusyTimeout = setTimeout(() => {
@@ -789,6 +895,7 @@ async function initChannel() {
     return;
   }
   section.style.display = '';
+  renderChannelCommands();
 
   let clickTimer: ReturnType<typeof setTimeout> | null = null;
 

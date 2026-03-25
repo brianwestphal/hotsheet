@@ -69,6 +69,7 @@ pageRoutes.get('/', (c) => {
                 <span className="channel-auto-icon" id="channel-auto-icon" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M12 6a2 2 0 0 1 3.414-1.414l6 6a2 2 0 0 1 0 2.828l-6 6A2 2 0 0 1 12 18z"/><path d="M2 6a2 2 0 0 1 3.414-1.414l6 6a2 2 0 0 1 0 2.828l-6 6A2 2 0 0 1 2 18z"/></svg></span>
               </button>
             </div>
+            <div id="channel-commands-container"></div>
             <div className="sidebar-copy-prompt" id="copy-prompt-section" style="display:none">
               <button className="copy-prompt-btn" id="copy-prompt-btn" title="Copy worklist prompt to clipboard">
                 <span className="copy-prompt-icon" id="copy-prompt-icon"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
@@ -233,6 +234,10 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>
               <span>Backups</span>
             </button>
+            <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental" style="display:none">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>
+              <span>Experimental</span>
+            </button>
             <button className="settings-tab" data-tab="updates" id="settings-tab-updates" style="display:none">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
               <span>Updates</span>
@@ -252,25 +257,6 @@ pageRoutes.get('/', (c) => {
               <div className="settings-field">
                 <label>Auto-clear verified after (days)</label>
                 <input type="number" id="settings-verified-days" min="1" value="30" />
-              </div>
-              <div id="settings-channel-section" style="display:none">
-                <div className="settings-section" style="margin-top:16px">
-                  <h3 className="settings-experimental-heading">Experimental</h3>
-                  <div className="settings-field">
-                    <label className="settings-checkbox-label">
-                      <input type="checkbox" id="settings-channel-enabled" />
-                      Enable Claude Channel integration
-                    </label>
-                    <span className="settings-hint" id="settings-channel-hint">Push worklist events to a running Claude Code session via MCP channels.</span>
-                    <div id="settings-channel-instructions" style="display:none">
-                      <div className="settings-hint" style="margin-top:8px">Launch Claude Code with channel support:</div>
-                      <div className="settings-channel-command">
-                        <code id="settings-channel-cmd">claude --dangerously-load-development-channels server:hotsheet-channel</code>
-                        <button className="btn btn-sm" id="settings-channel-copy-btn" title="Copy command">Copy</button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
             <div className="settings-tab-panel" data-panel="categories">
@@ -296,6 +282,32 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint" id="settings-backup-dir-hint">Leave empty to use the default location inside the data directory.</span>
               </div>
               <div id="backup-list" className="backup-list">Loading backups...</div>
+            </div>
+            <div className="settings-tab-panel" data-panel="experimental" id="settings-experimental-panel" style="display:none">
+              <div className="settings-field">
+                <label className="settings-checkbox-label">
+                  <input type="checkbox" id="settings-channel-enabled" />
+                  Enable Claude Channel integration
+                </label>
+                <span className="settings-hint" id="settings-channel-hint">Push worklist events to a running Claude Code session via MCP channels.</span>
+                <div id="settings-channel-instructions" style="display:none">
+                  <div className="settings-hint" style="margin-top:8px">Launch Claude Code with channel support:</div>
+                  <div className="settings-channel-command">
+                    <code id="settings-channel-cmd">claude --dangerously-load-development-channels server:hotsheet-channel</code>
+                    <button className="btn btn-sm" id="settings-channel-copy-btn" title="Copy command">Copy</button>
+                  </div>
+                </div>
+              </div>
+              <div id="settings-custom-commands-section" style="display:none">
+                <div className="settings-section" style="margin-top:16px">
+                  <div className="settings-section-header">
+                    <h3>Custom Commands</h3>
+                    <button className="btn btn-sm" id="settings-add-command-btn">Add Command</button>
+                  </div>
+                  <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
+                  <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
+                </div>
+              </div>
             </div>
             <div className="settings-tab-panel" data-panel="updates" id="settings-updates-section" style="display:none">
               <div className="settings-section-header">

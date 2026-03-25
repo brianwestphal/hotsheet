@@ -91,16 +91,14 @@ export async function isChannelAlive(dataDir: string): Promise<boolean> {
 export async function triggerChannel(dataDir: string, serverPort: number, message?: string): Promise<boolean> {
   const port = getChannelPort(dataDir);
   if (!port) return false;
-  const defaultMessage = [
-    'Process the Hot Sheet worklist. Run /hotsheet to work through the current Up Next items.',
-    '',
-    `When you are completely finished processing all items (or if the worklist was empty), signal completion by running:`,
-    `curl -s -X POST http://localhost:${serverPort}/api/channel/done`,
-  ].join('\n');
+  const doneSignal = `\n\nWhen you are completely finished (or if there was nothing to do), signal completion by running:\ncurl -s -X POST http://localhost:${serverPort}/api/channel/done`;
+  const content = message
+    ? message + doneSignal
+    : 'Process the Hot Sheet worklist. Run /hotsheet to work through the current Up Next items.' + doneSignal;
   try {
     const res = await fetch(`http://127.0.0.1:${port}/trigger`, {
       method: 'POST',
-      body: message || defaultMessage,
+      body: content,
     });
     return res.ok;
   } catch {
