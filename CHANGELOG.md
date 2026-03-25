@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.4] - 2026-03-26
+
+- Fixed data refresh disrupting text field editing
+- Improved automatic mode debounce/retry logic (when using Claude channel support)
+
 ## [0.6.3] - 2026-03-25
 
 - Custom command button styling, icon picker, color palette, drag reorder
