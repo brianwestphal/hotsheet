@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.0] - 2026-03-25
+
+- Users can now, when experimental Claude channels integration is enabled, add custom claude trigger buttons to the UI
+- Moved Experimental settings to a new tab in the settings dialog
+
 ## [0.5.3] - 2026-03-24
 
 - Fixed Tauri config for working with Claude channels
