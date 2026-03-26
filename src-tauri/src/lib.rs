@@ -305,6 +305,84 @@ fn install_cli(app: tauri::AppHandle) -> Result<InstallResult, String> {
     })
 }
 
+/// Read app_icon from settings.json in the data directory and apply it on startup.
+fn apply_saved_icon(app: &tauri::AppHandle) {
+    // Find the data dir from CLI args (--data-dir <path>)
+    let args: Vec<String> = std::env::args().collect();
+    let data_dir = args.iter().position(|a| a == "--data-dir")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .map(|p| p.join(".hotsheet").to_string_lossy().to_string())
+                .unwrap_or_default()
+        });
+
+    if data_dir.is_empty() { return; }
+
+    let settings_path = std::path::PathBuf::from(&data_dir).join("settings.json");
+    let variant = match std::fs::read_to_string(&settings_path) {
+        Ok(contents) => {
+            serde_json::from_str::<serde_json::Value>(&contents)
+                .ok()
+                .and_then(|v| v.get("appIcon").and_then(|i| i.as_str().map(String::from)))
+        }
+        Err(_) => None,
+    };
+
+    if let Some(variant) = variant {
+        if variant != "default" && !variant.is_empty() {
+            let _ = set_app_icon(app.clone(), variant);
+        }
+    }
+}
+
+#[tauri::command]
+fn set_app_icon(app: tauri::AppHandle, variant: String) -> Result<String, String> {
+    use tauri::image::Image;
+
+    // Resolve the icon PNG from bundled resources
+    let resource_path = app.path()
+        .resource_dir()
+        .map_err(|e| format!("resource dir: {}", e))?
+        .join("icons/variants")
+        .join(format!("{}.png", variant));
+
+    let png_data = std::fs::read(&resource_path)
+        .map_err(|e| format!("read icon {}: {}", resource_path.display(), e))?;
+
+    // Set window icon (cross-platform: taskbar on Windows/Linux)
+    if let Some(win) = app.get_webview_window("main") {
+        let image = Image::from_bytes(&png_data)
+            .map_err(|e| format!("parse png: {}", e))?;
+        let _ = win.set_icon(image);
+    }
+
+    // macOS: also set the dock icon via NSApplication
+    #[cfg(target_os = "macos")]
+    {
+        set_macos_dock_icon(&png_data);
+    }
+
+    Ok(format!("icon set to {}", variant))
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_dock_icon(png_data: &[u8]) {
+    use objc2::{AnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+
+    // Safe because Tauri commands run on the main thread
+    if let Some(mtm) = MainThreadMarker::new() {
+        let data = NSData::with_bytes(png_data);
+        if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
+            let app = NSApplication::sharedApplication(mtm);
+            unsafe { app.setApplicationIconImage(Some(&image)); }
+        }
+    }
+}
+
 #[tauri::command]
 fn request_attention(app: tauri::AppHandle) -> Result<String, String> {
     use tauri::UserAttentionType;
@@ -394,12 +472,16 @@ pub fn run() {
             get_pending_update,
             check_for_update,
             install_update,
+            set_app_icon,
             request_attention,
             request_attention_once
         ])
         .setup(|_app| {
             #[allow(unused_variables)]
             let app = _app;
+
+            // Apply saved icon variant on startup
+            apply_saved_icon(app.handle());
 
             // --- Dev mode: spawn Node server directly via tsx ---
             #[cfg(debug_assertions)]

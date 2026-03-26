@@ -4,6 +4,7 @@ import { join, resolve } from 'path';
 
 export interface FileSettings {
   appName?: string;
+  appIcon?: string;
   backupDir?: string;
   secret?: string;
   secretPathHash?: string;

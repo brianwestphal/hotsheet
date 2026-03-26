@@ -1849,6 +1849,52 @@ input, select, textarea {
   &:hover { background: var(--bg-selected); color: var(--accent); }
 }
 
+.settings-app-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-app-name-row input[type="text"] { flex: 1; }
+
+.app-icon-picker-btn {
+  flex-shrink: 0;
+  padding: 4px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--bg);
+
+  &:hover { border-color: var(--accent); }
+
+  img { display: block; border-radius: 4px; }
+}
+
+.icon-variant-popup {
+  z-index: 10000;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.icon-variant-option {
+  padding: 4px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  background: none;
+
+  &:hover { border-color: var(--accent); }
+  &.active { border-color: var(--accent); background: var(--bg-selected); }
+
+  img { display: block; border-radius: 4px; }
+}
+
 .settings-checkbox-label {
   display: flex !important;
   align-items: center;

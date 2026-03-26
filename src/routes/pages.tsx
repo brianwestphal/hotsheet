@@ -252,7 +252,12 @@ pageRoutes.get('/', (c) => {
             <div className="settings-tab-panel active" data-panel="general">
               <div className="settings-field">
                 <label>App name</label>
-                <input type="text" id="settings-app-name" placeholder="Hot Sheet" />
+                <div className="settings-app-name-row">
+                  <button className="app-icon-picker-btn" id="app-icon-picker-btn" title="Change app icon">
+                    <img id="app-icon-preview" src="/static/assets/icon-default.png" width="28" height="28" />
+                  </button>
+                  <input type="text" id="settings-app-name" placeholder="Hot Sheet" />
+                </div>
                 <span className="settings-hint" id="settings-app-name-hint">Custom name shown in the title bar. Leave empty for default.</span>
               </div>
               <div className="settings-field">

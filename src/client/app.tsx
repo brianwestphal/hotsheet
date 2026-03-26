@@ -204,6 +204,67 @@ function bindSettingsDialog() {
     }, 500);
   });
 
+  // App icon picker
+  const iconBtn = document.getElementById('app-icon-picker-btn')!;
+  const iconPreview = document.getElementById('app-icon-preview') as HTMLImageElement;
+  let currentIcon = 'default';
+
+  // Load current icon from file-settings
+  void api<{ appIcon?: string }>('/file-settings').then((fs) => {
+    if (fs.appIcon) {
+      currentIcon = fs.appIcon;
+      iconPreview.src = `/static/assets/icon-${currentIcon}.png`;
+    }
+  });
+
+  iconBtn.addEventListener('click', () => {
+    // Remove existing popup
+    document.querySelectorAll('.icon-variant-popup').forEach(el => el.remove());
+
+    const variants = ['default', ...Array.from({ length: 9 }, (_, i) => `variant-${i + 1}`)];
+    const popup = toElement(
+      <div className="icon-variant-popup">
+        {variants.map(v =>
+          <button className={`icon-variant-option${v === currentIcon ? ' active' : ''}`} data-variant={v}>
+            <img src={`/static/assets/icon-${v}.png`} width="40" height="40" />
+          </button>
+        )}
+      </div>
+    );
+
+    popup.querySelectorAll('.icon-variant-option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const variant = (btn as HTMLElement).dataset.variant!;
+        currentIcon = variant;
+        iconPreview.src = `/static/assets/icon-${variant}.png`;
+        popup.remove();
+
+        // Save to file-settings
+        void api('/file-settings', { method: 'PATCH', body: { appIcon: variant } });
+
+        // Apply via Tauri if available
+        const invoke = getTauriInvoke();
+        if (invoke) {
+          invoke('set_app_icon', { variant }).catch(() => {});
+        }
+      });
+    });
+
+    const rect = iconBtn.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.left = `${rect.left}px`;
+    popup.style.top = `${rect.bottom + 4}px`;
+    document.body.appendChild(popup);
+
+    // Close on outside click
+    setTimeout(() => {
+      const close = (e: MouseEvent) => {
+        if (!popup.contains(e.target as Node)) { popup.remove(); document.removeEventListener('click', close); }
+      };
+      document.addEventListener('click', close);
+    }, 0);
+  });
+
   // Notification dropdowns
   const notifyPermSelect = document.getElementById('settings-notify-permission') as HTMLSelectElement;
   const notifyCompSelect = document.getElementById('settings-notify-completed') as HTMLSelectElement;
@@ -446,9 +507,9 @@ async function checkForUpdate() {
   }
 }
 
-function getTauriInvoke(): ((cmd: string) => Promise<unknown>) | null {
+function getTauriInvoke(): ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null {
   const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
-    | { core?: { invoke: (cmd: string) => Promise<unknown> } }
+    | { core?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } }
     | undefined;
   return tauri?.core?.invoke ?? null;
 }
