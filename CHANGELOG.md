@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.0] - 2026-03-26
+
+- Attention notifications: bounce dock icon (Tauri) or flash tab title (browser) on permission requests and Claude idle
+- Auto-context prefix configuration per ticket category and per tag in settings dialog
+- Server-side bracket tag extraction on ticket creation
+- Search now includes tags
+- Secret-based API validation and port recovery for multi-instance safety
+
+When creating a new ticket, titles like "[my tag] [another tag] my title" get turned into a ticket title and extracted tags (ex. title: "my title" and tags: "my tag", and "another tag").
+
 ## [0.6.5] - 2026-03-26
 
 - Tag custom views, case-insensitive tag normalization, bracket syntax for tag creation, and autocomplete improvements
