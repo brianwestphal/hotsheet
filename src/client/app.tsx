@@ -45,6 +45,8 @@ async function init() {
   document.addEventListener('hotsheet:upnext-changed', () => channelAutoTrigger());
   // Print button
   document.getElementById('print-btn')?.addEventListener('click', showPrintDialog);
+  // Restore saved app icon variant in Tauri (Dock resets to bundle icon on launch)
+  void restoreAppIcon();
   // Claude Channel
   void initChannel();
   // Dashboard sidebar widget
@@ -512,6 +514,19 @@ function getTauriInvoke(): ((cmd: string, args?: Record<string, unknown>) => Pro
     | { core?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } }
     | undefined;
   return tauri?.core?.invoke ?? null;
+}
+
+/** Restore the saved app icon variant on page load. The Dock resets to the bundle
+ *  icon during app launch, so we re-apply it from the client once the page is ready. */
+async function restoreAppIcon() {
+  const invoke = getTauriInvoke();
+  if (!invoke) return;
+  try {
+    const fs = await api<{ appIcon?: string }>('/file-settings');
+    if (fs.appIcon && fs.appIcon !== 'default') {
+      await invoke('set_app_icon', { variant: fs.appIcon });
+    }
+  } catch { /* non-critical */ }
 }
 
 /** Request user attention — bounces dock icon in Tauri, flashes tab title in browser.

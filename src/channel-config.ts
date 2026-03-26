@@ -91,7 +91,14 @@ export async function isChannelAlive(dataDir: string): Promise<boolean> {
 export async function triggerChannel(dataDir: string, serverPort: number, message?: string): Promise<boolean> {
   const port = getChannelPort(dataDir);
   if (!port) return false;
-  const doneSignal = `\n\nWhen you are completely finished (or if there was nothing to do), signal completion by running:\ncurl -s -X POST http://localhost:${serverPort}/api/channel/done`;
+  // Include secret in the done signal so it passes the API middleware
+  let secretHeader = '';
+  try {
+    const { readFileSettings } = await import('./file-settings.js');
+    const settings = readFileSettings(dataDir);
+    if (settings.secret) secretHeader = ` -H "X-Hotsheet-Secret: ${settings.secret}"`;
+  } catch { /* ignore */ }
+  const doneSignal = `\n\nWhen you are completely finished (or if there was nothing to do), signal completion by running:\ncurl -s -X POST http://localhost:${serverPort}/api/channel/done${secretHeader}`;
   const content = message
     ? message + doneSignal
     : 'Process the Hot Sheet worklist. Run /hotsheet to work through the current Up Next items.' + doneSignal;

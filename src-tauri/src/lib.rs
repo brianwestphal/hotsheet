@@ -318,7 +318,10 @@ fn apply_saved_icon(app: &tauri::AppHandle) {
                 .unwrap_or_default()
         });
 
-    if data_dir.is_empty() { return; }
+    if data_dir.is_empty() {
+        eprintln!("[icon] no data dir found in args");
+        return;
+    }
 
     let settings_path = std::path::PathBuf::from(&data_dir).join("settings.json");
     let variant = match std::fs::read_to_string(&settings_path) {
@@ -327,60 +330,165 @@ fn apply_saved_icon(app: &tauri::AppHandle) {
                 .ok()
                 .and_then(|v| v.get("appIcon").and_then(|i| i.as_str().map(String::from)))
         }
-        Err(_) => None,
+        Err(e) => {
+            eprintln!("[icon] could not read {}: {}", settings_path.display(), e);
+            None
+        }
     };
 
-    if let Some(variant) = variant {
+    if let Some(ref variant) = variant {
         if variant != "default" && !variant.is_empty() {
-            let _ = set_app_icon(app.clone(), variant);
+            // Delay icon application until after macOS finishes launching the app.
+            // If set during setup(), macOS resets the dock icon to the bundle icon
+            // when applicationDidFinishLaunching fires. We sleep past that, then
+            // dispatch back to the main thread (MainThreadMarker requires it).
+            let handle1 = app.clone();
+            let handle2 = app.clone();
+            let variant = variant.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let _ = handle1.run_on_main_thread(move || {
+                    match set_app_icon(handle2, variant) {
+                        Ok(msg) => eprintln!("[icon] startup: {}", msg),
+                        Err(e) => eprintln!("[icon] startup error: {}", e),
+                    }
+                });
+            });
         }
     }
 }
 
 #[tauri::command]
 fn set_app_icon(app: tauri::AppHandle, variant: String) -> Result<String, String> {
-    use tauri::image::Image;
-
-    // Resolve the icon PNG from bundled resources
-    let resource_path = app.path()
+    let resource_dir = app.path()
         .resource_dir()
-        .map_err(|e| format!("resource dir: {}", e))?
-        .join("icons/variants")
-        .join(format!("{}.png", variant));
+        .map_err(|e| format!("resource dir: {}", e))?;
 
-    let png_data = std::fs::read(&resource_path)
-        .map_err(|e| format!("read icon {}: {}", resource_path.display(), e))?;
+    if variant == "default" {
+        // Reset to bundle's original icon
+        #[cfg(target_os = "macos")]
+        {
+            // In a macOS .app bundle, Tauri places the icon at Contents/Resources/icon.icns.
+            // resource_dir() points to Contents/Resources/, so icon.icns is directly inside.
+            // In dev mode the icon lives at src-tauri/icons/icon.icns.
+            let icns_data = std::fs::read(resource_dir.join("icon.icns"))
+                .or_else(|_| std::fs::read(resource_dir.join("icons").join("icon.icns")))
+                .map_err(|e| format!("read default icon: {}", e))?;
+            set_macos_dock_icon(&icns_data);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            // On non-macOS, reset by loading the default PNG
+            let png_path = resource_dir.join("icons/variants/variant-1.png");
+            if let Ok(png_data) = std::fs::read(&png_path) {
+                if let Some(win) = app.get_webview_window("main") {
+                    if let Ok(image) = tauri::image::Image::from_bytes(&png_data) {
+                        let _ = win.set_icon(image);
+                    }
+                }
+            }
+        }
+        return Ok("icon reset to default".to_string());
+    }
+
+    // Load the variant
+    let png_path = resource_dir.join("icons/variants").join(format!("{}.png", variant));
+    let png_data = std::fs::read(&png_path)
+        .map_err(|e| format!("read icon {}: {}", png_path.display(), e))?;
 
     // Set window icon (cross-platform: taskbar on Windows/Linux)
+    #[cfg(not(target_os = "macos"))]
     if let Some(win) = app.get_webview_window("main") {
-        let image = Image::from_bytes(&png_data)
+        let image = tauri::image::Image::from_bytes(&png_data)
             .map_err(|e| format!("parse png: {}", e))?;
         let _ = win.set_icon(image);
     }
 
-    // macOS: also set the dock icon via NSApplication
+    // macOS: use .icns for proper squircle mask rendering
     #[cfg(target_os = "macos")]
     {
-        set_macos_dock_icon(&png_data);
+        let icns_path = resource_dir.join("icons/variants").join(format!("{}.icns", variant));
+        let icon_data = std::fs::read(&icns_path).unwrap_or(png_data);
+        set_macos_dock_icon(&icon_data);
     }
 
     Ok(format!("icon set to {}", variant))
 }
 
 #[cfg(target_os = "macos")]
-fn set_macos_dock_icon(png_data: &[u8]) {
+fn set_macos_dock_icon(icon_data: &[u8]) {
     use objc2::{AnyThread, MainThreadMarker};
-    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_app_kit::{
+        NSApplication, NSBezierPath, NSColor, NSCompositingOperation,
+        NSGraphicsContext, NSImage, NSShadow,
+    };
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
     use objc2_foundation::NSData;
 
-    // Safe because Tauri commands run on the main thread
-    if let Some(mtm) = MainThreadMarker::new() {
-        let data = NSData::with_bytes(png_data);
-        if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
-            let app = NSApplication::sharedApplication(mtm);
-            unsafe { app.setApplicationIconImage(Some(&image)); }
-        }
-    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        eprintln!("[icon] not on main thread — cannot set dock icon");
+        return;
+    };
+
+    let data = NSData::with_bytes(icon_data);
+    let Some(source) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        eprintln!("[icon] failed to create NSImage from data");
+        return;
+    };
+
+    // Render the icon to match macOS Dock icon appearance.
+    // setApplicationIconImage does NOT apply the system squircle mask or shadow —
+    // only bundle icons get that treatment. We replicate it here:
+    // 1. Inset the icon to ~82% of the canvas (room for drop shadow)
+    // 2. Clip to a rounded rect (squircle approximation)
+    // 3. Draw a drop shadow behind the shape
+    let canvas = 512.0;
+    let body = 420.0;
+    let inset = (canvas - body) / 2.0;
+    // Shift icon up slightly so the shadow below doesn't get clipped at canvas edge
+    let body_rect = CGRect::new(
+        CGPoint::new(inset, inset + 4.0),
+        CGSize::new(body, body),
+    );
+    let radius = body * 0.22;
+
+    source.setSize(CGSize::new(body, body));
+
+    #[allow(deprecated)]
+    let result = NSImage::initWithSize(NSImage::alloc(), CGSize::new(canvas, canvas));
+    #[allow(deprecated)]
+    result.lockFocus();
+
+    let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(body_rect, radius, radius);
+
+    // 1) Draw shadow: fill the squircle shape with shadow enabled. The shadow
+    //    is cast outside the fill. The white fill itself gets covered by the icon.
+    NSGraphicsContext::saveGraphicsState_class();
+    let shadow = NSShadow::new();
+    shadow.setShadowOffset(CGSize::new(0.0, -6.0));
+    shadow.setShadowBlurRadius(12.0);
+    shadow.setShadowColor(Some(&NSColor::colorWithWhite_alpha(0.0, 0.3)));
+    shadow.set();
+    NSColor::colorWithWhite_alpha(1.0, 1.0).setFill();
+    path.fill();
+    NSGraphicsContext::restoreGraphicsState_class();
+
+    // 2) Draw the icon clipped to the squircle (covers the white fill exactly)
+    NSGraphicsContext::saveGraphicsState_class();
+    path.addClip();
+    source.drawInRect_fromRect_operation_fraction(
+        body_rect,
+        CGRect::ZERO,
+        NSCompositingOperation::Copy,
+        1.0,
+    );
+    NSGraphicsContext::restoreGraphicsState_class();
+
+    #[allow(deprecated)]
+    result.unlockFocus();
+
+    let app = NSApplication::sharedApplication(mtm);
+    unsafe { app.setApplicationIconImage(Some(&result)); }
 }
 
 #[tauri::command]

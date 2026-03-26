@@ -39,14 +39,22 @@ Source PNGs are stored in the project's `.hotsheet/attachments/` (development) a
 
 A Tauri command `set_app_icon` accepts a variant identifier:
 
-1. Reads the corresponding PNG from bundled resources (`icons/variants/{variant}.png`).
-2. Creates an `NSImage` from the PNG data using the `objc` and `cocoa` crates.
-3. Calls `NSApplication.sharedApplication().setApplicationIconImage(image)` to update the dock icon immediately.
-4. No relaunch required.
+1. Reads the corresponding `.icns` from bundled resources (`icons/variants/{variant}.icns`), falling back to PNG.
+2. Creates an `NSImage` from the icon data using the `objc2` crate.
+3. Renders the icon to match macOS Dock appearance: insets the image to ~82% of a 512×512 canvas, clips to a rounded rect (squircle approximation, ~22% corner radius) using `NSBezierPath`, and draws a drop shadow using `NSShadow` (Y offset -6, blur 12, 30% black). This replicates the Dock's treatment of bundle icons, which `setApplicationIconImage` does not apply automatically.
+4. Calls `NSApplication.sharedApplication().setApplicationIconImage(renderedImage)` to update the dock icon immediately.
+5. No relaunch required.
+
+### Reset to Default
+
+When switching back to "default", reads `icon.icns` from the resource directory (the bundle's original icon) and applies the same rendering process.
 
 ### Startup
 
-On app launch, the Rust code reads `app_icon` from `.hotsheet/settings.json` and applies the icon before the window becomes visible.
+Icon restoration uses two complementary mechanisms:
+
+1. **Client-side (primary):** When the web page loads, the client reads `appIcon` from `/api/file-settings` and invokes the Tauri `set_app_icon` command. This is the most reliable path because the page loads after the app is fully initialized and the Dock has settled.
+2. **Rust-side (fallback):** During `setup()`, the Rust code reads `appIcon` from `.hotsheet/settings.json` and dispatches `set_app_icon` to the main thread after a 500ms delay via `run_on_main_thread`. The delay is necessary because macOS resets the dock icon to the bundle icon during app launch.
 
 ### Icon Resources
 

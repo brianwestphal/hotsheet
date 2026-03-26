@@ -54,20 +54,39 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     return new Response(content, { headers: { 'Content-Type': mimeTypes[ext || ''] || 'application/octet-stream', 'Cache-Control': 'max-age=86400' } });
   });
 
-  // Secret validation middleware for API routes (HS-1684)
-  // If X-Hotsheet-Secret header is present but doesn't match, reject with recovery instructions.
-  // If header is absent, allow the request (browser UI doesn't send it).
+  // Secret validation middleware for API routes (HS-1684, HS-1982)
+  // Mutation requests (POST/PATCH/PUT/DELETE) MUST include the correct secret unless from browser.
+  // GET requests are allowed without secret (browser polling, status checks).
   app.use('/api/*', async (c, next) => {
+    const settings = readFileSettings(dataDir);
+    const expectedSecret = settings.secret;
+    if (!expectedSecret) { await next(); return; }
+
     const headerSecret = c.req.header('X-Hotsheet-Secret');
+    const method = c.req.method;
+    const isMutation = method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE';
+
     if (headerSecret) {
-      const settings = readFileSettings(dataDir);
-      if (settings.secret && headerSecret !== settings.secret) {
+      // Header present: validate it
+      if (headerSecret !== expectedSecret) {
         return c.json({
           error: 'Secret mismatch — you may be connecting to the wrong Hot Sheet instance.',
           recovery: 'Re-read .hotsheet/settings.json to get the correct port and secret, and re-read your skill files (e.g. .claude/skills/hotsheet/SKILL.md) for updated instructions.',
         }, 403);
       }
+    } else if (isMutation) {
+      // No header on a mutation: allow if from browser (has Origin or Referer), reject otherwise
+      const origin = c.req.header('Origin');
+      const referer = c.req.header('Referer');
+      const isBrowser = !!(origin || referer);
+      if (!isBrowser) {
+        return c.json({
+          error: 'Missing X-Hotsheet-Secret header. Read .hotsheet/settings.json for the correct port and secret.',
+          recovery: 'Re-read .hotsheet/settings.json to get the correct port and secret, and re-read your skill files for updated instructions.',
+        }, 403);
+      }
     }
+
     await next();
   });
 

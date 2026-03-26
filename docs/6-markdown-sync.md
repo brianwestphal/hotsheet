@@ -76,9 +76,9 @@ When running multiple Hot Sheet instances, AI tools can accidentally connect to 
 
 - **Secret generation**: At startup, a secret is generated and stored in `.hotsheet/settings.json` alongside the current `port`. The secret is a SHA-256 hash of the absolute settings.json path + a random value. A path hash is also stored; if the data directory moves, the secret is regenerated on next launch.
 - **Secret in requests**: The worklist.md workflow instructions and all generated skill files include the secret as an `X-Hotsheet-Secret` header in curl commands. AI tools send this header with every API request.
-- **Server validation**: If the `X-Hotsheet-Secret` header is present but doesn't match the expected value, the server returns HTTP 403 with a JSON body containing recovery instructions (re-read `.hotsheet/settings.json` for correct port and secret).
+- **Server validation**: Mutation requests (POST, PATCH, PUT, DELETE) **require** the correct secret header unless the request is from a browser (has `Origin` or `Referer` header). If the header is present but wrong, or absent on a non-browser mutation, the server returns HTTP 403 with recovery instructions. GET requests are allowed without the secret (for browser polling and status checks).
 - **Port recovery**: Skill files and worklist.md instruct AI tools to re-read `.hotsheet/settings.json` when requests fail (connection refused or 403), as the port or secret may have changed.
-- **Browser compatibility**: If the header is absent (as with browser UI requests), the request is allowed through without validation.
+- **Channel completion signal**: The `/channel/done` curl command embedded in channel triggers includes the secret header so it passes the middleware.
 
 ## Non-Functional Requirements
 
