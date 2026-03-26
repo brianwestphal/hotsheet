@@ -57,11 +57,12 @@ async function formatTicket(ticket: Ticket): Promise<string> {
   lines.push(`- Status: ${ticket.status.replace('_', ' ')}`);
   lines.push(`- Title: ${ticket.title}`);
 
-  // Tags
+  // Tags (displayed in Title Case)
   try {
     const tags = JSON.parse(ticket.tags);
     if (Array.isArray(tags) && tags.length > 0) {
-      lines.push(`- Tags: ${tags.join(', ')}`);
+      const display = tags.map((t: string) => t.replace(/\b\w/g, (c: string) => c.toUpperCase()));
+      lines.push(`- Tags: ${display.join(', ')}`);
     }
   } catch { /* ignore */ }
 

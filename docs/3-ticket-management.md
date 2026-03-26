@@ -15,10 +15,14 @@ Each ticket has the following properties:
 - **Priority** — One of five levels: Highest, High, Default, Low, Lowest.
 - **Status** — One of seven states (see 2.3).
 - **Up Next** — Boolean flag marking the ticket as a priority work item.
-- **Tags** — User-defined tags stored as a JSON array of strings in the `tags` column (default `[]`). Tags are free-form text. The full list of available tags is derived from all non-deleted tickets.
-  - Detail panel: displays tags as removable chips with an input to add new tags by pressing Enter.
+- **Tags** — User-defined tags stored as a JSON array of normalized strings in the `tags` column (default `[]`). The full list of available tags is derived from all non-deleted tickets.
+  - **Normalization**: All tags are normalized on input — non-alphanumeric character runs are collapsed to a single space, leading/trailing whitespace is trimmed, and the result is stored in lowercase. Example: `"  This  is --- a TAG  "` → `"this is a tag"`.
+  - **Display**: Tags are rendered in Title Case everywhere (chips, autocomplete, markdown sync). Example: `"this is a tag"` → `"This Is A Tag"`.
+  - **Deduplication**: Case-insensitive — `"Admin"` and `"admin"` are treated as the same tag.
+  - **Bracket syntax**: Ticket titles can include `[tag]` patterns during creation. Tags are extracted, normalized, and removed from the title. Example: `"[admin] fix the dashboard [urgent]"` creates a ticket with title `"fix the dashboard"` and tags `["admin", "urgent"]`. Multiple brackets and spacing around brackets are handled.
+  - Detail panel: displays tags as removable chips with an input to add new tags by pressing Enter. Autocomplete shows first 100 tags on focus, filters as the user types.
   - Batch toolbar "..." menu: "Tags..." opens a dialog with check/uncheck/mixed-state checkboxes for all known tags. Mixed state means some selected tickets have the tag and others don't — mixed tags are left unchanged on save.
-  - API: `GET /api/tags` returns all unique tags, ticket PATCH accepts `tags` (JSON string).
+  - API: `GET /api/tags` returns all unique normalized tags, ticket PATCH accepts `tags` (JSON string), ticket POST accepts `tags` in defaults.
 - **Notes** — Timestamped entries stored as a JSON array. Each note has a unique ID, text, and created_at timestamp. Notes can be added, edited, and deleted.
 - **Timestamps** — created_at, updated_at, completed_at, verified_at, deleted_at.
 

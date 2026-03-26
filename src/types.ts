@@ -129,6 +129,7 @@ export interface CustomViewCondition {
 export interface CustomView {
   id: string;
   name: string;
+  tag?: string;
   logic: 'all' | 'any';
   conditions: CustomViewCondition[];
 }

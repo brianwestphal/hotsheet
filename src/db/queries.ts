@@ -68,6 +68,7 @@ export async function createTicket(title: string, defaults?: Partial<{
   status: TicketStatus;
   up_next: boolean;
   details: string;
+  tags: string;
 }>): Promise<Ticket> {
   const db = await getDb();
   const ticketNumber = await nextTicketNumber();
@@ -78,6 +79,7 @@ export async function createTicket(title: string, defaults?: Partial<{
   if (defaults?.status !== undefined && defaults.status !== '') { cols.push('status'); vals.push(defaults.status); }
   if (defaults?.up_next !== undefined) { cols.push('up_next'); vals.push(defaults.up_next); }
   if (defaults?.details !== undefined && defaults.details !== '') { cols.push('details'); vals.push(defaults.details); }
+  if (defaults?.tags !== undefined && defaults.tags !== '' && defaults.tags !== '[]') { cols.push('tags'); vals.push(defaults.tags); }
 
   const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
   const result = await db.query<Ticket>(
@@ -392,6 +394,7 @@ export async function queryTickets(
   conditions: { field: string; operator: string; value: string }[],
   sortBy?: string,
   sortDir?: string,
+  requiredTag?: string,
 ): Promise<Ticket[]> {
   const db = await getDb();
   const where: string[] = [];
@@ -447,6 +450,13 @@ export async function queryTickets(
     }
   }
 
+  // Required tag filter — always AND'd regardless of logic
+  if (requiredTag) {
+    where[0] += ` AND tags ILIKE $${paramIdx}`;
+    values.push(`%${requiredTag}%`);
+    paramIdx++;
+  }
+
   const joiner = logic === 'any' ? ' OR ' : ' AND ';
   // The first condition (status != deleted) is always AND'd; user conditions are grouped
   const userConditions = where.slice(1);
@@ -477,6 +487,11 @@ export async function queryTickets(
 
 // --- Tags ---
 
+/** Normalize a tag: collapse non-alphanumeric runs to single space, lowercase, trim. */
+function normalizeTag(input: string): string {
+  return input.replace(/[^a-zA-Z0-9]+/g, ' ').trim().toLowerCase();
+}
+
 export async function getAllTags(): Promise<string[]> {
   const db = await getDb();
   const result = await db.query<{ tags: string }>(`SELECT DISTINCT tags FROM tickets WHERE tags != '[]' AND status != 'deleted'`);
@@ -486,7 +501,10 @@ export async function getAllTags(): Promise<string[]> {
       const parsed = JSON.parse(row.tags);
       if (Array.isArray(parsed)) {
         for (const tag of parsed) {
-          if (typeof tag === 'string' && tag.trim()) tagSet.add(tag.trim());
+          if (typeof tag === 'string' && tag.trim()) {
+            const norm = normalizeTag(tag);
+            if (norm) tagSet.add(norm);
+          }
         }
       }
     } catch { /* ignore bad JSON */ }

@@ -2114,6 +2114,52 @@ input, select, textarea {
 .cv-field-select { width: 100px; flex-shrink: 0; }
 .cv-op-select { width: 120px; flex-shrink: 0; }
 .cv-value-select, .cv-value-input { flex: 1; min-width: 0; }
+.cv-value-input-wrapper { position: relative; flex: 1; min-width: 0; display: flex; }
+.cv-value-input-wrapper .cv-value-input { width: 100%; }
+
+.cv-tag-field {
+  .cv-tag-info {
+    display: inline-flex;
+    vertical-align: middle;
+    color: var(--text-muted);
+    cursor: help;
+    margin-left: 4px;
+    &:hover { color: var(--accent); }
+  }
+}
+
+.cv-tag-help {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  background: var(--bg-selected);
+  border-radius: var(--radius);
+  line-height: 1.4;
+}
+
+.cv-tag-input-wrapper {
+  position: relative;
+}
+
+.cv-tag-autocomplete, .cv-rule-tag-ac {
+  display: none;
+  z-index: 10000;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 120px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.sidebar-view-tag-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
 
 .sidebar-custom-view {
   &.dragging { opacity: 0.4; }

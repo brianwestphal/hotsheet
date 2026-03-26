@@ -5,7 +5,7 @@ import { bindBackupsUI, loadBackupList } from './backups.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { renderDashboard, renderSidebarWidget } from './dashboard.js';
 import { showPrintDialog } from './print.js';
-import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, parseTags, refreshDetail, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
+import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, parseTags, refreshDetail, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { AppSettings, CategoryDef, Ticket } from './state.js';
@@ -1699,15 +1699,16 @@ function bindDetailPanel() {
   function showAutocomplete() {
     closeAutocomplete();
     const query = tagInput.value.trim().toLowerCase();
-    if (!query) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
     const currentTags = ticket ? parseTags(ticket.tags) : [];
-    const matches = allKnownTags.filter(t => t.toLowerCase().includes(query) && !currentTags.includes(t));
+    const matches = query
+      ? allKnownTags.filter(t => t.toLowerCase().includes(query) && !hasTag(currentTags, t))
+      : allKnownTags.filter(t => !hasTag(currentTags, t)).slice(0, 100);
     if (matches.length === 0) return;
 
     acDropdown = toElement(<div className="tag-autocomplete"></div>);
     for (let i = 0; i < matches.length; i++) {
-      const item = toElement(<div className="tag-autocomplete-item">{matches[i]}</div>);
+      const item = toElement(<div className="tag-autocomplete-item">{displayTag(matches[i])}</div>);
       item.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
         tagInput.value = matches[i];
@@ -1727,23 +1728,24 @@ function bindDetailPanel() {
   }
 
   async function addCurrentTag() {
-    const value = tagInput.value.trim();
-    if (!value || state.activeTicketId == null) return;
+    const normalized = normalizeTag(tagInput.value);
+    if (!normalized || state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
     if (!ticket) return;
     const currentTags = parseTags(ticket.tags);
-    if (currentTags.includes(value)) { tagInput.value = ''; return; }
-    const updated = [...currentTags, value];
+    if (hasTag(currentTags, normalized)) { tagInput.value = ''; return; }
+    const updated = [...currentTags, normalized];
     tagInput.value = '';
     closeAutocomplete();
     await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { tags: JSON.stringify(updated) } });
     ticket.tags = JSON.stringify(updated);
     renderDetailTags(updated, false);
     // Add to known tags if new
-    if (!allKnownTags.includes(value)) allKnownTags.push(value);
+    if (!hasTag(allKnownTags, normalized)) allKnownTags.push(normalized);
   }
 
   tagInput.addEventListener('input', () => { showAutocomplete(); });
+  tagInput.addEventListener('focus', () => { showAutocomplete(); });
   tagInput.addEventListener('blur', () => { closeAutocomplete(); });
   tagInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -1782,7 +1784,7 @@ async function showTagsDialog() {
   // Also include tags from selected tickets that might not be in allTags
   for (const t of selectedTickets) {
     for (const tag of parseTags(t.tags)) {
-      if (!allTags.includes(tag)) allTags.push(tag);
+      if (!hasTag(allTags, tag)) allTags.push(normalizeTag(tag));
     }
   }
   allTags.sort();
@@ -1791,7 +1793,7 @@ async function showTagsDialog() {
   type TagState = 'checked' | 'unchecked' | 'mixed';
   const tagStates = new Map<string, TagState>();
   for (const tag of allTags) {
-    const count = selectedTickets.filter(t => parseTags(t.tags).includes(tag)).length;
+    const count = selectedTickets.filter(t => hasTag(parseTags(t.tags), tag)).length;
     if (count === selectedTickets.length) tagStates.set(tag, 'checked');
     else if (count === 0) tagStates.set(tag, 'unchecked');
     else tagStates.set(tag, 'mixed');
@@ -1829,7 +1831,7 @@ async function showTagsDialog() {
       const row = toElement(
         <label className="tags-dialog-row">
           <input type="checkbox" checked={st === 'checked'} />
-          <span>{tag}</span>
+          <span>{displayTag(tag)}</span>
         </label>
       );
       const cb = row.querySelector('input') as HTMLInputElement;
@@ -1850,8 +1852,8 @@ async function showTagsDialog() {
   // Add new tag
   const newInput = overlay.querySelector('#tags-dialog-new-input') as HTMLInputElement;
   const addTag = () => {
-    const val = newInput.value.trim();
-    if (!val || allTags.includes(val)) { newInput.value = ''; return; }
+    const val = normalizeTag(newInput.value);
+    if (!val || hasTag(allTags, val)) { newInput.value = ''; return; }
     allTags.push(val);
     allTags.sort();
     currentStates.set(val, 'checked');
@@ -1885,8 +1887,8 @@ async function showTagsDialog() {
       for (const ticket of selectedTickets) {
         const current = parseTags(ticket.tags);
         let updated = [...current];
-        for (const tag of toAdd) { if (!updated.includes(tag)) updated.push(tag); }
-        for (const tag of toRemove) { updated = updated.filter(t => t !== tag); }
+        for (const tag of toAdd) { if (!hasTag(updated, tag)) updated.push(tag); }
+        for (const tag of toRemove) { updated = updated.filter(t => normalizeTag(t) !== normalizeTag(tag)); }
         if (JSON.stringify(updated) !== JSON.stringify(current)) {
           await api(`/tickets/${ticket.id}`, { method: 'PATCH', body: { tags: JSON.stringify(updated) } });
         }

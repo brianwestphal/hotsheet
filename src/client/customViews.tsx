@@ -1,15 +1,28 @@
 import { suppressAnimation } from './animate.js';
 import { api } from './api.js';
+import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { CustomView, CustomViewCondition } from './state.js';
 import { state } from './state.js';
+import { draggedTicketIds } from './ticketList.js';
+import { raw } from '../jsx-runtime.js';
 
 let loadTicketsFn: () => void;
 let draggedViewIndex: number | null = null;
+let allKnownTags: string[] = [];
+
+const TAG_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>';
+const INFO_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>';
+
+/** Refresh the known tags list from the server. */
+async function refreshTags() {
+  try { allKnownTags = await api<string[]>('/tags'); } catch { /* use cached */ }
+}
 
 export function initCustomViews(loadTickets: () => void) {
   loadTicketsFn = loadTickets;
+  void refreshTags();
   document.getElementById('add-custom-view-btn')!.addEventListener('click', (e) => {
     e.stopPropagation();
     showViewEditor();
@@ -46,6 +59,7 @@ export function renderSidebarViews() {
         data-cv-index={String(i)}
         draggable="true"
       >
+        {view.tag ? <span className="sidebar-view-tag-icon">{raw(TAG_ICON)}</span> : null}
         {view.name}
       </button>
     );
@@ -78,7 +92,8 @@ export function renderSidebarViews() {
       draggedViewIndex = null;
     });
     btn.addEventListener('dragover', (e) => {
-      if (draggedViewIndex === null) return;
+      // Allow both view reordering and ticket drop-to-tag
+      if (draggedViewIndex === null && !(view.tag && draggedTicketIds.length > 0)) return;
       e.preventDefault();
       e.dataTransfer!.dropEffect = 'move';
       btn.classList.add('drop-target');
@@ -87,6 +102,14 @@ export function renderSidebarViews() {
     btn.addEventListener('drop', (e) => {
       e.preventDefault();
       btn.classList.remove('drop-target');
+
+      // Handle ticket drop-to-tag: add the view's tag to dropped tickets
+      if (view.tag && draggedTicketIds.length > 0 && draggedViewIndex === null) {
+        void addTagToTickets(view.tag, draggedTicketIds);
+        return;
+      }
+
+      // Handle view reordering
       if (draggedViewIndex === null || draggedViewIndex === i) return;
       const [moved] = state.customViews.splice(draggedViewIndex, 1);
       state.customViews.splice(i, 0, moved);
@@ -127,6 +150,23 @@ async function deleteView(id: string) {
     loadTicketsFn();
   }
   await saveViews();
+}
+
+/** Add a tag to one or more tickets (used by drop-to-tag). */
+async function addTagToTickets(tag: string, ticketIds: number[]) {
+  const normalized = normalizeTag(tag);
+  if (!normalized) return;
+  for (const id of ticketIds) {
+    const ticket = state.tickets.find(t => t.id === id);
+    if (!ticket) continue;
+    const current = parseTags(ticket.tags);
+    if (hasTag(current, normalized)) continue;
+    const updated = [...current, normalized];
+    await api(`/tickets/${id}`, { method: 'PATCH', body: { tags: JSON.stringify(updated) } });
+    ticket.tags = JSON.stringify(updated);
+  }
+  if (!hasTag(allKnownTags, normalized)) allKnownTags.push(normalized);
+  loadTicketsFn();
 }
 
 // --- Field/operator configuration ---
@@ -186,6 +226,64 @@ function getValueLabel(field: string, value: string): string {
   return value;
 }
 
+// --- Tag autocomplete helper ---
+
+function setupTagAutocomplete(input: HTMLInputElement, dropdown: HTMLElement, onSelect: (value: string) => void) {
+  let acIndex = -1;
+
+  // Use fixed positioning to escape overflow:auto parents
+  dropdown.style.position = 'fixed';
+
+  function showAc() {
+    const query = input.value.trim().toLowerCase();
+    dropdown.innerHTML = '';
+    acIndex = -1;
+    const matches = query
+      ? allKnownTags.filter(t => t.toLowerCase().includes(query))
+      : allKnownTags.slice(0, 100);
+    if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+    for (const tag of matches) {
+      const item = toElement(<div className="tag-autocomplete-item" data-tag={tag}>{displayTag(tag)}</div>);
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        input.value = tag;
+        onSelect(tag);
+        dropdown.style.display = 'none';
+      });
+      dropdown.appendChild(item);
+    }
+    // Position as fixed relative to the input
+    const rect = input.getBoundingClientRect();
+    dropdown.style.left = `${rect.left}px`;
+    dropdown.style.top = `${rect.bottom + 2}px`;
+    dropdown.style.width = `${rect.width}px`;
+    dropdown.style.display = 'block';
+  }
+
+  input.addEventListener('input', showAc);
+  input.addEventListener('focus', showAc);
+  input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 150); });
+  input.addEventListener('keydown', (e) => {
+    const items = dropdown.querySelectorAll('.tag-autocomplete-item');
+    if (items.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      acIndex = Math.min(acIndex + 1, items.length - 1);
+      items.forEach((el, j) => el.classList.toggle('active', j === acIndex));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      acIndex = Math.max(acIndex - 1, 0);
+      items.forEach((el, j) => el.classList.toggle('active', j === acIndex));
+    } else if (e.key === 'Enter' && acIndex >= 0) {
+      e.preventDefault();
+      const selected = (items[acIndex] as HTMLElement)?.dataset.tag || items[acIndex]?.textContent || '';
+      input.value = selected;
+      onSelect(selected);
+      dropdown.style.display = 'none';
+    }
+  });
+}
+
 // --- View editor dialog ---
 
 function showViewEditor(existing?: CustomView) {
@@ -193,6 +291,9 @@ function showViewEditor(existing?: CustomView) {
   const conditions: CustomViewCondition[] = existing ? existing.conditions.map(c => ({ ...c })) : [];
   let logic: 'all' | 'any' = existing?.logic || 'all';
   let name = existing?.name || '';
+  let tag = existing?.tag || '';
+
+  void refreshTags();
 
   const overlay = toElement(
     <div className="custom-view-editor-overlay">
@@ -205,6 +306,18 @@ function showViewEditor(existing?: CustomView) {
           <div className="settings-field">
             <label>Name</label>
             <input type="text" id="cv-name" value={name} placeholder="View name..." />
+          </div>
+          <div className="settings-field cv-tag-field">
+            <label>
+              Tag <span className="cv-tag-info" id="cv-tag-info-btn">{raw(INFO_ICON)}</span>
+            </label>
+            <div className="cv-tag-help" id="cv-tag-help" style="display:none">
+              Associate this view with a tag. The view will show a tag icon in the sidebar and you can drag tickets onto it to add the tag. Tickets with this tag are automatically included in the view.
+            </div>
+            <div className="cv-tag-input-wrapper">
+              <input type="text" id="cv-tag" value={tag} placeholder="Optional tag..." autocomplete="off" />
+              <div className="cv-tag-autocomplete" id="cv-tag-ac"></div>
+            </div>
           </div>
           <div className="cv-logic-row">
             <span>Match</span>
@@ -242,7 +355,10 @@ function showViewEditor(existing?: CustomView) {
             ? <select className="cv-value-select">
                 {valueOpts.map(v => <option value={v} selected={v === cond.value}>{getValueLabel(cond.field, v)}</option>)}
               </select>
-            : <input type="text" className="cv-value-input" value={cond.value} placeholder="Value..." />
+            : <div className="cv-value-input-wrapper">
+                <input type="text" className="cv-value-input" value={cond.value} placeholder="Value..." autocomplete="off" />
+                {cond.field === 'tags' ? <div className="cv-tag-autocomplete cv-rule-tag-ac"></div> : null}
+              </div>
           }
           <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
         </div>
@@ -266,6 +382,11 @@ function showViewEditor(existing?: CustomView) {
       valueEl.addEventListener('change', () => { conditions[i].value = valueEl.value; });
       if (valueEl.tagName === 'INPUT') {
         valueEl.addEventListener('input', () => { conditions[i].value = valueEl.value; });
+        // Autocomplete for tags field in rules editor
+        const ruleTagAc = row.querySelector('.cv-rule-tag-ac') as HTMLElement | null;
+        if (ruleTagAc) {
+          setupTagAutocomplete(valueEl as HTMLInputElement, ruleTagAc, (v) => { conditions[i].value = v; (valueEl as HTMLInputElement).value = v; });
+        }
       }
       row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
         conditions.splice(i, 1);
@@ -281,6 +402,17 @@ function showViewEditor(existing?: CustomView) {
 
   // Focus name input
   (overlay.querySelector('#cv-name') as HTMLInputElement).focus();
+
+  // Tag info button toggle
+  const tagHelp = overlay.querySelector('#cv-tag-help') as HTMLElement;
+  overlay.querySelector('#cv-tag-info-btn')!.addEventListener('click', () => {
+    tagHelp.style.display = tagHelp.style.display === 'none' ? '' : 'none';
+  });
+
+  // Tag autocomplete
+  const tagInput = overlay.querySelector('#cv-tag') as HTMLInputElement;
+  const tagAc = overlay.querySelector('#cv-tag-ac') as HTMLElement;
+  setupTagAutocomplete(tagInput, tagAc, (v) => { tag = v; });
 
   // Logic radio
   overlay.querySelectorAll('input[name="cv-logic"]').forEach(r => {
@@ -303,10 +435,12 @@ function showViewEditor(existing?: CustomView) {
   overlay.querySelector('#cv-save')!.addEventListener('click', async () => {
     name = (overlay.querySelector('#cv-name') as HTMLInputElement).value.trim();
     if (!name) { (overlay.querySelector('#cv-name') as HTMLInputElement).focus(); return; }
+    tag = (overlay.querySelector('#cv-tag') as HTMLInputElement).value.trim();
 
     const view: CustomView = {
       id: existing?.id || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `view-${Date.now()}`,
       name,
+      ...(tag ? { tag } : {}),
       logic,
       conditions: conditions.filter(c => c.value !== ''),
     };

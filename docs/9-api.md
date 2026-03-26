@@ -95,7 +95,7 @@ Copies are created with " - Copy" suffix (incrementing if conflicts exist).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/tickets/query` | Query tickets with custom view conditions (`{ logic, conditions, sort_by, sort_dir }`) |
+| POST | `/api/tickets/query` | Query tickets with custom view conditions (`{ logic, conditions, sort_by, sort_dir, required_tag? }`). `required_tag` is always AND'd regardless of logic. |
 
 ### 9.10 Settings Endpoints
 

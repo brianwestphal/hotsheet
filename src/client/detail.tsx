@@ -6,6 +6,37 @@ import { pushNotesUndo } from './undo/actions.js';
 
 // --- Tags helpers ---
 
+/** Normalize a tag: collapse non-alphanumeric runs to single space, lowercase, trim. */
+export function normalizeTag(input: string): string {
+  return input.replace(/[^a-zA-Z0-9]+/g, ' ').trim().toLowerCase();
+}
+
+/** Display a tag in Title Case. */
+export function displayTag(tag: string): string {
+  return tag.replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/** Check if a tag already exists in a list (case-insensitive, normalized). */
+export function hasTag(tags: string[], tag: string): boolean {
+  const norm = normalizeTag(tag);
+  return tags.some(t => normalizeTag(t) === norm);
+}
+
+/** Extract bracket tags from a title, returning cleaned title and tag list.
+ *  e.g. " [admin ] this is a ticket [dashboard] " → { title: "this is a ticket", tags: ["admin", "dashboard"] } */
+export function extractBracketTags(input: string): { title: string; tags: string[] } {
+  const tags: string[] = [];
+  // Extract all [tag] patterns
+  const cleaned = input.replace(/\[([^\]]*)\]/g, (_match, content: string) => {
+    const tag = normalizeTag(content);
+    if (tag && !tags.some(t => t === tag)) tags.push(tag);
+    return ' '; // replace bracket with space
+  });
+  // Clean up extra whitespace
+  const title = cleaned.replace(/\s+/g, ' ').trim();
+  return { title, tags };
+}
+
 export function parseTags(raw: string): string[] {
   if (!raw || raw === '[]') return [];
   try {
@@ -22,7 +53,7 @@ export function renderDetailTags(tags: string[], readOnly: boolean) {
   for (const tag of tags) {
     const chip = toElement(
       <span className="tag-chip">
-        {tag}
+        {displayTag(tag)}
         {readOnly ? null : <button className="tag-chip-remove" data-tag={tag} title="Remove tag">{'\u00d7'}</button>}
       </span>
     );

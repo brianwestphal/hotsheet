@@ -359,8 +359,9 @@ apiRoutes.post('/tickets/query', async (c) => {
     conditions: { field: string; operator: string; value: string }[];
     sort_by?: string;
     sort_dir?: string;
+    required_tag?: string;
   }>();
-  const tickets = await queryTickets(body.logic, body.conditions, body.sort_by, body.sort_dir);
+  const tickets = await queryTickets(body.logic, body.conditions, body.sort_by, body.sort_dir, body.required_tag);
   return c.json(tickets);
 });
 

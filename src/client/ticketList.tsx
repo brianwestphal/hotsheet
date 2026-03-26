@@ -2,7 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { captureSnapshot, flipAnimate, suppressAnimation } from './animate.js';
 import { api } from './api.js';
 import { showTicketContextMenu } from './contextMenu.js';
-import { syncDetailPanel, updateStats } from './detail.js';
+import { extractBracketTags, hasTag, syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { Ticket } from './state.js';
@@ -524,14 +524,27 @@ function createDraftRow(): HTMLElement {
   titleInput.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter' && titleInput.value.trim()) {
       e.preventDefault();
-      const title = titleInput.value.trim();
+      const rawTitle = titleInput.value.trim();
+      const { title, tags } = extractBracketTags(rawTitle);
+      if (!title && tags.length === 0) return;
       draftTitle = '';
       titleInput.value = '';
-      const defaults = getDefaultsFromView();
+      const defaults: Record<string, unknown> = getDefaultsFromView();
       if (draftCategory && !state.view.startsWith('category:')) {
         defaults.category = draftCategory;
       }
-      const created = await api<Ticket>('/tickets', { method: 'POST', body: { title, defaults } });
+      // Auto-tag from tag-associated custom view (HS-1590)
+      if (state.view.startsWith('custom:')) {
+        const viewId = state.view.slice(7);
+        const view = state.customViews.find(v => v.id === viewId);
+        if (view?.tag && !hasTag(tags, view.tag)) {
+          tags.push(view.tag);
+        }
+      }
+      if (tags.length > 0) {
+        defaults.tags = JSON.stringify(tags);
+      }
+      const created = await api<Ticket>('/tickets', { method: 'POST', body: { title: title || rawTitle, defaults } });
       // Auto-select the newly created ticket (HS-202)
       if (created) {
         state.selectedIds.clear();
@@ -1084,7 +1097,13 @@ export async function loadTickets() {
     if (view) {
       state.tickets = await api<Ticket[]>('/tickets/query', {
         method: 'POST',
-        body: { logic: view.logic, conditions: view.conditions, sort_by: state.sortBy, sort_dir: state.sortDir },
+        body: {
+          logic: view.logic,
+          conditions: view.conditions,
+          sort_by: state.sortBy,
+          sort_dir: state.sortDir,
+          ...(view.tag ? { required_tag: view.tag } : {}),
+        },
       });
     } else {
       state.tickets = [];

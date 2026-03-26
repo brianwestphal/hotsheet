@@ -160,13 +160,21 @@ The interface is divided into:
 - Right-click a custom view for Edit/Delete options.
 - **View editor dialog:**
   - Name field for the view.
+  - Optional **Tag** field with autocomplete. An info button explains: associating a tag shows a tag icon in the sidebar and enables dropping tickets onto the view to add the tag.
   - "All of" / "Any of" logic toggle (AND vs OR).
   - List of conditions, each with: field selector, operator selector, value input/selector.
   - Supported fields: Category, Priority, Status, Title, Details, Up Next, Tags.
   - Operators vary by field type: equals/not equals (select fields), contains/not contains (text fields).
+  - Tags field values in the rules editor have autocomplete from existing tags.
   - Add/remove conditions dynamically.
-- Custom views are stored as JSON in the settings table (key: `custom_views`).
-- API: `POST /api/tickets/query` accepts `{ logic, conditions, sort_by, sort_dir }` and returns matching tickets via parameterized SQL.
+- **Tag views:** Custom views with an associated tag:
+  - Show a tag icon (Lucide tag) before the name in the sidebar.
+  - Implicitly filter by the associated tag (always AND'd, regardless of the view's all/any logic).
+  - Support drag-and-drop: dropping tickets onto the view adds the associated tag.
+  - Auto-tag on create: tickets created while viewing a tag view automatically receive the view's tag.
+- Tag autocomplete fields show the first 100 tags alphabetically on focus (before typing), then filter as the user types.
+- Custom views are stored as JSON in the settings table (key: `custom_views`). The `tag` field is optional on the `CustomView` object.
+- API: `POST /api/tickets/query` accepts `{ logic, conditions, sort_by, sort_dir, required_tag }` and returns matching tickets via parameterized SQL. The `required_tag` parameter is always AND'd with the query.
 - Custom views support both list and column layouts.
 
 ### 4.14 Dashboard
@@ -190,6 +198,10 @@ The interface is divided into:
 - When a change is detected (from another tab, API call, or AI tool), the ticket list automatically refreshes.
 - Poll timeout: 30 seconds; retry on connection error after 5 seconds.
 - Polling pauses during backup preview.
+- **Focus protection**: Text fields that currently have focus are never programmatically updated during a refresh to avoid cursor disruption. Specifically:
+  - Detail panel title and details inputs are skipped if focused.
+  - Notes are not re-rendered while a note textarea is being edited.
+  - Ticket list title inputs preserve both their value and cursor position (selectionStart/selectionEnd) across re-renders.
 
 ### 4.14 Error Handling
 
