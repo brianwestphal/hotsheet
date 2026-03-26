@@ -210,7 +210,7 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
   }
 
   if (filters.search !== undefined && filters.search !== '') {
-    conditions.push(`(title ILIKE $${paramIdx} OR details ILIKE $${paramIdx} OR ticket_number ILIKE $${paramIdx})`);
+    conditions.push(`(title ILIKE $${paramIdx} OR details ILIKE $${paramIdx} OR ticket_number ILIKE $${paramIdx} OR tags ILIKE $${paramIdx})`);
     values.push(`%${filters.search}%`);
     paramIdx++;
   }
@@ -490,6 +490,18 @@ export async function queryTickets(
 /** Normalize a tag: collapse non-alphanumeric runs to single space, lowercase, trim. */
 function normalizeTag(input: string): string {
   return input.replace(/[^a-zA-Z0-9]+/g, ' ').trim().toLowerCase();
+}
+
+/** Extract bracket tags from a title, returning cleaned title and normalized tag list. */
+export function extractBracketTags(input: string): { title: string; tags: string[] } {
+  const tags: string[] = [];
+  const cleaned = input.replace(/\[([^\]]*)\]/g, (_match, content: string) => {
+    const tag = normalizeTag(content);
+    if (tag && !tags.includes(tag)) tags.push(tag);
+    return ' ';
+  });
+  const title = cleaned.replace(/\s+/g, ' ').trim();
+  return { title, tags };
 }
 
 export async function getAllTags(): Promise<string[]> {

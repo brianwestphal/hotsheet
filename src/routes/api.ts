@@ -8,6 +8,7 @@ import {
   batchRestoreTickets,
   batchUpdateTickets,
   createTicket,
+  extractBracketTags,
   deleteAttachment,
   deleteNote,
   deleteTicket,
@@ -96,7 +97,25 @@ apiRoutes.get('/tickets', async (c) => {
 
 apiRoutes.post('/tickets', async (c) => {
   const body = await c.req.json<{ title: string; defaults?: Record<string, unknown> }>();
-  const ticket = await createTicket(body.title || '', body.defaults as Parameters<typeof createTicket>[1]);
+  let title = body.title || '';
+  const defaults = (body.defaults || {}) as Record<string, unknown>;
+
+  // Extract [tag] bracket syntax from title (HS-1750)
+  const { title: cleanTitle, tags: bracketTags } = extractBracketTags(title);
+  if (bracketTags.length > 0) {
+    title = cleanTitle || title;
+    // Merge bracket tags with any explicitly provided tags
+    let existingTags: string[] = [];
+    if (defaults.tags) {
+      try { existingTags = JSON.parse(defaults.tags as string); } catch { /* ignore */ }
+    }
+    for (const tag of bracketTags) {
+      if (!existingTags.some(t => t.toLowerCase() === tag.toLowerCase())) existingTags.push(tag);
+    }
+    defaults.tags = JSON.stringify(existingTags);
+  }
+
+  const ticket = await createTicket(title, defaults as Parameters<typeof createTicket>[1]);
   scheduleAllSync(); notifyChange();
   return c.json(ticket, 201);
 });
