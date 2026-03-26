@@ -5,6 +5,7 @@
 ### 5.1 File Upload
 
 - Files can be attached to any ticket via the detail panel.
+- Multiple files can be selected at once in the file picker dialog.
 - Uploaded files are copied to `.hotsheet/attachments/` with a filename of `{ticket_number}_{original_name}.{ext}` (e.g., `HS-42_screenshot.png`).
 - The original filename is preserved in the database for display purposes.
 

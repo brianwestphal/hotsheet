@@ -1532,7 +1532,8 @@ input, select, textarea {
 
 .permission-overlay-content {
   text-align: center;
-  max-width: 480px;
+  max-width: calc(100vw - 80px);
+  width: 100%;
   padding: 40px;
 }
 
@@ -1566,7 +1567,7 @@ input, select, textarea {
   color: rgba(255, 255, 255, 0.85);
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 200px;
+  max-height: 40vh;
   overflow-y: auto;
 }
 

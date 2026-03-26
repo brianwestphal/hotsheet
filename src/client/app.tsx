@@ -1911,12 +1911,14 @@ function bindDetailPanel() {
     openDetail(state.activeTicketId);
   });
 
-  // File upload
+  // File upload (supports multiple files)
   document.getElementById('detail-file-input')!.addEventListener('change', async (e) => {
     const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file || state.activeTicketId == null) return;
-    await apiUpload(`/tickets/${state.activeTicketId}/attachments`, file);
+    const files = input.files;
+    if (!files || files.length === 0 || state.activeTicketId == null) return;
+    for (const file of Array.from(files)) {
+      await apiUpload(`/tickets/${state.activeTicketId}/attachments`, file);
+    }
     input.value = '';
     openDetail(state.activeTicketId);
     void loadTickets();

@@ -159,7 +159,7 @@ When Claude needs approval to run a tool (Bash, Write, Edit, etc.), the channel 
 
 ### Overlay
 
-A dark, blurred overlay with large white text: "Claude is waiting for permission". Below it shows the tool name, description, and the `input_preview` (the actual command or file path being requested) in a monospace code block. Three buttons:
+A dark, blurred overlay with large white text: "Claude is waiting for permission". Below it shows the tool name, description, and the `input_preview` (the actual command or file path being requested) in a monospace code block. The overlay content area uses the full available screen width (minus padding) so command previews are easy to read. Three buttons:
 
 - **Allow** — sends `behavior: 'allow'` back to Claude Code, tool proceeds
 - **Deny** — sends `behavior: 'deny'`, tool is rejected

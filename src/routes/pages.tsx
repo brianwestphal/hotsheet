@@ -188,7 +188,7 @@ pageRoutes.get('/', (c) => {
                   <div id="detail-attachments" className="detail-attachments"></div>
                   <label className="btn btn-sm upload-btn">
                     Attach File
-                    <input type="file" id="detail-file-input" style="display:none" />
+                    <input type="file" id="detail-file-input" style="display:none" multiple />
                   </label>
                 </div>
                 <div className="detail-field detail-field-full" id="detail-notes-section">
