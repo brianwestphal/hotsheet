@@ -16,6 +16,7 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
   { id: 6, label: 'Detail panel — bottom orientation with tags and notes' },
   { id: 7, label: 'Column view — kanban board by status' },
   { id: 8, label: 'Dashboard — stats and charts' },
+  { id: 9, label: 'Claude Channel — AI integration with custom commands' },
 ];
 
 // --- Ticket data model ---
@@ -538,6 +539,72 @@ for (let i = 0; i < 30; i++) {
   });
 }
 
+// --- Scenario 9: Claude Channel integration — play button, custom commands, AI-driven workflow ---
+
+const SCENARIO_9: DemoTicket[] = [
+  {
+    title: 'Fix race condition in WebSocket message ordering',
+    details: 'Messages arriving during reconnect can be delivered out of order. Need to add sequence numbers and a reorder buffer on the client side.\n\nReproduction: disconnect WiFi briefly during a burst of real-time updates, then reconnect — events appear in wrong order.',
+    category: 'bug', priority: 'highest', status: 'started', up_next: true,
+    tags: ['websocket', 'real-time'],
+    notes: notesJson([
+      { text: 'Investigating — the issue is in the reconnect handler. When the socket reconnects, buffered server-side messages are flushed immediately without checking the client sequence counter.', days_ago: 0.1 },
+    ]),
+    days_ago: 3, updated_ago: 0.1,
+  },
+  {
+    title: 'Add rate limiting to public API endpoints',
+    details: 'Implement token bucket rate limiting for all /api/v2/ endpoints. 100 requests per minute per API key, with burst allowance of 20.',
+    category: 'feature', priority: 'high', status: 'not_started', up_next: true,
+    tags: ['api', 'security'],
+    notes: '', days_ago: 2, updated_ago: 2,
+  },
+  {
+    title: 'Migrate user preferences to new schema',
+    details: 'The preferences table needs to be migrated from the old key-value format to the new typed JSON column. Write a migration script that preserves existing user settings.',
+    category: 'task', priority: 'default', status: 'not_started', up_next: true,
+    tags: ['database', 'migration'],
+    notes: '', days_ago: 4, updated_ago: 4,
+  },
+  {
+    title: 'Investigate slow query on orders dashboard',
+    details: 'The orders dashboard takes 8+ seconds to load for merchants with >10k orders. Need to profile the SQL and add appropriate indexes.',
+    category: 'investigation', priority: 'high', status: 'completed', up_next: false,
+    tags: ['performance', 'database'],
+    notes: notesJson([
+      { text: 'Root cause: missing composite index on (merchant_id, created_at). The query was doing a full table scan. Added index and query time dropped from 8.2s to 45ms.', days_ago: 1 },
+    ]),
+    days_ago: 5, updated_ago: 1, completed_ago: 1,
+  },
+  {
+    title: 'Update error handling middleware to use structured logging',
+    details: 'Replace console.error calls with structured JSON logging using pino. Include request ID, user context, and stack traces.',
+    category: 'task', priority: 'default', status: 'completed', up_next: false,
+    tags: ['observability', 'logging'],
+    notes: notesJson([
+      { text: 'Replaced all console.error/warn calls with pino logger. Added request ID propagation via AsyncLocalStorage. Error responses now include a correlationId for support debugging.', days_ago: 2 },
+    ]),
+    days_ago: 7, updated_ago: 2, completed_ago: 2,
+  },
+  {
+    title: 'Fix CORS headers missing on preflight for webhook endpoints',
+    details: 'Third-party integrations sending OPTIONS preflight requests to /webhooks/* get 405 Method Not Allowed.',
+    category: 'bug', priority: 'default', status: 'verified', up_next: false,
+    tags: ['api', 'webhooks'],
+    notes: notesJson([
+      { text: 'Added CORS preflight handler for webhook routes. Configured allowed origins from the integration settings table.', days_ago: 4 },
+    ]),
+    days_ago: 9, updated_ago: 4, completed_ago: 5, verified_ago: 4,
+  },
+  {
+    title: 'Design new onboarding flow for team workspaces',
+    details: 'The current onboarding drops users into an empty workspace. Design a guided setup that creates sample data and walks through key features.',
+    category: 'feature', priority: 'low', status: 'not_started', up_next: false,
+    tags: ['onboarding', 'ux'],
+    notes: '', days_ago: 10, updated_ago: 10,
+  },
+];
+
 // --- Scenario data lookup ---
 
 const SCENARIO_DATA: Record<number, DemoTicket[]> = {
@@ -549,6 +616,7 @@ const SCENARIO_DATA: Record<number, DemoTicket[]> = {
   6: SCENARIO_6,
   7: SCENARIO_7,
   8: SCENARIO_8,
+  9: SCENARIO_9,
 };
 
 // --- Custom views for scenario 3 ---
@@ -572,6 +640,15 @@ const SCENARIO_3_VIEWS = [
       { field: 'status', operator: 'lte', value: 'started' },
     ],
   },
+];
+
+// --- Custom commands for scenario 9 ---
+
+const SCENARIO_9_COMMANDS = [
+  { name: 'Commit Changes', prompt: 'Make a commit for the recently completed tickets.', icon: 'git-commit-horizontal', color: '#6b7280' },
+  { name: 'Run Tests', prompt: 'Run the test suite and report any failures.', icon: 'test-tubes', color: '#3b82f6' },
+  { name: 'Code Review', prompt: 'Review the recent changes for code quality and potential issues.', icon: 'search-code', color: '#8b5cf6' },
+  { name: 'Deploy Staging', prompt: 'Deploy the current branch to the staging environment.', icon: 'rocket', color: '#f97316' },
 ];
 
 // --- Seeding ---
@@ -617,5 +694,11 @@ export async function seedDemoData(scenario: number): Promise<void> {
     const { backfillSnapshots, recordDailySnapshot } = await import('./db/stats.js');
     await backfillSnapshots();
     await recordDailySnapshot();
+  }
+  if (scenario === 9) {
+    // Enable Claude Channel and add custom command buttons
+    await db.query(`INSERT INTO settings (key, value) VALUES ('channel_enabled', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true'`);
+    await db.query(`INSERT INTO settings (key, value) VALUES ('custom_commands', $1) ON CONFLICT (key) DO UPDATE SET value = $1`,
+      [JSON.stringify(SCENARIO_9_COMMANDS)]);
   }
 }

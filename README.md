@@ -162,6 +162,10 @@ Hot Sheet can push events directly to a running Claude Code session via MCP chan
 
 Requires Claude Code v2.1.80+ with channel support. See [docs/12-claude-channel.md](docs/12-claude-channel.md) for setup details.
 
+<p align="center">
+  <img src="docs/demo-9.png" alt="Claude Channel integration with play button, custom command buttons, and AI-driven workflow" width="900">
+</p>
+
 ### Other AI Tools
 
 The worklist works with any AI tool that reads files — Cursor, Copilot, Aider, etc. Each ticket includes its number, type, priority, status, title, and details.
