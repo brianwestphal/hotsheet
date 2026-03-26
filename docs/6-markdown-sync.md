@@ -70,12 +70,22 @@ On startup, the application detects installed AI tools and generates skill/rule 
 - Generated skill files include a version comment (e.g., `<!-- hotsheet-skill-version: 2 -->`).
 - Files are only regenerated when the embedded skill version is higher than the existing file's version.
 
+### 6.8 API Secret & Port Recovery
+
+When running multiple Hot Sheet instances, AI tools can accidentally connect to the wrong instance. A secret-based validation mechanism prevents this:
+
+- **Secret generation**: At startup, a secret is generated and stored in `.hotsheet/settings.json` alongside the current `port`. The secret is a SHA-256 hash of the absolute settings.json path + a random value. A path hash is also stored; if the data directory moves, the secret is regenerated on next launch.
+- **Secret in requests**: The worklist.md workflow instructions and all generated skill files include the secret as an `X-Hotsheet-Secret` header in curl commands. AI tools send this header with every API request.
+- **Server validation**: If the `X-Hotsheet-Secret` header is present but doesn't match the expected value, the server returns HTTP 403 with a JSON body containing recovery instructions (re-read `.hotsheet/settings.json` for correct port and secret).
+- **Port recovery**: Skill files and worklist.md instruct AI tools to re-read `.hotsheet/settings.json` when requests fail (connection refused or 403), as the port or secret may have changed.
+- **Browser compatibility**: If the header is absent (as with browser UI requests), the request is allowed through without validation.
+
 ## Non-Functional Requirements
 
-### 6.8 Debouncing
+### 6.9 Debouncing
 
 - Markdown sync is debounced to avoid excessive file writes during rapid changes (500ms for worklist, 5s for open-tickets).
 
-### 6.9 Portability
+### 6.10 Portability
 
 - Skill files use a port range pattern (4170-4189) rather than a specific port, so they remain valid across port changes.

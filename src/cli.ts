@@ -6,6 +6,7 @@ import { initBackupScheduler } from './backup.js';
 import { cleanupAttachments } from './cleanup.js';
 import { getDb, setDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
+import { ensureSecret } from './file-settings.js';
 import { acquireLock } from './lock.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
 import { ensureGitignore } from './gitignore.js';
@@ -141,6 +142,9 @@ async function main() {
   console.log(`  Data directory: ${dataDir}`);
 
   const actualPort = await startServer(port, dataDir, { noOpen, strictPort });
+
+  // Generate/validate the API secret and write port to settings.json for AI tool consumption
+  ensureSecret(dataDir, actualPort);
 
   // Initialize markdown sync with the actual port (may differ if requested port was in use)
   initMarkdownSync(dataDir, actualPort);

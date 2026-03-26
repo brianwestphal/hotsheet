@@ -5,6 +5,7 @@ import { Hono } from 'hono';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
+import { readFileSettings } from './file-settings.js';
 import { apiRoutes } from './routes/api.js';
 import { backupRoutes } from './routes/backups.js';
 import { pageRoutes } from './routes/pages.js';
@@ -51,6 +52,23 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     const ext = filename.split('.').pop();
     const mimeTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', svg: 'image/svg+xml' };
     return new Response(content, { headers: { 'Content-Type': mimeTypes[ext || ''] || 'application/octet-stream', 'Cache-Control': 'max-age=86400' } });
+  });
+
+  // Secret validation middleware for API routes (HS-1684)
+  // If X-Hotsheet-Secret header is present but doesn't match, reject with recovery instructions.
+  // If header is absent, allow the request (browser UI doesn't send it).
+  app.use('/api/*', async (c, next) => {
+    const headerSecret = c.req.header('X-Hotsheet-Secret');
+    if (headerSecret) {
+      const settings = readFileSettings(dataDir);
+      if (settings.secret && headerSecret !== settings.secret) {
+        return c.json({
+          error: 'Secret mismatch — you may be connecting to the wrong Hot Sheet instance.',
+          recovery: 'Re-read .hotsheet/settings.json to get the correct port and secret, and re-read your skill files (e.g. .claude/skills/hotsheet/SKILL.md) for updated instructions.',
+        }, 403);
+      }
+    }
+    await next();
   });
 
   // API routes

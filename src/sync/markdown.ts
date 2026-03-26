@@ -2,6 +2,7 @@ import { writeFileSync } from 'fs';
 import { join } from 'path';
 
 import { getAttachments, getCategories, getTickets } from '../db/queries.js';
+import { readFileSettings } from '../file-settings.js';
 import type { Ticket } from '../types.js';
 
 let dataDir: string;
@@ -115,18 +116,22 @@ async function syncWorklist(): Promise<void> {
     sections.push('');
     sections.push('## Workflow');
     sections.push('');
+    const settings = readFileSettings(dataDir);
+    const secret = settings.secret || '';
+    const secretHeader = secret ? ` -H "X-Hotsheet-Secret: ${secret}"` : '';
+
     sections.push(`The Hot Sheet API is available at http://localhost:${port}/api. **You MUST update ticket status** as you work — this is required, not optional.`);
     sections.push('');
     sections.push('- **BEFORE starting work on a ticket**, set its status to "started":');
-    sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json" -d '{"status": "started"}'\``);
+    sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"status": "started"}'\``);
     sections.push('');
     sections.push('- **AFTER completing work on a ticket**, set its status to "completed" and **include notes** describing what was done:');
-    sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json" -d '{"status": "completed", "notes": "Describe the specific changes made"}'\``);
+    sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"status": "completed", "notes": "Describe the specific changes made"}'\``);
     sections.push('');
     sections.push('**IMPORTANT:**');
     sections.push('- Update status for EVERY ticket — "started" when you begin, "completed" when you finish.');
     sections.push('- The "notes" field is REQUIRED when completing a ticket. Describe the specific work done.');
-    sections.push('- If an API call fails (e.g. connection refused, error response), log a visible warning to the user and continue your work. Do NOT silently skip status updates.');
+    sections.push('- If an API call fails (e.g. connection refused, 403 secret mismatch, or error response), **re-read `.hotsheet/settings.json`** to get the correct `port` and `secret` values — you may be connecting to the wrong Hot Sheet instance. Log a visible warning to the user and continue your work. Do NOT silently skip status updates.');
     sections.push('- Do NOT set tickets to "verified" — that status is reserved for human review.');
     sections.push('');
     sections.push('## Creating Tickets');
@@ -140,7 +145,7 @@ async function syncWorklist(): Promise<void> {
     sections.push('To create a ticket:');
     const allCats = await getCategories();
     const catIds = allCats.map(c => c.id).join('|');
-    sections.push(`  \`curl -s -X POST http://localhost:${port}/api/tickets -H "Content-Type: application/json" -d '{"title": "Title", "defaults": {"category": "${catIds}", "up_next": false}}'\``);
+    sections.push(`  \`curl -s -X POST http://localhost:${port}/api/tickets -H "Content-Type: application/json"${secretHeader} -d '{"title": "Title", "defaults": {"category": "${catIds}", "up_next": false}}'\``);
     sections.push('');
     sections.push('You can also include `"details"` in the defaults object for longer descriptions.');
     sections.push('Set `up_next: true` only for items that should be prioritized immediately.');

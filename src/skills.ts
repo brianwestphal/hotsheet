@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, relative } from 'path';
 
+import { readFileSettings } from './file-settings.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
 
-export const SKILL_VERSION = 3;
+export const SKILL_VERSION = 4;
 
 let skillPort: number;
 let skillDataDir: string;
@@ -63,7 +64,10 @@ export function updateFile(path: string, content: string): boolean {
 // --- Shared content ---
 
 function ticketSkillBody(skill: SkillDef): string {
-  return [
+  const settings = readFileSettings(skillDataDir);
+  const secret = settings.secret || '';
+  const secretLine = secret ? `  -H "X-Hotsheet-Secret: ${secret}" \\` : '';
+  const lines = [
     `Create a new Hot Sheet **${skill.label}** ticket. ${skill.description}.`,
     '',
     '**Parsing the input:**',
@@ -74,16 +78,25 @@ function ticketSkillBody(skill: SkillDef): string {
     '```bash',
     `curl -s -X POST http://localhost:${skillPort}/api/tickets \\`,
     '  -H "Content-Type: application/json" \\',
+  ];
+  if (secretLine) lines.push(secretLine);
+  lines.push(
     `  -d '{"title": "<TITLE>", "defaults": {"category": "${skill.category}", "up_next": <true|false>}}'`,
     '```',
     '',
+    `If the request fails (connection refused or 403), re-read \`.hotsheet/settings.json\` for the current \`port\` and \`secret\` values — you may be connecting to the wrong Hot Sheet instance.`,
+    '',
     'Report the created ticket number and title to the user.',
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 function mainSkillBody(): string {
   const worklistRel = relative(process.cwd(), join(skillDataDir, 'worklist.md'));
+  const settingsRel = relative(process.cwd(), join(skillDataDir, 'settings.json'));
   return [
+    `Base directory for this skill: ${join(process.cwd(), '.claude', 'skills', 'hotsheet')}`,
+    '',
     `Read \`${worklistRel}\` and work through the tickets in priority order.`,
     '',
     'For each ticket:',
@@ -92,6 +105,8 @@ function mainSkillBody(): string {
     '3. When complete, mark it done via the Hot Sheet UI',
     '',
     'Work through them in order of priority, where reasonable.',
+    '',
+    `If API calls fail (connection refused or 403), re-read \`${settingsRel}\` for the current \`port\` and \`secret\` values — you may be connecting to the wrong Hot Sheet instance.`,
   ].join('\n');
 }
 
