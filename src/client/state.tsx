@@ -47,13 +47,16 @@ export interface CustomView {
   conditions: CustomViewCondition[];
 }
 
+export type NotifyLevel = 'none' | 'once' | 'persistent';
+
 export interface AppSettings {
   detail_position: 'side' | 'bottom';
   detail_width: number;
   detail_height: number;
   trash_cleanup_days: number;
   verified_cleanup_days: number;
-  notifications_enabled: boolean;
+  notify_permission: NotifyLevel;
+  notify_completed: NotifyLevel;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -62,7 +65,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   detail_height: 300,
   trash_cleanup_days: 3,
   verified_cleanup_days: 30,
-  notifications_enabled: true,
+  notify_permission: 'persistent',
+  notify_completed: 'once',
 };
 
 export interface AppState {

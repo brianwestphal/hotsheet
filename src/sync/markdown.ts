@@ -1,9 +1,15 @@
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 
-import { getAttachments, getCategories, getTickets } from '../db/queries.js';
+import { getAttachments, getCategories, getSettings, getTickets } from '../db/queries.js';
 import { readFileSettings } from '../file-settings.js';
 import type { Ticket } from '../types.js';
+
+interface AutoContextEntry {
+  type: 'category' | 'tag';
+  key: string;
+  text: string;
+}
 
 let dataDir: string;
 let port: number;
@@ -47,7 +53,7 @@ function parseTicketNotes(raw: string): { text: string; created_at: string }[] {
   return [];
 }
 
-async function formatTicket(ticket: Ticket): Promise<string> {
+async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Promise<string> {
   const attachments = await getAttachments(ticket.id);
   const lines: string[] = [];
 
@@ -59,16 +65,31 @@ async function formatTicket(ticket: Ticket): Promise<string> {
   lines.push(`- Title: ${ticket.title}`);
 
   // Tags (displayed in Title Case)
+  let ticketTags: string[] = [];
   try {
     const tags = JSON.parse(ticket.tags);
     if (Array.isArray(tags) && tags.length > 0) {
+      ticketTags = tags;
       const display = tags.map((t: string) => t.replace(/\b\w/g, (c: string) => c.toUpperCase()));
       lines.push(`- Tags: ${display.join(', ')}`);
     }
   } catch { /* ignore */ }
 
-  if (ticket.details.trim()) {
-    const detailLines = ticket.details.split('\n');
+  // Build auto-context: category first, then tags alphabetically
+  const contextParts: string[] = [];
+  const catContext = autoContext.find(ac => ac.type === 'category' && ac.key === ticket.category);
+  if (catContext) contextParts.push(catContext.text);
+  const tagContexts = autoContext
+    .filter(ac => ac.type === 'tag' && ticketTags.some(t => t.toLowerCase() === ac.key.toLowerCase()))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  for (const tc of tagContexts) contextParts.push(tc.text);
+
+  const fullDetails = contextParts.length > 0
+    ? (contextParts.join('\n\n') + (ticket.details.trim() ? '\n\n' + ticket.details : ''))
+    : ticket.details;
+
+  if (fullDetails.trim()) {
+    const detailLines = fullDetails.split('\n');
     lines.push(`- Details: ${detailLines[0]}`);
     for (let i = 1; i < detailLines.length; i++) {
       lines.push(`  ${detailLines[i]}`);
@@ -92,6 +113,17 @@ async function formatTicket(ticket: Ticket): Promise<string> {
   }
 
   return lines.join('\n');
+}
+
+async function loadAutoContext(): Promise<AutoContextEntry[]> {
+  try {
+    const settings = await getSettings();
+    if (settings.auto_context) {
+      const parsed = JSON.parse(settings.auto_context);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch { /* ignore */ }
+  return [];
 }
 
 async function formatCategoryDescriptions(usedCategories: Set<string>): Promise<string> {
@@ -154,11 +186,12 @@ async function syncWorklist(): Promise<void> {
     if (tickets.length === 0) {
       sections.push('No items in the Up Next list.');
     } else {
+      const autoContext = await loadAutoContext();
       for (const ticket of tickets) {
         categories.add(ticket.category);
         sections.push('---');
         sections.push('');
-        const formatted = await formatTicket(ticket);
+        const formatted = await formatTicket(ticket, autoContext);
         sections.push(formatted);
         sections.push('');
       }
@@ -189,13 +222,14 @@ async function syncOpenTickets(): Promise<void> {
     // Group by status
     const started = tickets.filter(t => t.status === 'started');
     const notStarted = tickets.filter(t => t.status === 'not_started');
+    const autoContext = await loadAutoContext();
 
     if (started.length > 0) {
       sections.push(`## Started (${started.length})`);
       sections.push('');
       for (const ticket of started) {
         categories.add(ticket.category);
-        const formatted = await formatTicket(ticket);
+        const formatted = await formatTicket(ticket, autoContext);
         sections.push(formatted);
         sections.push('');
       }
@@ -206,7 +240,7 @@ async function syncOpenTickets(): Promise<void> {
       sections.push('');
       for (const ticket of notStarted) {
         categories.add(ticket.category);
-        const formatted = await formatTicket(ticket);
+        const formatted = await formatTicket(ticket, autoContext);
         sections.push(formatted);
         sections.push('');
       }

@@ -205,14 +205,34 @@ The interface is divided into:
 
 ### 4.16 Attention Notifications
 
-- When Claude needs permission or finishes work, the app requests user attention:
-  - **Tauri (desktop)**: Bounces the dock icon using `requestUserAttention(2)` (Informational).
-  - **Browser**: Flashes the tab title with a warning message for 5 cycles.
-- Only triggers when the window is not currently focused.
-- Triggers on: permission overlay appearing, Claude becoming idle after working.
-- **Setting**: "Get attention on important events" checkbox in Settings → General. Enabled by default. Stored as `notifications_enabled` in the settings table.
+Two events can request user attention, each independently configurable in Settings → General:
 
-### 4.17 Error Handling
+- **When Claude needs permission** — triggered when the permission overlay appears. Default: "Notify until focused".
+- **When Claude finishes work** — triggered when Claude becomes idle after processing tickets. Default: "Notify once".
+
+Each has three options:
+| Option | Tauri (desktop) | Browser |
+|--------|----------------|---------|
+| Don't notify | No action | No action |
+| Notify once | Single dock icon bounce (Informational) | Tab title flashes 3 times |
+| Notify until focused | Continuous dock bounce until app is focused (Critical) | Tab title flashes 15 times |
+
+- **Tauri implementation**: Two custom Rust commands (`request_attention` for Critical, `request_attention_once` for Informational) call `window.request_user_attention()` on the main window via `AppHandle`.
+- **Browser implementation**: Alternates `document.title` between the original title and a warning message. Only triggers when `!document.hasFocus()`.
+- **Settings storage**: `notify_permission` and `notify_completed` keys in the settings table. Values: `none`, `once`, `persistent`.
+
+### 4.17 Auto-Context
+
+- Users can configure automatic context that is prepended to ticket details in the worklist and open-tickets markdown files.
+- **Settings tab**: "Context" tab (Lucide file-text icon) in the settings dialog.
+  - "Add" button opens a dialog with a filterable list of categories and tags (excluding already-configured ones).
+  - Each entry shows a badge (Category/Tag + name), an editable textarea for the context text, and a delete button.
+  - Changes auto-save with 500ms debounce.
+- **Storage**: JSON array in the `auto_context` settings key. Each entry: `{ type: 'category'|'tag', key: string, text: string }`.
+- **Prepend order**: Category context appears first, then tag context entries sorted alphabetically by tag key.
+- Only one entry per category or tag is allowed.
+
+### 4.18 Error Handling
 
 - Network errors display a popup notification to the user.
 - API failures are surfaced (not silently swallowed) in the UI.

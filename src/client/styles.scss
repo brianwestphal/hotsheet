@@ -1795,6 +1795,60 @@ input, select, textarea {
   }
 }
 
+// --- Auto-context settings ---
+
+.auto-context-entry {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+}
+
+.auto-context-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.auto-context-badge {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.auto-context-text {
+  width: 100%;
+  min-height: 60px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+
+  &:focus { border-color: var(--accent); }
+}
+
+.ac-options-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.ac-option-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: var(--radius);
+  cursor: pointer;
+
+  &:hover { background: var(--bg-selected); color: var(--accent); }
+}
+
 .settings-checkbox-label {
   display: flex !important;
   align-items: center;
@@ -2452,6 +2506,15 @@ input, select, textarea {
 
 .status-bar {
   font-size: 12px;
+}
+
+.bounce-debug {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-muted);
+  margin-left: 8px;
 }
 
 .channel-status-indicator {

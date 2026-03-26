@@ -8,7 +8,7 @@ import { showPrintDialog } from './print.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, parseTags, refreshDetail, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
-import type { AppSettings, CategoryDef, Ticket } from './state.js';
+import type { AppSettings, CategoryDef, NotifyLevel, Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
 import { cancelPendingSave, canUseColumnView, draggedTicketIds, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { canRedo, canUndo, performRedo, performUndo, pushNotesUndo, recordTextChange, trackedBatch, trackedCompoundBatch, trackedPatch } from './undo/actions.js';
@@ -71,7 +71,12 @@ async function loadSettings() {
     if (settings.trash_cleanup_days) state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || 3;
     if (settings.verified_cleanup_days) state.settings.verified_cleanup_days = parseInt(settings.verified_cleanup_days, 10) || 30;
     if (settings.layout === 'list' || settings.layout === 'columns') state.layout = settings.layout;
-    if (settings.notifications_enabled !== undefined) state.settings.notifications_enabled = settings.notifications_enabled !== 'false';
+    if (settings.notify_permission === 'none' || settings.notify_permission === 'once' || settings.notify_permission === 'persistent') {
+      state.settings.notify_permission = settings.notify_permission;
+    }
+    if (settings.notify_completed === 'none' || settings.notify_completed === 'once' || settings.notify_completed === 'persistent') {
+      state.settings.notify_completed = settings.notify_completed;
+    }
   } catch { /* use defaults */ }
 
   applyDetailPosition(state.settings.detail_position);
@@ -152,7 +157,8 @@ function bindSettingsDialog() {
     // Populate fields with current values
     (document.getElementById('settings-trash-days') as HTMLInputElement).value = String(state.settings.trash_cleanup_days);
     (document.getElementById('settings-verified-days') as HTMLInputElement).value = String(state.settings.verified_cleanup_days);
-    (document.getElementById('settings-notifications') as HTMLInputElement).checked = state.settings.notifications_enabled;
+    (document.getElementById('settings-notify-permission') as HTMLSelectElement).value = state.settings.notify_permission;
+    (document.getElementById('settings-notify-completed') as HTMLSelectElement).value = state.settings.notify_completed;
     overlay.style.display = 'flex';
     void loadBackupList();
     // Load file-based settings (app name, backup dir)
@@ -198,19 +204,16 @@ function bindSettingsDialog() {
     }, 500);
   });
 
-  // Notifications toggle
-  const notifCheckbox = document.getElementById('settings-notifications') as HTMLInputElement;
-  const notifHint = document.getElementById('settings-notifications-hint');
-  const isTauri = !!(window as unknown as Record<string, unknown>).__TAURI__;
-  if (notifHint) {
-    notifHint.textContent = isTauri
-      ? 'Bounce the dock icon when Claude needs permission or finishes work.'
-      : 'Flash the browser tab when Claude needs permission or finishes work.';
-  }
-  notifCheckbox.checked = state.settings.notifications_enabled;
-  notifCheckbox.addEventListener('change', () => {
-    state.settings.notifications_enabled = notifCheckbox.checked;
-    void api('/settings', { method: 'PATCH', body: { notifications_enabled: String(notifCheckbox.checked) } });
+  // Notification dropdowns
+  const notifyPermSelect = document.getElementById('settings-notify-permission') as HTMLSelectElement;
+  const notifyCompSelect = document.getElementById('settings-notify-completed') as HTMLSelectElement;
+  notifyPermSelect.addEventListener('change', () => {
+    state.settings.notify_permission = notifyPermSelect.value as NotifyLevel;
+    void api('/settings', { method: 'PATCH', body: { notify_permission: notifyPermSelect.value } });
+  });
+  notifyCompSelect.addEventListener('change', () => {
+    state.settings.notify_completed = notifyCompSelect.value as NotifyLevel;
+    void api('/settings', { method: 'PATCH', body: { notify_completed: notifyCompSelect.value } });
   });
 
   // App name (file-based setting)
@@ -270,6 +273,9 @@ function bindSettingsDialog() {
       });
     }, 800);
   });
+
+  // --- Context tab (auto-context) ---
+  bindAutoContextSettings();
 
   // --- Experimental tab (channel + custom commands) ---
   bindExperimentalSettings();
@@ -447,26 +453,23 @@ function getTauriInvoke(): ((cmd: string) => Promise<unknown>) | null {
   return tauri?.core?.invoke ?? null;
 }
 
-/** Request user attention — bounces dock icon in Tauri, flashes tab title in browser. */
-function requestAttention() {
-  if (!state.settings.notifications_enabled) return;
-  if (document.hasFocus()) return; // Already focused, no need
-
-  const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
-    | { window?: { getCurrentWindow?: () => { requestUserAttention: (type: number) => Promise<void> } } }
-    | undefined;
-
-  if (tauri?.window?.getCurrentWindow) {
-    // Tauri: bounce dock icon (2 = Informational)
-    tauri.window.getCurrentWindow().requestUserAttention(2).catch(() => {});
-  } else {
+/** Request user attention — bounces dock icon in Tauri, flashes tab title in browser.
+ *  @param level 'once' = single bounce, 'persistent' = keep bouncing until focused */
+function requestAttention(level: 'once' | 'persistent') {
+  const invoke = getTauriInvoke();
+  if (invoke) {
+    // Tauri: custom command that calls request_user_attention.
+    // 'persistent' = Critical (bounces until focused), 'once' = Informational (single bounce).
+    invoke(level === 'persistent' ? 'request_attention' : 'request_attention_once').catch(() => {});
+  } else if (!document.hasFocus()) {
     // Browser: flash the tab title
+    const maxFlashes = level === 'persistent' ? 30 : 6;
     const originalTitle = document.title;
     let flashes = 0;
     const interval = setInterval(() => {
       document.title = flashes % 2 === 0 ? '\u26a0 Hot Sheet needs attention' : originalTitle;
       flashes++;
-      if (flashes >= 10 || document.hasFocus()) {
+      if (flashes >= maxFlashes || document.hasFocus()) {
         clearInterval(interval);
         document.title = originalTitle;
       }
@@ -762,6 +765,156 @@ function contrastColor(hex: string): string {
   // Relative luminance
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return luminance > 0.6 ? '#1a1a1a' : '#ffffff';
+}
+
+// --- Auto-context settings ---
+
+interface AutoContextEntry {
+  type: 'category' | 'tag';
+  key: string;
+  text: string;
+}
+
+let autoContextEntries: AutoContextEntry[] = [];
+
+function bindAutoContextSettings() {
+  const list = document.getElementById('auto-context-list')!;
+  const addBtn = document.getElementById('auto-context-add-btn')!;
+
+  async function loadEntries() {
+    try {
+      const settings = await api<Record<string, string>>('/settings');
+      if (settings.auto_context) {
+        autoContextEntries = JSON.parse(settings.auto_context);
+      }
+    } catch { /* ignore */ }
+    renderEntries();
+  }
+
+  async function saveEntries() {
+    await api('/settings', { method: 'PATCH', body: { auto_context: JSON.stringify(autoContextEntries) } });
+  }
+
+  function renderEntries() {
+    list.innerHTML = '';
+    if (autoContextEntries.length === 0) {
+      list.innerHTML = '<div style="padding:12px 0;color:var(--text-muted);font-size:13px">No auto-context entries yet. Click + Add to create one.</div>';
+      return;
+    }
+    for (let i = 0; i < autoContextEntries.length; i++) {
+      const entry = autoContextEntries[i];
+      const displayKey = entry.type === 'category'
+        ? (state.categories.find(c => c.id === entry.key)?.label || entry.key)
+        : entry.key.replace(/\b\w/g, c => c.toUpperCase());
+      const row = toElement(
+        <div className="auto-context-entry">
+          <div className="auto-context-header">
+            <span className="auto-context-badge" data-type={entry.type}>{entry.type === 'category' ? 'Category' : 'Tag'}: {displayKey}</span>
+            <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
+          </div>
+          <textarea className="auto-context-text" rows={3}>{entry.text}</textarea>
+        </div>
+      );
+      const textarea = row.querySelector('.auto-context-text') as HTMLTextAreaElement;
+      let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+      textarea.addEventListener('input', () => {
+        if (saveTimeout) clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+          autoContextEntries[i] = { ...entry, text: textarea.value };
+          void saveEntries();
+        }, 500);
+      });
+      row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
+        autoContextEntries.splice(i, 1);
+        void saveEntries();
+        renderEntries();
+      });
+      list.appendChild(row);
+    }
+  }
+
+  addBtn.addEventListener('click', () => {
+    showAddAutoContextDialog();
+  });
+
+  function showAddAutoContextDialog() {
+    // Build options: categories + known tags
+    const options: { type: 'category' | 'tag'; key: string; label: string }[] = [];
+    for (const cat of state.categories) {
+      if (!autoContextEntries.some(e => e.type === 'category' && e.key === cat.id)) {
+        options.push({ type: 'category', key: cat.id, label: `Category: ${cat.label}` });
+      }
+    }
+    // Fetch tags
+    void api<string[]>('/tags').then(tags => {
+      for (const tag of tags) {
+        if (!autoContextEntries.some(e => e.type === 'tag' && e.key.toLowerCase() === tag.toLowerCase())) {
+          options.push({ type: 'tag', key: tag, label: `Tag: ${tag.replace(/\b\w/g, c => c.toUpperCase())}` });
+        }
+      }
+      renderDialog(options);
+    });
+
+    function renderDialog(options: { type: 'category' | 'tag'; key: string; label: string }[]) {
+      const overlay = toElement(
+        <div className="custom-view-editor-overlay">
+          <div className="custom-view-editor" style="width:400px">
+            <div className="custom-view-editor-header">
+              <span>Add Auto-Context</span>
+              <button className="detail-close" id="ac-dialog-close">{'\u00d7'}</button>
+            </div>
+            <div className="custom-view-editor-body">
+              <div className="settings-field">
+                <label>Select category or tag</label>
+                <input type="text" id="ac-filter" placeholder="Filter..." autocomplete="off" />
+              </div>
+              <div id="ac-options" className="ac-options-list"></div>
+            </div>
+          </div>
+        </div>
+      );
+
+      const filterInput = overlay.querySelector('#ac-filter') as HTMLInputElement;
+      const optionsList = overlay.querySelector('#ac-options')!;
+
+      function renderOptions(filter: string) {
+        optionsList.innerHTML = '';
+        const filtered = filter ? options.filter(o => o.label.toLowerCase().includes(filter.toLowerCase())) : options;
+        if (filtered.length === 0) {
+          optionsList.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:13px">No matching options</div>';
+          return;
+        }
+        for (const opt of filtered) {
+          const item = toElement(<button className="ac-option-item">{opt.label}</button>);
+          item.addEventListener('click', () => {
+            autoContextEntries.push({ type: opt.type, key: opt.key, text: '' });
+            void saveEntries();
+            renderEntries();
+            overlay.remove();
+            // Focus the new textarea
+            const textareas = list.querySelectorAll('.auto-context-text');
+            const last = textareas[textareas.length - 1] as HTMLTextAreaElement | null;
+            last?.focus();
+          });
+          optionsList.appendChild(item);
+        }
+      }
+
+      renderOptions('');
+      filterInput.addEventListener('input', () => renderOptions(filterInput.value));
+
+      const close = () => overlay.remove();
+      overlay.querySelector('#ac-dialog-close')!.addEventListener('click', close);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+      document.body.appendChild(overlay);
+      filterInput.focus();
+    }
+  }
+
+  // Load when settings dialog opens
+  const settingsBtn = document.getElementById('settings-btn')!;
+  settingsBtn.addEventListener('click', () => { void loadEntries(); });
 }
 
 let customCommands: CustomCommand[] = [];
@@ -1103,7 +1256,9 @@ function stopPermissionPolling() {
 function showPermissionOverlay(perm: { request_id: string; tool_name: string; description: string; input_preview?: string }) {
   const overlay = document.getElementById('permission-overlay');
   if (!overlay || overlay.style.display !== 'none') return;
-  requestAttention();
+  if (state.settings.notify_permission !== 'none') {
+    requestAttention(state.settings.notify_permission);
+  }
 
   const detail = document.getElementById('permission-overlay-detail');
   if (detail) {
@@ -1159,7 +1314,9 @@ function setChannelBusy(busy: boolean) {
     indicator.style.display = '';
     indicator.className = 'channel-status-indicator';
     indicator.innerHTML = '\u2713 Claude idle';
-    requestAttention();
+    if (state.settings.notify_completed !== 'none') {
+      requestAttention(state.settings.notify_completed);
+    }
     // Auto-hide after 5 seconds
     setTimeout(() => {
       if (!channelBusy && indicator) indicator.style.display = 'none';

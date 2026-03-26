@@ -305,6 +305,26 @@ fn install_cli(app: tauri::AppHandle) -> Result<InstallResult, String> {
     })
 }
 
+#[tauri::command]
+fn request_attention(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::UserAttentionType;
+    let win = app.get_webview_window("main")
+        .ok_or_else(|| "window 'main' not found".to_string())?;
+    win.request_user_attention(Some(UserAttentionType::Critical))
+        .map_err(|e| format!("request_user_attention failed: {}", e))?;
+    Ok("bounce sent (critical)".to_string())
+}
+
+#[tauri::command]
+fn request_attention_once(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::UserAttentionType;
+    let win = app.get_webview_window("main")
+        .ok_or_else(|| "window 'main' not found".to_string())?;
+    win.request_user_attention(Some(UserAttentionType::Informational))
+        .map_err(|e| format!("request_user_attention failed: {}", e))?;
+    Ok("bounce sent (informational)".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -373,7 +393,9 @@ pub fn run() {
             install_cli,
             get_pending_update,
             check_for_update,
-            install_update
+            install_update,
+            request_attention,
+            request_attention_once
         ])
         .setup(|_app| {
             #[allow(unused_variables)]
