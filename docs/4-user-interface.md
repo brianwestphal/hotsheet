@@ -203,7 +203,16 @@ The interface is divided into:
   - Notes are not re-rendered while a note textarea is being edited.
   - Ticket list title inputs preserve both their value and cursor position (selectionStart/selectionEnd) across re-renders.
 
-### 4.14 Error Handling
+### 4.16 Attention Notifications
+
+- When Claude needs permission or finishes work, the app requests user attention:
+  - **Tauri (desktop)**: Bounces the dock icon using `requestUserAttention(2)` (Informational).
+  - **Browser**: Flashes the tab title with a warning message for 5 cycles.
+- Only triggers when the window is not currently focused.
+- Triggers on: permission overlay appearing, Claude becoming idle after working.
+- **Setting**: "Get attention on important events" checkbox in Settings → General. Enabled by default. Stored as `notifications_enabled` in the settings table.
+
+### 4.17 Error Handling
 
 - Network errors display a popup notification to the user.
 - API failures are surfaced (not silently swallowed) in the UI.

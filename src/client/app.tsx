@@ -71,6 +71,7 @@ async function loadSettings() {
     if (settings.trash_cleanup_days) state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || 3;
     if (settings.verified_cleanup_days) state.settings.verified_cleanup_days = parseInt(settings.verified_cleanup_days, 10) || 30;
     if (settings.layout === 'list' || settings.layout === 'columns') state.layout = settings.layout;
+    if (settings.notifications_enabled !== undefined) state.settings.notifications_enabled = settings.notifications_enabled !== 'false';
   } catch { /* use defaults */ }
 
   applyDetailPosition(state.settings.detail_position);
@@ -151,6 +152,7 @@ function bindSettingsDialog() {
     // Populate fields with current values
     (document.getElementById('settings-trash-days') as HTMLInputElement).value = String(state.settings.trash_cleanup_days);
     (document.getElementById('settings-verified-days') as HTMLInputElement).value = String(state.settings.verified_cleanup_days);
+    (document.getElementById('settings-notifications') as HTMLInputElement).checked = state.settings.notifications_enabled;
     overlay.style.display = 'flex';
     void loadBackupList();
     // Load file-based settings (app name, backup dir)
@@ -194,6 +196,21 @@ function bindSettingsDialog() {
       state.settings.verified_cleanup_days = val;
       void api('/settings', { method: 'PATCH', body: { verified_cleanup_days: String(val) } });
     }, 500);
+  });
+
+  // Notifications toggle
+  const notifCheckbox = document.getElementById('settings-notifications') as HTMLInputElement;
+  const notifHint = document.getElementById('settings-notifications-hint');
+  const isTauri = !!(window as unknown as Record<string, unknown>).__TAURI__;
+  if (notifHint) {
+    notifHint.textContent = isTauri
+      ? 'Bounce the dock icon when Claude needs permission or finishes work.'
+      : 'Flash the browser tab when Claude needs permission or finishes work.';
+  }
+  notifCheckbox.checked = state.settings.notifications_enabled;
+  notifCheckbox.addEventListener('change', () => {
+    state.settings.notifications_enabled = notifCheckbox.checked;
+    void api('/settings', { method: 'PATCH', body: { notifications_enabled: String(notifCheckbox.checked) } });
   });
 
   // App name (file-based setting)
@@ -428,6 +445,33 @@ function getTauriInvoke(): ((cmd: string) => Promise<unknown>) | null {
     | { core?: { invoke: (cmd: string) => Promise<unknown> } }
     | undefined;
   return tauri?.core?.invoke ?? null;
+}
+
+/** Request user attention — bounces dock icon in Tauri, flashes tab title in browser. */
+function requestAttention() {
+  if (!state.settings.notifications_enabled) return;
+  if (document.hasFocus()) return; // Already focused, no need
+
+  const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
+    | { window?: { getCurrentWindow?: () => { requestUserAttention: (type: number) => Promise<void> } } }
+    | undefined;
+
+  if (tauri?.window?.getCurrentWindow) {
+    // Tauri: bounce dock icon (2 = Informational)
+    tauri.window.getCurrentWindow().requestUserAttention(2).catch(() => {});
+  } else {
+    // Browser: flash the tab title
+    const originalTitle = document.title;
+    let flashes = 0;
+    const interval = setInterval(() => {
+      document.title = flashes % 2 === 0 ? '\u26a0 Hot Sheet needs attention' : originalTitle;
+      flashes++;
+      if (flashes >= 10 || document.hasFocus()) {
+        clearInterval(interval);
+        document.title = originalTitle;
+      }
+    }, 800);
+  }
 }
 
 function showUpdateBanner(version: string) {
@@ -1059,6 +1103,7 @@ function stopPermissionPolling() {
 function showPermissionOverlay(perm: { request_id: string; tool_name: string; description: string; input_preview?: string }) {
   const overlay = document.getElementById('permission-overlay');
   if (!overlay || overlay.style.display !== 'none') return;
+  requestAttention();
 
   const detail = document.getElementById('permission-overlay-detail');
   if (detail) {
@@ -1114,6 +1159,7 @@ function setChannelBusy(busy: boolean) {
     indicator.style.display = '';
     indicator.className = 'channel-status-indicator';
     indicator.innerHTML = '\u2713 Claude idle';
+    requestAttention();
     // Auto-hide after 5 seconds
     setTimeout(() => {
       if (!channelBusy && indicator) indicator.style.display = 'none';

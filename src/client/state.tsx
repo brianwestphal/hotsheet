@@ -53,6 +53,7 @@ export interface AppSettings {
   detail_height: number;
   trash_cleanup_days: number;
   verified_cleanup_days: number;
+  notifications_enabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -61,6 +62,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   detail_height: 300,
   trash_cleanup_days: 3,
   verified_cleanup_days: 30,
+  notifications_enabled: true,
 };
 
 export interface AppState {

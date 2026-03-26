@@ -15,6 +15,7 @@
         }
       ]
     },
+    "core:window:allow-request-user-attention",
     "updater:default",
     "process:default"
   ]

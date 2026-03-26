@@ -259,6 +259,13 @@ pageRoutes.get('/', (c) => {
                 <label>Auto-clear verified after (days)</label>
                 <input type="number" id="settings-verified-days" min="1" value="30" />
               </div>
+              <div className="settings-field">
+                <label className="settings-checkbox-label">
+                  <input type="checkbox" id="settings-notifications" checked />
+                  Get attention on important events
+                </label>
+                <span className="settings-hint" id="settings-notifications-hint"></span>
+              </div>
             </div>
             <div className="settings-tab-panel" data-panel="categories">
               <div className="settings-section-header">
