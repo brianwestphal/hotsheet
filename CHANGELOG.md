@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.5] - 2026-03-26
+
+- Tag custom views, case-insensitive tag normalization, bracket syntax for tag creation, and autocomplete improvements
+
 ## [0.6.4] - 2026-03-26
 
 - Fixed data refresh disrupting text field editing
