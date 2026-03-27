@@ -415,11 +415,108 @@ fn set_app_icon(app: tauri::AppHandle, variant: String) -> Result<String, String
     Ok(format!("icon set to {}", variant))
 }
 
+/// Build the Apple continuous-corner rounded rect (squircle) path.
+/// Uses the exact bezier control points reverse-engineered from Apple's icon shape
+/// (see Liam Rosenfeld's "My Quest for the Apple Icon Shape"). This produces the
+/// correct continuous-curvature corners that `NSBezierPath::bezierPathWithRoundedRect`
+/// (which uses circular arcs) cannot match.
+///
+/// Coordinates are in flipped (screen) space: origin top-left, Y increases downward.
+#[cfg(target_os = "macos")]
+fn apple_squircle_path(
+    l: f64, t: f64, r: f64, b: f64, cr: f64,
+) -> objc2::rc::Retained<objc2_app_kit::NSBezierPath> {
+    use objc2_app_kit::NSBezierPath;
+    use objc2_core_foundation::CGPoint;
+
+    let p = |x: f64, y: f64| CGPoint::new(x, y);
+
+    let path = NSBezierPath::bezierPath();
+
+    // Start at top edge, right of top-left corner
+    path.moveToPoint(p(l + cr * 1.52866483, t));
+    // Top edge
+    path.lineToPoint(p(r - cr * 1.52866471, t));
+    // Top-right corner
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(r - cr * 0.63149399, t + cr * 0.07491100),
+        p(r - cr * 1.08849296, t),
+        p(r - cr * 0.86840694, t),
+    );
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(r - cr * 0.07491100, t + cr * 0.63149399),
+        p(r - cr * 0.37282392, t + cr * 0.16905899),
+        p(r - cr * 0.16905899, t + cr * 0.37282401),
+    );
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(r, t + cr * 1.52866483),
+        p(r, t + cr * 0.86840701),
+        p(r, t + cr * 1.08849299),
+    );
+    // Right edge
+    path.lineToPoint(p(r, b - cr * 1.52866471));
+    // Bottom-right corner
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(r - cr * 0.07491100, b - cr * 0.63149399),
+        p(r, b - cr * 1.08849299),
+        p(r, b - cr * 0.86840701),
+    );
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(r - cr * 0.63149399, b - cr * 0.07491100),
+        p(r - cr * 0.16905899, b - cr * 0.37282401),
+        p(r - cr * 0.37282392, b - cr * 0.16905899),
+    );
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(r - cr * 1.52866483, b),
+        p(r - cr * 0.86840694, b),
+        p(r - cr * 1.08849296, b),
+    );
+    // Bottom edge
+    path.lineToPoint(p(l + cr * 1.52866471, b));
+    // Bottom-left corner
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(l + cr * 0.63149399, b - cr * 0.07491100),
+        p(l + cr * 1.08849296, b),
+        p(l + cr * 0.86840694, b),
+    );
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(l + cr * 0.07491100, b - cr * 0.63149399),
+        p(l + cr * 0.37282392, b - cr * 0.16905899),
+        p(l + cr * 0.16905899, b - cr * 0.37282401),
+    );
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(l, b - cr * 1.52866483),
+        p(l, b - cr * 0.86840701),
+        p(l, b - cr * 1.08849299),
+    );
+    // Left edge
+    path.lineToPoint(p(l, t + cr * 1.52866471));
+    // Top-left corner
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(l + cr * 0.07491100, t + cr * 0.63149399),
+        p(l, t + cr * 1.08849299),
+        p(l, t + cr * 0.86840701),
+    );
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(l + cr * 0.63149399, t + cr * 0.07491100),
+        p(l + cr * 0.16905899, t + cr * 0.37282401),
+        p(l + cr * 0.37282392, t + cr * 0.16905899),
+    );
+    path.curveToPoint_controlPoint1_controlPoint2(
+        p(l + cr * 1.52866483, t),
+        p(l + cr * 0.86840694, t),
+        p(l + cr * 1.08849296, t),
+    );
+    path.closePath();
+
+    path
+}
+
 #[cfg(target_os = "macos")]
 fn set_macos_dock_icon(icon_data: &[u8]) {
     use objc2::{AnyThread, MainThreadMarker};
     use objc2_app_kit::{
-        NSApplication, NSBezierPath, NSColor, NSCompositingOperation,
+        NSApplication, NSColor, NSCompositingOperation,
         NSGraphicsContext, NSImage, NSShadow,
     };
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
@@ -436,21 +533,28 @@ fn set_macos_dock_icon(icon_data: &[u8]) {
         return;
     };
 
-    // Render the icon to match macOS Dock icon appearance.
-    // setApplicationIconImage does NOT apply the system squircle mask or shadow —
-    // only bundle icons get that treatment. We replicate it here:
-    // 1. Inset the icon to ~82% of the canvas (room for drop shadow)
-    // 2. Clip to a rounded rect (squircle approximation)
-    // 3. Draw a drop shadow behind the shape
-    let canvas = 512.0;
-    let body = 420.0;
-    let inset = (canvas - body) / 2.0;
-    // Shift icon up slightly so the shadow below doesn't get clipped at canvas edge
+    // Render to match macOS Dock icon appearance. setApplicationIconImage does NOT
+    // apply the system mask — only bundle icons get that treatment.
+    //
+    // Apple icon grid (1024×1024 canvas):
+    //   Body: 824×824, inset 100px from each edge
+    //   Corner radius: 185.4px (= 824 × 0.225, i.e. 45% of half the side)
+    //   Shadow: ~10px Y offset, ~18px blur, ~25% black
+    //
+    // The squircle shape uses Apple's continuous-corner bezier curves (NOT circular
+    // arcs from NSBezierPath::bezierPathWithRoundedRect).
+    let canvas = 1024.0;
+    let body = 824.0;
+    let inset = (canvas - body) / 2.0; // 100
+    let cr = 208.0;
+
+    // Shift body up ~8px so shadow below doesn't clip at canvas edge.
+    // In macOS coords (Y-up), "up" = larger Y.
+    let body_y = inset + 8.0; // 108
     let body_rect = CGRect::new(
-        CGPoint::new(inset, inset + 4.0),
+        CGPoint::new(inset, body_y),
         CGSize::new(body, body),
     );
-    let radius = body * 0.22;
 
     source.setSize(CGSize::new(body, body));
 
@@ -459,14 +563,22 @@ fn set_macos_dock_icon(icon_data: &[u8]) {
     #[allow(deprecated)]
     result.lockFocus();
 
-    let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(body_rect, radius, radius);
+    // The squircle path is vertically symmetric so the bezier constants work in
+    // both Y-up (macOS) and Y-down (screen) coords — just pass min_y as t, max_y as b.
+    let path = apple_squircle_path(
+        inset,               // left
+        body_y,              // t (min Y)
+        inset + body,        // right
+        body_y + body,       // b (max Y)
+        cr,
+    );
 
     // 1) Draw shadow: fill the squircle shape with shadow enabled. The shadow
     //    is cast outside the fill. The white fill itself gets covered by the icon.
     NSGraphicsContext::saveGraphicsState_class();
     let shadow = NSShadow::new();
-    shadow.setShadowOffset(CGSize::new(0.0, -6.0));
-    shadow.setShadowBlurRadius(12.0);
+    shadow.setShadowOffset(CGSize::new(0.0, -10.0));  // negative Y = downward in macOS coords
+    shadow.setShadowBlurRadius(80.0);
     shadow.setShadowColor(Some(&NSColor::colorWithWhite_alpha(0.0, 0.3)));
     shadow.set();
     NSColor::colorWithWhite_alpha(1.0, 1.0).setFill();

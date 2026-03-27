@@ -41,7 +41,7 @@ A Tauri command `set_app_icon` accepts a variant identifier:
 
 1. Reads the corresponding `.icns` from bundled resources (`icons/variants/{variant}.icns`), falling back to PNG.
 2. Creates an `NSImage` from the icon data using the `objc2` crate.
-3. Renders the icon to match macOS Dock appearance: insets the image to ~82% of a 512×512 canvas, clips to a rounded rect (squircle approximation, ~22% corner radius) using `NSBezierPath`, and draws a drop shadow using `NSShadow` (Y offset -6, blur 12, 30% black). This replicates the Dock's treatment of bundle icons, which `setApplicationIconImage` does not apply automatically.
+3. Renders the icon to match macOS Dock appearance using Apple's exact icon grid: 824×824 body within 1024×1024 canvas, clipped to a continuous-corner rounded rect (the "squircle" shape) using bezier control points reverse-engineered from Apple's implementation (corner radius 45% of half-side), with a drop shadow via `NSShadow`. This replicates the Dock's treatment of bundle icons, which `setApplicationIconImage` does not apply automatically.
 4. Calls `NSApplication.sharedApplication().setApplicationIconImage(renderedImage)` to update the dock icon immediately.
 5. No relaunch required.
 
