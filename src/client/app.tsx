@@ -124,6 +124,19 @@ function rebuildCategoryUI() {
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
     if (ticket) updateDetailCategory(ticket.category);
   }
+
+  // Update keyboard hints in the footer to reflect current shortcut keys
+  const hintsContainer = document.querySelector('.keyboard-hints');
+  if (hintsContainer) {
+    const catHint = hintsContainer.querySelector('[data-hint="category"]');
+    const keys = state.categories
+      .map(c => c.shortcutKey?.toUpperCase())
+      .filter(Boolean)
+      .join('/');
+    if (catHint && keys) {
+      catHint.innerHTML = `<kbd>\u2318${keys}</kbd> category`;
+    }
+  }
 }
 
 async function loadAppName() {
@@ -1386,6 +1399,9 @@ function setChannelBusy(busy: boolean) {
     indicator.style.display = '';
     indicator.className = 'channel-status-indicator busy';
     indicator.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Claude working';
+    // Claude picked up work — reset exponential backoff (HS-2049)
+    channelAutoBackoff = 0;
+    if (channelAutoVerifyTimeout) { clearTimeout(channelAutoVerifyTimeout); channelAutoVerifyTimeout = null; }
   } else {
     indicator.style.display = '';
     indicator.className = 'channel-status-indicator';
@@ -1488,6 +1504,10 @@ async function initChannel() {
 }
 
 let channelAutoRetryInterval: ReturnType<typeof setInterval> | null = null;
+let channelAutoBackoff = 0; // consecutive triggers where Claude didn't become busy
+let channelAutoVerifyTimeout: ReturnType<typeof setTimeout> | null = null;
+const CHANNEL_AUTO_BASE_DELAY = 5000;
+const CHANNEL_AUTO_MAX_DELAY = 120000; // 2 minutes
 
 function toggleAutoMode(btn: HTMLElement, playIcon: HTMLElement, autoIcon: HTMLElement) {
   channelAutoMode = !channelAutoMode;
@@ -1495,6 +1515,7 @@ function toggleAutoMode(btn: HTMLElement, playIcon: HTMLElement, autoIcon: HTMLE
     btn.classList.add('auto-mode');
     playIcon.style.display = 'none';
     autoIcon.style.display = '';
+    channelAutoBackoff = 0;
     // Start initial 5-second debounce when entering auto mode (HS-1453)
     channelAutoTrigger();
   } else {
@@ -1504,14 +1525,24 @@ function toggleAutoMode(btn: HTMLElement, playIcon: HTMLElement, autoIcon: HTMLE
     // Clear pending debounce and retry when leaving auto mode
     if (channelDebounceTimeout) { clearTimeout(channelDebounceTimeout); channelDebounceTimeout = null; }
     if (channelAutoRetryInterval) { clearInterval(channelAutoRetryInterval); channelAutoRetryInterval = null; }
+    if (channelAutoVerifyTimeout) { clearTimeout(channelAutoVerifyTimeout); channelAutoVerifyTimeout = null; }
+    channelAutoBackoff = 0;
   }
 }
 
+/** Returns the current auto-trigger delay with exponential backoff.
+ *  Base: 5s. Doubles with each consecutive failed trigger. Max: 2 minutes. */
+function autoTriggerDelay(): number {
+  if (channelAutoBackoff === 0) return CHANNEL_AUTO_BASE_DELAY;
+  return Math.min(CHANNEL_AUTO_BASE_DELAY * Math.pow(2, channelAutoBackoff), CHANNEL_AUTO_MAX_DELAY);
+}
+
 /** Called when entering auto mode or when a ticket's up_next changes.
- *  Debounces for 5s, then attempts to trigger. Restarts debounce on new up-next items. (HS-1453) */
+ *  Debounces, then attempts to trigger. Restarts debounce on new up-next items. (HS-1453)
+ *  Uses exponential backoff if triggers don't result in Claude becoming busy. (HS-2049) */
 function channelAutoTrigger() {
   if (!channelAutoMode) return;
-  // Restart the debounce (new up-next items restart the timer)
+  // Restart the debounce (new up-next items restart the timer and reset backoff)
   if (channelDebounceTimeout) clearTimeout(channelDebounceTimeout);
   // Clear any existing retry interval — fresh debounce takes priority
   if (channelAutoRetryInterval) { clearInterval(channelAutoRetryInterval); channelAutoRetryInterval = null; }
@@ -1519,10 +1550,10 @@ function channelAutoTrigger() {
   channelDebounceTimeout = setTimeout(() => {
     channelDebounceTimeout = null;
     void attemptAutoTrigger();
-  }, 5000);
+  }, autoTriggerDelay());
 }
 
-/** After debounce, try to trigger Claude. If busy, retry every 5s until idle. (HS-1453) */
+/** After debounce, try to trigger Claude. If busy, retry with backoff until idle. (HS-1453, HS-2049) */
 async function attemptAutoTrigger() {
   if (!channelAutoMode) return;
 
@@ -1536,8 +1567,19 @@ async function attemptAutoTrigger() {
     // Claude is idle — trigger now
     if (channelAutoRetryInterval) { clearInterval(channelAutoRetryInterval); channelAutoRetryInterval = null; }
     triggerChannelAndMarkBusy();
+
+    // Verify Claude actually became busy after a short delay. If not, increase backoff.
+    if (channelAutoVerifyTimeout) clearTimeout(channelAutoVerifyTimeout);
+    channelAutoVerifyTimeout = setTimeout(() => {
+      channelAutoVerifyTimeout = null;
+      if (!channelBusy && channelAutoMode) {
+        // Claude didn't pick up — increase backoff for next attempt
+        channelAutoBackoff++;
+      }
+    }, 10000);
   } else if (!channelAutoRetryInterval) {
-    // Claude is busy — start retrying every 5 seconds
+    // Claude is busy — start retrying with current backoff delay
+    const delay = autoTriggerDelay();
     channelAutoRetryInterval = setInterval(() => {
       if (!channelAutoMode) {
         clearInterval(channelAutoRetryInterval!);
@@ -1545,7 +1587,7 @@ async function attemptAutoTrigger() {
         return;
       }
       void attemptAutoTrigger();
-    }, 5000);
+    }, delay);
   }
 }
 
