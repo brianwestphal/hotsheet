@@ -112,7 +112,7 @@ export async function getSnapshots(days: number): Promise<{ date: string; data: 
 /** Get dashboard stats (KPIs, throughput, cycle times). */
 export async function getDashboardStats(days: number): Promise<{
   throughput: { date: string; completed: number; created: number }[];
-  cycleTime: { ticket_number: string; title: string; completed_at: string; days: number }[];
+  cycleTime: { ticket_number: string; title: string; completed_at: string; hours: number }[];
   categoryBreakdown: { category: string; count: number }[];
   categoryPeriod: { category: string; count: number }[];
   kpi: {
@@ -174,7 +174,7 @@ export async function getDashboardStats(days: number): Promise<{
     ticket_number: r.ticket_number,
     title: r.title,
     completed_at: r.completed_at,
-    days: Math.max(0, Math.round((new Date(r.completed_at).getTime() - new Date(r.created_at).getTime()) / 86400000)),
+    hours: Math.max(0, (new Date(r.completed_at).getTime() - new Date(r.created_at).getTime()) / 3600000),
   }));
 
   // Category breakdown (open tickets)
@@ -221,10 +221,10 @@ export async function getDashboardStats(days: number): Promise<{
     `SELECT COUNT(*) as count FROM tickets WHERE created_at >= $1`, [weekStart.toISOString()]
   );
 
-  // Median cycle time
-  const cycleDays = cycleTime.map(c => c.days).sort((a, b) => a - b);
-  const medianCycleTimeDays = cycleDays.length > 0
-    ? cycleDays[Math.floor(cycleDays.length / 2)]
+  // Median cycle time (in hours, converted to days for KPI display)
+  const cycleHours = cycleTime.map(c => c.hours).sort((a, b) => a - b);
+  const medianCycleTimeDays = cycleHours.length > 0
+    ? Math.round(cycleHours[Math.floor(cycleHours.length / 2)] / 24)
     : null;
 
   return {

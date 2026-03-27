@@ -5,7 +5,7 @@ import { getCategoryColor, state } from './state.js';
 
 interface DashboardData {
   throughput: { date: string; completed: number; created: number }[];
-  cycleTime: { ticket_number: string; title: string; completed_at: string; days: number }[];
+  cycleTime: { ticket_number: string; title: string; completed_at: string; hours: number }[];
   categoryBreakdown: { category: string; count: number }[];
   categoryPeriod: { category: string; count: number }[];
   snapshots: { date: string; data: { not_started: number; started: number; completed: number; verified: number } }[];
@@ -109,7 +109,7 @@ function buildDashboard(data: DashboardData): HTMLElement {
     'Distribution of tickets by category. Left: currently open. Right: all tickets active in the selected time period.',
     renderDonutCharts(data.categoryBreakdown, data.categoryPeriod)));
   grid.appendChild(chartCard('Cycle Time',
-    'Each dot is a completed ticket plotted by completion date and days to complete. Dashed lines show 50th and 85th percentile delivery times.',
+    'Each dot is a completed ticket plotted by completion date and time to complete (log scale). Dashed lines show 50th and 85th percentile delivery times.',
     renderScatterChart(data.cycleTime)));
 
   el.appendChild(grid);
@@ -358,11 +358,31 @@ function singleDonut(data: { category: string; count: number }[], label: string,
   return paths;
 }
 
-function renderScatterChart(data: { ticket_number: string; title: string; completed_at: string; days: number }[]): string {
+/** Format hours as a human-readable duration: "15m", "2.5h", "1.2d", "2w" */
+function fmtDuration(hours: number): string {
+  if (hours < 1) return `${Math.round(hours * 60)}m`;
+  if (hours < 48) return `${Math.round(hours * 10) / 10}h`;
+  const days = hours / 24;
+  if (days < 14) return `${Math.round(days * 10) / 10}d`;
+  return `${Math.round(days / 7 * 10) / 10}w`;
+}
+
+/** Map an hours value to a Y position using log scale. */
+function logY(hours: number, minLog: number, logRange: number, h: number): number {
+  const clamped = Math.max(hours, 1 / 60); // floor at 1 minute
+  return PAD.top + h - ((Math.log10(clamped) - minLog) / logRange) * h;
+}
+
+function renderScatterChart(data: { ticket_number: string; title: string; completed_at: string; hours: number }[]): string {
   if (data.length === 0) return '<div class="chart-empty">No completed tickets</div>';
-  const maxDays = Math.max(...data.map(d => d.days), 1);
   const w = CHART_W - PAD.left - PAD.right;
   const h = CHART_H - PAD.top - PAD.bottom;
+
+  // Log scale: compute range from data
+  const allHours = data.map(d => Math.max(d.hours, 1 / 60));
+  const minLog = Math.floor(Math.log10(Math.min(...allHours)));
+  const maxLog = Math.ceil(Math.log10(Math.max(...allHours, 1)));
+  const logRange = Math.max(maxLog - minLog, 1);
 
   const dates = data.map(d => new Date(d.completed_at).getTime());
   const minDate = Math.min(...dates);
@@ -372,25 +392,38 @@ function renderScatterChart(data: { ticket_number: string; title: string; comple
   let dots = '';
   for (const d of data) {
     const x = PAD.left + ((new Date(d.completed_at).getTime() - minDate) / dateRange) * w;
-    const y = PAD.top + h - (d.days / maxDays) * h;
-    dots += `<circle cx="${x}" cy="${y}" r="4" fill="#3b82f6" opacity="0.5" class="chart-hover"><title>${d.ticket_number}: ${d.title}\n${d.days} days</title></circle>`;
+    const y = logY(d.hours, minLog, logRange, h);
+    dots += `<circle cx="${x}" cy="${y}" r="4" fill="#3b82f6" opacity="0.5" class="chart-hover"><title>${d.ticket_number}: ${d.title}\n${fmtDuration(d.hours)}</title></circle>`;
   }
 
-  const sorted = data.map(d => d.days).sort((a, b) => a - b);
+  // Percentile lines
+  const sorted = data.map(d => d.hours).sort((a, b) => a - b);
   const p50 = sorted[Math.floor(sorted.length * 0.5)];
   const p85 = sorted[Math.floor(sorted.length * 0.85)];
-  const p50y = PAD.top + h - (p50 / maxDays) * h;
-  const p85y = PAD.top + h - (p85 / maxDays) * h;
+  const p50y = logY(p50, minLog, logRange, h);
+  const p85y = logY(p85, minLog, logRange, h);
 
   const percentiles = `
     <line x1="${PAD.left}" y1="${p50y}" x2="${PAD.left + w}" y2="${p50y}" stroke="#22c55e" stroke-dasharray="4,4" opacity="0.6"/>
-    <text x="${PAD.left + w + 2}" y="${p50y + 3}" fill="#22c55e" font-size="9">50% (${p50}d)</text>
+    <text x="${PAD.left + w + 2}" y="${p50y + 3}" fill="#22c55e" font-size="9">50% (${fmtDuration(p50)})</text>
     <line x1="${PAD.left}" y1="${p85y}" x2="${PAD.left + w}" y2="${p85y}" stroke="#f97316" stroke-dasharray="4,4" opacity="0.6"/>
-    <text x="${PAD.left + w + 2}" y="${p85y + 3}" fill="#f97316" font-size="9">85% (${p85}d)</text>
+    <text x="${PAD.left + w + 2}" y="${p85y + 3}" fill="#f97316" font-size="9">85% (${fmtDuration(p85)})</text>
   `;
 
+  // Log-scale Y axis: place ticks at powers of 10 and key durations
+  let yLines = '';
+  // Candidate tick values in hours: 1min, 5min, 15min, 1h, 4h, 12h, 1d, 3d, 1w, 2w, 1mo
+  const candidates = [1/60, 5/60, 0.25, 1, 4, 12, 24, 72, 168, 336, 720];
+  for (const val of candidates) {
+    if (val < Math.pow(10, minLog) * 0.5 || val > Math.pow(10, maxLog) * 2) continue;
+    const y = logY(val, minLog, logRange, h);
+    if (y < PAD.top - 5 || y > PAD.top + h + 5) continue;
+    yLines += `<line x1="${PAD.left}" y1="${y}" x2="${CHART_W - PAD.right}" y2="${y}" stroke="#e5e7eb" stroke-width="0.5"/>`;
+    yLines += `<text x="${PAD.left - 4}" y="${y + 3}" text-anchor="end" fill="#9ca3af" font-size="9">${fmtDuration(val)}</text>`;
+  }
+
   return `<svg viewBox="0 0 ${CHART_W} ${CHART_H}" class="dashboard-svg">
-    ${yAxisLines(maxDays, h, 'd')}
+    ${yLines}
     ${dots}
     ${percentiles}
     ${axisLabels(data.map(d => d.completed_at.slice(0, 10)))}
