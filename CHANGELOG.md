@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.9.0] - 2026-03-27
+
+- Security hardening: fix path traversal, CSRF bypass, and secret exposure
+
 ## [0.8.0] - 2026-03-27
 
 - Dynamic app icon switching with 9 variants
