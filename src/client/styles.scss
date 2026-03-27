@@ -1187,6 +1187,14 @@ input, select, textarea {
   margin-bottom: 8px;
 }
 
+// Drop target feedback when files are dragged over the detail panel
+.detail-body.drop-active {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
 .detail-tags {
   display: flex;
   flex-wrap: wrap;
