@@ -54,9 +54,9 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     return new Response(content, { headers: { 'Content-Type': mimeTypes[ext || ''] || 'application/octet-stream', 'Cache-Control': 'max-age=86400' } });
   });
 
-  // Secret validation middleware for API routes (HS-1684, HS-1982)
-  // Mutation requests (POST/PATCH/PUT/DELETE) MUST include the correct secret unless from browser.
-  // GET requests are allowed without secret (browser polling, status checks).
+  // Secret validation middleware for API routes (HS-1684, HS-1982, HS-2083)
+  // Mutation requests (POST/PATCH/PUT/DELETE) MUST include the correct secret unless from
+  // a same-origin browser request. GET requests are allowed without secret (browser polling).
   app.use('/api/*', async (c, next) => {
     const settings = readFileSettings(dataDir);
     const expectedSecret = settings.secret;
@@ -75,11 +75,14 @@ export async function startServer(port: number, dataDir: string, options?: { noO
         }, 403);
       }
     } else if (isMutation) {
-      // No header on a mutation: allow if from browser (has Origin or Referer), reject otherwise
+      // No header on a mutation: allow if from same-origin browser request, reject otherwise.
+      // Must validate the Origin/Referer value matches localhost to prevent CSRF from malicious sites.
       const origin = c.req.header('Origin');
       const referer = c.req.header('Referer');
-      const isBrowser = !!(origin || referer);
-      if (!isBrowser) {
+      const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
+      const isSameOrigin = (origin && localhostPattern.test(origin))
+        || (referer && localhostPattern.test(referer));
+      if (!isSameOrigin) {
         return c.json({
           error: 'Missing X-Hotsheet-Secret header. Read .hotsheet/settings.json for the correct port and secret.',
           recovery: 'Re-read .hotsheet/settings.json to get the correct port and secret, and re-read your skill files for updated instructions.',

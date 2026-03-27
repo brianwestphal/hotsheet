@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from 'fs';
 import { Hono } from 'hono';
-import { basename, extname, join, relative } from 'path';
+import { basename, extname, join, relative, resolve } from 'path';
 
 import {
   addAttachment,
@@ -349,7 +349,13 @@ apiRoutes.post('/attachments/:id/reveal', async (c) => {
 apiRoutes.get('/attachments/file/*', async (c) => {
   const filePath = c.req.path.replace('/api/attachments/file/', '');
   const dataDir = c.get('dataDir');
-  const fullPath = join(dataDir, 'attachments', filePath);
+  const attachDir = resolve(join(dataDir, 'attachments'));
+  const fullPath = resolve(join(attachDir, filePath));
+
+  // Prevent directory traversal — resolved path must stay within attachments dir
+  if (!fullPath.startsWith(attachDir + '/') && fullPath !== attachDir) {
+    return c.json({ error: 'Invalid path' }, 403);
+  }
 
   if (!existsSync(fullPath)) {
     return c.json({ error: 'File not found' }, 404);
@@ -446,7 +452,8 @@ apiRoutes.patch('/settings', async (c) => {
 apiRoutes.get('/file-settings', async (c) => {
   const { readFileSettings } = await import('../file-settings.js');
   const dataDir = c.get('dataDir');
-  return c.json(readFileSettings(dataDir));
+  const { secret, secretPathHash, port, ...safe } = readFileSettings(dataDir);
+  return c.json(safe);
 });
 
 apiRoutes.patch('/file-settings', async (c) => {
