@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.8.0] - 2026-03-27
+
+- Dynamic app icon switching with 9 variants
+- Drag-and-drop file attachments on detail panel and attach multiple files at once
+- Improved Claude permissions prompt
+- Exponential backoff for auto mode retries, fix category keyboard hints
+
 ## [0.7.0] - 2026-03-26
 
 - Attention notifications: bounce dock icon (Tauri) or flash tab title (browser) on permission requests and Claude idle
