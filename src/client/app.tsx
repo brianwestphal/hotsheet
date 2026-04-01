@@ -37,6 +37,17 @@ async function init() {
   initResize();
   startLongPoll();
   void checkForUpdate();
+  // Clicking empty space in the ticket list deselects all (HS-2114)
+  document.getElementById('ticket-list')!.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    // Only deselect if the click landed directly on the container or a column body/gap, not on a ticket row
+    if (!target.closest('.ticket-row') && !target.closest('.ticket-card') && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      if (state.selectedIds.size > 0) {
+        state.selectedIds.clear();
+        renderTicketList();
+      }
+    }
+  });
   // Re-render when detail panel dispatches close event
   document.addEventListener('hotsheet:render', () => renderTicketList());
   // Tags dialog triggered from context menu
