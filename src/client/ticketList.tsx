@@ -102,16 +102,21 @@ export function renderTicketList() {
   const isTrash = state.view === 'trash';
   const focusedId = isPreview ? null : getFocusedTicketId();
 
-  // Preserve in-progress title edits and cursor position for existing tickets (HS-199, HS-1454)
+  // Preserve in-progress title edits and cursor position (HS-199, HS-1454, HS-2113)
   let editingValue: string | null = null;
   let editingSelStart: number | null = null;
   let editingSelEnd: number | null = null;
-  if (focusedId != null && focusedId !== 'draft') {
-    const input = document.querySelector<HTMLInputElement>(`.ticket-row[data-id="${focusedId}"] .ticket-title-input`);
+  if (focusedId != null) {
+    const selector = focusedId === 'draft'
+      ? '.draft-row .draft-input'
+      : `.ticket-row[data-id="${focusedId}"] .ticket-title-input`;
+    const input = document.querySelector<HTMLInputElement>(selector);
     if (input) {
       editingValue = input.value;
       editingSelStart = input.selectionStart;
       editingSelEnd = input.selectionEnd;
+      // Keep draftTitle in sync so the recreated draft row has the latest value
+      if (focusedId === 'draft') draftTitle = input.value;
     }
   }
 
@@ -150,9 +155,12 @@ export function renderTicketList() {
   } else {
     const toolbar = document.getElementById('batch-toolbar');
     if (toolbar) toolbar.style.display = '';
-    // Restore in-progress title edit and cursor position if the user was editing (HS-199, HS-1454)
-    if (focusedId != null && focusedId !== 'draft' && editingValue != null) {
-      const input = document.querySelector<HTMLInputElement>(`.ticket-row[data-id="${focusedId}"] .ticket-title-input`);
+    // Restore in-progress title edit and cursor position (HS-199, HS-1454, HS-2113)
+    if (focusedId != null && editingValue != null) {
+      const selector = focusedId === 'draft'
+        ? '.draft-row .draft-input'
+        : `.ticket-row[data-id="${focusedId}"] .ticket-title-input`;
+      const input = document.querySelector<HTMLInputElement>(selector);
       if (input && input.value !== editingValue) {
         input.value = editingValue;
       }
@@ -520,6 +528,14 @@ function createDraftRow(): HTMLElement {
   const titleInput = row.querySelector('.draft-input') as HTMLInputElement;
   titleInput.addEventListener('input', () => {
     draftTitle = titleInput.value;
+  });
+  // Clear ticket selection when focusing draft input so Delete/Backspace
+  // can't accidentally delete a previously-selected ticket (HS-2113)
+  titleInput.addEventListener('focus', () => {
+    if (state.selectedIds.size > 0) {
+      state.selectedIds.clear();
+      updateSelectionClasses();
+    }
   });
   titleInput.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter' && titleInput.value.trim()) {
