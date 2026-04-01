@@ -41,7 +41,7 @@ async function init() {
   document.getElementById('ticket-list')!.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
     // Only deselect if the click landed directly on the container or a column body/gap, not on a ticket row
-    if (!target.closest('.ticket-row') && !target.closest('.ticket-card') && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+    if (!target.closest('.ticket-row') && !target.closest('.column-card') && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (state.selectedIds.size > 0) {
         state.selectedIds.clear();
         renderTicketList();
@@ -89,6 +89,9 @@ async function loadSettings() {
     }
     if (settings.notify_completed === 'none' || settings.notify_completed === 'once' || settings.notify_completed === 'persistent') {
       state.settings.notify_completed = settings.notify_completed;
+    }
+    if (settings.auto_order !== undefined) {
+      state.settings.auto_order = settings.auto_order !== 'false';
     }
   } catch { /* use defaults */ }
 
@@ -183,6 +186,7 @@ function bindSettingsDialog() {
     // Populate fields with current values
     (document.getElementById('settings-trash-days') as HTMLInputElement).value = String(state.settings.trash_cleanup_days);
     (document.getElementById('settings-verified-days') as HTMLInputElement).value = String(state.settings.verified_cleanup_days);
+    (document.getElementById('settings-auto-order') as HTMLInputElement).checked = state.settings.auto_order;
     (document.getElementById('settings-notify-permission') as HTMLSelectElement).value = state.settings.notify_permission;
     (document.getElementById('settings-notify-completed') as HTMLSelectElement).value = state.settings.notify_completed;
     overlay.style.display = 'flex';
@@ -289,6 +293,13 @@ function bindSettingsDialog() {
       };
       document.addEventListener('click', close);
     }, 0);
+  });
+
+  // Auto-prioritize toggle
+  const autoOrderCheckbox = document.getElementById('settings-auto-order') as HTMLInputElement;
+  autoOrderCheckbox.addEventListener('change', () => {
+    state.settings.auto_order = autoOrderCheckbox.checked;
+    void api('/settings', { method: 'PATCH', body: { auto_order: String(autoOrderCheckbox.checked) } });
   });
 
   // Notification dropdowns

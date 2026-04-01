@@ -603,6 +603,20 @@ input, select, textarea {
   letter-spacing: 0.5px;
 }
 
+.sidebar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.6;
+
+  // Priority icons have explicit colors — don't dim them
+  &[style*="color"] { opacity: 1; }
+}
+
 .sidebar-item {
   display: flex;
   align-items: center;
@@ -1788,6 +1802,13 @@ input, select, textarea {
     font-weight: 500;
     color: var(--text-secondary);
     margin-bottom: 6px;
+  }
+
+  &.settings-field-checkbox label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
   }
 
   select, input[type="number"], input[type="text"] {

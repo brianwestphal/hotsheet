@@ -92,15 +92,36 @@ export function renderTicketList() {
   const snapshot = captureSnapshot();
   const isPreview = !!state.backupPreview?.active;
 
+  // Capture draft focus state before any path destroys the DOM (HS-2148)
+  const focusedId = isPreview ? null : getFocusedTicketId();
+  let draftSelStart: number | null = null;
+  let draftSelEnd: number | null = null;
+  if (focusedId === 'draft') {
+    const input = document.querySelector<HTMLInputElement>('.draft-row .draft-input');
+    if (input) {
+      draftTitle = input.value;
+      draftSelStart = input.selectionStart;
+      draftSelEnd = input.selectionEnd;
+    }
+  }
+
   if (state.layout === 'columns' && canUseColumnView()) {
     if (isPreview) { renderPreviewColumnView(); flipAnimate(snapshot); return; }
     renderColumnView();
+    // Restore draft focus after column view rebuild
+    if (focusedId === 'draft') {
+      restoreFocus('draft');
+      const input = document.querySelector<HTMLInputElement>('.draft-row .draft-input');
+      if (input && draftSelStart != null) {
+        input.selectionStart = draftSelStart;
+        input.selectionEnd = draftSelEnd;
+      }
+    }
     flipAnimate(snapshot);
     return;
   }
 
   const isTrash = state.view === 'trash';
-  const focusedId = isPreview ? null : getFocusedTicketId();
 
   // Preserve in-progress title edits and cursor position (HS-199, HS-1454, HS-2113)
   let editingValue: string | null = null;
@@ -478,6 +499,7 @@ function createColumnCard(ticket: Ticket): HTMLElement {
     }
     updateColumnSelectionClasses();
     updateBatchToolbar();
+    syncDetailPanel();
   });
 
   return card;
@@ -530,11 +552,13 @@ function createDraftRow(): HTMLElement {
     draftTitle = titleInput.value;
   });
   // Clear ticket selection when focusing draft input so Delete/Backspace
-  // can't accidentally delete a previously-selected ticket (HS-2113)
+  // can't accidentally delete a previously-selected ticket (HS-2113, HS-2179)
   titleInput.addEventListener('focus', () => {
     if (state.selectedIds.size > 0) {
       state.selectedIds.clear();
       updateSelectionClasses();
+      updateColumnSelectionClasses();
+      syncDetailPanel();
     }
   });
   titleInput.addEventListener('keydown', async (e) => {
@@ -676,7 +700,21 @@ function createTicketRow(ticket: Ticket): HTMLElement {
     e.dataTransfer!.effectAllowed = 'move';
   });
 
-  // Row-level modifier click for selection
+  // Row-level click: select ticket and open detail panel (HS-2147)
+  row.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    // Skip if clicking interactive elements that have their own handlers
+    if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('button')) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return; // handled by mousedown below
+    state.selectedIds.clear();
+    state.selectedIds.add(ticket.id);
+    state.lastClickedId = ticket.id;
+    updateSelectionClasses();
+    updateBatchToolbar();
+    syncDetailPanel();
+  });
+
+  // Row-level modifier click for multi-selection
   row.addEventListener('mousedown', (e) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey) {
       e.preventDefault();

@@ -56,23 +56,26 @@ The interface is divided into:
 ### 4.6 Sidebar Navigation
 
 #### Status Views
-- All Tickets — Active tickets (excludes deleted, backlog, archive)
-- Non-Verified — Not started + started + completed
-- Up Next — Tickets flagged as priority items, sorted by priority
-- Open — Not started + started
-- Completed — Completed tickets only
-- Verified — Verified tickets only
+
+Each built-in view has an icon to the left of the label:
+
+- All Tickets (Lucide list icon) — Active tickets (excludes deleted, backlog, archive)
+- Non-Verified (◔ half-circle icon) — Not started + started + completed
+- Up Next (★ star icon) — Tickets flagged as priority items, sorted by priority
+- Open (○ circle icon) — Not started + started
+- Completed (✓ check icon) — Completed tickets only
+- Verified (✓✓ double-check icon) — Verified tickets only
 - (divider)
-- Backlog — Backlog tickets
-- Archive — Archived tickets
-- Trash — Deleted tickets with restore/empty options
+- Backlog (Lucide calendar icon) — Backlog tickets
+- Archive (Lucide archive icon) — Archived tickets
+- Trash (Lucide trash icon) — Deleted tickets with restore/empty options
 
 #### Category Filters
 - Six category items with color-coded dot indicators.
 - Click to filter the list to a single category.
 
 #### Priority Filters
-- Five priority items.
+- Five priority items, each with a colored Lucide icon: chevrons-up (red), chevron-up (orange), chevrons-up-down (gray), chevron-down (blue), chevrons-down (slate).
 - Click to filter the list to a single priority level.
 
 #### Drag-and-Drop Targets

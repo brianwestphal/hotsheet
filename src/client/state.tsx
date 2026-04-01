@@ -57,6 +57,7 @@ export interface AppSettings {
   verified_cleanup_days: number;
   notify_permission: NotifyLevel;
   notify_completed: NotifyLevel;
+  auto_order: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -67,6 +68,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   verified_cleanup_days: 30,
   notify_permission: 'persistent',
   notify_completed: 'once',
+  auto_order: true,
 };
 
 export interface AppState {
@@ -114,14 +116,14 @@ export const state: AppState = {
   backupPreview: null,
 };
 
-const MOVE_VERTICAL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="m8 18 4 4 4-4"/><path d="m8 6 4-4 4 4"/></svg>';
+const LUCIDE_14 = 'xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
 
 const PRIORITY_ICONS: Record<string, string> = {
-  highest: '\u2B06\u2B06',
-  high: '\u2B06',
-  default: MOVE_VERTICAL_SVG,
-  low: '\u2B07',
-  lowest: '\u2B07\u2B07',
+  highest: `<svg ${LUCIDE_14}><path d="m7 11 5-5 5 5"/><path d="m7 17 5-5 5 5"/></svg>`,
+  high: `<svg ${LUCIDE_14}><path d="m18 15-6-6-6 6"/></svg>`,
+  default: `<svg ${LUCIDE_14}><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>`,
+  low: `<svg ${LUCIDE_14}><path d="m6 9 6 6 6-6"/></svg>`,
+  lowest: `<svg ${LUCIDE_14}><path d="m7 7 5 5 5-5"/><path d="m7 13 5 5 5-5"/></svg>`,
 };
 
 const PRIORITY_COLORS: Record<string, string> = {

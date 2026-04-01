@@ -184,7 +184,24 @@ async function syncWorklist(): Promise<void> {
     sections.push('');
 
     if (tickets.length === 0) {
-      sections.push('No items in the Up Next list.');
+      // Check if auto-order is enabled (default: true)
+      const dbSettings = await getSettings();
+      const autoOrder = dbSettings.auto_order !== 'false';
+      if (autoOrder) {
+        sections.push('## Auto-Prioritize');
+        sections.push('');
+        sections.push('No items are in the Up Next list, but **auto-prioritize is enabled**. Before doing anything else:');
+        sections.push('');
+        sections.push('1. Read `.hotsheet/open-tickets.md` to see all open tickets.');
+        sections.push('2. Evaluate them by priority, urgency, and dependencies.');
+        sections.push('3. Choose the most important ticket(s) to work on next.');
+        sections.push(`4. Mark them as Up Next: \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"up_next": true}'\``);
+        sections.push('5. Then work through them as normal (set status to "started", implement, set to "completed" with notes).');
+        sections.push('');
+        sections.push('If there are no open tickets at all, there is nothing to do.');
+      } else {
+        sections.push('No items in the Up Next list.');
+      }
     } else {
       const autoContext = await loadAutoContext();
       for (const ticket of tickets) {

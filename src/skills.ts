@@ -5,7 +5,7 @@ import { readFileSettings } from './file-settings.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
 
-export const SKILL_VERSION = 4;
+export const SKILL_VERSION = 5;
 
 let skillPort: number;
 let skillDataDir: string;
@@ -105,6 +105,8 @@ function mainSkillBody(): string {
     '3. When complete, mark it done via the Hot Sheet UI',
     '',
     'Work through them in order of priority, where reasonable.',
+    '',
+    'If the worklist says "Auto-Prioritize", follow those instructions to choose and mark tickets as Up Next before working on them.',
     '',
     `If API calls fail (connection refused or 403), re-read \`${settingsRel}\` for the current \`port\` and \`secret\` values — you may be connecting to the wrong Hot Sheet instance.`,
   ].join('\n');

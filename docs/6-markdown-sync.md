@@ -12,13 +12,24 @@
   - Guidance that status updates and completion notes are required.
 - Updated on a 500ms debounce after any ticket change.
 
-### 6.2 Open Tickets Export
+### 6.2 Auto-Prioritize Mode
+
+When the "Auto-prioritize tickets" setting is enabled (default: on) and the Up Next list is empty, the worklist includes an "Auto-Prioritize" section instead of "No items in the Up Next list." This instructs the AI to:
+
+1. Read `.hotsheet/open-tickets.md` to evaluate all open tickets.
+2. Choose the most important ticket(s) based on priority, urgency, and dependencies.
+3. Mark them as Up Next via the API.
+4. Then proceed to work through them normally.
+
+This allows the AI to self-direct when no explicit priorities have been set by the user. The setting is stored as `auto_order` in the database settings table.
+
+### 6.3 Open Tickets Export
 
 - All open tickets (not_started and started) are exported to `.hotsheet/open-tickets.md`, grouped by status.
 - Includes ticket count and the same per-ticket format as the worklist.
 - Updated on a 5-second debounce after any ticket change.
 
-### 6.3 Sync Triggers
+### 6.4 Sync Triggers
 
 Both markdown files are regenerated on:
 - Ticket creation, update, or deletion
@@ -28,12 +39,12 @@ Both markdown files are regenerated on:
 - Attachments added or removed
 - Batch operations
 
-### 6.4 Copy AI Prompt
+### 6.5 Copy AI Prompt
 
 - The sidebar includes a "Copy AI prompt" button that copies a short prompt (e.g., "Read .hotsheet/worklist.md for current work items.") to the clipboard.
 - Intended for pasting into AI tools that don't support skills/rules natively.
 
-### 6.5 AI Tool Skill Generation
+### 6.6 AI Tool Skill Generation
 
 On startup, the application detects installed AI tools and generates skill/rule files that allow those tools to interact with Hot Sheet. Files are only regenerated when the skill version changes.
 
@@ -60,17 +71,17 @@ On startup, the application detects installed AI tools and generates skill/rule 
 - Create tickets via curl POST to the local API.
 - Report the created ticket number and title.
 
-### 6.6 Skills Notification
+### 6.7 Skills Notification
 
 - When skill files are created or updated, a one-time banner is shown in the UI advising the user to restart their AI tool.
 - The banner is dismissable and only shown once per server session.
 
-### 6.7 Version Tracking
+### 6.8 Version Tracking
 
 - Generated skill files include a version comment (e.g., `<!-- hotsheet-skill-version: 2 -->`).
 - Files are only regenerated when the embedded skill version is higher than the existing file's version.
 
-### 6.8 API Secret & Port Recovery
+### 6.9 API Secret & Port Recovery
 
 When running multiple Hot Sheet instances, AI tools can accidentally connect to the wrong instance. A secret-based validation mechanism prevents this:
 
@@ -82,10 +93,10 @@ When running multiple Hot Sheet instances, AI tools can accidentally connect to 
 
 ## Non-Functional Requirements
 
-### 6.9 Debouncing
+### 6.10 Debouncing
 
 - Markdown sync is debounced to avoid excessive file writes during rapid changes (500ms for worklist, 5s for open-tickets).
 
-### 6.10 Portability
+### 6.11 Portability
 
 - Skill files use a port range pattern (4170-4189) rather than a specific port, so they remain valid across port changes.

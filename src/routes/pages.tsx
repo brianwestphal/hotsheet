@@ -79,17 +79,17 @@ pageRoutes.get('/', (c) => {
             </div>
             <div className="sidebar-section">
               <div className="sidebar-label">Views <button className="sidebar-add-view-btn" id="add-custom-view-btn" title="New custom view"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 12h8"/><path d="M12 8v8"/></svg></button></div>
-              <button className="sidebar-item active" data-view="all">All Tickets</button>
-              <button className="sidebar-item" data-view="non-verified">Non-Verified</button>
-              <button className="sidebar-item" data-view="up-next">Up Next</button>
-              <button className="sidebar-item" data-view="open">Open</button>
-              <button className="sidebar-item" data-view="completed">Completed</button>
-              <button className="sidebar-item" data-view="verified">Verified</button>
+              <button className="sidebar-item active" data-view="all"><span className="sidebar-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h18"/><path d="M3 6h18"/><path d="M3 18h18"/></svg></span> All Tickets</button>
+              <button className="sidebar-item" data-view="non-verified"><span className="sidebar-icon">{'\u25D4'}</span> Non-Verified</button>
+              <button className="sidebar-item" data-view="up-next"><span className="sidebar-icon">{'\u2605'}</span> Up Next</button>
+              <button className="sidebar-item" data-view="open"><span className="sidebar-icon">{'\u25CB'}</span> Open</button>
+              <button className="sidebar-item" data-view="completed"><span className="sidebar-icon">{'\u2713'}</span> Completed</button>
+              <button className="sidebar-item" data-view="verified"><span className="sidebar-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg></span> Verified</button>
               <div id="custom-views-container"></div>
               <div className="sidebar-divider"></div>
-              <button className="sidebar-item" data-view="backlog">Backlog</button>
-              <button className="sidebar-item" data-view="archive">Archive</button>
-              <button className="sidebar-item" data-view="trash">Trash</button>
+              <button className="sidebar-item" data-view="backlog"><span className="sidebar-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg></span> Backlog</button>
+              <button className="sidebar-item" data-view="archive"><span className="sidebar-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg></span> Archive</button>
+              <button className="sidebar-item" data-view="trash"><span className="sidebar-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg></span> Trash</button>
             </div>
             <div className="sidebar-section" id="sidebar-categories">
               <div className="sidebar-label">Category</div>
@@ -114,11 +114,11 @@ pageRoutes.get('/', (c) => {
             </div>
             <div className="sidebar-section">
               <div className="sidebar-label">Priority</div>
-              <button className="sidebar-item" data-view="priority:highest">Highest</button>
-              <button className="sidebar-item" data-view="priority:high">High</button>
-              <button className="sidebar-item" data-view="priority:default">Default</button>
-              <button className="sidebar-item" data-view="priority:low">Low</button>
-              <button className="sidebar-item" data-view="priority:lowest">Lowest</button>
+              <button className="sidebar-item" data-view="priority:highest"><span className="sidebar-icon" style="color:#ef4444"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 11 5-5 5 5"/><path d="m7 17 5-5 5 5"/></svg></span> Highest</button>
+              <button className="sidebar-item" data-view="priority:high"><span className="sidebar-icon" style="color:#f97316"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m18 15-6-6-6 6"/></svg></span> High</button>
+              <button className="sidebar-item" data-view="priority:default"><span className="sidebar-icon" style="color:#6b7280"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg></span> Default</button>
+              <button className="sidebar-item" data-view="priority:low"><span className="sidebar-icon" style="color:#3b82f6"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg></span> Low</button>
+              <button className="sidebar-item" data-view="priority:lowest"><span className="sidebar-icon" style="color:#94a3b8"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 7 5 5 5-5"/><path d="m7 13 5 5 5-5"/></svg></span> Lowest</button>
             </div>
             <div className="sidebar-stats" id="stats-bar"></div>
           </nav>
@@ -267,6 +267,10 @@ pageRoutes.get('/', (c) => {
               <div className="settings-field">
                 <label>Auto-clear verified after (days)</label>
                 <input type="number" id="settings-verified-days" min="1" value="30" />
+              </div>
+              <div className="settings-field settings-field-checkbox">
+                <label><input type="checkbox" id="settings-auto-order" checked /> Auto-prioritize tickets</label>
+                <span className="settings-hint">When no Up Next items exist, the AI will evaluate open tickets and choose what to work on next.</span>
               </div>
               <div className="settings-field">
                 <label>When Claude needs permission</label>
