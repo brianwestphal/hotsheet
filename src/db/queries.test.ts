@@ -9,10 +9,16 @@ import {
   batchUpdateTickets,
   createTicket,
   deleteAttachment,
+  deleteNote,
   deleteTicket,
+  duplicateTickets,
+  editNote,
   emptyTrash,
+  extractBracketTags,
+  getAllTags,
   getAttachment,
   getAttachments,
+  getCategories,
   getSettings,
   getTicket,
   getTickets,
@@ -21,7 +27,10 @@ import {
   getUpNextTickets,
   hardDeleteTicket,
   nextTicketNumber,
+  parseNotes,
+  queryTickets,
   restoreTicket,
+  saveCategories,
   toggleUpNext,
   updateSetting,
   updateTicket,
@@ -640,5 +649,443 @@ describe('cleanup query', () => {
     );
     const forCleanup = await getTicketsForCleanup(30, 3);
     expect(forCleanup.map(c => c.id)).not.toContain(t.id);
+  });
+
+  it('respects custom threshold values', async () => {
+    const db = await getDb();
+    const t = await createTicket('Cleanup custom threshold');
+    // Set verified_at to 6 days ago
+    await db.query(
+      `UPDATE tickets SET status = 'verified', verified_at = NOW() - INTERVAL '6 days' WHERE id = $1`,
+      [t.id]
+    );
+    // With 5-day threshold, should be included
+    const forCleanup5 = await getTicketsForCleanup(5, 3);
+    expect(forCleanup5.map(c => c.id)).toContain(t.id);
+    // With 7-day threshold, should not be included
+    const forCleanup7 = await getTicketsForCleanup(7, 3);
+    expect(forCleanup7.map(c => c.id)).not.toContain(t.id);
+  });
+
+  it('uses default thresholds when not provided', async () => {
+    const db = await getDb();
+    const t = await createTicket('Cleanup defaults');
+    await db.query(
+      `UPDATE tickets SET status = 'verified', verified_at = NOW() - INTERVAL '31 days' WHERE id = $1`,
+      [t.id]
+    );
+    // Default is 30 days for verified, 3 days for trash
+    const forCleanup = await getTicketsForCleanup();
+    expect(forCleanup.map(c => c.id)).toContain(t.id);
+  });
+});
+
+describe('hardDeleteTicket', () => {
+  it('permanently removes the ticket from the database', async () => {
+    const t = await createTicket('Hard delete permanent');
+    expect(await getTicket(t.id)).not.toBeNull();
+    await hardDeleteTicket(t.id);
+    expect(await getTicket(t.id)).toBeNull();
+  });
+
+  it('does not throw for non-existent ticket id', async () => {
+    await expect(hardDeleteTicket(99999)).resolves.not.toThrow();
+  });
+
+  it('removes ticket from all query results', async () => {
+    const t = await createTicket('Hard delete query', { category: 'bug' });
+    await hardDeleteTicket(t.id);
+    const allTickets = await getTickets();
+    expect(allTickets.map(x => x.id)).not.toContain(t.id);
+  });
+});
+
+describe('editNote', () => {
+  it('edits an existing note by id', async () => {
+    const t = await createTicket('Edit note test');
+    await updateTicket(t.id, { notes: 'Original note' });
+    const ticket = await getTicket(t.id);
+    const notes = parseNotes(ticket!.notes);
+    const noteId = notes[0].id;
+
+    const result = await editNote(t.id, noteId, 'Updated note');
+    expect(result).not.toBeNull();
+    const updated = result!.find(n => n.id === noteId);
+    expect(updated!.text).toBe('Updated note');
+  });
+
+  it('returns null for non-existent ticket', async () => {
+    const result = await editNote(99999, 'n_fake', 'text');
+    expect(result).toBeNull();
+  });
+
+  it('returns null for non-existent note id', async () => {
+    const t = await createTicket('Edit note missing');
+    await updateTicket(t.id, { notes: 'A note' });
+    const result = await editNote(t.id, 'n_nonexistent', 'text');
+    expect(result).toBeNull();
+  });
+
+  it('preserves other notes when editing one', async () => {
+    const t = await createTicket('Edit note preserve');
+    await updateTicket(t.id, { notes: 'Note 1' });
+    await updateTicket(t.id, { notes: 'Note 2' });
+    const ticket = await getTicket(t.id);
+    const notes = parseNotes(ticket!.notes);
+    const firstNoteId = notes[0].id;
+
+    const result = await editNote(t.id, firstNoteId, 'Edited Note 1');
+    expect(result).toHaveLength(2);
+    expect(result![0].text).toBe('Edited Note 1');
+    expect(result![1].text).toBe('Note 2');
+  });
+});
+
+describe('deleteNote', () => {
+  it('deletes a note by id', async () => {
+    const t = await createTicket('Delete note test');
+    await updateTicket(t.id, { notes: 'Note to delete' });
+    const ticket = await getTicket(t.id);
+    const notes = parseNotes(ticket!.notes);
+    const noteId = notes[0].id;
+
+    const result = await deleteNote(t.id, noteId);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(0);
+  });
+
+  it('returns null for non-existent ticket', async () => {
+    const result = await deleteNote(99999, 'n_fake');
+    expect(result).toBeNull();
+  });
+
+  it('returns null for non-existent note id', async () => {
+    const t = await createTicket('Delete note missing');
+    await updateTicket(t.id, { notes: 'A note' });
+    const result = await deleteNote(t.id, 'n_nonexistent');
+    expect(result).toBeNull();
+  });
+
+  it('preserves other notes when deleting one', async () => {
+    const t = await createTicket('Delete note preserve');
+    await updateTicket(t.id, { notes: 'Keep me' });
+    await updateTicket(t.id, { notes: 'Delete me' });
+    const ticket = await getTicket(t.id);
+    const notes = parseNotes(ticket!.notes);
+    const deleteId = notes[1].id;
+
+    const result = await deleteNote(t.id, deleteId);
+    expect(result).toHaveLength(1);
+    expect(result![0].text).toBe('Keep me');
+  });
+
+  it('persists the deletion to the database', async () => {
+    const t = await createTicket('Delete note persist');
+    await updateTicket(t.id, { notes: 'Note 1' });
+    await updateTicket(t.id, { notes: 'Note 2' });
+    const ticket = await getTicket(t.id);
+    const notes = parseNotes(ticket!.notes);
+
+    await deleteNote(t.id, notes[0].id);
+    // Re-read from DB
+    const updated = await getTicket(t.id);
+    const remaining = parseNotes(updated!.notes);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].text).toBe('Note 2');
+  });
+});
+
+describe('parseNotes', () => {
+  it('returns empty array for empty string', () => {
+    expect(parseNotes('')).toEqual([]);
+  });
+
+  it('returns empty array for null-like input', () => {
+    expect(parseNotes(null as unknown as string)).toEqual([]);
+  });
+
+  it('parses JSON array of notes', () => {
+    const json = JSON.stringify([
+      { id: 'n1', text: 'Note 1', created_at: '2024-01-01T00:00:00Z' },
+      { id: 'n2', text: 'Note 2', created_at: '2024-01-02T00:00:00Z' },
+    ]);
+    const notes = parseNotes(json);
+    expect(notes).toHaveLength(2);
+    expect(notes[0].text).toBe('Note 1');
+    expect(notes[1].text).toBe('Note 2');
+  });
+
+  it('assigns IDs to legacy notes without them', () => {
+    const json = JSON.stringify([
+      { text: 'Legacy', created_at: '2024-01-01T00:00:00Z' },
+    ]);
+    const notes = parseNotes(json);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].id).toBeTruthy();
+    expect(notes[0].text).toBe('Legacy');
+  });
+
+  it('wraps plain text as a single note entry', () => {
+    const notes = parseNotes('Just plain text');
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toBe('Just plain text');
+    expect(notes[0].id).toBeTruthy();
+    expect(notes[0].created_at).toBeTruthy();
+  });
+});
+
+describe('getCategories', () => {
+  it('returns DEFAULT_CATEGORIES when no custom categories set', async () => {
+    const categories = await getCategories();
+    expect(categories).toHaveLength(6);
+    expect(categories[0].id).toBe('issue');
+    expect(categories[1].id).toBe('bug');
+  });
+
+  it('returns custom categories when saved', async () => {
+    const custom = [
+      { id: 'epic', label: 'Epic', shortLabel: 'EPC', color: '#8b5cf6', shortcutKey: 'e', description: 'Epics' },
+    ];
+    await saveCategories(custom);
+    const categories = await getCategories();
+    expect(categories).toHaveLength(1);
+    expect(categories[0].id).toBe('epic');
+  });
+
+  it('returns defaults when stored JSON is invalid', async () => {
+    await updateSetting('categories', 'not valid json');
+    const categories = await getCategories();
+    expect(categories).toHaveLength(6); // DEFAULT_CATEGORIES length
+  });
+
+  it('returns defaults when stored array is empty', async () => {
+    await updateSetting('categories', '[]');
+    const categories = await getCategories();
+    expect(categories).toHaveLength(6);
+  });
+});
+
+describe('saveCategories', () => {
+  it('saves and retrieves categories round-trip', async () => {
+    const custom = [
+      { id: 'task', label: 'Task', shortLabel: 'TSK', color: '#3b82f6', shortcutKey: 't', description: 'Tasks' },
+      { id: 'bug', label: 'Bug', shortLabel: 'BUG', color: '#ef4444', shortcutKey: 'b', description: 'Bugs' },
+    ];
+    await saveCategories(custom);
+    const result = await getCategories();
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe('task');
+    expect(result[1].id).toBe('bug');
+  });
+});
+
+describe('duplicateTickets', () => {
+  it('creates a copy with " - Copy" suffix', async () => {
+    const t = await createTicket('Original ticket', { category: 'bug', priority: 'high' });
+    const copies = await duplicateTickets([t.id]);
+    expect(copies).toHaveLength(1);
+    expect(copies[0].title).toBe('Original ticket - Copy');
+    expect(copies[0].category).toBe('bug');
+    expect(copies[0].priority).toBe('high');
+  });
+
+  it('handles duplicate copy names with numeric suffix', async () => {
+    const t = await createTicket('Dup test', { category: 'task' });
+    const copy1 = await duplicateTickets([t.id]);
+    expect(copy1[0].title).toBe('Dup test - Copy');
+    const copy2 = await duplicateTickets([t.id]);
+    expect(copy2[0].title).toBe('Dup test - Copy 2');
+    const copy3 = await duplicateTickets([t.id]);
+    expect(copy3[0].title).toBe('Dup test - Copy 3');
+  });
+
+  it('duplicates multiple tickets at once', async () => {
+    const t1 = await createTicket('Multi dup 1');
+    const t2 = await createTicket('Multi dup 2');
+    const copies = await duplicateTickets([t1.id, t2.id]);
+    expect(copies).toHaveLength(2);
+    expect(copies[0].title).toBe('Multi dup 1 - Copy');
+    expect(copies[1].title).toBe('Multi dup 2 - Copy');
+  });
+
+  it('skips non-existent ticket ids', async () => {
+    const t = await createTicket('Dup with missing');
+    const copies = await duplicateTickets([t.id, 99999]);
+    expect(copies).toHaveLength(1);
+    expect(copies[0].title).toBe('Dup with missing - Copy');
+  });
+
+  it('preserves up_next and details on copy', async () => {
+    const t = await createTicket('Dup details', { up_next: true, details: 'Important stuff' });
+    const copies = await duplicateTickets([t.id]);
+    expect(copies[0].up_next).toBe(true);
+    expect(copies[0].details).toBe('Important stuff');
+  });
+});
+
+describe('queryTickets', () => {
+  let queryBug: number;
+  let queryFeature: number;
+  let queryTask: number;
+
+  beforeAll(async () => {
+    const b = await createTicket('Query bug ticket', { category: 'bug', priority: 'high' });
+    queryBug = b.id;
+    const f = await createTicket('Query feature ticket', { category: 'feature', priority: 'low', up_next: true });
+    queryFeature = f.id;
+    const k = await createTicket('Query task ticket', { category: 'task', priority: 'highest' });
+    queryTask = k.id;
+  });
+
+  it('filters with equals operator', async () => {
+    const results = await queryTickets('all', [{ field: 'category', operator: 'equals', value: 'bug' }]);
+    const ids = results.map(r => r.id);
+    expect(ids).toContain(queryBug);
+    expect(ids).not.toContain(queryFeature);
+  });
+
+  it('filters with not_equals operator', async () => {
+    const results = await queryTickets('all', [{ field: 'category', operator: 'not_equals', value: 'bug' }]);
+    const ids = results.map(r => r.id);
+    expect(ids).not.toContain(queryBug);
+    expect(ids).toContain(queryFeature);
+  });
+
+  it('filters with contains operator', async () => {
+    const results = await queryTickets('all', [{ field: 'title', operator: 'contains', value: 'Query bug' }]);
+    const ids = results.map(r => r.id);
+    expect(ids).toContain(queryBug);
+    expect(ids).not.toContain(queryFeature);
+  });
+
+  it('filters with not_contains operator', async () => {
+    const results = await queryTickets('all', [{ field: 'title', operator: 'not_contains', value: 'bug' }]);
+    const ids = results.map(r => r.id);
+    expect(ids).not.toContain(queryBug);
+    expect(ids).toContain(queryFeature);
+  });
+
+  it('uses ANY logic to match any condition', async () => {
+    const results = await queryTickets('any', [
+      { field: 'category', operator: 'equals', value: 'bug' },
+      { field: 'category', operator: 'equals', value: 'feature' },
+    ]);
+    const ids = results.map(r => r.id);
+    expect(ids).toContain(queryBug);
+    expect(ids).toContain(queryFeature);
+  });
+
+  it('uses ALL logic to require all conditions', async () => {
+    const results = await queryTickets('all', [
+      { field: 'category', operator: 'equals', value: 'bug' },
+      { field: 'priority', operator: 'equals', value: 'high' },
+    ]);
+    const ids = results.map(r => r.id);
+    expect(ids).toContain(queryBug);
+    expect(ids).not.toContain(queryTask);
+  });
+
+  it('always excludes deleted tickets', async () => {
+    const t = await createTicket('Query deleted');
+    await deleteTicket(t.id);
+    const results = await queryTickets('all', [{ field: 'title', operator: 'contains', value: 'Query deleted' }]);
+    expect(results.map(r => r.id)).not.toContain(t.id);
+  });
+
+  it('supports ordinal comparison on priority', async () => {
+    // priority high = 2, so gte 2 (high or worse) should include high but not highest
+    const results = await queryTickets('all', [{ field: 'priority', operator: 'gte', value: 'high' }]);
+    const priorities = results.map(r => r.priority);
+    // "gte 2" in ordinal means >= 2 so: high(2), default(3), low(4), lowest(5) are included
+    for (const p of priorities) {
+      expect(['high', 'default', 'low', 'lowest']).toContain(p);
+    }
+  });
+
+  it('filters by up_next field', async () => {
+    const results = await queryTickets('all', [{ field: 'up_next', operator: 'equals', value: 'true' }]);
+    for (const r of results) {
+      expect(r.up_next).toBe(true);
+    }
+    expect(results.map(r => r.id)).toContain(queryFeature);
+  });
+
+  it('ignores non-queryable fields', async () => {
+    // 'id' is not in QUERYABLE_FIELDS so condition is skipped
+    const results = await queryTickets('all', [{ field: 'id', operator: 'equals', value: '1' }]);
+    // Should return all non-deleted tickets since the condition was skipped
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it('sorts results by specified field', async () => {
+    const results = await queryTickets('all', [], 'priority', 'asc');
+    const priorities = results.map(r => r.priority);
+    const order = ['highest', 'high', 'default', 'low', 'lowest'];
+    for (let i = 1; i < priorities.length; i++) {
+      expect(order.indexOf(priorities[i])).toBeGreaterThanOrEqual(order.indexOf(priorities[i - 1]));
+    }
+  });
+});
+
+describe('extractBracketTags', () => {
+  it('extracts bracket tags and cleans title', () => {
+    const result = extractBracketTags('[frontend] Fix the login button');
+    expect(result.title).toBe('Fix the login button');
+    expect(result.tags).toEqual(['frontend']);
+  });
+
+  it('extracts multiple tags', () => {
+    const result = extractBracketTags('[frontend] [urgent] Fix the bug');
+    expect(result.title).toBe('Fix the bug');
+    expect(result.tags).toContain('frontend');
+    expect(result.tags).toContain('urgent');
+  });
+
+  it('normalizes tag content', () => {
+    const result = extractBracketTags('[Front-End!!!] Something');
+    expect(result.tags).toEqual(['front end']);
+  });
+
+  it('deduplicates tags', () => {
+    const result = extractBracketTags('[api] [API] Something');
+    expect(result.tags).toHaveLength(1);
+    expect(result.tags[0]).toBe('api');
+  });
+
+  it('returns empty tags for no brackets', () => {
+    const result = extractBracketTags('No tags here');
+    expect(result.title).toBe('No tags here');
+    expect(result.tags).toEqual([]);
+  });
+
+  it('handles empty brackets', () => {
+    const result = extractBracketTags('[] Something');
+    expect(result.title).toBe('Something');
+    expect(result.tags).toEqual([]);
+  });
+});
+
+describe('getAllTags', () => {
+  it('returns all unique tags across tickets', async () => {
+    await createTicket('Tag test 1', { tags: JSON.stringify(['alpha', 'beta']) });
+    await createTicket('Tag test 2', { tags: JSON.stringify(['beta', 'gamma']) });
+    const tags = await getAllTags();
+    expect(tags).toContain('alpha');
+    expect(tags).toContain('beta');
+    expect(tags).toContain('gamma');
+  });
+
+  it('returns tags in sorted order', async () => {
+    const tags = await getAllTags();
+    for (let i = 1; i < tags.length; i++) {
+      expect(tags[i] >= tags[i - 1]).toBe(true);
+    }
+  });
+
+  it('excludes tags from deleted tickets', async () => {
+    const t = await createTicket('Deleted tag', { tags: JSON.stringify(['deleted-only-tag']) });
+    await deleteTicket(t.id);
+    const tags = await getAllTags();
+    expect(tags).not.toContain('deleted-only-tag');
   });
 });
