@@ -1457,7 +1457,7 @@ function triggerChannelAndMarkBusy(message?: string) {
 async function checkAndTrigger(btn: HTMLElement) {
   try {
     const stats = await api<{ up_next: number }>('/stats');
-    if (stats.up_next === 0) {
+    if (stats.up_next === 0 && !state.settings.auto_order) {
       showNoUpNextAlert();
       return;
     }
@@ -1579,10 +1579,10 @@ function channelAutoTrigger() {
 async function attemptAutoTrigger() {
   if (!channelAutoMode) return;
 
-  // Check if there are up-next items
+  // Check if there are up-next items (skip check if auto-prioritize will handle it)
   try {
     const stats = await api<{ up_next: number }>('/stats');
-    if (stats.up_next === 0) return;
+    if (stats.up_next === 0 && !state.settings.auto_order) return;
   } catch { /* proceed anyway */ }
 
   if (!channelBusy) {
