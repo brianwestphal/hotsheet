@@ -149,24 +149,24 @@ describe('status transitions', () => {
     expect(updated!.deleted_at).not.toBeNull();
   });
 
-  it('→ backlog: clears up_next, completed_at, verified_at, deleted_at', async () => {
+  it('→ backlog: clears up_next and deleted_at, preserves completed_at', async () => {
     const t = await createTicket('Transition backlog', { up_next: true });
     await updateTicket(t.id, { status: 'completed' });
     const updated = await updateTicket(t.id, { status: 'backlog' });
     expect(updated!.status).toBe('backlog');
     expect(updated!.up_next).toBe(false);
-    expect(updated!.completed_at).toBeNull();
+    expect(updated!.completed_at).not.toBeNull();
     expect(updated!.verified_at).toBeNull();
     expect(updated!.deleted_at).toBeNull();
   });
 
-  it('→ archive: clears up_next, completed_at, verified_at, deleted_at', async () => {
+  it('→ archive: clears up_next and deleted_at, preserves completed_at', async () => {
     const t = await createTicket('Transition archive');
     await updateTicket(t.id, { status: 'completed' });
     const updated = await updateTicket(t.id, { status: 'archive' });
     expect(updated!.status).toBe('archive');
     expect(updated!.up_next).toBe(false);
-    expect(updated!.completed_at).toBeNull();
+    expect(updated!.completed_at).not.toBeNull();
     expect(updated!.verified_at).toBeNull();
     expect(updated!.deleted_at).toBeNull();
   });
@@ -352,10 +352,10 @@ describe('sorting', () => {
     }
   });
 
-  it('sorts by status asc (started first)', async () => {
+  it('sorts by status asc (backlog first)', async () => {
     const tickets = await getTickets({ sort_by: 'status', sort_dir: 'asc' });
     const statuses = tickets.map(t => t.status);
-    const order = ['started', 'not_started', 'completed', 'verified', 'backlog', 'archive'];
+    const order = ['backlog', 'not_started', 'started', 'completed', 'verified', 'archive'];
     for (let i = 1; i < statuses.length; i++) {
       expect(order.indexOf(statuses[i])).toBeGreaterThanOrEqual(order.indexOf(statuses[i - 1]));
     }

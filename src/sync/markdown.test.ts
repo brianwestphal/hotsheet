@@ -32,7 +32,8 @@ describe('worklist sync', () => {
     expect(existsSync(path)).toBe(true);
     const content = readFileSync(path, 'utf-8');
     expect(content).toContain('# Hot Sheet - Up Next');
-    expect(content).toContain('No items in the Up Next list.');
+    // With auto_order enabled (default), empty worklist shows auto-prioritize instructions
+    expect(content).toContain('## Auto-Prioritize');
     expect(content).toContain('## Workflow');
   });
 

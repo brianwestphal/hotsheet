@@ -34,17 +34,18 @@ describe('getCategoryLabel', () => {
   });
 
   it('returns default for unknown category', () => {
-    expect(getCategoryLabel('unknown')).toBe('ISS');
+    expect(getCategoryLabel('unknown')).toBe('UNK');
   });
 });
 
 describe('getPriorityIcon', () => {
   it('returns correct icons for all priorities', () => {
-    expect(getPriorityIcon('highest')).toBe('\u2B06\u2B06');
-    expect(getPriorityIcon('high')).toBe('\u2B06');
-    expect(getPriorityIcon('default')).toBe('\u2014');
-    expect(getPriorityIcon('low')).toBe('\u2B07');
-    expect(getPriorityIcon('lowest')).toBe('\u2B07\u2B07');
+    // All priority icons are now Lucide SVG strings
+    expect(getPriorityIcon('highest')).toContain('<svg');
+    expect(getPriorityIcon('high')).toContain('<svg');
+    expect(getPriorityIcon('default')).toContain('<svg');
+    expect(getPriorityIcon('low')).toContain('<svg');
+    expect(getPriorityIcon('lowest')).toContain('<svg');
   });
 
   it('returns default for unknown priority', () => {
@@ -71,7 +72,7 @@ describe('getStatusIcon', () => {
     expect(getStatusIcon('not_started')).toBe('\u25CB');
     expect(getStatusIcon('started')).toBe('\u25D4');
     expect(getStatusIcon('completed')).toBe('\u2713');
-    expect(getStatusIcon('verified')).toBe('svg');
+    expect(getStatusIcon('verified')).toContain('<svg');
     expect(getStatusIcon('backlog')).toBe('\u25A1');
     expect(getStatusIcon('archive')).toBe('\u25A0');
   });

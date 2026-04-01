@@ -8,6 +8,13 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html'],
       reportsDirectory: './coverage',
+      all: true,
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/test-helpers.ts',
+        'src/types.ts',
+      ],
     },
   },
 });
