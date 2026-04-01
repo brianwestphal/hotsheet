@@ -450,3 +450,412 @@ describe('long-poll', () => {
     expect(data.version).toBeGreaterThan(version);
   });
 });
+
+describe('path traversal protection', () => {
+  it('does not serve files outside the attachments directory via ../ traversal', async () => {
+    // Place a sensitive file one level above the attachments dir (in the data dir)
+    const { writeFileSync } = await import('fs');
+    const { join } = await import('path');
+    writeFileSync(join(tempDir, 'secret-data.txt'), 'top secret');
+
+    // Attempt to traverse up from the attachments directory to reach it
+    // Hono normalizes path separators, so ../secret-data.txt collapses before the handler.
+    // The handler's resolve() + startsWith() check provides defense in depth.
+    const res = await app.request('/api/attachments/file/../secret-data.txt');
+    // Must not return the secret file content — either 403 (traversal caught) or 404 (path normalization)
+    expect([403, 404]).toContain(res.status);
+    if (res.status === 200) {
+      const text = await res.text();
+      expect(text).not.toBe('top secret');
+    }
+  });
+
+  it('rejects traversal attempts that resolve outside attachments dir (direct resolve check)', async () => {
+    // Test the protection logic directly: the handler uses resolve() and checks startsWith().
+    // When Hono normalizes URLs, the path after '/api/attachments/file/' may be empty or
+    // point to a non-existent file. Verify no file from outside attachments is served.
+    const attempts = [
+      '/api/attachments/file/../../../etc/passwd',
+      '/api/attachments/file/../../etc/passwd',
+      '/api/attachments/file/../secret-data.txt',
+    ];
+    for (const path of attempts) {
+      const res = await app.request(path);
+      // Must never return 200 with content from outside the attachments dir
+      expect([403, 404]).toContain(res.status);
+    }
+  });
+
+  it('allows normal file paths within the attachments dir', async () => {
+    const { writeFileSync } = await import('fs');
+    const { join } = await import('path');
+    const attachDir = join(tempDir, 'attachments');
+    writeFileSync(join(attachDir, 'traversal-test.txt'), 'safe content');
+
+    const res = await app.request('/api/attachments/file/traversal-test.txt');
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toBe('safe content');
+  });
+});
+
+describe('file-settings secret stripping', () => {
+  it('GET /api/file-settings does NOT return secret or secretPathHash', async () => {
+    // Write a settings.json with secret fields
+    const { writeFileSync } = await import('fs');
+    const { join } = await import('path');
+    writeFileSync(
+      join(tempDir, 'settings.json'),
+      JSON.stringify({
+        appName: 'Secret Test',
+        secret: 'super-secret-value',
+        secretPathHash: 'hash-value-here',
+        port: 4174,
+      }),
+    );
+
+    const res = await app.request('/api/file-settings');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+
+    // Should include safe fields
+    expect(data.appName).toBe('Secret Test');
+    // Must NOT include secret or secretPathHash
+    expect(data).not.toHaveProperty('secret');
+    expect(data).not.toHaveProperty('secretPathHash');
+    // port is also stripped by the destructuring in the route
+    expect(data).not.toHaveProperty('port');
+  });
+});
+
+describe('dashboard stats endpoint', () => {
+  it('GET /api/dashboard?days=7 returns expected structure', async () => {
+    const res = await app.request('/api/dashboard?days=7');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+
+    // Top-level keys
+    expect(data).toHaveProperty('throughput');
+    expect(data).toHaveProperty('cycleTime');
+    expect(data).toHaveProperty('categoryBreakdown');
+    expect(data).toHaveProperty('categoryPeriod');
+    expect(data).toHaveProperty('kpi');
+    expect(data).toHaveProperty('snapshots');
+
+    // throughput is an array of { date, completed, created }
+    expect(Array.isArray(data.throughput)).toBe(true);
+    if (data.throughput.length > 0) {
+      expect(data.throughput[0]).toHaveProperty('date');
+      expect(data.throughput[0]).toHaveProperty('completed');
+      expect(data.throughput[0]).toHaveProperty('created');
+    }
+
+    // kpi has the expected fields
+    expect(typeof data.kpi.completedThisWeek).toBe('number');
+    expect(typeof data.kpi.completedLastWeek).toBe('number');
+    expect(typeof data.kpi.wipCount).toBe('number');
+    expect(typeof data.kpi.createdThisWeek).toBe('number');
+    // medianCycleTimeDays is number or null
+    expect([null, 'number']).toContain(
+      data.kpi.medianCycleTimeDays === null ? null : typeof data.kpi.medianCycleTimeDays,
+    );
+
+    // snapshots is an array
+    expect(Array.isArray(data.snapshots)).toBe(true);
+  });
+
+  it('GET /api/dashboard defaults to 30 days when no param', async () => {
+    const res = await app.request('/api/dashboard');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    // Should still return valid structure
+    expect(data).toHaveProperty('kpi');
+    expect(data).toHaveProperty('throughput');
+  });
+});
+
+describe('batch operations — extended', () => {
+  it('batch delete marks multiple tickets as deleted', async () => {
+    const t1 = await (await app.request('/api/tickets', post({ title: 'BatchDel A' }))).json();
+    const t2 = await (await app.request('/api/tickets', post({ title: 'BatchDel B' }))).json();
+    const t3 = await (await app.request('/api/tickets', post({ title: 'BatchDel C' }))).json();
+
+    const res = await app.request('/api/tickets/batch', post({
+      ids: [t1.id, t2.id, t3.id],
+      action: 'delete',
+    }));
+    expect(res.status).toBe(200);
+
+    // All three should be deleted
+    for (const id of [t1.id, t2.id, t3.id]) {
+      const check = await (await app.request(`/api/tickets/${id}`)).json();
+      expect(check.status).toBe('deleted');
+    }
+  });
+
+  it('batch status change to started sets status on multiple tickets', async () => {
+    const t1 = await (await app.request('/api/tickets', post({ title: 'BatchStatus A' }))).json();
+    const t2 = await (await app.request('/api/tickets', post({ title: 'BatchStatus B' }))).json();
+
+    const res = await app.request('/api/tickets/batch', post({
+      ids: [t1.id, t2.id],
+      action: 'status',
+      value: 'started',
+    }));
+    expect(res.status).toBe(200);
+
+    for (const id of [t1.id, t2.id]) {
+      const check = await (await app.request(`/api/tickets/${id}`)).json();
+      expect(check.status).toBe('started');
+    }
+  });
+
+  it('batch restore recovers multiple deleted tickets', async () => {
+    const t1 = await (await app.request('/api/tickets', post({ title: 'BatchRestore A' }))).json();
+    const t2 = await (await app.request('/api/tickets', post({ title: 'BatchRestore B' }))).json();
+
+    // Soft-delete them
+    await app.request(`/api/tickets/${t1.id}`, { method: 'DELETE' });
+    await app.request(`/api/tickets/${t2.id}`, { method: 'DELETE' });
+
+    // Confirm deleted
+    expect((await (await app.request(`/api/tickets/${t1.id}`)).json()).status).toBe('deleted');
+    expect((await (await app.request(`/api/tickets/${t2.id}`)).json()).status).toBe('deleted');
+
+    // Batch restore
+    const res = await app.request('/api/tickets/batch', post({
+      ids: [t1.id, t2.id],
+      action: 'restore',
+    }));
+    expect(res.status).toBe(200);
+
+    // Both should be restored to not_started
+    for (const id of [t1.id, t2.id]) {
+      const check = await (await app.request(`/api/tickets/${id}`)).json();
+      expect(check.status).toBe('not_started');
+    }
+  });
+});
+
+describe('CSRF origin validation', () => {
+  // The CSRF middleware lives in server.ts's startServer, not in apiRoutes directly.
+  // We create a separate app instance with that middleware to test it.
+  let csrfApp: Hono<AppEnv>;
+
+  beforeAll(async () => {
+    const { writeFileSync } = await import('fs');
+    const { join } = await import('path');
+
+    // Write settings.json with a secret to activate the CSRF middleware
+    writeFileSync(
+      join(tempDir, 'settings.json'),
+      JSON.stringify({ secret: 'test-secret-csrf', secretPathHash: 'abc', port: 4174 }),
+    );
+
+    // Build an app that replicates the middleware from server.ts
+    csrfApp = new Hono<AppEnv>();
+    csrfApp.use('*', async (c, next) => {
+      c.set('dataDir', tempDir);
+      await next();
+    });
+
+    // Replicate the CSRF/secret middleware from server.ts
+    csrfApp.use('/api/*', async (c, next) => {
+      const { readFileSettings } = await import('../file-settings.js');
+      const dataDir = c.get('dataDir');
+      const settings = readFileSettings(dataDir);
+      const expectedSecret = settings.secret;
+      if (!expectedSecret) { await next(); return; }
+
+      const headerSecret = c.req.header('X-Hotsheet-Secret');
+      const method = c.req.method;
+      const isMutation = method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE';
+
+      if (headerSecret) {
+        if (headerSecret !== expectedSecret) {
+          return c.json({ error: 'Secret mismatch' }, 403);
+        }
+      } else if (isMutation) {
+        const origin = c.req.header('Origin');
+        const referer = c.req.header('Referer');
+        const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
+        const isSameOrigin = (origin && localhostPattern.test(origin))
+          || (referer && localhostPattern.test(referer));
+        if (!isSameOrigin) {
+          return c.json({ error: 'Missing X-Hotsheet-Secret header.' }, 403);
+        }
+      }
+      await next();
+    });
+
+    csrfApp.route('/api', apiRoutes);
+  });
+
+  it('rejects POST with non-localhost Origin header (403)', async () => {
+    const res = await csrfApp.request('/api/tickets', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': 'https://evil-site.com',
+      },
+      body: JSON.stringify({ title: 'CSRF attempt' }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects POST with no Origin and no secret header (403)', async () => {
+    const res = await csrfApp.request('/api/tickets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'No origin' }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('allows POST with localhost Origin header', async () => {
+    const res = await csrfApp.request('/api/tickets', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': 'http://localhost:4174',
+      },
+      body: JSON.stringify({ title: 'Localhost OK' }),
+    });
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.title).toBe('Localhost OK');
+  });
+
+  it('allows POST with 127.0.0.1 Origin header', async () => {
+    const res = await csrfApp.request('/api/tickets', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': 'http://127.0.0.1:4174',
+      },
+      body: JSON.stringify({ title: '127 OK' }),
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('allows POST with correct X-Hotsheet-Secret header', async () => {
+    const res = await csrfApp.request('/api/tickets', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Hotsheet-Secret': 'test-secret-csrf',
+      },
+      body: JSON.stringify({ title: 'Secret header OK' }),
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects POST with wrong X-Hotsheet-Secret header (403)', async () => {
+    const res = await csrfApp.request('/api/tickets', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Hotsheet-Secret': 'wrong-secret',
+      },
+      body: JSON.stringify({ title: 'Wrong secret' }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('allows GET requests without Origin or secret', async () => {
+    const res = await csrfApp.request('/api/tickets');
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('custom view query', () => {
+  it('POST /api/tickets/query with status condition returns matching tickets', async () => {
+    // Create a ticket and move it to started
+    const t = await (await app.request('/api/tickets', post({ title: 'QueryTest Started' }))).json();
+    await app.request(`/api/tickets/${t.id}`, patch({ status: 'started' }));
+
+    const res = await app.request('/api/tickets/query', post({
+      logic: 'all',
+      conditions: [{ field: 'status', operator: 'equals', value: 'started' }],
+    }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+    // Every returned ticket should have status 'started'
+    for (const ticket of data) {
+      expect(ticket.status).toBe('started');
+    }
+    // Our ticket should be in the results
+    expect(data.some((ticket: { id: number }) => ticket.id === t.id)).toBe(true);
+  });
+
+  it('POST /api/tickets/query with category condition', async () => {
+    const t = await (await app.request('/api/tickets', post({
+      title: 'QueryTest Bug',
+      defaults: { category: 'bug' },
+    }))).json();
+
+    const res = await app.request('/api/tickets/query', post({
+      logic: 'all',
+      conditions: [{ field: 'category', operator: 'equals', value: 'bug' }],
+    }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+    for (const ticket of data) {
+      expect(ticket.category).toBe('bug');
+    }
+    expect(data.some((ticket: { id: number }) => ticket.id === t.id)).toBe(true);
+  });
+
+  it('POST /api/tickets/query with "any" logic matches either condition', async () => {
+    const tBug = await (await app.request('/api/tickets', post({
+      title: 'QueryAny Bug',
+      defaults: { category: 'bug' },
+    }))).json();
+    const tFeature = await (await app.request('/api/tickets', post({
+      title: 'QueryAny Feature',
+      defaults: { category: 'feature' },
+    }))).json();
+
+    const res = await app.request('/api/tickets/query', post({
+      logic: 'any',
+      conditions: [
+        { field: 'category', operator: 'equals', value: 'bug' },
+        { field: 'category', operator: 'equals', value: 'feature' },
+      ],
+    }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+    for (const ticket of data) {
+      expect(['bug', 'feature']).toContain(ticket.category);
+    }
+    expect(data.some((ticket: { id: number }) => ticket.id === tBug.id)).toBe(true);
+    expect(data.some((ticket: { id: number }) => ticket.id === tFeature.id)).toBe(true);
+  });
+
+  it('POST /api/tickets/query with sort params', async () => {
+    const res = await app.request('/api/tickets/query', post({
+      logic: 'all',
+      conditions: [{ field: 'status', operator: 'equals', value: 'not_started' }],
+      sort_by: 'created_at',
+      sort_dir: 'desc',
+    }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+  });
+
+  it('POST /api/tickets/query excludes deleted tickets', async () => {
+    const t = await (await app.request('/api/tickets', post({ title: 'QueryDeleted' }))).json();
+    await app.request(`/api/tickets/${t.id}`, { method: 'DELETE' });
+
+    const res = await app.request('/api/tickets/query', post({
+      logic: 'all',
+      conditions: [],
+    }));
+    const data = await res.json();
+    expect(data.every((ticket: { id: number }) => ticket.id !== t.id)).toBe(true);
+  });
+});
