@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.10.0] - 2026-04-02
+
+- Added auto-prioritize option (enabled by default) -- if no items are in "up next" and this option is enabled, running /hotsheet (or clicking the play button when using Claude channels), automatically determines what should be worked on next
+- Added sidebar icons and changed some icons
+- Fixed a few item selection and race condition bugs
+- Log-scale cycle time chart with sub-day precision
+- Code cleanup and more testing
+
 ## [0.9.0] - 2026-03-27
 
 - Security hardening: fix path traversal, CSRF bypass, and secret exposure
