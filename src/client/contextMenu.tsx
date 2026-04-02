@@ -1,9 +1,8 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { parseTags, renderDetailTags } from './detail.js';
 import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
-import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
+import { getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
 import { trackedBatch, trackedDelete, trackedPatch } from './undo/actions.js';
 
@@ -61,7 +60,7 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
 
   // Up Next toggle
   addActionItem(menu, ticket.up_next ? '\u2605 Up Next' : '\u2606 Up Next', () => {
-    applyToSelected('up_next', !ticket.up_next);
+    void applyToSelected('up_next', !ticket.up_next);
   });
 
   addSeparator(menu);
@@ -159,8 +158,8 @@ function addSubmenuItem(menu: HTMLElement, label: string, items: SubItem[]) {
   const submenu = toElement(<div className="context-submenu"></div>);
   for (const sub of items) {
     const subItem = toElement(
-      <div className={`context-menu-item${sub.active ? ' active' : ''}`}>
-        {sub.icon ? <span className="dropdown-icon" style={sub.iconColor ? `color:${sub.iconColor}` : ''}>{raw(sub.icon)}</span> : null}
+      <div className={`context-menu-item${sub.active === true ? ' active' : ''}`}>
+        {sub.icon !== undefined && sub.icon !== '' ? <span className="dropdown-icon" style={sub.iconColor !== undefined && sub.iconColor !== '' ? `color:${sub.iconColor}` : ''}>{raw(sub.icon)}</span> : null}
         <span className="context-menu-label">{sub.label}</span>
       </div>
     );

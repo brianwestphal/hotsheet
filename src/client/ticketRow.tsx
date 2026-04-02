@@ -409,7 +409,7 @@ export function cancelPendingSave() {
 
 export function showCategoryMenu(anchor: HTMLElement, ticket: Ticket) {
   closeAllMenus();
-  const isMac = navigator.platform.includes('Mac');
+  const isMac = navigator.userAgent.includes('Mac');
   const mod = isMac ? '\u2318' : 'Ctrl+';
   const menu = createDropdown(anchor, getCategoryShortcuts().map(s => ({
     label: s.label,

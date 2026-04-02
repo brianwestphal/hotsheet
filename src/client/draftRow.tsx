@@ -2,7 +2,7 @@ import { api } from './api.js';
 import { extractBracketTags, hasTag, syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
-import type { CustomView, Ticket } from './state.js';
+import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, state } from './state.js';
 import {
   callFocusDraftInput, callLoadTickets, callRenderTicketList,
@@ -72,7 +72,7 @@ export function createDraftRow(): HTMLElement {
       if (state.view.startsWith('custom:')) {
         const viewId = state.view.slice(7);
         const view = state.customViews.find(v => v.id === viewId);
-        const viewTag = (view as CustomView & { tag?: string })?.tag;
+        const viewTag = view?.tag;
         if (viewTag !== undefined && viewTag !== '' && !hasTag(tags, viewTag)) {
           tags.push(viewTag);
         }

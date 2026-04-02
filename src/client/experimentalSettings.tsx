@@ -308,7 +308,7 @@ export function bindExperimentalSettings() {
   fetch('/api/channel/status').then(r => r.ok ? r.json() as Promise<{ enabled: boolean }> : null).then(s => {
     if (s !== null) {
       channelCheckbox.checked = s.enabled;
-      if (s.enabled === true) {
+      if (s.enabled) {
         channelInstructions.style.display = '';
         customCommandsSection.style.display = '';
       }
@@ -317,7 +317,7 @@ export function bindExperimentalSettings() {
 
   // Load custom commands from settings
   void api<Record<string, string>>('/settings').then(settings => {
-    if (settings.custom_commands !== undefined && settings.custom_commands !== '') {
+    if (settings.custom_commands !== '') {
       try { customCommands = JSON.parse(settings.custom_commands) as CustomCommand[]; } catch { /* ignore */ }
     }
     renderChannelCommands();

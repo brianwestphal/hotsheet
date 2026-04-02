@@ -3,7 +3,7 @@ import type { Ticket } from './state.js';
 import { showSkillsBanner } from './tauriIntegration.js';
 
 function parseNotes(raw: string): { text: string; created_at: string }[] {
-  if (raw === '' || raw === undefined) return [];
+  if (raw === '') return [];
   try {
     const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) return parsed as { text: string; created_at: string }[];

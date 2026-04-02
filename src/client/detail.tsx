@@ -1,7 +1,7 @@
 import { api } from './api.js';
 import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
-import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
+import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
 import { pushNotesUndo } from './undo/actions.js';
 
 // --- Tags helpers ---
@@ -23,7 +23,7 @@ export function hasTag(tags: string[], tag: string): boolean {
 }
 
 /** Extract bracket tags from a title, returning cleaned title and tag list.
- *  e.g. " [admin ] this is a ticket [dashboard] " → { title: "this is a ticket", tags: ["admin", "dashboard"] } */
+ *  e.g. " [admin ] this is a ticket [dashboard] " returns \{ title: "this is a ticket", tags: ["admin", "dashboard"] \} */
 export function extractBracketTags(input: string): { title: string; tags: string[] } {
   const tags: string[] = [];
   // Extract all [tag] patterns
@@ -40,8 +40,8 @@ export function extractBracketTags(input: string): { title: string; tags: string
 export function parseTags(raw: string): string[] {
   if (raw === '' || raw === '[]') return [];
   try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((t: unknown) => typeof t === 'string' && t.trim());
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) return (parsed as unknown[]).filter((t): t is string => typeof t === 'string' && t.trim() !== '');
   } catch { /* ignore */ }
   return [];
 }
@@ -89,7 +89,7 @@ export function updateDetailCategory(value: string) {
   btn.dataset.value = value;
   const cat = state.categories.find(c => c.id === value);
   const color = getCategoryColor(value);
-  btn.innerHTML = `<span class="cat-dot" style="background:${color}"></span> ${cat?.label || value}`;
+  btn.innerHTML = `<span class="cat-dot" style="background:${color}"></span> ${cat?.label ?? value}`;
 }
 
 export function updateDetailPriority(value: string) {
@@ -178,7 +178,7 @@ function setDetailReadOnly(readOnly: boolean) {
   const priBtn = document.getElementById('detail-priority') as HTMLButtonElement;
   const statusBtn = document.getElementById('detail-status') as HTMLButtonElement;
   const upnextBtn = document.getElementById('detail-upnext') as HTMLButtonElement;
-  const uploadBtn = document.querySelector('.upload-btn') as HTMLElement | null;
+  const uploadBtn = document.querySelector<HTMLElement>('.upload-btn');
 
   titleInput.readOnly = readOnly;
   detailsArea.readOnly = readOnly;
@@ -232,8 +232,8 @@ function loadPreviewDetail(id: number) {
   meta.innerHTML = (<>
     <div>Created: {new Date(ticket.created_at).toLocaleString()}</div>
     <div>Updated: {new Date(ticket.updated_at).toLocaleString()}</div>
-    {ticket.completed_at ? <div>Completed: {new Date(ticket.completed_at).toLocaleString()}</div> : null}
-    {ticket.verified_at ? <div>Verified: {new Date(ticket.verified_at).toLocaleString()}</div> : null}
+    {ticket.completed_at !== null && ticket.completed_at !== '' ? <div>Completed: {new Date(ticket.completed_at).toLocaleString()}</div> : null}
+    {ticket.verified_at !== null && ticket.verified_at !== '' ? <div>Verified: {new Date(ticket.verified_at).toLocaleString()}</div> : null}
   </>).toString();
 }
 
@@ -303,8 +303,8 @@ async function loadDetail(id: number) {
   meta.innerHTML = (<>
     <div>Created: {new Date(ticket.created_at).toLocaleString()}</div>
     <div>Updated: {new Date(ticket.updated_at).toLocaleString()}</div>
-    {ticket.completed_at ? <div>Completed: {new Date(ticket.completed_at).toLocaleString()}</div> : null}
-    {ticket.verified_at ? <div>Verified: {new Date(ticket.verified_at).toLocaleString()}</div> : null}
+    {ticket.completed_at !== null && ticket.completed_at !== '' ? <div>Completed: {new Date(ticket.completed_at).toLocaleString()}</div> : null}
+    {ticket.verified_at !== null && ticket.verified_at !== '' ? <div>Verified: {new Date(ticket.verified_at).toLocaleString()}</div> : null}
   </>).toString();
 }
 
@@ -406,11 +406,11 @@ let noteIdCounter = 0;
 function clientNoteId(): string { return `cn_${Date.now().toString(36)}_${(noteIdCounter++).toString(36)}`; }
 
 function parseNotesJson(raw: string): NoteEntry[] {
-  if (raw === '' || raw === undefined) return [];
+  if (raw === '') return [];
   try {
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed.map((n: { id?: string; text: string; created_at: string }) => ({
+      return (parsed as { id?: string; text: string; created_at: string }[]).map((n) => ({
         id: n.id ?? clientNoteId(),
         text: n.text,
         created_at: n.created_at,

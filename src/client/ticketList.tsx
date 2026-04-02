@@ -4,7 +4,7 @@ import { renderColumnView, renderPreviewColumnView, updateColumnSelectionClasses
 import { syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
-import type { CustomView, Ticket } from './state.js';
+import type { Ticket } from './state.js';
 import { state } from './state.js';
 import {
   draggedTicketIds as _draggedTicketIds,
@@ -278,7 +278,7 @@ export async function loadTickets() {
     const viewId = state.view.slice(7);
     const view = state.customViews.find(v => v.id === viewId);
     if (view) {
-      const viewTag = (view as CustomView & { tag?: string }).tag;
+      const viewTag = view.tag;
       state.tickets = await api<Ticket[]>('/tickets/query', {
         method: 'POST',
         body: {
@@ -370,7 +370,7 @@ function loadPreviewTickets() {
     tickets = tickets.filter(t =>
       t.title.toLowerCase().includes(q) ||
       t.ticket_number.toLowerCase().includes(q) ||
-      (t.details && t.details.toLowerCase().includes(q))
+      (t.details !== '' && t.details.toLowerCase().includes(q))
     );
   }
 

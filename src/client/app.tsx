@@ -87,10 +87,10 @@ async function loadSettings() {
     if (settings.detail_position === 'side' || settings.detail_position === 'bottom') {
       state.settings.detail_position = settings.detail_position;
     }
-    if (settings.detail_width !== undefined && settings.detail_width !== '') state.settings.detail_width = parseInt(settings.detail_width, 10) || 360;
-    if (settings.detail_height !== undefined && settings.detail_height !== '') state.settings.detail_height = parseInt(settings.detail_height, 10) || 300;
-    if (settings.trash_cleanup_days !== undefined && settings.trash_cleanup_days !== '') state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || 3;
-    if (settings.verified_cleanup_days !== undefined && settings.verified_cleanup_days !== '') state.settings.verified_cleanup_days = parseInt(settings.verified_cleanup_days, 10) || 30;
+    if (settings.detail_width !== '') state.settings.detail_width = parseInt(settings.detail_width, 10) || 360;
+    if (settings.detail_height !== '') state.settings.detail_height = parseInt(settings.detail_height, 10) || 300;
+    if (settings.trash_cleanup_days !== '') state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || 3;
+    if (settings.verified_cleanup_days !== '') state.settings.verified_cleanup_days = parseInt(settings.verified_cleanup_days, 10) || 30;
     if (settings.layout === 'list' || settings.layout === 'columns') state.layout = settings.layout;
     if (settings.notify_permission === 'none' || settings.notify_permission === 'once' || settings.notify_permission === 'persistent') {
       state.settings.notify_permission = settings.notify_permission;
@@ -580,7 +580,8 @@ function bindDetailPanel() {
       e.preventDefault();
       if (acDropdown && acIndex >= 0) {
         const items = acDropdown.querySelectorAll('.tag-autocomplete-item');
-        tagInput.value = items[acIndex].textContent ?? tagInput.value;
+        const text = items[acIndex].textContent;
+        if (text !== '') tagInput.value = text;
       }
       closeAutocomplete();
       void addCurrentTag();

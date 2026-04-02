@@ -32,7 +32,7 @@ export function initCustomViews(loadTickets: () => void) {
 export async function loadCustomViews() {
   try {
     const settings = await api<Record<string, string>>('/settings');
-    if (settings.custom_views !== undefined && settings.custom_views !== '') {
+    if (settings.custom_views !== '') {
       const parsed: unknown = JSON.parse(settings.custom_views);
       if (Array.isArray(parsed)) state.customViews = parsed as typeof state.customViews;
     }
@@ -59,7 +59,7 @@ export function renderSidebarViews() {
         data-cv-index={String(i)}
         draggable="true"
       >
-        {view.tag ? <span className="sidebar-view-tag-icon">{raw(TAG_ICON)}</span> : null}
+        {view.tag !== undefined && view.tag !== '' ? <span className="sidebar-view-tag-icon">{raw(TAG_ICON)}</span> : null}
         {view.name}
       </button>
     );
@@ -93,7 +93,7 @@ export function renderSidebarViews() {
     });
     btn.addEventListener('dragover', (e) => {
       // Allow both view reordering and ticket drop-to-tag
-      if (draggedViewIndex === null && !(view.tag && draggedTicketIds.length > 0)) return;
+      if (draggedViewIndex === null && !(view.tag !== undefined && view.tag !== '' && draggedTicketIds.length > 0)) return;
       e.preventDefault();
       e.dataTransfer!.dropEffect = 'move';
       btn.classList.add('drop-target');
@@ -104,7 +104,7 @@ export function renderSidebarViews() {
       btn.classList.remove('drop-target');
 
       // Handle ticket drop-to-tag: add the view's tag to dropped tickets
-      if (view.tag && draggedTicketIds.length > 0 && draggedViewIndex === null) {
+      if (view.tag !== undefined && view.tag !== '' && draggedTicketIds.length > 0 && draggedViewIndex === null) {
         void addTagToTickets(view.tag, draggedTicketIds);
         return;
       }
@@ -128,7 +128,7 @@ function showViewContextMenu(anchor: HTMLElement, view: CustomView) {
   closeAllMenus();
   const menu = createDropdown(anchor, [
     { label: 'Edit', key: 'e', icon: PENCIL_ICON, action: () => showViewEditor(view) },
-    { label: 'Delete', key: 'd', icon: TRASH_ICON, action: () => deleteView(view.id) },
+    { label: 'Delete', key: 'd', icon: TRASH_ICON, action: () => { void deleteView(view.id); } },
   ]);
   document.body.appendChild(menu);
   positionDropdown(menu, anchor);
@@ -219,7 +219,7 @@ function getValueOptions(field: string): string[] | null {
 function getValueLabel(field: string, value: string): string {
   if (field === 'category') {
     const cat = state.categories.find(c => c.id === value);
-    return cat?.label || value;
+    return cat?.label ?? value;
   }
   if (field === 'status') return value.replace(/_/g, ' ');
   if (field === 'up_next') return value === 'true' ? 'Yes' : 'No';
@@ -276,7 +276,7 @@ function setupTagAutocomplete(input: HTMLInputElement, dropdown: HTMLElement, on
       items.forEach((el, j) => el.classList.toggle('active', j === acIndex));
     } else if (e.key === 'Enter' && acIndex >= 0) {
       e.preventDefault();
-      const selected = (items[acIndex] as HTMLElement)?.dataset.tag || items[acIndex]?.textContent || '';
+      const selected = (items[acIndex] as HTMLElement).dataset.tag ?? items[acIndex].textContent;
       input.value = selected;
       onSelect(selected);
       dropdown.style.display = 'none';

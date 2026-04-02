@@ -141,8 +141,9 @@ function chartCard(title: string, info: string, content: string): HTMLElement {
 // --- Hover cursor for time-series charts ---
 
 function addChartHover(card: HTMLElement, data: { date: string; lines: { label: string; color: string; value: number }[] }[]) {
-  const body = card.querySelector('.dashboard-chart-body') as HTMLElement | null;
-  if (body === null || data.length === 0) return;
+  const bodyEl = card.querySelector('.dashboard-chart-body');
+  if (bodyEl === null || data.length === 0) return;
+  const body = bodyEl as HTMLElement;
 
   const cursor = document.createElement('div');
   cursor.className = 'chart-cursor';

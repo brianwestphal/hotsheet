@@ -120,7 +120,7 @@ export function bindKeyboardShortcuts() {
       else {
         // Also let native copy work when text is selected on the page
         const sel = !e.altKey ? window.getSelection() : null;
-        if (sel !== null && sel !== undefined && !sel.isCollapsed && sel.toString().trim() !== '') { /* native copy */ }
+        if (sel !== null && !sel.isCollapsed && sel.toString().trim() !== '') { /* native copy */ }
         else {
           e.preventDefault();
           const selected = state.tickets.filter(t => state.selectedIds.has(t.id));

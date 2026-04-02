@@ -374,7 +374,7 @@ function bindAutoContextSettings() {
   async function loadEntries() {
     try {
       const settings = await api<Record<string, string>>('/settings');
-      if (settings.auto_context !== undefined && settings.auto_context !== '') {
+      if (settings.auto_context !== '') {
         autoContextEntries = JSON.parse(settings.auto_context) as AutoContextEntry[];
       }
     } catch { /* ignore */ }
