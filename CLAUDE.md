@@ -93,6 +93,23 @@ The build produces:
 - `dist/client/app.js` — Client JS bundle (IIFE, minified, es2020 target)
 - `dist/client/styles.css` — Compiled and compressed CSS from SCSS
 
+## Testing
+
+```bash
+npm test              # Unit tests with coverage (vitest)
+npm run test:watch    # Unit tests in watch mode
+npm run test:e2e      # E2E browser tests (Playwright)
+npm run test:all      # Unified coverage: unit + E2E server + E2E browser, merged report
+```
+
+### Testing Philosophy
+
+- **Double coverage**: Every feature should be covered by both unit tests AND E2E tests. Unit tests verify logic in isolation; E2E tests verify real user flows through the actual running application with minimal mocking.
+- **Unit tests** (`src/**/*.test.ts`): Use vitest. Mock external dependencies (filesystem, network) but test real logic. Use `setupTestDb`/`cleanupTestDb` from `test-helpers.ts` for database tests.
+- **E2E tests** (`e2e/*.spec.ts`): Use Playwright with Chromium. Start a real Hot Sheet server with a temp data directory. Test through the browser — create tickets, click buttons, verify UI state. Minimize mocks; the whole point is exercising the real stack.
+- **Coverage target**: Maximize coverage from both test types. The `npm run test:all` script merges unit + E2E server + E2E browser coverage into a single report. Files showing low coverage should get both more unit tests AND more E2E test flows.
+- **Coverage collection**: Unit coverage via `@vitest/coverage-v8`. E2E server coverage via `NODE_V8_COVERAGE` with `node --import tsx`. E2E browser coverage via Playwright's `page.coverage.startJSCoverage()`, source-mapped from the esbuild bundle back to individual `.tsx` files.
+
 ## Conventions
 
 - ESM modules (`"type": "module"` in package.json)
