@@ -1,0 +1,215 @@
+name: Release Candidate
+
+permissions:
+  contents: write
+  id-token: write  # Required for npm OIDC trusted publishing
+
+on:
+  push:
+    tags:
+      - 'v*-rc.*'
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # --- Phase 1: Validation (parallel) ---
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npm run build:client
+      - run: npx playwright install chromium --with-deps
+      - run: npm run test:e2e
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npm run lint
+
+  npm-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: npm pack --dry-run
+
+  tauri-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: '${{ matrix.target }}' }
+      - if: matrix.platform == 'ubuntu-22.04'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
+      - run: npm ci
+      - run: bash scripts/build-sidecar.sh ${{ matrix.target }}
+        shell: bash
+      - run: npx tauri build --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-${{ matrix.target }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+
+  # --- Phase 2: Beta Publish via OIDC trusted publishing ---
+
+  beta-publish:
+    needs: [test, e2e, lint, npm-dry-run, tauri-build]
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    outputs:
+      rc_version: ${{ steps.version.outputs.rc_version }}
+      base_version: ${{ steps.version.outputs.base_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ github.ref }}' }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '${{ env.NODE_VERSION }}'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Extract versions from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          RC_VERSION="${TAG#v}"
+          BASE_VERSION=$(echo "$RC_VERSION" | sed 's/-rc\.[0-9]*//')
+          echo "rc_version=$RC_VERSION" >> "$GITHUB_OUTPUT"
+          echo "base_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "RC version: $RC_VERSION, Base version: $BASE_VERSION"
+
+      - run: npm ci
+
+      - name: Set version and publish beta (OIDC provenance)
+        run: |
+          npm version "${{ steps.version.outputs.rc_version }}" --no-git-tag-version --allow-same-version
+          npm run build
+          npm publish --tag beta --provenance --access public
+
+  # --- Phase 3: Smoke Tests (after beta publish, parallel) ---
+
+  smoke-fresh:
+    needs: beta-publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - run: npx playwright install chromium --with-deps
+
+      - name: Install beta globally and start server
+        run: |
+          npm install -g hotsheet@${{ needs.beta-publish.outputs.rc_version }}
+          hotsheet --data-dir /tmp/smoke-fresh --no-open --port 4195 &
+          sleep 5
+
+      - name: Run fresh install smoke tests
+        run: SMOKE_PORT=4195 npx playwright test --config playwright.config.smoke.ts e2e/smoke/fresh-install.spec.ts
+
+      - name: Stop server
+        if: always()
+        run: kill $(lsof -ti:4195) 2>/dev/null || true
+
+  smoke-upgrade:
+    needs: beta-publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - run: npx playwright install chromium --with-deps
+
+      - name: Install stable version and seed data
+        run: |
+          npm install -g hotsheet
+          hotsheet --data-dir /tmp/smoke-upgrade --no-open --port 4195 &
+          sleep 5
+          bash scripts/seed-upgrade-data.sh 4195
+          kill $(lsof -ti:4195) 2>/dev/null || true
+          sleep 2
+
+      - name: Upgrade to beta and start server
+        run: |
+          npm install -g hotsheet@${{ needs.beta-publish.outputs.rc_version }}
+          hotsheet --data-dir /tmp/smoke-upgrade --no-open --port 4195 &
+          sleep 5
+
+      - name: Run upgrade smoke tests
+        run: SMOKE_PORT=4195 npx playwright test --config playwright.config.smoke.ts e2e/smoke/upgrade-install.spec.ts
+
+      - name: Stop server
+        if: always()
+        run: kill $(lsof -ti:4195) 2>/dev/null || true
+
+  # --- Phase 4: Auto Promote (after all smoke tests pass) ---
+
+  promote:
+    needs: [beta-publish, smoke-fresh, smoke-upgrade]
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: '${{ github.ref }}'
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+
+      - name: Promote beta to latest on npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          npm dist-tag add hotsheet@${{ needs.beta-publish.outputs.rc_version }} latest
+          echo "Promoted hotsheet@${{ needs.beta-publish.outputs.rc_version }} to latest"
+
+      - name: Create final release tag
+        run: |
+          FINAL_TAG="v${{ needs.beta-publish.outputs.base_version }}"
+          RC_TAG="${GITHUB_REF_NAME}"
+          NOTES=$(git tag -l --format='%(contents)' "$RC_TAG")
+          echo "$NOTES" | git tag -a "$FINAL_TAG" -F -
+          git push origin "$FINAL_TAG"
+          echo "Created and pushed $FINAL_TAG (triggers desktop release)"

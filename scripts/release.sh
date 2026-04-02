@@ -367,47 +367,51 @@ step_update_version() {
   success "All version files updated to ${version}"
 }
 
-step_git_tag() {
+step_git_commit() {
   local version
   version=$(get_state "version")
-  local notes
-  notes=$(get_state "release_notes")
-  local tag="v${version}"
 
-  info "Creating git commit and tag ${BOLD}${tag}${RESET}..."
+  info "Creating git commit..."
 
   git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml CHANGELOG.md 2>/dev/null || git add package.json CHANGELOG.md
   git commit -m "release: v${version}" --allow-empty
 
+  success "Created release commit"
+}
+
+step_rc_tag_and_push() {
+  local version
+  version=$(get_state "version")
+  local notes
+  notes=$(get_state "release_notes")
+
+  # Auto-increment RC number: find existing v{version}-rc.N tags
+  local rc_num=1
+  while git rev-parse "v${version}-rc.${rc_num}" >/dev/null 2>&1; do
+    rc_num=$((rc_num + 1))
+  done
+  local rc_tag="v${version}-rc.${rc_num}"
+
+  info "Creating RC tag ${BOLD}${rc_tag}${RESET}..."
+
   # Create annotated tag with release notes
-  echo -e "$notes" | git tag -a "$tag" -F -
+  echo -e "$notes" | git tag -a "$rc_tag" -F -
 
-  success "Created tag ${tag}"
-}
+  info "Pushing commit and RC tag to origin..."
+  git push
+  git push origin "$rc_tag"
 
-step_publish() {
-  local version
-  version=$(get_state "version")
-
-  info "Publishing to npm..."
-  npm publish
-
-  success "Published hotsheet@${version} to npm"
-}
-
-step_git_push() {
-  local version
-  version=$(get_state "version")
-  local tag="v${version}"
-
-  if confirm "Push commit and tag to remote?"; then
-    git push
-    git push origin "$tag"
-    success "Pushed to remote"
-  else
-    warn "Skipped push. Run manually:"
-    echo "    git push && git push origin ${tag}"
-  fi
+  echo ""
+  success "RC tag ${rc_tag} pushed!"
+  echo ""
+  echo -e "  ${DIM}CI will now:${RESET}"
+  echo -e "    1. Run tests, lint, and build verification"
+  echo -e "    2. Publish beta to npm (hotsheet@${version}-rc.${rc_num})"
+  echo -e "    3. Run smoke tests (fresh install + upgrade)"
+  echo -e "    4. Auto-promote to hotsheet@${version} on npm"
+  echo -e "    5. Create final v${version} tag → desktop release"
+  echo ""
+  echo -e "  ${DIM}Monitor progress:${RESET} https://github.com/brianwestphal/hotsheet/actions"
 }
 
 # --- Main ---
@@ -421,7 +425,7 @@ main() {
   local resume_step
   resume_step=$(get_step)
   if [[ -n "$resume_step" && "$resume_step" -gt 0 ]]; then
-    warn "Found saved progress (step ${resume_step}/9)."
+    warn "Found saved progress (step ${resume_step}/8)."
     if confirm "Resume from where you left off?"; then
       echo ""
     else
@@ -484,25 +488,15 @@ main() {
     set_step 7
   fi
 
-  # Step 8: Git commit + tag
+  # Step 8: Git commit + RC tag + push
   if ! past_step 8; then
-    step_git_tag
+    step_git_commit
+    step_rc_tag_and_push
     set_step 8
   fi
 
-  # Step 9: Publish
-  if ! past_step 9; then
-    step_publish
-    set_step 9
-  fi
-
-  # Step 9: Push (optional, not tracked)
-  echo ""
-  step_git_push
-
   # Done — clean up
   echo ""
-  success "Release complete!"
   cleanup_state
 }
 
