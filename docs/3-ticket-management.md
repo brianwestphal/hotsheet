@@ -54,7 +54,7 @@ Tickets progress through these statuses:
 - **→ Completed**: Sets `completed_at`, clears `verified_at`, clears `up_next`.
 - **→ Verified**: Sets `verified_at`, sets `completed_at` if not already set, clears `up_next`.
 - **→ Deleted**: Sets `deleted_at`.
-- **→ Backlog or Archive**: Clears `up_next`, `completed_at`, `verified_at`, `deleted_at`.
+- **→ Backlog or Archive**: Clears `up_next` and `deleted_at`. Preserves `completed_at` and `verified_at` (the ticket's completion history is retained).
 - **→ Not Started or Started**: Clears `completed_at`, `verified_at`, `deleted_at`.
 
 ### 3.4 Up Next

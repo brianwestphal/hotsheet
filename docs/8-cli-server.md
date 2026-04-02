@@ -35,7 +35,7 @@ The application is launched from the command line via the `hotsheet` command (in
 6. Ensure `.hotsheet/` is in `.gitignore` (if in a git repo).
 7. Generate/update AI tool skill files.
 8. Start the Hono HTTP server.
-9. Run auto-cleanup for stale tickets.
+9. Run auto-cleanup for stale tickets (non-blocking, runs in background).
 10. Start the automatic backup scheduler.
 11. Trigger initial markdown sync.
 12. Check for CLI updates (daily, via npm registry).

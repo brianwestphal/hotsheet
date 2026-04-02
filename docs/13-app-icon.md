@@ -66,17 +66,11 @@ The CLI launcher script (`resources/hotsheet`) creates a stub `.app` for Dock/Cm
 
 ### Icon Selection in Stub
 
-When creating or updating the stub app:
-
-1. Read `app_icon` from `.hotsheet/settings.json` using the bundled Node binary.
-2. If a variant is selected, symlink or copy the corresponding `.icns` file from the main app bundle's resources to the stub's `Contents/Resources/icon.icns`.
-3. If no variant is set or value is `"default"`, use the main app's `icon.icns` (current behavior).
+The stub app always uses the main app's default `icon.icns`. Icon variant switching is handled at runtime by the Tauri app via `setApplicationIconImage()` — the dock icon updates dynamically without needing to regenerate the stub.
 
 ### Stub Regeneration
 
-The stub should be regenerated (icon updated) when:
-- The app name changes (existing behavior).
-- The `app_icon` setting changes. The stub creation check should also compare the current icon variant.
+The stub is regenerated when the app name changes.
 
 ## 13.7 Icon File Preparation
 

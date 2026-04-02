@@ -25,6 +25,8 @@ Usage:
 Options:
   --port <number>          Port to run on (default: 4174)
   --data-dir <path>        Store data in an alternative location (default: .hotsheet/)
+  --no-open                Don't open the browser on startup
+  --strict-port            Fail if the requested port is in use (don't auto-select)
   --check-for-updates      Check for new versions now
   --help                   Show this help message
 

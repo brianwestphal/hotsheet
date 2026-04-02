@@ -121,7 +121,7 @@ When automatic mode is active:
 
 ### Hot Sheet → Claude (via channel)
 
-Events pushed to Claude contain the worklist processing instruction plus a completion callback:
+Events are sent as MCP `notifications/claude/channel` messages with `{ content, meta: { type: 'worklist' } }` params. Claude Code renders these to the user as XML-wrapped channel events:
 
 ```
 <channel source="hotsheet-channel" type="worklist">
