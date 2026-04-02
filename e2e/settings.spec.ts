@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './coverage-fixture.js';
 
 test.describe('Settings dialog', () => {
   test.beforeEach(async ({ page }) => {

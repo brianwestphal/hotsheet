@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './coverage-fixture.js';
 
 /** Helper: create a ticket via the draft input and wait for it to appear in the list. */
 async function createTicket(page: import('@playwright/test').Page, title: string) {
