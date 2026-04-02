@@ -65,7 +65,7 @@ export function createDraftRow(): HTMLElement {
       setDraftTitle('');
       titleInput.value = '';
       const defaults: Record<string, unknown> = getDefaultsFromView();
-      if (draftCategory !== '' && !state.view.startsWith('category:')) {
+      if (draftCategory !== null && draftCategory !== '' && !state.view.startsWith('category:')) {
         defaults.category = draftCategory;
       }
       // Auto-tag from tag-associated custom view (HS-1590)

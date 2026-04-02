@@ -1253,3 +1253,274 @@ describe('custom view query', () => {
     expect(data.every((ticket) => ticket.id !== t.id)).toBe(true);
   });
 });
+
+// ---------- channel route endpoint tests ----------
+
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>();
+  return { ...actual, execFileSync: vi.fn() };
+});
+
+interface ClaudeCheckResponse {
+  installed: boolean;
+  version: string | null;
+  meetsMinimum: boolean;
+}
+
+interface ChannelPermissionResponse {
+  pending: unknown;
+}
+
+interface ChannelPermissionRespondResponse {
+  ok?: boolean;
+  error?: string;
+}
+
+describe('GET /api/channel/claude-check', () => {
+  it('returns installed=true with version when claude is found', async () => {
+    const { execFileSync } = await import('child_process');
+    const mockExec = vi.mocked(execFileSync);
+    mockExec.mockReturnValue('Claude Code v2.1.85\n');
+
+    const res = await app.request('/api/channel/claude-check');
+    expect(res.status).toBe(200);
+    const data = await res.json() as ClaudeCheckResponse;
+    expect(data.installed).toBe(true);
+    expect(data.version).toBe('2.1.85');
+    expect(data.meetsMinimum).toBe(true);
+  });
+
+  it('returns meetsMinimum=false for old versions', async () => {
+    const { execFileSync } = await import('child_process');
+    const mockExec = vi.mocked(execFileSync);
+    mockExec.mockReturnValue('Claude Code v2.0.5\n');
+
+    const res = await app.request('/api/channel/claude-check');
+    expect(res.status).toBe(200);
+    const data = await res.json() as ClaudeCheckResponse;
+    expect(data.installed).toBe(true);
+    expect(data.version).toBe('2.0.5');
+    expect(data.meetsMinimum).toBe(false);
+  });
+
+  it('returns installed=false when claude is not found', async () => {
+    const { execFileSync } = await import('child_process');
+    const mockExec = vi.mocked(execFileSync);
+    mockExec.mockImplementation(() => { throw new Error('command not found'); });
+
+    const res = await app.request('/api/channel/claude-check');
+    expect(res.status).toBe(200);
+    const data = await res.json() as ClaudeCheckResponse;
+    expect(data.installed).toBe(false);
+    expect(data.version).toBeNull();
+    expect(data.meetsMinimum).toBe(false);
+  });
+
+  it('returns meetsMinimum=true for major version above 2', async () => {
+    const { execFileSync } = await import('child_process');
+    const mockExec = vi.mocked(execFileSync);
+    mockExec.mockReturnValue('3.0.0\n');
+
+    const res = await app.request('/api/channel/claude-check');
+    const data = await res.json() as ClaudeCheckResponse;
+    expect(data.installed).toBe(true);
+    expect(data.version).toBe('3.0.0');
+    expect(data.meetsMinimum).toBe(true);
+  });
+});
+
+describe('POST /api/channel/trigger', () => {
+  it('calls triggerChannel and returns ok', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockTrigger = vi.mocked(channelConfig.triggerChannel);
+    mockTrigger.mockResolvedValue(true);
+
+    const res = await app.request('/api/channel/trigger', post({ message: 'Do the work' }));
+    expect(res.status).toBe(200);
+    const data = await res.json() as OkResponse;
+    expect(data.ok).toBe(true);
+    expect(mockTrigger).toHaveBeenCalledWith(
+      expect.any(String),    // dataDir
+      expect.any(Number),    // serverPort
+      'Do the work',
+    );
+  });
+
+  it('returns ok=false when triggerChannel fails', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockTrigger = vi.mocked(channelConfig.triggerChannel);
+    mockTrigger.mockResolvedValue(false);
+
+    const res = await app.request('/api/channel/trigger', post({}));
+    expect(res.status).toBe(200);
+    const data = await res.json() as OkResponse;
+    expect(data.ok).toBe(false);
+  });
+});
+
+describe('GET /api/channel/permission', () => {
+  it('returns pending permission data when channel port is available', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockGetPort = vi.mocked(channelConfig.getChannelPort);
+    mockGetPort.mockReturnValue(9999);
+
+    const permissionData = { pending: { request_id: 'req-1', tool: 'bash', description: 'Run ls' } };
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify(permissionData), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    const res = await app.request('/api/channel/permission');
+    expect(res.status).toBe(200);
+    const data = await res.json() as ChannelPermissionResponse;
+    expect(data.pending).toEqual(permissionData.pending);
+
+    fetchSpy.mockRestore();
+    mockGetPort.mockReturnValue(null); // reset
+  });
+
+  it('returns pending=null when channel port is null', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockGetPort = vi.mocked(channelConfig.getChannelPort);
+    mockGetPort.mockReturnValue(null);
+
+    const res = await app.request('/api/channel/permission');
+    expect(res.status).toBe(200);
+    const data = await res.json() as ChannelPermissionResponse;
+    expect(data.pending).toBeNull();
+  });
+
+  it('returns pending=null when fetch to channel server fails', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockGetPort = vi.mocked(channelConfig.getChannelPort);
+    mockGetPort.mockReturnValue(9999);
+
+    const fetchSpy = vi.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('Connection refused'));
+
+    const res = await app.request('/api/channel/permission');
+    expect(res.status).toBe(200);
+    const data = await res.json() as ChannelPermissionResponse;
+    expect(data.pending).toBeNull();
+
+    fetchSpy.mockRestore();
+    mockGetPort.mockReturnValue(null);
+  });
+});
+
+describe('POST /api/channel/permission/respond', () => {
+  it('forwards response to channel server and returns result', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockGetPort = vi.mocked(channelConfig.getChannelPort);
+    mockGetPort.mockReturnValue(9999);
+
+    const responseBody = { ok: true };
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify(responseBody), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    const res = await app.request('/api/channel/permission/respond', post({
+      request_id: 'req-1',
+      behavior: 'allow',
+    }));
+    expect(res.status).toBe(200);
+    const data = await res.json() as ChannelPermissionRespondResponse;
+    expect(data.ok).toBe(true);
+
+    // Verify fetch was called with correct args
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:9999/permission/respond',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ request_id: 'req-1', behavior: 'allow' }),
+      }),
+    );
+
+    fetchSpy.mockRestore();
+    mockGetPort.mockReturnValue(null);
+  });
+
+  it('returns 503 when channel port is null', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockGetPort = vi.mocked(channelConfig.getChannelPort);
+    mockGetPort.mockReturnValue(null);
+
+    const res = await app.request('/api/channel/permission/respond', post({
+      request_id: 'req-1',
+      behavior: 'deny',
+    }));
+    expect(res.status).toBe(503);
+    const data = await res.json() as ChannelPermissionRespondResponse;
+    expect(data.error).toBe('Channel not available');
+  });
+
+  it('returns 503 when fetch to channel server fails', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockGetPort = vi.mocked(channelConfig.getChannelPort);
+    mockGetPort.mockReturnValue(9999);
+
+    const fetchSpy = vi.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('Connection refused'));
+
+    const res = await app.request('/api/channel/permission/respond', post({
+      request_id: 'req-1',
+      behavior: 'allow',
+    }));
+    expect(res.status).toBe(503);
+    const data = await res.json() as ChannelPermissionRespondResponse;
+    expect(data.error).toBe('Failed to reach channel server');
+
+    fetchSpy.mockRestore();
+    mockGetPort.mockReturnValue(null);
+  });
+});
+
+describe('POST /api/channel/permission/dismiss', () => {
+  it('returns ok when channel port is available', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockGetPort = vi.mocked(channelConfig.getChannelPort);
+    mockGetPort.mockReturnValue(9999);
+
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response('{}', { status: 200 }),
+    );
+
+    const res = await app.request('/api/channel/permission/dismiss', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const data = await res.json() as OkResponse;
+    expect(data.ok).toBe(true);
+
+    // Verify fetch was called to the dismiss endpoint
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:9999/permission/dismiss',
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    fetchSpy.mockRestore();
+    mockGetPort.mockReturnValue(null);
+  });
+
+  it('returns ok when channel port is null (no-op)', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockGetPort = vi.mocked(channelConfig.getChannelPort);
+    mockGetPort.mockReturnValue(null);
+
+    const res = await app.request('/api/channel/permission/dismiss', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const data = await res.json() as OkResponse;
+    expect(data.ok).toBe(true);
+  });
+
+  it('returns ok even when fetch to channel server fails', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockGetPort = vi.mocked(channelConfig.getChannelPort);
+    mockGetPort.mockReturnValue(9999);
+
+    const fetchSpy = vi.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('Connection refused'));
+
+    const res = await app.request('/api/channel/permission/dismiss', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const data = await res.json() as OkResponse;
+    expect(data.ok).toBe(true);
+
+    fetchSpy.mockRestore();
+    mockGetPort.mockReturnValue(null);
+  });
+});
