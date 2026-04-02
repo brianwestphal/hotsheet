@@ -6,10 +6,10 @@
  */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
+import { unlinkSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
-import { writeFileSync, unlinkSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { z } from 'zod';
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -67,7 +67,7 @@ const PermissionRequestSchema = z.object({
   }),
 });
 
-mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
+mcp.setNotificationHandler(PermissionRequestSchema, ({ params }) => {
   pendingPermission = {
     request_id: params.request_id,
     tool_name: params.tool_name,
@@ -109,7 +109,7 @@ const httpServer = createServer(async (req, res) => {
 
   if (req.method === 'POST' && req.url === '/permission/respond') {
     let body = '';
-    for await (const chunk of req) body += chunk;
+    for await (const chunk of req) body += String(chunk);
     try {
       const { request_id, behavior } = JSON.parse(body) as { request_id: string; behavior: 'allow' | 'deny' };
       await mcp.notification({
@@ -137,7 +137,7 @@ const httpServer = createServer(async (req, res) => {
 
   if (req.method === 'POST' && req.url === '/trigger') {
     let body = '';
-    for await (const chunk of req) body += chunk;
+    for await (const chunk of req) body += String(chunk);
 
     try {
       await mcp.notification({
@@ -163,7 +163,7 @@ const httpServer = createServer(async (req, res) => {
 // Find an available port
 httpServer.listen(0, '127.0.0.1', () => {
   const addr = httpServer.address();
-  if (addr && typeof addr !== 'string') {
+  if (addr !== null && typeof addr !== 'string') {
     const port = addr.port;
     try {
       writeFileSync(portFile, String(port), 'utf-8');

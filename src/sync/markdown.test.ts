@@ -1,10 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import { addAttachment, createTicket, updateTicket } from '../db/queries.js';
 import { getDb } from '../db/connection.js';
+import { addAttachment, createTicket, updateTicket } from '../db/queries.js';
+import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { initMarkdownSync, scheduleOpenTicketsSync, scheduleWorklistSync } from './markdown.js';
 
 let tempDir: string;
@@ -50,7 +50,7 @@ describe('worklist sync', () => {
     expect(content).not.toContain('No items in the Up Next list.');
   });
 
-  it('includes workflow section with curl examples', async () => {
+  it('includes workflow section with curl examples', () => {
     const content = readFileSync(join(tempDir, 'worklist.md'), 'utf-8');
     expect(content).toContain('## Workflow');
     expect(content).toContain('curl');
@@ -114,12 +114,12 @@ describe('worklist sync', () => {
     expect(highestPos).toBeLessThan(lowPos);
   });
 
-  it('includes category descriptions', async () => {
+  it('includes category descriptions', () => {
     const content = readFileSync(join(tempDir, 'worklist.md'), 'utf-8');
     expect(content).toContain('Ticket Types:');
   });
 
-  it('includes creating tickets section', async () => {
+  it('includes creating tickets section', () => {
     const content = readFileSync(join(tempDir, 'worklist.md'), 'utf-8');
     expect(content).toContain('## Creating Tickets');
     expect(content).toContain('POST');
@@ -146,7 +146,7 @@ describe('open tickets sync', () => {
 
   it('places started tickets before not_started tickets', async () => {
     // Create a not_started ticket first, then a started one
-    const ns = await createTicket('Open not started item');
+    await createTicket('Open not started item');
     const st = await createTicket('Open started item');
     await updateTicket(st.id, { status: 'started' });
 

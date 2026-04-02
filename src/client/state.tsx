@@ -149,12 +149,12 @@ export const VERIFIED_SVG = CHECK_CHECK_SVG;
 
 export function getCategoryColor(cat: string): string {
   const def = state.categories.find(c => c.id === cat);
-  return def?.color || '#6b7280';
+  return def?.color ?? '#6b7280';
 }
 
 export function getCategoryLabel(cat: string): string {
   const def = state.categories.find(c => c.id === cat);
-  return def?.shortLabel || cat.slice(0, 3).toUpperCase();
+  return def?.shortLabel ?? cat.slice(0, 3).toUpperCase();
 }
 
 export function getPriorityIcon(pri: string): string {

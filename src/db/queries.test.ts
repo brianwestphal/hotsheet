@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { TicketStatus } from '../types.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
+import type { TicketStatus } from '../types.js';
+import { getDb } from './connection.js';
 import {
   addAttachment,
   batchDeleteTickets,
@@ -22,8 +23,8 @@ import {
   getSettings,
   getTicket,
   getTickets,
-  getTicketStats,
   getTicketsForCleanup,
+  getTicketStats,
   getUpNextTickets,
   hardDeleteTicket,
   nextTicketNumber,
@@ -35,7 +36,6 @@ import {
   updateSetting,
   updateTicket,
 } from './queries.js';
-import { getDb } from './connection.js';
 
 let tempDir: string;
 
@@ -213,7 +213,7 @@ describe('notes', () => {
   it('appends note as JSON array on empty notes', async () => {
     const t = await createTicket('Notes empty');
     const updated = await updateTicket(t.id, { notes: 'First note' });
-    const parsed = JSON.parse(updated!.notes);
+    const parsed = JSON.parse(updated!.notes) as { text: string; created_at: string }[];
     expect(parsed).toHaveLength(1);
     expect(parsed[0].text).toBe('First note');
     expect(parsed[0].created_at).toBeTruthy();
@@ -223,7 +223,7 @@ describe('notes', () => {
     const t = await createTicket('Notes append');
     await updateTicket(t.id, { notes: 'Note 1' });
     const updated = await updateTicket(t.id, { notes: 'Note 2' });
-    const parsed = JSON.parse(updated!.notes);
+    const parsed = JSON.parse(updated!.notes) as { text: string }[];
     expect(parsed).toHaveLength(2);
     expect(parsed[0].text).toBe('Note 1');
     expect(parsed[1].text).toBe('Note 2');
@@ -234,7 +234,7 @@ describe('notes', () => {
     const db = await getDb();
     await db.query(`UPDATE tickets SET notes = 'Legacy note' WHERE id = $1`, [t.id]);
     const updated = await updateTicket(t.id, { notes: 'New note' });
-    const parsed = JSON.parse(updated!.notes);
+    const parsed = JSON.parse(updated!.notes) as { text: string }[];
     expect(parsed).toHaveLength(2);
     expect(parsed[0].text).toBe('Legacy note');
     expect(parsed[1].text).toBe('New note');
@@ -244,7 +244,7 @@ describe('notes', () => {
     const t = await createTicket('Notes empty string');
     await updateTicket(t.id, { notes: 'First' });
     const updated = await updateTicket(t.id, { notes: '' });
-    const parsed = JSON.parse(updated!.notes);
+    const parsed = JSON.parse(updated!.notes) as { text: string }[];
     expect(parsed).toHaveLength(1);
     expect(parsed[0].text).toBe('First');
   });

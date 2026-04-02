@@ -6,12 +6,12 @@ import { initBackupScheduler } from './backup.js';
 import { cleanupAttachments } from './cleanup.js';
 import { getDb, setDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
-import { ensureSecret } from './file-settings.js';
-import { acquireLock } from './lock.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
+import { ensureSecret } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
+import { acquireLock } from './lock.js';
 import { startServer } from './server.js';
-import { initSkills, ensureSkills, setSkillCategories } from './skills.js';
+import { ensureSkills, initSkills, setSkillCategories } from './skills.js';
 import { initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
 import { checkForUpdates } from './update-check.js';
 

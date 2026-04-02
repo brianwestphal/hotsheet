@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { parseTags, renderDetailTags, refreshDetail } from './detail.js';
+import { parseTags, renderDetailTags } from './detail.js';
 import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
@@ -185,7 +185,7 @@ function addActionItem(menu: HTMLElement, label: string, action: () => void, dan
   item.addEventListener('click', (ev) => {
     ev.stopPropagation();
     closeContextMenu();
-    void action();
+    action();
   });
   menu.appendChild(item);
 }

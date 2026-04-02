@@ -2,13 +2,13 @@ import { api } from './api.js';
 import { extractBracketTags, hasTag, syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
-import type { Ticket } from './state.js';
+import type { CustomView, Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, state } from './state.js';
 import {
   callFocusDraftInput, callLoadTickets, callRenderTicketList,
   callUpdateColumnSelectionClasses, callUpdateSelectionClasses,
-  draftCategory, draftTitle, setDraftCategory, setDraftTitle,
-  getCategoryShortcuts,
+  draftCategory, draftTitle,   getCategoryShortcuts,
+setDraftCategory, setDraftTitle,
 } from './ticketListState.js';
 
 // --- Draft row ---
@@ -65,15 +65,16 @@ export function createDraftRow(): HTMLElement {
       setDraftTitle('');
       titleInput.value = '';
       const defaults: Record<string, unknown> = getDefaultsFromView();
-      if (draftCategory && !state.view.startsWith('category:')) {
+      if (draftCategory !== '' && !state.view.startsWith('category:')) {
         defaults.category = draftCategory;
       }
       // Auto-tag from tag-associated custom view (HS-1590)
       if (state.view.startsWith('custom:')) {
         const viewId = state.view.slice(7);
         const view = state.customViews.find(v => v.id === viewId);
-        if (view?.tag && !hasTag(tags, view.tag)) {
-          tags.push(view.tag);
+        const viewTag = (view as CustomView & { tag?: string })?.tag;
+        if (viewTag !== undefined && viewTag !== '' && !hasTag(tags, viewTag)) {
+          tags.push(viewTag);
         }
       }
       if (tags.length > 0) {
@@ -81,10 +82,8 @@ export function createDraftRow(): HTMLElement {
       }
       const created = await api<Ticket>('/tickets', { method: 'POST', body: { title: title || rawTitle, defaults } });
       // Auto-select the newly created ticket (HS-202)
-      if (created) {
-        state.selectedIds.clear();
-        state.selectedIds.add(created.id);
-      }
+      state.selectedIds.clear();
+      state.selectedIds.add(created.id);
       await callLoadTickets();
       callFocusDraftInput();
     } else if (e.key === 'ArrowDown') {
@@ -117,7 +116,7 @@ function getDefaultsFromView(): Record<string, unknown> {
 }
 
 function getDraftCategory(): string {
-  if (draftCategory) return draftCategory;
+  if (draftCategory !== '') return draftCategory;
   const view = state.view;
   if (view.startsWith('category:')) return view.split(':')[1];
   return 'issue';
@@ -125,7 +124,7 @@ function getDraftCategory(): string {
 
 function showDraftCategoryMenu(anchor: HTMLElement) {
   closeAllMenus();
-  const isMac = navigator.platform.includes('Mac');
+  const isMac = navigator.userAgent.includes('Mac');
   const mod = isMac ? '\u2318' : 'Ctrl+';
   const currentCat = getDraftCategory();
   const menu = createDropdown(anchor, getCategoryShortcuts().map(s => ({

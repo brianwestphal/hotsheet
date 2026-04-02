@@ -38,7 +38,7 @@ export function extractBracketTags(input: string): { title: string; tags: string
 }
 
 export function parseTags(raw: string): string[] {
-  if (!raw || raw === '[]') return [];
+  if (raw === '' || raw === '[]') return [];
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) return parsed.filter((t: unknown) => typeof t === 'string' && t.trim());
@@ -122,7 +122,7 @@ export function closeDetail() {
 
 export function syncDetailPanel() {
   const isTrash = state.view === 'trash';
-  const isPreview = !!state.backupPreview?.active;
+  const isPreview = state.backupPreview?.active === true;
   const panel = document.getElementById('detail-panel')!;
   const handle = document.getElementById('detail-resize-handle');
   const header = document.getElementById('detail-header')!;
@@ -186,7 +186,7 @@ function setDetailReadOnly(readOnly: boolean) {
   priBtn.disabled = readOnly;
   statusBtn.disabled = readOnly;
   upnextBtn.disabled = readOnly;
-  if (uploadBtn) uploadBtn.style.display = readOnly ? 'none' : '';
+  if (uploadBtn !== null) uploadBtn.style.display = readOnly ? 'none' : '';
 }
 
 function loadPreviewDetail(id: number) {
@@ -406,12 +406,12 @@ let noteIdCounter = 0;
 function clientNoteId(): string { return `cn_${Date.now().toString(36)}_${(noteIdCounter++).toString(36)}`; }
 
 function parseNotesJson(raw: string): NoteEntry[] {
-  if (!raw || raw === '') return [];
+  if (raw === '' || raw === undefined) return [];
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       return parsed.map((n: { id?: string; text: string; created_at: string }) => ({
-        id: n.id || clientNoteId(),
+        id: n.id ?? clientNoteId(),
         text: n.text,
         created_at: n.created_at,
       }));

@@ -1,3 +1,4 @@
+import { raw } from '../jsx-runtime.js';
 import { suppressAnimation } from './animate.js';
 import { api } from './api.js';
 import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
@@ -6,7 +7,6 @@ import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { CustomView, CustomViewCondition } from './state.js';
 import { state } from './state.js';
 import { draggedTicketIds } from './ticketList.js';
-import { raw } from '../jsx-runtime.js';
 
 let loadTicketsFn: () => void;
 let draggedViewIndex: number | null = null;
@@ -32,9 +32,9 @@ export function initCustomViews(loadTickets: () => void) {
 export async function loadCustomViews() {
   try {
     const settings = await api<Record<string, string>>('/settings');
-    if (settings.custom_views) {
-      const parsed = JSON.parse(settings.custom_views);
-      if (Array.isArray(parsed)) state.customViews = parsed;
+    if (settings.custom_views !== undefined && settings.custom_views !== '') {
+      const parsed: unknown = JSON.parse(settings.custom_views);
+      if (Array.isArray(parsed)) state.customViews = parsed as typeof state.customViews;
     }
   } catch { /* use empty */ }
   renderSidebarViews();
@@ -289,9 +289,9 @@ function setupTagAutocomplete(input: HTMLInputElement, dropdown: HTMLElement, on
 function showViewEditor(existing?: CustomView) {
   const isEdit = !!existing;
   const conditions: CustomViewCondition[] = existing ? existing.conditions.map(c => ({ ...c })) : [];
-  let logic: 'all' | 'any' = existing?.logic || 'all';
-  let name = existing?.name || '';
-  let tag = existing?.tag || '';
+  let logic: 'all' | 'any' = existing?.logic ?? 'all';
+  let name = existing?.name ?? '';
+  let tag = existing?.tag ?? '';
 
   void refreshTags();
 
@@ -383,7 +383,7 @@ function showViewEditor(existing?: CustomView) {
       if (valueEl.tagName === 'INPUT') {
         valueEl.addEventListener('input', () => { conditions[i].value = valueEl.value; });
         // Autocomplete for tags field in rules editor
-        const ruleTagAc = row.querySelector('.cv-rule-tag-ac') as HTMLElement | null;
+        const ruleTagAc = row.querySelector('.cv-rule-tag-ac');
         if (ruleTagAc) {
           setupTagAutocomplete(valueEl as HTMLInputElement, ruleTagAc, (v) => { conditions[i].value = v; (valueEl as HTMLInputElement).value = v; });
         }
@@ -438,15 +438,15 @@ function showViewEditor(existing?: CustomView) {
     tag = (overlay.querySelector('#cv-tag') as HTMLInputElement).value.trim();
 
     const view: CustomView = {
-      id: existing?.id || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `view-${Date.now()}`,
+      id: existing?.id ?? (name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `view-${Date.now()}`),
       name,
-      ...(tag ? { tag } : {}),
+      ...(tag !== '' ? { tag } : {}),
       logic,
       conditions: conditions.filter(c => c.value !== ''),
     };
 
     if (isEdit) {
-      const idx = state.customViews.findIndex(v => v.id === existing!.id);
+      const idx = state.customViews.findIndex(v => v.id === existing.id);
       if (idx >= 0) state.customViews[idx] = view;
       else state.customViews.push(view);
     } else {

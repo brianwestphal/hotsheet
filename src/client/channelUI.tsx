@@ -35,7 +35,7 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
   const detail = document.getElementById('permission-overlay-detail');
   if (detail) {
     let html = `<div class="permission-tool">${perm.tool_name}: ${perm.description}</div>`;
-    if (perm.input_preview) {
+    if (perm.input_preview !== undefined && perm.input_preview !== '') {
       html += `<pre class="permission-preview">${perm.input_preview.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`;
     }
     detail.innerHTML = html;
@@ -100,7 +100,7 @@ export function setChannelBusy(busy: boolean) {
     }
     // Auto-hide after 5 seconds
     setTimeout(() => {
-      if (!channelBusy && indicator) indicator.style.display = 'none';
+      if (!channelBusy) indicator.style.display = 'none';
     }, 5000);
     // In auto mode, check for more up-next items when Claude becomes idle (HS-1453)
     if (channelAutoMode) {
@@ -154,7 +154,7 @@ export async function initChannel() {
   let status = { enabled: false, alive: false };
   try {
     const res = await fetch('/api/channel/status');
-    if (res.ok) status = await res.json();
+    if (res.ok) status = await res.json() as typeof status;
   } catch { /* endpoint may not exist yet */ }
   const section = document.getElementById('channel-play-section')!;
   const btn = document.getElementById('channel-play-btn')!;
@@ -280,8 +280,8 @@ async function attemptAutoTrigger() {
 /** Check if Claude signaled done — called from long polling */
 export function checkChannelDone() {
   if (channelBusy) {
-    fetch('/api/channel/status').then(r => r.ok ? r.json() : null).then(s => {
-      if (s?.done) {
+    fetch('/api/channel/status').then(r => r.ok ? r.json() as Promise<{ done?: boolean }> : null).then(s => {
+      if (s?.done === true) {
         setChannelBusy(false);
         if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
       }

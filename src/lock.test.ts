@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
 import { tmpdir } from 'os';
+import { join } from 'path';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { acquireLock } from './lock.js';
 
@@ -30,7 +30,7 @@ describe('acquireLock', () => {
     const lockPath = join(tempDir, 'hotsheet.lock');
     expect(existsSync(lockPath)).toBe(true);
 
-    const contents = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    const contents = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid: number; startedAt: string };
     expect(contents.pid).toBe(process.pid);
     expect(contents.startedAt).toBeDefined();
     // startedAt should be a valid ISO string
@@ -48,7 +48,7 @@ describe('acquireLock', () => {
     // acquireLock should detect the stale lock, remove it, and create a new one
     acquireLock(tempDir);
 
-    const contents = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    const contents = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid: number };
     expect(contents.pid).toBe(process.pid);
   });
 
@@ -61,7 +61,7 @@ describe('acquireLock', () => {
 
     acquireLock(tempDir);
 
-    const contents = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    const contents = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid: number };
     expect(contents.pid).toBe(process.pid);
   });
 
@@ -77,7 +77,7 @@ describe('acquireLock', () => {
     expect(existsSync(lockPath)).toBe(true);
 
     // Verify it's specifically in the data dir, not somewhere else
-    const contents = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    const contents = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid: number };
     expect(typeof contents.pid).toBe('number');
   });
 });

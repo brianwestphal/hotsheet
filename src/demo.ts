@@ -533,7 +533,7 @@ for (let i = 0; i < 30; i++) {
     tags: [],
     notes: status === 'completed' || status === 'verified' ? notesJson([{ text: 'Completed work.', days_ago: completed! }]) : '',
     days_ago: 30 - i + Math.floor(Math.random() * 10),
-    updated_ago: completed || Math.floor(Math.random() * 10),
+    updated_ago: completed ?? Math.floor(Math.random() * 10),
     completed_ago: completed,
     verified_ago: verified,
   });
@@ -655,8 +655,8 @@ const SCENARIO_9_COMMANDS = [
 
 export async function seedDemoData(scenario: number): Promise<void> {
   const db = await getDb();
+  if (!(scenario in SCENARIO_DATA)) return;
   const tickets = SCENARIO_DATA[scenario];
-  if (!tickets) return;
 
   for (let i = 0; i < tickets.length; i++) {
     const t = tickets[i];

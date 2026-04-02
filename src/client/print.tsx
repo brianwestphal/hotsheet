@@ -1,8 +1,8 @@
 import { api } from './api.js';
-import { toElement } from './dom.js';
 import { parseTags } from './detail.js';
+import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
-import { getCategoryColor, getCategoryLabel, getStatusIcon, state } from './state.js';
+import { getCategoryColor, getCategoryLabel, state } from './state.js';
 
 type PrintScope = 'dashboard' | 'view' | 'selected' | 'current';
 type PrintFormat = 'checklist' | 'summary' | 'full';
@@ -123,7 +123,7 @@ function printTickets(tickets: Ticket[], format: PrintFormat) {
         return `<tr>
           <td>${esc(t.ticket_number)}</td>
           <td>${esc(t.title)}</td>
-          <td><span class="print-cat" style="background:${getCategoryColor(t.category)}">${esc(getCategoryLabel(t.category))}</span> ${esc(cat?.label || t.category)}</td>
+          <td><span class="print-cat" style="background:${getCategoryColor(t.category)}">${esc(getCategoryLabel(t.category))}</span> ${esc(cat?.label ?? t.category)}</td>
           <td>${esc(t.priority)}</td>
           <td>${esc(t.status.replace(/_/g, ' '))}</td>
           <td>${t.up_next ? '\u2605' : ''}</td>
@@ -135,7 +135,7 @@ function printTickets(tickets: Ticket[], format: PrintFormat) {
       const cat = state.categories.find(c => c.id === t.category);
       const tags = parseTags(t.tags);
       let notes: { text: string; created_at: string }[] = [];
-      try { notes = JSON.parse(t.notes); } catch { /* empty */ }
+      try { notes = JSON.parse(t.notes) as typeof notes; } catch { /* empty */ }
       if (!Array.isArray(notes)) notes = [];
 
       return `<div class="print-ticket">
@@ -145,7 +145,7 @@ function printTickets(tickets: Ticket[], format: PrintFormat) {
           ${t.up_next ? '<span class="print-star">\u2605</span>' : ''}
         </div>
         <div class="print-ticket-meta">
-          ${esc(cat?.label || t.category)} \u00b7 ${esc(t.priority)} \u00b7 ${esc(t.status.replace(/_/g, ' '))}
+          ${esc(cat?.label ?? t.category)} \u00b7 ${esc(t.priority)} \u00b7 ${esc(t.status.replace(/_/g, ' '))}
           ${tags.length > 0 ? ' \u00b7 ' + tags.map(tg => `<span class="print-tag">${esc(tg)}</span>`).join(' ') : ''}
         </div>
         ${t.details.trim() ? `<div class="print-ticket-details">${esc(t.details)}</div>` : ''}

@@ -6,12 +6,12 @@ import {
   batchRestoreTickets,
   batchUpdateTickets,
   createTicket,
-  extractBracketTags,
   deleteNote,
   deleteTicket,
   duplicateTickets,
   editNote,
   emptyTrash,
+  extractBracketTags,
   getAttachments,
   getTicket,
   getTickets,
@@ -34,7 +34,7 @@ ticketRoutes.get('/tickets', async (c) => {
   const filters: TicketFilters = {};
 
   const category = c.req.query('category');
-  if (category !== undefined && category !== '') filters.category = category as TicketCategory;
+  if (category !== undefined && category !== '') filters.category = category;
 
   const priority = c.req.query('priority');
   if (priority !== undefined && priority !== '') filters.priority = priority as TicketPriority;
@@ -61,7 +61,7 @@ ticketRoutes.get('/tickets', async (c) => {
 ticketRoutes.post('/tickets', async (c) => {
   const body = await c.req.json<{ title: string; defaults?: Record<string, unknown> }>();
   let title = body.title || '';
-  const defaults = (body.defaults || {}) as Record<string, unknown>;
+  const defaults = (body.defaults || {});
 
   // Extract [tag] bracket syntax from title (HS-1750)
   const { title: cleanTitle, tags: bracketTags } = extractBracketTags(title);
@@ -69,8 +69,8 @@ ticketRoutes.post('/tickets', async (c) => {
     title = cleanTitle || title;
     // Merge bracket tags with any explicitly provided tags
     let existingTags: string[] = [];
-    if (defaults.tags) {
-      try { existingTags = JSON.parse(defaults.tags as string); } catch { /* ignore */ }
+    if (defaults.tags !== undefined && defaults.tags !== null) {
+      try { existingTags = JSON.parse(defaults.tags as string) as string[]; } catch { /* ignore */ }
     }
     for (const tag of bracketTags) {
       if (!existingTags.some(t => t.toLowerCase() === tag.toLowerCase())) existingTags.push(tag);
@@ -123,8 +123,9 @@ ticketRoutes.delete('/tickets/:id', async (c) => {
 ticketRoutes.put('/tickets/:id/notes-bulk', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
   const body = await c.req.json<{ notes: string }>();
-  const db = await import('../db/connection.js').then(m => m.getDb());
-  const result = await (await db).query(
+  const connModule = await import('../db/connection.js');
+  const db = await connModule.getDb();
+  const result = await db.query(
     `UPDATE tickets SET notes = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
     [body.notes, id]
   );

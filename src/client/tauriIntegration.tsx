@@ -14,14 +14,14 @@ export async function restoreAppIcon() {
   if (!invoke) return;
   try {
     const fs = await api<{ appIcon?: string }>('/file-settings');
-    if (fs.appIcon && fs.appIcon !== 'default') {
+    if (fs.appIcon !== undefined && fs.appIcon !== '' && fs.appIcon !== 'default') {
       await invoke('set_app_icon', { variant: fs.appIcon });
     }
   } catch { /* non-critical */ }
 }
 
 /** Request user attention — bounces dock icon in Tauri, flashes tab title in browser.
- *  @param level 'once' = single bounce, 'persistent' = keep bouncing until focused */
+ *  @param level - 'once' = single bounce, 'persistent' = keep bouncing until focused */
 export function requestAttention(level: 'once' | 'persistent') {
   const invoke = getTauriInvoke();
   if (invoke) {
@@ -55,7 +55,6 @@ export function showUpdateBanner(version: string) {
 
   const installBtn = document.getElementById('update-install-btn') as HTMLButtonElement | null;
   installBtn?.addEventListener('click', async () => {
-    if (!installBtn) return;
     installBtn.textContent = 'Installing...';
     installBtn.disabled = true;
     try {
@@ -92,7 +91,7 @@ export async function checkForUpdate() {
     if (delay > 0) await new Promise(r => setTimeout(r, delay));
     try {
       const version = (await invoke('get_pending_update')) as string | null;
-      if (version) {
+      if (version !== null && version !== '') {
         showUpdateBanner(version);
         return;
       }

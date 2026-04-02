@@ -47,15 +47,15 @@ export async function loadBackupList(): Promise<void> {
     }
 
     // Group by tier
-    const grouped: Record<string, BackupInfo[]> = {};
+    const grouped: Partial<Record<string, BackupInfo[]>> = {};
     for (const b of data.backups) {
-      (grouped[b.tier] ||= []).push(b);
+      (grouped[b.tier] ??= []).push(b);
     }
 
     container.innerHTML = '';
     for (const tier of ['5min', 'hourly', 'daily']) {
       const items = grouped[tier];
-      if (!items || items.length === 0) continue;
+      if (items == null || items.length === 0) continue;
 
       container.appendChild(toElement(
         <div className="backup-tier-label">{tierLabel(tier)}</div>
@@ -160,7 +160,7 @@ export function bindBackupsUI(): void {
     (backupNowBtn as HTMLButtonElement).disabled = true;
     try {
       const result = await api<{ error?: string }>('/backups/now', { method: 'POST' });
-      if (result.error) {
+      if (result.error !== undefined && result.error !== '') {
         backupNowBtn.textContent = 'In progress...';
       } else {
         backupNowBtn.textContent = 'Done!';

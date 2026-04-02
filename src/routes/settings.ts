@@ -59,7 +59,12 @@ settingsRoutes.patch('/settings', async (c) => {
 settingsRoutes.get('/file-settings', async (c) => {
   const { readFileSettings } = await import('../file-settings.js');
   const dataDir = c.get('dataDir');
-  const { secret, secretPathHash, port, ...safe } = readFileSettings(dataDir);
+  const settings = readFileSettings(dataDir);
+  // Exclude sensitive fields before sending to client
+  const safe: Partial<typeof settings> = { ...settings };
+  delete safe.secret;
+  delete safe.secretPathHash;
+  delete safe.port;
   return c.json(safe);
 });
 

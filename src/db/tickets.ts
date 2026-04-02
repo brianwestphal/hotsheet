@@ -141,7 +141,7 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
     conditions.push(`status NOT IN ('deleted', 'backlog', 'archive')`);
   }
 
-  if (filters.category) {
+  if (filters.category !== undefined && filters.category !== '') {
     conditions.push(`category = $${paramIdx}`);
     values.push(filters.category);
     paramIdx++;
@@ -224,8 +224,8 @@ export async function duplicateTickets(ids: number[]): Promise<Ticket[]> {
     existingTitles.add(copyTitle);
 
     const newTicket = await createTicket(copyTitle, {
-      category: ticket.category as TicketCategory,
-      priority: ticket.priority as TicketPriority,
+      category: ticket.category,
+      priority: ticket.priority,
       details: ticket.details,
       up_next: ticket.up_next,
     });
@@ -329,8 +329,8 @@ export async function queryTickets(
 
     // Handle ordinal comparisons for priority and status
     const ordExpr = ordinalExpr(field);
-    const ordVal = ordExpr ? ordinalValue(field, cond.value) : null;
-    if (ordExpr && ordVal !== null && ['lt', 'lte', 'gt', 'gte'].includes(cond.operator)) {
+    const ordVal = ordExpr !== null ? ordinalValue(field, cond.value) : null;
+    if (ordExpr !== null && ordVal !== null && ['lt', 'lte', 'gt', 'gte'].includes(cond.operator)) {
       const op = cond.operator === 'lt' ? '<' : cond.operator === 'lte' ? '<=' : cond.operator === 'gt' ? '>' : '>=';
       where.push(`(${ordExpr}) ${op} $${paramIdx}`);
       values.push(ordVal);
@@ -363,7 +363,7 @@ export async function queryTickets(
   }
 
   // Required tag filter — always AND'd regardless of logic
-  if (requiredTag) {
+  if (requiredTag !== undefined && requiredTag !== '') {
     where[0] += ` AND tags ILIKE $${paramIdx}`;
     values.push(`%${requiredTag}%`);
     paramIdx++;
@@ -386,6 +386,7 @@ export async function queryTickets(
     case 'status':
       orderBy = `CASE status WHEN 'backlog' THEN 1 WHEN 'not_started' THEN 2 WHEN 'started' THEN 3 WHEN 'completed' THEN 4 WHEN 'verified' THEN 5 WHEN 'archive' THEN 6 END`;
       break;
+    case undefined: orderBy = 'created_at'; break;
     default: orderBy = 'created_at'; break;
   }
   const dir = sortDir === 'asc' ? 'ASC' : 'DESC';

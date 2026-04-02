@@ -37,8 +37,8 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     void loadBackupList();
     // Load file-based settings (app name, backup dir)
     void api<{ appName?: string; backupDir?: string }>('/file-settings').then((fs) => {
-      (document.getElementById('settings-app-name') as HTMLInputElement).value = fs.appName || '';
-      (document.getElementById('settings-backup-dir') as HTMLInputElement).value = fs.backupDir || '';
+      (document.getElementById('settings-app-name') as HTMLInputElement).value = fs.appName ?? '';
+      (document.getElementById('settings-backup-dir') as HTMLInputElement).value = fs.backupDir ?? '';
     });
   });
 
@@ -85,7 +85,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
 
   // Load current icon from file-settings
   void api<{ appIcon?: string }>('/file-settings').then((fs) => {
-    if (fs.appIcon) {
+    if (fs.appIcon !== undefined && fs.appIcon !== '') {
       currentIcon = fs.appIcon;
       iconPreview.src = `/static/assets/icon-${currentIcon}.png`;
     }
@@ -187,7 +187,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     checkUpdatesStatus.textContent = '';
     try {
       const version = (await invoke('check_for_update')) as string | null;
-      if (version) {
+      if (version !== null && version !== '') {
         checkUpdatesStatus.textContent = `Update available: v${version}`;
         // Close settings panel so the update banner is visible
         document.getElementById('settings-overlay')!.style.display = 'none';
@@ -326,7 +326,7 @@ function bindCategorySettings(rebuildCategoryUI: () => void) {
     // Focus the label input of the new row
     const rows = document.querySelectorAll('.category-row');
     const last = rows[rows.length - 1];
-    (last?.querySelector('.category-label-input') as HTMLInputElement)?.focus();
+    (last.querySelector('.category-label-input') as HTMLInputElement).focus();
   });
 
   // Preset selector
@@ -374,8 +374,8 @@ function bindAutoContextSettings() {
   async function loadEntries() {
     try {
       const settings = await api<Record<string, string>>('/settings');
-      if (settings.auto_context) {
-        autoContextEntries = JSON.parse(settings.auto_context);
+      if (settings.auto_context !== undefined && settings.auto_context !== '') {
+        autoContextEntries = JSON.parse(settings.auto_context) as AutoContextEntry[];
       }
     } catch { /* ignore */ }
     renderEntries();
@@ -394,7 +394,7 @@ function bindAutoContextSettings() {
     for (let i = 0; i < autoContextEntries.length; i++) {
       const entry = autoContextEntries[i];
       const displayKey = entry.type === 'category'
-        ? (state.categories.find(c => c.id === entry.key)?.label || entry.key)
+        ? (state.categories.find(c => c.id === entry.key)?.label ?? entry.key)
         : entry.key.replace(/\b\w/g, c => c.toUpperCase());
       const row = toElement(
         <div className="auto-context-entry">

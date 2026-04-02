@@ -2,9 +2,9 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { initChannel, triggerChannelAndMarkBusy } from './channelUI.js';
 import { toElement } from './dom.js';
-
 // All Lucide icons loaded from generated JSON
 import ALL_LUCIDE_ICONS from './lucide-icons.json';
+
 const CMD_ICONS: { name: string; svg: string }[] = Object.entries(ALL_LUCIDE_ICONS as Record<string, string>).map(([name, svg]) => ({ name, svg }));
 
 interface CustomCommand {
@@ -53,7 +53,7 @@ export function renderChannelCommands() {
 
   for (const cmd of customCommands) {
     if (!cmd.name.trim() || !cmd.prompt.trim()) continue;
-    const color = cmd.color || CMD_COLORS[0].value;
+    const color = cmd.color ?? CMD_COLORS[0].value;
     const textColor = contrastColor(color);
     const iconDef = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
     const btn = toElement(
@@ -71,7 +71,7 @@ function showColorDropdown(anchor: HTMLElement, cmdIndex: number) {
   const popup = toElement(
     <div className="color-dropdown-popup">
       {CMD_COLORS.map(c =>
-        <button className={`color-dropdown-item${(customCommands[cmdIndex].color || CMD_COLORS[0].value) === c.value ? ' active' : ''}`} data-color={c.value}>
+        <button className={`color-dropdown-item${(customCommands[cmdIndex].color ?? CMD_COLORS[0].value) === c.value ? ' active' : ''}`} data-color={c.value}>
           <span className="command-color-swatch" style={`background:${c.value}`}></span>
           <span>{c.label}</span>
         </button>
@@ -189,7 +189,7 @@ function renderCustomCommandSettings() {
   for (let i = 0; i < customCommands.length; i++) {
     const cmd = customCommands[i];
     const currentIcon = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
-    const currentColor = cmd.color || CMD_COLORS[0].value;
+    const currentColor = cmd.color ?? CMD_COLORS[0].value;
 
     const row = toElement(
       <div className="settings-command-row" draggable="true" data-cmd-index={String(i)}>
@@ -291,7 +291,7 @@ export function bindExperimentalSettings() {
       experimentalTab.style.display = '';
       experimentalPanel.style.display = '';
       if (!check.meetsMinimum) {
-        channelHint.textContent = `Claude Code ${check.version || 'unknown'} detected but v2.1.80+ is required. Please upgrade Claude Code.`;
+        channelHint.textContent = `Claude Code ${check.version ?? 'unknown'} detected but v2.1.80+ is required. Please upgrade Claude Code.`;
         channelCheckbox.disabled = true;
       } else {
         channelHint.textContent = 'Push worklist events to a running Claude Code session via MCP channels.';
@@ -305,10 +305,10 @@ export function bindExperimentalSettings() {
   });
 
   // Load channel status and custom commands
-  fetch('/api/channel/status').then(r => r.ok ? r.json() : null).then(s => {
-    if (s) {
+  fetch('/api/channel/status').then(r => r.ok ? r.json() as Promise<{ enabled: boolean }> : null).then(s => {
+    if (s !== null) {
       channelCheckbox.checked = s.enabled;
-      if (s.enabled) {
+      if (s.enabled === true) {
         channelInstructions.style.display = '';
         customCommandsSection.style.display = '';
       }
@@ -317,8 +317,8 @@ export function bindExperimentalSettings() {
 
   // Load custom commands from settings
   void api<Record<string, string>>('/settings').then(settings => {
-    if (settings.custom_commands) {
-      try { customCommands = JSON.parse(settings.custom_commands); } catch { /* ignore */ }
+    if (settings.custom_commands !== undefined && settings.custom_commands !== '') {
+      try { customCommands = JSON.parse(settings.custom_commands) as CustomCommand[]; } catch { /* ignore */ }
     }
     renderChannelCommands();
   });
@@ -338,12 +338,10 @@ export function bindExperimentalSettings() {
   });
 
   channelCopyBtn?.addEventListener('click', () => {
-    const text = channelCmd?.textContent || '';
+    const text = channelCmd?.textContent ?? '';
     void navigator.clipboard.writeText(text).then(() => {
-      if (channelCopyBtn) {
-        channelCopyBtn.textContent = 'Copied!';
-        setTimeout(() => { channelCopyBtn.textContent = 'Copy'; }, 1500);
-      }
+      channelCopyBtn.textContent = 'Copied!';
+      setTimeout(() => { channelCopyBtn.textContent = 'Copy'; }, 1500);
     });
   });
 

@@ -1,9 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { createTicket } from '../db/queries.js';
+import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
+import { backupRoutes } from './backups.js';
 
 // Mock markdown sync to avoid side effects
 vi.mock('../sync/markdown.js', () => ({
@@ -13,10 +14,33 @@ vi.mock('../sync/markdown.js', () => ({
   initMarkdownSync: vi.fn(),
 }));
 
-import { backupRoutes } from './backups.js';
-
 let tempDir: string;
 let app: Hono<AppEnv>;
+
+interface BackupEntry {
+  tier: string;
+  filename: string;
+  ticketCount: number;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+interface BackupListResponse {
+  backups: BackupEntry[];
+}
+
+interface PreviewResponse {
+  tickets: unknown[];
+  stats: { total: number; open: number; upNext: number };
+}
+
+interface OkResponse {
+  ok: boolean;
+}
+
+interface ErrorResponse {
+  error: string;
+}
 
 beforeAll(async () => {
   tempDir = await setupTestDb();
@@ -49,7 +73,7 @@ describe('GET /api/backups', () => {
   it('returns an empty array when no backups exist', async () => {
     const res = await app.request('/api/backups');
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data = await res.json() as BackupListResponse;
     expect(data.backups).toBeInstanceOf(Array);
     expect(data.backups.length).toBe(0);
   });
@@ -59,7 +83,7 @@ describe('POST /api/backups/create', () => {
   it('creates a backup with 5min tier', async () => {
     const res = await app.request('/api/backups/create', post({ tier: '5min' }));
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data = await res.json() as BackupEntry;
     expect(data.tier).toBe('5min');
     expect(data.filename).toMatch(/^backup-.*\.tar\.gz$/);
     expect(data.ticketCount).toBeGreaterThanOrEqual(3);
@@ -70,14 +94,14 @@ describe('POST /api/backups/create', () => {
   it('creates a backup with hourly tier', async () => {
     const res = await app.request('/api/backups/create', post({ tier: 'hourly' }));
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data = await res.json() as BackupEntry;
     expect(data.tier).toBe('hourly');
   });
 
   it('creates a backup with daily tier', async () => {
     const res = await app.request('/api/backups/create', post({ tier: 'daily' }));
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data = await res.json() as BackupEntry;
     expect(data.tier).toBe('daily');
   });
 });
@@ -86,7 +110,7 @@ describe('GET /api/backups (after creation)', () => {
   it('lists all created backups', async () => {
     const res = await app.request('/api/backups');
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data = await res.json() as BackupListResponse;
     expect(data.backups.length).toBeGreaterThanOrEqual(3);
 
     // Verify structure of backup entries
@@ -100,8 +124,8 @@ describe('GET /api/backups (after creation)', () => {
 
   it('returns backups sorted by creation date (newest first)', async () => {
     const res = await app.request('/api/backups');
-    const data = await res.json();
-    const dates = data.backups.map((b: { createdAt: string }) => new Date(b.createdAt).getTime());
+    const data = await res.json() as BackupListResponse;
+    const dates = data.backups.map((b) => new Date(b.createdAt).getTime());
     for (let i = 1; i < dates.length; i++) {
       expect(dates[i - 1]).toBeGreaterThanOrEqual(dates[i]);
     }
@@ -112,7 +136,7 @@ describe('POST /api/backups/now', () => {
   it('triggers a manual backup', async () => {
     const res = await app.request('/api/backups/now', { method: 'POST' });
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data = await res.json() as BackupEntry;
     // triggerManualBackup creates a 5min tier backup
     expect(data.tier).toBe('5min');
     expect(data.filename).toMatch(/^backup-.*\.tar\.gz$/);
@@ -123,12 +147,12 @@ describe('GET /api/backups/preview/:tier/:filename', () => {
   it('loads a backup for preview', async () => {
     // First get the list to find a backup filename
     const listRes = await app.request('/api/backups');
-    const listData = await listRes.json();
+    const listData = await listRes.json() as BackupListResponse;
     const backup = listData.backups[0];
 
     const res = await app.request(`/api/backups/preview/${backup.tier}/${backup.filename}`);
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data = await res.json() as PreviewResponse;
     expect(data.tickets).toBeInstanceOf(Array);
     expect(data.stats).toBeDefined();
     expect(typeof data.stats.total).toBe('number');
@@ -140,7 +164,7 @@ describe('GET /api/backups/preview/:tier/:filename', () => {
   it('returns 400 for nonexistent backup file', async () => {
     const res = await app.request('/api/backups/preview/5min/nonexistent.tar.gz');
     expect(res.status).toBe(400);
-    const data = await res.json();
+    const data = await res.json() as ErrorResponse;
     expect(data.error).toBeDefined();
   });
 });
@@ -149,7 +173,7 @@ describe('POST /api/backups/preview/cleanup', () => {
   it('cleans up preview resources', async () => {
     const res = await app.request('/api/backups/preview/cleanup', { method: 'POST' });
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data = await res.json() as OkResponse;
     expect(data.ok).toBe(true);
   });
 });
@@ -158,7 +182,7 @@ describe('POST /api/backups/restore', () => {
   it('restores from a backup', async () => {
     // Get a backup to restore from
     const listRes = await app.request('/api/backups');
-    const listData = await listRes.json();
+    const listData = await listRes.json() as BackupListResponse;
     const backup = listData.backups[0];
 
     const res = await app.request('/api/backups/restore', post({
@@ -166,7 +190,7 @@ describe('POST /api/backups/restore', () => {
       filename: backup.filename,
     }));
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data = await res.json() as OkResponse;
     expect(data.ok).toBe(true);
   });
 
@@ -176,7 +200,7 @@ describe('POST /api/backups/restore', () => {
       filename: 'nonexistent.tar.gz',
     }));
     expect(res.status).toBe(500);
-    const data = await res.json();
+    const data = await res.json() as ErrorResponse;
     expect(data.error).toBeDefined();
   });
 });

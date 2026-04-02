@@ -75,7 +75,7 @@ function buildDashboard(data: DashboardData): HTMLElement {
         <div className="kpi-label">In progress</div>
       </div>
       <div className="dashboard-kpi-card">
-        <div className="kpi-value">{String(backlogRatio)}</div>
+        <div className="kpi-value">{backlogRatio}</div>
         <div className="kpi-label">Completed / created</div>
       </div>
     </div>
@@ -141,8 +141,8 @@ function chartCard(title: string, info: string, content: string): HTMLElement {
 // --- Hover cursor for time-series charts ---
 
 function addChartHover(card: HTMLElement, data: { date: string; lines: { label: string; color: string; value: number }[] }[]) {
-  const body = card.querySelector('.dashboard-chart-body') as HTMLElement;
-  if (!body || data.length === 0) return;
+  const body = card.querySelector('.dashboard-chart-body') as HTMLElement | null;
+  if (body === null || data.length === 0) return;
 
   const cursor = document.createElement('div');
   cursor.className = 'chart-cursor';
@@ -310,7 +310,7 @@ function renderDonutCharts(openData: { category: string; count: number }[], peri
   for (const d of [...openData, ...periodData]) {
     if (!allCats.has(d.category)) {
       const cat = state.categories.find(c => c.id === d.category);
-      allCats.set(d.category, { color: getCategoryColor(d.category), label: cat?.label || d.category });
+      allCats.set(d.category, { color: getCategoryColor(d.category), label: cat?.label ?? d.category });
     }
   }
 
@@ -346,7 +346,7 @@ function singleDonut(data: { category: string; count: number }[], label: string,
     const large = slice > Math.PI ? 1 : 0;
     const color = getCategoryColor(d.category);
     const cat = state.categories.find(c => c.id === d.category);
-    const catLabel = cat?.label || d.category;
+    const catLabel = cat?.label ?? d.category;
 
     paths += `<path d="M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${ix1} ${iy1} A ${inner} ${inner} 0 ${large} 0 ${ix2} ${iy2} Z" fill="${color}" opacity="0.8" class="chart-hover"><title>${catLabel}: ${d.count}</title></path>`;
     angle += slice;

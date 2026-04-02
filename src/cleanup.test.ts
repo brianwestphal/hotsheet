@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { cleanupTestDb, setupTestDb } from './test-helpers.js';
-import { createTicket, getTicket, updateSetting } from './db/queries.js';
-import { getDb } from './db/connection.js';
 import { cleanupAttachments } from './cleanup.js';
+import { getDb } from './db/connection.js';
+import { createTicket, getTicket, updateSetting } from './db/queries.js';
+import { cleanupTestDb, setupTestDb } from './test-helpers.js';
 
 let tempDir: string;
 

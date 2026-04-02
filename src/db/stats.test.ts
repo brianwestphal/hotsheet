@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import { createTicket } from './queries.js';
 import { getDb } from './connection.js';
+import { createTicket } from './queries.js';
 import { getDashboardStats, getSnapshots, recordDailySnapshot } from './stats.js';
 
 let tempDir: string;
@@ -20,7 +20,7 @@ describe('recordDailySnapshot', () => {
     const db = await getDb();
 
     // Create some tickets in various statuses
-    const t1 = await createTicket('Snap not started');
+    await createTicket('Snap not started');
     const t2 = await createTicket('Snap started');
     await db.query(`UPDATE tickets SET status = 'started' WHERE id = $1`, [t2.id]);
     const t3 = await createTicket('Snap completed');
@@ -34,7 +34,7 @@ describe('recordDailySnapshot', () => {
     );
     expect(result.rows.length).toBe(1);
 
-    const data = JSON.parse(result.rows[0].data);
+    const data = JSON.parse(result.rows[0].data) as { not_started: number; started: number; completed: number };
     expect(data.not_started).toBeGreaterThanOrEqual(1);
     expect(data.started).toBeGreaterThanOrEqual(1);
     expect(data.completed).toBeGreaterThanOrEqual(1);
@@ -158,8 +158,6 @@ describe('getDashboardStats', () => {
   });
 
   it('includes category breakdown for open tickets', async () => {
-    const db = await getDb();
-
     await createTicket('Stats cat bug', { category: 'bug' });
     await createTicket('Stats cat feature', { category: 'feature' });
 

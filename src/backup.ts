@@ -1,7 +1,6 @@
+import { PGlite } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
-
-import { PGlite } from '@electric-sql/pglite';
 
 import { closeDb, getDb, setDataDir } from './db/connection.js';
 import { getBackupDir } from './file-settings.js';
@@ -170,9 +169,9 @@ export async function loadBackupForPreview(dataDir: string, tier: string, filena
   return {
     tickets: tickets.rows,
     stats: {
-      total: parseInt(row?.total || '0', 10),
-      open: parseInt(row?.open || '0', 10),
-      upNext: parseInt(row?.up_next || '0', 10),
+      total: parseInt(row.total, 10),
+      open: parseInt(row.open, 10),
+      upNext: parseInt(row.up_next, 10),
     },
   };
 }
@@ -183,7 +182,7 @@ export async function cleanupPreview(): Promise<void> {
     previewDb = null;
   }
   // Clean up preview directory if present — but dataDir may vary, so we track it
-  if (currentDataDir) {
+  if (currentDataDir !== null) {
     const previewDir = join(backupsDir(currentDataDir), '_preview');
     if (existsSync(previewDir)) {
       rmSync(previewDir, { recursive: true, force: true });
@@ -212,7 +211,7 @@ export async function restoreBackup(dataDir: string, tier: string, filename: str
 
   // Re-initialize with backup data
   setDataDir(dataDir);
-  const { getDb: reinitDb } = await import('./db/connection.js');
+  await import('./db/connection.js');
   // Create new PGlite with the backup data loaded
   const PGliteClass = (await import('@electric-sql/pglite')).PGlite;
   const newDb = new PGliteClass(dbDir, { loadDataDir: blob });

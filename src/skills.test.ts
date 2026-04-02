@@ -1,7 +1,7 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
 import { tmpdir } from 'os';
+import { join } from 'path';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   consumeSkillsCreatedFlag,
@@ -210,7 +210,7 @@ describe('ensureClaudePermissions', () => {
     ensureSkills();
     const settingsPath = join(tempDir, '.claude', 'settings.json');
     expect(existsSync(settingsPath)).toBe(true);
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { permissions: { allow: string[] } };
     expect(settings.permissions.allow).toContain('Bash(curl * http://localhost:417*/api/*)');
     expect(settings.permissions.allow).toContain('Bash(curl * http://localhost:418*/api/*)');
   });
@@ -221,7 +221,7 @@ describe('ensureClaudePermissions', () => {
       permissions: { allow: ['Bash(git *)'] },
     }));
     ensureSkills();
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { permissions: { allow: string[] } };
     expect(settings.permissions.allow).toContain('Bash(git *)');
     expect(settings.permissions.allow).toContain('Bash(curl * http://localhost:417*/api/*)');
   });
@@ -232,7 +232,7 @@ describe('ensureClaudePermissions', () => {
       permissions: { allow: ['Bash(curl * http://localhost:4174/api/*)'] },
     }));
     ensureSkills();
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { permissions: { allow: string[] } };
     // Old dynamic pattern removed
     expect(settings.permissions.allow).not.toContain('Bash(curl * http://localhost:4174/api/*)');
     // New static patterns added
@@ -252,7 +252,7 @@ describe('ensureClaudePermissions', () => {
     // Skills themselves don't exist yet, so ensureSkills will still create them,
     // but permissions should not be re-written
     ensureSkills();
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { permissions: { allow: string[] } };
     // Verify no duplicate patterns
     const curlPatterns = settings.permissions.allow.filter((p: string) => p.includes('curl'));
     expect(curlPatterns).toHaveLength(2);
@@ -263,7 +263,7 @@ describe('ensureClaudePermissions', () => {
     ensureSkills();
     const settingsPath = join(tempDir, '.claude', 'settings.json');
     if (existsSync(settingsPath)) {
-      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { permissions?: { allow?: string[] } };
       // Should not have curl patterns since port is out of 4170-4189 range
       const hasPatterns = settings.permissions?.allow?.some((p: string) => p.includes('curl'));
       expect(hasPatterns).toBeFalsy();

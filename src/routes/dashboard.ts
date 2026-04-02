@@ -1,4 +1,6 @@
+import { writeFileSync } from 'fs';
 import { Hono } from 'hono';
+import { tmpdir } from 'os';
 import { join, relative } from 'path';
 
 import { getTicketStats } from '../db/queries.js';
@@ -11,7 +13,7 @@ export const dashboardRoutes = new Hono<AppEnv>();
 // --- Long-poll ---
 
 dashboardRoutes.get('/poll', async (c) => {
-  const clientVersion = parseInt(c.req.query('version') || '0', 10);
+  const clientVersion = parseInt(c.req.query('version') ?? '0', 10);
   const changeVersion = getChangeVersion();
   if (changeVersion > clientVersion) {
     return c.json({ version: changeVersion });
@@ -33,7 +35,7 @@ dashboardRoutes.get('/stats', async (c) => {
 
 dashboardRoutes.get('/dashboard', async (c) => {
   const { getDashboardStats, getSnapshots } = await import('../db/stats.js');
-  const days = parseInt(c.req.query('days') || '30', 10);
+  const days = parseInt(c.req.query('days') ?? '30', 10);
   const [stats, snapshots] = await Promise.all([
     getDashboardStats(days),
     getSnapshots(days),
@@ -74,7 +76,7 @@ dashboardRoutes.get('/glassbox/status', async (c) => {
 });
 
 dashboardRoutes.post('/glassbox/launch', async (c) => {
-  if (!glassboxAvailable) return c.json({ error: 'Glassbox not available' }, 404);
+  if (glassboxAvailable !== true) return c.json({ error: 'Glassbox not available' }, 404);
   const { spawn } = await import('child_process');
   spawn('glassbox', [], {
     cwd: process.cwd(),
@@ -103,12 +105,9 @@ dashboardRoutes.post('/gitignore/add', async (c) => {
 
 dashboardRoutes.post('/print', async (c) => {
   const { html } = await c.req.json<{ html: string }>();
-  const { writeFileSync } = await import('fs');
-  const { tmpdir } = await import('os');
-  const { join: pathJoin } = await import('path');
   const { execFile } = await import('child_process');
 
-  const tmpPath = pathJoin(tmpdir(), `hotsheet-print-${Date.now()}.html`);
+  const tmpPath = join(tmpdir(), `hotsheet-print-${Date.now()}.html`);
   writeFileSync(tmpPath, html, 'utf-8');
 
   // Open in default browser

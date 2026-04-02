@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
 import { tmpdir } from 'os';
+import { join } from 'path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { ensureSecret, getBackupDir, readFileSettings, writeFileSettings } from './file-settings.js';
 
@@ -108,7 +108,7 @@ describe('ensureSecret', () => {
     mkdirSync(dir, { recursive: true });
     const secret1 = ensureSecret(dir, 4174);
     // Tamper with the path hash to simulate a directory move
-    const settings = readFileSettings(dir);
+    readFileSettings(dir);
     writeFileSettings(dir, { secretPathHash: 'wrong-hash' });
     const secret2 = ensureSecret(dir, 4174);
     expect(secret2).not.toBe(secret1);
@@ -152,7 +152,7 @@ describe('writeFileSettings edge cases', () => {
     writeFileSettings(dir, { appName: 'Test' });
     const raw = readFileSync(join(dir, 'settings.json'), 'utf-8');
     expect(raw.endsWith('\n')).toBe(true);
-    expect(() => JSON.parse(raw)).not.toThrow();
+    expect(() => JSON.parse(raw) as unknown).not.toThrow();
   });
 
   it('handles writing to non-existent file (create from scratch)', () => {

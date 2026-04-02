@@ -25,7 +25,7 @@ export async function getAllTags(): Promise<string[]> {
   const tagSet = new Set<string>();
   for (const row of result.rows) {
     try {
-      const parsed = JSON.parse(row.tags);
+      const parsed: unknown = JSON.parse(row.tags);
       if (Array.isArray(parsed)) {
         for (const tag of parsed) {
           if (typeof tag === 'string' && tag.trim()) {

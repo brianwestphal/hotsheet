@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
 import { tmpdir } from 'os';
+import { join } from 'path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getChannelPort, isChannelAlive, registerChannel, triggerChannel, unregisterChannel } from './channel-config.js';
 
@@ -25,7 +25,7 @@ describe('registerChannel', () => {
     registerChannel(dataDir);
     const mcpPath = join(tempDir, '.mcp.json');
     expect(existsSync(mcpPath)).toBe(true);
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, { command: string; args: string[] }> };
     expect(config.mcpServers).toBeDefined();
     expect(config.mcpServers['hotsheet-channel']).toBeDefined();
     expect(config.mcpServers['hotsheet-channel'].args).toContain('--data-dir');
@@ -42,7 +42,7 @@ describe('registerChannel', () => {
     const dataDir = join(tempDir, '.hotsheet');
     mkdirSync(dataDir, { recursive: true });
     registerChannel(dataDir);
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, { command: string; args: string[] }> };
     expect(config.mcpServers['other-server']).toBeDefined();
     expect(config.mcpServers['other-server'].command).toBe('node');
     expect(config.mcpServers['hotsheet-channel']).toBeDefined();
@@ -57,7 +57,7 @@ describe('registerChannel', () => {
     const dataDir = join(tempDir, '.hotsheet');
     mkdirSync(dataDir, { recursive: true });
     registerChannel(dataDir);
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { someOtherKey: string; mcpServers: Record<string, unknown> };
     expect(config.someOtherKey).toBe('value');
     expect(config.mcpServers['hotsheet-channel']).toBeDefined();
   });
@@ -72,7 +72,7 @@ describe('registerChannel', () => {
     const dataDir = join(tempDir, '.hotsheet');
     mkdirSync(dataDir, { recursive: true });
     registerChannel(dataDir);
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, { command: string; args: string[] }> };
     expect(config.mcpServers['hotsheet-channel'].args).toContain(dataDir);
     expect(config.mcpServers['hotsheet-channel'].args).not.toContain('old');
   });
@@ -83,7 +83,7 @@ describe('registerChannel', () => {
     const dataDir = join(tempDir, '.hotsheet');
     mkdirSync(dataDir, { recursive: true });
     registerChannel(dataDir);
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, unknown> };
     expect(config.mcpServers['hotsheet-channel']).toBeDefined();
   });
 
@@ -93,7 +93,7 @@ describe('registerChannel', () => {
     const dataDir = join(tempDir, '.hotsheet');
     mkdirSync(dataDir, { recursive: true });
     registerChannel(dataDir);
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, unknown> };
     expect(config.mcpServers).toBeDefined();
     expect(config.mcpServers['hotsheet-channel']).toBeDefined();
   });
@@ -109,7 +109,7 @@ describe('unregisterChannel', () => {
       },
     }));
     unregisterChannel();
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, unknown> };
     expect(config.mcpServers['hotsheet-channel']).toBeUndefined();
     expect(config.mcpServers['other-server']).toBeDefined();
   });
@@ -129,7 +129,7 @@ describe('unregisterChannel', () => {
     writeFileSync(mcpPath, original);
     unregisterChannel();
     // File should still have other-server, content may be reformatted but key should be there
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, unknown> };
     expect(config.mcpServers['other-server']).toBeDefined();
   });
 
@@ -424,7 +424,7 @@ describe('registerChannel file format', () => {
     mkdirSync(dataDir, { recursive: true });
     registerChannel(dataDir);
     const mcpPath = join(tempDir, '.mcp.json');
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, { command: string; args: string[] }> };
     const entry = config.mcpServers['hotsheet-channel'];
     // Command should be either 'node' or 'npx'
     expect(['node', 'npx']).toContain(entry.command);

@@ -19,7 +19,7 @@ export function readFileSettings(dataDir: string): FileSettings {
   const path = settingsPath(dataDir);
   if (!existsSync(path)) return {};
   try {
-    return JSON.parse(readFileSync(path, 'utf-8'));
+    return JSON.parse(readFileSync(path, 'utf-8')) as FileSettings;
   } catch {
     return {};
   }
@@ -32,10 +32,10 @@ export function writeFileSettings(dataDir: string, updates: Partial<FileSettings
   return merged;
 }
 
-/** Returns the resolved backup directory path. Defaults to {dataDir}/backups if not configured. */
+/** Returns the resolved backup directory path. Defaults to `\{dataDir\}/backups` if not configured. */
 export function getBackupDir(dataDir: string): string {
   const settings = readFileSettings(dataDir);
-  return settings.backupDir || join(dataDir, 'backups');
+  return settings.backupDir !== undefined && settings.backupDir !== '' ? settings.backupDir : join(dataDir, 'backups');
 }
 
 /** Hash the absolute path of settings.json for path-change detection. */
@@ -53,7 +53,7 @@ export function ensureSecret(dataDir: string, port: number): string {
   const settings = readFileSettings(dataDir);
   const currentPathHash = hashPath(dataDir);
 
-  if (settings.secret && settings.secretPathHash === currentPathHash) {
+  if (settings.secret !== undefined && settings.secret !== '' && settings.secretPathHash === currentPathHash) {
     // Secret exists and path hasn't changed — just update port
     if (settings.port !== port) {
       writeFileSettings(dataDir, { port });

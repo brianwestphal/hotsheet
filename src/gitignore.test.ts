@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
 import { execSync } from 'child_process';
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { addHotsheetToGitignore, getGitRoot, isGitRepo, isHotsheetGitignored } from './gitignore.js';
 

@@ -12,7 +12,7 @@ export function startLongPoll() {
       const result = await api<{ version: number }>(`/poll?version=${pollVersion}`);
       if (result.version > pollVersion) {
         pollVersion = result.version;
-        if (!state.backupPreview?.active) {
+        if (state.backupPreview?.active !== true) {
           void loadTickets();
           refreshDetail();
         }

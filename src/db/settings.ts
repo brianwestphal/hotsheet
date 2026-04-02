@@ -28,8 +28,8 @@ export async function getCategories(): Promise<CategoryDef[]> {
   const settings = await getSettings();
   if (settings.categories) {
     try {
-      const parsed = JSON.parse(settings.categories);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      const parsed: unknown = JSON.parse(settings.categories);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as CategoryDef[];
     } catch { /* invalid JSON, use defaults */ }
   }
   return DEFAULT_CATEGORIES;

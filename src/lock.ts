@@ -8,8 +8,8 @@ export function acquireLock(dataDir: string): void {
 
   if (existsSync(lockPath)) {
     try {
-      const contents = JSON.parse(readFileSync(lockPath, 'utf-8'));
-      const pid = contents.pid as number;
+      const contents = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid: number };
+      const pid = contents.pid;
 
       // Check if the process is still alive (signal 0 = test only)
       try {
@@ -39,7 +39,7 @@ export function acquireLock(dataDir: string): void {
 }
 
 function releaseLock(): void {
-  if (lockPath) {
+  if (lockPath !== null) {
     try { rmSync(lockPath, { force: true }); } catch { /* shutting down */ }
     lockPath = null;
   }

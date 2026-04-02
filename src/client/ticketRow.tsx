@@ -5,15 +5,15 @@ import { syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { Ticket } from './state.js';
-import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, VERIFIED_SVG, state } from './state.js';
+import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, state,VERIFIED_SVG } from './state.js';
 import {
   callFocusDraftInput, callLoadTickets, callRenderTicketList,
   callUpdateBatchToolbar, callUpdateSelectionClasses,
-  draggedTicketIds, setDraggedTicketIds,
-  saveTimeout, setSaveTimeout,
-  suppressFocusSelect, setSuppressFocusSelect,
-  PRIORITY_SHORTCUTS, getCategoryShortcuts,
-} from './ticketListState.js';
+  draggedTicketIds, getCategoryShortcuts,
+  PRIORITY_SHORTCUTS,   saveTimeout, setDraggedTicketIds,
+setSaveTimeout,
+setSuppressFocusSelect,
+  suppressFocusSelect, } from './ticketListState.js';
 import { recordTextChange, trackedDelete, trackedPatch, trackedRestore } from './undo/actions.js';
 
 // --- Ticket row ---
@@ -150,7 +150,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
 
 export function createTrashRow(ticket: Ticket): HTMLElement {
   const isSelected = state.selectedIds.has(ticket.id);
-  const deletedDate = ticket.deleted_at ? new Date(ticket.deleted_at) : null;
+  const deletedDate = ticket.deleted_at !== null && ticket.deleted_at !== '' ? new Date(ticket.deleted_at) : null;
 
   const row = toElement(
     <div className={`ticket-row trash-row${isSelected ? ' selected' : ''}`} data-id={String(ticket.id)}>

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from 'fs';
 import { Hono } from 'hono';
-import { basename, extname, join, resolve } from 'path';
+import { basename, dirname, extname, join, resolve } from 'path';
 
 import {
   addAttachment,
@@ -65,7 +65,6 @@ attachmentRoutes.post('/attachments/:id/reveal', async (c) => {
   if (!existsSync(attachment.stored_path)) return c.json({ error: 'File not found on disk' }, 404);
 
   const { execFile } = await import('child_process');
-  const { dirname } = await import('path');
   const platform = process.platform;
   if (platform === 'darwin') {
     execFile('open', ['-R', attachment.stored_path]);

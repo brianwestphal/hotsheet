@@ -34,7 +34,7 @@ export function registerChannel(dataDir: string): void {
   let config: { mcpServers?: Record<string, unknown>; [key: string]: unknown } = {};
   if (existsSync(mcpPath)) {
     try {
-      config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+      config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as typeof config;
     } catch { /* corrupt, overwrite */ }
   }
 
@@ -55,9 +55,12 @@ export function unregisterChannel(): void {
   if (!existsSync(mcpPath)) return;
 
   try {
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-    if (config.mcpServers?.[MCP_SERVER_KEY]) {
-      delete config.mcpServers[MCP_SERVER_KEY];
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers?: Record<string, unknown> };
+    if (config.mcpServers?.[MCP_SERVER_KEY] !== undefined) {
+      const servers = { ...config.mcpServers };
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete servers[MCP_SERVER_KEY];
+      config.mcpServers = servers;
       writeFileSync(mcpPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
     }
   } catch { /* ignore */ }
@@ -77,11 +80,11 @@ export function getChannelPort(dataDir: string): number | null {
 /** Check if the channel server is reachable */
 export async function isChannelAlive(dataDir: string): Promise<boolean> {
   const port = getChannelPort(dataDir);
-  if (!port) return false;
+  if (port === null) return false;
   try {
     const res = await fetch(`http://127.0.0.1:${port}/health`);
     const data = await res.json() as { ok: boolean };
-    return data.ok === true;
+    return data.ok;
   } catch {
     return false;
   }
@@ -90,16 +93,16 @@ export async function isChannelAlive(dataDir: string): Promise<boolean> {
 /** Send a trigger to the channel server */
 export async function triggerChannel(dataDir: string, serverPort: number, message?: string): Promise<boolean> {
   const port = getChannelPort(dataDir);
-  if (!port) return false;
+  if (port === null) return false;
   // Include secret in the done signal so it passes the API middleware
   let secretHeader = '';
   try {
     const { readFileSettings } = await import('./file-settings.js');
     const settings = readFileSettings(dataDir);
-    if (settings.secret) secretHeader = ` -H "X-Hotsheet-Secret: ${settings.secret}"`;
+    if (settings.secret !== undefined && settings.secret !== '') secretHeader = ` -H "X-Hotsheet-Secret: ${settings.secret}"`;
   } catch { /* ignore */ }
   const doneSignal = `\n\nWhen you are completely finished (or if there was nothing to do), signal completion by running:\ncurl -s -X POST http://localhost:${serverPort}/api/channel/done${secretHeader}`;
-  const content = message
+  const content = message !== undefined && message !== ''
     ? message + doneSignal
     : 'Process the Hot Sheet worklist. Run /hotsheet to work through the current Up Next items.' + doneSignal;
   try {

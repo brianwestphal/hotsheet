@@ -14,8 +14,8 @@ channelRoutes.get('/channel/claude-check', async (c) => {
     const version = execFileSync('claude', ['--version'], { timeout: 5000, encoding: 'utf-8' }).trim();
     // Version string like "Claude Code v2.1.85" or just "2.1.85"
     const match = version.match(/(\d+\.\d+\.\d+)/);
-    const versionNum = match ? match[1] : null;
-    const parts = versionNum ? versionNum.split('.').map(Number) : [];
+    const versionNum = match !== null ? match[1] : null;
+    const parts = versionNum !== null ? versionNum.split('.').map(Number) : [];
     // Requires v2.1.80+
     const meetsMinimum = parts.length === 3 && (
       parts[0] > 2 || (parts[0] === 2 && parts[1] > 1) || (parts[0] === 2 && parts[1] === 1 && parts[2] >= 80)
@@ -53,10 +53,10 @@ channelRoutes.get('/channel/permission', async (c) => {
   const { getChannelPort } = await import('../channel-config.js');
   const dataDir = c.get('dataDir');
   const port = getChannelPort(dataDir);
-  if (!port) return c.json({ pending: null });
+  if (port === null) return c.json({ pending: null });
   try {
     const res = await fetch(`http://127.0.0.1:${port}/permission`);
-    const data = await res.json();
+    const data = await res.json() as { pending: unknown };
     return c.json(data);
   } catch {
     return c.json({ pending: null });
@@ -67,7 +67,7 @@ channelRoutes.post('/channel/permission/respond', async (c) => {
   const { getChannelPort } = await import('../channel-config.js');
   const dataDir = c.get('dataDir');
   const port = getChannelPort(dataDir);
-  if (!port) return c.json({ error: 'Channel not available' }, 503);
+  if (port === null) return c.json({ error: 'Channel not available' }, 503);
   const body = await c.req.json<{ request_id: string; behavior: 'allow' | 'deny' }>();
   try {
     const res = await fetch(`http://127.0.0.1:${port}/permission/respond`, {
@@ -85,14 +85,14 @@ channelRoutes.post('/channel/permission/dismiss', async (c) => {
   const { getChannelPort } = await import('../channel-config.js');
   const dataDir = c.get('dataDir');
   const port = getChannelPort(dataDir);
-  if (!port) return c.json({ ok: true });
+  if (port === null) return c.json({ ok: true });
   try {
     await fetch(`http://127.0.0.1:${port}/permission/dismiss`, { method: 'POST' });
   } catch { /* ignore */ }
   return c.json({ ok: true });
 });
 
-channelRoutes.post('/channel/done', async (_c) => {
+channelRoutes.post('/channel/done', (_c) => {
   channelDoneFlag = true;
   notifyChange(); // Triggers long-poll so client picks up the done state
   return _c.json({ ok: true });

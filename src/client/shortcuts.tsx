@@ -1,5 +1,5 @@
-import { showPrintDialog } from './print.js';
 import { formatTicketForClipboard } from './clipboardUtil.js';
+import { showPrintDialog } from './print.js';
 import { state } from './state.js';
 import { cancelPendingSave, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { canRedo, canUndo, performRedo, performUndo, trackedBatch, trackedCompoundBatch } from './undo/actions.js';
@@ -20,14 +20,14 @@ function triggerUndo() {
   console.log('[undo] triggerUndo called, canUndo:', canUndo());
   if (detailSaveTimeout) { clearTimeout(detailSaveTimeout); detailSaveTimeout = null; }
   cancelPendingSave();
-  performUndo().then(() => console.log('[undo] performUndo completed')).catch((e) => console.error('[undo] performUndo error:', e));
+  performUndo().then(() => console.log('[undo] performUndo completed')).catch((e: unknown) => console.error('[undo] performUndo error:', e));
 }
 
 function triggerRedo() {
   console.log('[undo] triggerRedo called, canRedo:', canRedo());
   if (detailSaveTimeout) { clearTimeout(detailSaveTimeout); detailSaveTimeout = null; }
   cancelPendingSave();
-  performRedo().then(() => console.log('[undo] performRedo completed')).catch((e) => console.error('[undo] performRedo error:', e));
+  performRedo().then(() => console.log('[undo] performRedo completed')).catch((e: unknown) => console.error('[undo] performRedo error:', e));
 }
 
 export function bindKeyboardShortcuts() {
@@ -119,8 +119,8 @@ export function bindKeyboardShortcuts() {
       if (isInput && !e.altKey) { /* native copy */ }
       else {
         // Also let native copy work when text is selected on the page
-        const sel = !e.altKey && window.getSelection();
-        if (sel && !sel.isCollapsed && sel.toString().trim() !== '') { /* native copy */ }
+        const sel = !e.altKey ? window.getSelection() : null;
+        if (sel !== null && sel !== undefined && !sel.isCollapsed && sel.toString().trim() !== '') { /* native copy */ }
         else {
           e.preventDefault();
           const selected = state.tickets.filter(t => state.selectedIds.has(t.id));

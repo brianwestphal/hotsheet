@@ -133,38 +133,44 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
       {
         label: 'Duplicate',
         key: 'd',
-        action: async () => {
-          const ids = Array.from(state.selectedIds);
-          const created = await api<Ticket[]>('/tickets/duplicate', {
-            method: 'POST',
-            body: { ids },
-          });
-          state.selectedIds.clear();
-          for (const t of created) state.selectedIds.add(t.id);
-          void loadTickets();
+        action: () => {
+          void (async () => {
+            const ids = Array.from(state.selectedIds);
+            const created = await api<Ticket[]>('/tickets/duplicate', {
+              method: 'POST',
+              body: { ids },
+            });
+            state.selectedIds.clear();
+            for (const t of created) state.selectedIds.add(t.id);
+            void loadTickets();
+          })();
         },
       },
       { label: '', key: '', separator: true, action: () => {} },
       {
         label: 'Move to Backlog',
         key: 'b',
-        action: async () => {
-          const ids = Array.from(state.selectedIds);
-          const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
-          await trackedBatch(affected, { ids, action: 'status', value: 'backlog' }, 'Move to backlog');
-          state.selectedIds.clear();
-          void loadTickets();
+        action: () => {
+          void (async () => {
+            const ids = Array.from(state.selectedIds);
+            const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+            await trackedBatch(affected, { ids, action: 'status', value: 'backlog' }, 'Move to backlog');
+            state.selectedIds.clear();
+            void loadTickets();
+          })();
         },
       },
       {
         label: 'Archive',
         key: 'a',
-        action: async () => {
-          const ids = Array.from(state.selectedIds);
-          const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
-          await trackedBatch(affected, { ids, action: 'status', value: 'archive' }, 'Archive');
-          state.selectedIds.clear();
-          void loadTickets();
+        action: () => {
+          void (async () => {
+            const ids = Array.from(state.selectedIds);
+            const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+            await trackedBatch(affected, { ids, action: 'status', value: 'archive' }, 'Archive');
+            state.selectedIds.clear();
+            void loadTickets();
+          })();
         },
       },
     ]);

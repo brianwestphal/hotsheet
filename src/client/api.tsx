@@ -23,7 +23,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
       method: opts.method,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
-    return res.json() as Promise<T>;
+    return await res.json() as Promise<T>;
   } catch (err) {
     showErrorPopup('Unable to reach the server. It may have been stopped.');
     throw err;
@@ -35,7 +35,7 @@ export async function apiUpload<T>(path: string, file: File): Promise<T> {
     const form = new FormData();
     form.append('file', file);
     const res = await fetch('/api' + path, { method: 'POST', body: form });
-    return res.json() as Promise<T>;
+    return await res.json() as Promise<T>;
   } catch (err) {
     showErrorPopup('Unable to reach the server. It may have been stopped.');
     throw err;

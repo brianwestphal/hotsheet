@@ -6,7 +6,7 @@ import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { renderDashboard, renderSidebarWidget } from './dashboard.js';
-import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, parseTags, refreshDetail, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus, updateStats } from './detail.js';
+import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, parseTags, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { startLongPoll } from './poll.js';
@@ -14,8 +14,8 @@ import { showPrintDialog } from './print.js';
 import { bindSettingsDialog } from './settingsDialog.js';
 import { bindKeyboardShortcuts, getDetailSaveTimeout, setDetailSaveTimeout } from './shortcuts.js';
 import { bindSearchInput, bindSidebar, bindSortControls } from './sidebar.js';
-import type { AppSettings, CategoryDef } from './state.js';
-import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
+import type { AppSettings, CategoryDef, Ticket } from './state.js';
+import { getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
 import { showTagsDialog } from './tagsDialog.js';
 import { checkForUpdate, restoreAppIcon } from './tauriIntegration.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
@@ -75,7 +75,7 @@ async function init() {
   } catch (err) {
     console.error('Hot Sheet init failed:', err);
     const el = document.getElementById('ticket-list');
-    if (el) el.innerHTML = `<div style="padding:20px;color:red">Init error: ${err}</div>`;
+    if (el) el.innerHTML = `<div style="padding:20px;color:red">Init error: ${String(err)}</div>`;
   }
 }
 
@@ -87,10 +87,10 @@ async function loadSettings() {
     if (settings.detail_position === 'side' || settings.detail_position === 'bottom') {
       state.settings.detail_position = settings.detail_position;
     }
-    if (settings.detail_width) state.settings.detail_width = parseInt(settings.detail_width, 10) || 360;
-    if (settings.detail_height) state.settings.detail_height = parseInt(settings.detail_height, 10) || 300;
-    if (settings.trash_cleanup_days) state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || 3;
-    if (settings.verified_cleanup_days) state.settings.verified_cleanup_days = parseInt(settings.verified_cleanup_days, 10) || 30;
+    if (settings.detail_width !== undefined && settings.detail_width !== '') state.settings.detail_width = parseInt(settings.detail_width, 10) || 360;
+    if (settings.detail_height !== undefined && settings.detail_height !== '') state.settings.detail_height = parseInt(settings.detail_height, 10) || 300;
+    if (settings.trash_cleanup_days !== undefined && settings.trash_cleanup_days !== '') state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || 3;
+    if (settings.verified_cleanup_days !== undefined && settings.verified_cleanup_days !== '') state.settings.verified_cleanup_days = parseInt(settings.verified_cleanup_days, 10) || 30;
     if (settings.layout === 'list' || settings.layout === 'columns') state.layout = settings.layout;
     if (settings.notify_permission === 'none' || settings.notify_permission === 'once' || settings.notify_permission === 'persistent') {
       state.settings.notify_permission = settings.notify_permission;
@@ -98,7 +98,7 @@ async function loadSettings() {
     if (settings.notify_completed === 'none' || settings.notify_completed === 'once' || settings.notify_completed === 'persistent') {
       state.settings.notify_completed = settings.notify_completed;
     }
-    if (settings.auto_order !== undefined) {
+    if (settings.auto_order !== '') {
       state.settings.auto_order = settings.auto_order !== 'false';
     }
   } catch { /* use defaults */ }
@@ -152,7 +152,7 @@ function rebuildCategoryUI() {
   if (hintsContainer) {
     const catHint = hintsContainer.querySelector('[data-hint="category"]');
     const keys = state.categories
-      .map(c => c.shortcutKey?.toUpperCase())
+      .map(c => c.shortcutKey.toUpperCase())
       .filter(Boolean)
       .join('/');
     if (catHint && keys) {
@@ -164,7 +164,7 @@ function rebuildCategoryUI() {
 async function loadAppName() {
   try {
     const fs = await api<{ appName?: string }>('/file-settings');
-    if (fs.appName) {
+    if (fs.appName !== undefined && fs.appName !== '') {
       document.title = fs.appName;
       const h1 = document.querySelector('.app-title h1');
       if (h1) h1.textContent = fs.appName;
@@ -352,7 +352,7 @@ function bindDetailPanel() {
     const btn = e.currentTarget as HTMLButtonElement;
     if (btn.disabled) return;
     closeAllMenus();
-    const current = btn.dataset.value || '';
+    const current = btn.dataset.value ?? '';
     const menu = createDropdown(btn, state.categories.map(c => ({
       label: c.label,
       key: c.shortcutKey,
@@ -370,7 +370,7 @@ function bindDetailPanel() {
     const btn = e.currentTarget as HTMLButtonElement;
     if (btn.disabled) return;
     closeAllMenus();
-    const current = btn.dataset.value || '';
+    const current = btn.dataset.value ?? '';
     const menu = createDropdown(btn, PRIORITY_ITEMS.map(p => ({
       label: p.label,
       key: p.key,
@@ -389,7 +389,7 @@ function bindDetailPanel() {
     const btn = e.currentTarget as HTMLButtonElement;
     if (btn.disabled) return;
     closeAllMenus();
-    const current = btn.dataset.value || '';
+    const current = btn.dataset.value ?? '';
     const menu = createDropdown(btn, STATUS_ITEMS.map(s => ({
       label: s.label,
       key: s.key,
@@ -433,7 +433,7 @@ function bindDetailPanel() {
       });
       // Fetch the updated ticket to get the after-state notes with the new ID
       const updated = await api<{ notes: string }>(`/tickets/${state.activeTicketId}`);
-      pushNotesUndo({ ...ticket, notes: beforeNotes } as import('./state.js').Ticket, 'Add note', updated.notes);
+      pushNotesUndo({ ...ticket, notes: beforeNotes } as Ticket, 'Add note', updated.notes);
       ticket.notes = updated.notes;
     }
     openDetail(state.activeTicketId);
@@ -458,7 +458,7 @@ function bindDetailPanel() {
 
   detailBody.addEventListener('dragenter', (e) => {
     e.preventDefault();
-    if (!e.dataTransfer?.types.includes('Files')) return;
+    if (e.dataTransfer?.types.includes('Files') !== true) return;
     dragCounter++;
     if (dragCounter === 1) detailBody.classList.add('drop-active');
   });
@@ -494,7 +494,7 @@ function bindDetailPanel() {
     const revealBtn: HTMLElement | null = target.closest('.attachment-reveal');
     if (revealBtn) {
       const attId = revealBtn.dataset['attId'];
-      if (attId) void api(`/attachments/${attId}/reveal`, { method: 'POST' });
+      if (attId !== undefined && attId !== '') void api(`/attachments/${attId}/reveal`, { method: 'POST' });
       return;
     }
 
@@ -580,7 +580,7 @@ function bindDetailPanel() {
       e.preventDefault();
       if (acDropdown && acIndex >= 0) {
         const items = acDropdown.querySelectorAll('.tag-autocomplete-item');
-        tagInput.value = items[acIndex]?.textContent || tagInput.value;
+        tagInput.value = items[acIndex].textContent ?? tagInput.value;
       }
       closeAutocomplete();
       void addCurrentTag();

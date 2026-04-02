@@ -3,20 +3,20 @@ import { suppressAnimation } from './animate.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
+import { createDraftRow } from './draftRow.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, state } from './state.js';
 import {
   callLoadTickets, callUpdateBatchToolbar, callUpdateColumnSelectionClasses,
   draggedTicketIds, setDraggedTicketIds,
 } from './ticketListState.js';
-import { trackedBatch } from './undo/actions.js';
-import { createDraftRow } from './draftRow.js';
 import { showCategoryMenu, showPriorityMenu, toggleUpNext } from './ticketRow.js';
+import { trackedBatch } from './undo/actions.js';
 
 // --- Column scroll state ---
 
-export function saveColumnScrollState(container: HTMLElement): { scrollLeft: number; columns: Record<string, number> } {
-  const result = { scrollLeft: 0, columns: {} as Record<string, number> };
+export function saveColumnScrollState(container: HTMLElement): { scrollLeft: number; columns: Partial<Record<string, number>> } {
+  const result = { scrollLeft: 0, columns: {} as Partial<Record<string, number>> };
   const columnsContainer = container.querySelector('.columns-container');
   if (columnsContainer) {
     result.scrollLeft = columnsContainer.scrollLeft;
@@ -29,7 +29,7 @@ export function saveColumnScrollState(container: HTMLElement): { scrollLeft: num
   return result;
 }
 
-export function restoreColumnScrollState(container: HTMLElement, saved: { scrollLeft: number; columns: Record<string, number> }) {
+export function restoreColumnScrollState(container: HTMLElement, saved: { scrollLeft: number; columns: Partial<Record<string, number>> }) {
   const columnsContainer = container.querySelector('.columns-container');
   if (columnsContainer) {
     columnsContainer.scrollLeft = saved.scrollLeft;
@@ -289,7 +289,7 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
       if (anchorTicket && anchorTicket.status === ticket.status) {
         const colTickets = state.tickets.filter(t => t.status === ticket.status);
         const colIds = colTickets.map(t => t.id);
-        const anchorIdx = colIds.indexOf(state.lastClickedId!);
+        const anchorIdx = colIds.indexOf(state.lastClickedId);
         const targetIdx = colIds.indexOf(ticket.id);
         if (anchorIdx !== -1 && targetIdx !== -1) {
           const from = Math.min(anchorIdx, targetIdx);

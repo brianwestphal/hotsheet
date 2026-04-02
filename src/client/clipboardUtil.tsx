@@ -3,10 +3,10 @@ import type { Ticket } from './state.js';
 import { showSkillsBanner } from './tauriIntegration.js';
 
 function parseNotes(raw: string): { text: string; created_at: string }[] {
-  if (!raw || raw === '') return [];
+  if (raw === '' || raw === undefined) return [];
   try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed;
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as { text: string; created_at: string }[];
   } catch { /* not JSON */ }
   if (raw.trim()) return [{ text: raw, created_at: '' }];
   return [];

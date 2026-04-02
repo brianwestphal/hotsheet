@@ -65,7 +65,7 @@ export function updateFile(path: string, content: string): boolean {
 
 function ticketSkillBody(skill: SkillDef): string {
   const settings = readFileSettings(skillDataDir);
-  const secret = settings.secret || '';
+  const secret = settings.secret ?? '';
   const secretLine = secret ? `  -H "X-Hotsheet-Secret: ${secret}" \\` : '';
   const lines = [
     `Create a new Hot Sheet **${skill.label}** ticket. ${skill.description}.`,
@@ -132,7 +132,7 @@ function ensureClaudePermissions(cwd: string): boolean {
   let settings: { permissions?: { allow?: string[] }; [key: string]: unknown } = {};
   if (existsSync(settingsPath)) {
     try {
-      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as typeof settings;
     } catch { /* corrupt file, overwrite */ }
   }
 

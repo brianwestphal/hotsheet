@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SafeHtml, raw, jsx, jsxs, Fragment } from './jsx-runtime.js';
+import { Fragment,jsx, jsxs, raw, SafeHtml } from './jsx-runtime.js';
 
 describe('SafeHtml', () => {
   it('stores raw HTML string', () => {

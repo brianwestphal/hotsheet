@@ -9,14 +9,14 @@ export function generateNoteId(): string {
   return `n_${Date.now().toString(36)}_${(noteCounter++).toString(36)}`;
 }
 
-export function parseNotes(raw: string): NoteEntry[] {
-  if (!raw || raw === '') return [];
+export function parseNotes(raw: string | null): NoteEntry[] {
+  if (raw === null || raw === '') return [];
   try {
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       // Auto-assign IDs to legacy notes that don't have one
       return parsed.map((n: { id?: string; text: string; created_at: string }) => ({
-        id: n.id || generateNoteId(),
+        id: n.id !== undefined && n.id !== '' ? n.id : generateNoteId(),
         text: n.text,
         created_at: n.created_at,
       }));

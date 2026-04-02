@@ -49,9 +49,9 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     const filePath = join(distDir, 'assets', filename);
     if (!existsSync(filePath)) return c.notFound();
     const content = readFileSync(filePath);
-    const ext = filename.split('.').pop();
+    const ext = filename.split('.').pop() ?? '';
     const mimeTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', svg: 'image/svg+xml' };
-    return new Response(content, { headers: { 'Content-Type': mimeTypes[ext || ''] || 'application/octet-stream', 'Cache-Control': 'max-age=86400' } });
+    return new Response(content, { headers: { 'Content-Type': mimeTypes[ext] ?? 'application/octet-stream', 'Cache-Control': 'max-age=86400' } });
   });
 
   // Secret validation middleware for API routes (HS-1684, HS-1982, HS-2083)
@@ -60,13 +60,13 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   app.use('/api/*', async (c, next) => {
     const settings = readFileSettings(dataDir);
     const expectedSecret = settings.secret;
-    if (!expectedSecret) { await next(); return; }
+    if (expectedSecret === undefined || expectedSecret === '') { await next(); return; }
 
     const headerSecret = c.req.header('X-Hotsheet-Secret');
     const method = c.req.method;
     const isMutation = method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE';
 
-    if (headerSecret) {
+    if (headerSecret !== undefined && headerSecret !== '') {
       // Header present: validate it
       if (headerSecret !== expectedSecret) {
         return c.json({
@@ -80,8 +80,8 @@ export async function startServer(port: number, dataDir: string, options?: { noO
       const origin = c.req.header('Origin');
       const referer = c.req.header('Referer');
       const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
-      const isSameOrigin = (origin && localhostPattern.test(origin))
-        || (referer && localhostPattern.test(referer));
+      const isSameOrigin = (origin !== undefined && origin !== '' && localhostPattern.test(origin))
+        || (referer !== undefined && referer !== '' && localhostPattern.test(referer));
       if (!isSameOrigin) {
         return c.json({
           error: 'Missing X-Hotsheet-Secret header. Read .hotsheet/settings.json for the correct port and secret.',
@@ -107,7 +107,7 @@ export async function startServer(port: number, dataDir: string, options?: { noO
       break;
     } catch (err: unknown) {
       if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
-        if (options?.strictPort) {
+        if (options?.strictPort === true) {
           // In strict port mode (Tauri dev), the Tauri window connects to the exact port
           // configured in tauri.conf.json's devUrl, so we can't silently switch ports.
           console.error(`\n  Error: Port ${port} is already in use.`);
@@ -130,7 +130,7 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   console.log(`\n  Hot Sheet running at ${url}\n`);
 
   // Open browser (unless suppressed for Tauri sidecar mode)
-  if (!options?.noOpen) {
+  if (options?.noOpen !== true) {
     const openCmd = process.platform === 'darwin' ? 'open'
       : process.platform === 'win32' ? 'start'
       : 'xdg-open';

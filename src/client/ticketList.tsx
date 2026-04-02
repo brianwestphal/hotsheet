@@ -1,17 +1,16 @@
 import { captureSnapshot, flipAnimate } from './animate.js';
 import { api } from './api.js';
+import { renderColumnView, renderPreviewColumnView, updateColumnSelectionClasses } from './columnView.js';
 import { syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
-import type { Ticket } from './state.js';
+import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
+import type { CustomView, Ticket } from './state.js';
 import { state } from './state.js';
 import {
-  draftTitle, setDraftTitle, setSuppressFocusSelect,
-  registerCallbacks,
-} from './ticketListState.js';
-import { renderColumnView, renderPreviewColumnView, updateColumnSelectionClasses } from './columnView.js';
-import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
+  draggedTicketIds as _draggedTicketIds,
+registerCallbacks,
+setDraftTitle, setSuppressFocusSelect} from './ticketListState.js';
 import { cancelPendingSave as _cancelPendingSave, createPreviewRow, createTicketRow, createTrashRow } from './ticketRow.js';
-import { draggedTicketIds as _draggedTicketIds } from './ticketListState.js';
 
 // --- Re-exports (preserves the public API of this module) ---
 
@@ -56,7 +55,7 @@ function canUseColumnView(): boolean {
 
 export function renderTicketList() {
   const snapshot = captureSnapshot();
-  const isPreview = !!state.backupPreview?.active;
+  const isPreview = state.backupPreview?.active === true;
 
   // Capture draft focus state before any path destroys the DOM (HS-2148)
   const focusedId = isPreview ? null : getFocusedTicketId();
@@ -217,7 +216,7 @@ function updateBatchToolbar() {
         state.selectedIds.clear();
         void loadTickets();
       });
-      toolbar.insertBefore(restoreBtn, document.getElementById('batch-count')!);
+      toolbar.insertBefore(restoreBtn, document.getElementById('batch-count'));
     }
     restoreBtn.disabled = !hasSelection;
     restoreBtn.style.display = '';
@@ -229,7 +228,7 @@ function updateBatchToolbar() {
         state.selectedIds.clear();
         void loadTickets();
       });
-      toolbar.insertBefore(emptyBtn, document.getElementById('batch-count')!);
+      toolbar.insertBefore(emptyBtn, document.getElementById('batch-count'));
     }
     emptyBtn.disabled = total === 0;
     emptyBtn.style.display = '';
@@ -269,7 +268,7 @@ function updateBatchToolbar() {
 
 export async function loadTickets() {
   // In preview mode, filter backup tickets locally instead of querying the API
-  if (state.backupPreview?.active) {
+  if (state.backupPreview?.active === true) {
     loadPreviewTickets();
     return;
   }
@@ -279,6 +278,7 @@ export async function loadTickets() {
     const viewId = state.view.slice(7);
     const view = state.customViews.find(v => v.id === viewId);
     if (view) {
+      const viewTag = (view as CustomView & { tag?: string }).tag;
       state.tickets = await api<Ticket[]>('/tickets/query', {
         method: 'POST',
         body: {
@@ -286,7 +286,7 @@ export async function loadTickets() {
           conditions: view.conditions,
           sort_by: state.sortBy,
           sort_dir: state.sortDir,
-          ...(view.tag ? { required_tag: view.tag } : {}),
+          ...(viewTag !== undefined && viewTag !== '' ? { required_tag: viewTag } : {}),
         },
       });
     } else {
@@ -365,7 +365,7 @@ function loadPreviewTickets() {
   }
 
   // Apply search
-  if (state.search) {
+  if (state.search !== '') {
     const q = state.search.toLowerCase();
     tickets = tickets.filter(t =>
       t.title.toLowerCase().includes(q) ||

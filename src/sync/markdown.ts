@@ -44,12 +44,12 @@ export function scheduleAllSync() {
 }
 
 function parseTicketNotes(raw: string): { text: string; created_at: string }[] {
-  if (!raw || raw === '') return [];
+  if (raw === '') return [];
   try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed;
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as { text: string; created_at: string }[];
   } catch { /* not JSON */ }
-  if (raw.trim()) return [{ text: raw, created_at: '' }];
+  if (raw.trim() !== '') return [{ text: raw, created_at: '' }];
   return [];
 }
 
@@ -67,9 +67,9 @@ async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Pr
   // Tags (displayed in Title Case)
   let ticketTags: string[] = [];
   try {
-    const tags = JSON.parse(ticket.tags);
+    const tags: unknown = JSON.parse(ticket.tags);
     if (Array.isArray(tags) && tags.length > 0) {
-      ticketTags = tags;
+      ticketTags = tags as string[];
       const display = tags.map((t: string) => t.replace(/\b\w/g, (c: string) => c.toUpperCase()));
       lines.push(`- Tags: ${display.join(', ')}`);
     }
@@ -118,9 +118,9 @@ async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Pr
 async function loadAutoContext(): Promise<AutoContextEntry[]> {
   try {
     const settings = await getSettings();
-    if (settings.auto_context) {
-      const parsed = JSON.parse(settings.auto_context);
-      if (Array.isArray(parsed)) return parsed;
+    if (settings.auto_context !== '') {
+      const parsed: unknown = JSON.parse(settings.auto_context);
+      if (Array.isArray(parsed)) return parsed as AutoContextEntry[];
     }
   } catch { /* ignore */ }
   return [];
@@ -149,7 +149,7 @@ async function syncWorklist(): Promise<void> {
     sections.push('## Workflow');
     sections.push('');
     const settings = readFileSettings(dataDir);
-    const secret = settings.secret || '';
+    const secret = settings.secret ?? '';
     const secretHeader = secret ? ` -H "X-Hotsheet-Secret: ${secret}"` : '';
 
     sections.push(`The Hot Sheet API is available at http://localhost:${port}/api. **You MUST update ticket status** as you work — this is required, not optional.`);
