@@ -338,10 +338,8 @@ function renderNotes(ticketId: number, notes: NoteEntry[]) {
       entry.addEventListener('click', () => {
         const textEl = entry.querySelector('.note-text') as HTMLElement;
         if (entry.querySelector('.note-edit-area')) return;
-        const textarea = document.createElement('textarea');
-        textarea.className = 'note-edit-area';
+        const textarea = toElement(<textarea className="note-edit-area" rows={3}></textarea>) as HTMLTextAreaElement;
         textarea.value = note.text;
-        textarea.rows = 3;
         textEl.style.display = 'none';
         entry.appendChild(textarea);
         textarea.focus();

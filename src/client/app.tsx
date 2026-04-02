@@ -155,8 +155,8 @@ function rebuildCategoryUI() {
       .map(c => c.shortcutKey.toUpperCase())
       .filter(Boolean)
       .join('/');
-    if (catHint && keys) {
-      catHint.innerHTML = `<kbd>\u2318${keys}</kbd> category`;
+    if (catHint !== null && keys !== '') {
+      catHint.innerHTML = (<><kbd>{'\u2318'}{keys}</kbd> category</>).toString();
     }
   }
 }

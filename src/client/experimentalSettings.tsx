@@ -129,8 +129,7 @@ function showIconPicker(anchor: HTMLElement, cmdIndex: number) {
     } else {
       // Show featured icons first, then a separator, then all
       const featured = FEATURED.map(name => CMD_ICONS.find(ic => ic.name === name)).filter(Boolean) as typeof CMD_ICONS;
-      const sep = document.createElement('div');
-      sep.className = 'icon-picker-separator';
+      const sep = toElement(<div className="icon-picker-separator"></div>);
       addIconButtons(featured);
       grid.appendChild(sep);
       icons = CMD_ICONS.filter(ic => !FEATURED.includes(ic.name));

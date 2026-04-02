@@ -153,15 +153,15 @@ describe('jsx — component functions', () => {
     function Greeting(props: { name: string }) {
       return jsx('span', { children: `Hello ${props.name}` });
     }
-    const result = jsx(Greeting, { name: 'World' });
+    const result = jsx(Greeting as (props: Record<string, unknown>) => SafeHtml, { name: 'World' });
     expect(result.__html).toBe('<span>Hello World</span>');
   });
 
   it('passes children to function components', () => {
-    function Wrapper(props: { children?: unknown }) {
+    function Wrapper(props: { children?: SafeHtml | string }) {
       return jsx('div', { className: 'wrapper', children: props.children });
     }
-    const result = jsx(Wrapper, { children: jsx('p', { children: 'inside' }) });
+    const result = jsx(Wrapper as (props: Record<string, unknown>) => SafeHtml, { children: jsx('p', { children: 'inside' }) });
     expect(result.__html).toBe('<div class="wrapper"><p>inside</p></div>');
   });
 });

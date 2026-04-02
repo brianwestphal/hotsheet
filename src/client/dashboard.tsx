@@ -145,15 +145,11 @@ function addChartHover(card: HTMLElement, data: { date: string; lines: { label: 
   if (bodyEl === null || data.length === 0) return;
   const body = bodyEl as HTMLElement;
 
-  const cursor = document.createElement('div');
-  cursor.className = 'chart-cursor';
-  cursor.style.display = 'none';
+  const cursor = toElement(<div className="chart-cursor" style="display:none"></div>);
   body.style.position = 'relative';
   body.appendChild(cursor);
 
-  const tooltip = document.createElement('div');
-  tooltip.className = 'chart-tooltip';
-  tooltip.style.display = 'none';
+  const tooltip = toElement(<div className="chart-tooltip" style="display:none"></div>);
   body.appendChild(tooltip);
 
   const svg = body.querySelector('svg');

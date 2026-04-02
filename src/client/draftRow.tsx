@@ -116,7 +116,7 @@ function getDefaultsFromView(): Record<string, unknown> {
 }
 
 function getDraftCategory(): string {
-  if (draftCategory !== '') return draftCategory;
+  if (draftCategory !== null && draftCategory !== '') return draftCategory;
   const view = state.view;
   if (view.startsWith('category:')) return view.split(':')[1];
   return 'issue';

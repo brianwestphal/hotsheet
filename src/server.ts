@@ -1,5 +1,5 @@
 import { serve } from '@hono/node-server';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { Hono } from 'hono';
 import { dirname, join } from 'path';
@@ -134,7 +134,7 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     const openCmd = process.platform === 'darwin' ? 'open'
       : process.platform === 'win32' ? 'start'
       : 'xdg-open';
-    exec(`${openCmd} ${url}`);
+    execFile(openCmd, [url]);
   }
 
   return actualPort;

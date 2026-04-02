@@ -385,7 +385,7 @@ function showViewEditor(existing?: CustomView) {
         // Autocomplete for tags field in rules editor
         const ruleTagAc = row.querySelector('.cv-rule-tag-ac');
         if (ruleTagAc) {
-          setupTagAutocomplete(valueEl as HTMLInputElement, ruleTagAc, (v) => { conditions[i].value = v; (valueEl as HTMLInputElement).value = v; });
+          setupTagAutocomplete(valueEl as HTMLInputElement, ruleTagAc as HTMLElement, (v) => { conditions[i].value = v; (valueEl as HTMLInputElement).value = v; });
         }
       }
       row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
