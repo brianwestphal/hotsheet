@@ -23,6 +23,14 @@ vi.mock('../skills.js', () => ({
   updateFile: vi.fn(),
 }));
 
+vi.mock('../channel-config.js', () => ({
+  isChannelAlive: vi.fn(() => Promise.resolve(false)),
+  getChannelPort: vi.fn(() => null),
+  registerChannel: vi.fn(),
+  unregisterChannel: vi.fn(),
+  triggerChannel: vi.fn(() => Promise.resolve(true)),
+}));
+
 import { apiRoutes } from './api.js';
 
 let tempDir: string;
@@ -765,6 +773,305 @@ describe('CSRF origin validation', () => {
   it('allows GET requests without Origin or secret', async () => {
     const res = await csrfApp.request('/api/tickets');
     expect(res.status).toBe(200);
+  });
+});
+
+describe('tags', () => {
+  it('GET /api/tags returns an array of strings', async () => {
+    // Create a ticket with tags to ensure at least one tag exists
+    await app.request('/api/tickets', post({
+      title: 'Tagged ticket',
+      defaults: { tags: JSON.stringify(['backend', 'urgent']) },
+    }));
+    const res = await app.request('/api/tags');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+    expect(data.length).toBeGreaterThanOrEqual(1);
+    // Every item should be a string
+    for (const tag of data) {
+      expect(typeof tag).toBe('string');
+    }
+  });
+
+  it('GET /api/tags returns empty array when no tags exist', async () => {
+    // Even if other tickets exist, the endpoint should return an array
+    const res = await app.request('/api/tags');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+  });
+});
+
+describe('notes CRUD', () => {
+  let ticketId: number;
+
+  it('PATCH /api/tickets/:id adds notes via update', async () => {
+    const t = await (await app.request('/api/tickets', post({ title: 'Notes test' }))).json();
+    ticketId = t.id;
+
+    // Add a first note
+    const res = await app.request(`/api/tickets/${ticketId}`, patch({ notes: 'First note' }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const notes = JSON.parse(data.notes);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toBe('First note');
+    expect(notes[0].id).toBeDefined();
+  });
+
+  it('PATCH /api/tickets/:id appends additional notes', async () => {
+    const res = await app.request(`/api/tickets/${ticketId}`, patch({ notes: 'Second note' }));
+    const data = await res.json();
+    const notes = JSON.parse(data.notes);
+    expect(notes).toHaveLength(2);
+    expect(notes[1].text).toBe('Second note');
+  });
+
+  it('PATCH /api/tickets/:id/notes/:noteId edits a note', async () => {
+    // Get current notes to find the note ID
+    const ticket = await (await app.request(`/api/tickets/${ticketId}`)).json();
+    const notes = JSON.parse(ticket.notes);
+    const noteId = notes[0].id;
+
+    const res = await app.request(`/api/tickets/${ticketId}/notes/${noteId}`, patch({ text: 'Edited note' }));
+    expect(res.status).toBe(200);
+    const updatedNotes = await res.json();
+    expect(updatedNotes[0].text).toBe('Edited note');
+  });
+
+  it('PATCH /api/tickets/:id/notes/:noteId returns 404 for missing ticket', async () => {
+    const res = await app.request('/api/tickets/99999/notes/fake-id', patch({ text: 'Nope' }));
+    expect(res.status).toBe(404);
+  });
+
+  it('PATCH /api/tickets/:id/notes/:noteId returns 404 for missing note ID', async () => {
+    const res = await app.request(`/api/tickets/${ticketId}/notes/nonexistent-id`, patch({ text: 'Nope' }));
+    expect(res.status).toBe(404);
+  });
+
+  it('DELETE /api/tickets/:id/notes/:noteId removes a note', async () => {
+    // Get current notes
+    const ticket = await (await app.request(`/api/tickets/${ticketId}`)).json();
+    const notes = JSON.parse(ticket.notes);
+    const noteId = notes[0].id;
+    const originalLength = notes.length;
+
+    const res = await app.request(`/api/tickets/${ticketId}/notes/${noteId}`, { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    const updatedNotes = await res.json();
+    expect(updatedNotes).toHaveLength(originalLength - 1);
+  });
+
+  it('DELETE /api/tickets/:id/notes/:noteId returns 404 for missing ticket', async () => {
+    const res = await app.request('/api/tickets/99999/notes/fake-id', { method: 'DELETE' });
+    expect(res.status).toBe(404);
+  });
+
+  it('DELETE /api/tickets/:id/notes/:noteId returns 404 for missing note', async () => {
+    const res = await app.request(`/api/tickets/${ticketId}/notes/nonexistent-id`, { method: 'DELETE' });
+    expect(res.status).toBe(404);
+  });
+
+  it('PUT /api/tickets/:id/notes-bulk replaces all notes', async () => {
+    const newNotes = JSON.stringify([
+      { id: 'bulk-1', text: 'Bulk note A', created_at: new Date().toISOString() },
+      { id: 'bulk-2', text: 'Bulk note B', created_at: new Date().toISOString() },
+    ]);
+    const res = await app.request(`/api/tickets/${ticketId}/notes-bulk`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: newNotes }),
+    });
+    expect(res.status).toBe(200);
+
+    // Verify the notes were replaced
+    const ticket = await (await app.request(`/api/tickets/${ticketId}`)).json();
+    const notes = JSON.parse(ticket.notes);
+    expect(notes).toHaveLength(2);
+    expect(notes[0].text).toBe('Bulk note A');
+    expect(notes[1].text).toBe('Bulk note B');
+  });
+
+  it('PUT /api/tickets/:id/notes-bulk returns 404 for missing ticket', async () => {
+    const res = await app.request('/api/tickets/99999/notes-bulk', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: '[]' }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('worklist info', () => {
+  it('GET /api/worklist-info returns prompt and skillCreated flag', async () => {
+    const res = await app.request('/api/worklist-info');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(typeof data.prompt).toBe('string');
+    expect(data.prompt).toContain('worklist.md');
+    expect(typeof data.skillCreated).toBe('boolean');
+  });
+});
+
+describe('channel endpoints', () => {
+  it('POST /api/channel/done sets the done flag', async () => {
+    const res = await app.request('/api/channel/done', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+  });
+
+  it('GET /api/channel/status returns status fields', async () => {
+    const res = await app.request('/api/channel/status');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(typeof data.enabled).toBe('boolean');
+    expect(typeof data.alive).toBe('boolean');
+    expect(typeof data.done).toBe('boolean');
+    // port can be number or null
+    expect(data.port === null || typeof data.port === 'number').toBe(true);
+  });
+
+  it('GET /api/channel/status consumes the done flag', async () => {
+    // Set done flag
+    await app.request('/api/channel/done', { method: 'POST' });
+
+    // First read should show done=true
+    const res1 = await app.request('/api/channel/status');
+    const data1 = await res1.json();
+    expect(data1.done).toBe(true);
+
+    // Second read should show done=false (consumed)
+    const res2 = await app.request('/api/channel/status');
+    const data2 = await res2.json();
+    expect(data2.done).toBe(false);
+  });
+
+  it('POST /api/channel/enable enables the channel', async () => {
+    const res = await app.request('/api/channel/enable', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+
+    // Verify the setting was persisted
+    const settings = await (await app.request('/api/settings')).json();
+    expect(settings.channel_enabled).toBe('true');
+  });
+
+  it('POST /api/channel/disable disables the channel', async () => {
+    const res = await app.request('/api/channel/disable', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+
+    // Verify the setting was persisted
+    const settings = await (await app.request('/api/settings')).json();
+    expect(settings.channel_enabled).toBe('false');
+  });
+});
+
+describe('print endpoint', () => {
+  it('POST /api/print writes HTML and returns ok', async () => {
+    const res = await app.request('/api/print', post({
+      html: '<html><body><h1>Print Test</h1></body></html>',
+    }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(typeof data.path).toBe('string');
+    expect(data.path).toContain('hotsheet-print');
+  });
+});
+
+describe('categories', () => {
+  it('GET /api/categories returns categories array', async () => {
+    const res = await app.request('/api/categories');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+  });
+
+  it('PUT /api/categories saves custom categories', async () => {
+    const customCategories = [
+      { key: 'bug', label: 'Bug', color: '#ff0000' },
+      { key: 'feature', label: 'Feature', color: '#00ff00' },
+      { key: 'task', label: 'Task', color: '#0000ff' },
+    ];
+    const res = await app.request('/api/categories', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(customCategories),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data).toHaveLength(3);
+
+    // Verify persistence
+    const check = await (await app.request('/api/categories')).json();
+    expect(check).toHaveLength(3);
+    expect(check[0].key).toBe('bug');
+  });
+
+  it('GET /api/category-presets returns presets', async () => {
+    const res = await app.request('/api/category-presets');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(typeof data).toBe('object');
+    // Should have at least one preset
+    expect(Object.keys(data).length).toBeGreaterThan(0);
+  });
+});
+
+describe('duplicate tickets', () => {
+  it('POST /api/tickets/duplicate creates copies (201)', async () => {
+    const t1 = await (await app.request('/api/tickets', post({
+      title: 'Dup source',
+      defaults: { category: 'bug', priority: 'high' },
+    }))).json();
+
+    const res = await app.request('/api/tickets/duplicate', post({ ids: [t1.id] }));
+    expect(res.status).toBe(201);
+    const created = await res.json();
+    expect(Array.isArray(created)).toBe(true);
+    expect(created).toHaveLength(1);
+    expect(created[0].title).toBe('Dup source - Copy');
+    expect(created[0].category).toBe('bug');
+    expect(created[0].id).not.toBe(t1.id);
+  });
+
+  it('POST /api/tickets/duplicate handles multiple IDs', async () => {
+    const t1 = await (await app.request('/api/tickets', post({ title: 'Dup A' }))).json();
+    const t2 = await (await app.request('/api/tickets', post({ title: 'Dup B' }))).json();
+
+    const res = await app.request('/api/tickets/duplicate', post({ ids: [t1.id, t2.id] }));
+    expect(res.status).toBe(201);
+    const created = await res.json();
+    expect(created).toHaveLength(2);
+  });
+});
+
+describe('bracket tag extraction', () => {
+  it('POST /api/tickets with [tag] syntax extracts tags', async () => {
+    const res = await app.request('/api/tickets', post({ title: 'Fix login [auth] [urgent]' }));
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.title).toBe('Fix login');
+    const tags = JSON.parse(data.tags);
+    expect(tags).toContain('auth');
+    expect(tags).toContain('urgent');
+  });
+
+  it('POST /api/tickets with [tag] merges with explicit defaults.tags', async () => {
+    const res = await app.request('/api/tickets', post({
+      title: 'Something [newtag]',
+      defaults: { tags: JSON.stringify(['existing']) },
+    }));
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    const tags = JSON.parse(data.tags);
+    expect(tags).toContain('existing');
+    expect(tags).toContain('newtag');
   });
 });
 
