@@ -107,20 +107,21 @@ The loop stays tight because the AI always knows what to work on next.
 **Also includes:**
 - **Tags** — free-form tags on tickets, with autocomplete and a batch tag dialog for multi-select
 - **Custom views** — create filtered views with an interactive query builder (field + operator + value conditions, AND/OR logic)
-- **Five priority levels** — Highest to Lowest, sortable and filterable
+- **Five priority levels** — Highest to Lowest, with Lucide chevron icons, sortable and filterable
 - **Up Next flag** — star tickets to add them to the AI worklist
-- **Drag and drop** — drag tickets onto sidebar views to change category, priority, or status; reorder custom views
-- **Right-click context menus** — full context menu on tickets with category/priority/status submenus, tags, duplicate, delete
+- **Drag and drop** — drag tickets onto sidebar views to change category, priority, or status; drop files onto the detail panel to attach; reorder custom views
+- **Right-click context menus** — full context menu on tickets with category/priority/status submenus, tags, duplicate, backlog, archive, delete — all with Lucide icons
 - **Search** — full-text search across ticket titles, details, and ticket numbers
 - **Print** — print the dashboard, all tickets, selected tickets, or individual tickets in checklist, summary, or full-detail format
 - **Keyboard-driven** — `Enter` to create, `Cmd+I/B/F/R/K/G` for categories, `Alt+1-5` for priority, `Cmd+D` for Up Next, `Delete` to trash, `Cmd+P` to print, `Cmd+Z/Shift+Z` for undo/redo
 - **Undo/redo** — `Cmd+Z` and `Cmd+Shift+Z` for all operations including notes, batch changes, and deletions
 - **Animated transitions** — smooth FLIP animations when tickets reorder after property changes
 - **Copy for commits** — `Cmd+C` copies selected ticket info (number + title + details + notes) for use in commit messages
-- **File attachments** — attach files to any ticket, reveal in file manager
+- **File attachments** — attach files via file picker or drag-and-drop onto the detail panel, reveal in file manager
 - **Markdown sync** — `worklist.md` and `open-tickets.md` auto-generated on every change
 - **Automatic backups** — tiered snapshots (every 5 min, hourly, daily) with preview-before-restore recovery
 - **Auto-cleanup** — configurable auto-deletion of old trash and verified items
+- **App icon variants** — 9 icon variants to choose from in Settings, applied instantly to the dock icon
 - **Fully local** — embedded PostgreSQL (PGLite), no network calls, no accounts, no telemetry
 
 ---
@@ -156,9 +157,12 @@ Hot Sheet automatically generates skill files for Claude Code (as well as Cursor
 Hot Sheet can push events directly to a running Claude Code session via MCP channels. Enable it in Settings → Experimental (the tab only appears when Claude Code is detected on your system):
 
 - **Play button** — appears in the sidebar. Single-click sends the worklist to Claude on demand.
-- **Auto mode** — double-click the play button to enable automatic mode. When you star a ticket for Up Next, Claude is notified after a 5-second debounce and picks up the work automatically.
-- **Custom commands** — create named buttons that send custom prompts to Claude. For example, a "Commit Changes" button that tells Claude to generate a commit message from recently completed tickets and commit. Configure in Settings → Experimental → Custom Commands.
-- **Status indicator** — shows "Claude working" / "Claude idle" in the footer.
+- **Auto mode** — double-click the play button to enable automatic mode. When you star a ticket for Up Next, Claude is notified after a 5-second debounce and picks up the work automatically. Exponential backoff prevents runaway retries.
+- **Auto-prioritize** — when no tickets are flagged as Up Next, Claude automatically evaluates open tickets and picks the most important ones to work on.
+- **Custom commands** — create named buttons that send custom prompts to Claude **or run shell commands** directly. Toggle between "Claude Code" and "Shell" targets per command. Shell commands execute server-side with stdout/stderr captured to the commands log.
+- **Permission relay** — when Claude needs tool approval (Bash, Edit, etc.), a full-screen overlay shows the tool name and command preview with Allow/Deny/Dismiss buttons — no need to switch to the terminal.
+- **Commands log** — a resizable bottom panel that records all communication: triggers, completions, permission requests, and shell command output. Filter by type, search, and copy entries. Shell commands show a stop button for running processes.
+- **Status indicator** — shows "Claude working" / "Shell running" / idle in the footer.
 
 Requires Claude Code v2.1.80+ with channel support. See [docs/12-claude-channel.md](docs/12-claude-channel.md) for setup details.
 
@@ -293,7 +297,10 @@ hotsheet --browser
 |------|-------------|
 | `--port <number>` | Port to run on (default: 4174) |
 | `--data-dir <path>` | Data directory (default: `.hotsheet/`) |
+| `--no-open` | Don't open the browser on startup |
+| `--strict-port` | Fail if the requested port is in use |
 | `--browser` | Open in browser instead of desktop window |
+| `--check-for-updates` | Check for new versions |
 | `--help` | Show help |
 
 ### Settings file
@@ -311,8 +318,9 @@ Create `.hotsheet/settings.json` to configure per-project options:
 |-----|-------------|
 | `appName` | Custom window title (defaults to the project folder name) |
 | `backupDir` | Backup storage path (defaults to `.hotsheet/backups/`) |
+| `appIcon` | Icon variant (`default`, `variant-1` through `variant-9`) |
 
-Both settings can also be changed from the settings panel UI.
+All settings can also be changed from the settings panel UI.
 
 ### Keyboard shortcuts
 
@@ -360,9 +368,15 @@ npm install
 
 npm run dev              # Build client assets, then run via tsx
 npm run build            # Build to dist/cli.js
+npm test                 # Unit tests with coverage (446 tests)
+npm run test:e2e         # E2E browser tests (55 tests)
+npm run test:all         # Merged coverage report (unit + E2E)
+npm run lint             # ESLint
 npm run clean            # Remove dist and caches
 npm link                 # Symlink for global 'hotsheet' command
 ```
+
+The project has comprehensive test coverage with 446 unit tests (vitest) and 55 Playwright E2E browser tests, plus 12 smoke tests for production install verification.
 
 ---
 
