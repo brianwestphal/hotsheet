@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.10.2] - 2026-04-03
+
+- Fixed RC GitHub Action production version numbering
+
 ## [0.10.1] - 2026-04-03
 
 - Fixed RC GitHub action
