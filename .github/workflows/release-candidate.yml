@@ -127,7 +127,9 @@ jobs:
 
       - run: npm ci
 
-      - name: Set version and publish beta (OIDC provenance)
+      - name: Set version and publish beta
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm version "${{ steps.version.outputs.rc_version }}" --no-git-tag-version --allow-same-version
           npm run build
