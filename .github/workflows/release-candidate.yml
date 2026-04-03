@@ -150,7 +150,11 @@ jobs:
 
       - name: Install beta globally and start server
         run: |
-          npm install -g hotsheet@${{ needs.beta-publish.outputs.rc_version }}
+          for i in 1 2 3 4 5; do
+            npm install -g hotsheet@${{ needs.beta-publish.outputs.rc_version }} && break
+            echo "Attempt $i failed, waiting 15s for npm registry propagation..."
+            sleep 15
+          done
           hotsheet --data-dir /tmp/smoke-fresh --no-open --port 4195 &
           sleep 5
 
@@ -182,7 +186,11 @@ jobs:
 
       - name: Upgrade to beta and start server
         run: |
-          npm install -g hotsheet@${{ needs.beta-publish.outputs.rc_version }}
+          for i in 1 2 3 4 5; do
+            npm install -g hotsheet@${{ needs.beta-publish.outputs.rc_version }} && break
+            echo "Attempt $i failed, waiting 15s for npm registry propagation..."
+            sleep 15
+          done
           hotsheet --data-dir /tmp/smoke-upgrade --no-open --port 4195 &
           sleep 5
 
