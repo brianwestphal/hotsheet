@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.10.4] - 2026-04-03
+
+- Fixed permissions on RC workflow
+
 ## [0.10.3] - 2026-04-03
 
 - Making sure desktop apps get released after npm package release
