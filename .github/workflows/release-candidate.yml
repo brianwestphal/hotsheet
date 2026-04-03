@@ -207,6 +207,8 @@ jobs:
 
       - name: Create final release tag
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           FINAL_TAG="v${{ needs.beta-publish.outputs.base_version }}"
           RC_TAG="${GITHUB_REF_NAME}"
           NOTES=$(git tag -l --format='%(contents)' "$RC_TAG")

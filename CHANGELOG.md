@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.10.1] - 2026-04-03
+
+- Updated release script
+- Updated GitHub actions configuration
+
 ## [0.10.0] - 2026-04-02
 
 - Added auto-prioritize option (enabled by default) -- if no items are in "up next" and this option is enabled, running /hotsheet (or clicking the play button when using Claude channels), automatically determines what should be worked on next

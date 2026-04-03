@@ -14,8 +14,8 @@ export async function nextTicketNumber(): Promise<string> {
 
 export async function createTicket(title: string, defaults?: Partial<{
   category: TicketCategory;
-  priority: TicketPriority;
-  status: TicketStatus;
+  priority: TicketPriority | '';
+  status: TicketStatus | '';
   up_next: boolean;
   details: string;
   tags: string;
@@ -24,9 +24,9 @@ export async function createTicket(title: string, defaults?: Partial<{
   const ticketNumber = await nextTicketNumber();
   const cols = ['ticket_number', 'title'];
   const vals: unknown[] = [ticketNumber, title];
-  if (defaults?.category !== undefined && (defaults.category as string) !== '') { cols.push('category'); vals.push(defaults.category); }
-  if (defaults?.priority !== undefined && (defaults.priority as string) !== '') { cols.push('priority'); vals.push(defaults.priority); }
-  if (defaults?.status !== undefined && (defaults.status as string) !== '') { cols.push('status'); vals.push(defaults.status); }
+  if (defaults?.category !== undefined && defaults.category !== '') { cols.push('category'); vals.push(defaults.category); }
+  if (defaults?.priority !== undefined && defaults.priority !== '') { cols.push('priority'); vals.push(defaults.priority); }
+  if (defaults?.status !== undefined && defaults.status !== '') { cols.push('status'); vals.push(defaults.status); }
   if (defaults?.up_next !== undefined) { cols.push('up_next'); vals.push(defaults.up_next); }
   if (defaults?.details !== undefined && defaults.details !== '') { cols.push('details'); vals.push(defaults.details); }
   if (defaults?.tags !== undefined && defaults.tags !== '' && defaults.tags !== '[]') { cols.push('tags'); vals.push(defaults.tags); }

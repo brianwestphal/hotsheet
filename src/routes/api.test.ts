@@ -1257,8 +1257,8 @@ describe('custom view query', () => {
 // ---------- channel route endpoint tests ----------
 
 vi.mock('child_process', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('child_process')>();
-  return { ...actual, execFileSync: vi.fn() };
+  const actual = await importOriginal();
+  return { ...(actual as object), execFileSync: vi.fn() };
 });
 
 interface ClaudeCheckResponse {
