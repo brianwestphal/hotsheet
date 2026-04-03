@@ -70,7 +70,9 @@ test.describe('Upgrade install smoke test', () => {
   test('search works after upgrade', async ({ page }) => {
     const searchInput = page.locator('#search-input');
     await searchInput.fill('Upgrade ticket 1');
-    await page.waitForTimeout(300);
-    await expect(page.locator('.ticket-title-input[value="Upgrade ticket 1"]')).toBeVisible({ timeout: 5000 });
+    await page.waitForTimeout(500);
+    // After search, only matching tickets should be visible
+    const rows = page.locator('.ticket-row[data-id]');
+    await expect(rows).toHaveCount(1, { timeout: 5000 });
   });
 });

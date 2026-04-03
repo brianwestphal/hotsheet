@@ -32,7 +32,7 @@ test.describe('Fresh install smoke test', () => {
     const draft = page.locator('.draft-input');
     await draft.fill('Detail smoke test');
     await draft.press('Enter');
-    await expect(page.locator('.ticket-row[data-id]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.ticket-title-input[value="Detail smoke test"]')).toBeVisible({ timeout: 5000 });
 
     // Click to open detail panel
     await page.locator('.ticket-row[data-id] .ticket-number').first().click();

@@ -6,6 +6,7 @@ const useWebServer = !process.env.NO_WEB_SERVER;
 
 export default defineConfig({
   testDir: 'e2e',
+  testIgnore: ['**/smoke/**'],  // Smoke tests use playwright.config.smoke.ts with their own server
   timeout: 30_000,
   retries: 0,
   workers: 1,
