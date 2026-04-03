@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.10.1] - 2026-04-03
 
+- Fixed RC GitHub action
+
+## [0.10.1] - 2026-04-03
+
 - Fix beta publish
 
 ## [0.10.1] - 2026-04-03
