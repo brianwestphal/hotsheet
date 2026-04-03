@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.10.1] - 2026-04-03
 
+- Using GitHub actions for more complex testing / release process
+
+## [0.10.1] - 2026-04-03
+
 - Updated release script
 - Updated GitHub actions configuration
 
