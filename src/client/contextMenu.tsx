@@ -65,30 +65,34 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
 
   addSeparator(menu);
 
-  // Tags
+  // Tags — Lucide tag icon
   addActionItem(menu, 'Tags...', () => {
-    // Dispatch to the batch tags dialog (imported in app.tsx)
     document.dispatchEvent(new CustomEvent('hotsheet:show-tags-dialog'));
-  });
+  }, { icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>' });
 
-  // Duplicate
+  // Duplicate — Lucide copy icon
   addActionItem(menu, 'Duplicate', async () => {
     const ids = Array.from(state.selectedIds);
     const created = await api<Ticket[]>('/tickets/duplicate', { method: 'POST', body: { ids } });
     state.selectedIds.clear();
     for (const t of created) state.selectedIds.add(t.id);
     void loadTickets();
+  }, { icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>' });
+
+  addSeparator(menu);
+
+  // Move to Backlog — Lucide calendar icon
+  addActionItem(menu, 'Move to Backlog', () => applyToSelected('status', 'backlog'), {
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>',
+  });
+  // Archive — Lucide archive icon
+  addActionItem(menu, 'Archive', () => applyToSelected('status', 'archive'), {
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>',
   });
 
   addSeparator(menu);
 
-  // Move to Backlog / Archive
-  addActionItem(menu, 'Move to Backlog', () => applyToSelected('status', 'backlog'));
-  addActionItem(menu, 'Archive', () => applyToSelected('status', 'archive'));
-
-  addSeparator(menu);
-
-  // Delete
+  // Delete — Lucide trash icon
   addActionItem(menu, 'Delete', async () => {
     if (state.selectedIds.size === 1) {
       await trackedDelete(ticket);
@@ -99,7 +103,7 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
     }
     state.selectedIds.clear();
     void loadTickets();
-  }, true);
+  }, { danger: true, icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>' });
 
   document.body.appendChild(menu);
   clampToViewport(menu);
@@ -175,9 +179,10 @@ function addSubmenuItem(menu: HTMLElement, label: string, items: SubItem[]) {
   menu.appendChild(item);
 }
 
-function addActionItem(menu: HTMLElement, label: string, action: () => void, danger = false) {
+function addActionItem(menu: HTMLElement, label: string, action: () => void, options?: { danger?: boolean; icon?: string }) {
   const item = toElement(
-    <div className={`context-menu-item${danger ? ' danger' : ''}`}>
+    <div className={`context-menu-item${options?.danger === true ? ' danger' : ''}`}>
+      {options?.icon !== undefined ? <span className="dropdown-icon">{raw(options.icon)}</span> : null}
       <span className="context-menu-label">{label}</span>
     </div>
   );

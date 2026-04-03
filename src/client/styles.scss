@@ -152,11 +152,13 @@ input, select, textarea {
 
 .sort-controls {
   select {
-    padding: 6px 8px;
+    padding: 4px 8px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--bg);
     cursor: pointer;
+    font-size: 13px;
+    height: 28px; // Match segmented control height
   }
 }
 

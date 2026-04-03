@@ -15,7 +15,7 @@ The `command_log` table stores log entries:
 | direction | TEXT | `outgoing` (to Claude), `incoming` (from Claude), `system` |
 | summary | TEXT | Short description (first line displayed) |
 | detail | TEXT | Full content (expandable) |
-| created_at | TIMESTAMP | When the event occurred |
+| created_at | TIMESTAMPTZ | When the event occurred |
 
 Indexed on `created_at` for efficient newest-first queries.
 
@@ -25,12 +25,8 @@ Indexed on `created_at` for efficient newest-first queries.
 |------|-----------|------|
 | `trigger` | outgoing | Channel trigger sent to Claude (worklist or custom command) |
 | `done` | incoming | Claude signals completion via /channel/done |
-| `permission_request` | incoming | Claude requests permission for a tool (logged once per request_id) |
-| `permission_response` | outgoing | User allows or denies a permission request |
-| `custom_command` | outgoing | Custom command button clicked |
-| `shell_command` | outgoing | Shell command executed (see [future] §14.8) |
-| `shell_output` | incoming | Shell command stdout/stderr output |
-| `error` | system | Error during command execution |
+| `permission_request` | incoming | Claude requests permission for a tool. Updated in-place when user responds (summary changes to "Permission: {tool} — Allowed/Denied"). Logged once per request_id. |
+| `shell_command` | outgoing | Shell command executed. Updated in-place with output when command completes (detail gets separator + stdout/stderr). |
 
 ## 14.4 UI — Log Button
 

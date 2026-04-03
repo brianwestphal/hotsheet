@@ -30,11 +30,8 @@ let currentEntries: LogEntry[] = [];
 const ALL_FILTER_TYPES = [
   { value: 'trigger', label: 'Triggers' },
   { value: 'done', label: 'Completions' },
-  { value: 'permission_request', label: 'Permission Requests' },
-  { value: 'permission_response', label: 'Permission Responses' },
-  { value: 'custom_command', label: 'Custom Commands' },
+  { value: 'permission_request', label: 'Permissions' },
   { value: 'shell_command', label: 'Shell Commands' },
-  { value: 'error', label: 'Errors' },
 ];
 
 const activeFilterTypes = new Set<string>(ALL_FILTER_TYPES.map(t => t.value));
@@ -92,11 +89,7 @@ function typeBadgeColor(eventType: string): string {
     case 'trigger': return '#3b82f6';
     case 'done': return '#22c55e';
     case 'permission_request': return '#f97316';
-    case 'permission_response': return '#a855f7';
-    case 'custom_command': return '#14b8a6';
     case 'shell_command': return '#6b7280';
-    case 'shell_output': return '#6b7280';
-    case 'error': return '#ef4444';
     default: return '#6b7280';
   }
 }
@@ -106,11 +99,7 @@ function typeBadgeLabel(eventType: string): string {
     case 'trigger': return 'trigger';
     case 'done': return 'done';
     case 'permission_request': return 'permission';
-    case 'permission_response': return 'response';
-    case 'custom_command': return 'command';
     case 'shell_command': return 'shell';
-    case 'shell_output': return 'output';
-    case 'error': return 'error';
     default: return eventType;
   }
 }
