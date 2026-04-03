@@ -24,6 +24,7 @@ let currentSearch = '';
 const selectedLogIds = new Set<number>();
 let lastClickedId: number | null = null;
 let currentEntries: LogEntry[] = [];
+const expandedEntryIds = new Set<number>();
 
 // --- Multi-select filter (HS-2550) ---
 
@@ -298,11 +299,13 @@ function renderEntries(entries: LogEntry[]) {
       updateSelectionClasses();
 
       if (hasMore) {
-        el.classList.toggle('expanded');
+        const isExpanded = el.classList.toggle('expanded');
+        // Track expand state across refreshes
+        if (isExpanded) expandedEntryIds.add(entry.id); else expandedEntryIds.delete(entry.id);
         // For shell entries, handle the output detail expand separately
         const detailEls = el.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
         const fullEl = el.querySelector<HTMLElement>('.command-log-detail-full');
-        if (el.classList.contains('expanded')) {
+        if (isExpanded) {
           for (const d of detailEls) (d as HTMLElement).style.display = 'none';
           if (fullEl) fullEl.style.display = '';
         } else {
@@ -330,6 +333,18 @@ function renderEntries(entries: LogEntry[]) {
   // Replace content atomically — if anything above threw, the old content remains
   container.innerHTML = '';
   container.appendChild(fragment);
+
+  // Restore expanded state from previous render
+  for (const id of expandedEntryIds) {
+    const el = container.querySelector<HTMLElement>(`.command-log-entry[data-id="${id}"]`);
+    if (el !== null) {
+      el.classList.add('expanded');
+      const detailEls = el.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
+      const fullEl = el.querySelector<HTMLElement>('.command-log-detail-full');
+      for (const d of detailEls) (d as HTMLElement).style.display = 'none';
+      if (fullEl) fullEl.style.display = '';
+    }
+  }
 }
 
 // --- Load entries from API ---
@@ -373,7 +388,27 @@ function openPanel() {
   void loadEntries();
   startPolling();
   // Mark all as seen
-  updateBadge(0);
+  updateBadge(false);
+}
+
+/** Open the log panel and scroll to a specific entry, expanding it. */
+export function showLogEntryById(logId: number) {
+  if (!panelOpen) openPanel();
+  // Wait for entries to load, then scroll to and expand the entry
+  setTimeout(() => {
+    const entry = document.querySelector<HTMLElement>(`.command-log-entry[data-id="${logId}"]`);
+    if (entry !== null) {
+      entry.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Auto-expand if not already
+      if (!entry.classList.contains('expanded')) {
+        entry.click();
+      }
+      // Highlight briefly
+      entry.classList.add('selected');
+      selectedLogIds.clear();
+      selectedLogIds.add(logId);
+    }
+  }, 500);
 }
 
 function closePanel() {
@@ -411,23 +446,16 @@ function stopPolling() {
 
 // --- Badge ---
 
-function updateBadge(count: number) {
+function updateBadge(hasNew: boolean) {
   const badge = document.getElementById('command-log-badge');
   if (!badge) return;
-  if (count > 0) {
-    badge.textContent = String(count > 99 ? '99+' : count);
-    badge.style.display = '';
-  } else {
-    badge.style.display = 'none';
-  }
+  badge.style.display = hasNew ? '' : 'none';
 }
 
 /** Refresh the unread count badge. Call after channel events. */
 export async function refreshLogBadge() {
   if (panelOpen) return; // No badge when panel is open
   try {
-    const { count } = await api<{ count: number }>('/command-log/count');
-    // Count entries newer than last seen
     if (lastSeenId === 0) {
       // First load: set baseline without showing badge
       const entries = await api<LogEntry[]>('/command-log?limit=1');
@@ -438,8 +466,7 @@ export async function refreshLogBadge() {
     // For simplicity, just show total count if there are new entries.
     const entries = await api<LogEntry[]>('/command-log?limit=1');
     if (entries.length > 0 && entries[0].id > lastSeenId) {
-      // Count how many are new
-      updateBadge(count);
+      updateBadge(true);
     }
   } catch { /* ignore */ }
 }

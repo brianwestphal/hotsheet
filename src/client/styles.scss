@@ -424,6 +424,16 @@ input, select, textarea {
     }
   }
 
+  .command-auto-show-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    cursor: pointer;
+  }
+
   input[type="text"] {
     flex: 1;
     padding: 4px 8px;
@@ -2927,17 +2937,14 @@ input, select, textarea {
 
 .command-log-badge {
   position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--danger);
-  color: white;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 16px;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  overflow: hidden;
+  font-size: 0;
   text-align: center;
 }
 

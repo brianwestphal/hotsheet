@@ -14,6 +14,7 @@ interface CustomCommand {
   icon?: string;
   color?: string;
   target?: 'claude' | 'shell';  // default 'claude'
+  autoShowLog?: boolean;  // auto-show log entry on shell completion (always on error)
 }
 
 // Predefined color palette for command buttons
@@ -63,7 +64,7 @@ export function renderChannelCommands() {
     );
     btn.addEventListener('click', () => {
       if (cmd.target === 'shell') {
-        void runShellCommand(cmd.prompt, cmd.name);
+        void runShellCommand(cmd.prompt, cmd.name, cmd.autoShowLog === true);
       } else {
         triggerChannelAndMarkBusy(cmd.prompt);
       }
@@ -97,6 +98,8 @@ function setShellBusy(busy: boolean) {
   }
 }
 
+let shellAutoShowLog = false;
+
 function startShellPoll(id: number) {
   if (shellPollTimer) clearInterval(shellPollTimer);
   shellPollTimer = setInterval(async () => {
@@ -104,17 +107,36 @@ function startShellPoll(id: number) {
       const { ids } = await api<{ ids: number[] }>('/shell/running');
       if (!ids.includes(id)) {
         // Process finished
+        const wasAutoShow = shellAutoShowLog;
         shellBusyId = null;
+        shellAutoShowLog = false;
         if (shellPollTimer) { clearInterval(shellPollTimer); shellPollTimer = null; }
         setShellBusy(false);
         void refreshLogBadge();
+        // Auto-show log entry on completion or error
+        void autoShowLogEntry(id, wasAutoShow);
       }
     } catch { /* ignore */ }
   }, 2000);
 }
 
-async function runShellCommand(command: string, name?: string) {
+async function autoShowLogEntry(logId: number, autoShow: boolean) {
+  try {
+    const entries = await api<{ id: number; summary: string }[]>('/command-log?limit=50');
+    const entry = entries.find(e => e.id === logId);
+    if (!entry) return;
+    // Check for error: summary doesn't end with "Completed (exit 0)"
+    const isError = !entry.summary.includes('Completed (exit 0)');
+    if (autoShow || isError) {
+      const { showLogEntryById } = await import('./commandLog.js');
+      showLogEntryById(logId);
+    }
+  } catch { /* non-critical */ }
+}
+
+async function runShellCommand(command: string, name?: string, autoShow = false) {
   setShellBusy(true);
+  shellAutoShowLog = autoShow;
   try {
     const result = await api<{ id: number }>('/shell/exec', { method: 'POST', body: { command, name } });
     shellBusyId = result.id;
@@ -122,6 +144,7 @@ async function runShellCommand(command: string, name?: string) {
     void refreshLogBadge();
   } catch {
     setShellBusy(false);
+    shellAutoShowLog = false;
   }
 }
 
@@ -268,6 +291,9 @@ function renderCustomCommandSettings() {
         </div>
         <label className="command-prompt-label">{promptLabel}</label>
         <textarea placeholder={promptPlaceholder}>{cmd.prompt}</textarea>
+        <label className="command-auto-show-label" style={currentTarget === 'shell' ? '' : 'display:none'}>
+          <input type="checkbox" className="command-auto-show" checked={cmd.autoShowLog === true} /> Show log on completion
+        </label>
       </div>
     );
 
@@ -275,6 +301,8 @@ function renderCustomCommandSettings() {
     const promptArea = row.querySelector('textarea') as HTMLTextAreaElement;
     const segBtns = row.querySelectorAll('.seg-btn');
     const promptLabelEl = row.querySelector('.command-prompt-label') as HTMLElement;
+    const autoShowLabel = row.querySelector('.command-auto-show-label') as HTMLElement;
+    const autoShowCheckbox = row.querySelector('.command-auto-show') as HTMLInputElement;
 
     const save = () => {
       customCommands[i] = { ...customCommands[i], name: nameInput.value, prompt: promptArea.value };
@@ -283,6 +311,11 @@ function renderCustomCommandSettings() {
 
     nameInput.addEventListener('input', save);
     promptArea.addEventListener('input', save);
+
+    autoShowCheckbox.addEventListener('change', () => {
+      customCommands[i] = { ...customCommands[i], autoShowLog: autoShowCheckbox.checked };
+      void saveCustomCommands();
+    });
 
     for (const segBtn of segBtns) {
       segBtn.addEventListener('click', () => {
@@ -293,6 +326,7 @@ function renderCustomCommandSettings() {
         // Update the label and placeholder dynamically
         promptLabelEl.textContent = target === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
         promptArea.placeholder = target === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
+        autoShowLabel.style.display = target === 'shell' ? '' : 'none';
         void saveCustomCommands();
       });
     }
