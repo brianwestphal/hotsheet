@@ -6,8 +6,14 @@ Shell command targets allow custom command buttons to execute shell commands dir
 
 Each custom command (configured in Settings > Experimental > Custom Commands) has a **target** field:
 
-- **Claude Code** (default) — sends the prompt to the Claude Channel as before (see [12-claude-channel.md](12-claude-channel.md))
-- **Shell** — executes the prompt text as a shell command on the server
+- **Claude Code** — sends the prompt to the Claude Channel (see [12-claude-channel.md](12-claude-channel.md)). Requires Claude Channel to be enabled.
+- **Shell** — executes the prompt text as a shell command on the server. Works without Claude Channel.
+
+When Claude Channel is disabled, new commands default to Shell target. If a command is set to Claude Code while the channel is disabled, a warning is shown indicating the command won't appear in the sidebar until the channel is enabled.
+
+### Sidebar Visibility
+
+Shell commands always appear in the sidebar, regardless of Claude Channel status. Claude Code commands only appear when the channel is enabled. The custom commands settings section is always visible in the Experimental tab (even without Claude CLI installed).
 
 The target is selected via a dropdown in the command editor row, positioned before the prompt/command text field. When "Shell" is selected, the prompt label changes to "Shell command to run:" and the placeholder updates accordingly.
 

@@ -261,7 +261,7 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>
               <span>Context</span>
             </button>
-            <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental" style="display:none">
+            <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>
               <span>Experimental</span>
             </button>
@@ -343,7 +343,7 @@ pageRoutes.get('/', (c) => {
               <span className="settings-hint" style="margin-bottom:12px;display:block">Automatically prepend instructions to ticket details in the worklist, based on category or tag. Category context appears first, then tag context in alphabetical order.</span>
               <div id="auto-context-list"></div>
             </div>
-            <div className="settings-tab-panel" data-panel="experimental" id="settings-experimental-panel" style="display:none">
+            <div className="settings-tab-panel" data-panel="experimental" id="settings-experimental-panel">
               <div className="settings-field">
                 <label className="settings-checkbox-label">
                   <input type="checkbox" id="settings-channel-enabled" />

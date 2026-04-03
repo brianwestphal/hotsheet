@@ -32,6 +32,16 @@ const CMD_COLORS = [
 
 let customCommands: CustomCommand[] = [];
 
+let channelEnabledState = false;
+
+function isChannelEnabled(): boolean {
+  return channelEnabledState;
+}
+
+export function setChannelEnabledState(enabled: boolean) {
+  channelEnabledState = enabled;
+}
+
 export function renderIconSvg(svgPath: string, size = 14, color = 'currentColor'): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${svgPath}</svg>`;
 }
@@ -50,12 +60,16 @@ export function renderChannelCommands() {
   if (!container) return;
   container.innerHTML = '';
 
-  // Only show if channel is enabled and there are commands
+  // Check if Claude channel is enabled
   const channelSection = document.getElementById('channel-play-section');
-  if (!channelSection || channelSection.style.display === 'none') return;
+  const channelEnabled = channelSection !== null && channelSection.style.display !== 'none';
 
   for (const cmd of customCommands) {
     if (!cmd.name.trim() || !cmd.prompt.trim()) continue;
+    // Show shell commands always; show Claude commands only when channel is enabled
+    const isShell = cmd.target === 'shell';
+    if (!isShell && !channelEnabled) continue;
+
     const color = cmd.color ?? CMD_COLORS[0].value;
     const textColor = contrastColor(color);
     const iconDef = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
@@ -63,7 +77,7 @@ export function renderChannelCommands() {
       <button className="channel-command-btn" style={`background:${color};color:${textColor}`}>{raw(renderIconSvg(iconDef.svg, 14, textColor))}<span>{cmd.name}</span></button>
     );
     btn.addEventListener('click', () => {
-      if (cmd.target === 'shell') {
+      if (isShell) {
         void runShellCommand(cmd.prompt, cmd.name, cmd.autoShowLog === true);
       } else {
         triggerChannelAndMarkBusy(cmd.prompt);
@@ -294,6 +308,9 @@ function renderCustomCommandSettings() {
         <label className="command-auto-show-label" style={currentTarget === 'shell' ? '' : 'display:none'}>
           <input type="checkbox" className="command-auto-show" checked={cmd.autoShowLog === true} /> Show log on completion
         </label>
+        <div className="command-claude-warning" style={currentTarget !== 'shell' && !isChannelEnabled() ? '' : 'display:none'}>
+          {'\u26A0'} This command won't appear in the sidebar unless Claude Channel is enabled above.
+        </div>
       </div>
     );
 
@@ -303,6 +320,7 @@ function renderCustomCommandSettings() {
     const promptLabelEl = row.querySelector('.command-prompt-label') as HTMLElement;
     const autoShowLabel = row.querySelector('.command-auto-show-label') as HTMLElement;
     const autoShowCheckbox = row.querySelector('.command-auto-show') as HTMLInputElement;
+    const claudeWarning = row.querySelector('.command-claude-warning') as HTMLElement;
 
     const save = () => {
       customCommands[i] = { ...customCommands[i], name: nameInput.value, prompt: promptArea.value };
@@ -327,6 +345,7 @@ function renderCustomCommandSettings() {
         promptLabelEl.textContent = target === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
         promptArea.placeholder = target === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
         autoShowLabel.style.display = target === 'shell' ? '' : 'none';
+        claudeWarning.style.display = target !== 'shell' && !isChannelEnabled() ? '' : 'none';
         void saveCustomCommands();
       });
     }
@@ -386,8 +405,6 @@ async function saveCustomCommands() {
 }
 
 export function bindExperimentalSettings() {
-  const experimentalTab = document.getElementById('settings-tab-experimental') as HTMLElement;
-  const experimentalPanel = document.getElementById('settings-experimental-panel') as HTMLElement;
   const channelCheckbox = document.getElementById('settings-channel-enabled') as HTMLInputElement;
   const channelHint = document.getElementById('settings-channel-hint')!;
   const channelInstructions = document.getElementById('settings-channel-instructions') as HTMLElement;
@@ -399,23 +416,22 @@ export function bindExperimentalSettings() {
   document.getElementById('settings-btn')!.addEventListener('click', () => {
     fetch('/api/channel/claude-check').then(r => r.ok ? r.json() : null).then((check: { installed: boolean; version: string | null; meetsMinimum: boolean } | null) => {
       if (!check || !check.installed) {
-        experimentalTab.style.display = 'none';
-        experimentalPanel.style.display = 'none';
-        return;
-      }
-      experimentalTab.style.display = '';
-      experimentalPanel.style.display = '';
-      if (!check.meetsMinimum) {
+        channelCheckbox.disabled = true;
+        channelHint.textContent = 'Claude Code not detected. Shell commands are still available.';
+      } else if (!check.meetsMinimum) {
         channelHint.textContent = `Claude Code ${check.version ?? 'unknown'} detected but v2.1.80+ is required. Please upgrade Claude Code.`;
         channelCheckbox.disabled = true;
       } else {
         channelHint.textContent = 'Push worklist events to a running Claude Code session via MCP channels.';
         channelCheckbox.disabled = false;
       }
+      customCommandsSection.style.display = '';
       renderCustomCommandSettings();
     }).catch(() => {
-      experimentalTab.style.display = 'none';
-      experimentalPanel.style.display = 'none';
+      channelCheckbox.disabled = true;
+      channelHint.textContent = 'Could not check for Claude Code. Shell commands are still available.';
+      customCommandsSection.style.display = '';
+      renderCustomCommandSettings();
     });
   });
 
@@ -423,10 +439,12 @@ export function bindExperimentalSettings() {
   fetch('/api/channel/status').then(r => r.ok ? r.json() as Promise<{ enabled: boolean }> : null).then(s => {
     if (s !== null) {
       channelCheckbox.checked = s.enabled;
+      channelEnabledState = s.enabled;
       if (s.enabled) {
         channelInstructions.style.display = '';
-        customCommandsSection.style.display = '';
       }
+      // Always show custom commands (shell commands work without channel)
+      customCommandsSection.style.display = '';
     }
   }).catch(() => {});
 
@@ -442,14 +460,17 @@ export function bindExperimentalSettings() {
     if (channelCheckbox.checked) {
       await api('/channel/enable', { method: 'POST' });
       channelInstructions.style.display = '';
-      customCommandsSection.style.display = '';
+      channelEnabledState = true;
     } else {
       await api('/channel/disable', { method: 'POST' });
       channelInstructions.style.display = 'none';
-      customCommandsSection.style.display = 'none';
+      channelEnabledState = false;
     }
-    void initChannel();
+    // Always keep custom commands visible (shell commands work without channel)
+    customCommandsSection.style.display = '';
+    renderCustomCommandSettings(); // Re-render warnings before initChannel (which is async)
     renderChannelCommands();
+    void initChannel();
   });
 
   channelCopyBtn?.addEventListener('click', () => {
@@ -460,9 +481,10 @@ export function bindExperimentalSettings() {
     });
   });
 
-  // Add command button
+  // Add command button — default to Shell when channel is disabled
   document.getElementById('settings-add-command-btn')?.addEventListener('click', () => {
-    customCommands.push({ name: '', prompt: '' });
+    const defaultTarget = channelCheckbox.checked ? undefined : 'shell' as const;
+    customCommands.push({ name: '', prompt: '', target: defaultTarget });
     renderCustomCommandSettings();
   });
 }

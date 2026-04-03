@@ -161,14 +161,17 @@ export async function initChannel() {
   const playIcon = document.getElementById('channel-play-icon')!;
   const autoIcon = document.getElementById('channel-auto-icon')!;
 
+  // Always render custom commands (shell commands work without channel)
+  const { renderChannelCommands, setChannelEnabledState } = await import('./experimentalSettings.js');
+  setChannelEnabledState(status.enabled);
+
   if (!status.enabled) {
     section.style.display = 'none';
     stopPermissionPolling();
+    renderChannelCommands(); // Still render shell commands
     return;
   }
   section.style.display = '';
-  // renderChannelCommands is handled by experimentalSettings, which loads separately
-  const { renderChannelCommands } = await import('./experimentalSettings.js');
   renderChannelCommands();
   startPermissionPolling();
 

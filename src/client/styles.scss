@@ -434,6 +434,15 @@ input, select, textarea {
     cursor: pointer;
   }
 
+  .command-claude-warning {
+    font-size: 11px;
+    color: #f97316;
+    margin-top: 4px;
+    padding: 4px 8px;
+    background: color-mix(in srgb, #f97316 8%, transparent);
+    border-radius: var(--radius);
+  }
+
   input[type="text"] {
     flex: 1;
     padding: 4px 8px;
