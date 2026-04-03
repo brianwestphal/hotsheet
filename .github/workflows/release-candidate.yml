@@ -230,4 +230,17 @@ jobs:
           NOTES=$(git tag -l --format='%(contents)' "$RC_TAG")
           echo "$NOTES" | git tag -a "$FINAL_TAG" -F -
           git push origin "$FINAL_TAG"
-          echo "Created and pushed $FINAL_TAG (triggers desktop release)"
+          echo "Created and pushed $FINAL_TAG"
+
+      - name: Trigger desktop release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'release-desktop.yml',
+              ref: 'main',
+              inputs: { tag: 'v${{ needs.beta-publish.outputs.base_version }}' },
+            });
+            console.log('Triggered desktop release for v${{ needs.beta-publish.outputs.base_version }}');
