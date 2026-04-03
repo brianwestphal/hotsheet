@@ -4,6 +4,7 @@ import { bindBackupsUI } from './backups.js';
 import { bindBatchToolbar, PRIORITY_ITEMS, STATUS_ITEMS } from './batch.js';
 import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
+import { initCommandLog } from './commandLog.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { renderDashboard, renderSidebarWidget } from './dashboard.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, parseTags, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
@@ -68,6 +69,8 @@ async function init() {
   void restoreAppIcon();
   // Claude Channel
   void initChannel();
+  // Command log panel
+  initCommandLog();
   // Dashboard sidebar widget
   void initDashboardWidget();
   // Auto-focus the draft input on load

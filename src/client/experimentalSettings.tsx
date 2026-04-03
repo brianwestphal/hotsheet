@@ -1,6 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { initChannel, triggerChannelAndMarkBusy } from './channelUI.js';
+import { refreshLogBadge } from './commandLog.js';
 import { toElement } from './dom.js';
 // All Lucide icons loaded from generated JSON
 import ALL_LUCIDE_ICONS from './lucide-icons.json';
@@ -12,6 +13,7 @@ interface CustomCommand {
   prompt: string;
   icon?: string;
   color?: string;
+  target?: 'claude' | 'shell';  // default 'claude'
 }
 
 // Predefined color palette for command buttons
@@ -60,9 +62,66 @@ export function renderChannelCommands() {
       <button className="channel-command-btn" style={`background:${color};color:${textColor}`}>{raw(renderIconSvg(iconDef.svg, 14, textColor))}<span>{cmd.name}</span></button>
     );
     btn.addEventListener('click', () => {
-      triggerChannelAndMarkBusy(cmd.prompt);
+      if (cmd.target === 'shell') {
+        void runShellCommand(cmd.prompt, cmd.name);
+      } else {
+        triggerChannelAndMarkBusy(cmd.prompt);
+      }
     });
     container.appendChild(btn);
+  }
+}
+
+let shellBusyId: number | null = null;
+let shellPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function setShellBusy(busy: boolean) {
+  const indicator = document.getElementById('channel-status-indicator');
+  if (!indicator) return;
+  const channelSection = document.getElementById('channel-play-section');
+  if (!channelSection || channelSection.style.display === 'none') {
+    indicator.style.display = 'none';
+    return;
+  }
+  if (busy) {
+    indicator.style.display = '';
+    indicator.className = 'channel-status-indicator busy';
+    indicator.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Shell running';
+  } else {
+    indicator.style.display = '';
+    indicator.className = 'channel-status-indicator';
+    indicator.innerHTML = '\u2713 Shell done';
+    setTimeout(() => {
+      if (shellBusyId === null) indicator.style.display = 'none';
+    }, 5000);
+  }
+}
+
+function startShellPoll(id: number) {
+  if (shellPollTimer) clearInterval(shellPollTimer);
+  shellPollTimer = setInterval(async () => {
+    try {
+      const { ids } = await api<{ ids: number[] }>('/shell/running');
+      if (!ids.includes(id)) {
+        // Process finished
+        shellBusyId = null;
+        if (shellPollTimer) { clearInterval(shellPollTimer); shellPollTimer = null; }
+        setShellBusy(false);
+        void refreshLogBadge();
+      }
+    } catch { /* ignore */ }
+  }, 2000);
+}
+
+async function runShellCommand(command: string, name?: string) {
+  setShellBusy(true);
+  try {
+    const result = await api<{ id: number }>('/shell/exec', { method: 'POST', body: { command, name } });
+    shellBusyId = result.id;
+    startShellPoll(result.id);
+    void refreshLogBadge();
+  } catch {
+    setShellBusy(false);
   }
 }
 
@@ -190,6 +249,10 @@ function renderCustomCommandSettings() {
     const currentIcon = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
     const currentColor = cmd.color ?? CMD_COLORS[0].value;
 
+    const currentTarget = cmd.target ?? 'claude';
+    const promptLabel = currentTarget === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
+    const promptPlaceholder = currentTarget === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
+
     const row = toElement(
       <div className="settings-command-row" draggable="true" data-cmd-index={String(i)}>
         <div className="settings-command-row-header">
@@ -199,13 +262,19 @@ function renderCustomCommandSettings() {
           <input type="text" value={cmd.name} placeholder="Button label..." />
           <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
         </div>
-        <label>Prompt sent to Claude:</label>
-        <textarea placeholder="Tell Claude what to do...">{cmd.prompt}</textarea>
+        <div className="command-target-segmented">
+          <button className={`seg-btn${currentTarget === 'claude' ? ' active' : ''}`} data-target="claude">Claude Code</button>
+          <button className={`seg-btn${currentTarget === 'shell' ? ' active' : ''}`} data-target="shell">Shell</button>
+        </div>
+        <label className="command-prompt-label">{promptLabel}</label>
+        <textarea placeholder={promptPlaceholder}>{cmd.prompt}</textarea>
       </div>
     );
 
     const nameInput = row.querySelector('input[type="text"]') as HTMLInputElement;
     const promptArea = row.querySelector('textarea') as HTMLTextAreaElement;
+    const segBtns = row.querySelectorAll('.seg-btn');
+    const promptLabelEl = row.querySelector('.command-prompt-label') as HTMLElement;
 
     const save = () => {
       customCommands[i] = { ...customCommands[i], name: nameInput.value, prompt: promptArea.value };
@@ -214,6 +283,19 @@ function renderCustomCommandSettings() {
 
     nameInput.addEventListener('input', save);
     promptArea.addEventListener('input', save);
+
+    for (const segBtn of segBtns) {
+      segBtn.addEventListener('click', () => {
+        const target = (segBtn as HTMLElement).dataset.target as 'claude' | 'shell';
+        for (const b of segBtns) b.classList.remove('active');
+        segBtn.classList.add('active');
+        customCommands[i] = { ...customCommands[i], target: target === 'claude' ? undefined : target };
+        // Update the label and placeholder dynamically
+        promptLabelEl.textContent = target === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
+        promptArea.placeholder = target === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
+        void saveCustomCommands();
+      });
+    }
 
     // Color dropdown
     const colorBtn = row.querySelector('.command-color-dropdown-btn') as HTMLElement;

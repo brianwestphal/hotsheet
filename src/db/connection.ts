@@ -62,10 +62,10 @@ async function initSchema(db: PGlite): Promise<void> {
       priority TEXT NOT NULL DEFAULT 'default',
       status TEXT NOT NULL DEFAULT 'not_started',
       up_next BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      completed_at TIMESTAMP,
-      deleted_at TIMESTAMP
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      deleted_at TIMESTAMPTZ
     );
 
     CREATE TABLE IF NOT EXISTS attachments (
@@ -73,7 +73,7 @@ async function initSchema(db: PGlite): Promise<void> {
       ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
       original_filename TEXT NOT NULL,
       stored_path TEXT NOT NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     CREATE INDEX IF NOT EXISTS idx_attachments_ticket ON attachments(ticket_id);
@@ -101,10 +101,33 @@ async function initSchema(db: PGlite): Promise<void> {
     );
   `);
 
+  // Command log table for Claude/shell communication history
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS command_log (
+      id SERIAL PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      direction TEXT NOT NULL DEFAULT 'system',
+      summary TEXT NOT NULL DEFAULT '',
+      detail TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_command_log_created ON command_log(created_at);
+  `);
+  // Migrate existing command_log from TIMESTAMP to TIMESTAMPTZ
+  // Migrate all timestamp columns to TIMESTAMPTZ for correct timezone handling
+  await db.exec(`
+    ALTER TABLE tickets ALTER COLUMN created_at TYPE TIMESTAMPTZ;
+    ALTER TABLE tickets ALTER COLUMN updated_at TYPE TIMESTAMPTZ;
+    ALTER TABLE tickets ALTER COLUMN completed_at TYPE TIMESTAMPTZ;
+    ALTER TABLE tickets ALTER COLUMN deleted_at TYPE TIMESTAMPTZ;
+    ALTER TABLE attachments ALTER COLUMN created_at TYPE TIMESTAMPTZ;
+    ALTER TABLE command_log ALTER COLUMN created_at TYPE TIMESTAMPTZ;
+  `).catch(() => { /* already migrated or new db */ });
+
   // Migrations for existing databases
   await db.exec(`
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
-    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]';
   `).catch(() => { /* columns may already exist */ });
 }

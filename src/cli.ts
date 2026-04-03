@@ -161,6 +161,9 @@ async function main() {
     console.log('  Restart your AI tool to pick up the new ticket creation skills.\n');
   }
 
+  // Prune command log to keep it manageable
+  import('./db/commandLog.js').then(({ pruneLog }) => pruneLog(1000)).catch(() => { /* non-critical */ });
+
   // Record daily stats snapshot and backfill any missing days
   import('./db/stats.js').then(async ({ recordDailySnapshot, backfillSnapshots }) => {
     await backfillSnapshots();

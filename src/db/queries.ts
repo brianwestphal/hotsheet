@@ -1,4 +1,5 @@
 export * from './attachments.js';
+export * from './commandLog.js';
 export * from './notes.js';
 export * from './settings.js';
 export * from './tags.js';

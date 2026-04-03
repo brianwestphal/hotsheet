@@ -388,6 +388,40 @@ input, select, textarea {
     &:hover { border-color: var(--accent); }
   }
 
+  .command-target-segmented {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    flex-shrink: 0;
+    margin: 6px auto 2px;
+    align-self: center;
+
+    .seg-btn {
+      padding: 3px 10px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      background: var(--bg);
+      cursor: pointer;
+      border: none;
+      border-right: 1px solid var(--border);
+      transition: background 0.15s, color 0.15s;
+
+      &:last-child {
+        border-right: none;
+      }
+
+      &:hover {
+        background: var(--bg-hover);
+      }
+
+      &.active {
+        background: var(--accent);
+        color: white;
+      }
+    }
+  }
+
   input[type="text"] {
     flex: 1;
     padding: 4px 8px;
@@ -2869,4 +2903,395 @@ input, select, textarea {
   font-size: 13px;
   color: var(--text);
   white-space: pre-wrap;
+}
+
+// --- Command Log Panel ---
+
+.command-log-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+}
+
+.command-log-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+.command-log-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 300px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+}
+
+.command-log-resize-handle {
+  height: 4px;
+  cursor: row-resize;
+  flex-shrink: 0;
+  background: transparent;
+
+  &:hover, &:active {
+    background: var(--accent);
+    opacity: 0.3;
+  }
+}
+
+.command-log-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.command-log-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.command-log-search-box {
+  position: relative;
+  flex: 1;
+  max-width: 220px;
+
+  .command-log-search-icon {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+}
+
+.command-log-search {
+  width: 100%;
+  padding: 4px 8px 4px 26px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  font-size: 12px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
+  }
+}
+
+.command-log-filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+  }
+
+  &.active {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+  }
+
+  span {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.command-log-filter-dropdown {
+  position: absolute;
+  z-index: 600;
+  min-width: 180px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+
+  .filter-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text);
+    cursor: pointer;
+    user-select: none;
+
+    &:hover {
+      background: var(--bg-hover);
+    }
+
+    .filter-check {
+      width: 14px;
+      height: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: var(--accent);
+    }
+  }
+
+  .filter-separator {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+  }
+
+  .filter-toggle-all {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--accent);
+    cursor: pointer;
+    user-select: none;
+    font-weight: 500;
+
+    &:hover {
+      background: var(--bg-hover);
+    }
+  }
+}
+
+.command-log-clear-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+
+  &:hover {
+    color: var(--danger);
+    background: var(--bg-hover);
+  }
+}
+
+.command-log-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  margin-left: auto;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+
+  &:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+}
+
+.command-log-entries {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.command-log-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.command-log-entry {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+
+  &.expanded {
+    background: var(--bg-secondary);
+  }
+
+  &.selected {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+
+    &:hover {
+      background: color-mix(in srgb, var(--accent) 22%, transparent);
+    }
+  }
+}
+
+.command-log-shell-input {
+  color: var(--accent);
+  margin-bottom: 4px;
+  &::before {
+    content: '> ';
+    opacity: 0.6;
+  }
+}
+
+.command-log-shell-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+.command-log-context-menu {
+  position: fixed;
+  z-index: 700;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  min-width: 140px;
+
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text);
+    cursor: pointer;
+
+    &:hover {
+      background: var(--bg-hover);
+    }
+
+    svg {
+      flex-shrink: 0;
+    }
+  }
+}
+
+.command-log-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-log-direction {
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+}
+
+.command-log-type-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: white;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+.command-log-summary {
+  font-weight: 600;
+  font-size: 13px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-log-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.command-log-stop-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 3px;
+  background: var(--danger);
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  &:hover { opacity: 0.85; }
+}
+
+.command-log-canceling {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.command-log-detail {
+  margin-top: 4px;
+  font-size: 11px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.command-log-detail-full {
+  margin-top: 4px;
+  font-size: 11px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
