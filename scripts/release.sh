@@ -227,15 +227,16 @@ step_version() {
   local next_major="$((major + 1)).0.0"
 
   echo ""
-  echo -e "    ${DIM}1)${RESET} patch  ${BOLD}${next_patch}${RESET}"
-  echo -e "    ${DIM}2)${RESET} minor  ${BOLD}${next_minor}${RESET}"
-  echo -e "    ${DIM}3)${RESET} major  ${BOLD}${next_major}${RESET}"
-  echo -e "    ${DIM}4)${RESET} custom"
+  echo -e "    ${DIM}Enter)${RESET} keep   ${BOLD}${current_version}${RESET} ${DIM}(no change)${RESET}"
+  echo -e "    ${DIM}1)${RESET}     patch  ${BOLD}${next_patch}${RESET}"
+  echo -e "    ${DIM}2)${RESET}     minor  ${BOLD}${next_minor}${RESET}"
+  echo -e "    ${DIM}3)${RESET}     major  ${BOLD}${next_major}${RESET}"
+  echo -e "    ${DIM}4)${RESET}     custom"
   echo ""
 
   local prev_version
   prev_version=$(get_state "version")
-  if [[ -n "$prev_version" ]]; then
+  if [[ -n "$prev_version" && "$prev_version" != "$current_version" ]]; then
     echo -e "    ${DIM}Previous selection:${RESET} ${prev_version}"
     if confirm "Keep ${prev_version}?"; then
       REPLY="$prev_version"
@@ -244,10 +245,11 @@ step_version() {
     fi
   fi
 
-  echo -en "${CYAN}${BOLD}>>>${RESET} Choose version bump ${DIM}[1/2/3/4]${RESET} "
+  echo -en "${CYAN}${BOLD}>>>${RESET} Choose version bump ${DIM}[Enter/1/2/3/4]${RESET} "
   local choice
   read -r choice
   case "$choice" in
+    "") REPLY="$current_version" ;;
     1) REPLY="$next_patch" ;;
     2) REPLY="$next_minor" ;;
     3) REPLY="$next_major" ;;
@@ -445,16 +447,16 @@ main() {
     set_step 1
   fi
 
-  # Step 2: Version
+  # Step 2: Release notes (before version, so you see what changed)
   if ! past_step 2; then
-    echo ""
-    step_version
+    step_release_notes
     set_step 2
   fi
 
-  # Step 3: Release notes
+  # Step 3: Version
   if ! past_step 3; then
-    step_release_notes
+    echo ""
+    step_version
     set_step 3
   fi
 
@@ -481,10 +483,22 @@ main() {
     set_step 6
   fi
 
-  # Step 7: Build
+  # Step 7: Build + local checks
   if ! past_step 7; then
     echo ""
     step_build
+
+    info "Running local checks..."
+    echo ""
+    info "Unit tests..."
+    npm test
+    echo ""
+    info "Linting..."
+    npm run lint
+    echo ""
+    info "Type checking..."
+    npx tsc --noEmit
+    success "All local checks passed"
     set_step 7
   fi
 
