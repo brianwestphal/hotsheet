@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.0] - 2026-04-03
+
+- Added command log - accessible through new button on right side of bottom status bar
+- Support for custom shell command buttons
+- Various UI improvements
+
 ## [0.10.4] - 2026-04-03
 
 - Fixed permissions on RC workflow
