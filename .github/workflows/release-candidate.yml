@@ -206,15 +206,20 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
-        with: { node-version: '${{ env.NODE_VERSION }}' }
+        with:
+          node-version: '${{ env.NODE_VERSION }}'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
 
-      - name: Promote beta to latest on npm
+      - name: Publish clean release version to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
-          npm dist-tag add hotsheet@${{ needs.beta-publish.outputs.rc_version }} latest
-          echo "Promoted hotsheet@${{ needs.beta-publish.outputs.rc_version }} to latest"
+          npm version "${{ needs.beta-publish.outputs.base_version }}" --no-git-tag-version --allow-same-version
+          npm run build
+          npm publish --provenance --access public
+          echo "Published hotsheet@${{ needs.beta-publish.outputs.base_version }} to npm"
 
       - name: Create final release tag
         run: |
