@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
 
-import { addToProjectList, removeFromProjectList } from '../project-list.js';
-import { getAllProjects, getProjectBySecret, registerProject, unregisterProject } from '../projects.js';
+import { addToProjectList, removeFromProjectList, reorderProjectList } from '../project-list.js';
+import { getAllProjects, getProjectBySecret, registerProject, reorderProjects, unregisterProject } from '../projects.js';
 import type { AppEnv } from '../types.js';
 import { notifyChange } from './notify.js';
-import { parseBody, RegisterProjectSchema } from './validation.js';
+import { parseBody, RegisterProjectSchema, ReorderProjectsSchema } from './validation.js';
 
 export const projectRoutes = new Hono<AppEnv>();
 
@@ -77,5 +77,16 @@ projectRoutes.delete('/:secret', (c) => {
   removeFromProjectList(project.dataDir);
   unregisterProject(secret);
   notifyChange();
+  return c.json({ ok: true });
+});
+
+/** POST /api/projects/reorder — reorder the project list */
+projectRoutes.post('/reorder', async (c) => {
+  const raw = await c.req.json();
+  const parsed = parseBody(ReorderProjectsSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+  const dataDirs = reorderProjects(parsed.data.secrets);
+  reorderProjectList(dataDirs);
   return c.json({ ok: true });
 });

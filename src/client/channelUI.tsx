@@ -75,6 +75,12 @@ let channelAutoVerifyTimeout: ReturnType<typeof setTimeout> | null = null;
 const CHANNEL_AUTO_BASE_DELAY = 5000;
 const CHANNEL_AUTO_MAX_DELAY = 120000; // 2 minutes
 
+export function isChannelBusy(): boolean { return channelBusy; }
+export function isPermissionPending(): boolean {
+  const overlay = document.getElementById('permission-overlay');
+  return overlay !== null && overlay.style.display !== 'none';
+}
+
 export function setChannelBusy(busy: boolean) {
   channelBusy = busy;
   const indicator = document.getElementById('channel-status-indicator');

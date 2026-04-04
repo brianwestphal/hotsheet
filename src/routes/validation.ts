@@ -108,6 +108,10 @@ export const RegisterProjectSchema = z.object({
   dataDir: z.string().min(1, 'dataDir is required'),
 });
 
+export const ReorderProjectsSchema = z.object({
+  secrets: z.array(z.string()),
+});
+
 // --- Categories ---
 
 export const CategoryDefSchema = z.object({}).passthrough();

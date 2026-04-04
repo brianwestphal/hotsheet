@@ -4,7 +4,7 @@ import { resolve } from 'path';
 import { getBackupTimers, initBackupScheduler } from './backup.js';
 import { getDbForDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
-import { ensureSecret } from './file-settings.js';
+import { ensureSecret, readFileSettings } from './file-settings.js';
 import { acquireLock } from './lock.js';
 import { ensureSkills, initSkills, setSkillCategories } from './skills.js';
 import { getSyncState, initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
@@ -59,8 +59,10 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   // Initialize backup scheduler
   initBackupScheduler(absDataDir);
 
-  // Derive project name from the parent directory of .hotsheet
-  const name = absDataDir.replace(/\/.hotsheet\/?$/, '').split('/').pop() ?? absDataDir;
+  // Use appName from settings if set, otherwise derive from directory name
+  const fileSettings = readFileSettings(absDataDir);
+  const dirName = absDataDir.replace(/\/.hotsheet\/?$/, '').split('/').pop() ?? absDataDir;
+  const name = (fileSettings.appName !== undefined && fileSettings.appName !== '') ? fileSettings.appName : dirName;
 
   const syncState = getSyncState(absDataDir);
   const backupTimers = getBackupTimers(absDataDir);
@@ -94,7 +96,9 @@ export function registerExistingProject(dataDir: string, secret: string, db: PGl
     if (existing) return existing;
   }
 
-  const name = absDataDir.replace(/\/.hotsheet\/?$/, '').split('/').pop() ?? absDataDir;
+  const fileSettings = readFileSettings(absDataDir);
+  const dirName = absDataDir.replace(/\/.hotsheet\/?$/, '').split('/').pop() ?? absDataDir;
+  const name = (fileSettings.appName !== undefined && fileSettings.appName !== '') ? fileSettings.appName : dirName;
   const syncState = getSyncState(absDataDir);
   const backupTimers = getBackupTimers(absDataDir);
 
@@ -137,4 +141,26 @@ export function unregisterProject(secret: string): void {
   if (!ctx) return;
   dataDirToSecret.delete(ctx.dataDir);
   projects.delete(secret);
+}
+
+/** Reorder projects to match the given secret order. Returns dataDirs in new order. */
+export function reorderProjects(secrets: string[]): string[] {
+  // getAllProjects iterates the Map in insertion order, so we rebuild it
+  const ordered: ProjectContext[] = [];
+  for (const secret of secrets) {
+    const ctx = projects.get(secret);
+    if (ctx) ordered.push(ctx);
+  }
+  // Add any projects not in the list (shouldn't happen, but be safe)
+  for (const ctx of projects.values()) {
+    if (!ordered.includes(ctx)) ordered.push(ctx);
+  }
+  // Rebuild maps in new order
+  projects.clear();
+  dataDirToSecret.clear();
+  for (const ctx of ordered) {
+    projects.set(ctx.secret, ctx);
+    dataDirToSecret.set(ctx.dataDir, ctx.secret);
+  }
+  return ordered.map(ctx => ctx.dataDir);
 }

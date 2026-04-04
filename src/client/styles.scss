@@ -57,37 +57,34 @@ input, select, textarea {
 
 .project-tabs {
   flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
 }
 
 .project-tabs-inner {
   display: flex;
   align-items: center;
-  padding: 6px 12px 0;
-  gap: 2px;
+  padding: 6px 12px;
+  gap: 4px;
   overflow-x: auto;
 }
 
 .project-tab {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 6px 4px 6px 12px;
+  gap: 6px;
+  padding: 5px 12px;
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: 999px;
   white-space: nowrap;
-  transition: background 0.15s, color 0.15s;
-  position: relative;
-  top: 1px; // overlap the border-bottom of the container
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 
   &:hover {
-    background: var(--bg-hover);
+    border-color: var(--border);
     color: var(--text);
   }
 
@@ -98,47 +95,65 @@ input, select, textarea {
     font-weight: 600;
   }
 
+  &.dragging {
+    opacity: 0.4;
+  }
+
+  &.drag-over {
+    border-color: var(--primary, #3b82f6);
+  }
+
   .project-tab-name {
-    cursor: pointer;
-    padding-right: 4px;
-  }
-
-  .project-tab-close {
-    display: none;
-    font-size: 14px;
     line-height: 1;
-    color: var(--text-muted);
-    padding: 2px 5px;
-    border: none;
-    background: none;
-    border-radius: 3px;
-    cursor: pointer;
-
-    &:hover {
-      color: var(--danger);
-      background: rgba(239, 68, 68, 0.1);
-    }
-  }
-
-  &:hover .project-tab-close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
   }
 }
 
-.project-tab-add {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-  color: var(--text-muted);
+// Status dot on tabs
+.project-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: none;
+
+  &.attention {
+    display: block;
+    background: #3b82f6; // blue
+  }
+
+  &.busy {
+    display: block;
+    background: #eab308; // yellow
+  }
+}
+
+// Tab context menu
+.tab-context-menu {
+  position: fixed;
+  z-index: 3000;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  margin-left: 2px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  min-width: 180px;
+}
+
+.tab-context-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+  color: var(--text);
 
   &:hover {
     background: var(--bg-hover);
-    color: var(--text);
+  }
+
+  &.disabled {
+    color: var(--text-muted);
+    cursor: default;
+    pointer-events: none;
   }
 }
 

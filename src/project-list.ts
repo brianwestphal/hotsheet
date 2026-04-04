@@ -42,3 +42,9 @@ export function removeFromProjectList(dataDir: string): void {
   const list = readProjectList().filter(d => d !== abs);
   writeProjectList(list);
 }
+
+/** Reorder the persisted list to match the given order of dataDirs. */
+export function reorderProjectList(dataDirs: string[]): void {
+  const absOrder = dataDirs.map(d => resolve(d));
+  writeProjectList(absOrder);
+}
