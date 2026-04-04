@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { checkChannelDone } from './channelUI.js';
 import { refreshDetail } from './detail.js';
+import { refreshProjectTabs } from './projectTabs.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
 
@@ -18,6 +19,8 @@ export function startLongPoll() {
         }
         // Check if Claude signaled done via /channel/done
         checkChannelDone();
+        // Refresh project tabs (may have added/removed projects)
+        void refreshProjectTabs();
       }
     } catch {
       // Server down — wait longer before retry

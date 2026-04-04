@@ -13,14 +13,22 @@ The interface is divided into:
 - **Footer** — Keyboard shortcut hints and status bar.
 - **Banners** — Contextual banners for skills notifications, update availability, and backup previews.
 
-### 4.2 List View
+### 4.2 Project Tabs
+
+- A tab bar appears above the main content when 2 or more projects are registered in the instance. Hidden for a single project.
+- Clicking a tab name switches the active project, reloading all data (tickets, settings, views).
+- Each project has independent settings (layout mode, detail position, sort, etc.) that are restored on switch.
+- The segmented controls (layout toggle, detail position toggle) update to reflect the switched project's saved settings.
+- Close button (×) on a tab removes that project from the instance without a confirmation dialog (Tauri WKWebView suppresses native `confirm()`).
+
+### 4.3 List View
 
 - Default view: a flat bullet-list of tickets.
 - Each row displays: checkbox, category badge (3-letter color-coded abbreviation), ticket number, priority icon, status icon, up_next star, and title.
 - Clicking a ticket opens it in the detail panel.
 - Scroll position is preserved when the list re-renders (e.g., after data updates).
 
-### 4.3 Column View (Kanban)
+### 4.4 Column View (Kanban)
 
 - Tickets displayed in status-based columns (Not Started, Started, Completed, Verified).
 - Drag-and-drop cards between columns to change status.
@@ -29,8 +37,9 @@ The interface is divided into:
 - Per-column scroll position is preserved across re-renders.
 - Available for views: All, Up Next, Open, Non-Verified.
 - Not available for: Completed, Verified, Trash, Backlog, Archive (single-status views).
+- Tickets with unrecognized status values (e.g., from external tools or schema changes) are displayed in the first column rather than silently dropped.
 
-### 4.4 Draft Row (Quick Entry)
+### 4.5 Draft Row (Quick Entry)
 
 - A quick-entry row at the top of the list view for creating new tickets.
 - Visible in list view only (not in trash, backup preview, or column view).
@@ -38,7 +47,7 @@ The interface is divided into:
 - Category and priority can be set inline via dropdown or keyboard shortcut.
 - New tickets inherit sensible defaults from the current view context (e.g., creating in the Bug category view defaults to bug category).
 
-### 4.5 Detail Panel
+### 4.6 Detail Panel
 
 - Opens when a ticket is clicked; shows full ticket details.
 - **Position**: Side (default) or bottom, toggled via header button. Preference is persisted.
@@ -53,7 +62,7 @@ The interface is divided into:
 - **Attachments**: List of attached files with upload, reveal-in-finder, and delete actions.
 - **Read-only mode**: During backup preview, all editing is disabled.
 
-### 4.6 Sidebar Navigation
+### 4.7 Sidebar Navigation
 
 #### Status Views
 
@@ -86,7 +95,7 @@ Each built-in view has an icon to the left of the label:
 #### Stats Bar
 - Displays "X tickets, Y open, Z up next" at the bottom of the sidebar.
 
-### 4.7 Search
+### 4.8 Search
 
 - Pill-shaped search input with a Lucide search icon, right-aligned in the toolbar.
 - Default width 200px; animates to 50vw on focus (0.3s ease transition), shrinks back on blur.
@@ -95,19 +104,19 @@ Each built-in view has an icon to the left of the label:
 - Escape key clears the search field.
 - Cmd/Ctrl+F focuses the search input.
 
-### 4.8 Sort Controls
+### 4.9 Sort Controls
 
 - Dropdown to sort by: Created (default), Priority, Category, Status.
 - Sort direction: ascending or descending.
 - Sort preference is persisted to settings.
 
-### 4.9 Batch Toolbar
+### 4.10 Batch Toolbar
 
 - Appears when one or more tickets are selected.
 - Controls: category dropdown, priority dropdown, status dropdown, up_next toggle, delete button, select-all checkbox, selection count.
 - Dropdowns and buttons are disabled until at least one ticket is selected.
 
-### 4.10 Keyboard Shortcuts
+### 4.11 Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
@@ -136,14 +145,14 @@ Each built-in view has an icon to the left of the label:
 | Alt+4 | Set priority to Low |
 | Alt+5 | Set priority to Lowest |
 
-### 4.11 Clipboard Copy
+### 4.12 Clipboard Copy
 
 - Cmd/Ctrl+C copies selected tickets as formatted plain text.
 - Format: `HS-N: Title`, followed by details and notes (if present).
 - Multiple tickets separated by blank lines.
 - Respects native text selection in input fields (unless Alt/Option is held).
 
-### 4.12 Settings Dialog
+### 4.13 Settings Dialog
 
 - Opened via the gear icon in the header.
 - Uses a tabbed layout with Lucide icons and labels for each section:
@@ -155,7 +164,7 @@ Each built-in view has an icon to the left of the label:
 - Tabs persist their selection while the dialog is open; resets to General when reopened.
 - Closed via X button, clicking the overlay, or pressing Escape.
 
-### 4.13 Custom Views
+### 4.14 Custom Views
 
 - Users can create custom views with live-updating queries.
 - Custom views appear in a "Custom Views" sidebar section below priorities.
@@ -180,7 +189,7 @@ Each built-in view has an icon to the left of the label:
 - API: `POST /api/tickets/query` accepts `{ logic, conditions, sort_by, sort_dir, required_tag }` and returns matching tickets via parameterized SQL. The `required_tag` parameter is always AND'd with the query.
 - Custom views support both list and column layouts.
 
-### 4.14 Dashboard
+### 4.15 Dashboard
 
 - **Sidebar widget**: Always-visible compact widget below the stats bar showing a 7-day throughput spark chart, weekly completion count with trend arrow, and WIP count. Clicking it opens the full dashboard.
 - **Full dashboard view**: Replaces the ticket list with an analytics page containing:
@@ -195,7 +204,7 @@ Each built-in view has an icon to the left of the label:
 - Historical data stored in `stats_snapshots` table (daily status counts). Backfilled from ticket history on server start.
 - API: `GET /api/dashboard?days=30`
 
-### 4.15 Live Updates
+### 4.16 Live Updates
 
 - The UI uses long-polling to detect data changes.
 - When a change is detected (from another tab, API call, or AI tool), the ticket list automatically refreshes.
@@ -206,7 +215,7 @@ Each built-in view has an icon to the left of the label:
   - Notes are not re-rendered while a note textarea is being edited.
   - Ticket list title inputs preserve both their value and cursor position (selectionStart/selectionEnd) across re-renders.
 
-### 4.16 Attention Notifications
+### 4.17 Attention Notifications
 
 Two events can request user attention, each independently configurable in Settings → General:
 
@@ -224,7 +233,7 @@ Each has three options:
 - **Browser implementation**: Alternates `document.title` between the original title and a warning message. Only triggers when `!document.hasFocus()`.
 - **Settings storage**: `notify_permission` and `notify_completed` keys in the settings table. Values: `none`, `once`, `persistent`.
 
-### 4.17 Auto-Context
+### 4.18 Auto-Context
 
 - Users can configure automatic context that is prepended to ticket details in the worklist and open-tickets markdown files.
 - **Settings tab**: "Context" tab (Lucide file-text icon) in the settings dialog.
@@ -235,20 +244,20 @@ Each has three options:
 - **Prepend order**: Category context appears first, then tag context entries sorted alphabetically by tag key.
 - Only one entry per category or tag is allowed.
 
-### 4.18 Error Handling
+### 4.19 Error Handling
 
 - Network errors display a popup notification to the user.
 - API failures are surfaced (not silently swallowed) in the UI.
 
 ## Non-Functional Requirements
 
-### 4.15 Performance
+### 4.20 Performance
 
 - Scroll position is preserved across data-driven re-renders in both list and column views.
 - Input debouncing (200-800ms depending on field) prevents excessive API calls.
 - Long-poll minimizes unnecessary network traffic compared to interval polling.
 
-### 4.16 Undo / Redo
+### 4.21 Undo / Redo
 
 - **Cmd/Ctrl+Z** undoes the last change; **Cmd/Ctrl+Shift+Z** redoes.
 - Works globally, including when focused in text input fields.
@@ -260,7 +269,7 @@ Each has three options:
 - Any new change clears the redo stack (standard undo/redo behavior).
 - Pending debounced saves are cancelled when undo/redo is triggered.
 
-### 4.17 Responsiveness
+### 4.22 Responsiveness
 
 - Minimum window size: 800x500.
 - Detail panel is resizable in both orientations.

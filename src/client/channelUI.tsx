@@ -111,6 +111,8 @@ export function setChannelBusy(busy: boolean) {
 
 function triggerChannelAndMarkBusy(message?: string) {
   setChannelBusy(true);
+  // Ensure AI tool skills are installed/up-to-date before triggering
+  void api('/ensure-skills', { method: 'POST' });
   void api('/channel/trigger', { method: 'POST', body: { message } });
   // Timeout fallback: clear busy after 120s if Claude never calls /done
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);

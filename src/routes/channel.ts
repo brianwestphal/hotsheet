@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
 
 import { addLogEntry, getSettings, updateLogEntry, updateSetting } from '../db/queries.js';
+import { ensureSkills } from '../skills.js';
 import type { AppEnv } from '../types.js';
 import { notifyChange } from './notify.js';
+import { parseBody, ChannelTriggerSchema, PermissionRespondSchema } from './validation.js';
 
 export const channelRoutes = new Hono<AppEnv>();
 
@@ -46,12 +48,14 @@ channelRoutes.post('/channel/trigger', async (c) => {
   const { triggerChannel } = await import('../channel-config.js');
   const dataDir = c.get('dataDir');
   const serverPort = parseInt(new URL(c.req.url).port || '4174', 10);
-  const body = await c.req.json<{ message?: string }>().catch(() => ({ message: undefined }));
+  const raw = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(ChannelTriggerSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
   channelDoneFlag = false; // Reset done flag on new trigger
   loggedPermissionRequests.clear(); // Reset dedup set for new session
-  const ok = await triggerChannel(dataDir, serverPort, body.message);
-  const summary = body.message !== undefined && body.message !== '' ? body.message.slice(0, 200) : 'Worklist trigger';
-  addLogEntry('trigger', 'outgoing', summary, body.message ?? '').catch(() => {});
+  const ok = await triggerChannel(dataDir, serverPort, parsed.data.message);
+  const summary = parsed.data.message !== undefined && parsed.data.message !== '' ? parsed.data.message.slice(0, 200) : 'Worklist trigger';
+  addLogEntry('trigger', 'outgoing', summary, parsed.data.message ?? '').catch(() => {});
   return c.json({ ok });
 });
 
@@ -89,21 +93,23 @@ channelRoutes.post('/channel/permission/respond', async (c) => {
   const dataDir = c.get('dataDir');
   const port = getChannelPort(dataDir);
   if (port === null) return c.json({ error: 'Channel not available' }, 503);
-  const body = await c.req.json<{ request_id: string; behavior: 'allow' | 'deny'; tool_name?: string }>();
-  const action = body.behavior === 'allow' ? 'Allowed' : 'Denied';
-  const toolName = body.tool_name ?? 'tool';
+  const raw = await c.req.json();
+  const parsed = parseBody(PermissionRespondSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const action = parsed.data.behavior === 'allow' ? 'Allowed' : 'Denied';
+  const toolName = parsed.data.tool_name ?? 'tool';
   // Update the existing permission_request entry with the response instead of creating a new one
-  const logId = loggedPermissionRequests.get(body.request_id);
+  const logId = loggedPermissionRequests.get(parsed.data.request_id);
   if (logId !== undefined && logId > 0) {
     updateLogEntry(logId, { summary: `Permission: ${toolName} — ${action}` }).catch(() => {});
   } else {
-    addLogEntry('permission_request', 'incoming', `Permission: ${toolName} — ${action}`, JSON.stringify(body)).catch(() => {});
+    addLogEntry('permission_request', 'incoming', `Permission: ${toolName} — ${action}`, JSON.stringify(parsed.data)).catch(() => {});
   }
   try {
     const res = await fetch(`http://127.0.0.1:${port}/permission/respond`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(parsed.data),
     });
     return c.json(await res.json());
   } catch {
@@ -134,6 +140,7 @@ channelRoutes.post('/channel/enable', async (c) => {
   const dataDir = c.get('dataDir');
   await updateSetting('channel_enabled', 'true');
   registerChannel(dataDir);
+  ensureSkills(); // Make sure skills are installed before channel can be used
   notifyChange();
   return c.json({ ok: true });
 });

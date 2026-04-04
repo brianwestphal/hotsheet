@@ -41,7 +41,7 @@ attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
   writeFileSync(storedPath, buffer);
 
   const attachment = await addAttachment(id, originalName, storedPath);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json(attachment, 201);
 });
 
@@ -53,7 +53,7 @@ attachmentRoutes.delete('/attachments/:id', async (c) => {
   // Remove the file
   try { rmSync(attachment.stored_path, { force: true }); } catch { /* ignore */ }
 
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json({ ok: true });
 });
 

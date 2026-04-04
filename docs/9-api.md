@@ -2,6 +2,19 @@
 
 ## Functional Requirements
 
+### 9.0 Input Validation
+
+All API endpoints validate request bodies using [Zod](https://zod.dev/) schemas defined in `src/routes/validation.ts`. Invalid requests receive a `400` response with a descriptive `error` field listing the validation failures.
+
+Validated fields include:
+- **Ticket mutations**: `status` must be a valid `TicketStatus` enum value, `priority` must be a valid `TicketPriority`, category must be a non-empty string
+- **Batch operations**: `ids` must be an array of integers, `action` must be a valid enum, and `value` is validated per action type
+- **Custom view queries**: `logic`, `conditions[].field`, `conditions[].operator` are validated against known enums
+- **Shell commands**: `command` must be a non-empty string
+- **Settings**: key-value pairs must be `Record<string, string>`
+- **Backups**: `tier` must be one of `5min`, `hourly`, `daily`
+- **Projects**: `dataDir` must be a non-empty string
+
 ### 9.1 Ticket Endpoints
 
 | Method | Path | Description |
@@ -126,6 +139,7 @@ Copies are created with " - Copy" suffix (incrementing if conflicts exist).
 | GET | `/api/gitignore/status` | Check if .hotsheet is in .gitignore |
 | POST | `/api/gitignore/add` | Add .hotsheet to .gitignore |
 | POST | `/api/print` | Generate a print HTML file and open in browser |
+| POST | `/api/ensure-skills` | Check and update AI tool skill files (`{ updated: boolean }`) |
 
 ### 9.13 Claude Channel Endpoints
 
@@ -143,14 +157,22 @@ See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel AP
 | POST | `/api/channel/permission/respond` | Respond to a permission request |
 | POST | `/api/channel/permission/dismiss` | Dismiss permission overlay |
 
-### 9.14 Change Notification
+### 9.14 Project Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/projects` | List all registered projects with ticket counts |
+| POST | `/api/projects/register` | Register a project (`{ dataDir }`) |
+| DELETE | `/api/projects/:secret` | Remove a registered project by its secret |
+
+### 9.15 Change Notification
 
 - All mutation endpoints (create, update, delete, batch, attachment, settings) increment an internal change version counter.
 - The `/api/poll` endpoint returns when the change version exceeds the client's known version, enabling long-poll live updates.
 
 ## Non-Functional Requirements
 
-### 9.15 Consistency
+### 9.16 Consistency
 
 - All mutation endpoints trigger markdown sync and change notification.
 - The API is the single source of truth; the UI and markdown exports are derived views.

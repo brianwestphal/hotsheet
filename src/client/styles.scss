@@ -53,6 +53,95 @@ input, select, textarea {
   height: 100vh;
 }
 
+// --- Project Tabs ---
+
+.project-tabs {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.project-tabs-inner {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px 0;
+  gap: 2px;
+  overflow-x: auto;
+}
+
+.project-tab {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+  position: relative;
+  top: 1px; // overlap the border-bottom of the container
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  &.active {
+    background: var(--bg);
+    color: var(--text);
+    border-color: var(--border);
+    font-weight: 600;
+  }
+
+  .project-tab-name {
+    cursor: pointer;
+    padding-right: 4px;
+  }
+
+  .project-tab-close {
+    display: none;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--text-muted);
+    padding: 2px 5px;
+    border: none;
+    background: none;
+    border-radius: 3px;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--danger);
+      background: rgba(239, 68, 68, 0.1);
+    }
+  }
+
+  &:hover .project-tab-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.project-tab-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  color: var(--text-muted);
+  border-radius: var(--radius);
+  margin-left: 2px;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+}
+
 .app-header {
   display: flex;
   align-items: center;

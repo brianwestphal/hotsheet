@@ -23,8 +23,14 @@ import {
   updateTicket,
 } from '../db/queries.js';
 import { scheduleAllSync } from '../sync/markdown.js';
-import type { AppEnv, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
+import type { AppEnv, TicketFilters, TicketStatus } from '../types.js';
 import { notifyChange } from './notify.js';
+import {
+  BatchActionSchema, CreateTicketSchema, DuplicateSchema,
+  NotesBulkSchema, NotesEditSchema, QueryTicketsSchema,
+  TicketPrioritySchema, TicketStatusSchema, UpdateTicketSchema,
+  parseBody,
+} from './validation.js';
 
 export const ticketRoutes = new Hono<AppEnv>();
 
@@ -37,10 +43,18 @@ ticketRoutes.get('/tickets', async (c) => {
   if (category !== undefined && category !== '') filters.category = category;
 
   const priority = c.req.query('priority');
-  if (priority !== undefined && priority !== '') filters.priority = priority as TicketPriority;
+  if (priority !== undefined && priority !== '') {
+    const p = TicketPrioritySchema.safeParse(priority);
+    if (!p.success) return c.json({ error: `Invalid priority "${priority}"` }, 400);
+    filters.priority = p.data;
+  }
 
   const status = c.req.query('status');
-  if (status !== undefined && status !== '') filters.status = status as TicketStatus | 'open' | 'non_verified' | 'active';
+  if (status !== undefined && status !== '') {
+    const validStatuses = new Set(['not_started', 'started', 'completed', 'verified', 'backlog', 'archive', 'deleted', 'open', 'non_verified', 'active']);
+    if (!validStatuses.has(status)) return c.json({ error: `Invalid status filter "${status}"` }, 400);
+    filters.status = status as TicketFilters['status'];
+  }
 
   const upNext = c.req.query('up_next');
   if (upNext !== undefined) filters.up_next = upNext === 'true';
@@ -59,15 +73,17 @@ ticketRoutes.get('/tickets', async (c) => {
 });
 
 ticketRoutes.post('/tickets', async (c) => {
-  const body = await c.req.json<{ title: string; defaults?: Record<string, unknown> }>();
-  let title = body.title || '';
-  const defaults = (body.defaults || {});
+  const raw = await c.req.json();
+  const parsed = parseBody(CreateTicketSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+  let title = parsed.data.title;
+  const defaults = { ...(parsed.data.defaults || {}) };
 
   // Extract [tag] bracket syntax from title (HS-1750)
   const { title: cleanTitle, tags: bracketTags } = extractBracketTags(title);
   if (bracketTags.length > 0) {
     title = cleanTitle || title;
-    // Merge bracket tags with any explicitly provided tags
     let existingTags: string[] = [];
     if (defaults.tags !== undefined && defaults.tags !== null) {
       try { existingTags = JSON.parse(defaults.tags as string) as string[]; } catch { /* ignore */ }
@@ -79,42 +95,37 @@ ticketRoutes.post('/tickets', async (c) => {
   }
 
   const ticket = await createTicket(title, defaults as Parameters<typeof createTicket>[1]);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json(ticket, 201);
 });
 
 ticketRoutes.get('/tickets/:id', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   const ticket = await getTicket(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   const attachments = await getAttachments(id);
-  // Normalize notes to ensure IDs are present
   const notes = parseNotes(ticket.notes);
   return c.json({ ...ticket, notes: JSON.stringify(notes), attachments });
 });
 
 ticketRoutes.patch('/tickets/:id', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
-  const body = await c.req.json<Partial<{
-    title: string;
-    details: string;
-    notes: string;
-    tags: string;
-    category: TicketCategory;
-    priority: TicketPriority;
-    status: TicketStatus;
-    up_next: boolean;
-  }>>();
-  const ticket = await updateTicket(id, body);
+  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const raw = await c.req.json();
+  const parsed = parseBody(UpdateTicketSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const ticket = await updateTicket(id, parsed.data);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json(ticket);
 });
 
 ticketRoutes.delete('/tickets/:id', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   await deleteTicket(id);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json({ ok: true });
 });
 
@@ -122,89 +133,103 @@ ticketRoutes.delete('/tickets/:id', async (c) => {
 
 ticketRoutes.put('/tickets/:id/notes-bulk', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
-  const body = await c.req.json<{ notes: string }>();
+  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const raw = await c.req.json();
+  const parsed = parseBody(NotesBulkSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const connModule = await import('../db/connection.js');
   const db = await connModule.getDb();
   const result = await db.query(
     `UPDATE tickets SET notes = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
-    [body.notes, id]
+    [parsed.data.notes, id]
   );
   if (result.rows.length === 0) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json({ ok: true });
 });
 
 ticketRoutes.patch('/tickets/:id/notes/:noteId', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   const noteId = c.req.param('noteId');
-  const body = await c.req.json<{ text: string }>();
-  const notes = await editNote(id, noteId, body.text);
+  const raw = await c.req.json();
+  const parsed = parseBody(NotesEditSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const notes = await editNote(id, noteId, parsed.data.text);
   if (!notes) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json(notes);
 });
 
 ticketRoutes.delete('/tickets/:id/notes/:noteId', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   const noteId = c.req.param('noteId');
   const notes = await deleteNote(id, noteId);
   if (!notes) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json(notes);
 });
 
 ticketRoutes.delete('/tickets/:id/hard', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
-  // Clean up attachment files
+  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   const attachments = await getAttachments(id);
   for (const att of attachments) {
     try { rmSync(att.stored_path, { force: true }); } catch { /* ignore */ }
   }
   await hardDeleteTicket(id);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json({ ok: true });
 });
 
 // --- Batch operations ---
 
 ticketRoutes.post('/tickets/batch', async (c) => {
-  const body = await c.req.json<{
-    ids: number[];
-    action: 'delete' | 'restore' | 'category' | 'priority' | 'status' | 'up_next';
-    value?: string | boolean;
-  }>();
+  const raw = await c.req.json();
+  const parsed = parseBody(BatchActionSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const { ids, action, value } = parsed.data;
 
-  switch (body.action) {
+  switch (action) {
     case 'delete':
-      await batchDeleteTickets(body.ids);
+      await batchDeleteTickets(ids);
       break;
     case 'restore':
-      await batchRestoreTickets(body.ids);
+      await batchRestoreTickets(ids);
       break;
     case 'category':
-      await batchUpdateTickets(body.ids, { category: body.value as TicketCategory });
+      await batchUpdateTickets(ids, { category: value as string });
       break;
-    case 'priority':
-      await batchUpdateTickets(body.ids, { priority: body.value as TicketPriority });
+    case 'priority': {
+      const p = TicketPrioritySchema.safeParse(value);
+      if (!p.success) return c.json({ error: `Invalid priority "${value}"` }, 400);
+      await batchUpdateTickets(ids, { priority: p.data });
       break;
-    case 'status':
-      await batchUpdateTickets(body.ids, { status: body.value as TicketStatus });
+    }
+    case 'status': {
+      const s = TicketStatusSchema.safeParse(value);
+      if (!s.success) return c.json({ error: `Invalid status "${value}"` }, 400);
+      await batchUpdateTickets(ids, { status: s.data });
       break;
+    }
     case 'up_next':
-      await batchUpdateTickets(body.ids, { up_next: body.value as boolean });
+      await batchUpdateTickets(ids, { up_next: value as boolean });
       break;
   }
 
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json({ ok: true });
 });
 
 // --- Duplicate ---
 
 ticketRoutes.post('/tickets/duplicate', async (c) => {
-  const body = await c.req.json<{ ids: number[] }>();
-  const created = await duplicateTickets(body.ids);
-  scheduleAllSync(); notifyChange();
+  const raw = await c.req.json();
+  const parsed = parseBody(DuplicateSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const created = await duplicateTickets(parsed.data.ids);
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json(created, 201);
 });
 
@@ -212,9 +237,10 @@ ticketRoutes.post('/tickets/duplicate', async (c) => {
 
 ticketRoutes.post('/tickets/:id/restore', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   const ticket = await restoreTicket(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json(ticket);
 });
 
@@ -222,7 +248,6 @@ ticketRoutes.post('/tickets/:id/restore', async (c) => {
 
 ticketRoutes.post('/trash/empty', async (c) => {
   const deleted = await getTickets({ status: 'deleted' as TicketStatus });
-  // Clean up attachment files for all trashed tickets
   for (const ticket of deleted) {
     const attachments = await getAttachments(ticket.id);
     for (const att of attachments) {
@@ -230,7 +255,7 @@ ticketRoutes.post('/trash/empty', async (c) => {
     }
   }
   await emptyTrash();
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json({ ok: true });
 });
 
@@ -238,22 +263,20 @@ ticketRoutes.post('/trash/empty', async (c) => {
 
 ticketRoutes.post('/tickets/:id/up-next', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   const ticket = await toggleUpNext(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json(ticket);
 });
 
 // --- Custom view query ---
 
 ticketRoutes.post('/tickets/query', async (c) => {
-  const body = await c.req.json<{
-    logic: 'all' | 'any';
-    conditions: { field: string; operator: string; value: string }[];
-    sort_by?: string;
-    sort_dir?: string;
-    required_tag?: string;
-  }>();
-  const tickets = await queryTickets(body.logic, body.conditions, body.sort_by, body.sort_dir, body.required_tag);
+  const raw = await c.req.json();
+  const parsed = parseBody(QueryTicketsSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const { logic, conditions, sort_by, sort_dir, required_tag } = parsed.data;
+  const tickets = await queryTickets(logic, conditions, sort_by, sort_dir, required_tag);
   return c.json(tickets);
 });

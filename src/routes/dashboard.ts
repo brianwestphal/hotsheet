@@ -58,6 +58,14 @@ dashboardRoutes.get('/worklist-info', (c) => {
   return c.json({ prompt, skillCreated });
 });
 
+// --- Ensure skills ---
+
+dashboardRoutes.post('/ensure-skills', (c) => {
+  ensureSkills();
+  const updated = consumeSkillsCreatedFlag();
+  return c.json({ updated });
+});
+
 // --- Glassbox integration ---
 
 let glassboxAvailable: boolean | null = null;

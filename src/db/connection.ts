@@ -1,48 +1,105 @@
 import { PGlite } from '@electric-sql/pglite';
 import { mkdirSync, rmSync } from 'fs';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { join } from 'path';
 
-let db: PGlite | null = null;
-let currentDbPath: string | null = null;
+// Per-dataDir database instances
+const databases = new Map<string, PGlite>();
+
+// Legacy singleton state for backward compatibility (tests, single-project mode)
+let defaultDbPath: string | null = null;
+
+// Per-request dataDir context — set by server middleware so getDb() returns the correct
+// project's database without threading dataDir through every query function.
+const requestDataDir = new AsyncLocalStorage<string>();
+
+/** Run a function with a specific dataDir bound to the async context.
+ *  All getDb() calls within will use this project's database. */
+export function runWithDataDir<T>(dataDir: string, fn: () => T): T {
+  return requestDataDir.run(dataDir, fn);
+}
 
 export function setDataDir(dataDir: string) {
   const dbDir = join(dataDir, 'db');
   mkdirSync(dbDir, { recursive: true });
   mkdirSync(join(dataDir, 'attachments'), { recursive: true });
-  currentDbPath = dbDir;
+  defaultDbPath = dbDir;
 }
 
 export async function closeDb(): Promise<void> {
+  // Close the default/legacy db
+  if (defaultDbPath !== null) {
+    const db = databases.get(defaultDbPath);
+    if (db) {
+      await db.close();
+      databases.delete(defaultDbPath);
+    }
+  }
+}
+
+export async function closeDbForDir(dataDir: string): Promise<void> {
+  const dbDir = join(dataDir, 'db');
+  const db = databases.get(dbDir);
   if (db) {
     await db.close();
-    db = null;
+    databases.delete(dbDir);
   }
 }
 
 export function adoptDb(instance: PGlite): void {
-  db = instance;
+  if (defaultDbPath !== null) {
+    databases.set(defaultDbPath, instance);
+  }
 }
 
+/** Get the database for the current request's project, or the default project. */
 export async function getDb(): Promise<PGlite> {
-  if (db !== null) return db;
-  if (currentDbPath === null) throw new Error('Data directory not set. Call setDataDir() first.');
+  // Check per-request context first (set by server middleware)
+  const contextDataDir = requestDataDir.getStore();
+  if (contextDataDir !== undefined) {
+    return getDbForDir(contextDataDir);
+  }
+  // Fall back to default (tests, startup code, single-project mode)
+  if (defaultDbPath === null) throw new Error('Data directory not set. Call setDataDir() first.');
+  return getDbByPath(defaultDbPath);
+}
+
+/** Get or create a database for a specific dataDir. */
+export async function getDbForDir(dataDir: string): Promise<PGlite> {
+  const dbDir = join(dataDir, 'db');
+  mkdirSync(dbDir, { recursive: true });
+  mkdirSync(join(dataDir, 'attachments'), { recursive: true });
+
+  // If this is the first database and no default is set, make it the default
+  if (defaultDbPath === null) {
+    defaultDbPath = dbDir;
+  }
+
+  return getDbByPath(dbDir);
+}
+
+async function getDbByPath(dbPath: string): Promise<PGlite> {
+  const existing = databases.get(dbPath);
+  if (existing) return existing;
+
   try {
-    db = new PGlite(currentDbPath);
+    const db = new PGlite(dbPath);
     await db.waitReady;
     await initSchema(db);
+    databases.set(dbPath, db);
     return db;
   } catch (err: unknown) {
-    db = null;
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes('Aborted') || message.includes('RuntimeError')) {
       console.error('Database appears to be corrupt. Recreating...');
       console.error('(Previous ticket data will be lost.)');
       try {
-        rmSync(currentDbPath, { recursive: true, force: true });
+        rmSync(dbPath, { recursive: true, force: true });
       } catch { /* may not exist */ }
-      db = new PGlite(currentDbPath);
+      const db = new PGlite(dbPath);
       await db.waitReady;
       await initSchema(db);
+      databases.set(dbPath, db);
       return db;
     }
     throw err;

@@ -1,3 +1,15 @@
+export interface ProjectInfo {
+  name: string;
+  dataDir: string;
+  secret: string;
+}
+
+// Active project context — use getActiveProject() in modules that need the current value
+// (esbuild IIFE bundling may not preserve ESM live bindings)
+export let activeProject: ProjectInfo | null = null;
+export function setActiveProject(project: ProjectInfo) { activeProject = project; }
+export function getActiveProject(): ProjectInfo | null { return activeProject; }
+
 export interface Ticket {
   id: number;
   ticket_number: string;

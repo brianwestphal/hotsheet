@@ -85,10 +85,13 @@ export function renderPreviewColumnView() {
   container.classList.add('ticket-list-columns');
 
   const columns = getColumnsForView();
+  const knownStatuses = new Set(columns.map(c => c.status));
   const columnsContainer = toElement(<div className="columns-container"></div>);
 
   for (const col of columns) {
-    const colTickets = state.tickets.filter(t => t.status === col.status);
+    const colTickets = col === columns[0]
+      ? state.tickets.filter(t => t.status === col.status || !knownStatuses.has(t.status))
+      : state.tickets.filter(t => t.status === col.status);
     const column = toElement(
       <div className="column" data-status={col.status}>
         <div className="column-header">
@@ -161,10 +164,14 @@ export function renderColumnView() {
   container.appendChild(createDraftRow());
 
   const columns = getColumnsForView();
+  const knownStatuses = new Set(columns.map(c => c.status));
   const columnsContainer = toElement(<div className="columns-container"></div>);
 
   for (const col of columns) {
-    const colTickets = state.tickets.filter(t => t.status === col.status);
+    // First column also gets tickets with unrecognized statuses so nothing is silently dropped
+    const colTickets = col === columns[0]
+      ? state.tickets.filter(t => t.status === col.status || !knownStatuses.has(t.status))
+      : state.tickets.filter(t => t.status === col.status);
     const column = toElement(
       <div className="column" data-status={col.status}>
         <div className="column-header">

@@ -21,7 +21,25 @@ const TIERS = {
 
 type Tier = keyof typeof TIERS;
 
-let backupInProgress = false;
+// Per-dataDir backup state
+interface BackupState {
+  backupInProgress: boolean;
+  fiveMinTimer: ReturnType<typeof setTimeout> | null;
+  hourlyInterval: ReturnType<typeof setInterval> | null;
+  dailyInterval: ReturnType<typeof setInterval> | null;
+}
+
+const backupStates = new Map<string, BackupState>();
+
+function getOrCreateState(dataDir: string): BackupState {
+  let state = backupStates.get(dataDir);
+  if (!state) {
+    state = { backupInProgress: false, fiveMinTimer: null, hourlyInterval: null, dailyInterval: null };
+    backupStates.set(dataDir, state);
+  }
+  return state;
+}
+
 let previewDb: PGlite | null = null;
 let currentDataDir: string | null = null;
 
@@ -49,8 +67,9 @@ function parseTimestamp(filename: string): Date | null {
 }
 
 export async function createBackup(dataDir: string, tier: Tier): Promise<BackupInfo | null> {
-  if (backupInProgress) return null;
-  backupInProgress = true;
+  const state = getOrCreateState(dataDir);
+  if (state.backupInProgress) return null;
+  state.backupInProgress = true;
 
   try {
     const db = await getDb();
@@ -86,7 +105,7 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     console.error(`Backup failed (${tier}):`, err);
     return null;
   } finally {
-    backupInProgress = false;
+    state.backupInProgress = false;
   }
 }
 
@@ -222,11 +241,10 @@ export async function restoreBackup(dataDir: string, tier: string, filename: str
   adoptDb(newDb);
 }
 
-let fiveMinTimer: ReturnType<typeof setTimeout> | null = null;
-
 function scheduleFiveMinBackup(dataDir: string): void {
-  if (fiveMinTimer) clearTimeout(fiveMinTimer);
-  fiveMinTimer = setTimeout(() => {
+  const state = getOrCreateState(dataDir);
+  if (state.fiveMinTimer) clearTimeout(state.fiveMinTimer);
+  state.fiveMinTimer = setTimeout(() => {
     void createBackup(dataDir, '5min').then(() => scheduleFiveMinBackup(dataDir));
   }, TIERS['5min'].intervalMs);
 }
@@ -238,8 +256,16 @@ export async function triggerManualBackup(dataDir: string): Promise<BackupInfo |
   return result;
 }
 
+/** Get the backup timers for a given dataDir. Used by ProjectContext. */
+export function getBackupTimers(dataDir: string): { fiveMin: ReturnType<typeof setTimeout> | null; hourly: ReturnType<typeof setInterval> | null; daily: ReturnType<typeof setInterval> | null } {
+  const state = backupStates.get(dataDir);
+  if (!state) return { fiveMin: null, hourly: null, daily: null };
+  return { fiveMin: state.fiveMinTimer, hourly: state.hourlyInterval, daily: state.dailyInterval };
+}
+
 export function initBackupScheduler(dataDir: string): void {
   currentDataDir = dataDir;
+  const state = getOrCreateState(dataDir);
 
   // Clean up any leftover preview directory from a crash
   const previewDir = join(backupsDir(dataDir), '_preview');
@@ -253,6 +279,6 @@ export function initBackupScheduler(dataDir: string): void {
   }, 10_000);
 
   // Schedule recurring hourly and daily backups
-  setInterval(() => void createBackup(dataDir, 'hourly'), TIERS['hourly'].intervalMs);
-  setInterval(() => void createBackup(dataDir, 'daily'), TIERS['daily'].intervalMs);
+  state.hourlyInterval = setInterval(() => void createBackup(dataDir, 'hourly'), TIERS['hourly'].intervalMs);
+  state.dailyInterval = setInterval(() => void createBackup(dataDir, 'daily'), TIERS['daily'].intervalMs);
 }

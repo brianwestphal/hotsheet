@@ -5,10 +5,13 @@ import { Hono } from 'hono';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
+import { runWithDataDir } from './db/connection.js';
 import { readFileSettings } from './file-settings.js';
+import { getProjectBySecret } from './projects.js';
 import { apiRoutes } from './routes/api.js';
 import { backupRoutes } from './routes/backups.js';
 import { pageRoutes } from './routes/pages.js';
+import { projectRoutes } from './routes/projects.js';
 import type { AppEnv } from './types.js';
 
 function tryServe(fetch: Hono['fetch'], port: number): Promise<number> {
@@ -24,10 +27,33 @@ function tryServe(fetch: Hono['fetch'], port: number): Promise<number> {
 export async function startServer(port: number, dataDir: string, options?: { noOpen?: boolean; strictPort?: boolean }): Promise<number> {
   const app = new Hono<AppEnv>();
 
-  // Inject context
+  // Inject context: resolve which project the request is for.
+  // For requests with X-Hotsheet-Secret header, look up the project by secret.
+  // For GET requests, use a `project` query param (secret), or fall back to the default dataDir.
+  // Wraps next() in runWithDataDir() so all downstream getDb() calls use the correct database.
   app.use('*', async (c, next) => {
-    c.set('dataDir', dataDir);
-    await next();
+    let resolvedDataDir = dataDir;
+
+    const headerSecret = c.req.header('X-Hotsheet-Secret');
+    if (headerSecret !== undefined && headerSecret !== '') {
+      const project = getProjectBySecret(headerSecret);
+      if (project) {
+        resolvedDataDir = project.dataDir;
+      }
+    } else {
+      const projectParam = c.req.query('project');
+      if (projectParam !== undefined && projectParam !== '') {
+        const project = getProjectBySecret(projectParam);
+        if (project) {
+          resolvedDataDir = project.dataDir;
+        }
+      }
+    }
+
+    c.set('dataDir', resolvedDataDir);
+    const settings = readFileSettings(resolvedDataDir);
+    c.set('projectSecret', settings.secret ?? '');
+    await runWithDataDir(resolvedDataDir, () => next());
   });
 
   // Static client assets
@@ -57,8 +83,16 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   // Secret validation middleware for API routes (HS-1684, HS-1982, HS-2083)
   // Mutation requests (POST/PATCH/PUT/DELETE) MUST include the correct secret unless from
   // a same-origin browser request. GET requests are allowed without secret (browser polling).
+  // Skip secret validation for /api/projects/* — these are management endpoints used by
+  // the CLI for multi-project registration, accessible only from localhost.
   app.use('/api/*', async (c, next) => {
-    const settings = readFileSettings(dataDir);
+    if (c.req.path.startsWith('/api/projects')) {
+      await next();
+      return;
+    }
+
+    const currentDataDir = c.get('dataDir');
+    const settings = readFileSettings(currentDataDir);
     const expectedSecret = settings.secret;
     if (expectedSecret === undefined || expectedSecret === '') { await next(); return; }
 
@@ -67,12 +101,19 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     const isMutation = method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE';
 
     if (headerSecret !== undefined && headerSecret !== '') {
-      // Header present: validate it
+      // Header present: validate it against the resolved project's secret
       if (headerSecret !== expectedSecret) {
-        return c.json({
-          error: 'Secret mismatch — you may be connecting to the wrong Hot Sheet instance.',
-          recovery: 'Re-read .hotsheet/settings.json to get the correct port and secret, and re-read your skill files (e.g. .claude/skills/hotsheet/SKILL.md) for updated instructions.',
-        }, 403);
+        // Also check if it matches ANY registered project (multi-project support)
+        const project = getProjectBySecret(headerSecret);
+        if (!project) {
+          return c.json({
+            error: 'Secret mismatch — you may be connecting to the wrong Hot Sheet instance.',
+            recovery: 'Re-read .hotsheet/settings.json to get the correct port and secret, and re-read your skill files (e.g. .claude/skills/hotsheet/SKILL.md) for updated instructions.',
+          }, 403);
+        }
+        // Project found by secret — update context to use that project
+        c.set('dataDir', project.dataDir);
+        c.set('projectSecret', project.secret);
       }
     } else if (isMutation) {
       // No header on a mutation: allow if from same-origin browser request, reject otherwise.
@@ -96,6 +137,7 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   // API routes
   app.route('/api', apiRoutes);
   app.route('/api/backups', backupRoutes);
+  app.route('/api/projects', projectRoutes);
 
   // Page routes
   app.route('/', pageRoutes);

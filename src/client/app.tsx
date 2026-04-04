@@ -12,6 +12,7 @@ import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
+import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
 import { bindSettingsDialog } from './settingsDialog.js';
 import { bindKeyboardShortcuts, getDetailSaveTimeout, setDetailSaveTimeout } from './shortcuts.js';
 import { bindSearchInput, bindSidebar, bindSortControls } from './sidebar.js';
@@ -22,8 +23,30 @@ import { checkForUpdate, restoreAppIcon } from './tauriIntegration.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';
 
+/** Reload all app state — used after project switch and during init. */
+async function reloadAppState() {
+  await loadSettings();
+  // Sync toggle button UI to the new project's saved settings
+  updateLayoutToggle();
+  updateDetailPositionToggle();
+  await loadCategories();
+  await loadCustomViews();
+  void loadAppName();
+  suppressAnimation();
+  await loadTickets();
+  // Re-init channel for the new project context
+  void initChannel();
+}
+
 async function init() {
   try {
+  // Determine the active project before any API calls
+  await initProjectTabs();
+  setProjectReloadCallback(async () => {
+    closeDetail();
+    await reloadAppState();
+  });
+
   await loadSettings();
   await loadCategories();
   await loadCustomViews();

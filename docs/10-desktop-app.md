@@ -63,6 +63,10 @@ On app exit, the sidecar process is terminated:
 - `default` — Grants core IPC, shell (sidecar spawn), updater, and process permissions to the main window.
 - `remote-localhost` — Grants core IPC to `http://localhost:*` URLs so the Node-served frontend can call Tauri commands.
 
+### 10.8.1 WKWebView Dialog Limitations
+
+Native JavaScript dialogs (`confirm()`, `alert()`) may be suppressed or auto-dismissed in the Tauri WKWebView on macOS. The app avoids relying on `confirm()` for destructive actions, using direct actions or custom HTML dialogs instead.
+
 ## Non-Functional Requirements
 
 ### 10.9 Platforms

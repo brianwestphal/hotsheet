@@ -9,6 +9,7 @@ pageRoutes.get('/', (c) => {
   const html = (
     <Layout title="Hot Sheet">
       <div className="app">
+        <div id="project-tabs" className="project-tabs" style="display:none"></div>
         <header className="app-header">
           <div className="app-title">
             <h1>Hot Sheet</h1>

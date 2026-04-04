@@ -1,4 +1,5 @@
 import { toElement } from './dom.js';
+import { getActiveProject } from './state.js';
 
 function showErrorPopup(message: string) {
   document.getElementById('network-error-popup')?.remove();
@@ -15,11 +16,34 @@ function showErrorPopup(message: string) {
   document.body.appendChild(popup);
 }
 
+/** Build the full URL for an API call, adding project query param for GET requests. */
+function buildUrl(path: string, method?: string): string {
+  let url = '/api' + path;
+  const ap = getActiveProject();
+  if (ap !== null && (method === undefined || method === 'GET')) {
+    const sep = url.includes('?') ? '&' : '?';
+    url += sep + 'project=' + encodeURIComponent(ap.secret);
+  }
+  return url;
+}
+
+/** Build headers, adding X-Hotsheet-Secret for mutation requests. */
+function buildHeaders(opts: { body?: unknown; method?: string }): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
+  const isMutation = opts.method === 'POST' || opts.method === 'PATCH' || opts.method === 'PUT' || opts.method === 'DELETE';
+  const activeProj = getActiveProject();
+  if (activeProj !== null && isMutation) {
+    headers['X-Hotsheet-Secret'] = activeProj.secret;
+  }
+  return headers;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
   try {
-    const res = await fetch('/api' + path, {
-      headers: opts.body !== undefined ? { 'Content-Type': 'application/json' } : {},
+    const res = await fetch(buildUrl(path, opts.method), {
+      headers: buildHeaders(opts),
       method: opts.method,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
@@ -34,7 +58,12 @@ export async function apiUpload<T>(path: string, file: File): Promise<T> {
   try {
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch('/api' + path, { method: 'POST', body: form });
+    const headers: Record<string, string> = {};
+    const proj = getActiveProject();
+    if (proj !== null) {
+      headers['X-Hotsheet-Secret'] = proj.secret;
+    }
+    const res = await fetch(buildUrl(path, 'POST'), { method: 'POST', body: form, headers });
     return await (res.json() as Promise<T>);
   } catch (err) {
     showErrorPopup('Unable to reach the server. It may have been stopped.');

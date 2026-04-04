@@ -11,6 +11,7 @@ import { scheduleAllSync } from '../sync/markdown.js';
 import type { AppEnv, CategoryDef } from '../types.js';
 import { CATEGORY_PRESETS } from '../types.js';
 import { notifyChange } from './notify.js';
+import { parseBody, UpdateSettingsSchema, UpdateCategoriesSchema } from './validation.js';
 
 export const settingsRoutes = new Hono<AppEnv>();
 
@@ -29,9 +30,12 @@ settingsRoutes.get('/categories', async (c) => {
 });
 
 settingsRoutes.put('/categories', async (c) => {
-  const categories = await c.req.json<CategoryDef[]>();
+  const raw = await c.req.json();
+  const parsed = parseBody(UpdateCategoriesSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const categories = parsed.data;
   await saveCategories(categories);
-  scheduleAllSync(); notifyChange();
+  scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json(categories);
 });
 
@@ -47,8 +51,10 @@ settingsRoutes.get('/settings', async (c) => {
 });
 
 settingsRoutes.patch('/settings', async (c) => {
-  const body = await c.req.json<Record<string, string>>();
-  for (const [key, value] of Object.entries(body)) {
+  const raw = await c.req.json();
+  const parsed = parseBody(UpdateSettingsSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  for (const [key, value] of Object.entries(parsed.data)) {
     await updateSetting(key, value);
   }
   return c.json({ ok: true });
@@ -71,7 +77,9 @@ settingsRoutes.get('/file-settings', async (c) => {
 settingsRoutes.patch('/file-settings', async (c) => {
   const { writeFileSettings } = await import('../file-settings.js');
   const dataDir = c.get('dataDir');
-  const body = await c.req.json<Record<string, string>>();
-  const updated = writeFileSettings(dataDir, body);
+  const raw = await c.req.json();
+  const parsed = parseBody(UpdateSettingsSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const updated = writeFileSettings(dataDir, parsed.data);
   return c.json(updated);
 });

@@ -14,6 +14,8 @@ The application is launched from the command line via the `hotsheet` command (in
 | `--data-dir <path>` | Store data in a custom directory (default: `.hotsheet/`) |
 | `--no-open` | Don't open the browser on startup (used by Tauri sidecar) |
 | `--strict-port` | Fail if the specified port is already in use (used by Tauri dev) |
+| `--close` | Unregister the current project from the running instance and exit |
+| `--list` | List all projects registered with the running instance and exit |
 | `--check-for-updates` | Check the npm registry for a newer version immediately |
 | `--demo:<scenario>` | Launch with demo data (see §7.7) |
 | `--help` | Display usage information |
@@ -25,37 +27,60 @@ The application is launched from the command line via the `hotsheet` command (in
 - If `--strict-port` is set, the application fails with an error instead of trying alternative ports.
 - The actual port is communicated to the UI and used in markdown sync exports.
 
-### 8.4 Startup Sequence
+### 8.4 Multi-Project Instance Management
+
+Only one Hot Sheet server runs at a time. Subsequent invocations from other project directories join the running instance instead of starting a new server.
+
+- **Instance file**: `~/.hotsheet/instance.json` stores `{ port, pid }` for the running server.
+- **On startup** (non-demo mode): the CLI checks the instance file. If a responsive server is found, the CLI registers the current project via `POST /api/projects/register`, opens the browser, and exits.
+- **On server start**: the instance file is written with the actual port and PID.
+- **On server exit** (SIGTERM/SIGINT/exit): the instance file is removed if the PID matches.
+- **`--close`**: reads the instance file, finds the project's secret from its `settings.json`, and calls `DELETE /api/projects/:secret` to unregister the project. Cannot unregister the last remaining project.
+- **`--list`**: reads the instance file and calls `GET /api/projects` to display all registered projects with their ticket counts.
+- **Demo mode** skips instance detection entirely and always starts a fresh server.
+
+### 8.4.1 Request Routing via AsyncLocalStorage
+
+The server uses Node.js `AsyncLocalStorage` to route each HTTP request to the correct project's database. Middleware resolves the project context from the `X-Hotsheet-Secret` header or `?project=` query parameter and stores it in the async context for the duration of the request. All existing DB query functions work unchanged — they call `getDb()` which checks the async context first.
+
+### 8.4.2 Project Tab Persistence
+
+Project tabs are persisted to `~/.hotsheet/projects.json` and restored on restart, so the server remembers which projects were registered across restarts.
+
+### 8.5 Startup Sequence
 
 1. Parse CLI arguments.
-2. Create the data directory if it doesn't exist.
-3. Check and acquire the lock file.
-4. Initialize the PGLite database and run schema migrations.
-5. Load settings from the database.
-6. Ensure `.hotsheet/` is in `.gitignore` (if in a git repo).
-7. Generate/update AI tool skill files.
-8. Start the Hono HTTP server.
-9. Run auto-cleanup for stale tickets (non-blocking, runs in background).
-10. Start the automatic backup scheduler.
-11. Trigger initial markdown sync.
-12. Check for CLI updates (daily, via npm registry).
-13. Open the browser (unless `--no-open`).
+2. Handle `--close` or `--list` if specified (communicate with running instance and exit).
+3. Check for a running instance (`~/.hotsheet/instance.json`). If found and responsive, register the current project and exit.
+4. Create the data directory if it doesn't exist.
+5. Check and acquire the lock file.
+6. Initialize the PGLite database and run schema migrations.
+7. Load settings from the database.
+8. Ensure `.hotsheet/` is in `.gitignore` (if in a git repo).
+9. Generate/update AI tool skill files.
+10. Start the Hono HTTP server.
+11. Run auto-cleanup for stale tickets (non-blocking, runs in background).
+12. Start the automatic backup scheduler.
+13. Trigger initial markdown sync.
+14. Check for CLI updates (daily, via npm registry).
+15. Open the browser (unless `--no-open`).
+16. Write the instance file (`~/.hotsheet/instance.json`).
 
-### 8.5 HTTP Server
+### 8.6 HTTP Server
 
 - Built on the Hono framework with `@hono/node-server`.
 - Serves the single-page HTML application, client JS bundle, and CSS.
 - Provides a JSON REST API (see [9-api.md](9-api.md)).
 - Serves attachment files with correct MIME types.
 
-### 8.6 CLI Update Checking
+### 8.7 CLI Update Checking
 
 - Once per day, checks the npm registry for a newer version of the `hotsheet` package.
 - If an update is available, displays a colored banner in the terminal with the upgrade command.
 - Auto-detects the user's package manager (npm, yarn, pnpm, bun) from the install path.
 - Can be forced with `--check-for-updates`.
 
-### 8.7 Demo Mode
+### 8.8 Demo Mode
 
 Demo mode launches the application with pre-populated sample data, intended for screenshots, demonstrations, and feature exploration. Invoked via `--demo:<N>` where N is a scenario number (1–7).
 
@@ -92,7 +117,7 @@ Each scenario uses realistic e-commerce project data with a mix of categories, p
 
 ## Non-Functional Requirements
 
-### 8.8 Graceful Startup
+### 8.9 Graceful Startup
 
 - Port conflicts are handled gracefully with automatic fallback (unless strict mode).
 - Stale lock files from crashed processes are cleaned up automatically.

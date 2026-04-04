@@ -11,6 +11,11 @@ export function acquireLock(dataDir: string): void {
       const contents = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid: number };
       const pid = contents.pid;
 
+      // Same process re-acquiring the lock (e.g., project re-registered after tab close)
+      if (pid === process.pid) {
+        return;
+      }
+
       // Check if the process is still alive (signal 0 = test only)
       try {
         process.kill(pid, 0);

@@ -152,6 +152,8 @@ async function runShellCommand(command: string, name?: string, autoShow = false)
   setShellBusy(true);
   shellAutoShowLog = autoShow;
   try {
+    // Ensure AI tool skills are installed/up-to-date before running commands
+    void api('/ensure-skills', { method: 'POST' });
     const result = await api<{ id: number }>('/shell/exec', { method: 'POST', body: { command, name } });
     shellBusyId = result.id;
     startShellPoll(result.id);

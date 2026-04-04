@@ -31,9 +31,22 @@
 - A `hotsheet.lock` file prevents multiple instances from using the same database simultaneously.
 - Contains JSON with `pid` and `startedAt`.
 - On startup, checks if the lock holder PID is still alive (signal 0). Stale locks from dead processes are automatically removed.
+- If the lock file belongs to the current process (same PID), `acquireLock()` returns immediately instead of terminating. This allows a project to be re-registered after being removed from a tab without the server killing itself.
 - Lock is cleaned up on process exit.
 
-### 2.5 Gitignore Management
+### 2.5 Instance File
+
+- An `instance.json` file is written to `~/.hotsheet/` on server startup and removed on exit.
+- Contains `port` and `pid` of the running server.
+- Used by the CLI for `--list` and `--close` commands, and for detecting whether a running instance can be joined instead of starting a new one.
+
+### 2.6 Projects Registry
+
+- A `projects.json` file in `~/.hotsheet/` persists the list of registered project `dataDir` paths across server restarts.
+- On startup, previously registered projects whose directories still exist are automatically re-registered.
+- When a project is added or removed via the API, the file is updated immediately.
+
+### 2.7 Gitignore Management
 
 - On startup, detects if the project is a git repository.
 - Automatically adds `.hotsheet/` to `.gitignore` if not already present.
@@ -41,15 +54,15 @@
 
 ## Non-Functional Requirements
 
-### 2.6 Data Locality
+### 2.8 Data Locality
 
 - All data remains on the local machine. There is no cloud sync, external API dependency, or remote storage.
 
-### 2.7 Zero Configuration
+### 2.9 Zero Configuration
 
 - The database initializes automatically on first run with no manual setup, provisioning, or configuration required.
 
-### 2.8 Data Integrity
+### 2.10 Data Integrity
 
 - Only one application instance may access the database at a time, enforced by the lock file mechanism.
 - Soft-delete is the default for ticket removal; hard delete is a separate, explicit operation.

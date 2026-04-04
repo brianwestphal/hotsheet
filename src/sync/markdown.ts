@@ -11,36 +11,66 @@ interface AutoContextEntry {
   text: string;
 }
 
-let dataDir: string;
-let port: number;
-let worklistTimeout: ReturnType<typeof setTimeout> | null = null;
-let openTicketsTimeout: ReturnType<typeof setTimeout> | null = null;
+interface SyncState {
+  dataDir: string;
+  port: number;
+  worklistTimeout: ReturnType<typeof setTimeout> | null;
+  openTicketsTimeout: ReturnType<typeof setTimeout> | null;
+}
+
+// Per-dataDir sync state
+const syncStates = new Map<string, SyncState>();
+
+// The first registered dataDir, used as default for backward compatibility
+let defaultDataDir: string | null = null;
 
 const WORKLIST_DEBOUNCE = 500;
 const OPEN_TICKETS_DEBOUNCE = 5000;
 
 export function initMarkdownSync(dir: string, serverPort: number) {
-  dataDir = dir;
-  port = serverPort;
+  if (defaultDataDir === null) {
+    defaultDataDir = dir;
+  }
+  syncStates.set(dir, {
+    dataDir: dir,
+    port: serverPort,
+    worklistTimeout: null,
+    openTicketsTimeout: null,
+  });
 }
 
-export function scheduleWorklistSync() {
-  if (worklistTimeout) clearTimeout(worklistTimeout);
-  worklistTimeout = setTimeout(() => {
-    void syncWorklist();
+function resolveState(dir?: string): SyncState | undefined {
+  if (dir !== undefined) return syncStates.get(dir);
+  if (defaultDataDir !== null) return syncStates.get(defaultDataDir);
+  return undefined;
+}
+
+export function scheduleWorklistSync(dir?: string) {
+  const state = resolveState(dir);
+  if (!state) return;
+  if (state.worklistTimeout) clearTimeout(state.worklistTimeout);
+  state.worklistTimeout = setTimeout(() => {
+    void syncWorklist(state);
   }, WORKLIST_DEBOUNCE);
 }
 
-export function scheduleOpenTicketsSync() {
-  if (openTicketsTimeout) clearTimeout(openTicketsTimeout);
-  openTicketsTimeout = setTimeout(() => {
-    void syncOpenTickets();
+export function scheduleOpenTicketsSync(dir?: string) {
+  const state = resolveState(dir);
+  if (!state) return;
+  if (state.openTicketsTimeout) clearTimeout(state.openTicketsTimeout);
+  state.openTicketsTimeout = setTimeout(() => {
+    void syncOpenTickets(state);
   }, OPEN_TICKETS_DEBOUNCE);
 }
 
-export function scheduleAllSync() {
-  scheduleWorklistSync();
-  scheduleOpenTicketsSync();
+export function scheduleAllSync(dir?: string) {
+  scheduleWorklistSync(dir);
+  scheduleOpenTicketsSync(dir);
+}
+
+/** Get the sync state for a given dataDir. Used by ProjectContext. */
+export function getSyncState(dir: string): { worklistTimeout: ReturnType<typeof setTimeout> | null; openTicketsTimeout: ReturnType<typeof setTimeout> | null } | undefined {
+  return syncStates.get(dir);
 }
 
 function parseTicketNotes(raw: string): { text: string; created_at: string }[] {
@@ -136,7 +166,8 @@ async function formatCategoryDescriptions(usedCategories: Set<string>): Promise<
   return lines.join('\n');
 }
 
-async function syncWorklist(): Promise<void> {
+async function syncWorklist(state: SyncState): Promise<void> {
+  const { dataDir, port } = state;
   try {
     const tickets = await getTickets({ up_next: true, sort_by: 'priority', sort_dir: 'asc' });
     const categories = new Set<string>();
@@ -225,7 +256,8 @@ async function syncWorklist(): Promise<void> {
   }
 }
 
-async function syncOpenTickets(): Promise<void> {
+async function syncOpenTickets(state: SyncState): Promise<void> {
+  const { dataDir } = state;
   try {
     const tickets = await getTickets({ status: 'open', sort_by: 'priority', sort_dir: 'asc' });
     const categories = new Set<string>();

@@ -46,7 +46,14 @@ Both markdown files are regenerated on:
 
 ### 6.6 AI Tool Skill Generation
 
-On startup, the application detects installed AI tools and generates skill/rule files that allow those tools to interact with Hot Sheet. Files are only regenerated when the skill version changes.
+The application detects installed AI tools and generates skill/rule files that allow those tools to interact with Hot Sheet. Files are only regenerated when the skill version changes.
+
+Skill installation is checked proactively at multiple points:
+- **App launch**: Initial check during server startup.
+- **Project tab switch**: When switching to a different project tab, skills are ensured for that project.
+- **Channel enable**: When toggling Claude Channel integration on, skills are checked before the channel can be used.
+- **Play button / action buttons**: Before triggering Claude or running shell commands, skills are verified.
+- **`POST /api/ensure-skills`**: Dedicated endpoint that checks and updates skills, returning `{ updated: boolean }`.
 
 #### Claude Code (`.claude/`)
 - Creates skill files in `.claude/skills/`: a main `hotsheet` skill (read worklist and work through items) and per-category ticket creation skills (hs-bug, hs-feature, hs-task, hs-issue, hs-investigation, hs-req-change).

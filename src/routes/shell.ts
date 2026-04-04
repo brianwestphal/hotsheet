@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import type { AppEnv } from '../types.js';
+import { parseBody, ShellExecSchema, ShellKillSchema } from './validation.js';
 
 export const shellRoutes = new Hono<AppEnv>();
 
@@ -13,13 +14,11 @@ const killedProcesses = new Set<number>(); // Processes explicitly killed by use
 shellRoutes.post('/shell/exec', async (c) => {
   const { spawn } = await import('child_process');
   const dataDir = c.get('dataDir');
-  const body = await c.req.json<{ command: string; name?: string }>();
-  const command = body.command;
-  const name = body.name;
-
-  if (!command || command.trim() === '') {
-    return c.json({ error: 'No command provided' }, 400);
-  }
+  const raw = await c.req.json();
+  const parsed = parseBody(ShellExecSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const command = parsed.data.command;
+  const name = parsed.data.name;
 
   // The project root is the parent of the .hotsheet data dir
   const cwd = dataDir + '/..';
@@ -80,16 +79,18 @@ shellRoutes.post('/shell/exec', async (c) => {
 });
 
 shellRoutes.post('/shell/kill', async (c) => {
-  const body = await c.req.json<{ id: number }>();
-  const child = runningProcesses.get(body.id);
+  const raw = await c.req.json();
+  const parsed = parseBody(ShellKillSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const child = runningProcesses.get(parsed.data.id);
   if (!child) {
     return c.json({ error: 'Process not found or already finished' }, 404);
   }
-  killedProcesses.add(body.id);
+  killedProcesses.add(parsed.data.id);
   child.kill('SIGTERM');
   // Give it a moment, then force kill if still running
   setTimeout(() => {
-    if (runningProcesses.has(body.id)) {
+    if (runningProcesses.has(parsed.data.id)) {
       child.kill('SIGKILL');
     }
   }, 3000);

@@ -160,5 +160,6 @@ export const STATUSES: { value: TicketStatus; label: string }[] = [
 export interface AppEnv {
   Variables: {
     dataDir: string;
+    projectSecret: string;
   };
 }
