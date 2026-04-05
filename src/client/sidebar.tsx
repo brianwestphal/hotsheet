@@ -88,7 +88,14 @@ let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 export function bindSearchInput() {
   const input = document.getElementById('search-input') as HTMLInputElement;
+  const searchBox = input.closest('.search-box') as HTMLElement;
+
+  function updateSearchBoxClass() {
+    searchBox.classList.toggle('has-value', input.value !== '');
+  }
+
   input.addEventListener('input', () => {
+    updateSearchBoxClass();
     if (searchTimeout) clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
       state.search = input.value;
@@ -101,6 +108,7 @@ export function bindSearchInput() {
     if (e.key === 'Escape') {
       input.value = '';
       state.search = '';
+      updateSearchBoxClass();
       suppressAnimation();
       void loadTickets();
     }

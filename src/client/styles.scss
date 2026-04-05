@@ -186,7 +186,8 @@ input, select, textarea {
   position: relative;
   transition: width 0.3s ease;
 
-  &:focus-within {
+  &:focus-within,
+  &.has-value {
     width: 50vw;
   }
 

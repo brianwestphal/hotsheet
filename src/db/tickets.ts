@@ -4,10 +4,10 @@ import { generateNoteId, parseNotes } from './notes.js';
 
 // --- Ticket number ---
 
-export async function nextTicketNumber(): Promise<string> {
+export async function nextTicketNumber(prefix = 'HS'): Promise<string> {
   const db = await getDb();
   const result = await db.query<{ nextval: string }>("SELECT nextval('ticket_seq')");
-  return `HS-${result.rows[0].nextval}`;
+  return `${prefix}-${result.rows[0].nextval}`;
 }
 
 // --- Ticket CRUD ---
@@ -19,9 +19,9 @@ export async function createTicket(title: string, defaults?: Partial<{
   up_next: boolean;
   details: string;
   tags: string;
-}>): Promise<Ticket> {
+}>, prefix?: string): Promise<Ticket> {
   const db = await getDb();
-  const ticketNumber = await nextTicketNumber();
+  const ticketNumber = await nextTicketNumber(prefix);
   const cols = ['ticket_number', 'title'];
   const vals: unknown[] = [ticketNumber, title];
   if (defaults?.category !== undefined && defaults.category !== '') { cols.push('category'); vals.push(defaults.category); }

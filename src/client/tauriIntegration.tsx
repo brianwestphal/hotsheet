@@ -8,16 +8,10 @@ export function getTauriInvoke(): ((cmd: string, args?: Record<string, unknown>)
 }
 
 /** Restore the saved app icon variant on page load. The Dock resets to the bundle
- *  icon during app launch, so we re-apply it from the client once the page is ready. */
+ *  icon during app launch, so we re-apply it from the client once the page is ready.
+ *  NOTE: Custom icon support is feature-flagged out — always uses default icon. */
 export async function restoreAppIcon() {
-  const invoke = getTauriInvoke();
-  if (!invoke) return;
-  try {
-    const fs = await api<{ appIcon?: string }>('/file-settings');
-    if (fs.appIcon !== undefined && fs.appIcon !== '' && fs.appIcon !== 'default') {
-      await invoke('set_app_icon', { variant: fs.appIcon });
-    }
-  } catch { /* non-critical */ }
+  // Custom icon switching disabled — always use default icon
 }
 
 /** Request user attention — bounces dock icon in Tauri, flashes tab title in browser.

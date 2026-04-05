@@ -36,9 +36,10 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     overlay.style.display = 'flex';
     void loadBackupList();
     // Load file-based settings (app name, backup dir)
-    void api<{ appName?: string; backupDir?: string }>('/file-settings').then((fs) => {
+    void api<{ appName?: string; backupDir?: string; ticketPrefix?: string }>('/file-settings').then((fs) => {
       (document.getElementById('settings-app-name') as HTMLInputElement).value = fs.appName ?? '';
       (document.getElementById('settings-backup-dir') as HTMLInputElement).value = fs.backupDir ?? '';
+      (document.getElementById('settings-ticket-prefix') as HTMLInputElement).value = fs.ticketPrefix ?? '';
     });
   });
 
@@ -172,6 +173,24 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
         const h1 = document.querySelector('.app-title h1');
         if (h1) h1.textContent = displayName;
         appNameHint.textContent = val ? 'Saved. Restart the desktop app to update the title bar.' : 'Using default name.';
+      });
+    }, 800);
+  });
+
+  // Ticket prefix (file-based setting)
+  const prefixInput = document.getElementById('settings-ticket-prefix') as HTMLInputElement;
+  const prefixHint = document.getElementById('settings-ticket-prefix-hint')!;
+  let prefixTimeout: ReturnType<typeof setTimeout> | null = null;
+  prefixInput.addEventListener('input', () => {
+    if (prefixTimeout) clearTimeout(prefixTimeout);
+    prefixTimeout = setTimeout(() => {
+      const val = prefixInput.value.trim();
+      if (val !== '' && !/^[a-zA-Z0-9_-]{1,10}$/.test(val)) {
+        prefixHint.textContent = 'Invalid: use up to 10 alphanumeric, hyphen, or underscore characters.';
+        return;
+      }
+      void api('/file-settings', { method: 'PATCH', body: { ticketPrefix: val } }).then(() => {
+        prefixHint.textContent = val ? `New tickets will use "${val}-" prefix.` : 'Using default prefix (HS).';
       });
     }, 800);
   });

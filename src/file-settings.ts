@@ -6,6 +6,7 @@ export interface FileSettings {
   appName?: string;
   appIcon?: string;
   backupDir?: string;
+  ticketPrefix?: string;
   secret?: string;
   secretPathHash?: string;
   port?: number;

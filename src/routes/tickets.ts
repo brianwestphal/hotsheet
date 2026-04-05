@@ -94,7 +94,12 @@ ticketRoutes.post('/tickets', async (c) => {
     defaults.tags = JSON.stringify(existingTags);
   }
 
-  const ticket = await createTicket(title, defaults as Parameters<typeof createTicket>[1]);
+  // Read custom ticket prefix from project settings
+  const { readFileSettings } = await import('../file-settings.js');
+  const fileSettings = readFileSettings(c.get('dataDir'));
+  const prefix = fileSettings.ticketPrefix !== undefined && fileSettings.ticketPrefix !== '' ? fileSettings.ticketPrefix : undefined;
+
+  const ticket = await createTicket(title, defaults as Parameters<typeof createTicket>[1], prefix);
   scheduleAllSync(c.get('dataDir')); notifyChange();
   return c.json(ticket, 201);
 });

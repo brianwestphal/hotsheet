@@ -276,12 +276,17 @@ pageRoutes.get('/', (c) => {
               <div className="settings-field">
                 <label>Project name</label>
                 <div className="settings-app-name-row">
-                  <button className="app-icon-picker-btn" id="app-icon-picker-btn" title="Change app icon">
+                  <button className="app-icon-picker-btn" id="app-icon-picker-btn" title="Change app icon" style="display:none">
                     <img id="app-icon-preview" src="/static/assets/icon-default.png" width="28" height="28" />
                   </button>
                   <input type="text" id="settings-app-name" placeholder="Hot Sheet" />
                 </div>
                 <span className="settings-hint" id="settings-app-name-hint">Custom name shown in the title bar and project tab. Leave empty for default.</span>
+              </div>
+              <div className="settings-field">
+                <label>Ticket prefix</label>
+                <input type="text" id="settings-ticket-prefix" placeholder="HS" maxLength={10} style="width: 120px" />
+                <span className="settings-hint" id="settings-ticket-prefix-hint">Prefix for ticket numbers (e.g. HS-1). Alphanumeric, hyphens, underscores. Max 10 characters.</span>
               </div>
               <div className="settings-field">
                 <label>Auto-clear trash after (days)</label>
