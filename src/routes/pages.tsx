@@ -9,9 +9,8 @@ pageRoutes.get('/', (c) => {
   const html = (
     <Layout title="Hot Sheet">
       <div className="app">
-        <div id="project-tabs" className="project-tabs" style="display:none"></div>
         <header className="app-header">
-          <div className="app-title">
+          <div className="app-title" id="app-title-area">
             <h1>Hot Sheet</h1>
           </div>
           <div className="header-controls">
@@ -38,7 +37,7 @@ pageRoutes.get('/', (c) => {
             </div>
             <button className="glassbox-btn" id="glassbox-btn" title="Open Glassbox" style="display:none"><img id="glassbox-icon" alt="Glassbox" /></button>
             <button className="settings-btn print-btn" id="print-btn" title="Print"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/></svg></button>
-            <button className="settings-btn" id="settings-btn" title="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            <button className="settings-btn" id="settings-btn" title="Project Settings"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
           </div>
         </header>
 
@@ -274,6 +273,15 @@ pageRoutes.get('/', (c) => {
           <div className="settings-body">
             <div className="settings-tab-panel active" data-panel="general">
               <div className="settings-field">
+                <label>Layout mode <span className="global-setting-badge">Global Setting</span></label>
+                <div className="layout-toggle" id="settings-layout-mode">
+                  <button className="layout-btn active" data-mode="tabs">Tabs</button>
+                  <button className="layout-btn" data-mode="lanes">Lanes</button>
+                </div>
+                <span className="settings-hint">How multiple projects are displayed. Lanes mode coming soon.</span>
+              </div>
+              <div className="settings-divider"></div>
+              <div className="settings-field">
                 <label>Project name</label>
                 <div className="settings-app-name-row">
                   <button className="app-icon-picker-btn" id="app-icon-picker-btn" title="Change app icon" style="display:none">
@@ -353,7 +361,7 @@ pageRoutes.get('/', (c) => {
               <div className="settings-field">
                 <label className="settings-checkbox-label">
                   <input type="checkbox" id="settings-channel-enabled" />
-                  Enable Claude Channel integration
+                  Enable Claude Channel integration <span className="global-setting-badge">Global Setting</span>
                 </label>
                 <span className="settings-hint" id="settings-channel-hint">Push worklist events to a running Claude Code session via MCP channels.</span>
                 <div id="settings-channel-instructions" style="display:none">
@@ -385,6 +393,22 @@ pageRoutes.get('/', (c) => {
           </div>
         </div>
       </div>
+
+      <div className="open-folder-overlay" id="open-folder-overlay" style="display:none">
+        <div className="open-folder-dialog">
+          <div className="open-folder-header">
+            <h2>Open Folder</h2>
+            <button className="open-folder-close" id="open-folder-close">{'\u00d7'}</button>
+          </div>
+          <div className="open-folder-breadcrumb" id="open-folder-breadcrumb"></div>
+          <div className="open-folder-list" id="open-folder-list"></div>
+          <div className="open-folder-footer">
+            <span className="open-folder-path" id="open-folder-path"></span>
+            <button className="open-folder-select" id="open-folder-select-btn">Open</button>
+          </div>
+        </div>
+      </div>
+
       <div className="permission-overlay" id="permission-overlay" style="display:none">
         <div className="permission-overlay-content">
           <div className="permission-overlay-text">Claude is waiting for permission</div>

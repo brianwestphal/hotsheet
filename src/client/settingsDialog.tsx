@@ -27,6 +27,12 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   settingsBtn.addEventListener('click', () => {
+    // Always reset to General tab when opening
+    tabs.forEach(t => t.classList.remove('active'));
+    panels.forEach(p => p.classList.remove('active'));
+    tabs[0]?.classList.add('active');
+    panels[0]?.classList.add('active');
+
     // Populate fields with current values
     (document.getElementById('settings-trash-days') as HTMLInputElement).value = String(state.settings.trash_cleanup_days);
     (document.getElementById('settings-verified-days') as HTMLInputElement).value = String(state.settings.verified_cleanup_days);
@@ -194,6 +200,18 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       });
     }, 800);
   });
+
+  // Global: Layout mode (always tabs for now)
+  const layoutModeToggle = document.getElementById('settings-layout-mode');
+  if (layoutModeToggle) {
+    layoutModeToggle.querySelectorAll('.layout-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if ((btn as HTMLElement).dataset.mode === 'lanes') return; // Not implemented yet
+        layoutModeToggle.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+  }
 
   // Check for Updates button
   const checkUpdatesBtn = document.getElementById('check-updates-btn') as HTMLButtonElement;

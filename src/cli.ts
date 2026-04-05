@@ -316,7 +316,8 @@ async function main() {
 
   console.log(`  Data directory: ${dataDir}`);
 
-  const actualPort = await startServer(port, dataDir, { noOpen, strictPort });
+  // Start the server without opening the browser — we open it after all projects are restored
+  const actualPort = await startServer(port, dataDir, { noOpen: true, strictPort });
 
   // Generate/validate the API secret and write port to settings.json for AI tool consumption
   const secret = ensureSecret(dataDir, actualPort);
@@ -359,16 +360,27 @@ async function main() {
     // Restore previously registered projects (other tabs from last session)
     const previousProjects = readProjectList();
     const absDataDir = resolve(dataDir);
+    const validProjects = [absDataDir];
     for (const prevDir of previousProjects) {
       if (prevDir === absDataDir) continue; // Already registered above
       if (!existsSync(prevDir)) continue;   // Directory no longer exists
       try {
         await registerProject(prevDir, actualPort);
-      } catch (err) {
-        // Non-critical — skip projects that fail to register (e.g., locked by another process)
-        const msg = err instanceof Error ? err.message : String(err);
-        console.log(`  Skipping project ${prevDir}: ${msg}`);
+        validProjects.push(prevDir);
+      } catch {
+        // Non-critical — skip projects that fail to register
       }
+    }
+    // Clean up stale entries from the project list
+    if (validProjects.length !== previousProjects.length) {
+      const { reorderProjectList } = await import('./project-list.js');
+      reorderProjectList(validProjects);
+    }
+
+    // Notify long-poll so the UI discovers restored tabs
+    if (validProjects.length > 1) {
+      const { notifyChange } = await import('./routes/notify.js');
+      notifyChange();
     }
 
     writeInstanceFile(actualPort);
@@ -378,6 +390,15 @@ async function main() {
     process.on('exit', cleanupInstance);
     process.on('SIGINT', () => { cleanupInstance(); process.exit(0); });
     process.on('SIGTERM', () => { cleanupInstance(); process.exit(0); });
+  }
+
+  // Open browser AFTER all projects are restored (so tabs are ready when the page loads)
+  if (!noOpen) {
+    const url = `http://localhost:${actualPort}`;
+    const openCmd = process.platform === 'darwin' ? 'open'
+      : process.platform === 'win32' ? 'start'
+      : 'xdg-open';
+    execFile(openCmd, [url]);
   }
 }
 

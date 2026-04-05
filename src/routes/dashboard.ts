@@ -1,7 +1,8 @@
-import { writeFileSync } from 'fs';
+import { existsSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
 import { tmpdir } from 'os';
-import { join, relative } from 'path';
+import { homedir } from 'os';
+import { join, relative, resolve } from 'path';
 
 import { getTicketStats } from '../db/queries.js';
 import { consumeSkillsCreatedFlag, ensureSkills } from '../skills.js';
@@ -56,6 +57,52 @@ dashboardRoutes.get('/worklist-info', (c) => {
   const skillCreated = consumeSkillsCreatedFlag();
 
   return c.json({ prompt, skillCreated });
+});
+
+// --- Browse directories (for Open Folder dialog) ---
+
+dashboardRoutes.get('/browse', (c) => {
+  const requestedPath = c.req.query('path') ?? homedir();
+  const absPath = resolve(requestedPath);
+
+  if (!existsSync(absPath)) {
+    return c.json({ error: 'Path does not exist', path: absPath }, 404);
+  }
+
+  try {
+    const entries = readdirSync(absPath, { withFileTypes: true })
+      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(e => ({
+        name: e.name,
+        path: join(absPath, e.name),
+        hasHotsheet: existsSync(join(absPath, e.name, '.hotsheet')),
+      }));
+
+    const parentPath = resolve(absPath, '..');
+    return c.json({
+      path: absPath,
+      parent: parentPath !== absPath ? parentPath : null,
+      entries,
+      hasHotsheet: existsSync(join(absPath, '.hotsheet')),
+    });
+  } catch {
+    return c.json({ error: 'Cannot read directory', path: absPath }, 403);
+  }
+});
+
+// --- Global config ---
+
+dashboardRoutes.get('/global-config', async (c) => {
+  const { readGlobalConfig } = await import('../global-config.js');
+  return c.json(readGlobalConfig());
+});
+
+dashboardRoutes.patch('/global-config', async (c) => {
+  const { writeGlobalConfig } = await import('../global-config.js');
+  const body = await c.req.json();
+  const updated = writeGlobalConfig(body);
+  return c.json(updated);
 });
 
 // --- Ensure skills ---

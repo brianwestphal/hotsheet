@@ -306,8 +306,14 @@ fn install_cli(app: tauri::AppHandle) -> Result<InstallResult, String> {
 }
 
 /// Read app_icon from settings.json in the data directory and apply it on startup.
+/// NOTE: Custom icon support is feature-flagged out — always uses default icon.
 fn apply_saved_icon(app: &tauri::AppHandle) {
+    // Custom icon switching disabled — always use default icon
+    let _ = app;
+    return;
+
     // Find the data dir from CLI args (--data-dir <path>)
+    #[allow(unreachable_code)]
     let args: Vec<String> = std::env::args().collect();
     let data_dir = args.iter().position(|a| a == "--data-dir")
         .and_then(|i| args.get(i + 1))
@@ -623,6 +629,15 @@ fn request_attention_once(app: tauri::AppHandle) -> Result<String, String> {
     Ok("bounce sent (informational)".to_string())
 }
 
+#[tauri::command]
+async fn pick_folder() -> Result<Option<String>, String> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_title("Open Folder")
+        .pick_folder()
+        .await;
+    Ok(handle.map(|h| h.path().to_string_lossy().to_string()))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -643,8 +658,21 @@ pub fn run() {
                 .accelerator("CmdOrCtrl+Shift+Z")
                 .build(app)?;
 
+            let prefs_item = MenuItemBuilder::new("Preferences...")
+                .id("app-preferences")
+                .accelerator("CmdOrCtrl+,")
+                .build(app)?;
+            let open_folder_item = MenuItemBuilder::new("Open Folder...")
+                .id("app-open-folder")
+                .accelerator("CmdOrCtrl+O")
+                .build(app)?;
+
             let app_menu = SubmenuBuilder::new(app, "Hot Sheet")
-                .about(None)
+                .about(Some(tauri::menu::AboutMetadataBuilder::new()
+                    .name(Some("Hot Sheet"))
+                    .build()))
+                .separator()
+                .item(&prefs_item)
                 .separator()
                 .services()
                 .separator()
@@ -653,6 +681,9 @@ pub fn run() {
                 .show_all()
                 .separator()
                 .quit()
+                .build()?;
+            let file_menu = SubmenuBuilder::new(app, "File")
+                .item(&open_folder_item)
                 .build()?;
             let edit_menu = SubmenuBuilder::new(app, "Edit")
                 .item(&undo_item)
@@ -670,20 +701,34 @@ pub fn run() {
                 .build()?;
             MenuBuilder::new(app)
                 .item(&app_menu)
+                .item(&file_menu)
                 .item(&edit_menu)
                 .item(&window_menu)
                 .build()
         })
         .on_menu_event(|app, event| {
             let id = event.id().0.as_str();
-            if id == "app-undo" || id == "app-redo" {
-                if let Some(window) = app.get_webview_window("main") {
-                    let js_event = if id == "app-undo" { "app:undo" } else { "app:redo" };
-                    let _ = window.eval(&format!(
-                        "window.dispatchEvent(new Event('{}'))",
-                        js_event
-                    ));
+            match id {
+                "app-undo" | "app-redo" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let js_event = if id == "app-undo" { "app:undo" } else { "app:redo" };
+                        let _ = window.eval(&format!(
+                            "window.dispatchEvent(new Event('{}'))",
+                            js_event
+                        ));
+                    }
                 }
+                "app-preferences" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.eval("window.dispatchEvent(new Event('app:preferences'))");
+                    }
+                }
+                "app-open-folder" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.eval("window.dispatchEvent(new Event('app:open-folder'))");
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -694,7 +739,8 @@ pub fn run() {
             install_update,
             set_app_icon,
             request_attention,
-            request_attention_once
+            request_attention_once,
+            pick_folder
         ])
         .setup(|_app| {
             #[allow(unused_variables)]

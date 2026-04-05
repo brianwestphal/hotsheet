@@ -1,6 +1,8 @@
 import { formatTicketForClipboard } from './clipboardUtil.js';
+import { showOpenFolderDialog } from './openFolder.js';
 import { showPrintDialog } from './print.js';
 import { state } from './state.js';
+import { getTauriInvoke } from './tauriIntegration.js';
 import { cancelPendingSave, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { canRedo, canUndo, performRedo, performUndo, trackedBatch, trackedCompoundBatch } from './undo/actions.js';
 
@@ -31,9 +33,11 @@ function triggerRedo() {
 }
 
 export function bindKeyboardShortcuts() {
-  // Tauri menu events for Undo/Redo (native menu captures Cmd+Z before the WebView)
+  // Tauri menu events
   window.addEventListener('app:undo', triggerUndo);
   window.addEventListener('app:redo', triggerRedo);
+  window.addEventListener('app:preferences', () => document.getElementById('settings-btn')?.click());
+  window.addEventListener('app:open-folder', () => showOpenFolderDialog());
 
   // Keyboard fallback for browser mode (non-Tauri) — capture phase
   document.addEventListener('keydown', (e) => {
@@ -53,10 +57,28 @@ export function bindKeyboardShortcuts() {
     const tag = (e.target as HTMLElement).tagName;
     const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
-    // Close settings dialog on Escape
-    const overlay = document.getElementById('settings-overlay')!;
-    if (e.key === 'Escape' && overlay.style.display !== 'none') {
-      overlay.style.display = 'none';
+    // Close any open dialog on Escape
+    if (e.key === 'Escape') {
+      for (const id of ['open-folder-overlay', 'settings-overlay']) {
+        const dlg = document.getElementById(id);
+        if (dlg && dlg.style.display !== 'none') {
+          dlg.style.display = 'none';
+          return;
+        }
+      }
+    }
+
+    // Cmd/Ctrl+O: Open Folder (browser mode — Tauri handles via menu)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'o' && !getTauriInvoke()) {
+      e.preventDefault();
+      showOpenFolderDialog();
+      return;
+    }
+
+    // Cmd/Ctrl+,: Settings (browser mode — Tauri handles via menu)
+    if ((e.metaKey || e.ctrlKey) && e.key === ',' && !getTauriInvoke()) {
+      e.preventDefault();
+      document.getElementById('settings-btn')?.click();
       return;
     }
 

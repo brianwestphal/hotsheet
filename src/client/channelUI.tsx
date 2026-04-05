@@ -159,11 +159,13 @@ function showNoUpNextAlert() {
 }
 
 export async function initChannel() {
-  let status = { enabled: false, alive: false };
+  let status: { enabled: boolean; alive: boolean } | null = null;
   try {
     const res = await fetch('/api/channel/status');
-    if (res.ok) status = await res.json() as typeof status;
+    if (res.ok) status = await res.json() as { enabled: boolean; alive: boolean };
   } catch { /* endpoint may not exist yet */ }
+  // If we couldn't reach the server, keep the previous state
+  if (status === null) return;
   const section = document.getElementById('channel-play-section')!;
   const btn = document.getElementById('channel-play-btn')!;
   const playIcon = document.getElementById('channel-play-icon')!;

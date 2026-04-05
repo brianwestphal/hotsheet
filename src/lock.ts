@@ -1,10 +1,23 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-let lockPath: string | null = null;
+// Prevent EPIPE crashes when stdout/stderr pipe is closed (e.g., Tauri sidecar)
+process.stdout?.on?.('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'EPIPE') throw err; });
+process.stderr?.on?.('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'EPIPE') throw err; });
+
+// Track ALL lock paths so they can all be released on exit
+const lockPaths = new Set<string>();
+let exitHandlerRegistered = false;
+
+function releaseAllLocks(): void {
+  for (const p of lockPaths) {
+    try { rmSync(p, { force: true }); } catch { /* shutting down */ }
+  }
+  lockPaths.clear();
+}
 
 export function acquireLock(dataDir: string): void {
-  lockPath = join(dataDir, 'hotsheet.lock');
+  const lockPath = join(dataDir, 'hotsheet.lock');
 
   if (existsSync(lockPath)) {
     try {
@@ -13,6 +26,7 @@ export function acquireLock(dataDir: string): void {
 
       // Same process re-acquiring the lock (e.g., project re-registered after tab close)
       if (pid === process.pid) {
+        lockPaths.add(lockPath);
         return;
       }
 
@@ -36,16 +50,12 @@ export function acquireLock(dataDir: string): void {
   }
 
   writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  lockPaths.add(lockPath);
 
-  const cleanup = () => releaseLock();
-  process.on('exit', cleanup);
-  process.on('SIGINT', () => { cleanup(); process.exit(0); });
-  process.on('SIGTERM', () => { cleanup(); process.exit(0); });
-}
-
-function releaseLock(): void {
-  if (lockPath !== null) {
-    try { rmSync(lockPath, { force: true }); } catch { /* shutting down */ }
-    lockPath = null;
+  if (!exitHandlerRegistered) {
+    exitHandlerRegistered = true;
+    process.on('exit', releaseAllLocks);
+    process.on('SIGINT', () => { releaseAllLocks(); process.exit(0); });
+    process.on('SIGTERM', () => { releaseAllLocks(); process.exit(0); });
   }
 }

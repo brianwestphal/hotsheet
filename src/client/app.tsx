@@ -10,6 +10,7 @@ import { renderDashboard, renderSidebarWidget } from './dashboard.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, parseTags, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
+import { bindOpenFolder } from './openFolder.js';
 import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
 import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
@@ -64,6 +65,7 @@ async function init() {
   bindSettingsDialog(rebuildCategoryUI);
   bindBackupsUI();
   bindCopyPrompt();
+  bindOpenFolder();
   bindGlassbox();
   initCustomViews(() => { void loadTickets(); });
   initResize();

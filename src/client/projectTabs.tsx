@@ -169,6 +169,37 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
 // --- Drag & drop reorder ---
 
 let dragSecret: string | null = null;
+let dropIndicator: HTMLElement | null = null;
+let dropTarget: { secret: string; side: 'before' | 'after' } | null = null;
+
+function ensureDropIndicator(): HTMLElement {
+  if (!dropIndicator) {
+    dropIndicator = document.createElement('div');
+    dropIndicator.className = 'tab-drop-indicator';
+  }
+  return dropIndicator;
+}
+
+function positionIndicator(el: HTMLElement, side: 'before' | 'after') {
+  const indicator = ensureDropIndicator();
+  const container = el.closest('.project-tabs-inner') as HTMLElement;
+  if (!container) return;
+  if (!indicator.parentElement) container.appendChild(indicator);
+
+  const containerRect = container.getBoundingClientRect();
+  const tabRect = el.getBoundingClientRect();
+  const x = side === 'before'
+    ? tabRect.left - containerRect.left + container.scrollLeft - 1
+    : tabRect.right - containerRect.left + container.scrollLeft + 1;
+
+  indicator.style.left = `${x}px`;
+  indicator.style.display = '';
+}
+
+function hideIndicator() {
+  if (dropIndicator) dropIndicator.style.display = 'none';
+  dropTarget = null;
+}
 
 function handleDragStart(e: DragEvent, project: ProjectInfo) {
   dragSecret = project.secret;
@@ -179,34 +210,37 @@ function handleDragStart(e: DragEvent, project: ProjectInfo) {
 function handleDragOver(e: DragEvent) {
   e.preventDefault();
   e.dataTransfer!.dropEffect = 'move';
-}
-
-function handleDragEnter(e: DragEvent) {
-  (e.currentTarget as HTMLElement).classList.add('drag-over');
-}
-
-function handleDragLeave(e: DragEvent) {
-  const related = e.relatedTarget as Node | null;
-  if (!related || !(e.currentTarget as HTMLElement).contains(related)) {
-    (e.currentTarget as HTMLElement).classList.remove('drag-over');
+  const el = e.currentTarget as HTMLElement;
+  const secret = el.dataset.secret;
+  if (secret === dragSecret) {
+    hideIndicator();
+    return;
   }
+  const rect = el.getBoundingClientRect();
+  const side = e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+  // Avoid redundant repositioning
+  if (dropTarget && dropTarget.secret === secret && dropTarget.side === side) return;
+  dropTarget = { secret: secret!, side };
+  positionIndicator(el, side);
 }
 
 function handleDrop(e: DragEvent, targetProject: ProjectInfo) {
   e.preventDefault();
-  (e.currentTarget as HTMLElement).classList.remove('drag-over');
+  hideIndicator();
   if (dragSecret === null || dragSecret === targetProject.secret) return;
 
   const fromIdx = projectList.findIndex(p => p.secret === dragSecret);
   const toIdx = projectList.findIndex(p => p.secret === targetProject.secret);
   if (fromIdx === -1 || toIdx === -1) return;
 
-  // Reorder locally
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  const side = e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
   const [moved] = projectList.splice(fromIdx, 1);
-  projectList.splice(toIdx, 0, moved);
+  let insertIdx = projectList.findIndex(p => p.secret === targetProject.secret);
+  if (side === 'after') insertIdx++;
+  projectList.splice(insertIdx, 0, moved);
   renderTabs();
 
-  // Persist order to server
   void api('/projects/reorder', {
     method: 'POST',
     body: { secrets: projectList.map(p => p.secret) },
@@ -215,6 +249,7 @@ function handleDrop(e: DragEvent, targetProject: ProjectInfo) {
 
 function handleDragEnd(e: DragEvent) {
   (e.target as HTMLElement).classList.remove('dragging');
+  hideIndicator();
   dragSecret = null;
 }
 
@@ -246,20 +281,52 @@ function updateStatusDots() {
   }
 }
 
+// --- Scroll active tab into view ---
+
+function scrollActiveTabIntoView() {
+  const container = document.querySelector('.project-tabs-inner') as HTMLElement | null;
+  if (!container) return;
+  const activeTab = container.querySelector('.project-tab.active') as HTMLElement | null;
+  if (!activeTab) return;
+
+  const containerRect = container.getBoundingClientRect();
+  const tabRect = activeTab.getBoundingClientRect();
+
+  if (tabRect.left < containerRect.left) {
+    container.scrollLeft -= containerRect.left - tabRect.left;
+  } else if (tabRect.right > containerRect.right) {
+    container.scrollLeft += tabRect.right - containerRect.right;
+  }
+}
+
+// Watch for resize to keep active tab visible
+let resizeObserver: ResizeObserver | null = null;
+
+function setupScrollObserver() {
+  resizeObserver?.disconnect();
+  const container = document.querySelector('.project-tabs-inner') as HTMLElement | null;
+  if (!container) return;
+  resizeObserver = new ResizeObserver(() => scrollActiveTabIntoView());
+  resizeObserver.observe(container);
+}
+
 // --- Render ---
 
 function renderTabs() {
-  const container = document.getElementById('project-tabs');
-  if (!container) return;
+  const titleArea = document.getElementById('app-title-area');
+  if (!titleArea) return;
 
   if (projectList.length < 2) {
-    container.style.display = 'none';
-    container.innerHTML = '';
+    // Single project — show the project name as h1
+    const name = projectList.length === 1 ? projectList[0].name : 'Hot Sheet';
+    titleArea.innerHTML = '';
+    titleArea.appendChild(toElement(<h1>{name}</h1>));
+    titleArea.classList.remove('has-tabs');
     return;
   }
 
-  container.style.display = '';
-  container.innerHTML = '';
+  titleArea.classList.add('has-tabs');
+  titleArea.innerHTML = '';
 
   const tabList = toElement(
     <div className="project-tabs-inner">
@@ -267,7 +334,6 @@ function renderTabs() {
         <div
           className={`project-tab${p.secret === getActiveProject()?.secret ? ' active' : ''}`}
           data-secret={p.secret}
-          draggable={true}
         >
           <span className="project-tab-dot"></span>
           <span className="project-tab-name">{p.name}</span>
@@ -278,25 +344,22 @@ function renderTabs() {
 
   for (const tab of tabList.querySelectorAll('.project-tab')) {
     const el = tab as HTMLElement;
+    el.draggable = true;
     const secret = el.dataset.secret!;
     const project = projectList.find(p => p.secret === secret);
     if (!project) continue;
 
-    // Click to switch
     el.addEventListener('click', () => void switchProject(project));
-
-    // Right-click context menu
     el.addEventListener('contextmenu', (e) => showTabContextMenu(e as MouseEvent, project));
-
-    // Drag & drop
     el.addEventListener('dragstart', (e) => handleDragStart(e as DragEvent, project));
     el.addEventListener('dragover', (e) => handleDragOver(e as DragEvent));
-    el.addEventListener('dragenter', (e) => handleDragEnter(e as DragEvent));
-    el.addEventListener('dragleave', (e) => handleDragLeave(e as DragEvent));
     el.addEventListener('drop', (e) => handleDrop(e as DragEvent, project));
     el.addEventListener('dragend', (e) => handleDragEnd(e as DragEvent));
   }
 
-  container.appendChild(tabList);
+  titleArea.appendChild(tabList);
   updateStatusDots();
+  // Scroll active tab into view after DOM settles
+  requestAnimationFrame(scrollActiveTabIntoView);
+  setupScrollObserver();
 }

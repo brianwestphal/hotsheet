@@ -1041,9 +1041,9 @@ describe('channel endpoints', () => {
     const data = await res.json() as OkResponse;
     expect(data.ok).toBe(true);
 
-    // Verify the setting was persisted
-    const settings = await (await app.request('/api/settings')).json() as SettingsResponse;
-    expect(settings.channel_enabled).toBe('true');
+    // Verify via global config (channel_enabled moved from per-project to global)
+    const status = await (await app.request('/api/channel/status')).json() as { enabled: boolean };
+    expect(status.enabled).toBe(true);
   });
 
   it('POST /api/channel/disable disables the channel', async () => {
@@ -1052,9 +1052,9 @@ describe('channel endpoints', () => {
     const data = await res.json() as OkResponse;
     expect(data.ok).toBe(true);
 
-    // Verify the setting was persisted
-    const settings = await (await app.request('/api/settings')).json() as SettingsResponse;
-    expect(settings.channel_enabled).toBe('false');
+    // Verify via global config
+    const status = await (await app.request('/api/channel/status')).json() as { enabled: boolean };
+    expect(status.enabled).toBe(false);
   });
 });
 

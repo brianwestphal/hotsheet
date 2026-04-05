@@ -33,9 +33,17 @@ channelRoutes.get('/channel/claude-check', async (c) => {
 
 channelRoutes.get('/channel/status', async (c) => {
   const { isChannelAlive, getChannelPort } = await import('../channel-config.js');
+  const { readGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
-  const settings = await getSettings();
-  const enabled = settings.channel_enabled === 'true';
+  // Channel enabled is now a global setting; fall back to legacy per-project DB setting
+  const globalConfig = readGlobalConfig();
+  let enabled: boolean;
+  if (globalConfig.channelEnabled !== undefined) {
+    enabled = globalConfig.channelEnabled;
+  } else {
+    const settings = await getSettings();
+    enabled = settings.channel_enabled === 'true';
+  }
   const port = getChannelPort(dataDir);
   const alive = enabled ? await isChannelAlive(dataDir) : false;
   // Consume the done flag (read once, then clear)
@@ -137,17 +145,19 @@ channelRoutes.post('/channel/done', (_c) => {
 
 channelRoutes.post('/channel/enable', async (c) => {
   const { registerChannel } = await import('../channel-config.js');
+  const { writeGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
-  await updateSetting('channel_enabled', 'true');
+  writeGlobalConfig({ channelEnabled: true });
   registerChannel(dataDir);
-  ensureSkills(); // Make sure skills are installed before channel can be used
+  ensureSkills();
   notifyChange();
   return c.json({ ok: true });
 });
 
 channelRoutes.post('/channel/disable', async (c) => {
   const { unregisterChannel } = await import('../channel-config.js');
-  await updateSetting('channel_enabled', 'false');
+  const { writeGlobalConfig } = await import('../global-config.js');
+  writeGlobalConfig({ channelEnabled: false });
   unregisterChannel();
   notifyChange();
   return c.json({ ok: true });
