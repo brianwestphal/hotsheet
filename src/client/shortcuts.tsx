@@ -69,16 +69,21 @@ export function bindKeyboardShortcuts() {
       }
     }
 
-    // Tab switching: Cmd+Shift+Left/Right or Cmd+Shift+[/] (works even in inputs)
+    // Tab switching: Cmd+Shift+[/] (works even in inputs) or Cmd+Shift+Left/Right (not in text fields)
     if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
-      if (e.key === 'ArrowLeft' || e.key === '[') {
+      if (e.key === '[') {
         e.preventDefault();
         switchTabByOffset(-1);
         return;
       }
-      if (e.key === 'ArrowRight' || e.key === ']') {
+      if (e.key === ']') {
         e.preventDefault();
         switchTabByOffset(1);
+        return;
+      }
+      if (!isInput && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        switchTabByOffset(e.key === 'ArrowLeft' ? -1 : 1);
         return;
       }
     }

@@ -205,8 +205,6 @@ pageRoutes.get('/', (c) => {
         <footer className="app-footer">
           <div className="keyboard-hints">
             <span><kbd>Enter</kbd> new ticket</span>
-            <span data-hint="category"><kbd>{'\u2318'}I/B/F/R/K/G</kbd> category</span>
-            <span><kbd>Alt+1-5</kbd> priority</span>
             <span><kbd>{'\u2318'}D</kbd> up next</span>
             <span><kbd>Esc</kbd> close</span>
           </div>

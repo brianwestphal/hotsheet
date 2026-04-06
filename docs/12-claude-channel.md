@@ -40,14 +40,14 @@ Instructions tell Claude: when a hotsheet channel event arrives, run `/hotsheet`
 
 ## 12.4 Settings
 
-The Claude Channel and custom commands are configured in the **Experimental** settings tab (Lucide Flask icon). This tab only appears when the `claude` CLI is detected on the system.
+The Claude Channel and custom commands are configured in the **Experimental** settings tab (Lucide Flask icon). This tab is always visible in Settings.
 
 - **Claude Channel**: Enable/disable toggle. Disabled by default.
-- The toggle is only shown if `claude` CLI is detected on the system (`GET /api/channel/claude-check`).
+- The toggle is always visible, but disabled when the `claude` CLI is not detected on the system (`GET /api/channel/claude-check`).
 - If Claude Code is installed but below v2.1.80, the toggle is disabled with a message to upgrade.
 - When enabled: registers the channel server in `.mcp.json` (merging with existing entries) and shows launch instructions with a copyable command.
 - When disabled: removes the channel entry from `.mcp.json`.
-- Stored as `channel_enabled` in the settings table.
+- Stored as `channelEnabled` boolean in the global config at `~/.hotsheet/config.json`. Legacy per-project `channel_enabled` setting in the database is used as a fallback if the global config has no value.
 
 ## 12.5 `.mcp.json` Registration
 
@@ -77,7 +77,7 @@ When the channel is enabled, Hot Sheet adds an entry to `.mcp.json`:
 }
 ```
 
-The path detection uses `process.cwd()` and checks for `dist/channel.js` first (production), then `src/channel.ts` (dev mode).
+The path detection uses `dirname(fileURLToPath(import.meta.url))` and checks for `dist/channel.js` first (production), then `src/channel.ts` (dev mode).
 
 Existing `.mcp.json` entries are preserved (merge, not overwrite).
 
@@ -166,7 +166,7 @@ A dark, blurred overlay with large white text: "Claude is waiting for permission
 - **Deny** — sends `behavior: 'deny'`, tool is rejected
 - **Dismiss** — closes the overlay without responding (the terminal dialog remains open for the user to handle there)
 
-The overlay auto-expires after 120 seconds if not acted on (matching the channel server's expiry).
+The pending permission expires on the server after 120 seconds if not acted on. The client overlay reflects this by closing when the server reports no pending permission.
 
 Note: The local terminal dialog stays open in parallel. Whichever is answered first (Hot Sheet or terminal) takes effect.
 
@@ -211,8 +211,9 @@ Prompt: `Make a commit message for the recently completed tickets, without wrapp
 | `/api/channel/permission` | GET | Check for pending permission requests from Claude |
 | `/api/channel/permission/respond` | POST | Respond to a permission request (`{ request_id, behavior }`) |
 | `/api/channel/permission/dismiss` | POST | Dismiss a pending permission overlay without responding |
+| `/api/channel/notify` | POST | Notify long-poll of channel state changes (used internally by channel server) |
 
-## 12.11 Requirements
+## 12.13 Requirements
 
 - Claude Code v2.1.80+ with claude.ai login
 - During research preview: `--dangerously-load-development-channels server:hotsheet-channel` flag

@@ -14,7 +14,7 @@ The application runs a three-tier automatic backup system:
 
 - Backups are PGLite database dumps stored as `backup-{ISO-TIMESTAMP}.tar.gz`.
 - Stored in `.hotsheet/backups/{tier}/` by default, or in a custom directory specified via the `backupDir` file-based setting.
-- When the retention limit is exceeded, the oldest backup in that tier is deleted.
+- Pruning uses both count-based (maxCount) and time-based (maxAge) criteria: backups that exceed the retention count OR are older than the tier's maximum age are deleted.
 
 ### 7.2 Manual Backup
 
@@ -25,7 +25,7 @@ The application runs a three-tier automatic backup system:
 ### 7.3 Backup Listing
 
 - The settings dialog lists all available backups across all tiers.
-- Each entry shows: tier, filename, creation date, ticket count, and file size.
+- Each entry shows: tier, creation date, and file size.
 
 ### 7.4 Backup Preview
 

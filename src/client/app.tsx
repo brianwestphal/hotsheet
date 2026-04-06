@@ -131,7 +131,13 @@ async function loadSettings() {
     if (settings.auto_order !== '') {
       state.settings.auto_order = settings.auto_order !== 'false';
     }
+    if (settings.sort_by) state.sortBy = settings.sort_by;
+    if (settings.sort_dir) state.sortDir = settings.sort_dir;
   } catch { /* use defaults */ }
+
+  // Sync sort dropdown UI to loaded state
+  const sortSelect = document.getElementById('sort-select') as HTMLSelectElement | null;
+  if (sortSelect) sortSelect.value = `${state.sortBy}:${state.sortDir}`;
 
   applyDetailPosition(state.settings.detail_position);
   applyDetailSize();
@@ -177,18 +183,6 @@ function rebuildCategoryUI() {
     if (ticket) updateDetailCategory(ticket.category);
   }
 
-  // Update keyboard hints in the footer to reflect current shortcut keys
-  const hintsContainer = document.querySelector('.keyboard-hints');
-  if (hintsContainer) {
-    const catHint = hintsContainer.querySelector('[data-hint="category"]');
-    const keys = state.categories
-      .map(c => c.shortcutKey.toUpperCase())
-      .filter(Boolean)
-      .join('/');
-    if (catHint !== null && keys !== '') {
-      catHint.innerHTML = (<><kbd>{'\u2318'}{keys}</kbd> category</>).toString();
-    }
-  }
 }
 
 async function loadAppName() {

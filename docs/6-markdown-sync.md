@@ -56,7 +56,7 @@ Skill installation is checked proactively at multiple points:
 - **`POST /api/ensure-skills`**: Dedicated endpoint that checks and updates skills, returning `{ updated: boolean }`.
 
 #### Claude Code (`.claude/`)
-- Creates skill files in `.claude/skills/`: a main `hotsheet` skill (read worklist and work through items) and per-category ticket creation skills (hs-bug, hs-feature, hs-task, hs-issue, hs-investigation, hs-req-change).
+- Creates skill files in `.claude/skills/`: a main `hotsheet` skill (read worklist and work through items) and per-category ticket creation skills (hs-bug, hs-feature, hs-task, hs-issue, hs-investigation, hs-requirement-change).
 - Configures permissions in `.claude/settings.json` with curl access patterns covering ports 4170-4189.
 - Each skill has YAML frontmatter (name, description, allowed-tools).
 

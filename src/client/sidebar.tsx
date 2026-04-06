@@ -1,4 +1,5 @@
 import { suppressAnimation } from './animate.js';
+import { api } from './api.js';
 import { state } from './state.js';
 import { draggedTicketIds, loadTickets } from './ticketList.js';
 import { trackedBatch } from './undo/actions.js';
@@ -79,6 +80,7 @@ export function bindSortControls() {
     state.sortDir = sortDir;
     suppressAnimation();
     void loadTickets();
+    void api('/settings', { method: 'PATCH', body: { sort_by: sortBy, sort_dir: sortDir } });
   });
 }
 

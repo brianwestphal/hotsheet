@@ -140,6 +140,12 @@ Copies are created with " - Copy" suffix (incrementing if conflicts exist).
 | POST | `/api/gitignore/add` | Add .hotsheet to .gitignore |
 | POST | `/api/print` | Generate a print HTML file and open in browser |
 | POST | `/api/ensure-skills` | Check and update AI tool skill files (`{ updated: boolean }`) |
+| GET | `/api/browse` | Browse filesystem directories for project registration |
+| GET | `/api/global-config` | Read global cross-project configuration |
+| GET | `/api/glassbox/status` | Check if Glassbox CLI is available |
+| POST | `/api/glassbox/launch` | Launch Glassbox for current project |
+
+See also [14-commands-log.md](14-commands-log.md) §14.8 for command log endpoints and [15-shell-commands.md](15-shell-commands.md) §15.4 for shell execution endpoints.
 
 ### 9.13 Claude Channel Endpoints
 
@@ -156,6 +162,7 @@ See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel AP
 | GET | `/api/channel/permission` | Check pending permission requests |
 | POST | `/api/channel/permission/respond` | Respond to a permission request |
 | POST | `/api/channel/permission/dismiss` | Dismiss permission overlay |
+| POST | `/api/channel/notify` | Notify long-poll of channel state changes (used internally by channel server) |
 
 ### 9.14 Project Endpoints
 
@@ -165,15 +172,17 @@ See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel AP
 | POST | `/api/projects/register` | Register a project (`{ dataDir }`) |
 | DELETE | `/api/projects/:secret` | Remove a registered project by its secret |
 | POST | `/api/projects/:secret/reveal` | Open the project's root folder in the OS file manager |
+| GET | `/api/projects/channel-status` | Returns channel alive/dead status for all registered projects |
+| POST | `/api/projects/reorder` | Reorder the project list (`{ secrets: string[] }`) |
 
 ### 9.15 Change Notification
 
-- All mutation endpoints (create, update, delete, batch, attachment, settings) increment an internal change version counter.
+- All ticket-mutating endpoints (create, update, delete, batch, attachment) increment an internal change version counter.
 - The `/api/poll` endpoint returns when the change version exceeds the client's known version, enabling long-poll live updates.
 
 ## Non-Functional Requirements
 
 ### 9.16 Consistency
 
-- All mutation endpoints trigger markdown sync and change notification.
+- All ticket-mutating endpoints trigger markdown sync and change notification. Settings updates trigger change notification but not markdown sync.
 - The API is the single source of truth; the UI and markdown exports are derived views.

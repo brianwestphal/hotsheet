@@ -13,18 +13,31 @@
 #### Tickets Table
 - Stores ticket records with fields: id, ticket_number, title, details, category, priority, status, up_next, notes, created_at, updated_at, completed_at, verified_at, deleted_at.
 - Ticket numbers are auto-generated from a PostgreSQL sequence (`ticket_seq`) and prefixed with `HS-` (e.g., HS-1, HS-42). Numbers are never reused.
-- Notes are stored as a JSON-encoded text array of `{ text, created_at }` entries, with legacy plain-text support.
+- Notes are stored as a JSON-encoded text array of `{ id, text, created_at }` entries, with legacy plain-text support.
 
 #### Attachments Table
 - Stores file attachment metadata: id, ticket_id, original_filename, stored_path, created_at.
 - Linked to tickets via foreign key.
 
+#### Stats Snapshots Table
+- Stores periodic ticket count snapshots for dashboard charts.
+
+#### Command Log Table
+- Stores channel commands and shell command execution entries.
+
 #### Settings Table
-- Key-value store for application configuration (detail_position, detail_width, detail_height, trash_cleanup_days, verified_cleanup_days, layout).
+- Key-value store for application configuration (detail_position, detail_width, detail_height, trash_cleanup_days, verified_cleanup_days, layout). Additional settings keys are created dynamically at runtime by the UI (categories, custom_commands, custom_views, etc.).
 
 ### 2.3 File-Based Settings
 
-- A separate `settings.json` file in the data directory stores settings that need to be readable without a database connection: `appName` and `backupDir`.
+- A separate `settings.json` file in the data directory stores settings that need to be readable without a database connection. Fields:
+  - `appName` — Display name for the project (shown in UI title bar and tabs).
+  - `backupDir` — Custom directory for storing backups (overrides default `.hotsheet/backups/`).
+  - `appIcon` — Selected app icon variant (e.g., default, dark, colorful).
+  - `ticketPrefix` — Custom prefix for ticket numbers (default: `HS-`).
+  - `secret` — Server-generated secret token for API authentication.
+  - `secretPathHash` — Hashed path identifier used to scope the secret to a specific project.
+  - `port` — Preferred port number for the server.
 
 ### 2.4 Lock File
 

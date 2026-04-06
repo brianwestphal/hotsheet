@@ -19,15 +19,19 @@ The interface is divided into:
 - Clicking a tab name switches the active project, reloading all data (tickets, settings, views).
 - Each project has independent settings (detail position, sort, etc.) that are restored on switch.
 - The segmented controls (layout toggle, detail position toggle) update to reflect the switched project's saved settings.
-- Close button (×) on a tab removes that project from the instance without a confirmation dialog (Tauri WKWebView suppresses native `confirm()`).
 - Right-click on a tab shows a context menu with:
   - Close Tab, Close Other Tabs, Close Tabs to the Left, Close Tabs to the Right (disabled when not applicable).
-  - A separator, then "Show in Finder" (macOS) / "Show in Explorer" (Windows) / open via `xdg-open` (Linux) with a folder icon. Opens the project's root folder (parent of `.hotsheet/`), not the data directory itself.
+  - A separator, then "Show in Finder" with a folder icon. Opens the project's root folder (parent of `.hotsheet/`) using the OS file manager.
+- Keyboard shortcuts for tab management:
+  - Cmd/Ctrl+Shift+[ or ] — Switch to previous/next tab (works even in text fields).
+  - Cmd/Ctrl+Shift+Arrow Left/Right — Switch to previous/next tab (ignored when focus is in a text field, to preserve native text selection).
+  - Cmd/Ctrl+Alt+W — Close active tab.
+- Tabs can be reordered by drag-and-drop. A drop indicator shows the insertion point. Order is persisted to the server.
 
 ### 4.3 List View
 
 - Default view: a flat bullet-list of tickets.
-- Each row displays: checkbox, category badge (3-letter color-coded abbreviation), ticket number, priority icon, status icon, up_next star, and title.
+- Each row displays: checkbox, category badge (3-letter color-coded abbreviation), ticket number, status icon, title, priority icon, and up_next star.
 - Clicking a ticket opens it in the detail panel.
 - Scroll position is preserved when the list re-renders (e.g., after data updates).
 
@@ -45,7 +49,7 @@ The interface is divided into:
 ### 4.5 Draft Row (Quick Entry)
 
 - A quick-entry row at the top of the list view for creating new tickets.
-- Visible in list view only (not in trash, backup preview, or column view).
+- Visible in both list and column views (not in trash or backup preview).
 - Press Enter to create the ticket and immediately focus a new draft row.
 - Category and priority can be set inline via dropdown or keyboard shortcut.
 - New tickets inherit sensible defaults from the current view context (e.g., creating in the Bug category view defaults to bug category).
@@ -116,7 +120,7 @@ Each built-in view has an icon to the left of the label:
 ### 4.10 Batch Toolbar
 
 - Appears when one or more tickets are selected.
-- Controls: category dropdown, priority dropdown, status dropdown, up_next toggle, delete button, select-all checkbox, selection count.
+- Controls: category dropdown, priority dropdown, status dropdown, up_next toggle, delete button, more menu (Tags, Duplicate), select-all checkbox, selection count.
 - Dropdowns and buttons are disabled until at least one ticket is selected.
 
 ### 4.11 Keyboard Shortcuts
@@ -133,21 +137,6 @@ Each built-in view has an icon to the left of the label:
 | Cmd/Ctrl+Alt+C | Force ticket copy even when in a text field |
 | Escape | Close settings dialog, or deselect all tickets |
 
-#### Draft Row Shortcuts (when focused)
-| Key | Action |
-|-----|--------|
-| I | Set category to Issue |
-| B | Set category to Bug |
-| F | Set category to Feature |
-| R | Set category to Requirement Change |
-| K | Set category to Task |
-| G | Set category to Investigation |
-| Alt+1 | Set priority to Highest |
-| Alt+2 | Set priority to High |
-| Alt+3 | Set priority to Default |
-| Alt+4 | Set priority to Low |
-| Alt+5 | Set priority to Lowest |
-
 ### 4.12 Clipboard Copy
 
 - Cmd/Ctrl+C copies selected tickets as formatted plain text.
@@ -159,10 +148,11 @@ Each built-in view has an icon to the left of the label:
 
 - Opened via the gear icon in the header.
 - Uses a tabbed layout with Lucide icons and labels for each section:
-  - **General** (SlidersHorizontal icon) — App name, auto-clear trash/verified days.
+  - **General** (SlidersHorizontal icon) — Project name, auto-clear trash/verified days.
   - **Categories** (Tag icon) — Category management with inline editing and preset selector (see [3-ticket-management.md](3-ticket-management.md) §3.1).
   - **Backups** (HardDrive icon) — Backup location, backup list (see [7-backup-restore.md](7-backup-restore.md)).
-  - **Experimental** (Flask icon) — Claude Channel integration and custom commands. Only shown when `claude` CLI is detected on the system (see [12-claude-channel.md](12-claude-channel.md)).
+  - **Context** (FileText icon) — Auto-context configuration for categories and tags (see §4.18).
+  - **Experimental** (Flask icon) — Claude Channel integration and custom commands (see [12-claude-channel.md](12-claude-channel.md)).
   - **Updates** (Download icon) — Software updates, shown only in the Tauri desktop app.
 - Tabs persist their selection while the dialog is open; resets to General when reopened.
 - Closed via X button, clicking the overlay, or pressing Escape.
@@ -170,7 +160,7 @@ Each built-in view has an icon to the left of the label:
 ### 4.14 Custom Views
 
 - Users can create custom views with live-updating queries.
-- Custom views appear in a "Custom Views" sidebar section below priorities.
+- Custom views appear within the Views sidebar section, after the main status views (separated by a divider, before Backlog/Archive/Trash).
 - The "+" button in the section header opens the view editor.
 - Right-click a custom view for Edit/Delete options.
 - **View editor dialog:**
@@ -179,7 +169,7 @@ Each built-in view has an icon to the left of the label:
   - "All of" / "Any of" logic toggle (AND vs OR).
   - List of conditions, each with: field selector, operator selector, value input/selector.
   - Supported fields: Category, Priority, Status, Title, Details, Up Next, Tags.
-  - Operators vary by field type: equals/not equals (select fields), contains/not contains (text fields).
+  - Operators vary by field type: `select` fields use equals/not_equals; `ordinal` fields (Priority, Status) use equals/not_equals/lt/lte/gt/gte; `text` fields use contains/not_contains; `boolean` fields (Up Next) use equals only.
   - Tags field values in the rules editor have autocomplete from existing tags.
   - Add/remove conditions dynamically.
 - **Tag views:** Custom views with an associated tag:

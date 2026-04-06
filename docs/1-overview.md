@@ -8,7 +8,7 @@
 - **Database**: PGLite (embedded PostgreSQL via WASM) — raw SQL, no ORM
 - **Desktop**: Tauri v2 (Rust-based native wrapper)
 - **Rendering**: Custom JSX runtime producing HTML strings (`SafeHtml` class), shared by server and client
-- **Build**: tsup (server), esbuild (client IIFE bundle), sass (SCSS → CSS)
+- **Build**: tsup (all JS bundles: server, channel, client), sass (SCSS → CSS)
 - **Dev**: tsx for direct TypeScript execution
 
 ## 1.2 Architecture
@@ -61,6 +61,7 @@
 - **Desktop app**: Tauri-built native binaries with auto-update support.
 - **Build outputs**:
   - `dist/cli.js` — Server ESM bundle (external deps kept external)
+  - `dist/channel.js` — MCP channel server bundle
   - `dist/client/app.global.js` — Client IIFE bundle (minified, es2020)
   - `dist/client/styles.css` — Compiled SCSS (compressed, no source maps)
 
@@ -69,7 +70,7 @@
 - One primary export per file.
 - Files should not be excessively long — break by concern.
 - Use sub-folders for related modules.
-- SCSS uses partials imported from a single entry point.
+- The app uses a single SCSS file (`src/client/styles.scss`).
 - TSX/SafeHtml for HTML building (not manual string concatenation).
 - `toElement()` instead of `document.createElement()`.
 - No ORM — raw SQL via PGLite's `query()` method.

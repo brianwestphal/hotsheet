@@ -13,7 +13,7 @@ Each ticket has the following properties:
   - Categories are stored as JSON in the `settings` table (key: `categories`).
   - API: `GET /api/categories`, `PUT /api/categories`, `GET /api/category-presets`.
 - **Priority** — One of five levels: Highest, High, Default, Low, Lowest.
-- **Status** — One of seven states (see 2.3).
+- **Status** — One of seven states (see §3.3).
 - **Up Next** — Boolean flag marking the ticket as a priority work item.
 - **Tags** — User-defined tags stored as a JSON array of normalized strings in the `tags` column (default `[]`). The full list of available tags is derived from all non-deleted tickets.
   - **Normalization**: All tags are normalized on input — non-alphanumeric character runs are collapsed to a single space, leading/trailing whitespace is trimmed, and the result is stored in lowercase. Example: `"  This  is --- a TAG  "` → `"this is a tag"`.

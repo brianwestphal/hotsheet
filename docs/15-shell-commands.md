@@ -26,7 +26,7 @@ When a shell-targeted command button is clicked:
 3. The working directory is the project root (parent of the `.hotsheet/` data directory)
 4. A `shell_command` entry is logged to the command log
 5. The client shows a busy indicator ("Shell running") using the same status indicator as Claude Channel
-6. stdout and stderr are captured; when the process exits, a `shell_output` log entry is created with the full output
+6. stdout and stderr are captured; when the process exits, the existing `shell_command` log entry is updated in-place with the output appended (using a `---SHELL_OUTPUT---` separator in the detail field)
 7. The client polls `/api/shell/running` to detect when the process finishes, then clears the busy state
 
 ## 15.3 Stopping a Running Process
@@ -43,7 +43,7 @@ Running shell processes can be stopped:
 
 Execute a shell command asynchronously.
 
-- **Body**: `{ command: string }`
+- **Body**: `{ command: string, name?: string }` — `name` is used as the log entry summary/label
 - **Response**: `{ id: number }` — the command_log entry ID for tracking
 - **Behavior**: Spawns the command, logs it, returns immediately. Process runs in background.
 
@@ -71,6 +71,7 @@ interface CustomCommand {
   icon?: string;
   color?: string;
   target?: 'claude' | 'shell';  // default 'claude'
+  autoShowLog?: boolean;        // controls whether Commands Log auto-opens on shell command completion
 }
 ```
 
@@ -78,11 +79,9 @@ Custom commands are stored in the `settings` table as a JSON string under the `c
 
 ## 15.6 Command Log Integration
 
-Shell commands produce two log entry types:
+Shell commands use a single `shell_command` log entry that is updated in-place upon completion:
 
-| event_type | direction | description |
-|---|---|---|
-| `shell_command` | outgoing | The command that was executed |
-| `shell_output` | incoming | The stdout/stderr output and exit code |
+- **Initial entry**: Created when the command starts, with `event_type: 'shell_command'`, `direction: 'outgoing'`, and the command text as the detail.
+- **On completion**: The same entry is updated — the summary is updated with the exit status (e.g., "exited with code 0"), and the detail field is updated with the stdout/stderr output appended after a `---SHELL_OUTPUT---` separator.
 
-These appear in the Commands Log panel alongside Claude Channel events, with the "shell" and "output" badge labels respectively.
+These appear in the Commands Log panel alongside Claude Channel events, with the "shell" badge label.

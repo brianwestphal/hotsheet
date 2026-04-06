@@ -17,7 +17,7 @@ The application is launched from the command line via the `hotsheet` command (in
 | `--close` | Unregister the current project from the running instance and exit |
 | `--list` | List all projects registered with the running instance and exit |
 | `--check-for-updates` | Check the npm registry for a newer version immediately |
-| `--demo:<scenario>` | Launch with demo data (see §7.7) |
+| `--demo:<scenario>` | Launch with demo data (see §8.8) |
 | `--help` | Display usage information |
 
 ### 8.3 Port Selection
@@ -51,20 +51,20 @@ Project tabs are persisted to `~/.hotsheet/projects.json` and restored on restar
 
 1. Parse CLI arguments.
 2. Handle `--close` or `--list` if specified (communicate with running instance and exit).
-3. Check for a running instance (`~/.hotsheet/instance.json`). If found and responsive, register the current project and exit.
-4. Create the data directory if it doesn't exist.
-5. Check and acquire the lock file.
-6. Initialize the PGLite database and run schema migrations.
-7. Load settings from the database.
-8. Ensure `.hotsheet/` is in `.gitignore` (if in a git repo).
-9. Generate/update AI tool skill files.
-10. Start the Hono HTTP server.
-11. Run auto-cleanup for stale tickets (non-blocking, runs in background).
-12. Start the automatic backup scheduler.
-13. Trigger initial markdown sync.
-14. Check for CLI updates (daily, via npm registry).
-15. Open the browser (unless `--no-open`).
-16. Write the instance file (`~/.hotsheet/instance.json`).
+3. Check for CLI updates (daily, via npm registry).
+4. Check for a running instance (`~/.hotsheet/instance.json`). If found and responsive, register the current project and exit.
+5. Resolve the data directory (temp directory for demo mode).
+6. Ensure the `.hotsheet/` data directory exists.
+7. Acquire the lock file (non-demo only).
+8. Ensure `.hotsheet/` is in `.gitignore` (if in a git repo, non-demo only).
+9. Initialize the PGLite database and run schema migrations.
+10. Run auto-cleanup for stale tickets (synchronous, blocking).
+11. Start the Hono HTTP server.
+12. Trigger initial markdown sync.
+13. Generate/update AI tool skill files.
+14. Start the automatic backup scheduler.
+15. Write the instance file (`~/.hotsheet/instance.json`).
+16. Open the browser (unless `--no-open`).
 
 ### 8.6 HTTP Server
 
@@ -82,14 +82,13 @@ Project tabs are persisted to `~/.hotsheet/projects.json` and restored on restar
 
 ### 8.8 Demo Mode
 
-Demo mode launches the application with pre-populated sample data, intended for screenshots, demonstrations, and feature exploration. Invoked via `--demo:<N>` where N is a scenario number (1–7).
+Demo mode launches the application with pre-populated sample data, intended for screenshots, demonstrations, and feature exploration. Invoked via `--demo:<N>` where N is a scenario number (1–9).
 
 #### Behavior
 - Creates a temporary, isolated data directory in the OS temp folder (not inside the project).
 - Skips lock file checks (no risk of collision).
 - Skips gitignore checks (temp directory is outside any repo).
 - Seeds the database with scenario-specific ticket data on startup.
-- Cleans up stale temp preview directories from prior demo runs.
 - The demo instance is fully functional — tickets can be created, edited, and deleted — but data is ephemeral.
 
 #### Scenarios
@@ -105,6 +104,8 @@ Each scenario uses realistic e-commerce project data with a mix of categories, p
 | 5 | Batch Operations | Many similar tickets — demonstrates multi-select and batch toolbar |
 | 6 | Detail Panel Bottom | Rich notes with timestamps — detail panel set to bottom orientation, reduced height |
 | 7 | Column View | Tickets spread across statuses — layout pre-set to column/kanban view |
+| 8 | Dashboard | Stats and charts |
+| 9 | Claude Channel | AI integration with custom commands |
 
 #### Scenario-Specific Settings
 - Scenario 6 sets `detail_position` to `bottom` and `detail_height` to `280`.

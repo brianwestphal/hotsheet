@@ -96,11 +96,6 @@ let shellPollTimer: ReturnType<typeof setInterval> | null = null;
 function setShellBusy(busy: boolean) {
   const indicator = document.getElementById('channel-status-indicator');
   if (!indicator) return;
-  const channelSection = document.getElementById('channel-play-section');
-  if (!channelSection || channelSection.style.display === 'none') {
-    indicator.style.display = 'none';
-    return;
-  }
   if (busy) {
     indicator.style.display = '';
     indicator.className = 'channel-status-indicator busy';

@@ -29,7 +29,7 @@ Source PNGs are stored in the project's `.hotsheet/attachments/` (development) a
 
 ## 13.4 Storage
 
-- Selected variant stored as `app_icon` in `.hotsheet/settings.json` (file-based, not database).
+- Selected variant stored as `appIcon` in `.hotsheet/settings.json` (file-based, not database).
 - Values: `"default"` or `"variant-1"` through `"variant-9"`. Default: `"default"` (variant 1).
 - Read by both the Rust Tauri binary and the CLI launcher shell script.
 
@@ -51,10 +51,7 @@ When switching back to "default", reads `icon.icns` from the resource directory 
 
 ### Startup
 
-Icon restoration uses two complementary mechanisms:
-
-1. **Client-side (primary):** When the web page loads, the client reads `appIcon` from `/api/file-settings` and invokes the Tauri `set_app_icon` command. This is the most reliable path because the page loads after the app is fully initialized and the Dock has settled.
-2. **Rust-side (fallback):** During `setup()`, the Rust code reads `appIcon` from `.hotsheet/settings.json` and dispatches `set_app_icon` to the main thread after a 500ms delay via `run_on_main_thread`. The delay is necessary because macOS resets the dock icon to the bundle icon during app launch.
+Client-side startup icon restoration is currently not implemented — the icon is only read and applied when the settings dialog opens. The Rust-side `apply_saved_icon` is also disabled. As a result, the dock icon reverts to the default variant on each app launch until the user opens Settings.
 
 ### Icon Resources
 
