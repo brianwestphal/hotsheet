@@ -383,8 +383,17 @@ async function main() {
       notifyChange();
     }
 
+    // One-time migration: if no global channelEnabled, read from first project's DB
+    const { readGlobalConfig, writeGlobalConfig } = await import('./global-config.js');
+    const globalConfig = readGlobalConfig();
+    if (globalConfig.channelEnabled === undefined) {
+      const { getSettings } = await import('./db/queries.js');
+      const settings = await getSettings();
+      const legacy = settings.channel_enabled === 'true';
+      writeGlobalConfig({ channelEnabled: legacy });
+    }
+
     // If channel is globally enabled, ensure .mcp.json exists for all projects
-    const { readGlobalConfig } = await import('./global-config.js');
     if (readGlobalConfig().channelEnabled === true) {
       const { registerChannelForAll } = await import('./channel-config.js');
       const { getAllProjects } = await import('./projects.js');

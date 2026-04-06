@@ -98,13 +98,6 @@ dashboardRoutes.get('/global-config', async (c) => {
   return c.json(readGlobalConfig());
 });
 
-dashboardRoutes.patch('/global-config', async (c) => {
-  const { writeGlobalConfig } = await import('../global-config.js');
-  const body = await c.req.json();
-  const updated = writeGlobalConfig(body);
-  return c.json(updated);
-});
-
 // --- Ensure skills ---
 
 dashboardRoutes.post('/ensure-skills', (c) => {

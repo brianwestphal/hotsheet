@@ -1,6 +1,7 @@
 import { formatTicketForClipboard } from './clipboardUtil.js';
 import { showOpenFolderDialog } from './openFolder.js';
 import { showPrintDialog } from './print.js';
+import { closeActiveTab, switchTabByOffset } from './projectTabs.js';
 import { state } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { cancelPendingSave, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
@@ -66,6 +67,27 @@ export function bindKeyboardShortcuts() {
           return;
         }
       }
+    }
+
+    // Tab switching: Cmd+Shift+Left/Right or Cmd+Shift+[/] (works even in inputs)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
+      if (e.key === 'ArrowLeft' || e.key === '[') {
+        e.preventDefault();
+        switchTabByOffset(-1);
+        return;
+      }
+      if (e.key === 'ArrowRight' || e.key === ']') {
+        e.preventDefault();
+        switchTabByOffset(1);
+        return;
+      }
+    }
+
+    // Close tab: Opt+Cmd+W (macOS) / Ctrl+Alt+W (other)
+    if ((e.metaKey || e.ctrlKey) && e.altKey && e.key.toLowerCase() === 'w') {
+      e.preventDefault();
+      closeActiveTab();
+      return;
     }
 
     // Cmd/Ctrl+O: Open Folder (browser mode — Tauri handles via menu)

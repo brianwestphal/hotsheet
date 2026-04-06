@@ -70,6 +70,22 @@ export async function refreshProjectTabs(): Promise<void> {
   renderTabs();
 }
 
+/** Switch to the next or previous tab. */
+export function switchTabByOffset(offset: number): void {
+  if (projectList.length < 2) return;
+  const activeSecret = getActiveProject()?.secret;
+  const idx = projectList.findIndex(p => p.secret === activeSecret);
+  if (idx === -1) return;
+  const next = (idx + offset + projectList.length) % projectList.length;
+  void switchProject(projectList[next]);
+}
+
+/** Close the active tab. */
+export function closeActiveTab(): void {
+  const active = getActiveProject();
+  if (active) void removeProject(active);
+}
+
 // --- Remove helpers ---
 
 async function removeProject(project: ProjectInfo): Promise<void> {
@@ -283,7 +299,7 @@ export function isProjectAlive(secret: string): boolean {
   return aliveProjects.has(secret);
 }
 
-function updateStatusDots() {
+export function updateStatusDots() {
   const attentionSecrets = getProjectAttentionSecrets();
   const busySecrets = getProjectBusySecrets();
 

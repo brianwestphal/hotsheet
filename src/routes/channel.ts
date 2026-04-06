@@ -35,17 +35,14 @@ channelRoutes.get('/channel/status', async (c) => {
   const { isChannelAlive, getChannelPort } = await import('../channel-config.js');
   const { readGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
-  // Channel enabled is a global setting; one-time migration from legacy per-project DB
-  const { writeGlobalConfig } = await import('../global-config.js');
+  // Channel enabled is a global setting; fall back to legacy per-project DB (read-only)
   const globalConfig = readGlobalConfig();
   let enabled: boolean;
   if (globalConfig.channelEnabled !== undefined) {
     enabled = globalConfig.channelEnabled;
   } else {
-    // Legacy: read from per-project DB, then persist to global so this only happens once
     const settings = await getSettings();
     enabled = settings.channel_enabled === 'true';
-    writeGlobalConfig({ channelEnabled: enabled });
   }
   const port = getChannelPort(dataDir);
   const alive = enabled ? await isChannelAlive(dataDir) : false;

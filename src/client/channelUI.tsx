@@ -104,20 +104,31 @@ const attentionProjects = new Set<string>();
 export function getProjectBusySecrets(): ReadonlySet<string> { return busyProjects; }
 export function getProjectAttentionSecrets(): ReadonlySet<string> { return attentionProjects; }
 
+function syncDots() {
+  // Lazy import to avoid circular dependency at module init time
+  const dots = document.querySelectorAll('.project-tab-dot');
+  if (dots.length === 0) return;
+  import('./projectTabs.js').then(m => m.updateStatusDots()).catch(() => {});
+}
+
 function markProjectBusy(secret: string) {
   busyProjects.add(secret);
+  syncDots();
 }
 
 function clearProjectBusy(secret: string) {
   busyProjects.delete(secret);
+  syncDots();
 }
 
 export function markProjectAttention(secret: string) {
   attentionProjects.add(secret);
+  syncDots();
 }
 
 export function clearProjectAttention(secret: string) {
   attentionProjects.delete(secret);
+  syncDots();
 }
 
 export function setChannelBusy(busy: boolean) {
