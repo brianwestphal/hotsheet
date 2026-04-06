@@ -1,6 +1,6 @@
 import { api } from './api.js';
 import { toElement } from './dom.js';
-import { state } from './state.js';
+import { getActiveProject, state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
 
 // --- Permission Overlay ---
@@ -28,6 +28,9 @@ function stopPermissionPolling() {
 function showPermissionOverlay(perm: { request_id: string; tool_name: string; description: string; input_preview?: string }) {
   const overlay = document.getElementById('permission-overlay');
   if (!overlay || overlay.style.display !== 'none') return;
+  // Track which project needs attention for tab dots
+  const secret = getActiveProject()?.secret;
+  if (secret) markProjectAttention(secret);
   if (state.settings.notify_permission !== 'none') {
     requestAttention(state.settings.notify_permission);
   }
@@ -50,11 +53,13 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
       body: JSON.stringify({ request_id: perm.request_id, behavior }),
     });
     overlay!.style.display = 'none';
+    if (secret) clearProjectAttention(secret);
   }
 
   function dismiss() {
     void fetch('/api/channel/permission/dismiss', { method: 'POST' });
     overlay!.style.display = 'none';
+    if (secret) clearProjectAttention(secret);
   }
 
   // Use one-time click handlers via { once: true }
@@ -79,6 +84,29 @@ export function isChannelBusy(): boolean { return channelBusy; }
 export function isPermissionPending(): boolean {
   const overlay = document.getElementById('permission-overlay');
   return overlay !== null && overlay.style.display !== 'none';
+}
+
+// Per-project busy/attention tracking for tab status dots
+const busyProjects = new Set<string>();
+const attentionProjects = new Set<string>();
+
+export function getProjectBusySecrets(): ReadonlySet<string> { return busyProjects; }
+export function getProjectAttentionSecrets(): ReadonlySet<string> { return attentionProjects; }
+
+function markProjectBusy(secret: string) {
+  busyProjects.add(secret);
+}
+
+function clearProjectBusy(secret: string) {
+  busyProjects.delete(secret);
+}
+
+export function markProjectAttention(secret: string) {
+  attentionProjects.add(secret);
+}
+
+export function clearProjectAttention(secret: string) {
+  attentionProjects.delete(secret);
 }
 
 export function setChannelBusy(busy: boolean) {
@@ -117,6 +145,9 @@ export function setChannelBusy(busy: boolean) {
 
 function triggerChannelAndMarkBusy(message?: string) {
   setChannelBusy(true);
+  // Track which project is busy for tab status dots
+  const secret = getActiveProject()?.secret;
+  if (secret) markProjectBusy(secret);
   // Ensure AI tool skills are installed/up-to-date before triggering
   void api('/ensure-skills', { method: 'POST' });
   void api('/channel/trigger', { method: 'POST', body: { message } });
@@ -124,6 +155,7 @@ function triggerChannelAndMarkBusy(message?: string) {
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
   channelBusyTimeout = setTimeout(() => {
     if (channelBusy) setChannelBusy(false);
+    if (secret) clearProjectBusy(secret);
   }, 120000);
 }
 
@@ -297,6 +329,9 @@ export function checkChannelDone() {
       if (s?.done === true) {
         setChannelBusy(false);
         if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
+        // Clear per-project busy state for the active project
+        const secret = getActiveProject()?.secret;
+        if (secret) clearProjectBusy(secret);
       }
     }).catch(() => {});
   }

@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { isChannelBusy, isPermissionPending } from './channelUI.js';
+import { getProjectAttentionSecrets, getProjectBusySecrets } from './channelUI.js';
 import { toElement } from './dom.js';
 import type { ProjectInfo } from './state.js';
 import { getActiveProject, setActiveProject } from './state.js';
@@ -263,17 +263,17 @@ function startStatusDotPolling() {
 }
 
 function updateStatusDots() {
-  const permPending = isPermissionPending();
-  const busy = isChannelBusy();
+  const attentionSecrets = getProjectAttentionSecrets();
+  const busySecrets = getProjectBusySecrets();
 
   for (const dot of document.querySelectorAll('.project-tab-dot')) {
     const tab = dot.closest('.project-tab') as HTMLElement | null;
     if (!tab) continue;
-    const isActive = tab.classList.contains('active');
+    const secret = tab.dataset.secret ?? '';
 
-    if (permPending && isActive) {
+    if (attentionSecrets.has(secret)) {
       dot.className = 'project-tab-dot attention';
-    } else if (busy && isActive) {
+    } else if (busySecrets.has(secret)) {
       dot.className = 'project-tab-dot busy';
     } else {
       dot.className = 'project-tab-dot';
