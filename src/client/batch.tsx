@@ -2,28 +2,9 @@ import { api } from './api.js';
 import { channelAutoTrigger } from './channelUI.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { Ticket } from './state.js';
-import { getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
+import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from './state.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
 import { trackedBatch, trackedCompoundBatch } from './undo/actions.js';
-
-const PRIORITY_ITEMS = [
-  { key: '1', value: 'highest', label: 'Highest' },
-  { key: '2', value: 'high', label: 'High' },
-  { key: '3', value: 'default', label: 'Default' },
-  { key: '4', value: 'low', label: 'Low' },
-  { key: '5', value: 'lowest', label: 'Lowest' },
-];
-
-const STATUS_ITEMS = [
-  { key: 'n', value: 'not_started', label: 'Not Started' },
-  { key: 's', value: 'started', label: 'Started' },
-  { key: 'c', value: 'completed', label: 'Completed' },
-  { key: 'v', value: 'verified', label: 'Verified' },
-  { key: 'b', value: 'backlog', label: 'Backlog' },
-  { key: 'a', value: 'archive', label: 'Archive' },
-];
-
-export { PRIORITY_ITEMS, STATUS_ITEMS };
 
 export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
   const batchCategory = document.getElementById('batch-category') as HTMLButtonElement;

@@ -7,7 +7,7 @@
  * them without importing ticketList.tsx directly.
  */
 
-import { state } from './state.js';
+import { PRIORITY_ITEMS, state } from './state.js';
 
 // --- Module-level mutable state ---
 
@@ -28,13 +28,7 @@ export function setDraggedTicketIds(v: number[]) { draggedTicketIds = v; }
 
 // --- Shared constants ---
 
-export const PRIORITY_SHORTCUTS: { key: string; value: string; label: string }[] = [
-  { key: '1', value: 'highest', label: 'Highest' },
-  { key: '2', value: 'high', label: 'High' },
-  { key: '3', value: 'default', label: 'Default' },
-  { key: '4', value: 'low', label: 'Low' },
-  { key: '5', value: 'lowest', label: 'Lowest' },
-];
+export const PRIORITY_SHORTCUTS = PRIORITY_ITEMS;
 
 export function getCategoryShortcuts(): { key: string; value: string; label: string }[] {
   return state.categories.map(c => ({ key: c.shortcutKey, value: c.id, label: c.label }));

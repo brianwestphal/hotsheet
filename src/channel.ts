@@ -109,7 +109,12 @@ const httpServer = createServer(async (req, res) => {
 
   if (req.method === 'POST' && req.url === '/permission/respond') {
     let body = '';
-    for await (const chunk of req) body += String(chunk);
+    let bodySize = 0;
+    for await (const chunk of req) {
+      bodySize += chunk.length;
+      if (bodySize > 1_048_576) { res.writeHead(413); res.end('Payload too large'); return; }
+      body += String(chunk);
+    }
     try {
       const { request_id, behavior } = JSON.parse(body) as { request_id: string; behavior: 'allow' | 'deny' };
       await mcp.notification({
@@ -137,7 +142,12 @@ const httpServer = createServer(async (req, res) => {
 
   if (req.method === 'POST' && req.url === '/trigger') {
     let body = '';
-    for await (const chunk of req) body += String(chunk);
+    let bodySize = 0;
+    for await (const chunk of req) {
+      bodySize += chunk.length;
+      if (bodySize > 1_048_576) { res.writeHead(413); res.end('Payload too large'); return; }
+      body += String(chunk);
+    }
 
     try {
       await mcp.notification({

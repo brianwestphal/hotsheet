@@ -20,17 +20,15 @@ export function getDetailSaveTimeout(): ReturnType<typeof setTimeout> | null {
 }
 
 function triggerUndo() {
-  console.log('[undo] triggerUndo called, canUndo:', canUndo());
   if (detailSaveTimeout) { clearTimeout(detailSaveTimeout); detailSaveTimeout = null; }
   cancelPendingSave();
-  performUndo().then(() => console.log('[undo] performUndo completed')).catch((e: unknown) => console.error('[undo] performUndo error:', e));
+  void performUndo();
 }
 
 function triggerRedo() {
-  console.log('[undo] triggerRedo called, canRedo:', canRedo());
   if (detailSaveTimeout) { clearTimeout(detailSaveTimeout); detailSaveTimeout = null; }
   cancelPendingSave();
-  performRedo().then(() => console.log('[undo] performRedo completed')).catch((e: unknown) => console.error('[undo] performRedo error:', e));
+  void performRedo();
 }
 
 export function bindKeyboardShortcuts() {

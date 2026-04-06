@@ -1,6 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
+import { ICON_CHECK } from './icons.js';
 
 let runningShellIds: number[] = [];
 const cancelingShellIds = new Set<number>();
@@ -179,13 +180,134 @@ function updateSelectionClasses() {
 
 // --- Render entries ---
 
+/** Create the DOM element for a single log entry, including event handlers. */
+function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
+  const dir = directionIndicator(entry.direction);
+  const badgeColor = typeBadgeColor(entry.event_type);
+  const badgeLabel = typeBadgeLabel(entry.event_type);
+  const time = relativeTime(entry.created_at);
+
+  // Shell command combined display (HS-2547)
+  const shellParts = entry.event_type === 'shell_command' ? formatShellDetail(entry.detail) : null;
+  const displayDetail = shellParts ? shellParts.output : entry.detail;
+
+  // Truncate detail to first 3 lines for preview
+  const detailLines = displayDetail.split('\n');
+  const preview = detailLines.slice(0, 3).join('\n');
+  const hasMore = detailLines.length > 3 || displayDetail.length > 300;
+
+  const isRunningShell = entry.event_type === 'shell_command' && runningShellIds.includes(entry.id);
+  const isCanceling = cancelingShellIds.has(entry.id);
+
+  const el = toElement(
+    <div className={`command-log-entry${selectedLogIds.has(entry.id) ? ' selected' : ''}`} data-id={String(entry.id)}>
+      <div className="command-log-entry-header">
+        <span className="command-log-direction" style={`color:${dir.color}`}>{dir.symbol}</span>
+        <span className="command-log-type-badge" style={`background:${badgeColor}`}>{badgeLabel}</span>
+        <span className="command-log-summary">{entry.summary}</span>
+        {isRunningShell && isCanceling
+          ? <span className="command-log-canceling">{'Canceling\u2026'}</span>
+          : isRunningShell
+          ? <button className="command-log-stop-btn" title="Stop process">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>')}</button>
+          : null}
+        <span className="command-log-time">{time}</span>
+      </div>
+      {shellParts ? (
+        <div>
+          <pre className="command-log-detail command-log-shell-input">{shellParts.inputLine}</pre>
+          {displayDetail !== '' ? <hr className="command-log-shell-divider" /> : null}
+          {displayDetail !== '' ? <pre className="command-log-detail">{preview}{hasMore ? '\u2026' : ''}</pre> : null}
+          {hasMore ? <pre className="command-log-detail-full" style="display:none">{displayDetail}</pre> : null}
+        </div>
+      ) : (
+        <div>
+          {entry.detail !== '' ? <pre className="command-log-detail">{preview}{hasMore ? '\u2026' : ''}</pre> : null}
+          {hasMore ? <pre className="command-log-detail-full" style="display:none">{entry.detail}</pre> : null}
+        </div>
+      )}
+    </div>
+  );
+
+  // Stop button handler
+  if (isRunningShell) {
+    const stopBtn = el.querySelector('.command-log-stop-btn') as HTMLElement;
+    stopBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cancelingShellIds.add(entry.id);
+      void api('/shell/kill', { method: 'POST', body: { id: entry.id } });
+      stopBtn.replaceWith(toElement(<span className="command-log-canceling">{'Canceling\u2026'}</span>));
+    });
+  }
+
+  // Click: selection + expand/collapse (HS-2544)
+  el.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('.command-log-stop-btn')) return;
+
+    if (e.metaKey || e.ctrlKey) {
+      if (selectedLogIds.has(entry.id)) {
+        selectedLogIds.delete(entry.id);
+      } else {
+        selectedLogIds.add(entry.id);
+      }
+      lastClickedId = entry.id;
+      updateSelectionClasses();
+      return;
+    }
+
+    if (e.shiftKey && lastClickedId !== null) {
+      const ids = filtered.map(e2 => e2.id);
+      const startIdx = ids.indexOf(lastClickedId);
+      const endIdx = ids.indexOf(entry.id);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const [lo, hi] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+        for (let idx = lo; idx <= hi; idx++) {
+          selectedLogIds.add(ids[idx]);
+        }
+        updateSelectionClasses();
+        return;
+      }
+    }
+
+    selectedLogIds.clear();
+    selectedLogIds.add(entry.id);
+    lastClickedId = entry.id;
+    updateSelectionClasses();
+
+    if (hasMore) {
+      const isExpanded = el.classList.toggle('expanded');
+      if (isExpanded) expandedEntryIds.add(entry.id); else expandedEntryIds.delete(entry.id);
+      const detailEls = el.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
+      const fullEl = el.querySelector<HTMLElement>('.command-log-detail-full');
+      if (isExpanded) {
+        for (const d of detailEls) (d as HTMLElement).style.display = 'none';
+        if (fullEl) fullEl.style.display = '';
+      } else {
+        for (const d of detailEls) (d as HTMLElement).style.display = '';
+        if (fullEl) fullEl.style.display = 'none';
+      }
+    }
+  });
+
+  // Right-click context menu (HS-2546)
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    let entriesToCopy: LogEntry[];
+    if (selectedLogIds.size > 0 && selectedLogIds.has(entry.id)) {
+      entriesToCopy = filtered.filter(e2 => selectedLogIds.has(e2.id));
+    } else {
+      entriesToCopy = [entry];
+    }
+    showContextMenu(e.clientX, e.clientY, entriesToCopy);
+  });
+
+  return el;
+}
+
 function renderEntries(entries: LogEntry[]) {
   currentEntries = entries;
   const container = document.getElementById('command-log-entries');
   if (!container) return;
-
-  // Build new content in a fragment first, only clear container on success
-  const fragment = document.createDocumentFragment();
 
   // Apply client-side type filter
   const filtered = activeFilterTypes.size === ALL_FILTER_TYPES.length
@@ -200,134 +322,10 @@ function renderEntries(entries: LogEntry[]) {
     return;
   }
 
+  // Build new content in a fragment first, only clear container on success
+  const fragment = document.createDocumentFragment();
   for (const entry of filtered) {
-    const dir = directionIndicator(entry.direction);
-    const badgeColor = typeBadgeColor(entry.event_type);
-    const badgeLabel = typeBadgeLabel(entry.event_type);
-    const time = relativeTime(entry.created_at);
-
-    // Shell command combined display (HS-2547)
-    const shellParts = entry.event_type === 'shell_command' ? formatShellDetail(entry.detail) : null;
-    const displayDetail = shellParts ? shellParts.output : entry.detail;
-
-    // Truncate detail to first 3 lines for preview
-    const detailLines = displayDetail.split('\n');
-    const preview = detailLines.slice(0, 3).join('\n');
-    const hasMore = detailLines.length > 3 || displayDetail.length > 300;
-
-    const isRunningShell = entry.event_type === 'shell_command' && runningShellIds.includes(entry.id);
-    const isCanceling = cancelingShellIds.has(entry.id);
-
-    const el = toElement(
-      <div className={`command-log-entry${selectedLogIds.has(entry.id) ? ' selected' : ''}`} data-id={String(entry.id)}>
-        <div className="command-log-entry-header">
-          <span className="command-log-direction" style={`color:${dir.color}`}>{dir.symbol}</span>
-          <span className="command-log-type-badge" style={`background:${badgeColor}`}>{badgeLabel}</span>
-          <span className="command-log-summary">{entry.summary}</span>
-          {isRunningShell && isCanceling
-            ? <span className="command-log-canceling">{'Canceling\u2026'}</span>
-            : isRunningShell
-            ? <button className="command-log-stop-btn" title="Stop process">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>')}</button>
-            : null}
-          <span className="command-log-time">{time}</span>
-        </div>
-        {shellParts ? (
-          <div>
-            <pre className="command-log-detail command-log-shell-input">{shellParts.inputLine}</pre>
-            {displayDetail !== '' ? <hr className="command-log-shell-divider" /> : null}
-            {displayDetail !== '' ? <pre className="command-log-detail">{preview}{hasMore ? '\u2026' : ''}</pre> : null}
-            {hasMore ? <pre className="command-log-detail-full" style="display:none">{displayDetail}</pre> : null}
-          </div>
-        ) : (
-          <div>
-            {entry.detail !== '' ? <pre className="command-log-detail">{preview}{hasMore ? '\u2026' : ''}</pre> : null}
-            {hasMore ? <pre className="command-log-detail-full" style="display:none">{entry.detail}</pre> : null}
-          </div>
-        )}
-      </div>
-    );
-
-    // Stop button handler
-    if (isRunningShell) {
-      const stopBtn = el.querySelector('.command-log-stop-btn') as HTMLElement;
-      stopBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        cancelingShellIds.add(entry.id);
-        void api('/shell/kill', { method: 'POST', body: { id: entry.id } });
-        // Immediately replace stop button with "Canceling..." label
-        stopBtn.replaceWith(toElement(<span className="command-log-canceling">{'Canceling\u2026'}</span>));
-      });
-    }
-
-    // Click: selection + expand/collapse (HS-2544)
-    el.addEventListener('click', (e) => {
-      const target = e.target as HTMLElement;
-      // Ignore clicks on stop button
-      if (target.closest('.command-log-stop-btn')) return;
-
-      if (e.metaKey || e.ctrlKey) {
-        // Toggle individual selection
-        if (selectedLogIds.has(entry.id)) {
-          selectedLogIds.delete(entry.id);
-        } else {
-          selectedLogIds.add(entry.id);
-        }
-        lastClickedId = entry.id;
-        updateSelectionClasses();
-        return;
-      }
-
-      if (e.shiftKey && lastClickedId !== null) {
-        // Range select
-        const ids = filtered.map(e2 => e2.id);
-        const startIdx = ids.indexOf(lastClickedId);
-        const endIdx = ids.indexOf(entry.id);
-        if (startIdx !== -1 && endIdx !== -1) {
-          const [lo, hi] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
-          for (let idx = lo; idx <= hi; idx++) {
-            selectedLogIds.add(ids[idx]);
-          }
-          updateSelectionClasses();
-          return;
-        }
-      }
-
-      // Normal click: select this entry, toggle expand
-      selectedLogIds.clear();
-      selectedLogIds.add(entry.id);
-      lastClickedId = entry.id;
-      updateSelectionClasses();
-
-      if (hasMore) {
-        const isExpanded = el.classList.toggle('expanded');
-        // Track expand state across refreshes
-        if (isExpanded) expandedEntryIds.add(entry.id); else expandedEntryIds.delete(entry.id);
-        // For shell entries, handle the output detail expand separately
-        const detailEls = el.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
-        const fullEl = el.querySelector<HTMLElement>('.command-log-detail-full');
-        if (isExpanded) {
-          for (const d of detailEls) (d as HTMLElement).style.display = 'none';
-          if (fullEl) fullEl.style.display = '';
-        } else {
-          for (const d of detailEls) (d as HTMLElement).style.display = '';
-          if (fullEl) fullEl.style.display = 'none';
-        }
-      }
-    });
-
-    // Right-click context menu (HS-2546)
-    el.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      let entriesToCopy: LogEntry[];
-      if (selectedLogIds.size > 0 && selectedLogIds.has(entry.id)) {
-        entriesToCopy = filtered.filter(e2 => selectedLogIds.has(e2.id));
-      } else {
-        entriesToCopy = [entry];
-      }
-      showContextMenu(e.clientX, e.clientY, entriesToCopy);
-    });
-
-    fragment.appendChild(el);
+    fragment.appendChild(renderLogEntry(entry, filtered));
   }
 
   // Replace content atomically — if anything above threw, the old content remains
@@ -559,7 +557,7 @@ function showFilterDropdown() {
     <div className="command-log-filter-dropdown">
       {raw(ALL_FILTER_TYPES.map(t => `
         <div class="filter-option" data-type="${t.value}">
-          <span class="filter-check">${activeFilterTypes.has(t.value) ? '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>' : ''}</span>
+          <span class="filter-check">${activeFilterTypes.has(t.value) ? ICON_CHECK : ''}</span>
           <span>${t.label}</span>
         </div>
       `).join(''))}
@@ -583,7 +581,7 @@ function showFilterDropdown() {
         check.innerHTML = '';
       } else {
         activeFilterTypes.add(type);
-        check.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+        check.innerHTML = ICON_CHECK;
       }
       // Update toggle label
       const nowAll = activeFilterTypes.size === ALL_FILTER_TYPES.length;
@@ -606,7 +604,7 @@ function showFilterDropdown() {
     for (const opt of dropdown.querySelectorAll('.filter-option')) {
       const type = (opt as HTMLElement).dataset.type!;
       const check = opt.querySelector('.filter-check') as HTMLElement;
-      check.innerHTML = activeFilterTypes.has(type) ? '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>' : '';
+      check.innerHTML = activeFilterTypes.has(type) ? ICON_CHECK : '';
     }
     toggleEl.textContent = activeFilterTypes.size === ALL_FILTER_TYPES.length ? 'Deselect All' : 'Select All';
     updateFilterButtonLabel();

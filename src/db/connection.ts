@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { mkdirSync, rmSync } from 'fs';
+import { mkdirSync, renameSync, rmSync } from 'fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { join } from 'path';
 
@@ -91,11 +91,13 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes('Aborted') || message.includes('RuntimeError')) {
-      console.error('Database appears to be corrupt. Recreating...');
-      console.error('(Previous ticket data will be lost.)');
+      const corruptPath = `${dbPath}-corrupt-${Date.now()}`;
+      console.error(`Database appears to be corrupt. Preserving as ${corruptPath} and recreating...`);
       try {
-        rmSync(dbPath, { recursive: true, force: true });
-      } catch { /* may not exist */ }
+        renameSync(dbPath, corruptPath);
+      } catch {
+        try { rmSync(dbPath, { recursive: true, force: true }); } catch { /* may not exist */ }
+      }
       const db = new PGlite(dbPath);
       await db.waitReady;
       await initSchema(db);
@@ -179,12 +181,12 @@ async function initSchema(db: PGlite): Promise<void> {
     ALTER TABLE tickets ALTER COLUMN deleted_at TYPE TIMESTAMPTZ;
     ALTER TABLE attachments ALTER COLUMN created_at TYPE TIMESTAMPTZ;
     ALTER TABLE command_log ALTER COLUMN created_at TYPE TIMESTAMPTZ;
-  `).catch(() => { /* already migrated or new db */ });
+  `).catch((e: Error) => { if (!e.message.includes('already exists') && !e.message.includes('already')) console.error('Migration error (TIMESTAMPTZ):', e.message); });
 
   // Migrations for existing databases
   await db.exec(`
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]';
-  `).catch(() => { /* columns may already exist */ });
+  `).catch((e: Error) => { if (!e.message.includes('already exists')) console.error('Migration error (columns):', e.message); });
 }

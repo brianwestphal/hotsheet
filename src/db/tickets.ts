@@ -60,8 +60,10 @@ export async function updateTicket(id: number, updates: Partial<{
   const values: unknown[] = [];
   let paramIdx = 1;
 
+  const ALLOWED_COLUMNS = new Set(['title', 'details', 'tags', 'category', 'priority', 'status', 'up_next', 'notes', 'completed_at', 'verified_at', 'deleted_at']);
   for (const [key, value] of Object.entries(updates) as [string, unknown][]) {
     if (value === undefined) continue;
+    if (!ALLOWED_COLUMNS.has(key)) continue;
     if (key === 'notes') continue; // handled separately below
     sets.push(`${key} = $${paramIdx}`);
     values.push(value);
@@ -118,8 +120,7 @@ export async function hardDeleteTicket(id: number): Promise<void> {
 
 // --- Ticket queries ---
 
-export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]> {
-  const db = await getDb();
+function buildTicketWhereClause(filters: TicketFilters): { where: string; values: unknown[] } {
   const conditions: string[] = [];
   const values: unknown[] = [];
   let paramIdx = 1;
@@ -166,22 +167,23 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  return { where, values };
+}
+
+export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]> {
+  const db = await getDb();
+  const { where, values } = buildTicketWhereClause(filters);
 
   let orderBy: string;
   switch (filters.sort_by) {
     case 'priority':
-      // Use CASE for custom priority ordering
-      orderBy = `CASE priority
-        WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'default' THEN 3
-        WHEN 'low' THEN 4 WHEN 'lowest' THEN 5 END`;
+      orderBy = PRIORITY_ORD;
       break;
     case 'category':
       orderBy = 'category';
       break;
     case 'status':
-      orderBy = `CASE status
-        WHEN 'backlog' THEN 1 WHEN 'not_started' THEN 2 WHEN 'started' THEN 3
-        WHEN 'completed' THEN 4 WHEN 'verified' THEN 5 WHEN 'archive' THEN 6 END`;
+      orderBy = STATUS_ORD;
       break;
     case 'ticket_number':
       orderBy = 'id';
@@ -380,11 +382,11 @@ export async function queryTickets(
   let orderBy: string;
   switch (sortBy) {
     case 'priority':
-      orderBy = `CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'default' THEN 3 WHEN 'low' THEN 4 WHEN 'lowest' THEN 5 END`;
+      orderBy = PRIORITY_ORD;
       break;
     case 'category': orderBy = 'category'; break;
     case 'status':
-      orderBy = `CASE status WHEN 'backlog' THEN 1 WHEN 'not_started' THEN 2 WHEN 'started' THEN 3 WHEN 'completed' THEN 4 WHEN 'verified' THEN 5 WHEN 'archive' THEN 6 END`;
+      orderBy = STATUS_ORD;
       break;
     case undefined: orderBy = 'created_at'; break;
     default: orderBy = 'created_at'; break;

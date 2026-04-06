@@ -1,7 +1,7 @@
 import { suppressAnimation } from './animate.js';
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI } from './backups.js';
-import { bindBatchToolbar, PRIORITY_ITEMS, STATUS_ITEMS } from './batch.js';
+import { bindBatchToolbar } from './batch.js';
 import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
 import { initCommandLog, refreshCommandLog } from './commandLog.js';
@@ -18,7 +18,7 @@ import { bindSettingsDialog } from './settingsDialog.js';
 import { bindKeyboardShortcuts, getDetailSaveTimeout, setDetailSaveTimeout } from './shortcuts.js';
 import { bindSearchInput, bindSidebar, bindSortControls } from './sidebar.js';
 import type { AppSettings, CategoryDef, Ticket } from './state.js';
-import { getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
+import { allKnownTags, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, refreshAllKnownTags, state, STATUS_ITEMS } from './state.js';
 import { showTagsDialog } from './tagsDialog.js';
 import { checkForUpdate, restoreAppIcon } from './tauriIntegration.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
@@ -330,10 +330,8 @@ async function initDashboardWidget() {
 
 // --- Detail panel ---
 
-function bindDetailPanel() {
-  document.getElementById('detail-close')!.addEventListener('click', closeDetail);
-
-  // Auto-save detail fields
+/** Auto-save debounce for title and details fields. */
+function bindDetailAutoSave() {
   const fields = ['detail-title', 'detail-details'];
   for (const fieldId of fields) {
     const el = document.getElementById(fieldId) as HTMLInputElement | HTMLTextAreaElement;
@@ -357,8 +355,10 @@ function bindDetailPanel() {
       setDetailSaveTimeout(newTimeout);
     });
   }
+}
 
-  // Detail dropdown buttons
+/** Category, priority, and status dropdown binding. */
+function bindDetailDropdowns() {
   async function applyDetailChange(key: string, value: string) {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
@@ -425,8 +425,10 @@ function bindDetailPanel() {
     positionDropdown(menu, btn);
     menu.style.visibility = '';
   });
+}
 
-  // Up Next star button
+/** Up-next star toggle. */
+function bindDetailUpNext() {
   document.getElementById('detail-upnext')!.addEventListener('click', async () => {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
@@ -443,8 +445,10 @@ function bindDetailPanel() {
     channelAutoTrigger();
     openDetail(state.activeTicketId);
   });
+}
 
-  // Add note
+/** Add note functionality. */
+function bindDetailNotes() {
   document.getElementById('detail-add-note-btn')?.addEventListener('click', async () => {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
@@ -462,7 +466,10 @@ function bindDetailPanel() {
     }
     openDetail(state.activeTicketId);
   });
+}
 
+/** File upload button + drag-and-drop upload. */
+function bindDetailFileUpload() {
   // File upload (supports multiple files)
   document.getElementById('detail-file-input')!.addEventListener('change', async (e) => {
     const input = e.target as HTMLInputElement;
@@ -509,8 +516,10 @@ function bindDetailPanel() {
     openDetail(state.activeTicketId);
     void loadTickets();
   });
+}
 
-  // Attachment actions (event delegation)
+/** Attachment reveal/delete click handlers. */
+function bindDetailAttachmentActions() {
   document.getElementById('detail-attachments')!.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
 
@@ -532,15 +541,16 @@ function bindDetailPanel() {
       openDetail(state.activeTicketId);
     }
   });
+}
 
-  // Tag input with autocomplete
+/** Tag input with autocomplete. */
+function bindDetailTagInput() {
   const tagInput = document.getElementById('detail-tag-input') as HTMLInputElement;
   let acDropdown: HTMLElement | null = null;
   let acIndex = -1;
-  let allKnownTags: string[] = [];
 
-  // Load known tags
-  void api<string[]>('/tags').then(tags => { allKnownTags = tags; });
+  // Load known tags into shared state
+  void refreshAllKnownTags();
 
   function closeAutocomplete() {
     acDropdown?.remove();
@@ -623,6 +633,17 @@ function bindDetailPanel() {
       items.forEach((el, i) => el.classList.toggle('active', i === acIndex));
     }
   });
+}
+
+function bindDetailPanel() {
+  document.getElementById('detail-close')!.addEventListener('click', closeDetail);
+  bindDetailAutoSave();
+  bindDetailDropdowns();
+  bindDetailUpNext();
+  bindDetailNotes();
+  bindDetailFileUpload();
+  bindDetailAttachmentActions();
+  bindDetailTagInput();
 }
 
 void init();

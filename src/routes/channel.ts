@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 
-import { addLogEntry, getSettings, updateLogEntry, updateSetting } from '../db/queries.js';
+import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
+import { getSettings } from '../db/settings.js';
 import type { AppEnv } from '../types.js';
 import { notifyChange } from './notify.js';
 import { parseBody, ChannelTriggerSchema, PermissionRespondSchema } from './validation.js';

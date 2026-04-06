@@ -2,7 +2,7 @@ import { serve } from '@hono/node-server';
 import { execFile } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { Hono } from 'hono';
-import { dirname, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 import { runWithDataDir } from './db/connection.js';
@@ -71,7 +71,7 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     return c.text(js, 200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' });
   });
   app.get('/static/assets/:filename', (c) => {
-    const filename = c.req.param('filename');
+    const filename = basename(c.req.param('filename'));
     const filePath = join(distDir, 'assets', filename);
     if (!existsSync(filePath)) return c.notFound();
     const content = readFileSync(filePath);

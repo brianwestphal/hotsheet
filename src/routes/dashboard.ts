@@ -5,10 +5,12 @@ import { homedir } from 'os';
 import { join, relative, resolve } from 'path';
 
 import { getTicketStats } from '../db/queries.js';
+import { openInFileManager } from '../open-in-file-manager.js';
 import { getAllProjects } from '../projects.js';
 import { consumeSkillsCreatedFlag, ensureSkills, ensureSkillsForDir } from '../skills.js';
 import type { AppEnv } from '../types.js';
 import { addPollWaiter, getChangeVersion } from './notify.js';
+import { parseBody, PrintSchema } from './validation.js';
 
 export const dashboardRoutes = new Hono<AppEnv>();
 
@@ -159,21 +161,15 @@ dashboardRoutes.post('/gitignore/add', async (c) => {
 // --- Print (Tauri) ---
 
 dashboardRoutes.post('/print', async (c) => {
-  const { html } = await c.req.json<{ html: string }>();
-  const { execFile } = await import('child_process');
+  const raw = await c.req.json();
+  const parsed = parseBody(PrintSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
   const tmpPath = join(tmpdir(), `hotsheet-print-${Date.now()}.html`);
-  writeFileSync(tmpPath, html, 'utf-8');
+  writeFileSync(tmpPath, parsed.data.html, 'utf-8');
 
   // Open in default browser
-  const platform = process.platform;
-  if (platform === 'darwin') {
-    execFile('open', [tmpPath]);
-  } else if (platform === 'win32') {
-    execFile('start', ['', tmpPath], { shell: true });
-  } else {
-    execFile('xdg-open', [tmpPath]);
-  }
+  await openInFileManager(tmpPath);
 
   return c.json({ ok: true, path: tmpPath });
 });

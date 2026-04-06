@@ -114,7 +114,14 @@ export const ReorderProjectsSchema = z.object({
 
 // --- Categories ---
 
-export const CategoryDefSchema = z.object({}).passthrough();
+export const CategoryDefSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  shortLabel: z.string().min(1),
+  color: z.string().min(1),
+  shortcutKey: z.string(),
+  description: z.string(),
+}).passthrough();
 
 export const UpdateCategoriesSchema = z.array(CategoryDefSchema).min(1);
 

@@ -168,6 +168,65 @@ async function formatCategoryDescriptions(usedCategories: Set<string>): Promise<
   return lines.join('\n');
 }
 
+async function buildWorkflowInstructions(port: number, secretHeader: string): Promise<string[]> {
+  const sections: string[] = [];
+  sections.push('## Workflow');
+  sections.push('');
+  sections.push(`The Hot Sheet API is available at http://localhost:${port}/api. **You MUST update ticket status** as you work — this is required, not optional.`);
+  sections.push('');
+  sections.push('- **BEFORE starting work on a ticket**, set its status to "started":');
+  sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"status": "started"}'\``);
+  sections.push('');
+  sections.push('- **AFTER completing work on a ticket**, set its status to "completed" and **include notes** describing what was done:');
+  sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"status": "completed", "notes": "Describe the specific changes made"}'\``);
+  sections.push('');
+  sections.push('**IMPORTANT:**');
+  sections.push('- Update status for EVERY ticket — "started" when you begin, "completed" when you finish.');
+  sections.push('- The "notes" field is REQUIRED when completing a ticket. Describe the specific work done.');
+  sections.push('- If an API call fails (e.g. connection refused, 403 secret mismatch, or error response), **re-read `.hotsheet/settings.json`** to get the correct `port` and `secret` values — you may be connecting to the wrong Hot Sheet instance. Log a visible warning to the user and continue your work. Do NOT silently skip status updates.');
+  sections.push('- Do NOT set tickets to "verified" — that status is reserved for human review.');
+  sections.push('');
+  sections.push('## Creating Tickets');
+  sections.push('');
+  sections.push('You can create new tickets directly via the API. Use this strategically to:');
+  sections.push('- Break up complex tasks into smaller, trackable sub-tickets');
+  sections.push('- Flag implementation decisions that need human review');
+  sections.push('- Record bugs or issues discovered while working');
+  sections.push('- Create follow-up tasks for items outside the current scope');
+  sections.push('');
+  sections.push('To create a ticket:');
+  const allCats = await getCategories();
+  const catIds = allCats.map(c => c.id).join('|');
+  sections.push(`  \`curl -s -X POST http://localhost:${port}/api/tickets -H "Content-Type: application/json"${secretHeader} -d '{"title": "Title", "defaults": {"category": "${catIds}", "up_next": false}}'\``);
+  sections.push('');
+  sections.push('You can also include `"details"` in the defaults object for longer descriptions.');
+  sections.push('Set `up_next: true` only for items that should be prioritized immediately.');
+  sections.push('');
+  return sections;
+}
+
+async function buildAutoPrioritizeSection(port: number, secretHeader: string): Promise<string[]> {
+  const dbSettings = await getSettings();
+  const autoOrder = dbSettings.auto_order !== 'false';
+  if (!autoOrder) {
+    return ['No items in the Up Next list.'];
+  }
+
+  const sections: string[] = [];
+  sections.push('## Auto-Prioritize');
+  sections.push('');
+  sections.push('No items are in the Up Next list, but **auto-prioritize is enabled**. Before doing anything else:');
+  sections.push('');
+  sections.push('1. Read `.hotsheet/open-tickets.md` to see all open tickets.');
+  sections.push('2. Evaluate them by priority, urgency, and dependencies.');
+  sections.push('3. Choose the most important ticket(s) to work on next.');
+  sections.push(`4. Mark them as Up Next: \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"up_next": true}'\``);
+  sections.push('5. Then work through them as normal (set status to "started", implement, set to "completed" with notes).');
+  sections.push('');
+  sections.push('If there are no open tickets at all, there is nothing to do.');
+  return sections;
+}
+
 async function syncWorklist(state: SyncState): Promise<void> {
   const { dataDir, port } = state;
   try {
@@ -179,62 +238,14 @@ async function syncWorklist(state: SyncState): Promise<void> {
     sections.push('');
     sections.push('These are the current priority work items. Complete them in order of priority, where reasonable.');
     sections.push('');
-    sections.push('## Workflow');
-    sections.push('');
     const settings = readFileSettings(dataDir);
     const secret = settings.secret ?? '';
     const secretHeader = secret ? ` -H "X-Hotsheet-Secret: ${secret}"` : '';
 
-    sections.push(`The Hot Sheet API is available at http://localhost:${port}/api. **You MUST update ticket status** as you work — this is required, not optional.`);
-    sections.push('');
-    sections.push('- **BEFORE starting work on a ticket**, set its status to "started":');
-    sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"status": "started"}'\``);
-    sections.push('');
-    sections.push('- **AFTER completing work on a ticket**, set its status to "completed" and **include notes** describing what was done:');
-    sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"status": "completed", "notes": "Describe the specific changes made"}'\``);
-    sections.push('');
-    sections.push('**IMPORTANT:**');
-    sections.push('- Update status for EVERY ticket — "started" when you begin, "completed" when you finish.');
-    sections.push('- The "notes" field is REQUIRED when completing a ticket. Describe the specific work done.');
-    sections.push('- If an API call fails (e.g. connection refused, 403 secret mismatch, or error response), **re-read `.hotsheet/settings.json`** to get the correct `port` and `secret` values — you may be connecting to the wrong Hot Sheet instance. Log a visible warning to the user and continue your work. Do NOT silently skip status updates.');
-    sections.push('- Do NOT set tickets to "verified" — that status is reserved for human review.');
-    sections.push('');
-    sections.push('## Creating Tickets');
-    sections.push('');
-    sections.push('You can create new tickets directly via the API. Use this strategically to:');
-    sections.push('- Break up complex tasks into smaller, trackable sub-tickets');
-    sections.push('- Flag implementation decisions that need human review');
-    sections.push('- Record bugs or issues discovered while working');
-    sections.push('- Create follow-up tasks for items outside the current scope');
-    sections.push('');
-    sections.push('To create a ticket:');
-    const allCats = await getCategories();
-    const catIds = allCats.map(c => c.id).join('|');
-    sections.push(`  \`curl -s -X POST http://localhost:${port}/api/tickets -H "Content-Type: application/json"${secretHeader} -d '{"title": "Title", "defaults": {"category": "${catIds}", "up_next": false}}'\``);
-    sections.push('');
-    sections.push('You can also include `"details"` in the defaults object for longer descriptions.');
-    sections.push('Set `up_next: true` only for items that should be prioritized immediately.');
-    sections.push('');
+    sections.push(...await buildWorkflowInstructions(port, secretHeader));
 
     if (tickets.length === 0) {
-      // Check if auto-order is enabled (default: true)
-      const dbSettings = await getSettings();
-      const autoOrder = dbSettings.auto_order !== 'false';
-      if (autoOrder) {
-        sections.push('## Auto-Prioritize');
-        sections.push('');
-        sections.push('No items are in the Up Next list, but **auto-prioritize is enabled**. Before doing anything else:');
-        sections.push('');
-        sections.push('1. Read `.hotsheet/open-tickets.md` to see all open tickets.');
-        sections.push('2. Evaluate them by priority, urgency, and dependencies.');
-        sections.push('3. Choose the most important ticket(s) to work on next.');
-        sections.push(`4. Mark them as Up Next: \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"up_next": true}'\``);
-        sections.push('5. Then work through them as normal (set status to "started", implement, set to "completed" with notes).');
-        sections.push('');
-        sections.push('If there are no open tickets at all, there is nothing to do.');
-      } else {
-        sections.push('No items in the Up Next list.');
-      }
+      sections.push(...await buildAutoPrioritizeSection(port, secretHeader));
     } else {
       const autoContext = await loadAutoContext();
       for (const ticket of tickets) {

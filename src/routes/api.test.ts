@@ -130,6 +130,7 @@ beforeAll(async () => {
   app = new Hono<AppEnv>();
   app.use('*', async (c, next) => {
     c.set('dataDir', tempDir);
+    c.set('projectSecret', 'test-secret');
     await next();
   });
   app.route('/api', apiRoutes);
@@ -1083,9 +1084,9 @@ describe('categories', () => {
 
   it('PUT /api/categories saves custom categories', async () => {
     const customCategories = [
-      { key: 'bug', label: 'Bug', color: '#ff0000' },
-      { key: 'feature', label: 'Feature', color: '#00ff00' },
-      { key: 'task', label: 'Task', color: '#0000ff' },
+      { id: 'bug', label: 'Bug', shortLabel: 'BUG', color: '#ff0000', shortcutKey: 'b', description: 'Bugs' },
+      { id: 'feature', label: 'Feature', shortLabel: 'FEA', color: '#00ff00', shortcutKey: 'f', description: 'Features' },
+      { id: 'task', label: 'Task', shortLabel: 'TSK', color: '#0000ff', shortcutKey: 't', description: 'Tasks' },
     ];
     const res = await app.request('/api/categories', {
       method: 'PUT',
@@ -1099,7 +1100,7 @@ describe('categories', () => {
     // Verify persistence
     const check = await (await app.request('/api/categories')).json() as CategoryEntry[];
     expect(check).toHaveLength(3);
-    expect(check[0].key).toBe('bug');
+    expect(check[0].id).toBe('bug');
   });
 
   it('GET /api/category-presets returns presets', async () => {

@@ -158,7 +158,15 @@ export function listBackups(dataDir: string): BackupInfo[] {
   return backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
+const VALID_TIERS = new Set<string>(['5min', 'hourly', 'daily']);
+
+function validateBackupParams(tier: string, filename: string): void {
+  if (!VALID_TIERS.has(tier)) throw new Error(`Invalid backup tier: ${tier}`);
+  if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) throw new Error('Invalid filename');
+}
+
 export async function loadBackupForPreview(dataDir: string, tier: string, filename: string): Promise<{ tickets: Array<Record<string, unknown>>; stats: { total: number; open: number; upNext: number } }> {
+  validateBackupParams(tier, filename);
 
   const filePath = join(tierDir(dataDir, tier as Tier), filename);
   if (!existsSync(filePath)) throw new Error('Backup file not found');
@@ -218,6 +226,7 @@ export async function cleanupPreview(dataDir?: string): Promise<void> {
 }
 
 export async function restoreBackup(dataDir: string, tier: string, filename: string): Promise<void> {
+  validateBackupParams(tier, filename);
   await cleanupPreview(dataDir);
 
   const filePath = join(tierDir(dataDir, tier as Tier), filename);

@@ -1,7 +1,8 @@
+import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
-import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, state } from './state.js';
+import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { pushNotesUndo } from './undo/actions.js';
 
 // --- Tags helpers ---
@@ -75,33 +76,33 @@ export function renderDetailTags(tags: string[], readOnly: boolean) {
 
 // --- Detail field button helpers ---
 
-const STATUS_LABELS: Record<string, string> = {
-  not_started: 'Not Started', started: 'Started', completed: 'Completed',
-  verified: 'Verified', backlog: 'Backlog', archive: 'Archive',
-};
-
-const PRIORITY_LABELS: Record<string, string> = {
-  highest: 'Highest', high: 'High', default: 'Default', low: 'Low', lowest: 'Lowest',
-};
-
 export function updateDetailCategory(value: string) {
   const btn = document.getElementById('detail-category') as HTMLButtonElement;
   btn.dataset.value = value;
   const cat = state.categories.find(c => c.id === value);
   const color = getCategoryColor(value);
-  btn.innerHTML = `<span class="cat-dot" style="background:${color}"></span> ${cat?.label ?? value}`;
+  const dot = toElement(<span className="cat-dot" style={`background:${color}`}></span>);
+  btn.textContent = '';
+  btn.appendChild(dot);
+  btn.append(` ${cat?.label ?? value}`);
 }
 
 export function updateDetailPriority(value: string) {
   const btn = document.getElementById('detail-priority') as HTMLButtonElement;
   btn.dataset.value = value;
-  btn.innerHTML = `<span class="dropdown-icon" style="color:${getPriorityColor(value)}">${getPriorityIcon(value)}</span> ${PRIORITY_LABELS[value] || value}`;
+  const icon = toElement(<span className="dropdown-icon" style={`color:${getPriorityColor(value)}`}>{raw(getPriorityIcon(value))}</span>);
+  btn.textContent = '';
+  btn.appendChild(icon);
+  btn.append(` ${PRIORITY_LABELS[value] || value}`);
 }
 
 export function updateDetailStatus(value: string) {
   const btn = document.getElementById('detail-status') as HTMLButtonElement;
   btn.dataset.value = value;
-  btn.innerHTML = `<span class="dropdown-icon">${getStatusIcon(value)}</span> ${STATUS_LABELS[value] || value}`;
+  const icon = toElement(<span className="dropdown-icon">{raw(getStatusIcon(value))}</span>);
+  btn.textContent = '';
+  btn.appendChild(icon);
+  btn.append(` ${STATUS_LABELS[value] || value}`);
 }
 
 // --- Detail panel ---

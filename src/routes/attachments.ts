@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from 'fs';
 import { Hono } from 'hono';
-import { basename, dirname, extname, join, resolve } from 'path';
+import { basename, extname, join, resolve } from 'path';
 
 import {
   addAttachment,
@@ -8,14 +8,15 @@ import {
   getAttachment,
   getTicket,
 } from '../db/queries.js';
-import { scheduleAllSync } from '../sync/markdown.js';
+import { revealInFileManager } from '../open-in-file-manager.js';
 import type { AppEnv } from '../types.js';
-import { notifyChange } from './notify.js';
+import { notifyMutation } from './notify.js';
 
 export const attachmentRoutes = new Hono<AppEnv>();
 
 attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id)) return c.json({ error: 'Invalid attachment ticket ID' }, 400);
   const ticket = await getTicket(id);
   if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
 
@@ -23,7 +24,7 @@ attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
   const body = await c.req.parseBody();
   const file = body['file'];
 
-  if (typeof file === 'string') {
+  if (!file || typeof file === 'string') {
     return c.json({ error: 'No file uploaded' }, 400);
   }
 
@@ -41,38 +42,32 @@ attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
   writeFileSync(storedPath, buffer);
 
   const attachment = await addAttachment(id, originalName, storedPath);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json(attachment, 201);
 });
 
 attachmentRoutes.delete('/attachments/:id', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id)) return c.json({ error: 'Invalid attachment ID' }, 400);
   const attachment = await deleteAttachment(id);
   if (!attachment) return c.json({ error: 'Not found' }, 404);
 
   // Remove the file
   try { rmSync(attachment.stored_path, { force: true }); } catch { /* ignore */ }
 
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json({ ok: true });
 });
 
 // Reveal attachment in OS file manager
 attachmentRoutes.post('/attachments/:id/reveal', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id)) return c.json({ error: 'Invalid attachment ID' }, 400);
   const attachment = await getAttachment(id);
   if (!attachment) return c.json({ error: 'Not found' }, 404);
   if (!existsSync(attachment.stored_path)) return c.json({ error: 'File not found on disk' }, 404);
 
-  const { execFile } = await import('child_process');
-  const platform = process.platform;
-  if (platform === 'darwin') {
-    execFile('open', ['-R', attachment.stored_path]);
-  } else if (platform === 'win32') {
-    execFile('explorer', ['/select,', attachment.stored_path]);
-  } else {
-    execFile('xdg-open', [dirname(attachment.stored_path)]);
-  }
+  await revealInFileManager(attachment.stored_path);
   return c.json({ ok: true });
 });
 

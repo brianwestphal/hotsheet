@@ -4,25 +4,17 @@ import { api } from './api.js';
 import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
+import { ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE } from './icons.js';
 import type { CustomView, CustomViewCondition } from './state.js';
-import { state } from './state.js';
+import { allKnownTags, refreshAllKnownTags, state } from './state.js';
 import { draggedTicketIds } from './ticketList.js';
 
 let loadTicketsFn: () => void;
 let draggedViewIndex: number | null = null;
-let allKnownTags: string[] = [];
-
-const TAG_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>';
-const INFO_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>';
-
-/** Refresh the known tags list from the server. */
-async function refreshTags() {
-  try { allKnownTags = await api<string[]>('/tags'); } catch { /* use cached */ }
-}
 
 export function initCustomViews(loadTickets: () => void) {
   loadTicketsFn = loadTickets;
-  void refreshTags();
+  void refreshAllKnownTags();
   document.getElementById('add-custom-view-btn')!.addEventListener('click', (e) => {
     e.stopPropagation();
     showViewEditor();
@@ -59,7 +51,7 @@ export function renderSidebarViews() {
         data-cv-index={String(i)}
         draggable="true"
       >
-        {view.tag !== undefined && view.tag !== '' ? <span className="sidebar-view-tag-icon">{raw(TAG_ICON)}</span> : null}
+        {view.tag !== undefined && view.tag !== '' ? <span className="sidebar-view-tag-icon">{raw(ICON_TAG)}</span> : null}
         {view.name}
       </button>
     );
@@ -121,14 +113,11 @@ export function renderSidebarViews() {
   }
 }
 
-const PENCIL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>';
-const TRASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
-
 function showViewContextMenu(anchor: HTMLElement, view: CustomView) {
   closeAllMenus();
   const menu = createDropdown(anchor, [
-    { label: 'Edit', key: 'e', icon: PENCIL_ICON, action: () => showViewEditor(view) },
-    { label: 'Delete', key: 'd', icon: TRASH_ICON, action: () => { void deleteView(view.id); } },
+    { label: 'Edit', key: 'e', icon: ICON_PENCIL, action: () => showViewEditor(view) },
+    { label: 'Delete', key: 'd', icon: ICON_TRASH_SIMPLE, action: () => { void deleteView(view.id); } },
   ]);
   document.body.appendChild(menu);
   positionDropdown(menu, anchor);
@@ -293,7 +282,7 @@ function showViewEditor(existing?: CustomView) {
   let name = existing?.name ?? '';
   let tag = existing?.tag ?? '';
 
-  void refreshTags();
+  void refreshAllKnownTags();
 
   const overlay = toElement(
     <div className="custom-view-editor-overlay">
@@ -309,7 +298,7 @@ function showViewEditor(existing?: CustomView) {
           </div>
           <div className="settings-field cv-tag-field">
             <label>
-              Tag <span className="cv-tag-info" id="cv-tag-info-btn">{raw(INFO_ICON)}</span>
+              Tag <span className="cv-tag-info" id="cv-tag-info-btn">{raw(ICON_INFO)}</span>
             </label>
             <div className="cv-tag-help" id="cv-tag-help" style="display:none">
               Associate this view with a tag. The view will show a tag icon in the sidebar and you can drag tickets onto it to add the tag. Tickets with this tag are automatically included in the view.

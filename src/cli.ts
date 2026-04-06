@@ -209,24 +209,17 @@ async function joinRunningInstance(port: number, dataDir: string): Promise<void>
   execFile(openCmd, [url]);
 }
 
-async function main() {
-  const parsed = parseArgs(process.argv);
-  if (!parsed) {
-    printUsage();
-    process.exit(1);
-  }
-
-  const { port, demo, forceUpdateCheck, noOpen, strictPort, close, list } = parsed;
-  let { dataDir } = parsed;
-
-  // Handle --close: unregister current project from running instance and exit
-  if (close) {
-    await handleClose(dataDir);
+/**
+ * Handle early exit flags: --close, --list, --version, --help.
+ * Returns true if the process should exit.
+ */
+async function handleEarlyFlags(args: ParsedArgs): Promise<boolean> {
+  if (args.close) {
+    await handleClose(args.dataDir);
     process.exit(0);
   }
 
-  // Handle --list: list projects registered with running instance and exit
-  if (list) {
+  if (args.list) {
     const instance = readInstanceFile();
     if (instance === null) {
       console.error('No running Hot Sheet instance found.');
@@ -243,65 +236,21 @@ async function main() {
     process.exit(0);
   }
 
-  await checkForUpdates(forceUpdateCheck);
+  return false;
+}
 
-  // Demo mode: use a fresh temp directory
-  if (demo !== null) {
-    const scenario = DEMO_SCENARIOS.find(s => s.id === demo);
-    if (!scenario) {
-      console.error(`Unknown demo scenario: ${demo}`);
-      console.error('Available scenarios:');
-      for (const s of DEMO_SCENARIOS) {
-        console.error(`  --demo:${s.id}  ${s.label}`);
-      }
-      process.exit(1);
-    }
-    dataDir = join(tmpdir(), `hotsheet-demo-${demo}-${Date.now()}`);
-    console.log(`\n  DEMO MODE: ${scenario.label}\n`);
-  }
-
-  // Multi-project: check for an already-running instance (skip in demo mode)
-  if (demo === null) {
-    const instance = readInstanceFile();
-    if (instance !== null) {
-      const running = await isInstanceRunning(instance.port);
-      if (running) {
-        // Another instance is already running — register this project and open browser
-        if (!noOpen) {
-          await joinRunningInstance(instance.port, dataDir);
-        } else {
-          // --no-open: just register, don't open browser
-          const absDataDir = resolve(dataDir);
-          const res = await fetch(`http://localhost:${instance.port}/api/projects/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dataDir: absDataDir }),
-          });
-          if (res.ok) {
-            const project = await res.json() as { name: string };
-            console.log(`  Registered project "${project.name}" with running instance on port ${instance.port}`);
-          } else {
-            const body = await res.json().catch(() => ({})) as { error?: string };
-            console.error(`  Failed to register with running instance: ${body.error ?? 'Unknown error'}`);
-            process.exit(1);
-          }
-        }
-        process.exit(0);
-      }
-    }
-  }
-
-  // Ensure data directory exists
+/**
+ * Initialize the project: data directory, gitignore, DB, cleanup, lock.
+ * Returns the initialized database instance.
+ */
+async function initializeProject(dataDir: string, demo: number | null): Promise<import('@electric-sql/pglite').PGlite> {
   mkdirSync(dataDir, { recursive: true });
 
   if (demo === null) {
-    // Prevent multiple instances from corrupting the database
     acquireLock(dataDir);
-    // Check .gitignore only for real projects
     ensureGitignore(process.cwd());
   }
 
-  // Initialize database
   setDataDir(dataDir);
   const db = await getDb();
 
@@ -310,24 +259,25 @@ async function main() {
   }
 
   if (demo === null) {
-    // Clean up old attachments only for real projects
     const { runWithDataDir } = await import('./db/connection.js');
     await runWithDataDir(dataDir, () => cleanupAttachments());
   }
 
   console.log(`  Data directory: ${dataDir}`);
+  return db;
+}
 
-  // Start the server without opening the browser — we open it after all projects are restored
+/**
+ * Start the server and configure secrets, markdown sync, skills.
+ * Returns the actual port and secret.
+ */
+async function startAndConfigure(port: number, dataDir: string, strictPort: boolean): Promise<{ actualPort: number; secret: string }> {
   const actualPort = await startServer(port, dataDir, { noOpen: true, strictPort });
-
-  // Generate/validate the API secret and write port to settings.json for AI tool consumption
   const secret = ensureSecret(dataDir, actualPort);
 
-  // Initialize markdown sync with the actual port (may differ if requested port was in use)
   initMarkdownSync(dataDir, actualPort);
   scheduleAllSync(dataDir);
 
-  // Initialize and sync AI tool skills/rules — wrap in dataDir context for getCategories()
   const { runWithDataDir: runWith } = await import('./db/connection.js');
   initSkills(actualPort, dataDir);
   setSkillCategories(await runWith(dataDir, () => getCategories()));
@@ -337,26 +287,25 @@ async function main() {
     console.log('  Restart your AI tool to pick up the new ticket creation skills.\n');
   }
 
-  // Prune command log to keep it manageable — run in dataDir context
+  // Non-critical background tasks
   runWith(dataDir, () => import('./db/commandLog.js').then(({ pruneLog }) => pruneLog(1000))).catch(() => { /* non-critical */ });
-
-  // Record daily stats snapshot and backfill any missing days — run in dataDir context
   runWith(dataDir, () => import('./db/stats.js').then(async ({ recordDailySnapshot, backfillSnapshots }) => {
     await backfillSnapshots();
     await recordDailySnapshot();
   })).catch(() => { /* non-critical */ });
 
+  return { actualPort, secret };
+}
+
+/**
+ * Post-startup tasks: backup scheduling, project restore, instance file, browser open.
+ */
+async function postStartup(dataDir: string, actualPort: number, demo: number | null, noOpen: boolean): Promise<void> {
   if (demo === null) {
     initBackupScheduler(dataDir);
   }
 
-  // Register this project in the multi-project registry so the server
-  // middleware can resolve it by secret for API requests.
-  registerExistingProject(dataDir, secret, db);
-
-  // Write instance file so subsequent invocations can join this instance
   if (demo === null) {
-    // Persist this project in the project list
     addToProjectList(dataDir);
 
     // Restore previously registered projects (other tabs from last session)
@@ -364,8 +313,8 @@ async function main() {
     const absDataDir = resolve(dataDir);
     const validProjects = [absDataDir];
     for (const prevDir of previousProjects) {
-      if (prevDir === absDataDir) continue; // Already registered above
-      if (!existsSync(prevDir)) continue;   // Directory no longer exists
+      if (prevDir === absDataDir) continue;
+      if (!existsSync(prevDir)) continue;
       try {
         await registerProject(prevDir, actualPort);
         validProjects.push(prevDir);
@@ -373,13 +322,11 @@ async function main() {
         // Non-critical — skip projects that fail to register
       }
     }
-    // Clean up stale entries from the project list
     if (validProjects.length !== previousProjects.length) {
       const { reorderProjectList } = await import('./project-list.js');
       reorderProjectList(validProjects);
     }
 
-    // Notify long-poll so the UI discovers restored tabs
     if (validProjects.length > 1) {
       const { notifyChange } = await import('./routes/notify.js');
       notifyChange();
@@ -426,6 +373,70 @@ async function main() {
       : 'xdg-open';
     execFile(openCmd, [url]);
   }
+}
+
+async function main() {
+  const parsed = parseArgs(process.argv);
+  if (!parsed) {
+    printUsage();
+    process.exit(1);
+  }
+
+  const { port, demo, forceUpdateCheck, noOpen, strictPort } = parsed;
+  let { dataDir } = parsed;
+
+  await handleEarlyFlags(parsed);
+
+  await checkForUpdates(forceUpdateCheck);
+
+  // Demo mode: use a fresh temp directory
+  if (demo !== null) {
+    const scenario = DEMO_SCENARIOS.find(s => s.id === demo);
+    if (!scenario) {
+      console.error(`Unknown demo scenario: ${demo}`);
+      console.error('Available scenarios:');
+      for (const s of DEMO_SCENARIOS) {
+        console.error(`  --demo:${s.id}  ${s.label}`);
+      }
+      process.exit(1);
+    }
+    dataDir = join(tmpdir(), `hotsheet-demo-${demo}-${Date.now()}`);
+    console.log(`\n  DEMO MODE: ${scenario.label}\n`);
+  }
+
+  // Multi-project: check for an already-running instance (skip in demo mode)
+  if (demo === null) {
+    const instance = readInstanceFile();
+    if (instance !== null) {
+      const running = await isInstanceRunning(instance.port);
+      if (running) {
+        if (!noOpen) {
+          await joinRunningInstance(instance.port, dataDir);
+        } else {
+          const absDataDir = resolve(dataDir);
+          const res = await fetch(`http://localhost:${instance.port}/api/projects/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataDir: absDataDir }),
+          });
+          if (res.ok) {
+            const project = await res.json() as { name: string };
+            console.log(`  Registered project "${project.name}" with running instance on port ${instance.port}`);
+          } else {
+            const body = await res.json().catch(() => ({})) as { error?: string };
+            console.error(`  Failed to register with running instance: ${body.error ?? 'Unknown error'}`);
+            process.exit(1);
+          }
+        }
+        process.exit(0);
+      }
+    }
+  }
+
+  const db = await initializeProject(dataDir, demo);
+  const { actualPort, secret } = await startAndConfigure(port, dataDir, strictPort);
+  registerExistingProject(dataDir, secret, db);
+  await postStartup(dataDir, actualPort, demo, noOpen);
 }
 
 main().catch((err: unknown) => {

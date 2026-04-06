@@ -1,7 +1,7 @@
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 
-function showErrorPopup(message: string) {
+export function showErrorPopup(message: string) {
   document.getElementById('network-error-popup')?.remove();
   const popup = toElement(
     <div id="network-error-popup" className="error-popup">
@@ -47,9 +47,20 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
       method: opts.method,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
+    if (!res.ok) {
+      let message = `Server returned ${res.status}`;
+      try {
+        const body = await res.json();
+        if (body && typeof body.error === 'string') message = body.error;
+      } catch { /* body not JSON, use default message */ }
+      if (res.status >= 500) showErrorPopup(message);
+      throw new Error(message);
+    }
     return await (res.json() as Promise<T>);
   } catch (err) {
-    showErrorPopup('Unable to reach the server. It may have been stopped.');
+    if (err instanceof TypeError) {
+      showErrorPopup('Unable to reach the server. It may have been stopped.');
+    }
     throw err;
   }
 }
@@ -64,9 +75,20 @@ export async function apiUpload<T>(path: string, file: File): Promise<T> {
       headers['X-Hotsheet-Secret'] = proj.secret;
     }
     const res = await fetch(buildUrl(path, 'POST'), { method: 'POST', body: form, headers });
+    if (!res.ok) {
+      let message = `Server returned ${res.status}`;
+      try {
+        const body = await res.json();
+        if (body && typeof body.error === 'string') message = body.error;
+      } catch { /* body not JSON, use default message */ }
+      if (res.status >= 500) showErrorPopup(message);
+      throw new Error(message);
+    }
     return await (res.json() as Promise<T>);
   } catch (err) {
-    showErrorPopup('Unable to reach the server. It may have been stopped.');
+    if (err instanceof TypeError) {
+      showErrorPopup('Unable to reach the server. It may have been stopped.');
+    }
     throw err;
   }
 }

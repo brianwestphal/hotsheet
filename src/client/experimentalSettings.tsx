@@ -1,8 +1,9 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { initChannel, isChannelAlive, triggerChannelAndMarkBusy } from './channelUI.js';
+import { initChannel, isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { refreshLogBadge } from './commandLog.js';
 import { toElement } from './dom.js';
+import { renderIconSvg } from './icons.js';
 // All Lucide icons loaded from generated JSON
 import ALL_LUCIDE_ICONS from './lucide-icons.json';
 
@@ -40,10 +41,6 @@ function isChannelEnabled(): boolean {
 
 export function setChannelEnabledState(enabled: boolean) {
   channelEnabledState = enabled;
-}
-
-export function renderIconSvg(svgPath: string, size = 14, color = 'currentColor'): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${svgPath}</svg>`;
 }
 
 export function contrastColor(hex: string): string {
@@ -92,23 +89,6 @@ export function renderChannelCommands() {
 
 let shellBusyId: number | null = null;
 let shellPollTimer: ReturnType<typeof setInterval> | null = null;
-
-function setShellBusy(busy: boolean) {
-  const indicator = document.getElementById('channel-status-indicator');
-  if (!indicator) return;
-  if (busy) {
-    indicator.style.display = '';
-    indicator.className = 'channel-status-indicator busy';
-    indicator.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Shell running';
-  } else {
-    indicator.style.display = '';
-    indicator.className = 'channel-status-indicator';
-    indicator.innerHTML = '\u2713 Shell done';
-    setTimeout(() => {
-      if (shellBusyId === null) indicator.style.display = 'none';
-    }, 5000);
-  }
-}
 
 let shellAutoShowLog = false;
 
@@ -276,126 +256,130 @@ function showIconPicker(anchor: HTMLElement, cmdIndex: number) {
 
 let draggedCmdIndex: number | null = null;
 
+/** Render a single command row with all its event handlers. */
+function renderCommandRow(index: number): HTMLElement {
+  const cmd = customCommands[index];
+  const currentIcon = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
+  const currentColor = cmd.color ?? CMD_COLORS[0].value;
+
+  const currentTarget = cmd.target ?? 'claude';
+  const promptLabel = currentTarget === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
+  const promptPlaceholder = currentTarget === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
+
+  const row = toElement(
+    <div className="settings-command-row" draggable="true" data-cmd-index={String(index)}>
+      <div className="settings-command-row-header">
+        <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
+        <button className="command-color-dropdown-btn" title="Choose color" style={`background:${currentColor}`}></button>
+        <button className="command-icon-picker-btn" title="Choose icon">{raw(renderIconSvg(currentIcon.svg, 16))}</button>
+        <input type="text" value={cmd.name} placeholder="Button label..." />
+        <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
+      </div>
+      <div className="command-target-segmented">
+        <button className={`seg-btn${currentTarget === 'claude' ? ' active' : ''}`} data-target="claude">Claude Code</button>
+        <button className={`seg-btn${currentTarget === 'shell' ? ' active' : ''}`} data-target="shell">Shell</button>
+      </div>
+      <label className="command-prompt-label">{promptLabel}</label>
+      <textarea placeholder={promptPlaceholder}>{cmd.prompt}</textarea>
+      <label className="command-auto-show-label" style={currentTarget === 'shell' ? '' : 'display:none'}>
+        <input type="checkbox" className="command-auto-show" checked={cmd.autoShowLog === true} /> Show log on completion
+      </label>
+      <div className="command-claude-warning" style={currentTarget !== 'shell' && !isChannelEnabled() ? '' : 'display:none'}>
+        {'\u26A0'} This command won't appear in the sidebar unless Claude Channel is enabled above.
+      </div>
+    </div>
+  );
+
+  const nameInput = row.querySelector('input[type="text"]') as HTMLInputElement;
+  const promptArea = row.querySelector('textarea') as HTMLTextAreaElement;
+  const segBtns = row.querySelectorAll('.seg-btn');
+  const promptLabelEl = row.querySelector('.command-prompt-label') as HTMLElement;
+  const autoShowLabel = row.querySelector('.command-auto-show-label') as HTMLElement;
+  const autoShowCheckbox = row.querySelector('.command-auto-show') as HTMLInputElement;
+  const claudeWarning = row.querySelector('.command-claude-warning') as HTMLElement;
+
+  const save = () => {
+    customCommands[index] = { ...customCommands[index], name: nameInput.value, prompt: promptArea.value };
+    void saveCustomCommands();
+  };
+
+  nameInput.addEventListener('input', save);
+  promptArea.addEventListener('input', save);
+
+  autoShowCheckbox.addEventListener('change', () => {
+    customCommands[index] = { ...customCommands[index], autoShowLog: autoShowCheckbox.checked };
+    void saveCustomCommands();
+  });
+
+  for (const segBtn of segBtns) {
+    segBtn.addEventListener('click', () => {
+      const target = (segBtn as HTMLElement).dataset.target as 'claude' | 'shell';
+      for (const b of segBtns) b.classList.remove('active');
+      segBtn.classList.add('active');
+      customCommands[index] = { ...customCommands[index], target: target === 'claude' ? undefined : target };
+      promptLabelEl.textContent = target === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
+      promptArea.placeholder = target === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
+      autoShowLabel.style.display = target === 'shell' ? '' : 'none';
+      claudeWarning.style.display = target !== 'shell' && !isChannelEnabled() ? '' : 'none';
+      void saveCustomCommands();
+    });
+  }
+
+  // Color dropdown
+  const colorBtn = row.querySelector('.command-color-dropdown-btn') as HTMLElement;
+  colorBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showColorDropdown(colorBtn, index);
+  });
+
+  // Icon picker
+  row.querySelector('.command-icon-picker-btn')!.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showIconPicker(row.querySelector('.command-icon-picker-btn') as HTMLElement, index);
+  });
+
+  row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
+    customCommands.splice(index, 1);
+    renderCustomCommandSettings();
+    void saveCustomCommands();
+  });
+
+  // Drag and drop reordering
+  row.addEventListener('dragstart', (e) => {
+    draggedCmdIndex = index;
+    e.dataTransfer!.setData('text/plain', String(index));
+    e.dataTransfer!.effectAllowed = 'move';
+    setTimeout(() => row.classList.add('dragging'), 0);
+  });
+  row.addEventListener('dragend', () => { row.classList.remove('dragging'); draggedCmdIndex = null; });
+  row.addEventListener('dragover', (e) => {
+    if (draggedCmdIndex === null) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'move';
+    row.classList.add('drop-target');
+  });
+  row.addEventListener('dragleave', () => { row.classList.remove('drop-target'); });
+  row.addEventListener('drop', (e) => {
+    e.preventDefault();
+    row.classList.remove('drop-target');
+    if (draggedCmdIndex === null || draggedCmdIndex === index) return;
+    const [moved] = customCommands.splice(draggedCmdIndex, 1);
+    customCommands.splice(index, 0, moved);
+    draggedCmdIndex = null;
+    renderCustomCommandSettings();
+    void saveCustomCommands();
+  });
+
+  return row;
+}
+
 function renderCustomCommandSettings() {
   const list = document.getElementById('settings-commands-list');
   if (!list) return;
   list.innerHTML = '';
 
   for (let i = 0; i < customCommands.length; i++) {
-    const cmd = customCommands[i];
-    const currentIcon = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
-    const currentColor = cmd.color ?? CMD_COLORS[0].value;
-
-    const currentTarget = cmd.target ?? 'claude';
-    const promptLabel = currentTarget === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
-    const promptPlaceholder = currentTarget === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
-
-    const row = toElement(
-      <div className="settings-command-row" draggable="true" data-cmd-index={String(i)}>
-        <div className="settings-command-row-header">
-          <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
-          <button className="command-color-dropdown-btn" title="Choose color" style={`background:${currentColor}`}></button>
-          <button className="command-icon-picker-btn" title="Choose icon">{raw(renderIconSvg(currentIcon.svg, 16))}</button>
-          <input type="text" value={cmd.name} placeholder="Button label..." />
-          <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
-        </div>
-        <div className="command-target-segmented">
-          <button className={`seg-btn${currentTarget === 'claude' ? ' active' : ''}`} data-target="claude">Claude Code</button>
-          <button className={`seg-btn${currentTarget === 'shell' ? ' active' : ''}`} data-target="shell">Shell</button>
-        </div>
-        <label className="command-prompt-label">{promptLabel}</label>
-        <textarea placeholder={promptPlaceholder}>{cmd.prompt}</textarea>
-        <label className="command-auto-show-label" style={currentTarget === 'shell' ? '' : 'display:none'}>
-          <input type="checkbox" className="command-auto-show" checked={cmd.autoShowLog === true} /> Show log on completion
-        </label>
-        <div className="command-claude-warning" style={currentTarget !== 'shell' && !isChannelEnabled() ? '' : 'display:none'}>
-          {'\u26A0'} This command won't appear in the sidebar unless Claude Channel is enabled above.
-        </div>
-      </div>
-    );
-
-    const nameInput = row.querySelector('input[type="text"]') as HTMLInputElement;
-    const promptArea = row.querySelector('textarea') as HTMLTextAreaElement;
-    const segBtns = row.querySelectorAll('.seg-btn');
-    const promptLabelEl = row.querySelector('.command-prompt-label') as HTMLElement;
-    const autoShowLabel = row.querySelector('.command-auto-show-label') as HTMLElement;
-    const autoShowCheckbox = row.querySelector('.command-auto-show') as HTMLInputElement;
-    const claudeWarning = row.querySelector('.command-claude-warning') as HTMLElement;
-
-    const save = () => {
-      customCommands[i] = { ...customCommands[i], name: nameInput.value, prompt: promptArea.value };
-      void saveCustomCommands();
-    };
-
-    nameInput.addEventListener('input', save);
-    promptArea.addEventListener('input', save);
-
-    autoShowCheckbox.addEventListener('change', () => {
-      customCommands[i] = { ...customCommands[i], autoShowLog: autoShowCheckbox.checked };
-      void saveCustomCommands();
-    });
-
-    for (const segBtn of segBtns) {
-      segBtn.addEventListener('click', () => {
-        const target = (segBtn as HTMLElement).dataset.target as 'claude' | 'shell';
-        for (const b of segBtns) b.classList.remove('active');
-        segBtn.classList.add('active');
-        customCommands[i] = { ...customCommands[i], target: target === 'claude' ? undefined : target };
-        // Update the label and placeholder dynamically
-        promptLabelEl.textContent = target === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
-        promptArea.placeholder = target === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
-        autoShowLabel.style.display = target === 'shell' ? '' : 'none';
-        claudeWarning.style.display = target !== 'shell' && !isChannelEnabled() ? '' : 'none';
-        void saveCustomCommands();
-      });
-    }
-
-    // Color dropdown
-    const colorBtn = row.querySelector('.command-color-dropdown-btn') as HTMLElement;
-    colorBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      showColorDropdown(colorBtn, i);
-    });
-
-    // Icon picker
-    row.querySelector('.command-icon-picker-btn')!.addEventListener('click', (e) => {
-      e.stopPropagation();
-      showIconPicker(row.querySelector('.command-icon-picker-btn') as HTMLElement, i);
-    });
-
-    row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
-      customCommands.splice(i, 1);
-      renderCustomCommandSettings();
-      void saveCustomCommands();
-    });
-
-    // Drag and drop reordering
-    row.addEventListener('dragstart', (e) => {
-      draggedCmdIndex = i;
-      e.dataTransfer!.setData('text/plain', String(i));
-      e.dataTransfer!.effectAllowed = 'move';
-      setTimeout(() => row.classList.add('dragging'), 0);
-    });
-    row.addEventListener('dragend', () => { row.classList.remove('dragging'); draggedCmdIndex = null; });
-    row.addEventListener('dragover', (e) => {
-      if (draggedCmdIndex === null) return;
-      e.preventDefault();
-      e.dataTransfer!.dropEffect = 'move';
-      row.classList.add('drop-target');
-    });
-    row.addEventListener('dragleave', () => { row.classList.remove('drop-target'); });
-    row.addEventListener('drop', (e) => {
-      e.preventDefault();
-      row.classList.remove('drop-target');
-      if (draggedCmdIndex === null || draggedCmdIndex === i) return;
-      const [moved] = customCommands.splice(draggedCmdIndex, 1);
-      customCommands.splice(i, 0, moved);
-      draggedCmdIndex = null;
-      renderCustomCommandSettings();
-      void saveCustomCommands();
-    });
-
-    list.appendChild(row);
+    list.appendChild(renderCommandRow(i));
   }
 }
 

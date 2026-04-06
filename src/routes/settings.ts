@@ -7,10 +7,9 @@ import {
   saveCategories,
   updateSetting,
 } from '../db/queries.js';
-import { scheduleAllSync } from '../sync/markdown.js';
 import type { AppEnv, CategoryDef } from '../types.js';
 import { CATEGORY_PRESETS } from '../types.js';
-import { notifyChange } from './notify.js';
+import { notifyChange, notifyMutation } from './notify.js';
 import { parseBody, UpdateSettingsSchema, UpdateCategoriesSchema } from './validation.js';
 
 export const settingsRoutes = new Hono<AppEnv>();
@@ -35,7 +34,7 @@ settingsRoutes.put('/categories', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const categories = parsed.data;
   await saveCategories(categories);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json(categories);
 });
 

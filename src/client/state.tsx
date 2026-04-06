@@ -181,3 +181,35 @@ export function getPriorityColor(pri: string): string {
 export function getStatusIcon(status: string): string {
   return STATUS_ICONS[status] || '\u25CB';
 }
+
+// --- Canonical priority and status items (shared across batch, contextMenu, detail, ticketListState) ---
+
+export const PRIORITY_ITEMS: { key: string; value: string; label: string }[] = [
+  { key: '1', value: 'highest', label: 'Highest' },
+  { key: '2', value: 'high', label: 'High' },
+  { key: '3', value: 'default', label: 'Default' },
+  { key: '4', value: 'low', label: 'Low' },
+  { key: '5', value: 'lowest', label: 'Lowest' },
+];
+
+export const STATUS_ITEMS: { key: string; value: string; label: string }[] = [
+  { key: 'n', value: 'not_started', label: 'Not Started' },
+  { key: 's', value: 'started', label: 'Started' },
+  { key: 'c', value: 'completed', label: 'Completed' },
+  { key: 'v', value: 'verified', label: 'Verified' },
+  { key: 'b', value: 'backlog', label: 'Backlog' },
+  { key: 'a', value: 'archive', label: 'Archive' },
+];
+
+export const PRIORITY_LABELS: Record<string, string> = Object.fromEntries(PRIORITY_ITEMS.map(p => [p.value, p.label]));
+export const STATUS_LABELS: Record<string, string> = Object.fromEntries(STATUS_ITEMS.map(s => [s.value, s.label]));
+
+// --- Shared tags state ---
+
+export let allKnownTags: string[] = [];
+
+export async function refreshAllKnownTags(): Promise<void> {
+  // Lazy import to avoid circular dependency at module init time
+  const { api } = await import('./api.js');
+  try { allKnownTags = await api<string[]>('/tags'); } catch { /* use cached */ }
+}

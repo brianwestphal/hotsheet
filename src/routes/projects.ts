@@ -2,6 +2,7 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { Hono } from 'hono';
 
+import { openInFileManager } from '../open-in-file-manager.js';
 import { addToProjectList, removeFromProjectList, reorderProjectList } from '../project-list.js';
 import { getAllProjects, getProjectBySecret, registerProject, reorderProjects, unregisterProject } from '../projects.js';
 import type { AppEnv } from '../types.js';
@@ -114,15 +115,7 @@ projectRoutes.post('/:secret/reveal', async (c) => {
   const projectRoot = resolve(project.dataDir, '..');
   if (!existsSync(projectRoot)) return c.json({ error: 'Folder not found on disk' }, 404);
 
-  const { execFile } = await import('child_process');
-  const platform = process.platform;
-  if (platform === 'darwin') {
-    execFile('open', [projectRoot]);
-  } else if (platform === 'win32') {
-    execFile('explorer', [projectRoot]);
-  } else {
-    execFile('xdg-open', [projectRoot]);
-  }
+  await openInFileManager(projectRoot);
   return c.json({ ok: true });
 });
 

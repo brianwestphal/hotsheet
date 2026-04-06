@@ -1,6 +1,7 @@
 import { raw } from '../jsx-runtime.js';
-import { api } from './api.js';
+import { api, showErrorPopup } from './api.js';
 import { toElement } from './dom.js';
+import { ICON_FOLDER, ICON_FOLDER_OPEN } from './icons.js';
 import { refreshProjectTabs, switchProject } from './projectTabs.js';
 import type { ProjectInfo } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
@@ -55,10 +56,9 @@ function renderEntries(result: BrowseResult) {
   }
 
   for (const entry of result.entries) {
-    const FOLDER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
     const row = toElement(
       <div className={`open-folder-entry${entry.hasHotsheet ? ' has-hotsheet' : ''}`}>
-        <span className="open-folder-entry-icon">{raw(FOLDER_SVG)}</span>
+        <span className="open-folder-entry-icon">{raw(ICON_FOLDER)}</span>
         <span className="open-folder-entry-name">{entry.name}</span>
         {entry.hasHotsheet ? <span className="open-folder-entry-badge">Hot Sheet</span> : ''}
       </div>
@@ -90,7 +90,7 @@ async function openSelectedFolder(path: string) {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
-      alert(body.error ?? 'Failed to open folder');
+      showErrorPopup(body.error ?? 'Failed to open folder');
       return;
     }
     const project = await res.json() as ProjectInfo;
@@ -147,7 +147,6 @@ export function bindOpenFolder() {
   window.addEventListener('app:open-folder', () => showOpenFolderDialog());
 
   // Right-click context menu on toolbar and tab area
-  const FOLDER_OPEN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>';
   document.querySelector('.app-header')?.addEventListener('contextmenu', (e) => {
     // Don't show toolbar context menu if the target is inside a tab (tab has its own menu)
     if ((e.target as HTMLElement).closest('.project-tab')) return;
@@ -156,7 +155,7 @@ export function bindOpenFolder() {
 
     const menu = toElement(
       <div className="tab-context-menu" id="toolbar-context-menu">
-        <div className="tab-context-item">{raw(FOLDER_OPEN_SVG)} Open Folder</div>
+        <div className="tab-context-item">{raw(ICON_FOLDER_OPEN)} Open Folder</div>
       </div>
     );
       menu.querySelector('.tab-context-item')!.addEventListener('click', () => {

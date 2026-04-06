@@ -2,6 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { toElement } from './dom.js';
+import { ICON_FOLDER } from './icons.js';
 import type { ProjectInfo } from './state.js';
 import { getActiveProject, setActiveProject } from './state.js';
 
@@ -147,8 +148,7 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
     { label: 'Close Tabs to the Right', action: () => void removeProjectsInDirection(project, 'right'), disabled: !hasRight },
   ];
 
-  // Lucide folder icon (14x14)
-  const folderIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+  const folderIcon = ICON_FOLDER;
 
   const menu = toElement(
     <div className="tab-context-menu" id="tab-context-menu">

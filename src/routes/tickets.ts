@@ -22,15 +22,21 @@ import {
   toggleUpNext,
   updateTicket,
 } from '../db/queries.js';
-import { scheduleAllSync } from '../sync/markdown.js';
 import type { AppEnv, TicketFilters, TicketStatus } from '../types.js';
-import { notifyChange } from './notify.js';
+import { notifyMutation } from './notify.js';
 import {
   BatchActionSchema, CreateTicketSchema, DuplicateSchema,
   NotesBulkSchema, NotesEditSchema, QueryTicketsSchema,
+  SortBySchema, SortDirSchema,
   TicketPrioritySchema, TicketStatusSchema, UpdateTicketSchema,
   parseBody,
 } from './validation.js';
+
+/** All valid values for the `status` query-param filter, including virtual filters. */
+const VALID_STATUS_FILTERS = new Set<string>([
+  'not_started', 'started', 'completed', 'verified', 'backlog', 'archive', 'deleted',
+  'open', 'non_verified', 'active',
+]);
 
 export const ticketRoutes = new Hono<AppEnv>();
 
@@ -51,8 +57,7 @@ ticketRoutes.get('/tickets', async (c) => {
 
   const status = c.req.query('status');
   if (status !== undefined && status !== '') {
-    const validStatuses = new Set(['not_started', 'started', 'completed', 'verified', 'backlog', 'archive', 'deleted', 'open', 'non_verified', 'active']);
-    if (!validStatuses.has(status)) return c.json({ error: `Invalid status filter "${status}"` }, 400);
+    if (!VALID_STATUS_FILTERS.has(status)) return c.json({ error: `Invalid status filter "${status}"` }, 400);
     filters.status = status as TicketFilters['status'];
   }
 
@@ -63,10 +68,16 @@ ticketRoutes.get('/tickets', async (c) => {
   if (search !== undefined && search !== '') filters.search = search;
 
   const sortBy = c.req.query('sort_by');
-  if (sortBy !== undefined && sortBy !== '') filters.sort_by = sortBy as TicketFilters['sort_by'];
+  if (sortBy !== undefined && sortBy !== '') {
+    const sb = SortBySchema.safeParse(sortBy);
+    if (sb.success) filters.sort_by = sb.data;
+  }
 
   const sortDir = c.req.query('sort_dir');
-  if (sortDir !== undefined && sortDir !== '') filters.sort_dir = sortDir as 'asc' | 'desc';
+  if (sortDir !== undefined && sortDir !== '') {
+    const sd = SortDirSchema.safeParse(sortDir);
+    if (sd.success) filters.sort_dir = sd.data;
+  }
 
   const tickets = await getTickets(filters);
   return c.json(tickets);
@@ -100,7 +111,7 @@ ticketRoutes.post('/tickets', async (c) => {
   const prefix = fileSettings.ticketPrefix !== undefined && fileSettings.ticketPrefix !== '' ? fileSettings.ticketPrefix : undefined;
 
   const ticket = await createTicket(title, defaults as Parameters<typeof createTicket>[1], prefix);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json(ticket, 201);
 });
 
@@ -122,7 +133,7 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const ticket = await updateTicket(id, parsed.data);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json(ticket);
 });
 
@@ -130,7 +141,7 @@ ticketRoutes.delete('/tickets/:id', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
   if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   await deleteTicket(id);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json({ ok: true });
 });
 
@@ -149,7 +160,7 @@ ticketRoutes.put('/tickets/:id/notes-bulk', async (c) => {
     [parsed.data.notes, id]
   );
   if (result.rows.length === 0) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json({ ok: true });
 });
 
@@ -162,7 +173,7 @@ ticketRoutes.patch('/tickets/:id/notes/:noteId', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const notes = await editNote(id, noteId, parsed.data.text);
   if (!notes) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json(notes);
 });
 
@@ -172,7 +183,7 @@ ticketRoutes.delete('/tickets/:id/notes/:noteId', async (c) => {
   const noteId = c.req.param('noteId');
   const notes = await deleteNote(id, noteId);
   if (!notes) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json(notes);
 });
 
@@ -184,7 +195,7 @@ ticketRoutes.delete('/tickets/:id/hard', async (c) => {
     try { rmSync(att.stored_path, { force: true }); } catch { /* ignore */ }
   }
   await hardDeleteTicket(id);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json({ ok: true });
 });
 
@@ -223,7 +234,7 @@ ticketRoutes.post('/tickets/batch', async (c) => {
       break;
   }
 
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json({ ok: true });
 });
 
@@ -234,7 +245,7 @@ ticketRoutes.post('/tickets/duplicate', async (c) => {
   const parsed = parseBody(DuplicateSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const created = await duplicateTickets(parsed.data.ids);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json(created, 201);
 });
 
@@ -245,7 +256,7 @@ ticketRoutes.post('/tickets/:id/restore', async (c) => {
   if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   const ticket = await restoreTicket(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json(ticket);
 });
 
@@ -260,7 +271,7 @@ ticketRoutes.post('/trash/empty', async (c) => {
     }
   }
   await emptyTrash();
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json({ ok: true });
 });
 
@@ -271,7 +282,7 @@ ticketRoutes.post('/tickets/:id/up-next', async (c) => {
   if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   const ticket = await toggleUpNext(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
-  scheduleAllSync(c.get('dataDir')); notifyChange();
+  notifyMutation(c.get('dataDir'));
   return c.json(ticket);
 });
 

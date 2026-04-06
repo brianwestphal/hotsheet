@@ -1,3 +1,4 @@
+import type { PGlite } from '@electric-sql/pglite';
 import { getDb } from './connection.js';
 
 interface SnapshotData {
@@ -109,26 +110,7 @@ export async function getSnapshots(days: number): Promise<{ date: string; data: 
   }));
 }
 
-/** Get dashboard stats (KPIs, throughput, cycle times). */
-export async function getDashboardStats(days: number): Promise<{
-  throughput: { date: string; completed: number; created: number }[];
-  cycleTime: { ticket_number: string; title: string; completed_at: string; hours: number }[];
-  categoryBreakdown: { category: string; count: number }[];
-  categoryPeriod: { category: string; count: number }[];
-  kpi: {
-    completedThisWeek: number;
-    completedLastWeek: number;
-    wipCount: number;
-    createdThisWeek: number;
-    medianCycleTimeDays: number | null;
-  };
-}> {
-  const db = await getDb();
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-  const sinceStr = since.toISOString();
-
-  // Throughput: completed and created per day
+async function getThroughputTimeline(db: PGlite, since: Date, sinceStr: string): Promise<{ date: string; completed: number; created: number }[]> {
   const completedByDay = await db.query<{ date: string; count: string }>(
     `SELECT DATE(completed_at) as date, COUNT(*) as count FROM tickets
      WHERE completed_at >= $1 AND completed_at IS NOT NULL
@@ -142,7 +124,6 @@ export async function getDashboardStats(days: number): Promise<{
     [sinceStr]
   );
 
-  // Merge into a single timeline
   const dateMap = new Map<string, { completed: number; created: number }>();
   const current = new Date(since);
   const today = new Date();
@@ -161,32 +142,35 @@ export async function getDashboardStats(days: number): Promise<{
     const entry = dateMap.get(d);
     if (entry) entry.created = parseInt(r.count, 10);
   }
-  const throughput = Array.from(dateMap.entries()).map(([date, counts]) => ({ date, ...counts }));
+  return Array.from(dateMap.entries()).map(([date, counts]) => ({ date, ...counts }));
+}
 
-  // Cycle time: for completed tickets, days from created_at to completed_at
-  const cycleTimeResult = await db.query<{ ticket_number: string; title: string; completed_at: string; created_at: string }>(
+async function getCycleTimes(db: PGlite, sinceStr: string): Promise<{ ticket_number: string; title: string; completed_at: string; hours: number }[]> {
+  const result = await db.query<{ ticket_number: string; title: string; completed_at: string; created_at: string }>(
     `SELECT ticket_number, title, completed_at, created_at FROM tickets
      WHERE completed_at >= $1 AND completed_at IS NOT NULL AND status IN ('completed', 'verified')
      ORDER BY completed_at ASC`,
     [sinceStr]
   );
-  const cycleTime = cycleTimeResult.rows.map(r => ({
+  return result.rows.map(r => ({
     ticket_number: r.ticket_number,
     title: r.title,
     completed_at: r.completed_at,
     hours: Math.max(0, (new Date(r.completed_at).getTime() - new Date(r.created_at).getTime()) / 3600000),
   }));
+}
 
-  // Category breakdown (open tickets)
-  const catResult = await db.query<{ category: string; count: string }>(
+async function getCategoryBreakdown(db: PGlite): Promise<{ category: string; count: number }[]> {
+  const result = await db.query<{ category: string; count: string }>(
     `SELECT category, COUNT(*) as count FROM tickets
      WHERE status IN ('not_started', 'started')
      GROUP BY category ORDER BY count DESC`
   );
-  const categoryBreakdown = catResult.rows.map(r => ({ category: r.category, count: parseInt(r.count, 10) }));
+  return result.rows.map(r => ({ category: r.category, count: parseInt(r.count, 10) }));
+}
 
-  // Category breakdown for the selected period (tickets created, started, completed, or verified in the period)
-  const catPeriodResult = await db.query<{ category: string; count: string }>(
+async function getPriorityBreakdown(db: PGlite, sinceStr: string): Promise<{ category: string; count: number }[]> {
+  const result = await db.query<{ category: string; count: string }>(
     `SELECT category, COUNT(*) as count FROM tickets
      WHERE status != 'deleted' AND (
        created_at >= $1 OR
@@ -197,9 +181,16 @@ export async function getDashboardStats(days: number): Promise<{
      GROUP BY category ORDER BY count DESC`,
     [sinceStr]
   );
-  const categoryPeriod = catPeriodResult.rows.map(r => ({ category: r.category, count: parseInt(r.count, 10) }));
+  return result.rows.map(r => ({ category: r.category, count: parseInt(r.count, 10) }));
+}
 
-  // KPI calculations
+async function computeKPIs(db: PGlite, cycleTime: { hours: number }[]): Promise<{
+  completedThisWeek: number;
+  completedLastWeek: number;
+  wipCount: number;
+  createdThisWeek: number;
+  medianCycleTimeDays: number | null;
+}> {
   const now = new Date();
   const weekStart = new Date(now);
   weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Sunday
@@ -221,23 +212,44 @@ export async function getDashboardStats(days: number): Promise<{
     `SELECT COUNT(*) as count FROM tickets WHERE created_at >= $1`, [weekStart.toISOString()]
   );
 
-  // Median cycle time (in hours, converted to days for KPI display)
   const cycleHours = cycleTime.map(c => c.hours).sort((a, b) => a - b);
   const medianCycleTimeDays = cycleHours.length > 0
     ? Math.round(cycleHours[Math.floor(cycleHours.length / 2)] / 24)
     : null;
 
   return {
-    throughput,
-    cycleTime,
-    categoryBreakdown,
-    categoryPeriod,
-    kpi: {
-      completedThisWeek: parseInt(completedThisWeekR.rows[0].count, 10),
-      completedLastWeek: parseInt(completedLastWeekR.rows[0].count, 10),
-      wipCount: parseInt(wipR.rows[0].count, 10),
-      createdThisWeek: parseInt(createdThisWeekR.rows[0].count, 10),
-      medianCycleTimeDays,
-    },
+    completedThisWeek: parseInt(completedThisWeekR.rows[0].count, 10),
+    completedLastWeek: parseInt(completedLastWeekR.rows[0].count, 10),
+    wipCount: parseInt(wipR.rows[0].count, 10),
+    createdThisWeek: parseInt(createdThisWeekR.rows[0].count, 10),
+    medianCycleTimeDays,
   };
+}
+
+/** Get dashboard stats (KPIs, throughput, cycle times). */
+export async function getDashboardStats(days: number): Promise<{
+  throughput: { date: string; completed: number; created: number }[];
+  cycleTime: { ticket_number: string; title: string; completed_at: string; hours: number }[];
+  categoryBreakdown: { category: string; count: number }[];
+  categoryPeriod: { category: string; count: number }[];
+  kpi: {
+    completedThisWeek: number;
+    completedLastWeek: number;
+    wipCount: number;
+    createdThisWeek: number;
+    medianCycleTimeDays: number | null;
+  };
+}> {
+  const db = await getDb();
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  const sinceStr = since.toISOString();
+
+  const throughput = await getThroughputTimeline(db, since, sinceStr);
+  const cycleTime = await getCycleTimes(db, sinceStr);
+  const categoryBreakdown = await getCategoryBreakdown(db);
+  const categoryPeriod = await getPriorityBreakdown(db, sinceStr);
+  const kpi = await computeKPIs(db, cycleTime);
+
+  return { throughput, cycleTime, categoryBreakdown, categoryPeriod, kpi };
 }

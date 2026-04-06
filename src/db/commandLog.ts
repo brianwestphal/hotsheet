@@ -23,6 +23,25 @@ export async function addLogEntry(
   return result.rows[0];
 }
 
+function buildLogWhereClause(filters?: { eventType?: string; search?: string }): { where: string; params: (string | number)[]; nextParamIdx: number } {
+  const conditions: string[] = [];
+  const params: (string | number)[] = [];
+  let paramIdx = 1;
+
+  if (filters?.eventType !== undefined && filters.eventType !== '') {
+    conditions.push(`event_type = $${paramIdx++}`);
+    params.push(filters.eventType);
+  }
+  if (filters?.search !== undefined && filters.search !== '') {
+    conditions.push(`(summary ILIKE $${paramIdx} OR detail ILIKE $${paramIdx})`);
+    params.push(`%${filters.search}%`);
+    paramIdx++;
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  return { where, params, nextParamIdx: paramIdx };
+}
+
 export async function getLogEntries(options?: {
   limit?: number;
   offset?: number;
@@ -30,21 +49,9 @@ export async function getLogEntries(options?: {
   search?: string;
 }): Promise<CommandLogEntry[]> {
   const db = await getDb();
-  const conditions: string[] = [];
-  const params: (string | number)[] = [];
-  let paramIdx = 1;
+  const { where, params, nextParamIdx } = buildLogWhereClause(options);
+  let paramIdx = nextParamIdx;
 
-  if (options?.eventType !== undefined && options.eventType !== '') {
-    conditions.push(`event_type = $${paramIdx++}`);
-    params.push(options.eventType);
-  }
-  if (options?.search !== undefined && options.search !== '') {
-    conditions.push(`(summary ILIKE $${paramIdx} OR detail ILIKE $${paramIdx})`);
-    params.push(`%${options.search}%`);
-    paramIdx++;
-  }
-
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = options?.limit ?? 100;
   const offset = options?.offset ?? 0;
 
@@ -63,21 +70,7 @@ export async function getLogCount(options?: {
   search?: string;
 }): Promise<number> {
   const db = await getDb();
-  const conditions: string[] = [];
-  const params: string[] = [];
-  let paramIdx = 1;
-
-  if (options?.eventType !== undefined && options.eventType !== '') {
-    conditions.push(`event_type = $${paramIdx++}`);
-    params.push(options.eventType);
-  }
-  if (options?.search !== undefined && options.search !== '') {
-    conditions.push(`(summary ILIKE $${paramIdx} OR detail ILIKE $${paramIdx})`);
-    params.push(`%${options.search}%`);
-    paramIdx++;
-  }
-
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const { where, params } = buildLogWhereClause(options);
   const result = await db.query<{ count: string }>(
     `SELECT COUNT(*) as count FROM command_log ${where}`,
     params,

@@ -39,9 +39,10 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
 
   const detail = document.getElementById('permission-overlay-detail');
   if (detail) {
-    let html = `<div class="permission-tool">${perm.tool_name}: ${perm.description}</div>`;
+    const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    let html = `<div class="permission-tool">${escHtml(perm.tool_name)}: ${escHtml(perm.description)}</div>`;
     if (perm.input_preview !== undefined && perm.input_preview !== '') {
-      html += `<pre class="permission-preview">${perm.input_preview.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`;
+      html += `<pre class="permission-preview">${escHtml(perm.input_preview)}</pre>`;
     }
     detail.innerHTML = html;
   }
@@ -76,6 +77,56 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
 let channelAutoMode = false;
 let channelDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
 let channelBusy = false;
+let shellBusyState = false;
+
+// Spinner SVG shared by channel and shell indicator states (12x12)
+const SPINNER_12 = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+
+/** Unified status indicator renderer. Resolves channel vs. shell busy states
+ *  into a single indicator to avoid conflicting innerHTML writes. */
+function updateStatusIndicator() {
+  const indicator = document.getElementById('channel-status-indicator');
+  if (!indicator) return;
+  const channelSection = document.getElementById('channel-play-section');
+  if (!channelSection || channelSection.style.display === 'none') {
+    indicator.style.display = 'none';
+    return;
+  }
+  if (channelBusy) {
+    indicator.style.display = '';
+    indicator.className = 'channel-status-indicator busy';
+    indicator.innerHTML = `${SPINNER_12} Claude working`;
+  } else if (shellBusyState) {
+    indicator.style.display = '';
+    indicator.className = 'channel-status-indicator busy';
+    indicator.innerHTML = `${SPINNER_12} Shell running`;
+  } else {
+    // Both idle -- leave indicator as-is (callers set idle text before hiding)
+  }
+}
+
+/** Set shell busy state. Called from experimentalSettings when shell commands run. */
+export function setShellBusy(busy: boolean) {
+  shellBusyState = busy;
+  const indicator = document.getElementById('channel-status-indicator');
+  if (!indicator) return;
+  if (busy) {
+    updateStatusIndicator();
+  } else {
+    // If channel is also idle, show "Shell done" briefly then hide
+    if (!channelBusy) {
+      indicator.style.display = '';
+      indicator.className = 'channel-status-indicator';
+      indicator.innerHTML = '\u2713 Shell done';
+      setTimeout(() => {
+        if (!shellBusyState && !channelBusy) indicator.style.display = 'none';
+      }, 5000);
+    } else {
+      // Channel is still busy, just update to show channel state
+      updateStatusIndicator();
+    }
+  }
+}
 let channelBusyTimeout: ReturnType<typeof setTimeout> | null = null;
 let channelAutoRetryInterval: ReturnType<typeof setInterval> | null = null;
 let channelAutoBackoff = 0; // consecutive triggers where Claude didn't become busy
@@ -146,23 +197,27 @@ export function setChannelBusy(busy: boolean) {
     return;
   }
   if (busy) {
-    indicator.style.display = '';
-    indicator.className = 'channel-status-indicator busy';
-    indicator.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Claude working';
     // Claude picked up work — reset exponential backoff (HS-2049)
     channelAutoBackoff = 0;
     if (channelAutoVerifyTimeout) { clearTimeout(channelAutoVerifyTimeout); channelAutoVerifyTimeout = null; }
+    updateStatusIndicator();
   } else {
-    indicator.style.display = '';
-    indicator.className = 'channel-status-indicator';
-    indicator.innerHTML = '\u2713 Claude idle';
     if (state.settings.notify_completed !== 'none') {
       requestAttention(state.settings.notify_completed);
     }
-    // Auto-hide after 5 seconds
-    setTimeout(() => {
-      if (!channelBusy) indicator.style.display = 'none';
-    }, 5000);
+    // If shell is also idle, show "Claude idle" briefly then hide
+    if (!shellBusyState) {
+      indicator.style.display = '';
+      indicator.className = 'channel-status-indicator';
+      indicator.innerHTML = '\u2713 Claude idle';
+      // Auto-hide after 5 seconds
+      setTimeout(() => {
+        if (!channelBusy && !shellBusyState) indicator.style.display = 'none';
+      }, 5000);
+    } else {
+      // Shell is still busy, update indicator to show shell state
+      updateStatusIndicator();
+    }
     // In auto mode, check for more up-next items when Claude becomes idle (HS-1453)
     if (channelAutoMode) {
       channelAutoTrigger();
