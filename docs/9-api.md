@@ -164,6 +164,7 @@ See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel AP
 | GET | `/api/projects` | List all registered projects with ticket counts |
 | POST | `/api/projects/register` | Register a project (`{ dataDir }`) |
 | DELETE | `/api/projects/:secret` | Remove a registered project by its secret |
+| POST | `/api/projects/:secret/reveal` | Open the project's root folder in the OS file manager |
 
 ### 9.15 Change Notification
 

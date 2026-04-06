@@ -1,3 +1,4 @@
+import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { toElement } from './dom.js';
@@ -146,6 +147,9 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
     { label: 'Close Tabs to the Right', action: () => void removeProjectsInDirection(project, 'right'), disabled: !hasRight },
   ];
 
+  // Lucide folder icon (14x14)
+  const folderIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+
   const menu = toElement(
     <div className="tab-context-menu" id="tab-context-menu">
       {items.map(item => (
@@ -153,11 +157,16 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
           {item.label}
         </div>
       ))}
+      <div className="tab-context-separator"></div>
+      <div className="tab-context-item" data-action="reveal">
+        <span className="tab-context-icon">{raw(folderIcon)}</span>
+        Show in Finder
+      </div>
     </div>
   );
 
-  // Bind click handlers
-  const menuItems = menu.querySelectorAll('.tab-context-item');
+  // Bind click handlers for close items
+  const menuItems = menu.querySelectorAll('.tab-context-item:not([data-action])');
   items.forEach((item, i) => {
     if (!item.disabled) {
       menuItems[i].addEventListener('click', () => {
@@ -165,6 +174,12 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
         item.action();
       });
     }
+  });
+
+  // Bind "Show in Finder" handler
+  menu.querySelector('[data-action="reveal"]')!.addEventListener('click', () => {
+    menu.remove();
+    void api(`/projects/${encodeURIComponent(project.secret)}/reveal`, { method: 'POST' });
   });
 
   // Position near click

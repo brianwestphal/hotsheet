@@ -17,9 +17,12 @@ The interface is divided into:
 
 - A tab bar appears above the main content when 2 or more projects are registered in the instance. Hidden for a single project.
 - Clicking a tab name switches the active project, reloading all data (tickets, settings, views).
-- Each project has independent settings (layout mode, detail position, sort, etc.) that are restored on switch.
+- Each project has independent settings (detail position, sort, etc.) that are restored on switch.
 - The segmented controls (layout toggle, detail position toggle) update to reflect the switched project's saved settings.
 - Close button (×) on a tab removes that project from the instance without a confirmation dialog (Tauri WKWebView suppresses native `confirm()`).
+- Right-click on a tab shows a context menu with:
+  - Close Tab, Close Other Tabs, Close Tabs to the Left, Close Tabs to the Right (disabled when not applicable).
+  - A separator, then "Show in Finder" (macOS) / "Show in Explorer" (Windows) / open via `xdg-open` (Linux) with a folder icon. Opens the project's root folder (parent of `.hotsheet/`), not the data directory itself.
 
 ### 4.3 List View
 

@@ -1,3 +1,5 @@
+import { existsSync } from 'fs';
+import { resolve } from 'path';
 import { Hono } from 'hono';
 
 import { addToProjectList, removeFromProjectList, reorderProjectList } from '../project-list.js';
@@ -100,6 +102,28 @@ projectRoutes.get('/channel-status', async (c) => {
     statuses[p.secret] = await isChannelAlive(p.dataDir);
   }));
   return c.json({ enabled: true, projects: statuses });
+});
+
+/** POST /api/projects/:secret/reveal — open the project folder in OS file manager */
+projectRoutes.post('/:secret/reveal', async (c) => {
+  const secret = c.req.param('secret');
+  const project = getProjectBySecret(secret);
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+
+  // Project root is the parent of the .hotsheet data dir
+  const projectRoot = resolve(project.dataDir, '..');
+  if (!existsSync(projectRoot)) return c.json({ error: 'Folder not found on disk' }, 404);
+
+  const { execFile } = await import('child_process');
+  const platform = process.platform;
+  if (platform === 'darwin') {
+    execFile('open', [projectRoot]);
+  } else if (platform === 'win32') {
+    execFile('explorer', [projectRoot]);
+  } else {
+    execFile('xdg-open', [projectRoot]);
+  }
+  return c.json({ ok: true });
 });
 
 /** POST /api/projects/reorder — reorder the project list */

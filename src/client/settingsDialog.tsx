@@ -201,18 +201,6 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     }, 800);
   });
 
-  // Global: Layout mode (always tabs for now)
-  const layoutModeToggle = document.getElementById('settings-layout-mode');
-  if (layoutModeToggle) {
-    layoutModeToggle.querySelectorAll('.layout-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        if ((btn as HTMLElement).dataset.mode === 'lanes') return; // Not implemented yet
-        layoutModeToggle.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
-    });
-  }
-
   // Check for Updates button
   const checkUpdatesBtn = document.getElementById('check-updates-btn') as HTMLButtonElement;
   const checkUpdatesStatus = document.getElementById('check-updates-status')!;

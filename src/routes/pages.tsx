@@ -274,15 +274,6 @@ pageRoutes.get('/', (c) => {
           <div className="settings-body">
             <div className="settings-tab-panel active" data-panel="general">
               <div className="settings-field">
-                <label>Layout mode <span className="global-setting-badge">Global Setting</span></label>
-                <div className="layout-toggle" id="settings-layout-mode">
-                  <button className="layout-btn active" data-mode="tabs">Tabs</button>
-                  <button className="layout-btn" data-mode="lanes">Lanes</button>
-                </div>
-                <span className="settings-hint">How multiple projects are displayed. Lanes mode coming soon.</span>
-              </div>
-              <div className="settings-divider"></div>
-              <div className="settings-field">
                 <label>Project name</label>
                 <div className="settings-app-name-row">
                   <button className="app-icon-picker-btn" id="app-icon-picker-btn" title="Change app icon" style="display:none">

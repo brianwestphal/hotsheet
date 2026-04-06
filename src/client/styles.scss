@@ -167,6 +167,18 @@ input, select, textarea {
   }
 }
 
+.tab-context-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.tab-context-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
 .app-header {
   display: flex;
   align-items: center;
