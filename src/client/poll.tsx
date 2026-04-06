@@ -1,7 +1,7 @@
 import { api } from './api.js';
 import { checkChannelDone } from './channelUI.js';
 import { refreshDetail } from './detail.js';
-import { refreshProjectTabs } from './projectTabs.js';
+import { refreshProjectChannelStatus, refreshProjectTabs } from './projectTabs.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
 
@@ -17,16 +17,15 @@ export function startLongPoll() {
           void loadTickets();
           refreshDetail();
         }
-        // Check if Claude signaled done via /channel/done
         checkChannelDone();
-        // Refresh project tabs (may have added/removed projects)
         void refreshProjectTabs();
+        // Channel connect/disconnect triggers notifyChange via /channel/notify,
+        // so the long-poll returns immediately and we refresh status here.
+        void refreshProjectChannelStatus();
       }
     } catch {
-      // Server down — wait longer before retry
       await new Promise(r => setTimeout(r, 5000));
     }
-    // Continue polling
     setTimeout(poll, 100);
   }
   void poll();

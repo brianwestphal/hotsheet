@@ -116,7 +116,9 @@ vi.mock('../channel-config.js', () => ({
   isChannelAlive: vi.fn(() => Promise.resolve(false)),
   getChannelPort: vi.fn(() => null),
   registerChannel: vi.fn(),
+  registerChannelForAll: vi.fn(),
   unregisterChannel: vi.fn(),
+  unregisterChannelForAll: vi.fn(),
   triggerChannel: vi.fn(() => Promise.resolve(true)),
 }));
 

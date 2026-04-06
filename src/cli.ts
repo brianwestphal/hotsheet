@@ -383,6 +383,14 @@ async function main() {
       notifyChange();
     }
 
+    // If channel is globally enabled, ensure .mcp.json exists for all projects
+    const { readGlobalConfig } = await import('./global-config.js');
+    if (readGlobalConfig().channelEnabled === true) {
+      const { registerChannelForAll } = await import('./channel-config.js');
+      const { getAllProjects } = await import('./projects.js');
+      registerChannelForAll(getAllProjects().map(p => p.dataDir));
+    }
+
     writeInstanceFile(actualPort);
 
     // Clean up instance file on exit

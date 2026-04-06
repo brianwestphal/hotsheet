@@ -6,7 +6,7 @@
  */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { unlinkSync, writeFileSync } from 'fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
 import { join } from 'path';
 import { z } from 'zod';
@@ -160,6 +160,20 @@ const httpServer = createServer(async (req, res) => {
   res.end('not found');
 });
 
+/** Notify the main Hot Sheet server that channel state changed (so long-poll wakes up). */
+function notifyMainServer(signal?: AbortSignal): Promise<void> {
+  try {
+    const settingsPath = join(dataDir, 'settings.json');
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { port?: number; secret?: string };
+    if (settings.port) {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (settings.secret) headers['X-Hotsheet-Secret'] = settings.secret;
+      return fetch(`http://localhost:${settings.port}/api/channel/notify`, { method: 'POST', headers, signal }).then(() => {}).catch(() => {});
+    }
+  } catch { /* ignore */ }
+  return Promise.resolve();
+}
+
 // Find an available port
 httpServer.listen(0, '127.0.0.1', () => {
   const addr = httpServer.address();
@@ -172,14 +186,23 @@ httpServer.listen(0, '127.0.0.1', () => {
     }
     // Log to stderr (stdout is reserved for MCP stdio transport)
     process.stderr.write(`hotsheet-channel listening on port ${port}\n`);
+    // Notify main server that channel is now connected
+    notifyMainServer();
   }
 });
 
 // Cleanup on exit
-function cleanup() {
+async function cleanup() {
   try { unlinkSync(portFile); } catch { /* ignore */ }
+  // Notify main server synchronously before exiting — use a short timeout
+  // so we don't hang if the server is down
+  try {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 1000);
+    await notifyMainServer(controller.signal);
+  } catch { /* ignore */ }
   process.exit(0);
 }
-process.on('SIGTERM', cleanup);
-process.on('SIGINT', cleanup);
+process.on('SIGTERM', () => void cleanup());
+process.on('SIGINT', () => void cleanup());
 process.on('exit', () => { try { unlinkSync(portFile); } catch { /* ignore */ } });

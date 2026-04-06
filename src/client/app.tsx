@@ -4,7 +4,7 @@ import { bindBackupsUI } from './backups.js';
 import { bindBatchToolbar, PRIORITY_ITEMS, STATUS_ITEMS } from './batch.js';
 import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
-import { initCommandLog } from './commandLog.js';
+import { initCommandLog, refreshCommandLog } from './commandLog.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { renderDashboard, renderSidebarWidget } from './dashboard.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, parseTags, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
@@ -35,6 +35,8 @@ async function reloadAppState() {
   void loadAppName();
   suppressAnimation();
   await loadTickets();
+  // Refresh command log for the new project context
+  refreshCommandLog();
   // Re-init channel for the new project context
   void initChannel();
 }

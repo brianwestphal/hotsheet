@@ -392,6 +392,15 @@ function openPanel() {
 }
 
 /** Open the log panel and scroll to a specific entry, expanding it. */
+/** Refresh the command log contents (e.g., after switching projects). */
+export function refreshCommandLog() {
+  const panel = document.getElementById('command-log-panel');
+  if (panel && panel.style.display !== 'none') {
+    void loadEntries();
+  }
+  void refreshLogBadge();
+}
+
 export function showLogEntryById(logId: number) {
   if (!panelOpen) openPanel();
   // Wait for entries to load, then scroll to and expand the entry

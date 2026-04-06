@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { getProjectAttentionSecrets, getProjectBusySecrets } from './channelUI.js';
+import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { toElement } from './dom.js';
 import type { ProjectInfo } from './state.js';
 import { getActiveProject, setActiveProject } from './state.js';
@@ -45,7 +45,7 @@ export async function initProjectTabs(): Promise<void> {
   }
 
   renderTabs();
-  startStatusDotPolling();
+  void refreshProjectChannelStatus();
 }
 
 /** Switch to a different project. */
@@ -253,13 +253,34 @@ function handleDragEnd(e: DragEvent) {
   dragSecret = null;
 }
 
-// --- Status dot polling ---
+// --- Status dots (updated from long-poll, not periodic timer) ---
 
-let statusDotInterval: ReturnType<typeof setInterval> | null = null;
+// Per-project alive state from bulk endpoint
+const aliveProjects = new Set<string>();
 
-function startStatusDotPolling() {
-  if (statusDotInterval) return;
-  statusDotInterval = setInterval(updateStatusDots, 2000);
+/** Called from the long-poll handler to refresh per-project channel status. */
+export async function refreshProjectChannelStatus() {
+  try {
+    const res = await fetch('/api/projects/channel-status');
+    if (!res.ok) return;
+    const data = await res.json() as { enabled: boolean; projects: Record<string, boolean> };
+    aliveProjects.clear();
+    if (data.enabled) {
+      for (const [secret, alive] of Object.entries(data.projects)) {
+        if (alive) aliveProjects.add(secret);
+      }
+    }
+  } catch { /* ignore */ }
+  // Sync the active project's disconnected warning
+  const activeSecret = getActiveProject()?.secret;
+  if (activeSecret) {
+    setChannelAlive(aliveProjects.has(activeSecret));
+  }
+  updateStatusDots();
+}
+
+export function isProjectAlive(secret: string): boolean {
+  return aliveProjects.has(secret);
 }
 
 function updateStatusDots() {

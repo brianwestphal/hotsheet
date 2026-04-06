@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { initChannel, triggerChannelAndMarkBusy } from './channelUI.js';
+import { initChannel, isChannelAlive, triggerChannelAndMarkBusy } from './channelUI.js';
 import { refreshLogBadge } from './commandLog.js';
 import { toElement } from './dom.js';
 // All Lucide icons loaded from generated JSON
@@ -79,6 +79,9 @@ export function renderChannelCommands() {
     btn.addEventListener('click', () => {
       if (isShell) {
         void runShellCommand(cmd.prompt, cmd.name, cmd.autoShowLog === true);
+      } else if (!isChannelAlive()) {
+        // eslint-disable-next-line no-alert
+        alert('Claude is not connected. Launch Claude Code with channel support first.');
       } else {
         triggerChannelAndMarkBusy(cmd.prompt);
       }
@@ -437,17 +440,18 @@ export function bindExperimentalSettings() {
     });
   });
 
-  // Load channel status and custom commands
-  fetch('/api/channel/status').then(r => r.ok ? r.json() as Promise<{ enabled: boolean }> : null).then(s => {
-    if (s !== null) {
-      channelCheckbox.checked = s.enabled;
-      channelEnabledState = s.enabled;
-      if (s.enabled) {
+  // Load channel enabled state from global config (authoritative source)
+  fetch('/api/global-config').then(r => r.ok ? r.json() as Promise<{ channelEnabled?: boolean }> : null).then(config => {
+    if (config !== null) {
+      const enabled = config.channelEnabled === true;
+      channelCheckbox.checked = enabled;
+      channelEnabledState = enabled;
+      if (enabled) {
         channelInstructions.style.display = '';
       }
-      // Always show custom commands (shell commands work without channel)
-      customCommandsSection.style.display = '';
     }
+    // Always show custom commands (shell commands work without channel)
+    customCommandsSection.style.display = '';
   }).catch(() => {});
 
   // Load custom commands from settings

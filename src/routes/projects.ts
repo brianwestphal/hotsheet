@@ -48,6 +48,12 @@ projectRoutes.post('/register', async (c) => {
 
     const ctx = await registerProject(parsed.data.dataDir, port);
     addToProjectList(ctx.dataDir);
+    // If channel is globally enabled, write .mcp.json for the new project
+    const { readGlobalConfig } = await import('../global-config.js');
+    if (readGlobalConfig().channelEnabled === true) {
+      const { registerChannel } = await import('../channel-config.js');
+      registerChannel(ctx.dataDir);
+    }
     notifyChange(); // Wake long-poll so UI detects the new project
     return c.json({
       name: ctx.name,
@@ -78,6 +84,22 @@ projectRoutes.delete('/:secret', (c) => {
   unregisterProject(secret);
   notifyChange();
   return c.json({ ok: true });
+});
+
+/** GET /api/projects/channel-status — alive status for all projects (for tab dots) */
+projectRoutes.get('/channel-status', async (c) => {
+  const { isChannelAlive } = await import('../channel-config.js');
+  const { readGlobalConfig } = await import('../global-config.js');
+  const globalConfig = readGlobalConfig();
+  const enabled = globalConfig.channelEnabled === true;
+  if (!enabled) return c.json({ enabled: false, projects: {} });
+
+  const projects = getAllProjects();
+  const statuses: Record<string, boolean> = {};
+  await Promise.all(projects.map(async (p) => {
+    statuses[p.secret] = await isChannelAlive(p.dataDir);
+  }));
+  return c.json({ enabled: true, projects: statuses });
 });
 
 /** POST /api/projects/reorder — reorder the project list */

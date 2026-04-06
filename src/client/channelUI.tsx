@@ -11,9 +11,7 @@ function startPermissionPolling() {
   if (permissionPollInterval) return;
   permissionPollInterval = setInterval(async () => {
     try {
-      const res = await fetch('/api/channel/permission');
-      if (!res.ok) return;
-      const data = await res.json() as { pending: { request_id: string; tool_name: string; description: string; input_preview?: string } | null };
+      const data = await api<{ pending: { request_id: string; tool_name: string; description: string; input_preview?: string } | null }>('/channel/permission');
       if (data.pending) {
         showPermissionOverlay(data.pending);
       }
@@ -81,6 +79,19 @@ const CHANNEL_AUTO_BASE_DELAY = 5000;
 const CHANNEL_AUTO_MAX_DELAY = 120000; // 2 minutes
 
 export function isChannelBusy(): boolean { return channelBusy; }
+export function isChannelAlive(): boolean { return channelAliveLocal; }
+
+let channelAliveLocal = false;
+
+/** Update alive state — called from initChannel and checkChannelDone */
+export function setChannelAlive(alive: boolean) {
+  channelAliveLocal = alive;
+  const warning = document.getElementById('channel-disconnected');
+  if (!warning) return;
+  const section = document.getElementById('channel-play-section');
+  const enabled = section !== null && section.style.display !== 'none';
+  warning.style.display = enabled && !alive ? '' : 'none';
+}
 export function isPermissionPending(): boolean {
   const overlay = document.getElementById('permission-overlay');
   return overlay !== null && overlay.style.display !== 'none';
@@ -163,6 +174,11 @@ function triggerChannelAndMarkBusy(message?: string) {
 export { triggerChannelAndMarkBusy };
 
 async function checkAndTrigger(btn: HTMLElement) {
+  // Check if Claude is connected before triggering
+  if (!isChannelAlive()) {
+    showDisconnectedAlert();
+    return;
+  }
   try {
     const stats = await api<{ up_next: number }>('/stats');
     if (stats.up_next === 0 && !state.settings.auto_order) {
@@ -173,6 +189,21 @@ async function checkAndTrigger(btn: HTMLElement) {
   btn.classList.add('pulsing');
   setTimeout(() => btn.classList.remove('pulsing'), 600);
   triggerChannelAndMarkBusy();
+}
+
+function showDisconnectedAlert() {
+  const existing = document.getElementById('channel-disconnected-alert');
+  if (existing) existing.remove();
+  const alert = toElement(
+    <div id="channel-disconnected-alert" className="no-upnext-alert">
+      <span>Claude is not connected. Launch Claude Code with channel support first.</span>
+      <button className="no-upnext-dismiss">{'\u00d7'}</button>
+    </div>
+  );
+  alert.querySelector('.no-upnext-dismiss')!.addEventListener('click', () => alert.remove());
+  setTimeout(() => alert.remove(), 6000);
+  const playSection = document.getElementById('channel-play-section');
+  if (playSection) playSection.after(alert);
 }
 
 function showNoUpNextAlert() {
@@ -193,8 +224,7 @@ function showNoUpNextAlert() {
 export async function initChannel() {
   let status: { enabled: boolean; alive: boolean } | null = null;
   try {
-    const res = await fetch('/api/channel/status');
-    if (res.ok) status = await res.json() as { enabled: boolean; alive: boolean };
+    status = await api<{ enabled: boolean; alive: boolean }>('/channel/status');
   } catch { /* endpoint may not exist yet */ }
   // If we couldn't reach the server, keep the previous state
   if (status === null) return;
@@ -209,13 +239,19 @@ export async function initChannel() {
 
   if (!status.enabled) {
     section.style.display = 'none';
+    setChannelAlive(false);
     stopPermissionPolling();
     renderChannelCommands(); // Still render shell commands
     return;
   }
   section.style.display = '';
+  setChannelAlive(status.alive);
   renderChannelCommands();
   startPermissionPolling();
+
+  // Only bind the click handler once (initChannel is called on every project switch)
+  if (btn.dataset.bound) return;
+  btn.dataset.bound = 'true';
 
   let clickTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -322,17 +358,22 @@ async function attemptAutoTrigger() {
   }
 }
 
-/** Check if Claude signaled done — called from long polling */
+/** Check if Claude signaled done and refresh alive status — called from long polling */
 export function checkChannelDone() {
-  if (channelBusy) {
-    fetch('/api/channel/status').then(r => r.ok ? r.json() as Promise<{ done?: boolean }> : null).then(s => {
-      if (s?.done === true) {
-        setChannelBusy(false);
-        if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
-        // Clear per-project busy state for the active project
-        const secret = getActiveProject()?.secret;
-        if (secret) clearProjectBusy(secret);
-      }
-    }).catch(() => {});
-  }
+  const section = document.getElementById('channel-play-section');
+  const enabled = section !== null && section.style.display !== 'none';
+  if (!enabled) return;
+
+  api<{ done?: boolean; alive?: boolean }>('/channel/status').then(s => {
+    if (!s) return;
+    // Update alive/disconnected warning
+    if (s.alive !== undefined) setChannelAlive(s.alive);
+    // Check for done signal
+    if (channelBusy && s.done === true) {
+      setChannelBusy(false);
+      if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
+      const secret = getActiveProject()?.secret;
+      if (secret) clearProjectBusy(secret);
+    }
+  }).catch(() => {});
 }

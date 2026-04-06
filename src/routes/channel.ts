@@ -35,14 +35,17 @@ channelRoutes.get('/channel/status', async (c) => {
   const { isChannelAlive, getChannelPort } = await import('../channel-config.js');
   const { readGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
-  // Channel enabled is now a global setting; fall back to legacy per-project DB setting
+  // Channel enabled is a global setting; one-time migration from legacy per-project DB
+  const { writeGlobalConfig } = await import('../global-config.js');
   const globalConfig = readGlobalConfig();
   let enabled: boolean;
   if (globalConfig.channelEnabled !== undefined) {
     enabled = globalConfig.channelEnabled;
   } else {
+    // Legacy: read from per-project DB, then persist to global so this only happens once
     const settings = await getSettings();
     enabled = settings.channel_enabled === 'true';
+    writeGlobalConfig({ channelEnabled: enabled });
   }
   const port = getChannelPort(dataDir);
   const alive = enabled ? await isChannelAlive(dataDir) : false;
@@ -144,21 +147,40 @@ channelRoutes.post('/channel/done', (_c) => {
 });
 
 channelRoutes.post('/channel/enable', async (c) => {
-  const { registerChannel } = await import('../channel-config.js');
+  const { registerChannel, registerChannelForAll } = await import('../channel-config.js');
   const { writeGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
   writeGlobalConfig({ channelEnabled: true });
-  registerChannel(dataDir);
+  // Register .mcp.json for ALL projects, not just the active one
+  try {
+    const { getAllProjects } = await import('../projects.js');
+    registerChannelForAll(getAllProjects().map(p => p.dataDir));
+  } catch {
+    // Fallback: at least register the current project
+    registerChannel(dataDir);
+  }
   ensureSkills();
   notifyChange();
   return c.json({ ok: true });
 });
 
 channelRoutes.post('/channel/disable', async (c) => {
-  const { unregisterChannel } = await import('../channel-config.js');
+  const { unregisterChannel, unregisterChannelForAll } = await import('../channel-config.js');
   const { writeGlobalConfig } = await import('../global-config.js');
+  const dataDir = c.get('dataDir');
   writeGlobalConfig({ channelEnabled: false });
-  unregisterChannel();
+  try {
+    const { getAllProjects } = await import('../projects.js');
+    unregisterChannelForAll(getAllProjects().map(p => p.dataDir));
+  } catch {
+    unregisterChannel(dataDir);
+  }
+  notifyChange();
+  return c.json({ ok: true });
+});
+
+/** Called by the channel server process when it starts or stops, to wake the long-poll. */
+channelRoutes.post('/channel/notify', (c) => {
   notifyChange();
   return c.json({ ok: true });
 });

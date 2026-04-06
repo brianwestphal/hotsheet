@@ -25,10 +25,15 @@ function getChannelServerPath(): { command: string; args: string[] } {
   return { command: 'node', args: [distPath] };
 }
 
-/** Register the channel server in .mcp.json */
+/** Get the project root directory (parent of .hotsheet/) */
+function projectRoot(dataDir: string): string {
+  return dataDir.replace(/\/.hotsheet\/?$/, '');
+}
+
+/** Register the channel server in .mcp.json for a specific project */
 export function registerChannel(dataDir: string): void {
-  const cwd = process.cwd();
-  const mcpPath = join(cwd, '.mcp.json');
+  const root = projectRoot(dataDir);
+  const mcpPath = join(root, '.mcp.json');
   const { command, args } = getChannelServerPath();
 
   let config: { mcpServers?: Record<string, unknown>; [key: string]: unknown } = {};
@@ -47,10 +52,17 @@ export function registerChannel(dataDir: string): void {
   writeFileSync(mcpPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
 }
 
-/** Remove the channel server from .mcp.json */
-export function unregisterChannel(): void {
-  const cwd = process.cwd();
-  const mcpPath = join(cwd, '.mcp.json');
+/** Register the channel for multiple projects at once */
+export function registerChannelForAll(dataDirs: string[]): void {
+  for (const dataDir of dataDirs) {
+    registerChannel(dataDir);
+  }
+}
+
+/** Remove the channel server from .mcp.json for a specific project */
+export function unregisterChannel(dataDir?: string): void {
+  const root = dataDir ? projectRoot(dataDir) : process.cwd();
+  const mcpPath = join(root, '.mcp.json');
 
   if (!existsSync(mcpPath)) return;
 
@@ -64,6 +76,13 @@ export function unregisterChannel(): void {
       writeFileSync(mcpPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
     }
   } catch { /* ignore */ }
+}
+
+/** Unregister the channel from multiple projects at once */
+export function unregisterChannelForAll(dataDirs: string[]): void {
+  for (const dataDir of dataDirs) {
+    unregisterChannel(dataDir);
+  }
 }
 
 /** Read the channel port from the port file */

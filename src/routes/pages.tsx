@@ -64,6 +64,7 @@ pageRoutes.get('/', (c) => {
 
         <div className="app-body">
           <nav className="sidebar">
+            <div className="channel-disconnected-warning" id="channel-disconnected" style="display:none">Claude not connected</div>
             <div className="sidebar-channel-play" id="channel-play-section" style="display:none">
               <button className="channel-play-btn" id="channel-play-btn" title="Run worklist (double-click for auto mode)">
                 <span className="channel-play-icon" id="channel-play-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg></span>
