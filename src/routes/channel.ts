@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
 import type { AppEnv } from '../types.js';
-import { notifyChange } from './notify.js';
+import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js';
 import { ChannelTriggerSchema, parseBody, PermissionRespondSchema } from './validation.js';
 
 export const channelRoutes = new Hono<AppEnv>();
@@ -69,15 +69,16 @@ channelRoutes.post('/channel/trigger', async (c) => {
   return c.json({ ok });
 });
 
-channelRoutes.get('/channel/permission', async (c) => {
+type PermissionResult = { pending: { request_id?: string; tool_name?: string; description?: string; input_preview?: string; tool_input?: unknown } | null };
+
+/** Fetch permission from the channel server and log new requests. */
+async function fetchPermission(dataDir: string): Promise<PermissionResult> {
   const { getChannelPort } = await import('../channel-config.js');
-  const dataDir = c.get('dataDir');
   const port = getChannelPort(dataDir);
-  if (port === null) return c.json({ pending: null });
+  if (port === null) return { pending: null };
   try {
     const res = await fetch(`http://127.0.0.1:${port}/permission`);
-    const data = await res.json() as { pending: { request_id?: string; tool_name?: string; description?: string; input_preview?: string; tool_input?: unknown } | null };
-    // Log permission requests once per unique request_id
+    const data = await res.json() as PermissionResult;
     if (data.pending !== null) {
       const reqId = data.pending.request_id ?? '';
       if (reqId !== '' && !loggedPermissionRequests.has(reqId)) {
@@ -92,10 +93,25 @@ channelRoutes.get('/channel/permission', async (c) => {
           .catch(() => { loggedPermissionRequests.set(reqId, 0); });
       }
     }
-    return c.json(data);
+    return data;
   } catch {
-    return c.json({ pending: null });
+    return { pending: null };
   }
+}
+
+/** Long-poll: returns immediately if a permission is pending, otherwise waits up to 30s. */
+channelRoutes.get('/channel/permission', async (c) => {
+  const dataDir = c.get('dataDir');
+  const immediate = await fetchPermission(dataDir);
+  if (immediate.pending !== null) return c.json(immediate);
+
+  // Wait for a permission notification or 30s timeout
+  await Promise.race([
+    new Promise<void>((resolve) => { addPermissionWaiter(resolve); }),
+    new Promise<void>((resolve) => { setTimeout(resolve, 30000); }),
+  ]);
+
+  return c.json(await fetchPermission(dataDir));
 });
 
 channelRoutes.post('/channel/permission/respond', async (c) => {
@@ -185,5 +201,11 @@ channelRoutes.post('/channel/disable', async (c) => {
 /** Called by the channel server process when it starts or stops, to wake the long-poll. */
 channelRoutes.post('/channel/notify', (c) => {
   notifyChange();
+  return c.json({ ok: true });
+});
+
+/** Called by the channel server when a permission request arrives, to wake the permission long-poll. */
+channelRoutes.post('/channel/permission/notify', (c) => {
+  notifyPermission();
   return c.json({ ok: true });
 });

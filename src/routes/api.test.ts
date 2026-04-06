@@ -1386,10 +1386,14 @@ describe('GET /api/channel/permission', () => {
 
   it('returns pending=null when channel port is null', async () => {
     const channelConfig = await import('../channel-config.js');
+    const { notifyPermission } = await import('./notify.js');
     const mockGetPort = vi.mocked(channelConfig.getChannelPort);
     mockGetPort.mockReturnValue(null);
 
-    const res = await app.request('/api/channel/permission');
+    // Wake the long-poll immediately so it doesn't wait 30s
+    const resPromise = app.request('/api/channel/permission');
+    setTimeout(() => notifyPermission(), 50);
+    const res = await resPromise;
     expect(res.status).toBe(200);
     const data = await res.json() as ChannelPermissionResponse;
     expect(data.pending).toBeNull();
@@ -1397,12 +1401,16 @@ describe('GET /api/channel/permission', () => {
 
   it('returns pending=null when fetch to channel server fails', async () => {
     const channelConfig = await import('../channel-config.js');
+    const { notifyPermission } = await import('./notify.js');
     const mockGetPort = vi.mocked(channelConfig.getChannelPort);
     mockGetPort.mockReturnValue(9999);
 
-    const fetchSpy = vi.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('Connection refused'));
+    const fetchSpy = vi.spyOn(global, 'fetch').mockRejectedValue(new Error('Connection refused'));
 
-    const res = await app.request('/api/channel/permission');
+    // Wake the long-poll immediately so it doesn't wait 30s
+    const resPromise = app.request('/api/channel/permission');
+    setTimeout(() => notifyPermission(), 50);
+    const res = await resPromise;
     expect(res.status).toBe(200);
     const data = await res.json() as ChannelPermissionResponse;
     expect(data.pending).toBeNull();

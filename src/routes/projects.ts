@@ -105,6 +105,46 @@ projectRoutes.get('/channel-status', async (c) => {
   return c.json({ enabled: true, projects: statuses });
 });
 
+/** GET /api/projects/permissions — check for pending permissions across all projects (long-poll, 30s timeout) */
+projectRoutes.get('/permissions', async (c) => {
+  const { getChannelPort } = await import('../channel-config.js');
+  const { readGlobalConfig } = await import('../global-config.js');
+  const { addPermissionWaiter } = await import('./notify.js');
+  const globalConfig = readGlobalConfig();
+  if (globalConfig.channelEnabled !== true) return c.json({ permissions: {} });
+
+  async function checkAll(): Promise<Record<string, { request_id: string; tool_name: string; description: string; input_preview?: string } | null>> {
+    const projects = getAllProjects();
+    const result: Record<string, { request_id: string; tool_name: string; description: string; input_preview?: string } | null> = {};
+    await Promise.all(projects.map(async (p) => {
+      const port = getChannelPort(p.dataDir);
+      if (port === null) { result[p.secret] = null; return; }
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/permission`);
+        const data = await res.json() as { pending: { request_id: string; tool_name: string; description: string; input_preview?: string } | null };
+        result[p.secret] = data.pending;
+      } catch {
+        result[p.secret] = null;
+      }
+    }));
+    return result;
+  }
+
+  // Check immediately — if any project has a pending permission, return right away
+  const immediate = await checkAll();
+  if (Object.values(immediate).some(v => v !== null)) {
+    return c.json({ permissions: immediate });
+  }
+
+  // Wait for a permission notification or 30s timeout
+  await Promise.race([
+    new Promise<void>((resolve) => { addPermissionWaiter(resolve); }),
+    new Promise<void>((resolve) => { setTimeout(resolve, 30000); }),
+  ]);
+
+  return c.json({ permissions: await checkAll() });
+});
+
 /** POST /api/projects/:secret/reveal — open the project folder in OS file manager */
 projectRoutes.post('/:secret/reveal', async (c) => {
   const secret = c.req.param('secret');

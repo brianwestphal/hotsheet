@@ -5,22 +5,42 @@ import { requestAttention } from './tauriIntegration.js';
 
 // --- Permission Overlay ---
 
-let permissionPollInterval: ReturnType<typeof setInterval> | null = null;
+type PermissionData = { request_id: string; tool_name: string; description: string; input_preview?: string };
+
+let permissionPollActive = false;
 
 function startPermissionPolling() {
-  if (permissionPollInterval) return;
-  permissionPollInterval = setInterval(async () => {
+  if (permissionPollActive) return;
+  permissionPollActive = true;
+
+  async function poll() {
+    if (!permissionPollActive) return;
     try {
-      const data = await api<{ pending: { request_id: string; tool_name: string; description: string; input_preview?: string } | null }>('/channel/permission');
-      if (data.pending) {
-        showPermissionOverlay(data.pending);
+      // Long-poll: server holds up to 30s, returns when any project has a pending permission
+      const data = await api<{ permissions: Record<string, PermissionData | null> }>('/projects/permissions');
+      const activeSecret = getActiveProject()?.secret;
+
+      for (const [secret, perm] of Object.entries(data.permissions)) {
+        if (perm !== null) {
+          // Mark the tab with attention dot
+          markProjectAttention(secret);
+          // Show overlay only for the active project's permission
+          if (secret === activeSecret) {
+            showPermissionOverlay(perm);
+          }
+        }
       }
-    } catch { /* ignore */ }
-  }, 2000);
+    } catch {
+      // Back off on errors (network failure, server restart)
+      await new Promise(r => setTimeout(r, 5000));
+    }
+    if (permissionPollActive) setTimeout(poll, 100); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- can be set false by stopPermissionPolling()
+  }
+  void poll();
 }
 
 function stopPermissionPolling() {
-  if (permissionPollInterval) { clearInterval(permissionPollInterval); permissionPollInterval = null; }
+  permissionPollActive = false;
 }
 
 // Track request IDs we've already responded to, so polling doesn't re-show them
@@ -30,9 +50,6 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
   const overlay = document.getElementById('permission-overlay');
   if (!overlay || overlay.style.display !== 'none') return;
   if (respondedRequestIds.has(perm.request_id)) return;
-  // Track which project needs attention for tab dots
-  const secret = getActiveProject()?.secret;
-  if (secret !== undefined && secret !== '') markProjectAttention(secret);
   if (state.settings.notify_permission !== 'none') {
     requestAttention(state.settings.notify_permission);
   }
@@ -61,14 +78,16 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
       body: { request_id: perm.request_id, behavior },
     });
     overlay!.style.display = 'none';
-    if (secret !== undefined && secret !== '') clearProjectAttention(secret);
+    const activeSecret = getActiveProject()?.secret;
+    if (activeSecret !== undefined && activeSecret !== '') clearProjectAttention(activeSecret);
   }
 
   function dismiss() {
     respondedRequestIds.add(perm.request_id);
     void api('/channel/permission/dismiss', { method: 'POST' });
     overlay!.style.display = 'none';
-    if (secret !== undefined && secret !== '') clearProjectAttention(secret);
+    const activeSecret = getActiveProject()?.secret;
+    if (activeSecret !== undefined && activeSecret !== '') clearProjectAttention(activeSecret);
   }
 
   // Use one-time click handlers via { once: true }

@@ -77,6 +77,8 @@ mcp.setNotificationHandler(PermissionRequestSchema, ({ params }) => {
     timestamp: Date.now(),
   };
   process.stderr.write(`Permission request: ${params.tool_name} — ${params.description}\n`);
+  // Notify main server so the permission long-poll wakes immediately
+  notifyMainServer('permission').catch(() => {});
 });
 
 // Start HTTP server for Hot Sheet to POST commands
@@ -172,14 +174,22 @@ const httpServer = createServer(async (req, res) => {
 });
 
 /** Notify the main Hot Sheet server that channel state changed (so long-poll wakes up). */
-function notifyMainServer(signal?: AbortSignal): Promise<void> {
+function notifyMainServer(type?: 'permission' | AbortSignal, signal?: AbortSignal): Promise<void> {
+  // Support old signature: notifyMainServer(abortSignal) and new: notifyMainServer('permission', abortSignal?)
+  let actualSignal = signal;
+  let endpoint = '/api/channel/notify';
+  if (type instanceof AbortSignal) {
+    actualSignal = type;
+  } else if (type === 'permission') {
+    endpoint = '/api/channel/permission/notify';
+  }
   try {
     const settingsPath = join(dataDir, 'settings.json');
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { port?: number; secret?: string };
     if (settings.port !== undefined && settings.port !== 0) {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (settings.secret !== undefined && settings.secret !== '') headers['X-Hotsheet-Secret'] = settings.secret;
-      return fetch(`http://localhost:${settings.port}/api/channel/notify`, { method: 'POST', headers, signal }).then(() => {}).catch(() => {});
+      return fetch(`http://localhost:${settings.port}${endpoint}`, { method: 'POST', headers, signal: actualSignal }).then(() => {}).catch(() => {});
     }
   } catch { /* ignore */ }
   return Promise.resolve();

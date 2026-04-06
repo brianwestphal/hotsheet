@@ -155,7 +155,7 @@ When Claude needs approval to run a tool (Bash, Write, Edit, etc.), the channel 
 1. The channel server declares `claude/channel/permission` capability
 2. When Claude calls a tool that needs approval, Claude Code sends `notifications/claude/channel/permission_request` to the channel server
 3. The channel server stores the pending request and exposes it via `GET /permission`
-4. Hot Sheet polls `/api/channel/permission` every 2 seconds when the channel is enabled
+4. Hot Sheet long-polls `GET /api/channel/permission` — the server holds the connection up to 30 seconds, returning immediately when a permission arrives (the channel server notifies via `POST /api/channel/permission/notify`)
 5. When a pending permission is detected, a full-screen overlay appears
 
 ### Overlay
@@ -212,6 +212,7 @@ Prompt: `Make a commit message for the recently completed tickets, without wrapp
 | `/api/channel/permission/respond` | POST | Respond to a permission request (`{ request_id, behavior }`) |
 | `/api/channel/permission/dismiss` | POST | Dismiss a pending permission overlay without responding |
 | `/api/channel/notify` | POST | Notify long-poll of channel state changes (used internally by channel server) |
+| `/api/channel/permission/notify` | POST | Wake the permission long-poll when a new permission request arrives (used internally by channel server) |
 
 ## 12.13 Requirements
 

@@ -159,10 +159,11 @@ See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel AP
 | POST | `/api/channel/done` | Claude signals completion |
 | POST | `/api/channel/enable` | Enable channel, register in `.mcp.json` |
 | POST | `/api/channel/disable` | Disable channel, remove from `.mcp.json` |
-| GET | `/api/channel/permission` | Check pending permission requests |
+| GET | `/api/channel/permission` | Long-poll for pending permission requests (30s timeout) |
 | POST | `/api/channel/permission/respond` | Respond to a permission request |
 | POST | `/api/channel/permission/dismiss` | Dismiss permission overlay |
 | POST | `/api/channel/notify` | Notify long-poll of channel state changes (used internally by channel server) |
+| POST | `/api/channel/permission/notify` | Wake the permission long-poll (used internally by channel server) |
 
 ### 9.14 Project Endpoints
 

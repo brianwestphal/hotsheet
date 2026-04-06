@@ -28,3 +28,18 @@ export function notifyMutation(dataDir: string) {
   scheduleAllSync(dataDir);
   notifyChange();
 }
+
+// --- Permission long-poll support ---
+
+let permissionWaiters: Array<() => void> = [];
+
+export function addPermissionWaiter(resolve: () => void) {
+  permissionWaiters.push(resolve);
+}
+
+/** Wake all waiting permission long-poll connections. */
+export function notifyPermission() {
+  const waiters = permissionWaiters;
+  permissionWaiters = [];
+  for (const resolve of waiters) resolve();
+}
