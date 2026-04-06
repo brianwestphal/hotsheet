@@ -9,7 +9,7 @@ import { cleanupAttachments } from './cleanup.js';
 import { getDb, setDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
-import { ensureSecret } from './file-settings.js';
+import { ensureSecret, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
 import { isInstanceRunning, readInstanceFile, removeInstanceFile, writeInstanceFile } from './instance.js';
 import { acquireLock } from './lock.js';
@@ -401,7 +401,7 @@ async function main() {
       }
       process.exit(1);
     }
-    dataDir = join(tmpdir(), `hotsheet-demo-${demo}-${Date.now()}`);
+    dataDir = join(tmpdir(), `hotsheet-demo-${Date.now()}`);
     console.log(`\n  DEMO MODE: ${scenario.label}\n`);
   }
 
@@ -435,9 +435,18 @@ async function main() {
   }
 
   const db = await initializeProject(dataDir, demo);
+  if (demo !== null) {
+    writeFileSettings(dataDir, { appName: 'Hot Sheet Demo' });
+  }
   const { actualPort, secret } = await startAndConfigure(port, dataDir, strictPort);
   registerExistingProject(dataDir, secret, db);
   await postStartup(dataDir, actualPort, demo, noOpen);
+
+  // Multi-project demo: register additional projects after server is running
+  if (demo !== null) {
+    const { seedDemoExtraProjects } = await import('./demo.js');
+    await seedDemoExtraProjects(demo, dataDir, actualPort);
+  }
 }
 
 main().catch((err: unknown) => {

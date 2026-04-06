@@ -104,12 +104,19 @@ The loop stays tight because the AI always knows what to work on next.
   <img src="docs/demo-8.png" alt="Stats dashboard showing throughput, flow, and cycle time charts" width="900">
 </p>
 
+**Multi-project tabs** — open multiple projects in a single window. Tabs appear automatically when you register a second project via the Open Folder dialog (`Cmd+O`). Drag tabs to reorder, right-click for close options and "Show in Finder," and switch with `Cmd+Shift+[/]`. Each project has independent settings, sort preferences, and views.
+
+<p align="center">
+  <img src="docs/demo-10.png" alt="Multiple project tabs showing independent ticket lists with tab context menu" width="900">
+</p>
+
 **Also includes:**
 - **Tags** — free-form tags on tickets, with autocomplete and a batch tag dialog for multi-select
-- **Custom views** — create filtered views with an interactive query builder (field + operator + value conditions, AND/OR logic)
+- **Custom views** — create filtered views with an interactive query builder (field + operator + value conditions, AND/OR logic). Associate a tag with a view to enable drag-and-drop tagging and auto-tag on create.
+- **Custom ticket prefix** — change the default `HS-` prefix to any project-specific prefix in Settings
 - **Five priority levels** — Highest to Lowest, with Lucide chevron icons, sortable and filterable
 - **Up Next flag** — star tickets to add them to the AI worklist
-- **Drag and drop** — drag tickets onto sidebar views to change category, priority, or status; drop files onto the detail panel to attach; reorder custom views
+- **Drag and drop** — drag tickets onto sidebar views to change category, priority, or status; drop files onto the detail panel to attach; reorder project tabs and custom views
 - **Right-click context menus** — full context menu on tickets with category/priority/status submenus, tags, duplicate, backlog, archive, delete — all with Lucide icons
 - **Search** — full-text search across ticket titles, details, and ticket numbers
 - **Print** — print the dashboard, all tickets, selected tickets, or individual tickets in checklist, summary, or full-detail format
@@ -154,7 +161,7 @@ Hot Sheet automatically generates skill files for Claude Code (as well as Cursor
 
 ### Claude Channel Integration (Experimental)
 
-Hot Sheet can push events directly to a running Claude Code session via MCP channels. Enable it in Settings → Experimental (the tab only appears when Claude Code is detected on your system):
+Hot Sheet can push events directly to a running Claude Code session via MCP channels. Enable it in Settings → Experimental:
 
 - **Play button** — appears in the sidebar. Single-click sends the worklist to Claude on demand.
 - **Auto mode** — double-click the play button to enable automatic mode. When you star a ticket for Up Next, Claude is notified after a 5-second debounce and picks up the work automatically. Exponential backoff prevents runaway retries.
@@ -316,8 +323,9 @@ Create `.hotsheet/settings.json` to configure per-project options:
 
 | Key | Description |
 |-----|-------------|
-| `appName` | Custom window title (defaults to the project folder name) |
+| `appName` | Custom window title and tab name (defaults to the project folder name) |
 | `backupDir` | Backup storage path (defaults to `.hotsheet/backups/`) |
+| `ticketPrefix` | Custom ticket number prefix (defaults to `HS`) |
 | `appIcon` | Icon variant (`default`, `variant-1` through `variant-9`) |
 
 All settings can also be changed from the settings panel UI.
@@ -338,6 +346,10 @@ All settings can also be changed from the settings panel UI.
 | `Cmd+P` | Print |
 | `Cmd+F` | Focus search |
 | `Cmd+N` / `N` | Focus new ticket input |
+| `Cmd+O` | Open folder (add project) |
+| `Cmd+,` | Settings |
+| `Cmd+Shift+[` / `]` | Switch project tab |
+| `Cmd+Alt+W` | Close active tab |
 | `Escape` | Blur field / clear selection / close |
 
 ---
@@ -352,7 +364,7 @@ All settings can also be changed from the settings panel UI.
 | Database | PGLite (embedded PostgreSQL) |
 | UI | Custom server-side JSX (no React), vanilla client JS |
 | Charts | Inline SVG (no external chart library) |
-| Build | tsup (single-file bundle) |
+| Build | tsup (server + client bundles), sass (SCSS → CSS) |
 | Storage | `.hotsheet/` in your project directory |
 
 Data stays local. No network calls, no accounts, no telemetry.

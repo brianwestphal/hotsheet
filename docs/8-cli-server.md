@@ -82,10 +82,11 @@ Project tabs are persisted to `~/.hotsheet/projects.json` and restored on restar
 
 ### 8.8 Demo Mode
 
-Demo mode launches the application with pre-populated sample data, intended for screenshots, demonstrations, and feature exploration. Invoked via `--demo:<N>` where N is a scenario number (1–9).
+Demo mode launches the application with pre-populated sample data, intended for screenshots, demonstrations, and feature exploration. Invoked via `--demo:<N>` where N is a scenario number (1–10).
 
 #### Behavior
 - Creates a temporary, isolated data directory in the OS temp folder (not inside the project).
+- Sets `appName` to "Hot Sheet Demo" for a clean title/tab display.
 - Skips lock file checks (no risk of collision).
 - Skips gitignore checks (temp directory is outside any repo).
 - Seeds the database with scenario-specific ticket data on startup.
@@ -106,10 +107,12 @@ Each scenario uses realistic e-commerce project data with a mix of categories, p
 | 7 | Column View | Tickets spread across statuses — layout pre-set to column/kanban view |
 | 8 | Dashboard | Stats and charts |
 | 9 | Claude Channel | AI integration with custom commands |
+| 10 | Multi-Project Tabs | Multiple projects in one window — registers additional projects with independent ticket data |
 
 #### Scenario-Specific Settings
 - Scenario 6 sets `detail_position` to `bottom` and `detail_height` to `280`.
 - Scenario 7 sets `layout` to `columns`.
+- Scenario 10 creates and registers two additional projects ("Mobile App" and "API Platform") with their own ticket data, demonstrating the tabbed multi-project interface.
 
 #### Demo Data Characteristics
 - Tickets have realistic titles, detailed descriptions, and timestamped notes showing work progress.

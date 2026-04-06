@@ -17,6 +17,7 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
   { id: 7, label: 'Column view — kanban board by status' },
   { id: 8, label: 'Dashboard — stats and charts' },
   { id: 9, label: 'Claude Channel — AI integration with custom commands' },
+  { id: 10, label: 'Multi-project tabs — multiple projects in one window' },
 ];
 
 // --- Ticket data model ---
@@ -617,6 +618,7 @@ const SCENARIO_DATA: Record<number, DemoTicket[]> = {
   7: SCENARIO_7,
   8: SCENARIO_8,
   9: SCENARIO_9,
+  10: SCENARIO_1, // Primary project uses hero data; extra projects added by seedDemoExtraProjects
 };
 
 // --- Custom views for scenario 3 ---
@@ -701,4 +703,86 @@ export async function seedDemoData(scenario: number): Promise<void> {
     await db.query(`INSERT INTO settings (key, value) VALUES ('custom_commands', $1) ON CONFLICT (key) DO UPDATE SET value = $1`,
       [JSON.stringify(SCENARIO_9_COMMANDS)]);
   }
+}
+
+// --- Scenario 10: Multi-project tabs — extra projects ---
+
+interface ExtraProject {
+  appName: string;
+  tickets: DemoTicket[];
+}
+
+const EXTRA_PROJECTS: ExtraProject[] = [
+  {
+    appName: 'Mobile App',
+    tickets: [
+      { title: 'Push notification deep links not opening correct screen', details: 'Tapping a push notification for an order update opens the home screen instead of the order detail. Affects both iOS and Android.', category: 'bug', priority: 'highest', status: 'started', up_next: true, tags: ['notifications'], notes: notesJson([{ text: 'Confirmed the intent URI is malformed on Android. iOS works for some notification types but not order updates.', days_ago: 0.5 }]), days_ago: 3, updated_ago: 0.5 },
+      { title: 'Add biometric login (Face ID / fingerprint)', details: 'Allow users to authenticate with biometrics after initial login. Store a refresh token in the secure keychain.', category: 'feature', priority: 'high', status: 'not_started', up_next: true, tags: ['auth', 'security'], notes: '', days_ago: 5, updated_ago: 5 },
+      { title: 'Offline mode for product catalog', details: 'Cache the product catalog locally so users can browse without network. Sync changes when connection is restored.', category: 'feature', priority: 'default', status: 'not_started', up_next: false, tags: ['offline', 'sync'], notes: '', days_ago: 7, updated_ago: 7 },
+      { title: 'App crashes on low-memory devices during checkout', details: 'Reports from Android users with 2GB RAM that the app crashes when loading the payment form. Need to profile memory usage.', category: 'bug', priority: 'high', status: 'not_started', up_next: true, tags: ['android', 'performance'], notes: '', days_ago: 2, updated_ago: 2 },
+      { title: 'Update to React Native 0.76', details: 'New architecture is now stable. Update from 0.73 and enable the new renderer. Run full regression test suite after.', category: 'task', priority: 'default', status: 'completed', up_next: false, tags: ['dependencies'], notes: notesJson([{ text: 'Updated and all tests passing. New renderer is 15% faster on list scrolling benchmarks.', days_ago: 1 }]), days_ago: 10, updated_ago: 1, completed_ago: 1 },
+    ],
+  },
+  {
+    appName: 'API Platform',
+    tickets: [
+      { title: 'Rate limiter returning 429 for authenticated internal calls', details: 'Internal service-to-service calls using API keys are being rate limited. They should bypass the public rate limit.', category: 'bug', priority: 'highest', status: 'started', up_next: true, tags: ['rate-limiting', 'internal'], notes: notesJson([{ text: 'The rate limiter key includes the IP but not the API key type. Internal keys need a separate bucket with higher limits.', days_ago: 0.2 }]), days_ago: 1, updated_ago: 0.2 },
+      { title: 'Add GraphQL subscriptions for real-time updates', details: 'Implement WebSocket-based GraphQL subscriptions for order status changes and inventory updates.', category: 'feature', priority: 'high', status: 'not_started', up_next: true, tags: ['graphql', 'websocket'], notes: '', days_ago: 6, updated_ago: 6 },
+      { title: 'Migrate to OpenAPI 3.1 spec', details: 'Current spec is OpenAPI 3.0. Upgrade to 3.1 for JSON Schema compatibility and webhook support.', category: 'task', priority: 'default', status: 'not_started', up_next: false, tags: ['api-docs'], notes: '', days_ago: 8, updated_ago: 8 },
+      { title: 'Investigate P99 latency spike on /orders endpoint', details: 'P99 jumped from 200ms to 1.2s after last deploy. No obvious code changes. Check connection pool and query plans.', category: 'investigation', priority: 'high', status: 'completed', up_next: false, tags: ['performance', 'database'], notes: notesJson([{ text: 'Found it — the connection pool was exhausted due to a missing connection release in the new middleware. Hotfix deployed.', days_ago: 0.5 }]), days_ago: 2, updated_ago: 0.5, completed_ago: 0.5 },
+    ],
+  },
+];
+
+/**
+ * For multi-project demo scenarios, create and register additional projects.
+ * Called from cli.ts after the server is running.
+ */
+export async function seedDemoExtraProjects(scenario: number, primaryDataDir: string, port: number): Promise<void> {
+  if (scenario !== 10) return;
+
+  const fs = await import('fs');
+  const path = await import('path');
+  const { registerProject } = await import('./projects.js');
+  const { writeFileSettings } = await import('./file-settings.js');
+  const { setDataDir: setDir, getDb: getDatabase } = await import('./db/connection.js');
+
+  const baseDir = path.dirname(primaryDataDir);
+
+  for (const extra of EXTRA_PROJECTS) {
+    const extraDataDir = path.join(baseDir, `hotsheet-demo-${extra.appName.toLowerCase().replace(/\s+/g, '-')}`);
+    fs.mkdirSync(extraDataDir, { recursive: true });
+
+    // Initialize DB for this project
+    setDir(extraDataDir);
+    const db = await getDatabase();
+
+    // Seed tickets
+    for (let i = 0; i < extra.tickets.length; i++) {
+      const t = extra.tickets[i];
+      const ticketNumber = `HS-${i + 1}`;
+      const createdAt = daysAgo(t.days_ago);
+      const updatedAt = daysAgo(t.updated_ago);
+      const completedAt = t.completed_ago !== undefined ? daysAgo(t.completed_ago) : null;
+      const verifiedAt = t.verified_ago !== undefined ? daysAgo(t.verified_ago) : null;
+      const tags = JSON.stringify(t.tags);
+
+      await db.query(`
+        INSERT INTO tickets (ticket_number, title, details, category, priority, status, up_next, notes, tags, created_at, updated_at, completed_at, verified_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamp, $11::timestamp, $12::timestamp, $13::timestamp)
+      `, [ticketNumber, t.title, t.details, t.category, t.priority, t.status, t.up_next, t.notes, tags, createdAt, updatedAt, completedAt, verifiedAt]);
+    }
+    await db.query(`SELECT setval('ticket_seq', $1)`, [extra.tickets.length]);
+
+    // Set app name
+    writeFileSettings(extraDataDir, { appName: extra.appName });
+
+    // Register with the running server
+    // Reset dataDir to primary so registerProject can work correctly
+    setDir(primaryDataDir);
+    await registerProject(extraDataDir, port);
+  }
+
+  // Restore primary dataDir context
+  setDir(primaryDataDir);
 }
