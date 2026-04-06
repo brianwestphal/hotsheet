@@ -311,7 +311,8 @@ async function main() {
 
   if (demo === null) {
     // Clean up old attachments only for real projects
-    await cleanupAttachments();
+    const { runWithDataDir } = await import('./db/connection.js');
+    await runWithDataDir(dataDir, () => cleanupAttachments());
   }
 
   console.log(`  Data directory: ${dataDir}`);
@@ -326,23 +327,24 @@ async function main() {
   initMarkdownSync(dataDir, actualPort);
   scheduleAllSync(dataDir);
 
-  // Initialize and sync AI tool skills/rules
+  // Initialize and sync AI tool skills/rules — wrap in dataDir context for getCategories()
+  const { runWithDataDir: runWith } = await import('./db/connection.js');
   initSkills(actualPort, dataDir);
-  setSkillCategories(await getCategories());
+  setSkillCategories(await runWith(dataDir, () => getCategories()));
   const updatedPlatforms = ensureSkills();
   if (updatedPlatforms.length > 0) {
     console.log(`\n  AI tool skills created/updated for: ${updatedPlatforms.join(', ')}`);
     console.log('  Restart your AI tool to pick up the new ticket creation skills.\n');
   }
 
-  // Prune command log to keep it manageable
-  import('./db/commandLog.js').then(({ pruneLog }) => pruneLog(1000)).catch(() => { /* non-critical */ });
+  // Prune command log to keep it manageable — run in dataDir context
+  runWith(dataDir, () => import('./db/commandLog.js').then(({ pruneLog }) => pruneLog(1000))).catch(() => { /* non-critical */ });
 
-  // Record daily stats snapshot and backfill any missing days
-  import('./db/stats.js').then(async ({ recordDailySnapshot, backfillSnapshots }) => {
+  // Record daily stats snapshot and backfill any missing days — run in dataDir context
+  runWith(dataDir, () => import('./db/stats.js').then(async ({ recordDailySnapshot, backfillSnapshots }) => {
     await backfillSnapshots();
     await recordDailySnapshot();
-  }).catch(() => { /* non-critical */ });
+  })).catch(() => { /* non-critical */ });
 
   if (demo === null) {
     initBackupScheduler(dataDir);
@@ -393,11 +395,18 @@ async function main() {
       writeGlobalConfig({ channelEnabled: legacy });
     }
 
-    // If channel is globally enabled, ensure .mcp.json exists for all projects
-    if (readGlobalConfig().channelEnabled === true) {
-      const { registerChannelForAll } = await import('./channel-config.js');
+    // Ensure skills and .mcp.json for all restored projects
+    {
       const { getAllProjects } = await import('./projects.js');
-      registerChannelForAll(getAllProjects().map(p => p.dataDir));
+      const { ensureSkillsForDir } = await import('./skills.js');
+      for (const p of getAllProjects()) {
+        const root = p.dataDir.replace(/\/.hotsheet\/?$/, '');
+        ensureSkillsForDir(root);
+      }
+      if (readGlobalConfig().channelEnabled === true) {
+        const { registerChannelForAll } = await import('./channel-config.js');
+        registerChannelForAll(getAllProjects().map(p => p.dataDir));
+      }
     }
 
     writeInstanceFile(actualPort);

@@ -5,7 +5,7 @@ import { readFileSettings } from './file-settings.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
 
-export const SKILL_VERSION = 5;
+export const SKILL_VERSION = 6;
 
 let skillPort: number;
 let skillDataDir: string;
@@ -63,8 +63,10 @@ export function updateFile(path: string, content: string): boolean {
 
 // --- Shared content ---
 
-function ticketSkillBody(skill: SkillDef): string {
-  const settings = readFileSettings(skillDataDir);
+function ticketSkillBody(skill: SkillDef, projectRoot: string): string {
+  const dataDir = join(projectRoot, '.hotsheet');
+  const settings = readFileSettings(dataDir);
+  const port = settings.port ?? skillPort;
   const secret = settings.secret ?? '';
   const secretLine = secret ? `  -H "X-Hotsheet-Secret: ${secret}" \\` : '';
   const lines = [
@@ -76,7 +78,7 @@ function ticketSkillBody(skill: SkillDef): string {
     '',
     '**Create the ticket** by running:',
     '```bash',
-    `curl -s -X POST http://localhost:${skillPort}/api/tickets \\`,
+    `curl -s -X POST http://localhost:${port}/api/tickets \\`,
     '  -H "Content-Type: application/json" \\',
   ];
   if (secretLine) lines.push(secretLine);
@@ -91,11 +93,12 @@ function ticketSkillBody(skill: SkillDef): string {
   return lines.join('\n');
 }
 
-function mainSkillBody(): string {
-  const worklistRel = relative(process.cwd(), join(skillDataDir, 'worklist.md'));
-  const settingsRel = relative(process.cwd(), join(skillDataDir, 'settings.json'));
+function mainSkillBody(projectRoot: string): string {
+  const dataDir = join(projectRoot, '.hotsheet');
+  const worklistRel = relative(projectRoot, join(dataDir, 'worklist.md'));
+  const settingsRel = relative(projectRoot, join(dataDir, 'settings.json'));
   return [
-    `Base directory for this skill: ${join(process.cwd(), '.claude', 'skills', 'hotsheet')}`,
+    `Base directory for this skill: ${join(projectRoot, '.claude', 'skills', 'hotsheet')}`,
     '',
     `Read \`${worklistRel}\` and work through the tickets in priority order.`,
     '',
@@ -170,7 +173,7 @@ function ensureClaudeSkills(cwd: string): boolean {
     '---',
     versionHeader(),
     '',
-    mainSkillBody(),
+    mainSkillBody(cwd),
     '',
   ].join('\n');
   if (updateFile(join(mainDir, 'SKILL.md'), mainContent)) updated = true;
@@ -187,7 +190,7 @@ function ensureClaudeSkills(cwd: string): boolean {
       '---',
       versionHeader(),
       '',
-      ticketSkillBody(skill),
+      ticketSkillBody(skill, cwd),
       '',
     ].join('\n');
     if (updateFile(join(dir, 'SKILL.md'), content)) updated = true;
@@ -211,7 +214,7 @@ function ensureCursorRules(cwd: string): boolean {
     '---',
     versionHeader(),
     '',
-    mainSkillBody(),
+    mainSkillBody(cwd),
     '',
   ].join('\n');
   if (updateFile(join(rulesDir, 'hotsheet.mdc'), mainContent)) updated = true;
@@ -225,7 +228,7 @@ function ensureCursorRules(cwd: string): boolean {
       '---',
       versionHeader(),
       '',
-      ticketSkillBody(skill),
+      ticketSkillBody(skill, cwd),
       '',
     ].join('\n');
     if (updateFile(join(rulesDir, `${skill.name}.mdc`), content)) updated = true;
@@ -248,7 +251,7 @@ function ensureCopilotPrompts(cwd: string): boolean {
     '---',
     versionHeader(),
     '',
-    mainSkillBody(),
+    mainSkillBody(cwd),
     '',
   ].join('\n');
   if (updateFile(join(promptsDir, 'hotsheet.prompt.md'), mainContent)) updated = true;
@@ -261,7 +264,7 @@ function ensureCopilotPrompts(cwd: string): boolean {
       '---',
       versionHeader(),
       '',
-      ticketSkillBody(skill),
+      ticketSkillBody(skill, cwd),
       '',
     ].join('\n');
     if (updateFile(join(promptsDir, `${skill.name}.prompt.md`), content)) updated = true;
@@ -285,7 +288,7 @@ function ensureWindsurfRules(cwd: string): boolean {
     '---',
     versionHeader(),
     '',
-    mainSkillBody(),
+    mainSkillBody(cwd),
     '',
   ].join('\n');
   if (updateFile(join(rulesDir, 'hotsheet.md'), mainContent)) updated = true;
@@ -299,7 +302,7 @@ function ensureWindsurfRules(cwd: string): boolean {
       '---',
       versionHeader(),
       '',
-      ticketSkillBody(skill),
+      ticketSkillBody(skill, cwd),
       '',
     ].join('\n');
     if (updateFile(join(rulesDir, `${skill.name}.md`), content)) updated = true;
@@ -315,35 +318,32 @@ function ensureWindsurfRules(cwd: string): boolean {
 // cli.ts already called ensureSkills() before the page loaded.
 let pendingCreatedFlag = false;
 
-export function ensureSkills(): string[] {
-  const cwd = process.cwd();
+/** Ensure skills for a specific project root directory. */
+export function ensureSkillsForDir(projectRoot: string): string[] {
   const platforms: string[] = [];
 
-  // Claude Code: detect .claude/ directory
-  if (existsSync(join(cwd, '.claude'))) {
-    if (ensureClaudeSkills(cwd)) platforms.push('Claude Code');
+  if (existsSync(join(projectRoot, '.claude'))) {
+    if (ensureClaudeSkills(projectRoot)) platforms.push('Claude Code');
   }
-
-  // Cursor: detect .cursor/ directory
-  if (existsSync(join(cwd, '.cursor'))) {
-    if (ensureCursorRules(cwd)) platforms.push('Cursor');
+  if (existsSync(join(projectRoot, '.cursor'))) {
+    if (ensureCursorRules(projectRoot)) platforms.push('Cursor');
   }
-
-  // GitHub Copilot: detect existing prompts dir or copilot instructions file
-  if (existsSync(join(cwd, '.github', 'prompts')) || existsSync(join(cwd, '.github', 'copilot-instructions.md'))) {
-    if (ensureCopilotPrompts(cwd)) platforms.push('GitHub Copilot');
+  if (existsSync(join(projectRoot, '.github', 'prompts')) || existsSync(join(projectRoot, '.github', 'copilot-instructions.md'))) {
+    if (ensureCopilotPrompts(projectRoot)) platforms.push('GitHub Copilot');
   }
-
-  // Windsurf: detect .windsurf/ directory
-  if (existsSync(join(cwd, '.windsurf'))) {
-    if (ensureWindsurfRules(cwd)) platforms.push('Windsurf');
+  if (existsSync(join(projectRoot, '.windsurf'))) {
+    if (ensureWindsurfRules(projectRoot)) platforms.push('Windsurf');
   }
 
   if (platforms.length > 0) {
     pendingCreatedFlag = true;
   }
-
   return platforms;
+}
+
+/** Ensure skills for the current working directory (backward compat). */
+export function ensureSkills(): string[] {
+  return ensureSkillsForDir(process.cwd());
 }
 
 export function consumeSkillsCreatedFlag(): boolean {

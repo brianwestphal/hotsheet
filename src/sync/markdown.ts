@@ -1,6 +1,7 @@
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 
+import { runWithDataDir } from '../db/connection.js';
 import { getAttachments, getCategories, getSettings, getTickets } from '../db/queries.js';
 import { readFileSettings } from '../file-settings.js';
 import type { Ticket } from '../types.js';
@@ -50,7 +51,8 @@ export function scheduleWorklistSync(dir?: string) {
   if (!state) return;
   if (state.worklistTimeout) clearTimeout(state.worklistTimeout);
   state.worklistTimeout = setTimeout(() => {
-    void syncWorklist(state);
+    // Run with the correct project's DB context (sync runs outside HTTP request scope)
+    void runWithDataDir(state.dataDir, () => syncWorklist(state));
   }, WORKLIST_DEBOUNCE);
 }
 
@@ -59,7 +61,7 @@ export function scheduleOpenTicketsSync(dir?: string) {
   if (!state) return;
   if (state.openTicketsTimeout) clearTimeout(state.openTicketsTimeout);
   state.openTicketsTimeout = setTimeout(() => {
-    void syncOpenTickets(state);
+    void runWithDataDir(state.dataDir, () => syncOpenTickets(state));
   }, OPEN_TICKETS_DEBOUNCE);
 }
 

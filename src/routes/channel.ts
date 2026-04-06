@@ -1,14 +1,14 @@
 import { Hono } from 'hono';
 
 import { addLogEntry, getSettings, updateLogEntry, updateSetting } from '../db/queries.js';
-import { ensureSkills } from '../skills.js';
 import type { AppEnv } from '../types.js';
 import { notifyChange } from './notify.js';
 import { parseBody, ChannelTriggerSchema, PermissionRespondSchema } from './validation.js';
 
 export const channelRoutes = new Hono<AppEnv>();
 
-let channelDoneFlag = false;
+// Per-project done flags, keyed by project secret
+const channelDoneFlags = new Map<string, boolean>();
 
 // Track which permission request_ids we've already logged to avoid duplicates
 const loggedPermissionRequests = new Map<string, number>(); // request_id -> log entry id
@@ -46,9 +46,10 @@ channelRoutes.get('/channel/status', async (c) => {
   }
   const port = getChannelPort(dataDir);
   const alive = enabled ? await isChannelAlive(dataDir) : false;
-  // Consume the done flag (read once, then clear)
-  const done = channelDoneFlag;
-  if (done) channelDoneFlag = false;
+  // Consume the done flag for this project (read once, then clear)
+  const projectSecret = c.get('projectSecret');
+  const done = channelDoneFlags.get(projectSecret) === true;
+  if (done) channelDoneFlags.delete(projectSecret);
   return c.json({ enabled, alive, port, done });
 });
 
@@ -59,7 +60,7 @@ channelRoutes.post('/channel/trigger', async (c) => {
   const raw = await c.req.json().catch(() => ({}));
   const parsed = parseBody(ChannelTriggerSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  channelDoneFlag = false; // Reset done flag on new trigger
+  channelDoneFlags.delete(c.get('projectSecret')); // Reset done flag on new trigger
   loggedPermissionRequests.clear(); // Reset dedup set for new session
   const ok = await triggerChannel(dataDir, serverPort, parsed.data.message);
   const summary = parsed.data.message !== undefined && parsed.data.message !== '' ? parsed.data.message.slice(0, 200) : 'Worklist trigger';
@@ -137,7 +138,8 @@ channelRoutes.post('/channel/permission/dismiss', async (c) => {
 });
 
 channelRoutes.post('/channel/done', (_c) => {
-  channelDoneFlag = true;
+  const secret = _c.get('projectSecret');
+  if (secret) channelDoneFlags.set(secret, true);
   addLogEntry('done', 'incoming', 'Claude finished', '').catch(() => {});
   notifyChange(); // Triggers long-poll so client picks up the done state
   return _c.json({ ok: true });
@@ -148,15 +150,18 @@ channelRoutes.post('/channel/enable', async (c) => {
   const { writeGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
   writeGlobalConfig({ channelEnabled: true });
-  // Register .mcp.json for ALL projects, not just the active one
+  // Register .mcp.json and ensure skills for ALL projects
   try {
     const { getAllProjects } = await import('../projects.js');
-    registerChannelForAll(getAllProjects().map(p => p.dataDir));
+    const { ensureSkillsForDir } = await import('../skills.js');
+    const projects = getAllProjects();
+    registerChannelForAll(projects.map(p => p.dataDir));
+    for (const p of projects) {
+      ensureSkillsForDir(p.dataDir.replace(/\/.hotsheet\/?$/, ''));
+    }
   } catch {
-    // Fallback: at least register the current project
     registerChannel(dataDir);
   }
-  ensureSkills();
   notifyChange();
   return c.json({ ok: true });
 });

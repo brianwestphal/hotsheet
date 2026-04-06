@@ -5,7 +5,8 @@ import { homedir } from 'os';
 import { join, relative, resolve } from 'path';
 
 import { getTicketStats } from '../db/queries.js';
-import { consumeSkillsCreatedFlag, ensureSkills } from '../skills.js';
+import { getAllProjects } from '../projects.js';
+import { consumeSkillsCreatedFlag, ensureSkills, ensureSkillsForDir } from '../skills.js';
 import type { AppEnv } from '../types.js';
 import { addPollWaiter, getChangeVersion } from './notify.js';
 
@@ -52,8 +53,10 @@ dashboardRoutes.get('/worklist-info', (c) => {
   const worklistRel = relative(cwd, join(dataDir, 'worklist.md'));
   const prompt = `Read ${worklistRel} for current work items.`;
 
-  // Ensure skills are up-to-date (version/port changes)
-  ensureSkills();
+  // Ensure skills are up-to-date for all projects
+  for (const p of getAllProjects()) {
+    ensureSkillsForDir(p.dataDir.replace(/\/.hotsheet\/?$/, ''));
+  }
   const skillCreated = consumeSkillsCreatedFlag();
 
   return c.json({ prompt, skillCreated });
@@ -101,7 +104,11 @@ dashboardRoutes.get('/global-config', async (c) => {
 // --- Ensure skills ---
 
 dashboardRoutes.post('/ensure-skills', (c) => {
-  ensureSkills();
+  // Ensure skills for ALL registered projects, not just the active one
+  for (const p of getAllProjects()) {
+    const projectRoot = p.dataDir.replace(/\/.hotsheet\/?$/, '');
+    ensureSkillsForDir(projectRoot);
+  }
   const updated = consumeSkillsCreatedFlag();
   return c.json({ updated });
 });

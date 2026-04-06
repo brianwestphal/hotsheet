@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { resolve } from 'path';
 
 import { getBackupTimers, initBackupScheduler } from './backup.js';
-import { getDbForDir } from './db/connection.js';
+import { getDbForDir, runWithDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
 import { ensureSecret, readFileSettings } from './file-settings.js';
 import { acquireLock } from './lock.js';
@@ -51,9 +51,9 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   initMarkdownSync(absDataDir, port);
   scheduleAllSync(absDataDir);
 
-  // Initialize and sync AI tool skills
+  // Initialize and sync AI tool skills — run in this project's DB context
   initSkills(port, absDataDir);
-  setSkillCategories(await getCategories());
+  setSkillCategories(await runWithDataDir(absDataDir, () => getCategories()));
   ensureSkills();
 
   // Initialize backup scheduler

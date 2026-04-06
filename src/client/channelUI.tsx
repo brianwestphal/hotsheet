@@ -23,9 +23,13 @@ function stopPermissionPolling() {
   if (permissionPollInterval) { clearInterval(permissionPollInterval); permissionPollInterval = null; }
 }
 
+// Track request IDs we've already responded to, so polling doesn't re-show them
+const respondedRequestIds = new Set<string>();
+
 function showPermissionOverlay(perm: { request_id: string; tool_name: string; description: string; input_preview?: string }) {
   const overlay = document.getElementById('permission-overlay');
   if (!overlay || overlay.style.display !== 'none') return;
+  if (respondedRequestIds.has(perm.request_id)) return;
   // Track which project needs attention for tab dots
   const secret = getActiveProject()?.secret;
   if (secret) markProjectAttention(secret);
@@ -45,17 +49,18 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
   overlay.style.display = '';
 
   function respond(behavior: 'allow' | 'deny') {
-    void fetch('/api/channel/permission/respond', {
+    respondedRequestIds.add(perm.request_id);
+    void api('/channel/permission/respond', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ request_id: perm.request_id, behavior }),
+      body: { request_id: perm.request_id, behavior },
     });
     overlay!.style.display = 'none';
     if (secret) clearProjectAttention(secret);
   }
 
   function dismiss() {
-    void fetch('/api/channel/permission/dismiss', { method: 'POST' });
+    respondedRequestIds.add(perm.request_id);
+    void api('/channel/permission/dismiss', { method: 'POST' });
     overlay!.style.display = 'none';
     if (secret) clearProjectAttention(secret);
   }

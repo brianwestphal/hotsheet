@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-import { closeDb, getDb, setDataDir } from './db/connection.js';
+import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
 import { getBackupDir } from './file-settings.js';
 
 interface BackupInfo {
@@ -40,8 +40,9 @@ function getOrCreateState(dataDir: string): BackupState {
   return state;
 }
 
-let previewDb: PGlite | null = null;
-let currentDataDir: string | null = null;
+// Per-project preview state, keyed by dataDir
+const previewDbs = new Map<string, PGlite>();
+const previewDataDirs = new Set<string>();
 
 function backupsDir(dataDir: string): string {
   return getBackupDir(dataDir);
@@ -72,7 +73,7 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
   state.backupInProgress = true;
 
   try {
-    const db = await getDb();
+    const db = await runWithDataDir(dataDir, () => getDb());
     const dir = tierDir(dataDir, tier);
     mkdirSync(dir, { recursive: true });
 
@@ -158,7 +159,6 @@ export function listBackups(dataDir: string): BackupInfo[] {
 }
 
 export async function loadBackupForPreview(dataDir: string, tier: string, filename: string): Promise<{ tickets: Array<Record<string, unknown>>; stats: { total: number; open: number; upNext: number } }> {
-  await cleanupPreview();
 
   const filePath = join(tierDir(dataDir, tier as Tier), filename);
   if (!existsSync(filePath)) throw new Error('Backup file not found');
@@ -169,14 +169,19 @@ export async function loadBackupForPreview(dataDir: string, tier: string, filena
   const previewDir = join(backupsDir(dataDir), '_preview');
   mkdirSync(previewDir, { recursive: true });
 
-  previewDb = new PGlite(previewDir, { loadDataDir: blob });
-  await previewDb.waitReady;
+  // Clean up any existing preview for this project
+  await cleanupPreview(dataDir);
 
-  const tickets = await previewDb.query<Record<string, unknown>>(
+  const db = new PGlite(previewDir, { loadDataDir: blob });
+  await db.waitReady;
+  previewDbs.set(dataDir, db);
+  previewDataDirs.add(dataDir);
+
+  const tickets = await db.query<Record<string, unknown>>(
     `SELECT * FROM tickets WHERE status != 'deleted' ORDER BY created_at DESC`
   );
 
-  const statsResult = await previewDb.query<{ total: string; open: string; up_next: string }>(`
+  const statsResult = await db.query<{ total: string; open: string; up_next: string }>(`
     SELECT
       COUNT(*) FILTER (WHERE status != 'deleted') as total,
       COUNT(*) FILTER (WHERE status IN ('not_started', 'started')) as open,
@@ -195,14 +200,17 @@ export async function loadBackupForPreview(dataDir: string, tier: string, filena
   };
 }
 
-export async function cleanupPreview(): Promise<void> {
-  if (previewDb) {
-    try { await previewDb.close(); } catch { /* ignore */ }
-    previewDb = null;
-  }
-  // Clean up preview directory if present — but dataDir may vary, so we track it
-  if (currentDataDir !== null) {
-    const previewDir = join(backupsDir(currentDataDir), '_preview');
+export async function cleanupPreview(dataDir?: string): Promise<void> {
+  // If a specific dataDir is given, clean up just that one
+  const dirs = dataDir ? [dataDir] : Array.from(previewDataDirs);
+  for (const dir of dirs) {
+    const db = previewDbs.get(dir);
+    if (db) {
+      try { await db.close(); } catch { /* ignore */ }
+      previewDbs.delete(dir);
+    }
+    previewDataDirs.delete(dir);
+    const previewDir = join(backupsDir(dir), '_preview');
     if (existsSync(previewDir)) {
       rmSync(previewDir, { recursive: true, force: true });
     }
@@ -210,7 +218,7 @@ export async function cleanupPreview(): Promise<void> {
 }
 
 export async function restoreBackup(dataDir: string, tier: string, filename: string): Promise<void> {
-  await cleanupPreview();
+  await cleanupPreview(dataDir);
 
   const filePath = join(tierDir(dataDir, tier as Tier), filename);
   if (!existsSync(filePath)) throw new Error('Backup file not found');
@@ -264,7 +272,6 @@ export function getBackupTimers(dataDir: string): { fiveMin: ReturnType<typeof s
 }
 
 export function initBackupScheduler(dataDir: string): void {
-  currentDataDir = dataDir;
   const state = getOrCreateState(dataDir);
 
   // Clean up any leftover preview directory from a crash
