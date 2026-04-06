@@ -121,7 +121,7 @@ export const CategoryDefSchema = z.object({
   color: z.string().min(1),
   shortcutKey: z.string(),
   description: z.string(),
-}).passthrough();
+}).loose();
 
 export const UpdateCategoriesSchema = z.array(CategoryDefSchema).min(1);
 

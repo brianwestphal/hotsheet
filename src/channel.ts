@@ -24,6 +24,7 @@ for (let i = 0; i < args.length; i++) {
 const portFile = join(dataDir, 'channel-port');
 
 // Create MCP server with channel capability
+// eslint-disable-next-line @typescript-eslint/no-deprecated -- Server is needed for low-level MCP channel/permission protocol
 const mcp = new Server(
   { name: 'hotsheet-channel', version: '0.1.0' },
   {
@@ -110,7 +111,7 @@ const httpServer = createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/permission/respond') {
     let body = '';
     let bodySize = 0;
-    for await (const chunk of req) {
+    for await (const chunk of req as AsyncIterable<Buffer>) {
       bodySize += chunk.length;
       if (bodySize > 1_048_576) { res.writeHead(413); res.end('Payload too large'); return; }
       body += String(chunk);
@@ -143,7 +144,7 @@ const httpServer = createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/trigger') {
     let body = '';
     let bodySize = 0;
-    for await (const chunk of req) {
+    for await (const chunk of req as AsyncIterable<Buffer>) {
       bodySize += chunk.length;
       if (bodySize > 1_048_576) { res.writeHead(413); res.end('Payload too large'); return; }
       body += String(chunk);
@@ -175,9 +176,9 @@ function notifyMainServer(signal?: AbortSignal): Promise<void> {
   try {
     const settingsPath = join(dataDir, 'settings.json');
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { port?: number; secret?: string };
-    if (settings.port) {
+    if (settings.port !== undefined && settings.port !== 0) {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (settings.secret) headers['X-Hotsheet-Secret'] = settings.secret;
+      if (settings.secret !== undefined && settings.secret !== '') headers['X-Hotsheet-Secret'] = settings.secret;
       return fetch(`http://localhost:${settings.port}/api/channel/notify`, { method: 'POST', headers, signal }).then(() => {}).catch(() => {});
     }
   } catch { /* ignore */ }
@@ -197,7 +198,7 @@ httpServer.listen(0, '127.0.0.1', () => {
     // Log to stderr (stdout is reserved for MCP stdio transport)
     process.stderr.write(`hotsheet-channel listening on port ${port}\n`);
     // Notify main server that channel is now connected
-    notifyMainServer();
+    void notifyMainServer();
   }
 });
 

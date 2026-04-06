@@ -26,10 +26,10 @@ import type { AppEnv, TicketFilters, TicketStatus } from '../types.js';
 import { notifyMutation } from './notify.js';
 import {
   BatchActionSchema, CreateTicketSchema, DuplicateSchema,
-  NotesBulkSchema, NotesEditSchema, QueryTicketsSchema,
+  NotesBulkSchema, NotesEditSchema,   parseBody,
+QueryTicketsSchema,
   SortBySchema, SortDirSchema,
   TicketPrioritySchema, TicketStatusSchema, UpdateTicketSchema,
-  parseBody,
 } from './validation.js';
 
 /** All valid values for the `status` query-param filter, including virtual filters. */
@@ -84,7 +84,7 @@ ticketRoutes.get('/tickets', async (c) => {
 });
 
 ticketRoutes.post('/tickets', async (c) => {
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(CreateTicketSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
@@ -96,8 +96,8 @@ ticketRoutes.post('/tickets', async (c) => {
   if (bracketTags.length > 0) {
     title = cleanTitle || title;
     let existingTags: string[] = [];
-    if (defaults.tags !== undefined && defaults.tags !== null) {
-      try { existingTags = JSON.parse(defaults.tags as string) as string[]; } catch { /* ignore */ }
+    if (defaults.tags !== undefined) {
+      try { existingTags = JSON.parse(defaults.tags) as string[]; } catch { /* ignore */ }
     }
     for (const tag of bracketTags) {
       if (!existingTags.some(t => t.toLowerCase() === tag.toLowerCase())) existingTags.push(tag);
@@ -128,7 +128,7 @@ ticketRoutes.get('/tickets/:id', async (c) => {
 ticketRoutes.patch('/tickets/:id', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
   if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(UpdateTicketSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const ticket = await updateTicket(id, parsed.data);
@@ -150,7 +150,7 @@ ticketRoutes.delete('/tickets/:id', async (c) => {
 ticketRoutes.put('/tickets/:id/notes-bulk', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
   if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(NotesBulkSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const connModule = await import('../db/connection.js');
@@ -168,7 +168,7 @@ ticketRoutes.patch('/tickets/:id/notes/:noteId', async (c) => {
   const id = parseInt(c.req.param('id'), 10);
   if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   const noteId = c.req.param('noteId');
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(NotesEditSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const notes = await editNote(id, noteId, parsed.data.text);
@@ -202,7 +202,7 @@ ticketRoutes.delete('/tickets/:id/hard', async (c) => {
 // --- Batch operations ---
 
 ticketRoutes.post('/tickets/batch', async (c) => {
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(BatchActionSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const { ids, action, value } = parsed.data;
@@ -241,7 +241,7 @@ ticketRoutes.post('/tickets/batch', async (c) => {
 // --- Duplicate ---
 
 ticketRoutes.post('/tickets/duplicate', async (c) => {
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(DuplicateSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const created = await duplicateTickets(parsed.data.ids);
@@ -289,7 +289,7 @@ ticketRoutes.post('/tickets/:id/up-next', async (c) => {
 // --- Custom view query ---
 
 ticketRoutes.post('/tickets/query', async (c) => {
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(QueryTicketsSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const { logic, conditions, sort_by, sort_dir, required_tag } = parsed.data;

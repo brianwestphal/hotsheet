@@ -1,6 +1,10 @@
 import { api } from './api.js';
+import { renderIconSvg } from './icons.js';
 import type { Ticket } from './state.js';
 import { showSkillsBanner } from './tauriIntegration.js';
+
+const ICON_CHECK_13 = renderIconSvg('<path d="M20 6L9 17l-5-5"/>', 13);
+const ICON_COPY_13 = renderIconSvg('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', 13);
 
 function parseNotes(raw: string): { text: string; created_at: string }[] {
   if (raw === '') return [];
@@ -51,10 +55,10 @@ export function bindCopyPrompt() {
     if (prompt === '') return;
     void navigator.clipboard.writeText(prompt).then(() => {
       label.textContent = 'Copied!';
-      icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+      icon.innerHTML = ICON_CHECK_13;
       setTimeout(() => {
         label.textContent = 'Copy AI prompt';
-        icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+        icon.innerHTML = ICON_COPY_13;
       }, 1500);
     });
   });

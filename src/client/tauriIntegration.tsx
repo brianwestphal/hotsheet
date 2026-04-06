@@ -1,5 +1,3 @@
-import { api } from './api.js';
-
 export function getTauriInvoke(): ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null {
   const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
     | { core?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } }

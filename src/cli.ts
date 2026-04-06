@@ -1,3 +1,4 @@
+import type { PGlite } from '@electric-sql/pglite';
 import { execFile } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
@@ -243,7 +244,7 @@ async function handleEarlyFlags(args: ParsedArgs): Promise<boolean> {
  * Initialize the project: data directory, gitignore, DB, cleanup, lock.
  * Returns the initialized database instance.
  */
-async function initializeProject(dataDir: string, demo: number | null): Promise<import('@electric-sql/pglite').PGlite> {
+async function initializeProject(dataDir: string, demo: number | null): Promise<PGlite> {
   mkdirSync(dataDir, { recursive: true });
 
   if (demo === null) {
@@ -279,7 +280,7 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   scheduleAllSync(dataDir);
 
   const { runWithDataDir: runWith } = await import('./db/connection.js');
-  initSkills(actualPort, dataDir);
+  initSkills(actualPort);
   setSkillCategories(await runWith(dataDir, () => getCategories()));
   const updatedPlatforms = ensureSkills();
   if (updatedPlatforms.length > 0) {

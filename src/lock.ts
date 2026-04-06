@@ -2,8 +2,8 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 // Prevent EPIPE crashes when stdout/stderr pipe is closed (e.g., Tauri sidecar)
-process.stdout?.on?.('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'EPIPE') throw err; });
-process.stderr?.on?.('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'EPIPE') throw err; });
+process.stdout.on('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'EPIPE') throw err; });
+process.stderr.on('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'EPIPE') throw err; });
 
 // Track ALL lock paths so they can all be released on exit
 const lockPaths = new Set<string>();

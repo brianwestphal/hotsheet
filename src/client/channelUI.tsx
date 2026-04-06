@@ -32,19 +32,24 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
   if (respondedRequestIds.has(perm.request_id)) return;
   // Track which project needs attention for tab dots
   const secret = getActiveProject()?.secret;
-  if (secret) markProjectAttention(secret);
+  if (secret !== undefined && secret !== '') markProjectAttention(secret);
   if (state.settings.notify_permission !== 'none') {
     requestAttention(state.settings.notify_permission);
   }
 
   const detail = document.getElementById('permission-overlay-detail');
   if (detail) {
-    const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    let html = `<div class="permission-tool">${escHtml(perm.tool_name)}: ${escHtml(perm.description)}</div>`;
-    if (perm.input_preview !== undefined && perm.input_preview !== '') {
-      html += `<pre class="permission-preview">${escHtml(perm.input_preview)}</pre>`;
-    }
-    detail.innerHTML = html;
+    const content = toElement(
+      <div>
+        <div className="permission-tool">{perm.tool_name}: {perm.description}</div>
+        {perm.input_preview !== undefined && perm.input_preview !== ''
+          ? <pre className="permission-preview">{perm.input_preview}</pre>
+          : ''}
+      </div>
+    );
+    detail.innerHTML = '';
+    // Append each child node instead of using the wrapper div
+    while (content.firstChild) detail.appendChild(content.firstChild);
   }
 
   overlay.style.display = '';
@@ -56,14 +61,14 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
       body: { request_id: perm.request_id, behavior },
     });
     overlay!.style.display = 'none';
-    if (secret) clearProjectAttention(secret);
+    if (secret !== undefined && secret !== '') clearProjectAttention(secret);
   }
 
   function dismiss() {
     respondedRequestIds.add(perm.request_id);
     void api('/channel/permission/dismiss', { method: 'POST' });
     overlay!.style.display = 'none';
-    if (secret) clearProjectAttention(secret);
+    if (secret !== undefined && secret !== '') clearProjectAttention(secret);
   }
 
   // Use one-time click handlers via { once: true }
@@ -229,7 +234,7 @@ function triggerChannelAndMarkBusy(message?: string) {
   setChannelBusy(true);
   // Track which project is busy for tab status dots
   const secret = getActiveProject()?.secret;
-  if (secret) markProjectBusy(secret);
+  if (secret !== undefined && secret !== '') markProjectBusy(secret);
   // Ensure AI tool skills are installed/up-to-date before triggering
   void api('/ensure-skills', { method: 'POST' });
   void api('/channel/trigger', { method: 'POST', body: { message } });
@@ -237,7 +242,7 @@ function triggerChannelAndMarkBusy(message?: string) {
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
   channelBusyTimeout = setTimeout(() => {
     if (channelBusy) setChannelBusy(false);
-    if (secret) clearProjectBusy(secret);
+    if (secret !== undefined && secret !== '') clearProjectBusy(secret);
   }, 120000);
 }
 
@@ -321,7 +326,7 @@ export async function initChannel() {
   startPermissionPolling();
 
   // Only bind the click handler once (initChannel is called on every project switch)
-  if (btn.dataset.bound) return;
+  if (btn.dataset.bound !== undefined && btn.dataset.bound !== '') return;
   btn.dataset.bound = 'true';
 
   let clickTimer: ReturnType<typeof setTimeout> | null = null;
@@ -436,7 +441,6 @@ export function checkChannelDone() {
   if (!enabled) return;
 
   api<{ done?: boolean; alive?: boolean }>('/channel/status').then(s => {
-    if (!s) return;
     // Update alive/disconnected warning
     if (s.alive !== undefined) setChannelAlive(s.alive);
     // Check for done signal
@@ -444,7 +448,7 @@ export function checkChannelDone() {
       setChannelBusy(false);
       if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
       const secret = getActiveProject()?.secret;
-      if (secret) clearProjectBusy(secret);
+      if (secret !== undefined && secret !== '') clearProjectBusy(secret);
     }
   }).catch(() => {});
 }

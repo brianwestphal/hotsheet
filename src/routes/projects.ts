@@ -1,6 +1,6 @@
 import { existsSync } from 'fs';
-import { resolve } from 'path';
 import { Hono } from 'hono';
+import { resolve } from 'path';
 
 import { openInFileManager } from '../open-in-file-manager.js';
 import { addToProjectList, removeFromProjectList, reorderProjectList } from '../project-list.js';
@@ -32,7 +32,7 @@ projectRoutes.get('/', async (c) => {
 
 /** POST /api/projects/register — register a new project by dataDir path */
 projectRoutes.post('/register', async (c) => {
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(RegisterProjectSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
@@ -121,7 +121,7 @@ projectRoutes.post('/:secret/reveal', async (c) => {
 
 /** POST /api/projects/reorder — reorder the project list */
 projectRoutes.post('/reorder', async (c) => {
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(ReorderProjectsSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
 

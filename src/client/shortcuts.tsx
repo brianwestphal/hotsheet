@@ -5,7 +5,7 @@ import { closeActiveTab, switchTabByOffset } from './projectTabs.js';
 import { state } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { cancelPendingSave, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
-import { canRedo, canUndo, performRedo, performUndo, trackedBatch, trackedCompoundBatch } from './undo/actions.js';
+import { performRedo, performUndo, trackedBatch, trackedCompoundBatch } from './undo/actions.js';
 
 let detailSaveTimeout: ReturnType<typeof setTimeout> | null = null;
 

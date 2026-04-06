@@ -24,7 +24,7 @@ attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
   const body = await c.req.parseBody();
   const file = body['file'];
 
-  if (!file || typeof file === 'string') {
+  if (typeof file === 'string') {
     return c.json({ error: 'No file uploaded' }, 400);
   }
 

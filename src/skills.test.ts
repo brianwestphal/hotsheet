@@ -111,7 +111,7 @@ describe('ensureClaudeSkills', () => {
     // Create .claude directory so ensureSkills detects Claude Code
     mkdirSync(join(tempDir, '.claude'), { recursive: true });
     // Init skills with correct port and data dir
-    initSkills(4174, settingsDir);
+    initSkills(4174);
     setSkillCategories(DEFAULT_CATEGORIES);
     // Override process.cwd() for skill creation
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
@@ -196,7 +196,7 @@ describe('ensureClaudePermissions', () => {
     mkdirSync(settingsDir, { recursive: true });
     writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({ secret: 'abc', port: 4174 }));
     mkdirSync(join(tempDir, '.claude'), { recursive: true });
-    initSkills(4174, settingsDir);
+    initSkills(4174);
     setSkillCategories(DEFAULT_CATEGORIES);
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
   });
@@ -259,7 +259,7 @@ describe('ensureClaudePermissions', () => {
   });
 
   it('does not add permissions when port is out of range', () => {
-    initSkills(5000, settingsDir);
+    initSkills(5000);
     ensureSkills();
     const settingsPath = join(tempDir, '.claude', 'settings.json');
     if (existsSync(settingsPath)) {
@@ -281,7 +281,7 @@ describe('mainSkillBody content', () => {
     mkdirSync(settingsDir, { recursive: true });
     writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({}));
     mkdirSync(join(tempDir, '.claude'), { recursive: true });
-    initSkills(4174, settingsDir);
+    initSkills(4174);
     setSkillCategories(DEFAULT_CATEGORIES);
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
   });
@@ -326,7 +326,7 @@ describe('ticket creation skill content', () => {
     mkdirSync(settingsDir, { recursive: true });
     writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({ secret: 'mysecret', port: 4174 }));
     mkdirSync(join(tempDir, '.claude'), { recursive: true });
-    initSkills(4174, settingsDir);
+    initSkills(4174);
     setSkillCategories(DEFAULT_CATEGORIES);
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
   });
@@ -378,7 +378,7 @@ describe('consumeSkillsCreatedFlag', () => {
     mkdirSync(settingsDir, { recursive: true });
     writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({}));
     mkdirSync(join(tempDir, '.claude'), { recursive: true });
-    initSkills(4174, settingsDir);
+    initSkills(4174);
     setSkillCategories(DEFAULT_CATEGORIES);
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
   });
@@ -416,7 +416,7 @@ describe('setSkillCategories', () => {
     mkdirSync(settingsDir, { recursive: true });
     writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({}));
     mkdirSync(join(tempDir, '.claude'), { recursive: true });
-    initSkills(4174, settingsDir);
+    initSkills(4174);
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
   });
 
@@ -458,7 +458,7 @@ describe('multi-platform skill creation', () => {
     settingsDir = join(tempDir, '.hotsheet');
     mkdirSync(settingsDir, { recursive: true });
     writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({}));
-    initSkills(4174, settingsDir);
+    initSkills(4174);
     setSkillCategories(DEFAULT_CATEGORIES);
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
   });

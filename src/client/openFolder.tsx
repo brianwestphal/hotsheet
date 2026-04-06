@@ -13,8 +13,6 @@ interface BrowseResult {
   hasHotsheet: boolean;
 }
 
-let currentPath = '';
-
 function renderBreadcrumb(path: string) {
   const container = document.getElementById('open-folder-breadcrumb')!;
   const parts = path.split('/').filter(Boolean);
@@ -39,7 +37,6 @@ function renderBreadcrumb(path: string) {
 async function navigateTo(path: string) {
   try {
     const result = await api<BrowseResult>(`/browse?path=${encodeURIComponent(path)}`);
-    currentPath = result.path;
     renderBreadcrumb(result.path);
     renderEntries(result);
     updateFooter(result);
@@ -109,7 +106,7 @@ export function showOpenFolderDialog() {
     void (async () => {
       try {
         const selected = (await invoke('pick_folder')) as string | null;
-        if (selected) {
+        if (selected !== null && selected !== '') {
           await openSelectedFolder(selected);
         }
       } catch {
@@ -140,7 +137,7 @@ export function bindOpenFolder() {
   // Select button
   document.getElementById('open-folder-select-btn')?.addEventListener('click', () => {
     const path = (document.getElementById('open-folder-select-btn') as HTMLButtonElement).dataset.selectedPath;
-    if (path) void openSelectedFolder(path);
+    if (path !== undefined && path !== '') void openSelectedFolder(path);
   });
 
   // Listen for Tauri menu event

@@ -14,7 +14,7 @@ const killedProcesses = new Set<number>(); // Processes explicitly killed by use
 shellRoutes.post('/shell/exec', async (c) => {
   const { spawn } = await import('child_process');
   const dataDir = c.get('dataDir');
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(ShellExecSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const command = parsed.data.command;
@@ -79,7 +79,7 @@ shellRoutes.post('/shell/exec', async (c) => {
 });
 
 shellRoutes.post('/shell/kill', async (c) => {
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(ShellKillSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const child = runningProcesses.get(parsed.data.id);

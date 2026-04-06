@@ -48,11 +48,8 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
     if (!res.ok) {
-      let message = `Server returned ${res.status}`;
-      try {
-        const body = await res.json();
-        if (body && typeof body.error === 'string') message = body.error;
-      } catch { /* body not JSON, use default message */ }
+      const body = await res.json().catch(() => null) as { error?: string } | null;
+      const message = body?.error ?? `Server returned ${res.status}`;
       if (res.status >= 500) showErrorPopup(message);
       throw new Error(message);
     }
@@ -76,11 +73,8 @@ export async function apiUpload<T>(path: string, file: File): Promise<T> {
     }
     const res = await fetch(buildUrl(path, 'POST'), { method: 'POST', body: form, headers });
     if (!res.ok) {
-      let message = `Server returned ${res.status}`;
-      try {
-        const body = await res.json();
-        if (body && typeof body.error === 'string') message = body.error;
-      } catch { /* body not JSON, use default message */ }
+      const body = await res.json().catch(() => null) as { error?: string } | null;
+      const message = body?.error ?? `Server returned ${res.status}`;
       if (res.status >= 500) showErrorPopup(message);
       throw new Error(message);
     }

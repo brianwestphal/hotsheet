@@ -6,7 +6,7 @@ import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
 import { initCommandLog, refreshCommandLog } from './commandLog.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
-import { renderDashboard, renderSidebarWidget } from './dashboard.js';
+import { initDashboardWidget, restoreTicketList } from './dashboardMode.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, parseTags, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
@@ -15,14 +15,18 @@ import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
 import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
 import { bindSettingsDialog } from './settingsDialog.js';
+import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
 import { bindKeyboardShortcuts, getDetailSaveTimeout, setDetailSaveTimeout } from './shortcuts.js';
 import { bindSearchInput, bindSidebar, bindSortControls } from './sidebar.js';
-import type { AppSettings, CategoryDef, Ticket } from './state.js';
+import type { AppSettings, Ticket } from './state.js';
 import { allKnownTags, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, refreshAllKnownTags, state, STATUS_ITEMS } from './state.js';
 import { showTagsDialog } from './tagsDialog.js';
 import { checkForUpdate, restoreAppIcon } from './tauriIntegration.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';
+
+// Wire up the restoreTicketList callback used by settingsLoader's category buttons
+setRestoreTicketListCallback(restoreTicketList);
 
 /** Reload all app state — used after project switch and during init. */
 async function reloadAppState() {
@@ -30,7 +34,7 @@ async function reloadAppState() {
   // Sync toggle button UI to the new project's saved settings
   updateLayoutToggle();
   updateDetailPositionToggle();
-  await loadCategories();
+  await loadCategories(rebuildCategoryUI);
   await loadCustomViews();
   void loadAppName();
   suppressAnimation();
@@ -51,7 +55,7 @@ async function init() {
   });
 
   await loadSettings();
-  await loadCategories();
+  await loadCategories(rebuildCategoryUI);
   await loadCustomViews();
   void loadAppName();
   suppressAnimation();
@@ -107,93 +111,6 @@ async function init() {
     const el = document.getElementById('ticket-list');
     if (el) el.innerHTML = `<div style="padding:20px;color:red">Init error: ${String(err)}</div>`;
   }
-}
-
-// --- Settings ---
-
-async function loadSettings() {
-  try {
-    const settings = await api<Record<string, string>>('/settings');
-    if (settings.detail_position === 'side' || settings.detail_position === 'bottom') {
-      state.settings.detail_position = settings.detail_position;
-    }
-    if (settings.detail_width !== '') state.settings.detail_width = parseInt(settings.detail_width, 10) || 360;
-    if (settings.detail_height !== '') state.settings.detail_height = parseInt(settings.detail_height, 10) || 300;
-    if (settings.trash_cleanup_days !== '') state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || 3;
-    if (settings.verified_cleanup_days !== '') state.settings.verified_cleanup_days = parseInt(settings.verified_cleanup_days, 10) || 30;
-    if (settings.layout === 'list' || settings.layout === 'columns') state.layout = settings.layout;
-    if (settings.notify_permission === 'none' || settings.notify_permission === 'once' || settings.notify_permission === 'persistent') {
-      state.settings.notify_permission = settings.notify_permission;
-    }
-    if (settings.notify_completed === 'none' || settings.notify_completed === 'once' || settings.notify_completed === 'persistent') {
-      state.settings.notify_completed = settings.notify_completed;
-    }
-    if (settings.auto_order !== '') {
-      state.settings.auto_order = settings.auto_order !== 'false';
-    }
-    if (settings.sort_by) state.sortBy = settings.sort_by;
-    if (settings.sort_dir) state.sortDir = settings.sort_dir;
-  } catch { /* use defaults */ }
-
-  // Sync sort dropdown UI to loaded state
-  const sortSelect = document.getElementById('sort-select') as HTMLSelectElement | null;
-  if (sortSelect) sortSelect.value = `${state.sortBy}:${state.sortDir}`;
-
-  applyDetailPosition(state.settings.detail_position);
-  applyDetailSize();
-}
-
-async function loadCategories() {
-  try {
-    const categories = await api<CategoryDef[]>('/categories');
-    if (categories.length > 0) state.categories = categories;
-  } catch { /* use defaults */ }
-  rebuildCategoryUI();
-}
-
-function rebuildCategoryUI() {
-  // Rebuild sidebar category buttons
-  const sidebarSection = document.getElementById('sidebar-categories');
-  if (sidebarSection) {
-    const label = sidebarSection.querySelector('.sidebar-label');
-    sidebarSection.innerHTML = '';
-    if (label) sidebarSection.appendChild(label);
-    for (const cat of state.categories) {
-      const btn = toElement(
-        <button className={`sidebar-item${state.view === `category:${cat.id}` ? ' active' : ''}`} data-view={`category:${cat.id}`}>
-          <span className="cat-dot" style={`background:${cat.color}`}></span> {cat.label}
-        </button>
-      );
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
-        btn.classList.add('active');
-        state.view = `category:${cat.id}`;
-        state.selectedIds.clear();
-        restoreTicketList();
-        suppressAnimation();
-        void loadTickets();
-      });
-      sidebarSection.appendChild(btn);
-    }
-  }
-
-  // Refresh detail panel category button if a ticket is active
-  if (state.activeTicketId != null) {
-    const ticket = state.tickets.find(t => t.id === state.activeTicketId);
-    if (ticket) updateDetailCategory(ticket.category);
-  }
-
-}
-
-async function loadAppName() {
-  try {
-    const fs = await api<{ appName?: string }>('/file-settings');
-    if (fs.appName !== undefined && fs.appName !== '') {
-      document.title = fs.appName;
-      const h1 = document.querySelector('.app-title h1');
-      if (h1) h1.textContent = fs.appName;
-    }
-  } catch { /* ignore */ }
 }
 
 // --- Glassbox integration ---
@@ -267,65 +184,6 @@ function bindDetailPositionToggle() {
     });
   });
   updateDetailPositionToggle();
-}
-
-// --- Dashboard ---
-
-function restoreTicketList() {
-  const dashContainer = document.getElementById('dashboard-container');
-  if (dashContainer) {
-    dashContainer.id = 'ticket-list';
-    dashContainer.innerHTML = '';
-    exitDashboardMode();
-  }
-}
-
-const DASHBOARD_HIDDEN_IDS = ['search-input', 'layout-toggle', 'sort-select', 'detail-position-toggle', 'glassbox-btn'];
-
-function enterDashboardMode() {
-  state.view = 'dashboard';
-  document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
-  // Hide toolbar elements
-  for (const id of DASHBOARD_HIDDEN_IDS) {
-    const el = document.getElementById(id);
-    if (el) {
-      const container = el.closest('.search-box, .layout-toggle, .sort-controls') || el;
-      (container as HTMLElement).style.display = 'none';
-    }
-  }
-  // Hide batch toolbar and detail panel
-  const batchToolbar = document.getElementById('batch-toolbar');
-  if (batchToolbar) batchToolbar.style.display = 'none';
-  const detailPanel = document.getElementById('detail-panel');
-  if (detailPanel) detailPanel.style.display = 'none';
-  const resizeHandle = document.getElementById('detail-resize-handle');
-  if (resizeHandle) resizeHandle.style.display = 'none';
-
-  const ticketList = document.getElementById('ticket-list')!;
-  ticketList.innerHTML = '';
-  ticketList.id = 'dashboard-container';
-  ticketList.classList.remove('ticket-list-columns');
-  void renderDashboard(ticketList);
-}
-
-function exitDashboardMode() {
-  // Restore toolbar elements
-  for (const id of DASHBOARD_HIDDEN_IDS) {
-    const el = document.getElementById(id);
-    if (el) {
-      const container = el.closest('.search-box, .layout-toggle, .sort-controls') || el;
-      (container as HTMLElement).style.display = '';
-    }
-  }
-  restoreTicketList();
-  // Detail panel and resize handle are restored by syncDetailPanel on next render
-}
-
-async function initDashboardWidget() {
-  const widget = await renderSidebarWidget();
-  const statsBar = document.getElementById('stats-bar');
-  if (statsBar) statsBar.after(widget);
-  widget.addEventListener('click', () => enterDashboardMode());
 }
 
 // --- Detail panel ---

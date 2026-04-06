@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+
 import { getDb } from './connection.js';
 
 interface SnapshotData {

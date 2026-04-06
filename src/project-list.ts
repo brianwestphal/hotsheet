@@ -11,7 +11,7 @@ export function readProjectList(): string[] {
   const path = getProjectListPath();
   if (!existsSync(path)) return [];
   try {
-    const data = JSON.parse(readFileSync(path, 'utf-8'));
+    const data: unknown = JSON.parse(readFileSync(path, 'utf-8'));
     if (!Array.isArray(data)) return [];
     return data.filter((d): d is string => typeof d === 'string');
   } catch {

@@ -1,6 +1,7 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { PGlite } from '@electric-sql/pglite';
 import { mkdirSync, renameSync, rmSync } from 'fs';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { join } from 'path';
 
 // Per-dataDir database instances
@@ -181,12 +182,12 @@ async function initSchema(db: PGlite): Promise<void> {
     ALTER TABLE tickets ALTER COLUMN deleted_at TYPE TIMESTAMPTZ;
     ALTER TABLE attachments ALTER COLUMN created_at TYPE TIMESTAMPTZ;
     ALTER TABLE command_log ALTER COLUMN created_at TYPE TIMESTAMPTZ;
-  `).catch((e: Error) => { if (!e.message.includes('already exists') && !e.message.includes('already')) console.error('Migration error (TIMESTAMPTZ):', e.message); });
+  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists') && !e.message.includes('already')) console.error('Migration error (TIMESTAMPTZ):', e.message); });
 
   // Migrations for existing databases
   await db.exec(`
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]';
-  `).catch((e: Error) => { if (!e.message.includes('already exists')) console.error('Migration error (columns):', e.message); });
+  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (columns):', e.message); });
 }

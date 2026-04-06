@@ -61,7 +61,7 @@ export function registerChannelForAll(dataDirs: string[]): void {
 
 /** Remove the channel server from .mcp.json for a specific project */
 export function unregisterChannel(dataDir?: string): void {
-  const root = dataDir ? projectRoot(dataDir) : process.cwd();
+  const root = dataDir !== undefined ? projectRoot(dataDir) : process.cwd();
   const mcpPath = join(root, '.mcp.json');
 
   if (!existsSync(mcpPath)) return;

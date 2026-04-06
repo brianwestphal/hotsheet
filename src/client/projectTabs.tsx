@@ -153,7 +153,7 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
   const menu = toElement(
     <div className="tab-context-menu" id="tab-context-menu">
       {items.map(item => (
-        <div className={`tab-context-item${item.disabled ? ' disabled' : ''}`}>
+        <div className={`tab-context-item${item.disabled === true ? ' disabled' : ''}`}>
           {item.label}
         </div>
       ))}
@@ -168,7 +168,7 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
   // Bind click handlers for close items
   const menuItems = menu.querySelectorAll('.tab-context-item:not([data-action])');
   items.forEach((item, i) => {
-    if (!item.disabled) {
+    if (item.disabled !== true) {
       menuItems[i].addEventListener('click', () => {
         menu.remove();
         item.action();
@@ -205,16 +205,15 @@ let dropTarget: { secret: string; side: 'before' | 'after' } | null = null;
 
 function ensureDropIndicator(): HTMLElement {
   if (!dropIndicator) {
-    dropIndicator = document.createElement('div');
-    dropIndicator.className = 'tab-drop-indicator';
+    dropIndicator = toElement(<div className="tab-drop-indicator" />);
   }
   return dropIndicator;
 }
 
 function positionIndicator(el: HTMLElement, side: 'before' | 'after') {
   const indicator = ensureDropIndicator();
-  const container = el.closest('.project-tabs-inner') as HTMLElement;
-  if (!container) return;
+  const container = el.closest('.project-tabs-inner');
+  if (container === null) return;
   if (!indicator.parentElement) container.appendChild(indicator);
 
   const containerRect = container.getBoundingClientRect();
@@ -304,7 +303,7 @@ export async function refreshProjectChannelStatus() {
   } catch { /* ignore */ }
   // Sync the active project's disconnected warning
   const activeSecret = getActiveProject()?.secret;
-  if (activeSecret) {
+  if (activeSecret !== undefined && activeSecret !== '') {
     setChannelAlive(aliveProjects.has(activeSecret));
   }
   updateStatusDots();
@@ -319,8 +318,8 @@ export function updateStatusDots() {
   const busySecrets = getProjectBusySecrets();
 
   for (const dot of document.querySelectorAll('.project-tab-dot')) {
-    const tab = dot.closest('.project-tab') as HTMLElement | null;
-    if (!tab) continue;
+    const tab = dot.closest<HTMLElement>('.project-tab');
+    if (tab === null) continue;
     const secret = tab.dataset.secret ?? '';
 
     if (attentionSecrets.has(secret)) {
@@ -336,9 +335,9 @@ export function updateStatusDots() {
 // --- Scroll active tab into view ---
 
 function scrollActiveTabIntoView() {
-  const container = document.querySelector('.project-tabs-inner') as HTMLElement | null;
+  const container = document.querySelector('.project-tabs-inner');
   if (!container) return;
-  const activeTab = container.querySelector('.project-tab.active') as HTMLElement | null;
+  const activeTab = container.querySelector('.project-tab.active');
   if (!activeTab) return;
 
   const containerRect = container.getBoundingClientRect();
@@ -356,7 +355,7 @@ let resizeObserver: ResizeObserver | null = null;
 
 function setupScrollObserver() {
   resizeObserver?.disconnect();
-  const container = document.querySelector('.project-tabs-inner') as HTMLElement | null;
+  const container = document.querySelector('.project-tabs-inner');
   if (!container) return;
   resizeObserver = new ResizeObserver(() => scrollActiveTabIntoView());
   resizeObserver.observe(container);
@@ -403,10 +402,10 @@ function renderTabs() {
 
     el.addEventListener('click', () => void switchProject(project));
     el.addEventListener('contextmenu', (e) => showTabContextMenu(e as MouseEvent, project));
-    el.addEventListener('dragstart', (e) => handleDragStart(e as DragEvent, project));
-    el.addEventListener('dragover', (e) => handleDragOver(e as DragEvent));
-    el.addEventListener('drop', (e) => handleDrop(e as DragEvent, project));
-    el.addEventListener('dragend', (e) => handleDragEnd(e as DragEvent));
+    el.addEventListener('dragstart', (e) => handleDragStart(e, project));
+    el.addEventListener('dragover', (e) => handleDragOver(e));
+    el.addEventListener('drop', (e) => handleDrop(e, project));
+    el.addEventListener('dragend', (e) => handleDragEnd(e));
   }
 
   titleArea.appendChild(tabList);

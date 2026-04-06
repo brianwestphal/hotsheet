@@ -1,13 +1,12 @@
-import { existsSync, readdirSync, statSync, writeFileSync } from 'fs';
+import { existsSync, readdirSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
-import { tmpdir } from 'os';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join, relative, resolve } from 'path';
 
 import { getTicketStats } from '../db/queries.js';
 import { openInFileManager } from '../open-in-file-manager.js';
 import { getAllProjects } from '../projects.js';
-import { consumeSkillsCreatedFlag, ensureSkills, ensureSkillsForDir } from '../skills.js';
+import { consumeSkillsCreatedFlag, ensureSkillsForDir } from '../skills.js';
 import type { AppEnv } from '../types.js';
 import { addPollWaiter, getChangeVersion } from './notify.js';
 import { parseBody, PrintSchema } from './validation.js';
@@ -161,7 +160,7 @@ dashboardRoutes.post('/gitignore/add', async (c) => {
 // --- Print (Tauri) ---
 
 dashboardRoutes.post('/print', async (c) => {
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(PrintSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
 

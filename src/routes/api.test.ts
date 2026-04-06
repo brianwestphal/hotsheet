@@ -90,9 +90,12 @@ interface WorklistInfoResponse {
 }
 
 interface CategoryEntry {
-  key: string;
+  id: string;
   label: string;
+  shortLabel: string;
   color: string;
+  shortcutKey: string;
+  description: string;
 }
 
 // Mock markdown sync and skills to avoid side effects in API tests

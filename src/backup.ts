@@ -210,7 +210,7 @@ export async function loadBackupForPreview(dataDir: string, tier: string, filena
 
 export async function cleanupPreview(dataDir?: string): Promise<void> {
   // If a specific dataDir is given, clean up just that one
-  const dirs = dataDir ? [dataDir] : Array.from(previewDataDirs);
+  const dirs = dataDir !== undefined ? [dataDir] : Array.from(previewDataDirs);
   for (const dir of dirs) {
     const db = previewDbs.get(dir);
     if (db) {

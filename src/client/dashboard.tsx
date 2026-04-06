@@ -182,9 +182,17 @@ function addChartHover(card: HTMLElement, data: { date: string; lines: { label: 
 
     const d = data[idx];
     tooltip.style.display = '';
-    tooltip.innerHTML = `<div class="chart-tooltip-date">${fmtDate(d.date)}</div>${d.lines.map(l =>
-      `<div class="chart-tooltip-row"><span class="chart-legend-dot" style="background:${l.color}"></span>${l.label}: <b>${l.value}</b></div>`
-    ).join('')}`;
+    const tooltipContent = toElement(
+      <div>
+        <div className="chart-tooltip-date">{fmtDate(d.date)}</div>
+        {d.lines.map(l =>
+          <div className="chart-tooltip-row"><span className="chart-legend-dot" style={`background:${l.color}`}></span>{l.label}: <b>{String(l.value)}</b></div>
+        )}
+      </div>
+    );
+    tooltip.innerHTML = '';
+    // Append children from the wrapper div
+    while (tooltipContent.firstChild) tooltip.appendChild(tooltipContent.firstChild);
 
     // Position tooltip relative to body
     const tooltipLeft = cursorLeft + 10;
@@ -489,16 +497,22 @@ export async function renderSidebarWidget(): Promise<HTMLElement> {
       return `<rect x="${i * 14}" y="${20 - barH}" width="10" height="${barH}" fill="#3b82f6" rx="1" opacity="0.7"/>`;
     }).join('');
 
-    widget.innerHTML = `
-      <div class="sidebar-widget-spark"><svg viewBox="0 0 98 20" width="98" height="20">${barSvg}</svg></div>
-      <div class="sidebar-widget-stats">
-        <span class="sidebar-widget-value">${kpi.completedThisWeek} completed</span>
-        ${arrow ? `<span class="sidebar-widget-trend ${change > 0 ? 'up' : 'down'}">${arrow}${Math.abs(change)}%</span>` : ''}
+    const content = toElement(
+      <div>
+        <div className="sidebar-widget-spark">{raw(`<svg viewBox="0 0 98 20" width="98" height="20">${barSvg}</svg>`)}</div>
+        <div className="sidebar-widget-stats">
+          <span className="sidebar-widget-value">{kpi.completedThisWeek} completed</span>
+          {arrow ? <span className={`sidebar-widget-trend ${change > 0 ? 'up' : 'down'}`}>{arrow}{Math.abs(change)}%</span> : null}
+        </div>
+        <div className="sidebar-widget-wip">{kpi.wipCount} in progress</div>
       </div>
-      <div class="sidebar-widget-wip">${kpi.wipCount} in progress</div>
-    `;
+    );
+    widget.innerHTML = '';
+    while (content.firstChild) widget.appendChild(content.firstChild);
   } catch {
-    widget.innerHTML = '<div class="sidebar-widget-stats">Dashboard</div>';
+    const fallback = toElement(<div className="sidebar-widget-stats">Dashboard</div>);
+    widget.innerHTML = '';
+    widget.appendChild(fallback);
   }
   return widget;
 }

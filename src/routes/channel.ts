@@ -4,7 +4,7 @@ import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
 import type { AppEnv } from '../types.js';
 import { notifyChange } from './notify.js';
-import { parseBody, ChannelTriggerSchema, PermissionRespondSchema } from './validation.js';
+import { ChannelTriggerSchema, parseBody, PermissionRespondSchema } from './validation.js';
 
 export const channelRoutes = new Hono<AppEnv>();
 
@@ -58,7 +58,7 @@ channelRoutes.post('/channel/trigger', async (c) => {
   const { triggerChannel } = await import('../channel-config.js');
   const dataDir = c.get('dataDir');
   const serverPort = parseInt(new URL(c.req.url).port || '4174', 10);
-  const raw = await c.req.json().catch(() => ({}));
+  const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(ChannelTriggerSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   channelDoneFlags.delete(c.get('projectSecret')); // Reset done flag on new trigger
@@ -103,7 +103,7 @@ channelRoutes.post('/channel/permission/respond', async (c) => {
   const dataDir = c.get('dataDir');
   const port = getChannelPort(dataDir);
   if (port === null) return c.json({ error: 'Channel not available' }, 503);
-  const raw = await c.req.json();
+  const raw: unknown = await c.req.json();
   const parsed = parseBody(PermissionRespondSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const action = parsed.data.behavior === 'allow' ? 'Allowed' : 'Denied';

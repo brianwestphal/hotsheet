@@ -52,7 +52,7 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   scheduleAllSync(absDataDir);
 
   // Initialize and sync AI tool skills — run in this project's DB context
-  initSkills(port, absDataDir);
+  initSkills(port);
   setSkillCategories(await runWithDataDir(absDataDir, () => getCategories()));
   ensureSkills();
 

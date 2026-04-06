@@ -8,12 +8,10 @@ import { DEFAULT_CATEGORIES } from './types.js';
 export const SKILL_VERSION = 6;
 
 let skillPort: number;
-let skillDataDir: string;
 let skillCategories: CategoryDef[] = DEFAULT_CATEGORIES;
 
-export function initSkills(port: number, dataDir: string) {
+export function initSkills(port: number) {
   skillPort = port;
-  skillDataDir = dataDir;
 }
 
 export function setSkillCategories(categories: CategoryDef[]) {

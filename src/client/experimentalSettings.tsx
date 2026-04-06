@@ -77,7 +77,7 @@ export function renderChannelCommands() {
       if (isShell) {
         void runShellCommand(cmd.prompt, cmd.name, cmd.autoShowLog === true);
       } else if (!isChannelAlive()) {
-        // eslint-disable-next-line no-alert
+         
         alert('Claude is not connected. Launch Claude Code with channel support first.');
       } else {
         triggerChannelAndMarkBusy(cmd.prompt);
@@ -87,7 +87,6 @@ export function renderChannelCommands() {
   }
 }
 
-let shellBusyId: number | null = null;
 let shellPollTimer: ReturnType<typeof setInterval> | null = null;
 
 let shellAutoShowLog = false;
@@ -100,7 +99,7 @@ function startShellPoll(id: number) {
       if (!ids.includes(id)) {
         // Process finished
         const wasAutoShow = shellAutoShowLog;
-        shellBusyId = null;
+
         shellAutoShowLog = false;
         if (shellPollTimer) { clearInterval(shellPollTimer); shellPollTimer = null; }
         setShellBusy(false);
@@ -133,7 +132,7 @@ async function runShellCommand(command: string, name?: string, autoShow = false)
     // Ensure AI tool skills are installed/up-to-date before running commands
     void api('/ensure-skills', { method: 'POST' });
     const result = await api<{ id: number }>('/shell/exec', { method: 'POST', body: { command, name } });
-    shellBusyId = result.id;
+
     startShellPoll(result.id);
     void refreshLogBadge();
   } catch {
