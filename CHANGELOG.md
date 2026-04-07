@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.12.0] - 2026-04-07
+
+- Multi-project support within a single app instance.  Tabbed interface.
+- Custom ticket prefix
+- Various usability improvements
+
+## [0.12.0] - 2026-04-07
+
+- Multi-project support within a single app instance.  Tabbed interface.
+- Custom ticket prefix
+- Various usability improvements
+
 ## [0.11.0] - 2026-04-03
 
 - Added command log - accessible through new button on right side of bottom status bar
