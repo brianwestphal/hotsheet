@@ -39,7 +39,7 @@ let channelEnabledState = false;
 export async function reloadCustomCommands(): Promise<void> {
   try {
     const settings = await api<Record<string, string>>('/settings');
-    if (settings.custom_commands !== undefined && settings.custom_commands !== '') {
+    if (settings.custom_commands !== '') {
       try { customCommands = JSON.parse(settings.custom_commands) as CustomCommand[]; } catch { customCommands = []; }
     } else {
       customCommands = [];

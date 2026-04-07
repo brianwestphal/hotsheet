@@ -433,8 +433,9 @@ function bindCliToolSettings() {
   }
 
   // Check current status
-  void invoke('check_cli_installed').then((installed) => {
-    if (installed) {
+  void invoke('check_cli_installed').then((result: unknown) => {
+    const data = result as { installed?: boolean } | null;
+    if (data?.installed === true) {
       showInstalled();
     } else {
       showNotInstalled();
@@ -459,8 +460,9 @@ function bindCliToolSettings() {
   // Re-check when settings dialog opens
   const settingsBtn = document.getElementById('settings-btn')!;
   settingsBtn.addEventListener('click', () => {
-    void invoke('check_cli_installed').then((installed) => {
-      if (installed) showInstalled();
+    void invoke('check_cli_installed').then((result: unknown) => {
+      const data = result as { installed?: boolean } | null;
+      if (data?.installed === true) showInstalled();
       else showNotInstalled();
     }).catch(() => {});
   });
