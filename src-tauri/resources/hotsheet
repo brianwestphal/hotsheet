@@ -161,6 +161,14 @@ for i in $(seq 1 150); do
       SERVER_URL=$(echo "$LINE" | sed 's/.*running at //' | tr -d '[:space:]')
       break
     fi
+    # Check if the CLI joined an existing instance and exited
+    JOINED=$(grep "running instance on port " "$LOGFILE" 2>/dev/null || true)
+    if [ -n "$JOINED" ]; then
+      PORT=$(echo "$JOINED" | sed 's/.*running instance on port //' | tr -d '[:space:]')
+      SERVER_URL="http://localhost:$PORT"
+      NODE_PID=""
+      break
+    fi
   fi
   if ! kill -0 $NODE_PID 2>/dev/null; then
     echo "Error: Server failed to start" >&2
