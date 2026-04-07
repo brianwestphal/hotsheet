@@ -193,11 +193,11 @@ function notifyMainServer(abortSignal?: AbortSignal): Promise<void> {
           process.stderr.write(`[notify] POST ${url} returned ${res.status}\n`);
         }
       })
-      .catch(err => {
-        process.stderr.write(`[notify] POST ${url} failed: ${err}\n`);
+      .catch((err: unknown) => {
+        process.stderr.write(`[notify] POST ${url} failed: ${String(err)}\n`);
       });
-  } catch (err) {
-    process.stderr.write(`[notify] error reading settings: ${err}\n`);
+  } catch (err: unknown) {
+    process.stderr.write(`[notify] error reading settings: ${String(err)}\n`);
     return Promise.resolve();
   }
 }

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.12.1] - 2026-04-07
+
+- Improved permissions prompt handling
+
 ## [0.12.0] - 2026-04-07
 
 - Multi-project support within a single app instance.  Tabbed interface.
