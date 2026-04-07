@@ -16,7 +16,8 @@ let lastAccumulatedAt: number;
 /** Trigger the Web Share API, falling back to clipboard copy. */
 async function triggerShare(): Promise<void> {
   try {
-    if ('share' in navigator) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- navigator.share is not available in all browsers at runtime
+    if (navigator.share !== undefined) {
       await navigator.share({ title: 'Hot Sheet', text: SHARE_TEXT, url: SHARE_URL });
     } else {
       await navigator.clipboard.writeText(`${SHARE_TEXT}\n${SHARE_URL}`);
