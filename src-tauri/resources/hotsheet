@@ -186,6 +186,19 @@ if [ -z "$SERVER_URL" ]; then
   exit 1
 fi
 
+# If we joined an existing instance (no new server started), just activate the running app
+if [ -z "$NODE_PID" ]; then
+  STUB_APP="$DATA_DIR_ABS/$APP_NAME.app"
+  if [ -d "$STUB_APP" ]; then
+    # Activate the existing stub app (brings window to front)
+    osascript -e "tell application \"$APP_NAME\" to activate" 2>/dev/null || open -a "$STUB_APP" --args --data-dir "$DATA_DIR_ABS"
+  else
+    # No stub app — open the URL directly
+    open "$SERVER_URL"
+  fi
+  exit 0
+fi
+
 # Write server info to /tmp (stub apps can't access ~/Documents due to macOS privacy)
 SERVER_INFO="/tmp/hotsheet-server-$(echo "$DATA_DIR_ABS" | shasum -a 256 | cut -c1-12).info"
 echo "$SERVER_URL $NODE_PID" > "$SERVER_INFO"
