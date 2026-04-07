@@ -58,7 +58,11 @@ test.describe('Channel API endpoints', () => {
   });
 
   test('GET /api/channel/permission returns response with pending field', async ({ page }) => {
-    const res = await page.request.get('/api/channel/permission');
+    // Permission endpoint is a long-poll (30s timeout). Wake it immediately so the test doesn't block.
+    const resPromise = page.request.get('/api/channel/permission');
+    await page.waitForTimeout(100);
+    await page.request.post('/api/channel/permission/notify');
+    const res = await resPromise;
     expect(res.ok()).toBe(true);
     const data = await res.json();
     // No channel server running, so pending should be null

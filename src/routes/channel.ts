@@ -105,10 +105,10 @@ channelRoutes.get('/channel/permission', async (c) => {
   const immediate = await fetchPermission(dataDir);
   if (immediate.pending !== null) return c.json(immediate);
 
-  // Wait for a permission notification or 30s timeout
+  // Wait for a permission notification or 3s timeout
   await Promise.race([
     new Promise<void>((resolve) => { addPermissionWaiter(resolve); }),
-    new Promise<void>((resolve) => { setTimeout(resolve, 30000); }),
+    new Promise<void>((resolve) => { setTimeout(resolve, 3000); }),
   ]);
 
   return c.json(await fetchPermission(dataDir));
@@ -200,12 +200,14 @@ channelRoutes.post('/channel/disable', async (c) => {
 
 /** Called by the channel server process when it starts or stops, to wake the long-poll. */
 channelRoutes.post('/channel/notify', (c) => {
+  console.log(`[notify] channel/notify received — waking poll + permission waiters`);
   notifyChange();
   return c.json({ ok: true });
 });
 
 /** Called by the channel server when a permission request arrives, to wake the permission long-poll. */
 channelRoutes.post('/channel/permission/notify', (c) => {
+  console.log(`[perm] notify received, waking waiters at ${Date.now()}`);
   notifyPermission();
   return c.json({ ok: true });
 });

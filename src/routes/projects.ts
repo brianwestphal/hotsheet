@@ -109,9 +109,11 @@ projectRoutes.get('/channel-status', async (c) => {
 projectRoutes.get('/permissions', async (c) => {
   const { getChannelPort } = await import('../channel-config.js');
   const { readGlobalConfig } = await import('../global-config.js');
-  const { addPermissionWaiter } = await import('./notify.js');
+  const { addPermissionWaiter, getPermissionVersion } = await import('./notify.js');
   const globalConfig = readGlobalConfig();
-  if (globalConfig.channelEnabled !== true) return c.json({ permissions: {} });
+  if (globalConfig.channelEnabled !== true) return c.json({ permissions: {}, v: 0 });
+
+  const clientVersion = parseInt(c.req.query('v') ?? '0', 10) || 0;
 
   async function checkAll(): Promise<Record<string, { request_id: string; tool_name: string; description: string; input_preview?: string } | null>> {
     const projects = getAllProjects();
@@ -130,19 +132,30 @@ projectRoutes.get('/permissions', async (c) => {
     return result;
   }
 
-  // Check immediately — if any project has a pending permission, return right away
-  const immediate = await checkAll();
-  if (Object.values(immediate).some(v => v !== null)) {
-    return c.json({ permissions: immediate });
+  // If the permission version changed since the client last checked, return immediately
+  // (this closes the race condition where a notify fires during checkAll)
+  const versionBefore = getPermissionVersion();
+  if (versionBefore > clientVersion) {
+    return c.json({ permissions: await checkAll(), v: versionBefore });
   }
 
-  // Wait for a permission notification or 30s timeout
+  // Check immediately — if any project has a pending permission, return right away
+  const immediate = await checkAll();
+  const versionAfter = getPermissionVersion();
+  if (Object.values(immediate).some(v => v !== null) || versionAfter > versionBefore) {
+    return c.json({ permissions: immediate, v: versionAfter });
+  }
+
+  // Wait for a permission notification or 3s timeout.
+  // Short timeout because the channel server's HTTP notify to wake this
+  // long-poll is unreliable (auth issues, separate process). The version
+  // counter prevents the client from hot-looping when nothing changed.
   await Promise.race([
     new Promise<void>((resolve) => { addPermissionWaiter(resolve); }),
-    new Promise<void>((resolve) => { setTimeout(resolve, 30000); }),
+    new Promise<void>((resolve) => { setTimeout(resolve, 3000); }),
   ]);
 
-  return c.json({ permissions: await checkAll() });
+  return c.json({ permissions: await checkAll(), v: getPermissionVersion() });
 });
 
 /** POST /api/projects/:secret/reveal — open the project folder in OS file manager */

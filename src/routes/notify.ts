@@ -13,6 +13,9 @@ export function notifyChange() {
   for (const resolve of waiters) {
     resolve(changeVersion);
   }
+  // Also wake permission waiters — the channel server calls notifyChange()
+  // via POST /api/channel/notify which is proven to work reliably.
+  notifyPermission();
 }
 
 export function getChangeVersion() {
@@ -30,8 +33,14 @@ export function notifyMutation(dataDir: string) {
 }
 
 // --- Permission long-poll support ---
+// Uses a version counter to avoid race conditions between check and wait.
 
+let permissionVersion = 0;
 let permissionWaiters: Array<() => void> = [];
+
+export function getPermissionVersion() {
+  return permissionVersion;
+}
 
 export function addPermissionWaiter(resolve: () => void) {
   permissionWaiters.push(resolve);
@@ -39,7 +48,9 @@ export function addPermissionWaiter(resolve: () => void) {
 
 /** Wake all waiting permission long-poll connections. */
 export function notifyPermission() {
+  permissionVersion++;
   const waiters = permissionWaiters;
   permissionWaiters = [];
+  console.log(`[perm] notifyPermission v${permissionVersion}, waking ${waiters.length} waiters`);
   for (const resolve of waiters) resolve();
 }

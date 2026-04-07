@@ -8,6 +8,8 @@ import { requestAttention } from './tauriIntegration.js';
 type PermissionData = { request_id: string; tool_name: string; description: string; input_preview?: string };
 
 let permissionPollActive = false;
+let permissionVersion = 0;
+let currentOverlayRequestId: string | null = null;
 
 function startPermissionPolling() {
   if (permissionPollActive) return;
@@ -16,22 +18,32 @@ function startPermissionPolling() {
   async function poll() {
     if (!permissionPollActive) return;
     try {
-      // Long-poll: server holds up to 30s, returns when any project has a pending permission
-      const data = await api<{ permissions: Record<string, PermissionData | null> }>('/projects/permissions');
+      const data = await api<{ permissions: Record<string, PermissionData | null>; v: number }>(`/projects/permissions?v=${permissionVersion}`);
+      permissionVersion = data.v;
       const activeSecret = getActiveProject()?.secret;
 
+      // Check the active project's permission state
+      const activePerm = activeSecret !== undefined ? (data.permissions[activeSecret] ?? null) : null;
+
+      // Auto-dismiss if the permission was handled elsewhere (e.g., in Claude Code)
+      if (currentOverlayRequestId !== null && (activePerm === null || activePerm.request_id !== currentOverlayRequestId)) {
+        dismissOverlay();
+      }
+
+      // Show/update overlay for the active project
+      if (activePerm !== null) {
+        showPermissionOverlay(activePerm);
+      }
+
+      // Mark attention dots for all projects with pending permissions
       for (const [secret, perm] of Object.entries(data.permissions)) {
         if (perm !== null) {
-          // Mark the tab with attention dot
           markProjectAttention(secret);
-          // Show overlay only for the active project's permission
-          if (secret === activeSecret) {
-            showPermissionOverlay(perm);
-          }
+        } else {
+          clearProjectAttention(secret);
         }
       }
     } catch {
-      // Back off on errors (network failure, server restart)
       await new Promise(r => setTimeout(r, 5000));
     }
     if (permissionPollActive) setTimeout(poll, 100); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- can be set false by stopPermissionPolling()
@@ -46,10 +58,21 @@ function stopPermissionPolling() {
 // Track request IDs we've already responded to, so polling doesn't re-show them
 const respondedRequestIds = new Set<string>();
 
+/** Dismiss the permission overlay without responding (e.g., permission handled elsewhere). */
+function dismissOverlay() {
+  const overlay = document.getElementById('permission-overlay');
+  if (overlay) overlay.style.display = 'none';
+  currentOverlayRequestId = null;
+}
+
 function showPermissionOverlay(perm: { request_id: string; tool_name: string; description: string; input_preview?: string }) {
   const overlay = document.getElementById('permission-overlay');
-  if (!overlay || overlay.style.display !== 'none') return;
+  if (!overlay) return;
   if (respondedRequestIds.has(perm.request_id)) return;
+  // Already showing this exact permission
+  if (currentOverlayRequestId === perm.request_id) return;
+  // New permission replaces any currently shown one
+  currentOverlayRequestId = perm.request_id;
   if (state.settings.notify_permission !== 'none') {
     requestAttention(state.settings.notify_permission);
   }
@@ -73,6 +96,7 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
 
   function respond(behavior: 'allow' | 'deny') {
     respondedRequestIds.add(perm.request_id);
+    currentOverlayRequestId = null;
     void api('/channel/permission/respond', {
       method: 'POST',
       body: { request_id: perm.request_id, behavior },
@@ -84,6 +108,7 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
 
   function dismiss() {
     respondedRequestIds.add(perm.request_id);
+    currentOverlayRequestId = null;
     void api('/channel/permission/dismiss', { method: 'POST' });
     overlay!.style.display = 'none';
     const activeSecret = getActiveProject()?.secret;
