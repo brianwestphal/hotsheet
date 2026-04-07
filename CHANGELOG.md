@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.12.3] - 2026-04-08
+
+- Fixed an issue with the CLI script when Hot Sheet is already running
+- Add a Share Hot Sheet button and periodic prompt to share Hot Sheet with friends and colleagues
+
 ## [0.12.2] - 2026-04-07
 
 - Fixed an issue with the CLI script

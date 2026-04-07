@@ -16,7 +16,7 @@ let lastAccumulatedAt: number;
 /** Trigger the Web Share API, falling back to clipboard copy. */
 async function triggerShare(): Promise<void> {
   try {
-    if (navigator.share !== undefined) {
+    if ('share' in navigator) {
       await navigator.share({ title: 'Hot Sheet', text: SHARE_TEXT, url: SHARE_URL });
     } else {
       await navigator.clipboard.writeText(`${SHARE_TEXT}\n${SHARE_URL}`);
