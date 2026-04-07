@@ -248,6 +248,9 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
 
   // --- Category management ---
   bindCategorySettings(rebuildCategoryUI);
+
+  // --- CLI tool install (Tauri only) ---
+  bindCliToolSettings();
 }
 
 // --- Auto-context settings ---
@@ -398,4 +401,67 @@ function bindAutoContextSettings() {
   // Load when settings dialog opens
   const settingsBtn = document.getElementById('settings-btn')!;
   settingsBtn.addEventListener('click', () => { void loadEntries(); });
+}
+
+// --- CLI tool install (Tauri only) ---
+
+function bindCliToolSettings() {
+  const invoke = getTauriInvoke();
+  if (!invoke) return;
+
+  const section = document.getElementById('cli-tool-section');
+  if (!section) return;
+  section.style.display = '';
+
+  const dot = document.getElementById('cli-status-dot')!;
+  const statusText = document.getElementById('cli-status-text')!;
+  const installBtn = document.getElementById('cli-install-btn') as HTMLButtonElement;
+  const hint = document.getElementById('cli-install-hint')!;
+
+  function showInstalled() {
+    dot.className = 'cli-status-dot installed';
+    statusText.textContent = 'Installed';
+    installBtn.style.display = 'none';
+    hint.textContent = 'The hotsheet command is available at /usr/local/bin/hotsheet.';
+  }
+
+  function showNotInstalled() {
+    dot.className = 'cli-status-dot not-installed';
+    statusText.textContent = 'Not installed';
+    installBtn.style.display = '';
+    hint.textContent = 'Installs the hotsheet command to /usr/local/bin.';
+  }
+
+  // Check current status
+  void invoke('check_cli_installed').then((installed) => {
+    if (installed) {
+      showInstalled();
+    } else {
+      showNotInstalled();
+    }
+  }).catch(() => {
+    showNotInstalled();
+  });
+
+  // Bind install button
+  installBtn.addEventListener('click', async () => {
+    installBtn.disabled = true;
+    installBtn.textContent = 'Installing...';
+    try {
+      await invoke('install_cli');
+      showInstalled();
+    } catch {
+      installBtn.textContent = 'Install Failed';
+      installBtn.disabled = false;
+    }
+  });
+
+  // Re-check when settings dialog opens
+  const settingsBtn = document.getElementById('settings-btn')!;
+  settingsBtn.addEventListener('click', () => {
+    void invoke('check_cli_installed').then((installed) => {
+      if (installed) showInstalled();
+      else showNotInstalled();
+    }).catch(() => {});
+  });
 }

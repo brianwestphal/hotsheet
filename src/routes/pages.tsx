@@ -314,6 +314,18 @@ pageRoutes.get('/', (c) => {
                   <option value="persistent">Notify until focused</option>
                 </select>
               </div>
+              <div id="cli-tool-section" style="display:none">
+                <div className="settings-divider"></div>
+                <div className="settings-field">
+                  <label>CLI Tool <span className="global-setting-badge">Global Setting</span></label>
+                  <div className="cli-status-row">
+                    <span className="cli-status-dot" id="cli-status-dot"></span>
+                    <span id="cli-status-text">Checking...</span>
+                    <button className="btn btn-sm" id="cli-install-btn" style="display:none">Install CLI</button>
+                  </div>
+                  <span className="settings-hint" id="cli-install-hint">Installs the <code>hotsheet</code> command to /usr/local/bin.</span>
+                </div>
+              </div>
             </div>
             <div className="settings-tab-panel" data-panel="categories">
               <div className="settings-section-header">

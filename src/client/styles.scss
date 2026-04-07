@@ -3030,6 +3030,29 @@ input, select, textarea {
   margin: 12px 0;
 }
 
+.cli-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cli-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+
+  &.installed {
+    background: #22c55e;
+  }
+
+  &.not-installed {
+    background: #ef4444;
+  }
+}
+
 // --- Open Folder Dialog ---
 
 .open-folder-overlay {

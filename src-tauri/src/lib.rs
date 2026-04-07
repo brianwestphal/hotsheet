@@ -638,6 +638,135 @@ async fn pick_folder() -> Result<Option<String>, String> {
     Ok(handle.map(|h| h.path().to_string_lossy().to_string()))
 }
 
+#[cfg(not(debug_assertions))]
+/// Spawns the sidecar Node process with the given data_dir, waits for the "running at" URL,
+/// navigates the main window to it, stores the PID for cleanup, and sets the window title.
+async fn spawn_sidecar_and_navigate(
+    app: &tauri::AppHandle,
+    data_dir: &str,
+) -> Result<(), String> {
+    eprintln!("[sidecar] spawn_sidecar_and_navigate called with data_dir={}", data_dir);
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Failed to get resource dir: {e}"))?;
+    let cli_js = resource_dir.join("server").join("cli.js");
+    eprintln!("[sidecar] cli_js={}, exists={}", cli_js.display(), cli_js.exists());
+
+    let sidecar_args = vec![
+        cli_js.to_string_lossy().to_string(),
+        "--no-open".to_string(),
+        "--data-dir".to_string(),
+        data_dir.to_string(),
+    ];
+    eprintln!("[sidecar] args={:?}", sidecar_args);
+
+    let sidecar = app
+        .shell()
+        .sidecar("hotsheet-node")
+        .map_err(|e| format!("Failed to create sidecar command: {e}"))?;
+
+    let args_refs: Vec<&str> = sidecar_args.iter().map(|s| s.as_str()).collect();
+    let (mut rx, child) = sidecar
+        .args(&args_refs)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
+
+    let sidecar_pid = child.pid();
+    eprintln!("[sidecar] spawned with PID {}", sidecar_pid);
+    *app.state::<SidecarPid>().0.lock().unwrap() = Some(sidecar_pid);
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+
+    // Set window title from settings or project folder name
+    let name = resolve_app_name(data_dir);
+    let _ = window.set_title(&name);
+
+    let data_dir_owned = data_dir.to_string();
+    tauri::async_runtime::spawn(async move {
+        let _child = child;
+        let mut navigated = false;
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(line) => {
+                    let line_str = String::from_utf8_lossy(&line);
+                    eprintln!("[sidecar stdout] {}", line_str.trim());
+                    if !navigated {
+                        // Case 1: sidecar started its own server
+                        if let Some(idx) = line_str.find("running at ") {
+                            let url = line_str[idx + "running at ".len()..].trim();
+                            if let Ok(parsed) = url.parse() {
+                                let _ = window.navigate(parsed);
+                                navigated = true;
+                            }
+                        }
+                        // Case 2: sidecar joined an existing instance
+                        if let Some(idx) = line_str.find("running instance on port ") {
+                            let port_str = line_str[idx + "running instance on port ".len()..].trim();
+                            let url = format!("http://localhost:{}", port_str);
+                            eprintln!("[sidecar] joining existing instance at {}", url);
+                            if let Ok(parsed) = url.parse() {
+                                let _ = window.navigate(parsed);
+                                navigated = true;
+                            }
+                        }
+                    }
+                }
+                CommandEvent::Stderr(line) => {
+                    eprintln!("[sidecar stderr] {}", String::from_utf8_lossy(&line).trim());
+                }
+                CommandEvent::Terminated(payload) => {
+                    eprintln!("[sidecar] terminated: code={:?} signal={:?}", payload.code, payload.signal);
+                }
+                _ => {}
+            }
+        }
+        // Fallback: if sidecar exited without navigating, try reading port from settings.json
+        if !navigated {
+            eprintln!("[sidecar] process exited without navigating, trying settings.json fallback");
+            let settings_path = std::path::PathBuf::from(&data_dir_owned).join("settings.json");
+            if let Ok(contents) = std::fs::read_to_string(&settings_path) {
+                if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if let Some(port) = settings.get("port").and_then(|p| p.as_u64()) {
+                        let url = format!("http://localhost:{}", port);
+                        eprintln!("[sidecar] fallback: navigating to {}", url);
+                        if let Ok(parsed) = url.parse() {
+                            let _ = window.navigate(parsed);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[cfg(not(debug_assertions))]
+#[tauri::command]
+async fn open_project(app: tauri::AppHandle, data_dir: String) -> Result<(), String> {
+    // Kill existing sidecar if any, and wait for it to clean up (lock files, etc.)
+    if let Some(pid) = app.state::<SidecarPid>().0.lock().unwrap().take() {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+            libc::kill(-(pid as i32), libc::SIGTERM);
+        }
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .status();
+        }
+        // Give the Node process time to run cleanup handlers (release lock files)
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    spawn_sidecar_and_navigate(&app, &data_dir).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -740,7 +869,9 @@ pub fn run() {
             set_app_icon,
             request_attention,
             request_attention_once,
-            pick_folder
+            pick_folder,
+            #[cfg(not(debug_assertions))]
+            open_project
         ])
         .setup(|_app| {
             #[allow(unused_variables)]
@@ -809,42 +940,97 @@ pub fn run() {
                 let app_args: Vec<String> = std::env::args().collect();
                 let has_data_dir = app_args.iter().any(|a| a == "--data-dir");
 
+                eprintln!("[setup] has_data_dir={}, args={:?}", has_data_dir, app_args);
+
                 if !has_data_dir {
-                    // No --data-dir: show the welcome/setup screen
-                    let window = app
-                        .get_webview_window("main")
-                        .expect("main window not found");
-                    let _ = window.navigate("tauri://localhost/welcome.html".parse().unwrap());
+                    // Check ~/.hotsheet/projects.json for previously opened projects
+                    let mut restored_dir: Option<String> = None;
+                    if let Ok(home) = std::env::var("HOME") {
+                        let projects_path = std::path::PathBuf::from(&home)
+                            .join(".hotsheet")
+                            .join("projects.json");
+                        eprintln!("[setup] checking projects.json at {}", projects_path.display());
+                        if let Ok(contents) = std::fs::read_to_string(&projects_path) {
+                            eprintln!("[setup] projects.json contents: {}", contents.trim());
+                            if let Ok(entries) = serde_json::from_str::<Vec<String>>(&contents) {
+                                for entry in &entries {
+                                    let exists = std::path::Path::new(entry).is_dir();
+                                    eprintln!("[setup] project entry: {} (exists={})", entry, exists);
+                                    if exists && restored_dir.is_none() {
+                                        restored_dir = Some(entry.clone());
+                                    }
+                                }
+                            } else {
+                                eprintln!("[setup] failed to parse projects.json as Vec<String>");
+                            }
+                        } else {
+                            eprintln!("[setup] no projects.json found");
+                        }
+                    } else {
+                        eprintln!("[setup] HOME env var not set");
+                    }
 
-                    // Check for updates (store version for user-initiated install)
-                    let handle = app.handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        let Ok(updater) = handle.updater() else {
-                            return;
-                        };
-                        let Ok(Some(update)) = updater.check().await else {
-                            return;
-                        };
-                        *handle.state::<PendingUpdate>().0.lock().unwrap() =
-                            Some(update.version);
-                    });
+                    if let Some(ref data_dir) = restored_dir {
+                        eprintln!("[setup] restoring project: {}", data_dir);
+                        // Restore the most recent project — spawn sidecar and return
+                        let handle = app.handle().clone();
+                        let dir = data_dir.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = spawn_sidecar_and_navigate(&handle, &dir).await {
+                                eprintln!("[setup] failed to restore project: {e}");
+                                // Navigate to welcome screen as fallback
+                                if let Some(window) = handle.get_webview_window("main") {
+                                    let _ = window.navigate("tauri://localhost/welcome.html".parse().unwrap());
+                                }
+                            }
+                        });
 
-                    return Ok(());
-                }
+                        // Check for updates
+                        let handle = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            let Ok(updater) = handle.updater() else { return; };
+                            let Ok(Some(update)) = updater.check().await else { return; };
+                            *handle.state::<PendingUpdate>().0.lock().unwrap() = Some(update.version);
+                        });
 
-                // Set window title from settings or project folder name
-                let window = app
-                    .get_webview_window("main")
-                    .expect("main window not found");
-                if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
-                    if let Some(dir) = app_args.get(i + 1) {
-                        let name = resolve_app_name(dir);
-                        let _ = window.set_title(&name);
+                        return Ok(());
+                    } else {
+                        // No previous projects — show the welcome/setup screen
+                        let window = app
+                            .get_webview_window("main")
+                            .expect("main window not found");
+                        let _ = window.navigate("tauri://localhost/welcome.html".parse().unwrap());
+
+                        // Check for updates (store version for user-initiated install)
+                        let handle = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            let Ok(updater) = handle.updater() else {
+                                return;
+                            };
+                            let Ok(Some(update)) = updater.check().await else {
+                                return;
+                            };
+                            *handle.state::<PendingUpdate>().0.lock().unwrap() =
+                                Some(update.version);
+                        });
+
+                        return Ok(());
                     }
                 }
 
                 // Check if the CLI launcher already started the server
                 if let Ok(server_url) = std::env::var("HOTSHEET_SERVER_URL") {
+                    // Set window title from settings or project folder name
+                    let window = app
+                        .get_webview_window("main")
+                        .expect("main window not found");
+                    if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
+                        if let Some(dir) = app_args.get(i + 1) {
+                            let name = resolve_app_name(dir);
+                            let _ = window.set_title(&name);
+                        }
+                    }
+
                     // Navigate directly to the pre-started server
                     if let Ok(parsed) = server_url.parse() {
                         let _ = window.navigate(parsed);
@@ -858,54 +1044,14 @@ pub fn run() {
                     }
                 } else {
                     // No pre-started server — spawn sidecar ourselves
-                    let resource_dir = app
-                        .path()
-                        .resource_dir()
-                        .map_err(|e| format!("Failed to get resource dir: {e}"))?;
-                    let cli_js = resource_dir.join("server").join("cli.js");
-
-                    let mut sidecar_args = vec![
-                        cli_js.to_string_lossy().to_string(),
-                        "--no-open".to_string(),
-                    ];
-                    if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
-                        if let Some(dir) = app_args.get(i + 1) {
-                            sidecar_args.push("--data-dir".to_string());
-                            sidecar_args.push(dir.clone());
-                        }
-                    }
-
-                    let sidecar = app
-                        .shell()
-                        .sidecar("hotsheet-node")
-                        .map_err(|e| format!("Failed to create sidecar command: {e}"))?;
-
-                    let args_refs: Vec<&str> = sidecar_args.iter().map(|s| s.as_str()).collect();
-                    let (mut rx, child) = sidecar
-                        .args(&args_refs)
-                        .spawn()
-                        .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
-
-                    let sidecar_pid = child.pid();
-                    *app.state::<SidecarPid>().0.lock().unwrap() = Some(sidecar_pid);
-
+                    let data_dir = app_args.iter().position(|a| a == "--data-dir")
+                        .and_then(|i| app_args.get(i + 1))
+                        .cloned()
+                        .unwrap_or_default();
+                    let handle = app.handle().clone();
                     tauri::async_runtime::spawn(async move {
-                        let _child = child;
-                        let mut navigated = false;
-                        while let Some(event) = rx.recv().await {
-                            if let CommandEvent::Stdout(line) = event {
-                                if !navigated {
-                                    let line_str = String::from_utf8_lossy(&line);
-                                    if let Some(idx) = line_str.find("running at ") {
-                                        let url =
-                                            line_str[idx + "running at ".len()..].trim();
-                                        if let Ok(parsed) = url.parse() {
-                                            let _ = window.navigate(parsed);
-                                            navigated = true;
-                                        }
-                                    }
-                                }
-                            }
+                        if let Err(e) = spawn_sidecar_and_navigate(&handle, &data_dir).await {
+                            eprintln!("[setup] failed to spawn sidecar: {e}");
                         }
                     });
                 }
@@ -934,14 +1080,13 @@ pub fn run() {
                 if let Some(pid) = app_handle.state::<SidecarPid>().0.lock().unwrap().take() {
                     #[cfg(unix)]
                     {
-                        // Kill the sidecar process directly, then try process group as a fallback.
-                        // Direct kill is needed because on the CLI launcher path, the Node process
-                        // is backgrounded from a non-interactive shell and is NOT a process group
-                        // leader — so kill(-pid, SIGTERM) would silently fail.
+                        // Send SIGTERM to let the Node process clean up (release lock files, etc.)
                         unsafe {
                             libc::kill(pid as i32, libc::SIGTERM);
                             libc::kill(-(pid as i32), libc::SIGTERM);
                         }
+                        // Wait briefly for cleanup before the process is force-killed by OS
+                        std::thread::sleep(std::time::Duration::from_millis(300));
                     }
                     #[cfg(windows)]
                     {

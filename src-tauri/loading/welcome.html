@@ -55,6 +55,7 @@
     }
     .dot-red { background: #ef4444; }
     .dot-green { background: #22c55e; }
+    .dot-blue { background: #6366f1; }
     .instructions {
       font-size: 13px;
       line-height: 1.6;
@@ -114,6 +115,11 @@
       color: #c0c0d8;
     }
     .btn-secondary:hover { background: #333358; }
+    .btn-secondary:disabled {
+      background: #3a3a5c;
+      color: #8888a8;
+      cursor: default;
+    }
     .error {
       color: #ef4444;
       font-size: 12px;
@@ -126,6 +132,87 @@
     }
     .hidden { display: none; }
     .loading .btn { pointer-events: none; opacity: 0.6; }
+    .prefs-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10,10,24,0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .prefs-dialog {
+      background: #1e1e3a;
+      border: 1px solid #3a3a5c;
+      border-radius: 12px;
+      padding: 28px;
+      min-width: 400px;
+      max-width: 460px;
+      position: relative;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    .prefs-dialog h2 {
+      font-size: 16px;
+      color: #e0e0f0;
+      margin-bottom: 16px;
+    }
+    .prefs-close {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+      background: none;
+      border: none;
+      color: #8888a8;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px;
+    }
+    .prefs-close:hover { color: #c0c0d8; }
+    .prefs-section {
+      margin-bottom: 16px;
+    }
+    .prefs-section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #a0a0b8;
+      margin-bottom: 8px;
+    }
+    .prefs-section-header .dot { width: 8px; height: 8px; }
+    .prefs-update-status {
+      font-size: 13px;
+      color: #a0a0b8;
+      margin-top: 8px;
+    }
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 16px 0 12px;
+      font-size: 12px;
+      color: #686888;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #3a3a5c;
+    }
+    .spinner {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border: 2px solid #3a3a5c;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
@@ -143,12 +230,18 @@
         CLI not installed
       </div>
       <div class="instructions">
-        <p>Hot Sheet needs to be launched from your project directory so it knows where to store data.</p>
-        <p>Click below to install the <code>hotsheet</code> command, or copy the command manually:</p>
+        <p>Open a project folder to get started, or install the CLI to launch from your terminal.</p>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="btn-open-folder-ni" onclick="openFolder()">Open Folder</button>
+      </div>
+      <div class="divider">or install the CLI</div>
+      <div class="instructions">
+        <p>The <code>hotsheet</code> command lets you launch from the terminal. Click below to install, or copy the command manually:</p>
         <div id="manual-command" class="code-block"></div>
       </div>
       <div class="btn-row">
-        <button class="btn" id="btn-install" onclick="installCli()">Install CLI</button>
+        <button class="btn btn-secondary" id="btn-install" onclick="installCli()">Install CLI</button>
       </div>
       <div id="install-error" class="error hidden"></div>
     </div>
@@ -159,9 +252,11 @@
         CLI is installed
       </div>
       <div class="instructions">
-        <p>Open a terminal, navigate to your project, and run:</p>
+        <p>Open a project folder to get started, or launch from your terminal:</p>
         <div class="code-block">cd /path/to/your/project<br>hotsheet</div>
-        <p>This opens Hot Sheet with your project's data directory. Close this window — the app will reopen from the terminal.</p>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="btn-open-folder-inst" onclick="openFolder()">Open Folder</button>
       </div>
     </div>
 
@@ -172,8 +267,48 @@
       </div>
       <div class="instructions">
         <p id="installed-path"></p>
-        <p>Now open a terminal, navigate to your project, and run:</p>
+        <p>Open a project folder to get started, or launch from your terminal:</p>
         <div class="code-block">cd /path/to/your/project<br>hotsheet</div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="btn-open-folder-ji" onclick="openFolder()">Open Folder</button>
+      </div>
+    </div>
+
+    <div id="view-starting" class="status hidden">
+      <div class="status-header">
+        <span class="dot dot-blue"></span>
+        Starting Hot Sheet...
+      </div>
+      <div class="instructions">
+        <p><span class="spinner"></span>Opening project, this may take a moment...</p>
+      </div>
+    </div>
+
+    <div id="open-folder-error" class="error hidden"></div>
+  </div>
+
+  <div id="prefs-overlay" class="prefs-overlay" style="display:none">
+    <div class="prefs-dialog">
+      <button class="prefs-close" id="prefs-close-btn">&times;</button>
+      <h2>Settings</h2>
+      <div class="prefs-section">
+        <div class="prefs-section-header">
+          <span id="prefs-cli-dot" class="dot dot-red"></span>
+          <span id="prefs-cli-label">CLI Tool</span>
+        </div>
+        <div id="prefs-cli-not-installed">
+          <button class="btn btn-secondary" style="font-size:13px;padding:6px 14px" onclick="prefsInstallCli()">Install CLI</button>
+          <div id="prefs-install-error" class="error hidden"></div>
+        </div>
+        <div id="prefs-cli-installed" class="hidden">
+          <span style="font-size:13px;color:#a0a0b8">The <code>hotsheet</code> command is available in your terminal.</span>
+        </div>
+      </div>
+      <div class="prefs-section">
+        <div class="prefs-section-header">Updates</div>
+        <button class="btn btn-secondary" style="font-size:13px;padding:6px 14px" id="prefs-check-update" onclick="prefsCheckUpdate()">Check for Updates</button>
+        <div id="prefs-update-status" class="prefs-update-status"></div>
       </div>
     </div>
   </div>
@@ -184,6 +319,9 @@
     function showView(id) {
       document.querySelectorAll('.status').forEach(el => el.classList.add('hidden'));
       document.getElementById(id).classList.remove('hidden');
+      // Clear open-folder error when switching views
+      const errEl = document.getElementById('open-folder-error');
+      if (errEl) errEl.classList.add('hidden');
     }
 
     async function checkStatus() {
@@ -220,6 +358,119 @@
         btn.textContent = 'Install CLI';
       }
     }
+
+    async function openFolder() {
+      const errorEl = document.getElementById('open-folder-error');
+      errorEl.classList.add('hidden');
+      try {
+        const folder = await invoke('pick_folder');
+        if (!folder) return; // User cancelled
+        const dataDir = folder + '/.hotsheet';
+        showView('view-starting');
+        await invoke('open_project', { dataDir });
+        // Rust handles navigation to the running server
+      } catch (e) {
+        errorEl.textContent = typeof e === 'string' ? e : 'Failed to open project';
+        errorEl.classList.remove('hidden');
+        // Go back to the previous view
+        await checkStatus();
+      }
+    }
+
+    // Listen for File > Open Folder menu
+    window.addEventListener('app:open-folder', () => {
+      openFolder();
+    });
+
+    // --- Preferences dialog ---
+    function closePrefs() {
+      document.getElementById('prefs-overlay').style.display = 'none';
+    }
+
+    async function openPrefs() {
+      const overlay = document.getElementById('prefs-overlay');
+      overlay.style.display = 'flex';
+      // Refresh CLI status
+      try {
+        const result = await invoke('check_cli_installed');
+        const dot = document.getElementById('prefs-cli-dot');
+        const label = document.getElementById('prefs-cli-label');
+        if (result.installed) {
+          dot.className = 'dot dot-green';
+          label.textContent = 'CLI Tool — Installed';
+          document.getElementById('prefs-cli-installed').classList.remove('hidden');
+          document.getElementById('prefs-cli-not-installed').classList.add('hidden');
+        } else {
+          dot.className = 'dot dot-red';
+          label.textContent = 'CLI Tool — Not installed';
+          document.getElementById('prefs-cli-installed').classList.add('hidden');
+          document.getElementById('prefs-cli-not-installed').classList.remove('hidden');
+        }
+      } catch {}
+      // Check for pending update
+      try {
+        const pending = await invoke('get_pending_update');
+        const statusEl = document.getElementById('prefs-update-status');
+        if (pending) {
+          statusEl.textContent = 'Update available: v' + pending;
+        } else {
+          statusEl.textContent = '';
+        }
+      } catch {}
+    }
+
+    async function prefsInstallCli() {
+      const errEl = document.getElementById('prefs-install-error');
+      errEl.classList.add('hidden');
+      try {
+        await invoke('install_cli');
+        await openPrefs(); // Refresh
+        await checkStatus(); // Refresh main view too
+      } catch (e) {
+        errEl.textContent = e;
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    async function prefsCheckUpdate() {
+      const btn = document.getElementById('prefs-check-update');
+      const statusEl = document.getElementById('prefs-update-status');
+      btn.disabled = true;
+      btn.textContent = 'Checking...';
+      try {
+        const version = await invoke('check_for_update');
+        if (version) {
+          statusEl.textContent = 'Update available: v' + version;
+        } else {
+          statusEl.textContent = 'You are on the latest version.';
+        }
+      } catch (e) {
+        statusEl.textContent = 'Failed to check: ' + e;
+      }
+      btn.disabled = false;
+      btn.textContent = 'Check for Updates';
+    }
+
+    // Bind prefs dialog close handlers
+    document.getElementById('prefs-close-btn').addEventListener('click', closePrefs);
+    document.getElementById('prefs-overlay').addEventListener('click', function(e) {
+      if (e.target === this) closePrefs();
+    });
+
+    // Listen for Preferences menu (only after initial page load to prevent auto-trigger)
+    let pageReady = false;
+    setTimeout(function() { pageReady = true; }, 500);
+    window.addEventListener('app:preferences', () => {
+      if (pageReady) openPrefs();
+    });
+
+    // Close prefs on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closePrefs();
+    });
+
+    // Force-hide prefs overlay on load (defeats WKWebView state restoration)
+    document.getElementById('prefs-overlay').style.display = 'none';
 
     checkStatus();
   </script>

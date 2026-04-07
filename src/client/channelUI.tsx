@@ -328,9 +328,10 @@ export async function initChannel() {
   const playIcon = document.getElementById('channel-play-icon')!;
   const autoIcon = document.getElementById('channel-auto-icon')!;
 
-  // Always render custom commands (shell commands work without channel)
-  const { renderChannelCommands, setChannelEnabledState } = await import('./experimentalSettings.js');
+  // Reload custom commands for the active project and render
+  const { renderChannelCommands, reloadCustomCommands, setChannelEnabledState } = await import('./experimentalSettings.js');
   setChannelEnabledState(status.enabled);
+  await reloadCustomCommands();
 
   if (!status.enabled) {
     section.style.display = 'none';

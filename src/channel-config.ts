@@ -5,14 +5,16 @@ import { fileURLToPath } from 'url';
 const MCP_SERVER_KEY = 'hotsheet-channel';
 
 /** Get the path to the channel server and the command to run it.
- *  channel-config.ts and channel.ts are siblings in src/ (dev) and dist/ (production). */
+ *  channel-config.ts and channel.ts are siblings in src/ (dev) and dist/ (production).
+ *  Uses process.execPath for the node binary so it works even when launched from Tauri
+ *  (where node may not be on the PATH). */
 function getChannelServerPath(): { command: string; args: string[] } {
   const thisDir = dirname(fileURLToPath(import.meta.url));
 
   // Production: this file is dist/channel-config.js, sibling is dist/channel.js
   const distPath = resolve(thisDir, 'channel.js');
   if (existsSync(distPath)) {
-    return { command: 'node', args: [distPath] };
+    return { command: process.execPath, args: [distPath] };
   }
 
   // Dev mode: this file is src/channel-config.ts, sibling is src/channel.ts
@@ -22,7 +24,7 @@ function getChannelServerPath(): { command: string; args: string[] } {
   }
 
   // Fallback
-  return { command: 'node', args: [distPath] };
+  return { command: process.execPath, args: [distPath] };
 }
 
 /** Get the project root directory (parent of .hotsheet/) */

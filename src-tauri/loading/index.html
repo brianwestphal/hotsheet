@@ -35,12 +35,44 @@
       font-size: 14px;
       letter-spacing: 0.02em;
     }
+    .hint {
+      margin-top: 16px;
+      font-size: 12px;
+      color: #686888;
+    }
+    .hint a {
+      color: #818cf8;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
   <div class="loading">
     <div class="spinner"></div>
     <p>Starting Hot Sheet&hellip;</p>
+    <p id="slow-hint" class="hint hidden">
+      Taking longer than expected. <a onclick="openFolder()">Open a different folder</a>
+    </p>
   </div>
+  <script>
+    // Show hint after 10 seconds if still on this page
+    setTimeout(function() {
+      document.getElementById('slow-hint').classList.remove('hidden');
+    }, 10000);
+
+    // Handle File > Open Folder menu on the loading screen
+    async function openFolder() {
+      try {
+        var folder = await window.__TAURI__.core.invoke('pick_folder');
+        if (!folder) return;
+        await window.__TAURI__.core.invoke('open_project', { dataDir: folder + '/.hotsheet' });
+      } catch (e) {
+        console.error('open_project failed:', e);
+      }
+    }
+    window.addEventListener('app:open-folder', function() { openFolder(); });
+  </script>
 </body>
 </html>

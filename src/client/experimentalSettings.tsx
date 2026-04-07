@@ -35,6 +35,20 @@ let customCommands: CustomCommand[] = [];
 
 let channelEnabledState = false;
 
+/** Reload custom commands from the active project's settings. Called on project switch. */
+export async function reloadCustomCommands(): Promise<void> {
+  try {
+    const settings = await api<Record<string, string>>('/settings');
+    if (settings.custom_commands !== undefined && settings.custom_commands !== '') {
+      try { customCommands = JSON.parse(settings.custom_commands) as CustomCommand[]; } catch { customCommands = []; }
+    } else {
+      customCommands = [];
+    }
+  } catch {
+    customCommands = [];
+  }
+}
+
 function isChannelEnabled(): boolean {
   return channelEnabledState;
 }
@@ -432,12 +446,10 @@ export function bindExperimentalSettings() {
     customCommandsSection.style.display = '';
   }).catch(() => {});
 
-  // Load custom commands from settings
-  void api<Record<string, string>>('/settings').then(settings => {
-    if (settings.custom_commands !== '') {
-      try { customCommands = JSON.parse(settings.custom_commands) as CustomCommand[]; } catch { /* ignore */ }
-    }
+  // Load custom commands for the current project
+  void reloadCustomCommands().then(() => {
     renderChannelCommands();
+    renderCustomCommandSettings();
   });
 
   channelCheckbox.addEventListener('change', async () => {
