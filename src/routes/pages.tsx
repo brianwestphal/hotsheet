@@ -62,6 +62,14 @@ pageRoutes.get('/', (c) => {
           </div>
         </div>
 
+        <div id="share-banner" className="share-banner" style="display:none">
+          <span>Enjoying Hot Sheet? Share it with others!</span>
+          <div className="share-banner-actions">
+            <button id="share-banner-share" className="btn btn-sm btn-share">Share</button>
+            <button id="share-banner-dismiss" className="btn btn-sm">Not now</button>
+          </div>
+        </div>
+
         <div className="app-body">
           <nav className="sidebar">
             <div className="channel-disconnected-warning" id="channel-disconnected" style="display:none">Claude not connected</div>
@@ -203,10 +211,8 @@ pageRoutes.get('/', (c) => {
         </div>
 
         <footer className="app-footer">
-          <div className="keyboard-hints">
-            <span><kbd>Enter</kbd> new ticket</span>
-            <span><kbd>{'\u2318'}D</kbd> up next</span>
-            <span><kbd>Esc</kbd> close</span>
+          <div className="footer-left">
+            <a href="#" id="share-link" className="share-link">Know someone who'd love this? Share Hot Sheet</a>
           </div>
           <div className="status-bar-right">
             <div id="status-bar" className="status-bar"></div>

@@ -16,6 +16,7 @@ import { showPrintDialog } from './print.js';
 import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
 import { bindSettingsDialog } from './settingsDialog.js';
 import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
+import { initShare } from './share.js';
 import { bindKeyboardShortcuts, getDetailSaveTimeout, setDetailSaveTimeout } from './shortcuts.js';
 import { bindSearchInput, bindSidebar, bindSortControls } from './sidebar.js';
 import type { AppSettings, Ticket } from './state.js';
@@ -104,6 +105,8 @@ async function init() {
   initCommandLog();
   // Dashboard sidebar widget
   void initDashboardWidget();
+  // Share prompt and toolbar button
+  initShare();
   // Auto-focus the draft input on load
   focusDraftInput();
   } catch (err) {

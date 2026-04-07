@@ -142,6 +142,7 @@ Copies are created with " - Copy" suffix (incrementing if conflicts exist).
 | POST | `/api/ensure-skills` | Check and update AI tool skill files (`{ updated: boolean }`) |
 | GET | `/api/browse` | Browse filesystem directories for project registration |
 | GET | `/api/global-config` | Read global cross-project configuration |
+| PATCH | `/api/global-config` | Update global config fields (share timing, channel enabled, etc.) |
 | GET | `/api/glassbox/status` | Check if Glassbox CLI is available |
 | POST | `/api/glassbox/launch` | Launch Glassbox for current project |
 

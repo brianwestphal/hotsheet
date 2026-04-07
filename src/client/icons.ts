@@ -35,3 +35,7 @@ export const ICON_FOLDER_OPEN = `<svg ${LUCIDE_14}><path d="m6 14 1.5-2.9A2 2 0 
 export const ICON_PENCIL = `<svg ${LUCIDE_14}><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>`;
 
 export const ICON_INFO = `<svg ${LUCIDE_14}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`;
+
+export const ICON_SHARE = `<svg ${LUCIDE_14}><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" x2="12" y1="2" y2="15"/></svg>`;
+
+export const ICON_SHARE_2 = `<svg ${LUCIDE_14}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>`;

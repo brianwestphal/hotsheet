@@ -2758,18 +2758,20 @@ input, select, textarea {
   flex-shrink: 0;
 }
 
-.keyboard-hints {
+.footer-left {
   display: flex;
-  gap: 16px;
+  align-items: center;
+}
 
-  kbd {
-    display: inline-block;
-    padding: 1px 5px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    background: var(--bg);
-    font-family: inherit;
-    font-size: 11px;
+.share-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+    color: var(--accent-hover);
   }
 }
 
@@ -2951,7 +2953,7 @@ input, select, textarea {
     width: 280px;
   }
 
-  .keyboard-hints {
+  .footer-left {
     display: none;
   }
 }
@@ -3654,4 +3656,43 @@ input, select, textarea {
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+// --- Share Banner ---
+
+.share-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 20px;
+  background: #f0e6ff;
+  border-bottom: 2px solid #8b5cf6;
+  font-size: 13px;
+  color: #4c1d95;
+  flex-shrink: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .share-banner {
+    background: #2e1065;
+    border-bottom-color: #8b5cf6;
+    color: #c4b5fd;
+  }
+}
+
+.share-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn-share {
+  color: white;
+  background: #8b5cf6;
+  border-color: #8b5cf6;
+
+  &:hover:not(:disabled) {
+    background: #7c3aed;
+  }
 }

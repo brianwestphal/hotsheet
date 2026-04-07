@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'os';
 import { join, relative, resolve } from 'path';
 
 import { getTicketStats } from '../db/queries.js';
+import type { GlobalConfig } from '../global-config.js';
 import { openInFileManager } from '../open-in-file-manager.js';
 import { getAllProjects } from '../projects.js';
 import { consumeSkillsCreatedFlag, ensureSkillsForDir } from '../skills.js';
@@ -100,6 +101,16 @@ dashboardRoutes.get('/browse', (c) => {
 dashboardRoutes.get('/global-config', async (c) => {
   const { readGlobalConfig } = await import('../global-config.js');
   return c.json(readGlobalConfig());
+});
+
+dashboardRoutes.patch('/global-config', async (c) => {
+  const body: unknown = await c.req.json();
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return c.json({ error: 'Invalid body: expected an object' }, 400);
+  }
+  const { writeGlobalConfig } = await import('../global-config.js');
+  const merged = writeGlobalConfig(body as Partial<GlobalConfig>);
+  return c.json(merged);
 });
 
 // --- Ensure skills ---
