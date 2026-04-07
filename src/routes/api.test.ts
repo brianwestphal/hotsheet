@@ -125,6 +125,22 @@ vi.mock('../channel-config.js', () => ({
   triggerChannel: vi.fn(() => Promise.resolve(true)),
 }));
 
+// Mock global config so channel enable/disable tests don't modify the real ~/.hotsheet/config.json
+let mockGlobalConfig: Record<string, unknown> = {};
+vi.mock('../global-config.js', () => ({
+  readGlobalConfig: vi.fn(() => mockGlobalConfig),
+  writeGlobalConfig: vi.fn((updates: Record<string, unknown>) => {
+    mockGlobalConfig = { ...mockGlobalConfig, ...updates };
+    return mockGlobalConfig;
+  }),
+}));
+
+// Mock openInFileManager so the print test doesn't open a browser
+vi.mock('../open-in-file-manager.js', () => ({
+  openInFileManager: vi.fn(() => Promise.resolve()),
+  revealInFileManager: vi.fn(() => Promise.resolve()),
+}));
+
 let tempDir: string;
 let app: Hono<AppEnv>;
 
