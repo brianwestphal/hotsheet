@@ -2,7 +2,7 @@ import { suppressAnimation } from './animate.js';
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI } from './backups.js';
 import { bindBatchToolbar } from './batch.js';
-import { channelAutoTrigger, initChannel } from './channelUI.js';
+import { bindStatusBarContextMenu, channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
 import { initCommandLog, refreshCommandLog } from './commandLog.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
@@ -110,6 +110,8 @@ async function init() {
   void initDashboardWidget();
   // Share prompt and toolbar button
   initShare();
+  // Status bar context menu for manual busy state sync
+  bindStatusBarContextMenu();
   // Auto-focus the draft input on load
   focusDraftInput();
   } catch (err) {

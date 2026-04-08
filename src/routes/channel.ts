@@ -184,15 +184,21 @@ channelRoutes.post('/channel/enable', async (c) => {
 });
 
 channelRoutes.post('/channel/disable', async (c) => {
-  const { unregisterChannel, unregisterChannelForAll } = await import('../channel-config.js');
+  const { unregisterChannel, unregisterChannelForAll, shutdownChannel } = await import('../channel-config.js');
   const { writeGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
   writeGlobalConfig({ channelEnabled: false });
   try {
     const { getAllProjects } = await import('../projects.js');
-    unregisterChannelForAll(getAllProjects().map(p => p.dataDir));
+    const projects = getAllProjects();
+    unregisterChannelForAll(projects.map(p => p.dataDir));
+    // Shut down all channel servers
+    for (const p of projects) {
+      await shutdownChannel(p.dataDir);
+    }
   } catch {
     unregisterChannel(dataDir);
+    await shutdownChannel(dataDir);
   }
   notifyChange();
   return c.json({ ok: true });
@@ -234,18 +240,21 @@ channelRoutes.post('/channel/ping', async (c) => {
     (secret !== '' ? `&secret=${encodeURIComponent(secret)}` : '');
 
   // Send ping to channel server which forwards to Claude
+  console.log(`[ping] sending to channel server on port ${port}, nonce=${nonce}`);
   try {
     const res = await fetch(`http://127.0.0.1:${port}/ping`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nonce, callbackUrl }),
+      body: JSON.stringify({ nonce, callbackUrl, secret }),
     });
+    console.log(`[ping] channel server responded: ${res.status}`);
     if (!res.ok) return c.json({ idle: false, reason: 'ping-failed' });
-  } catch {
+  } catch (err) {
+    console.log(`[ping] channel server unreachable: ${String(err)}`);
     return c.json({ idle: false, reason: 'channel-unreachable' });
   }
 
-  // Wait for pong (up to 5 seconds)
+  // Wait for pong (up to 15 seconds — the round-trip through Claude takes time)
   const idle = await new Promise<boolean>((resolve) => {
     pendingPings.set(nonce, resolve);
     setTimeout(() => {
@@ -253,7 +262,7 @@ channelRoutes.post('/channel/ping', async (c) => {
         pendingPings.delete(nonce);
         resolve(false); // Timeout — Claude is busy
       }
-    }, 5000);
+    }, 15000);
   });
 
   return c.json({ idle });

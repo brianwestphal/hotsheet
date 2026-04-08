@@ -507,25 +507,77 @@ async function pingClaude(): Promise<boolean> {
 // --- Passive ping: periodically verify busy/idle state ---
 let passivePingInterval: ReturnType<typeof setInterval> | null = null;
 
+/** Run a single ping check and update busy state accordingly. */
+async function runPingCheck() {
+  if (!channelAliveLocal) return;
+  const idle = await pingClaude();
+  if (isChannelBusy() && idle) {
+    setChannelBusy(false);
+    if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
+  } else if (!isChannelBusy() && !idle) {
+    setChannelBusy(true);
+  }
+}
+
 function startPassivePing() {
   if (passivePingInterval !== null) return;
-  passivePingInterval = setInterval(async () => {
-    if (!channelAliveLocal) return; // Channel not connected
-    const busy = isChannelBusy();
-    const idle = await pingClaude();
-    if (busy && idle) {
-      // We thought Claude was busy but it responded to ping — it's actually idle
-      setChannelBusy(false);
-      if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
-    } else if (!busy && !idle) {
-      // We thought Claude was idle but it didn't respond — it's actually busy
-      setChannelBusy(true);
-    }
-  }, 60000);
+  // Run an immediate check on startup / project switch
+  void runPingCheck();
+  passivePingInterval = setInterval(() => { void runPingCheck(); }, 60000);
 }
 
 function stopPassivePing() {
   if (passivePingInterval !== null) { clearInterval(passivePingInterval); passivePingInterval = null; }
+}
+
+/** Reset timer and immediately check. Called from context menu. */
+function syncBusyStatusNow() {
+  stopPassivePing();
+  startPassivePing(); // Starts interval and runs immediate check
+}
+
+/** Bind the status bar context menu for manual busy state sync. */
+export function bindStatusBarContextMenu() {
+  const statusBar = document.querySelector('.status-bar-right');
+  if (!statusBar) return;
+  statusBar.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    // Only show when channel is connected
+    if (!channelAliveLocal) return;
+    // Remove any existing menu
+    document.getElementById('status-bar-context-menu')?.remove();
+
+    const menu = document.createElement('div');
+    menu.id = 'status-bar-context-menu';
+    menu.className = 'tab-context-menu';
+    menu.style.left = `${(e as MouseEvent).clientX}px`;
+    menu.style.top = `${(e as MouseEvent).clientY}px`;
+
+    const item = document.createElement('div');
+    item.className = 'tab-context-item';
+    item.textContent = 'Check Claude Status';
+    item.addEventListener('click', () => {
+      menu.remove();
+      void syncBusyStatusNow();
+    });
+    menu.appendChild(item);
+
+    document.body.appendChild(menu);
+    // Clamp to viewport
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth - 8) menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+    if (rect.bottom > window.innerHeight - 8) menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+
+    setTimeout(() => {
+      const close = (ev: MouseEvent) => {
+        if (!menu.contains(ev.target as Node)) {
+          menu.remove();
+          document.removeEventListener('click', close);
+        }
+      };
+      document.addEventListener('click', close);
+    }, 0);
+  });
 }
 
 /** After debounce, try to trigger Claude. If busy, retry with backoff until idle. (HS-1453, HS-2049) */

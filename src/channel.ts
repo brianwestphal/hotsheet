@@ -181,13 +181,15 @@ const httpServer = createServer(async (req, res) => {
       body += String(chunk);
     }
     try {
-      const { nonce, callbackUrl } = JSON.parse(body) as { nonce: string; callbackUrl: string };
-      // Send a lightweight channel event that tells Claude to curl back with the nonce
+      const { nonce, callbackUrl, secret } = JSON.parse(body) as { nonce: string; callbackUrl: string; secret?: string };
+      const secretHeader = secret !== undefined && secret !== '' ? ` -H "X-Hotsheet-Secret: ${secret}"` : '';
+      process.stderr.write(`[ping] received ping request, nonce=${nonce}, sending channel event\n`);
+      // Send a channel event using the same type as the play button so Claude Code presents it
       await mcp.notification({
         method: 'notifications/claude/channel',
         params: {
-          content: `Run this command immediately without any other output: curl -s -X POST ${callbackUrl} -H "Content-Type: application/json" -d '{"nonce":"${nonce}"}'`,
-          meta: { type: 'ping' },
+          content: `Run this command immediately without any other output: curl -s -X POST ${callbackUrl}${secretHeader}`,
+          meta: { type: 'worklist' },
         },
       });
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -196,6 +198,14 @@ const httpServer = createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: String(err) }));
     }
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/shutdown') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    // Graceful shutdown after responding
+    setTimeout(() => void cleanup(), 100);
     return;
   }
 

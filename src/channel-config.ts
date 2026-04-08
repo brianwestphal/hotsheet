@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -96,6 +96,33 @@ export function getChannelPort(dataDir: string): number | null {
   } catch {
     return null;
   }
+}
+
+/** Clean up stale channel port files (dead servers only).
+ *  Does NOT shut down alive channel servers — they're connected to Claude Code via stdio
+ *  and killing them would break the MCP connection, requiring manual reconnect.
+ *  Called on app startup. */
+export async function cleanupStaleChannel(dataDir: string): Promise<void> {
+  const port = getChannelPort(dataDir);
+  if (port === null) return;
+
+  const alive = await isChannelAlive(dataDir);
+  if (!alive) {
+    // Port file exists but server is dead — clean up the stale port file
+    try { unlinkSync(join(dataDir, 'channel-port')); } catch { /* ignore */ }
+  }
+  // If alive, leave it alone — it's connected to Claude Code
+}
+
+/** Shut down a channel server via its /shutdown endpoint.
+ *  Used when the user explicitly disables the channel. */
+export async function shutdownChannel(dataDir: string): Promise<void> {
+  const port = getChannelPort(dataDir);
+  if (port === null) return;
+  try {
+    await fetch(`http://127.0.0.1:${port}/shutdown`, { method: 'POST' });
+  } catch { /* ignore */ }
+  try { unlinkSync(join(dataDir, 'channel-port')); } catch { /* ignore */ }
 }
 
 /** Check if the channel server is reachable */

@@ -358,6 +358,15 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
       writeGlobalConfig({ channelEnabled: legacy });
     }
 
+    // Clean up stale channel servers from previous sessions
+    {
+      const { cleanupStaleChannel } = await import('./channel-config.js');
+      const { getAllProjects: allProjects } = await import('./projects.js');
+      for (const p of allProjects()) {
+        await cleanupStaleChannel(p.dataDir);
+      }
+    }
+
     // Ensure skills and .mcp.json for all restored projects
     {
       const { getAllProjects } = await import('./projects.js');
