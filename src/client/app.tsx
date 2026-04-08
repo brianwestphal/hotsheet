@@ -6,7 +6,7 @@ import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
 import { initCommandLog, refreshCommandLog } from './commandLog.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
-import { initDashboardWidget, restoreTicketList } from './dashboardMode.js';
+import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, parseTags, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
@@ -42,6 +42,8 @@ async function reloadAppState() {
   await loadTickets();
   // Refresh command log for the new project context
   refreshCommandLog();
+  // Refresh sidebar stats widget for the new project
+  void refreshDashboardWidget();
   // Re-init channel for the new project context
   void initChannel();
 }
@@ -52,6 +54,7 @@ async function init() {
   await initProjectTabs();
   setProjectReloadCallback(async () => {
     closeDetail();
+    restoreTicketList(); // Exit dashboard mode if active
     await reloadAppState();
   });
 

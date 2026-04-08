@@ -384,7 +384,6 @@ pageRoutes.get('/', (c) => {
                 <div className="settings-section" style="margin-top:16px">
                   <div className="settings-section-header">
                     <h3>Custom Commands</h3>
-                    <button className="btn btn-sm" id="settings-add-command-btn">Add Command</button>
                   </div>
                   <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
                   <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>

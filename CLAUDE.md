@@ -140,6 +140,7 @@ The `docs/` folder contains numbered requirements documents that describe the ap
   12. `12-claude-channel.md` — Claude Channel integration, play button, auto mode
   13. `13-app-icon.md` — Dynamic app icon variants, settings UI, cross-platform switching
   15. `15-shell-commands.md` — Shell command targets for custom commands, execution API
+  16. `16-command-groups.md` — Custom command groups, collapsible sidebar, outline settings editor
   17. `17-share.md` — Share prompt, toolbar button, timing criteria
 - **Section numbering** — each document uses `N.X` section numbers matching its file number (e.g., `3-ticket-management.md` uses §3.1, §3.2, etc.)
 - **Cross-references** — use relative markdown links between docs (e.g., `[3-ticket-management.md](3-ticket-management.md) §3.7`)

@@ -1,7 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { suppressAnimation } from './animate.js';
 import { showTicketContextMenu } from './contextMenu.js';
-import { syncDetailPanel, updateStats } from './detail.js';
+import { parseTags, syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { createDraftRow } from './draftRow.js';
 import type { Ticket } from './state.js';
@@ -139,6 +139,13 @@ export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
         </span>
       </div>
       <div className="column-card-title">{ticket.title}</div>
+      {parseTags(ticket.tags).length > 0 ? (
+        <div className="column-card-tags">
+          {parseTags(ticket.tags).map(tag => (
+            <span className="column-card-tag">{tag}</span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 
@@ -244,6 +251,13 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
         </button>
       </div>
       <div className="column-card-title">{ticket.title}</div>
+      {parseTags(ticket.tags).length > 0 ? (
+        <div className="column-card-tags">
+          {parseTags(ticket.tags).map(tag => (
+            <span className="column-card-tag">{tag}</span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 

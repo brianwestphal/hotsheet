@@ -40,7 +40,7 @@ The interface is divided into:
 - Tickets displayed in status-based columns (Not Started, Started, Completed, Verified).
 - Drag-and-drop cards between columns to change status.
 - Column headers show ticket count.
-- Cards display category badge, ticket number, priority, up_next star, and title.
+- Cards display category badge, ticket number, priority, up_next star, title, and tags (if any, shown as small pills below the title).
 - Per-column scroll position is preserved across re-renders.
 - Available for views: All, Up Next, Open, Non-Verified.
 - Not available for: Completed, Verified, Trash, Backlog, Archive (single-status views).

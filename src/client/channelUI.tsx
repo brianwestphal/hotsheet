@@ -124,6 +124,7 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
 // --- Claude Channel ---
 
 let channelAutoMode = false;
+const autoModeByProject = new Map<string, boolean>();
 let channelDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
 let channelBusy = false;
 let shellBusyState = false;
@@ -141,7 +142,7 @@ function updateStatusIndicator() {
     indicator.style.display = 'none';
     return;
   }
-  if (channelBusy) {
+  if (isChannelBusy()) {
     indicator.style.display = '';
     indicator.className = 'channel-status-indicator busy';
     indicator.innerHTML = `${SPINNER_12} Claude working`;
@@ -183,7 +184,11 @@ let channelAutoVerifyTimeout: ReturnType<typeof setTimeout> | null = null;
 const CHANNEL_AUTO_BASE_DELAY = 5000;
 const CHANNEL_AUTO_MAX_DELAY = 120000; // 2 minutes
 
-export function isChannelBusy(): boolean { return channelBusy; }
+export function isChannelBusy(): boolean {
+  // Check per-project busy state rather than global flag
+  const secret = getActiveProject()?.secret;
+  return secret !== undefined && secret !== '' ? busyProjects.has(secret) : channelBusy;
+}
 export function isChannelAlive(): boolean { return channelAliveLocal; }
 
 let channelAliveLocal = false;
@@ -353,6 +358,27 @@ export async function initChannel() {
   const playIcon = document.getElementById('channel-play-icon')!;
   const autoIcon = document.getElementById('channel-auto-icon')!;
 
+  // Save auto-mode for the previous project, restore for the new one
+  {
+    // We don't have the previous project secret, so we rely on the current autoMode
+    // being saved by toggleAutoMode when it changes. Just restore for the new project.
+    const activeSecret = getActiveProject()?.secret ?? '';
+    channelAutoMode = autoModeByProject.get(activeSecret) ?? false;
+    if (channelDebounceTimeout) { clearTimeout(channelDebounceTimeout); channelDebounceTimeout = null; }
+    // Update the play button UI to reflect the restored auto-mode state
+    if (channelAutoMode) {
+      playIcon.style.display = 'none';
+      autoIcon.style.display = '';
+      btn.classList.add('auto-active');
+    } else {
+      playIcon.style.display = '';
+      autoIcon.style.display = 'none';
+      btn.classList.remove('auto-active');
+    }
+  }
+  // Re-render the status indicator for the active project's busy state
+  updateStatusIndicator();
+
   // Reload custom commands for the active project and render
   const { renderChannelCommands, reloadCustomCommands, setChannelEnabledState } = await import('./experimentalSettings.js');
   setChannelEnabledState(status.enabled);
@@ -399,13 +425,16 @@ export async function initChannel() {
 
 function toggleAutoMode(btn: HTMLElement, playIcon: HTMLElement, autoIcon: HTMLElement) {
   channelAutoMode = !channelAutoMode;
+  // Persist per-project
+  const secret = getActiveProject()?.secret ?? '';
+  if (secret !== '') autoModeByProject.set(secret, channelAutoMode);
   if (channelAutoMode) {
     btn.classList.add('auto-mode');
     playIcon.style.display = 'none';
     autoIcon.style.display = '';
     channelAutoBackoff = 0;
-    // Start initial 5-second debounce when entering auto mode (HS-1453)
-    channelAutoTrigger();
+    // Immediately trigger Claude when entering auto mode, then continue auto-monitoring
+    triggerChannelAndMarkBusy();
   } else {
     btn.classList.remove('auto-mode');
     playIcon.style.display = '';

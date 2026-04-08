@@ -60,3 +60,12 @@ export async function initDashboardWidget() {
   if (statsBar) statsBar.after(widget);
   widget.addEventListener('click', () => enterDashboardMode());
 }
+
+/** Refresh the sidebar widget with the active project's data. */
+export async function refreshDashboardWidget() {
+  const existing = document.getElementById('sidebar-dashboard-widget');
+  if (!existing) return;
+  const fresh = await renderSidebarWidget();
+  fresh.addEventListener('click', () => enterDashboardMode());
+  existing.replaceWith(fresh);
+}

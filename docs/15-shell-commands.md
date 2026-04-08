@@ -72,6 +72,7 @@ interface CustomCommand {
   color?: string;
   target?: 'claude' | 'shell';  // default 'claude'
   autoShowLog?: boolean;        // controls whether Commands Log auto-opens on shell command completion
+  group?: string;               // group header name (see [16-command-groups.md](16-command-groups.md))
 }
 ```
 
