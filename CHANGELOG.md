@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.13.0] - 2026-04-08
+
+- Support for grouping custom commands (see experimental tab of settings)
+- Column view now shows tags on tickets
+- A few bug fixes
+
 ## [0.12.3] - 2026-04-08
 
 - Fixed an issue with the CLI script when Hot Sheet is already running
