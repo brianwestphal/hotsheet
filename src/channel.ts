@@ -4,6 +4,11 @@
  * MCP server that bridges Hot Sheet UI → Claude Code session.
  * Spawned by Claude Code as a subprocess via .mcp.json.
  */
+
+/** Bump this when changing channel server capabilities (endpoints, protocol, etc.).
+ *  The main server compares this against the running channel server's reported version
+ *  and warns if they don't match (user needs to reconnect via /mcp in Claude Code). */
+export const CHANNEL_VERSION = 2;
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFileSync, unlinkSync, writeFileSync } from 'fs';
@@ -99,7 +104,7 @@ const httpServer = createServer(async (req, res) => {
 
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true }));
+    res.end(JSON.stringify({ ok: true, version: CHANNEL_VERSION }));
     return;
   }
 

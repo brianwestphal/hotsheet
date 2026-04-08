@@ -114,6 +114,25 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
   // If alive, leave it alone — it's connected to Claude Code
 }
 
+/** Expected channel server version — must match CHANNEL_VERSION in channel.ts.
+ *  Duplicated here to avoid importing channel.ts (which has side effects). */
+const EXPECTED_CHANNEL_VERSION = 2;
+
+/** Check if the running channel server's version matches the expected version.
+ *  Returns null if no channel, true if matching, false if mismatched. */
+export async function checkChannelVersion(dataDir: string): Promise<{ match: boolean; running: number; expected: number } | null> {
+  const port = getChannelPort(dataDir);
+  if (port === null) return null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`);
+    const data = await res.json() as { ok: boolean; version?: number };
+    const running = data.version ?? 0;
+    return { match: running === EXPECTED_CHANNEL_VERSION, running, expected: EXPECTED_CHANNEL_VERSION };
+  } catch {
+    return null;
+  }
+}
+
 /** Shut down a channel server via its /shutdown endpoint.
  *  Used when the user explicitly disables the channel. */
 export async function shutdownChannel(dataDir: string): Promise<void> {

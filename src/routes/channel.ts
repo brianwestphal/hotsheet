@@ -33,7 +33,7 @@ channelRoutes.get('/channel/claude-check', async (c) => {
 });
 
 channelRoutes.get('/channel/status', async (c) => {
-  const { isChannelAlive, getChannelPort } = await import('../channel-config.js');
+  const { isChannelAlive, getChannelPort, checkChannelVersion } = await import('../channel-config.js');
   const { readGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
   // Channel enabled is a global setting; fall back to legacy per-project DB (read-only)
@@ -51,7 +51,13 @@ channelRoutes.get('/channel/status', async (c) => {
   const projectSecret = c.get('projectSecret');
   const done = channelDoneFlags.get(projectSecret) === true;
   if (done) channelDoneFlags.delete(projectSecret);
-  return c.json({ enabled, alive, port, done });
+  // Check if the running channel server version matches the expected version
+  let versionMismatch = false;
+  if (alive) {
+    const vCheck = await checkChannelVersion(dataDir);
+    if (vCheck !== null && !vCheck.match) versionMismatch = true;
+  }
+  return c.json({ enabled, alive, port, done, versionMismatch });
 });
 
 channelRoutes.post('/channel/trigger', async (c) => {

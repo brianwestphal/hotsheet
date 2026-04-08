@@ -422,6 +422,24 @@ input, select, textarea {
   border-radius: var(--radius);
 }
 
+.channel-version-warning {
+  margin: 4px 10px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #f97316;
+  text-align: center;
+  border: 1px solid #f9731640;
+  border-radius: var(--radius);
+  background: #f9731610;
+
+  code {
+    background: #f9731620;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+}
+
 .no-upnext-alert {
   display: flex;
   align-items: center;

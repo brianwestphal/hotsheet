@@ -119,6 +119,7 @@ npm run test:all      # Unified coverage: unit + E2E server + E2E browser, merge
 - Hono context variables typed via `AppEnv` in `src/types.ts`
 - Server-rendered HTML for initial page load; client JS for interactivity
 - Client CSS and JS are built separately and served as static files
+- **`CHANNEL_VERSION`** in `src/channel.ts` AND `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` — bump both integers (they must match) when changing the channel server's capabilities (new endpoints, protocol changes, new MCP features). The main server compares the running server's version against the expected version and warns the user to reconnect via `/mcp` in Claude Code if they don't match. Always increment both when modifying `src/channel.ts` in ways that affect the HTTP API or MCP behavior.
 
 ### Requirements Documentation
 

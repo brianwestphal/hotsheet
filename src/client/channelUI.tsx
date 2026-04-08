@@ -369,9 +369,9 @@ function showNoUpNextAlert() {
 }
 
 export async function initChannel() {
-  let status: { enabled: boolean; alive: boolean } | null = null;
+  let status: { enabled: boolean; alive: boolean; versionMismatch?: boolean } | null = null;
   try {
-    status = await api<{ enabled: boolean; alive: boolean }>('/channel/status');
+    status = await api<{ enabled: boolean; alive: boolean; versionMismatch?: boolean }>('/channel/status');
   } catch { /* endpoint may not exist yet */ }
   // If we couldn't reach the server, keep the previous state
   if (status === null) return;
@@ -418,6 +418,12 @@ export async function initChannel() {
   setChannelAlive(status.alive);
   renderChannelCommands();
   startPermissionPolling();
+
+  // Warn if the running channel server is outdated
+  const versionWarning = document.getElementById('channel-version-warning');
+  if (versionWarning) {
+    versionWarning.style.display = status.versionMismatch === true ? '' : 'none';
+  }
   // Load ping setting for this project and start/stop accordingly
   void api<Record<string, string>>('/settings').then(settings => {
     pingEnabledState = settings.ping_enabled === 'true';
@@ -699,9 +705,12 @@ export function checkChannelDone() {
   const enabled = section !== null && section.style.display !== 'none';
   if (!enabled) return;
 
-  api<{ done?: boolean; alive?: boolean }>('/channel/status').then(s => {
+  api<{ done?: boolean; alive?: boolean; versionMismatch?: boolean }>('/channel/status').then(s => {
     // Update alive/disconnected warning
     if (s.alive !== undefined) setChannelAlive(s.alive);
+    // Update version mismatch warning
+    const versionWarning = document.getElementById('channel-version-warning');
+    if (versionWarning) versionWarning.style.display = s.versionMismatch === true ? '' : 'none';
     // Check for done signal — always process it, even if we don't think we're busy
     // (the busy state may have been cleared by timeout or tab switch)
     if (s.done === true) {
