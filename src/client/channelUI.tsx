@@ -69,6 +69,17 @@ function showPermissionOverlay(perm: { request_id: string; tool_name: string; de
   const overlay = document.getElementById('permission-overlay');
   if (!overlay) return;
   if (respondedRequestIds.has(perm.request_id)) return;
+
+  // A permission request is proof Claude is actively working — extend the busy timeout
+  if (channelBusyTimeout) {
+    clearTimeout(channelBusyTimeout);
+    channelBusyTimeout = setTimeout(() => {
+      if (isChannelBusy()) setChannelBusy(false);
+    }, 60000);
+  }
+  // If we're not marked busy but got a permission request, mark busy now
+  if (!isChannelBusy()) setChannelBusy(true);
+
   // Already showing this exact permission
   if (currentOverlayRequestId === perm.request_id) return;
   // New permission replaces any currently shown one
@@ -196,12 +207,18 @@ let channelAliveLocal = false;
 
 /** Update alive state — called from initChannel and checkChannelDone */
 export function setChannelAlive(alive: boolean) {
+  const wasAlive = channelAliveLocal;
   channelAliveLocal = alive;
   const warning = document.getElementById('channel-disconnected');
   if (!warning) return;
   const section = document.getElementById('channel-play-section');
   const enabled = section !== null && section.style.display !== 'none';
   warning.style.display = enabled && !alive ? '' : 'none';
+  // If the channel server went down while we thought Claude was busy, clear busy state
+  if (wasAlive && !alive && isChannelBusy()) {
+    setChannelBusy(false);
+    if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
+  }
 }
 export function isPermissionPending(): boolean {
   const overlay = document.getElementById('permission-overlay');
@@ -293,11 +310,11 @@ function triggerChannelAndMarkBusy(message?: string) {
   // Ensure AI tool skills are installed/up-to-date before triggering
   void api('/ensure-skills', { method: 'POST' });
   void api('/channel/trigger', { method: 'POST', body: { message } });
-  // Timeout fallback: clear busy after 120s if Claude never calls /done
+  // Timeout fallback: clear busy after 60s if Claude never calls /done
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
   channelBusyTimeout = setTimeout(() => {
     if (isChannelBusy()) setChannelBusy(false);
-  }, 120000);
+  }, 60000);
 }
 
 // Exported so experimentalSettings can call it for custom command buttons
@@ -475,6 +492,16 @@ export function channelAutoTrigger() {
   }, autoTriggerDelay());
 }
 
+/** Ping Claude to check if it's actually idle. Returns true if idle (responded quickly). */
+async function pingClaude(): Promise<boolean> {
+  try {
+    const result = await api<{ idle: boolean }>('/channel/ping', { method: 'POST' });
+    return result.idle;
+  } catch {
+    return false;
+  }
+}
+
 /** After debounce, try to trigger Claude. If busy, retry with backoff until idle. (HS-1453, HS-2049) */
 async function attemptAutoTrigger() {
   if (!channelAutoMode) return;
@@ -486,7 +513,7 @@ async function attemptAutoTrigger() {
   } catch { /* proceed anyway */ }
 
   if (!isChannelBusy()) {
-    // Claude is idle — trigger now
+    // We think Claude is idle — trigger now
     if (channelAutoRetryInterval) { clearInterval(channelAutoRetryInterval); channelAutoRetryInterval = null; }
     triggerChannelAndMarkBusy();
 
@@ -500,7 +527,15 @@ async function attemptAutoTrigger() {
       }
     }, 10000);
   } else if (!channelAutoRetryInterval) {
-    // Claude is busy — start retrying with current backoff delay
+    // We think Claude is busy — ping to verify before waiting
+    const actuallyIdle = await pingClaude();
+    if (actuallyIdle) {
+      // Claude responded to ping — it's actually idle. Clear busy and trigger.
+      setChannelBusy(false);
+      triggerChannelAndMarkBusy();
+      return;
+    }
+    // Confirmed busy — start retrying with current backoff delay
     const delay = autoTriggerDelay();
     channelAutoRetryInterval = setInterval(() => {
       if (!channelAutoMode) {

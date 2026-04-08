@@ -211,3 +211,63 @@ channelRoutes.post('/channel/permission/notify', (c) => {
   notifyPermission();
   return c.json({ ok: true });
 });
+
+// --- Ping/pong busy detection ---
+// Sends a lightweight channel event to Claude and waits for a callback.
+// If Claude responds quickly, it's idle. If not, it's busy.
+
+const pendingPings = new Map<string, (idle: boolean) => void>();
+
+/** POST /api/channel/ping — initiate a ping and wait for pong (up to 5s) */
+channelRoutes.post('/channel/ping', async (c) => {
+  const { getChannelPort } = await import('../channel-config.js');
+  const dataDir = c.get('dataDir');
+  const port = getChannelPort(dataDir);
+  if (port === null) return c.json({ idle: false, reason: 'no-channel' });
+
+  const nonce = Math.random().toString(36).slice(2);
+  const { readFileSettings } = await import('../file-settings.js');
+  const settings = readFileSettings(dataDir);
+  const serverPort = settings.port ?? 4174;
+  const secret = settings.secret ?? '';
+  const callbackUrl = `http://localhost:${serverPort}/api/channel/pong?nonce=${nonce}` +
+    (secret !== '' ? `&secret=${encodeURIComponent(secret)}` : '');
+
+  // Send ping to channel server which forwards to Claude
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/ping`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nonce, callbackUrl }),
+    });
+    if (!res.ok) return c.json({ idle: false, reason: 'ping-failed' });
+  } catch {
+    return c.json({ idle: false, reason: 'channel-unreachable' });
+  }
+
+  // Wait for pong (up to 5 seconds)
+  const idle = await new Promise<boolean>((resolve) => {
+    pendingPings.set(nonce, resolve);
+    setTimeout(() => {
+      if (pendingPings.has(nonce)) {
+        pendingPings.delete(nonce);
+        resolve(false); // Timeout — Claude is busy
+      }
+    }, 5000);
+  });
+
+  return c.json({ idle });
+});
+
+/** POST /api/channel/pong — Claude responds to a ping.
+ *  The nonce itself serves as authentication (only the intended Claude session has it). */
+channelRoutes.post('/channel/pong', (c) => {
+  const nonce = c.req.query('nonce') ?? '';
+  if (nonce === '') return c.json({ error: 'missing nonce' }, 400);
+  const waiter = pendingPings.get(nonce);
+  if (waiter) {
+    pendingPings.delete(nonce);
+    waiter(true); // Claude responded — it's idle
+  }
+  return c.json({ ok: true });
+});

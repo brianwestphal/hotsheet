@@ -24,8 +24,10 @@ export default defineConfig({
   ...(useWebServer
     ? {
         webServer: {
+          // Use isolated HOME so global files (instance.json, projects.json, config.json)
+          // don't interfere with any running Hot Sheet instance
           command:
-            'npm run build:client && npx tsx src/cli.ts --data-dir /tmp/hotsheet-e2e-$(date +%s%N) --no-open --port 4190',
+            'export HOME=$(mktemp -d) && npm run build:client && npx tsx src/cli.ts --data-dir /tmp/hotsheet-e2e-$(date +%s%N) --no-open --port 4190 --strict-port',
           port: 4190,
           reuseExistingServer: false,
           timeout: 30_000,

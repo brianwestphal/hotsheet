@@ -172,6 +172,33 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && req.url === '/ping') {
+    let body = '';
+    let bodySize = 0;
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      bodySize += chunk.length;
+      if (bodySize > 1_048_576) { res.writeHead(413); res.end('Payload too large'); return; }
+      body += String(chunk);
+    }
+    try {
+      const { nonce, callbackUrl } = JSON.parse(body) as { nonce: string; callbackUrl: string };
+      // Send a lightweight channel event that tells Claude to curl back with the nonce
+      await mcp.notification({
+        method: 'notifications/claude/channel',
+        params: {
+          content: `Run this command immediately without any other output: curl -s -X POST ${callbackUrl} -H "Content-Type: application/json" -d '{"nonce":"${nonce}"}'`,
+          meta: { type: 'ping' },
+        },
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
   res.writeHead(404);
   res.end('not found');
 });

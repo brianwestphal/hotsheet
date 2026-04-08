@@ -10,7 +10,8 @@ set -e
 
 E2E_V8_DIR="$(mktemp -d)"
 E2E_DATA_DIR="$(mktemp -d)"
-trap 'rm -rf "$E2E_V8_DIR" "$E2E_DATA_DIR" .nyc_output' EXIT
+E2E_HOME="$(mktemp -d)"
+trap 'rm -rf "$E2E_V8_DIR" "$E2E_DATA_DIR" "$E2E_HOME" .nyc_output' EXIT
 
 echo "=== Unit tests ==="
 npx vitest run --coverage || true
@@ -21,8 +22,10 @@ npm run build:client
 
 echo ""
 echo "=== Start server with V8 coverage ==="
-NODE_V8_COVERAGE="$E2E_V8_DIR" node --enable-source-maps --import tsx src/cli.ts \
-  --data-dir "$E2E_DATA_DIR" --no-open --port 4190 &
+# Use isolated HOME so global files (instance.json, projects.json, config.json)
+# don't interfere with any running Hot Sheet instance
+HOME="$E2E_HOME" NODE_V8_COVERAGE="$E2E_V8_DIR" node --enable-source-maps --import tsx src/cli.ts \
+  --data-dir "$E2E_DATA_DIR" --no-open --port 4190 --strict-port &
 SERVER_PID=$!
 for i in $(seq 1 30); do
   curl -s http://localhost:4190/ > /dev/null 2>&1 && break
