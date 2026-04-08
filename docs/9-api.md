@@ -150,7 +150,7 @@ See also [14-commands-log.md](14-commands-log.md) §14.8 for command log endpoin
 
 ### 9.13 Claude Channel Endpoints
 
-See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel API reference.
+See [12-claude-channel.md](12-claude-channel.md) §12.13 for the full channel API reference.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -165,6 +165,8 @@ See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel AP
 | POST | `/api/channel/permission/dismiss` | Dismiss permission overlay |
 | POST | `/api/channel/notify` | Notify long-poll of channel state changes (used internally by channel server) |
 | POST | `/api/channel/permission/notify` | Wake the permission long-poll (used internally by channel server) |
+| POST | `/api/channel/ping` | Ping active project's Claude to check busy/idle (15s timeout) |
+| POST | `/api/channel/pong` | Pong callback from Claude (nonce-authenticated) |
 
 ### 9.14 Project Endpoints
 
@@ -177,6 +179,7 @@ See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel AP
 | GET | `/api/projects/channel-status` | Returns channel alive/dead status for all registered projects |
 | POST | `/api/projects/reorder` | Reorder the project list (`{ secrets: string[] }`) |
 | GET | `/api/projects/permissions` | Long-poll for pending permissions across all projects (versioned, 3s timeout) |
+| POST | `/api/projects/ping` | Ping all projects' Claude channels in parallel (15s timeout each) |
 
 ### 9.15 Change Notification
 

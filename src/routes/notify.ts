@@ -51,6 +51,5 @@ export function notifyPermission() {
   permissionVersion++;
   const waiters = permissionWaiters;
   permissionWaiters = [];
-  console.log(`[perm] notifyPermission v${permissionVersion}, waking ${waiters.length} waiters`);
   for (const resolve of waiters) resolve();
 }

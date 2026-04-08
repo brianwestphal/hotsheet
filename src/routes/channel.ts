@@ -206,14 +206,12 @@ channelRoutes.post('/channel/disable', async (c) => {
 
 /** Called by the channel server process when it starts or stops, to wake the long-poll. */
 channelRoutes.post('/channel/notify', (c) => {
-  console.log(`[notify] channel/notify received — waking poll + permission waiters`);
   notifyChange();
   return c.json({ ok: true });
 });
 
 /** Called by the channel server when a permission request arrives, to wake the permission long-poll. */
 channelRoutes.post('/channel/permission/notify', (c) => {
-  console.log(`[perm] notify received, waking waiters at ${Date.now()}`);
   notifyPermission();
   return c.json({ ok: true });
 });
@@ -224,38 +222,26 @@ channelRoutes.post('/channel/permission/notify', (c) => {
 
 const pendingPings = new Map<string, (idle: boolean) => void>();
 
-/** POST /api/channel/ping — initiate a ping and wait for pong (up to 5s) */
-channelRoutes.post('/channel/ping', async (c) => {
-  const { getChannelPort } = await import('../channel-config.js');
-  const dataDir = c.get('dataDir');
-  const port = getChannelPort(dataDir);
-  if (port === null) return c.json({ idle: false, reason: 'no-channel' });
-
+/** Send a ping to a channel server and wait for pong.
+ *  Returns: true = idle (responded), false = busy (no response), null = channel unreachable. */
+export async function pingChannelServer(channelPort: number, serverPort: number, secret: string): Promise<boolean | null> {
   const nonce = Math.random().toString(36).slice(2);
-  const { readFileSettings } = await import('../file-settings.js');
-  const settings = readFileSettings(dataDir);
-  const serverPort = settings.port ?? 4174;
-  const secret = settings.secret ?? '';
   const callbackUrl = `http://localhost:${serverPort}/api/channel/pong?nonce=${nonce}` +
     (secret !== '' ? `&secret=${encodeURIComponent(secret)}` : '');
 
-  // Send ping to channel server which forwards to Claude
-  console.log(`[ping] sending to channel server on port ${port}, nonce=${nonce}`);
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/ping`, {
+    const res = await fetch(`http://127.0.0.1:${channelPort}/ping`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nonce, callbackUrl, secret }),
     });
-    console.log(`[ping] channel server responded: ${res.status}`);
-    if (!res.ok) return c.json({ idle: false, reason: 'ping-failed' });
-  } catch (err) {
-    console.log(`[ping] channel server unreachable: ${String(err)}`);
-    return c.json({ idle: false, reason: 'channel-unreachable' });
+    if (!res.ok) return null; // Channel server error — not connected
+  } catch {
+    return null; // Channel server unreachable — not connected
   }
 
   // Wait for pong (up to 15 seconds — the round-trip through Claude takes time)
-  const idle = await new Promise<boolean>((resolve) => {
+  return new Promise<boolean>((resolve) => {
     pendingPings.set(nonce, resolve);
     setTimeout(() => {
       if (pendingPings.has(nonce)) {
@@ -264,7 +250,20 @@ channelRoutes.post('/channel/ping', async (c) => {
       }
     }, 15000);
   });
+}
 
+/** POST /api/channel/ping — initiate a ping for the active project */
+channelRoutes.post('/channel/ping', async (c) => {
+  const { getChannelPort } = await import('../channel-config.js');
+  const { readFileSettings } = await import('../file-settings.js');
+  const dataDir = c.get('dataDir');
+  const port = getChannelPort(dataDir);
+  if (port === null) return c.json({ idle: false, reason: 'no-channel' });
+
+  const settings = readFileSettings(dataDir);
+  const serverPort = settings.port ?? 4174;
+  const secret = settings.secret ?? '';
+  const idle = await pingChannelServer(port, serverPort, secret);
   return c.json({ idle });
 });
 

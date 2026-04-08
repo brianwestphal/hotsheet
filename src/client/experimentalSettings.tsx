@@ -875,6 +875,28 @@ export function bindExperimentalSettings() {
     });
   });
 
+  // Ping checkbox
+  const pingSection = document.getElementById('settings-ping-section') as HTMLElement;
+  const pingCheckbox = document.getElementById('settings-ping-enabled') as HTMLInputElement;
+
+  function updatePingSectionVisibility(channelEnabled: boolean) {
+    pingSection.style.display = channelEnabled ? '' : 'none';
+  }
+
+  // Reload ping setting every time settings opens (per-project)
+  document.getElementById('settings-btn')!.addEventListener('click', () => {
+    void api<Record<string, string>>('/settings').then(settings => {
+      pingCheckbox.checked = settings.ping_enabled === 'true';
+    });
+  });
+
+  pingCheckbox.addEventListener('change', async () => {
+    await api('/settings', { method: 'PATCH', body: { ping_enabled: String(pingCheckbox.checked) } });
+    // Notify channelUI to start/stop passive ping
+    const { setPingEnabled } = await import('./channelUI.js');
+    setPingEnabled(pingCheckbox.checked);
+  });
+
   // Load channel enabled state from global config (authoritative source)
   fetch('/api/global-config').then(r => r.ok ? r.json() as Promise<{ channelEnabled?: boolean }> : null).then(config => {
     if (config !== null) {
@@ -884,6 +906,7 @@ export function bindExperimentalSettings() {
       if (enabled) {
         channelInstructions.style.display = '';
       }
+      updatePingSectionVisibility(enabled);
     }
     // Always show custom commands (shell commands work without channel)
     customCommandsSection.style.display = '';
@@ -905,6 +928,7 @@ export function bindExperimentalSettings() {
       channelInstructions.style.display = 'none';
       channelEnabledState = false;
     }
+    updatePingSectionVisibility(channelCheckbox.checked);
     // Always keep custom commands visible (shell commands work without channel)
     customCommandsSection.style.display = '';
     renderCustomCommandSettings(); // Re-render warnings before initChannel (which is async)

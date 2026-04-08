@@ -418,7 +418,12 @@ export async function initChannel() {
   setChannelAlive(status.alive);
   renderChannelCommands();
   startPermissionPolling();
-  startPassivePing();
+  // Load ping setting for this project and start/stop accordingly
+  void api<Record<string, string>>('/settings').then(settings => {
+    pingEnabledState = settings.ping_enabled === 'true';
+    if (pingEnabledState) startPassivePing();
+    else stopPassivePing();
+  });
 
   // Only bind the click handler once (initChannel is called on every project switch)
   if (btn.dataset.bound !== undefined && btn.dataset.bound !== '') return;
@@ -494,7 +499,7 @@ export function channelAutoTrigger() {
   }, autoTriggerDelay());
 }
 
-/** Ping Claude to check if it's actually idle. Returns true if idle (responded quickly). */
+/** Ping Claude to check if it's actually idle (active project only). */
 async function pingClaude(): Promise<boolean> {
   try {
     const result = await api<{ idle: boolean }>('/channel/ping', { method: 'POST' });
@@ -504,26 +509,87 @@ async function pingClaude(): Promise<boolean> {
   }
 }
 
-// --- Passive ping: periodically verify busy/idle state ---
-let passivePingInterval: ReturnType<typeof setInterval> | null = null;
+/** Ping all projects and update busy state for each. */
+async function pingAllProjects(): Promise<void> {
+  try {
+    const data = await api<{ results: Record<string, boolean | null> }>('/projects/ping', { method: 'POST' });
+    for (const [secret, idle] of Object.entries(data.results)) {
+      if (idle === null) continue; // No channel — don't change busy state
+      if (busyProjects.has(secret) && idle) {
+        busyProjects.delete(secret);
+      } else if (!busyProjects.has(secret) && !idle) {
+        busyProjects.add(secret);
+      }
+    }
+    syncDots();
+    updateStatusIndicator();
+  } catch { /* ignore */ }
+}
 
-/** Run a single ping check and update busy state accordingly. */
-async function runPingCheck() {
-  if (!channelAliveLocal) return;
-  const idle = await pingClaude();
-  if (isChannelBusy() && idle) {
-    setChannelBusy(false);
-    if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
-  } else if (!isChannelBusy() && !idle) {
-    setChannelBusy(true);
+// --- Activity-gated passive ping ---
+// Only ping when the user has been active in the last 2 minutes.
+// When the app becomes active after being idle, ping immediately.
+// Controlled by per-project ping_enabled setting (off by default).
+
+let pingEnabledState = false;
+
+/** Set ping enabled state. Called from settings checkbox and on project switch. */
+export function setPingEnabled(enabled: boolean) {
+  pingEnabledState = enabled;
+  if (enabled) {
+    startPassivePing();
+  } else {
+    stopPassivePing();
   }
 }
 
+const ACTIVITY_TIMEOUT = 2 * 60 * 1000; // 2 minutes
+let lastActivityTime = Date.now();
+let wasInactive = false;
+let activityListenersRegistered = false;
+
+function registerActivityListeners() {
+  if (activityListenersRegistered) return;
+  activityListenersRegistered = true;
+  const markActive = () => {
+    const now = Date.now();
+    const wasIdle = now - lastActivityTime > ACTIVITY_TIMEOUT;
+    lastActivityTime = now;
+    if (wasIdle && !wasInactive) {
+      wasInactive = true;
+    }
+    if (wasInactive) {
+      // App just became active after being idle — ping immediately
+      wasInactive = false;
+      if (channelAliveLocal) void runPingCheck();
+    }
+  };
+  for (const event of ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'] as const) {
+    document.addEventListener(event, markActive, { passive: true });
+  }
+}
+
+let passivePingInterval: ReturnType<typeof setInterval> | null = null;
+
+/** Run a ping check for all projects and update busy states. */
+async function runPingCheck() {
+  await pingAllProjects();
+}
+
+function isUserActive(): boolean {
+  return Date.now() - lastActivityTime < ACTIVITY_TIMEOUT;
+}
+
 function startPassivePing() {
+  if (!pingEnabledState) return;
+  registerActivityListeners();
   if (passivePingInterval !== null) return;
-  // Run an immediate check on startup / project switch
-  void runPingCheck();
-  passivePingInterval = setInterval(() => { void runPingCheck(); }, 60000);
+  // Initial check on startup / project switch — delay slightly to let channel server settle
+  setTimeout(() => { void runPingCheck(); }, 2000);
+  // Check every 60s, but only actually ping if user has been active recently
+  passivePingInterval = setInterval(() => {
+    if (isUserActive()) void runPingCheck();
+  }, 60000);
 }
 
 function stopPassivePing() {
@@ -532,8 +598,9 @@ function stopPassivePing() {
 
 /** Reset timer and immediately check. Called from context menu. */
 function syncBusyStatusNow() {
+  lastActivityTime = Date.now(); // Treat manual check as activity
   stopPassivePing();
-  startPassivePing(); // Starts interval and runs immediate check
+  startPassivePing();
 }
 
 /** Bind the status bar context menu for manual busy state sync. */
