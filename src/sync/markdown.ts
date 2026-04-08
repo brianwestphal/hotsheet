@@ -185,6 +185,7 @@ async function buildWorkflowInstructions(port: number, secretHeader: string): Pr
   sections.push('- The "notes" field is REQUIRED when completing a ticket. Describe the specific work done.');
   sections.push('- If an API call fails (e.g. connection refused, 403 secret mismatch, or error response), **re-read `.hotsheet/settings.json`** to get the correct `port` and `secret` values — you may be connecting to the wrong Hot Sheet instance. Log a visible warning to the user and continue your work. Do NOT silently skip status updates.');
   sections.push('- Do NOT set tickets to "verified" — that status is reserved for human review.');
+  sections.push('- Do NOT use the API to read or list tickets (e.g., GET /api/tickets). Always read this worklist file for current work items. The API is only for updating ticket status and creating new tickets.');
   sections.push('');
   sections.push('## Creating Tickets');
   sections.push('');

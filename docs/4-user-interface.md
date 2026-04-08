@@ -27,6 +27,7 @@ The interface is divided into:
   - Cmd/Ctrl+Shift+Arrow Left/Right — Switch to previous/next tab (ignored when focus is in a text field, to preserve native text selection).
   - Cmd/Ctrl+Alt+W — Close active tab.
 - Tabs can be reordered by drag-and-drop. A drop indicator shows the insertion point. Order is persisted to the server.
+- Tab order is preserved across restarts. New projects are appended to the end of the tab bar. Re-opening an existing project does not reorder tabs.
 
 ### 4.3 List View
 

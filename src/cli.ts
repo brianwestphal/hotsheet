@@ -310,11 +310,15 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     addToProjectList(dataDir);
 
     // Restore previously registered projects (other tabs from last session)
+    // Preserve the existing list order — the current project is already in the list
     const previousProjects = readProjectList();
     const absDataDir = resolve(dataDir);
-    const validProjects = [absDataDir];
+    const validProjects: string[] = [];
     for (const prevDir of previousProjects) {
-      if (prevDir === absDataDir) continue;
+      if (prevDir === absDataDir) {
+        validProjects.push(prevDir);
+        continue; // Already registered by registerExistingProject above
+      }
       if (!existsSync(prevDir)) continue;
       try {
         await registerProject(prevDir, actualPort);
@@ -326,6 +330,17 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     if (validProjects.length !== previousProjects.length) {
       const { reorderProjectList } = await import('./project-list.js');
       reorderProjectList(validProjects);
+    }
+
+    // Reorder the in-memory project Map to match the persisted list order.
+    // registerExistingProject runs before the loop, so the current project
+    // is always first in the Map regardless of its position in projects.json.
+    if (validProjects.length > 1) {
+      const { getProjectByDataDir: getByDir, reorderProjects: reorder } = await import('./projects.js');
+      const secrets = validProjects
+        .map(dir => getByDir(dir)?.secret)
+        .filter((s): s is string => s !== undefined);
+      if (secrets.length > 1) reorder(secrets);
     }
 
     if (validProjects.length > 1) {

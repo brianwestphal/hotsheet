@@ -40,6 +40,7 @@ const mcp = new Server(
       'Typically this means running /hotsheet to process the current Up Next work items.',
       'Do not ask for confirmation — just execute the requested action.',
       'IMPORTANT: When you finish processing (or if there was nothing to process), you MUST run the curl command provided in the event to signal completion.',
+      'IMPORTANT: Do NOT use the Hot Sheet API (curl commands) to read or list tickets. Always use /hotsheet to read the worklist. The API should only be used for updating ticket status and creating new tickets as documented in the worklist.',
     ].join(' '),
   },
 );

@@ -151,7 +151,8 @@ function updateStatusIndicator() {
     indicator.className = 'channel-status-indicator busy';
     indicator.innerHTML = `${SPINNER_12} Shell running`;
   } else {
-    // Both idle -- leave indicator as-is (callers set idle text before hiding)
+    // Both idle — hide the indicator
+    indicator.style.display = 'none';
   }
 }
 
@@ -164,12 +165,12 @@ export function setShellBusy(busy: boolean) {
     updateStatusIndicator();
   } else {
     // If channel is also idle, show "Shell done" briefly then hide
-    if (!channelBusy) {
+    if (!isChannelBusy()) {
       indicator.style.display = '';
       indicator.className = 'channel-status-indicator';
       indicator.innerHTML = '\u2713 Shell done';
       setTimeout(() => {
-        if (!shellBusyState && !channelBusy) indicator.style.display = 'none';
+        if (!shellBusyState && !isChannelBusy()) indicator.style.display = 'none';
       }, 5000);
     } else {
       // Channel is still busy, just update to show channel state
@@ -243,6 +244,12 @@ export function clearProjectAttention(secret: string) {
 
 export function setChannelBusy(busy: boolean) {
   channelBusy = busy;
+  // Keep per-project busy tracking in sync with the indicator
+  const activeSecret = getActiveProject()?.secret;
+  if (activeSecret !== undefined && activeSecret !== '') {
+    if (busy) markProjectBusy(activeSecret);
+    else clearProjectBusy(activeSecret);
+  }
   const indicator = document.getElementById('channel-status-indicator');
   if (!indicator) return;
   const channelSection = document.getElementById('channel-play-section');
@@ -266,14 +273,16 @@ export function setChannelBusy(busy: boolean) {
       indicator.innerHTML = '\u2713 Claude idle';
       // Auto-hide after 5 seconds
       setTimeout(() => {
-        if (!channelBusy && !shellBusyState) indicator.style.display = 'none';
+        if (!isChannelBusy() && !shellBusyState) indicator.style.display = 'none';
       }, 5000);
     } else {
       // Shell is still busy, update indicator to show shell state
       updateStatusIndicator();
     }
-    // In auto mode, check for more up-next items when Claude becomes idle (HS-1453)
+    // In auto mode, check for more work when Claude becomes idle (HS-1453)
+    // Reset backoff since Claude successfully completed a task
     if (channelAutoMode) {
+      channelAutoBackoff = 0;
       channelAutoTrigger();
     }
   }
@@ -281,17 +290,13 @@ export function setChannelBusy(busy: boolean) {
 
 function triggerChannelAndMarkBusy(message?: string) {
   setChannelBusy(true);
-  // Track which project is busy for tab status dots
-  const secret = getActiveProject()?.secret;
-  if (secret !== undefined && secret !== '') markProjectBusy(secret);
   // Ensure AI tool skills are installed/up-to-date before triggering
   void api('/ensure-skills', { method: 'POST' });
   void api('/channel/trigger', { method: 'POST', body: { message } });
   // Timeout fallback: clear busy after 120s if Claude never calls /done
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
   channelBusyTimeout = setTimeout(() => {
-    if (channelBusy) setChannelBusy(false);
-    if (secret !== undefined && secret !== '') clearProjectBusy(secret);
+    if (isChannelBusy()) setChannelBusy(false);
   }, 120000);
 }
 
@@ -480,7 +485,7 @@ async function attemptAutoTrigger() {
     if (stats.up_next === 0 && !state.settings.auto_order) return;
   } catch { /* proceed anyway */ }
 
-  if (!channelBusy) {
+  if (!isChannelBusy()) {
     // Claude is idle — trigger now
     if (channelAutoRetryInterval) { clearInterval(channelAutoRetryInterval); channelAutoRetryInterval = null; }
     triggerChannelAndMarkBusy();
@@ -489,7 +494,7 @@ async function attemptAutoTrigger() {
     if (channelAutoVerifyTimeout) clearTimeout(channelAutoVerifyTimeout);
     channelAutoVerifyTimeout = setTimeout(() => {
       channelAutoVerifyTimeout = null;
-      if (!channelBusy && channelAutoMode) {
+      if (!isChannelBusy() && channelAutoMode) {
         // Claude didn't pick up — increase backoff for next attempt
         channelAutoBackoff++;
       }
@@ -517,12 +522,11 @@ export function checkChannelDone() {
   api<{ done?: boolean; alive?: boolean }>('/channel/status').then(s => {
     // Update alive/disconnected warning
     if (s.alive !== undefined) setChannelAlive(s.alive);
-    // Check for done signal
-    if (channelBusy && s.done === true) {
-      setChannelBusy(false);
+    // Check for done signal — always process it, even if we don't think we're busy
+    // (the busy state may have been cleared by timeout or tab switch)
+    if (s.done === true) {
+      setChannelBusy(false); // Clears per-project busy tracking, updates dots, triggers auto-mode
       if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
-      const secret = getActiveProject()?.secret;
-      if (secret !== undefined && secret !== '') clearProjectBusy(secret);
     }
   }).catch(() => {});
 }
