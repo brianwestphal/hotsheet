@@ -99,7 +99,7 @@ async function fetchPermission(dataDir: string): Promise<PermissionResult> {
   }
 }
 
-/** Long-poll: returns immediately if a permission is pending, otherwise waits up to 30s. */
+/** Long-poll: returns immediately if a permission is pending, otherwise waits up to 3s. */
 channelRoutes.get('/channel/permission', async (c) => {
   const dataDir = c.get('dataDir');
   const immediate = await fetchPermission(dataDir);

@@ -58,7 +58,7 @@ Project tabs are persisted to `~/.hotsheet/projects.json` and restored on restar
 7. Acquire the lock file (non-demo only).
 8. Ensure `.hotsheet/` is in `.gitignore` (if in a git repo, non-demo only).
 9. Initialize the PGLite database and run schema migrations.
-10. Run auto-cleanup for stale tickets (synchronous, blocking).
+10. Run auto-cleanup for orphaned attachments (synchronous, blocking).
 11. Start the Hono HTTP server.
 12. Trigger initial markdown sync.
 13. Generate/update AI tool skill files.

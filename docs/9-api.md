@@ -36,8 +36,8 @@ Validated fields include:
 | `priority` | highest, high, default, low, lowest |
 | `status` | not_started, started, completed, verified, backlog, archive, deleted, open, non_verified, active |
 | `up_next` | true, false |
-| `search` | Free-text search (ILIKE on title, details, ticket_number) |
-| `sort_by` | created, priority, category, status, ticket_number |
+| `search` | Free-text search (ILIKE on title, details, ticket_number, tags) |
+| `sort_by` | created, priority, category, status |
 | `sort_dir` | asc, desc |
 
 Special status filter values:
@@ -160,7 +160,7 @@ See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel AP
 | POST | `/api/channel/done` | Claude signals completion |
 | POST | `/api/channel/enable` | Enable channel, register in `.mcp.json` |
 | POST | `/api/channel/disable` | Disable channel, remove from `.mcp.json` |
-| GET | `/api/channel/permission` | Long-poll for pending permission requests (30s timeout) |
+| GET | `/api/channel/permission` | Long-poll for pending permission requests (3s timeout) |
 | POST | `/api/channel/permission/respond` | Respond to a permission request |
 | POST | `/api/channel/permission/dismiss` | Dismiss permission overlay |
 | POST | `/api/channel/notify` | Notify long-poll of channel state changes (used internally by channel server) |
@@ -176,6 +176,7 @@ See [12-claude-channel.md](12-claude-channel.md) §12.12 for the full channel AP
 | POST | `/api/projects/:secret/reveal` | Open the project's root folder in the OS file manager |
 | GET | `/api/projects/channel-status` | Returns channel alive/dead status for all registered projects |
 | POST | `/api/projects/reorder` | Reorder the project list (`{ secrets: string[] }`) |
+| GET | `/api/projects/permissions` | Long-poll for pending permissions across all projects (versioned, 3s timeout) |
 
 ### 9.15 Change Notification
 

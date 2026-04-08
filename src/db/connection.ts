@@ -149,7 +149,6 @@ async function initSchema(db: PGlite): Promise<void> {
     INSERT INTO settings (key, value) VALUES ('detail_width', '360') ON CONFLICT DO NOTHING;
     INSERT INTO settings (key, value) VALUES ('detail_height', '300') ON CONFLICT DO NOTHING;
     INSERT INTO settings (key, value) VALUES ('trash_cleanup_days', '3') ON CONFLICT DO NOTHING;
-    INSERT INTO settings (key, value) VALUES ('completed_cleanup_days', '30') ON CONFLICT DO NOTHING;
     INSERT INTO settings (key, value) VALUES ('verified_cleanup_days', '30') ON CONFLICT DO NOTHING;
   `);
 

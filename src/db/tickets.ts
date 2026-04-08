@@ -185,9 +185,6 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
     case 'status':
       orderBy = STATUS_ORD;
       break;
-    case 'ticket_number':
-      orderBy = 'id';
-      break;
     case 'created':
     case undefined:
       orderBy = 'created_at';
@@ -259,7 +256,11 @@ export async function batchDeleteTickets(ids: number[]): Promise<void> {
 export async function toggleUpNext(id: number): Promise<Ticket | null> {
   const db = await getDb();
   const result = await db.query<Ticket>(
-    `UPDATE tickets SET up_next = NOT up_next, updated_at = NOW() WHERE id = $1 RETURNING *`,
+    `UPDATE tickets SET up_next = NOT up_next, updated_at = NOW(),
+      status = CASE WHEN NOT up_next AND status IN ('completed', 'verified') THEN 'not_started' ELSE status END,
+      completed_at = CASE WHEN NOT up_next AND status IN ('completed', 'verified') THEN NULL ELSE completed_at END,
+      verified_at = CASE WHEN NOT up_next AND status IN ('completed', 'verified') THEN NULL ELSE verified_at END
+    WHERE id = $1 RETURNING *`,
     [id]
   );
   return result.rows[0] ?? null;

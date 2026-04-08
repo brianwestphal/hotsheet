@@ -392,8 +392,8 @@ describe('sorting', () => {
   });
 
   it('sort_dir=asc reverses order', async () => {
-    const desc = await getTickets({ sort_by: 'ticket_number', sort_dir: 'desc' });
-    const asc = await getTickets({ sort_by: 'ticket_number', sort_dir: 'asc' });
+    const desc = await getTickets({ sort_by: 'created', sort_dir: 'desc' });
+    const asc = await getTickets({ sort_by: 'created', sort_dir: 'asc' });
     if (desc.length > 1) {
       expect(desc[0].id).toBeGreaterThan(desc[desc.length - 1].id);
       expect(asc[0].id).toBeLessThan(asc[asc.length - 1].id);

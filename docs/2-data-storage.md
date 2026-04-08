@@ -26,7 +26,7 @@
 - Stores channel commands and shell command execution entries.
 
 #### Settings Table
-- Key-value store for application configuration (detail_position, detail_width, detail_height, trash_cleanup_days, verified_cleanup_days, layout). Additional settings keys are created dynamically at runtime by the UI (categories, custom_commands, custom_views, etc.).
+- Key-value store for application configuration (detail_position, detail_width, detail_height, trash_cleanup_days, verified_cleanup_days). Additional settings keys are created dynamically at runtime by the UI (layout, categories, custom_commands, custom_views, etc.).
 
 ### 2.3 File-Based Settings
 

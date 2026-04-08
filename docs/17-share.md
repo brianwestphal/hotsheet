@@ -4,12 +4,10 @@
 
 Hot Sheet prompts users to share the app after they've used it for a meaningful amount of time. A persistent share button in the toolbar also allows sharing at any time.
 
-## 17.2 Share Button
+## 17.2 Share Link
 
-- A share button appears in the header toolbar between the print button and the settings button.
-- **macOS**: Uses the Lucide "share" icon (arrow out of box).
-- **Other platforms**: Uses the Lucide "share-2" icon (connected nodes). The icon is swapped on the client side based on `navigator.userAgent`.
-- Clicking the button triggers the Web Share API (`navigator.share()`) with:
+- A persistent share link appears in the footer status bar. The link text reads "Know someone who'd love this? Share Hot Sheet" and uses accent blue color. No icon.
+- Clicking the link triggers the Web Share API (`navigator.share()`) with:
   - Title: "Hot Sheet"
   - Text: "A fast, local ticket tracker that feeds your AI coding tools."
   - URL: `https://www.npmjs.com/package/hotsheet`

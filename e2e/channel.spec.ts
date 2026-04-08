@@ -58,7 +58,7 @@ test.describe('Channel API endpoints', () => {
   });
 
   test('GET /api/channel/permission returns response with pending field', async ({ page }) => {
-    // Permission endpoint is a long-poll (30s timeout). Wake it immediately so the test doesn't block.
+    // Permission endpoint is a long-poll (3s timeout). Wake it immediately so the test doesn't block.
     const resPromise = page.request.get('/api/channel/permission');
     await page.waitForTimeout(100);
     await page.request.post('/api/channel/permission/notify');

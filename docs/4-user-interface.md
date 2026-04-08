@@ -107,7 +107,7 @@ Each built-in view has an icon to the left of the label:
 
 - Pill-shaped search input with a Lucide search icon, right-aligned in the toolbar.
 - Default width 200px; animates to 50vw on focus (0.3s ease transition), shrinks back on blur.
-- Text search across ticket title, details, and ticket number (case-insensitive).
+- Text search across ticket title, details, ticket number, and tags (case-insensitive).
 - Input debounced at 200ms.
 - Escape key clears the search field.
 - Cmd/Ctrl+F focuses the search input.

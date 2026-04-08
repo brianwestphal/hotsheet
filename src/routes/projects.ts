@@ -105,7 +105,7 @@ projectRoutes.get('/channel-status', async (c) => {
   return c.json({ enabled: true, projects: statuses });
 });
 
-/** GET /api/projects/permissions — check for pending permissions across all projects (long-poll, 30s timeout) */
+/** GET /api/projects/permissions — check for pending permissions across all projects (long-poll, 3s timeout) */
 projectRoutes.get('/permissions', async (c) => {
   const { getChannelPort } = await import('../channel-config.js');
   const { readGlobalConfig } = await import('../global-config.js');

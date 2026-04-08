@@ -87,7 +87,7 @@ The channel server writes its listening port to `.hotsheet/channel-port`. Hot Sh
 
 ## 12.7 UI — Play Button
 
-A green play button (Lucide "play" icon) appears in the sidebar above the "Copy AI prompt" button when the channel is enabled.
+A green play button (Lucide "play" icon) appears in the sidebar above the custom commands area and the "Copy AI prompt" button when the channel is enabled.
 
 ### States
 
@@ -108,8 +108,8 @@ A green play button (Lucide "play" icon) appears in the sidebar above the "Copy 
 
 When automatic mode is active:
 
-1. **Initial debounce** — When entering automatic mode (double-click), a 5-second debounce starts before any trigger is sent.
-2. **Up Next watching** — Hot Sheet watches for `up_next` changes on tickets. Each change restarts the debounce.
+1. **Immediate trigger** — When entering automatic mode (double-click), Claude is triggered immediately to process the current Up Next items.
+2. **Up Next watching** — Hot Sheet then monitors for subsequent `up_next` changes on tickets. Each change restarts the debounce.
 3. **Trigger after debounce** — After the debounce expires, Hot Sheet checks for Up Next items and whether Claude is idle:
    - If Claude is idle and Up Next items exist, a channel event is sent immediately.
    - If Claude is busy, Hot Sheet retries with the current backoff delay until Claude becomes idle, then triggers.
@@ -155,7 +155,7 @@ When Claude needs approval to run a tool (Bash, Write, Edit, etc.), the channel 
 1. The channel server declares `claude/channel/permission` capability
 2. When Claude calls a tool that needs approval, Claude Code sends `notifications/claude/channel/permission_request` to the channel server
 3. The channel server stores the pending request and exposes it via `GET /permission`
-4. Hot Sheet long-polls `GET /api/channel/permission` — the server holds the connection up to 30 seconds, returning immediately when a permission arrives (the channel server notifies via `POST /api/channel/permission/notify`)
+4. Hot Sheet long-polls `GET /api/channel/permission` — the server holds the connection up to 3 seconds, returning immediately when a permission arrives (the channel server notifies via `POST /api/channel/permission/notify`)
 5. When a pending permission is detected, a full-screen overlay appears
 
 ### Overlay
