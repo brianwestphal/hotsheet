@@ -410,6 +410,7 @@ export async function initChannel() {
     section.style.display = 'none';
     setChannelAlive(false);
     stopPermissionPolling();
+    stopPassivePing();
     renderChannelCommands(); // Still render shell commands
     return;
   }
@@ -417,6 +418,7 @@ export async function initChannel() {
   setChannelAlive(status.alive);
   renderChannelCommands();
   startPermissionPolling();
+  startPassivePing();
 
   // Only bind the click handler once (initChannel is called on every project switch)
   if (btn.dataset.bound !== undefined && btn.dataset.bound !== '') return;
@@ -500,6 +502,30 @@ async function pingClaude(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// --- Passive ping: periodically verify busy/idle state ---
+let passivePingInterval: ReturnType<typeof setInterval> | null = null;
+
+function startPassivePing() {
+  if (passivePingInterval !== null) return;
+  passivePingInterval = setInterval(async () => {
+    if (!channelAliveLocal) return; // Channel not connected
+    const busy = isChannelBusy();
+    const idle = await pingClaude();
+    if (busy && idle) {
+      // We thought Claude was busy but it responded to ping — it's actually idle
+      setChannelBusy(false);
+      if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
+    } else if (!busy && !idle) {
+      // We thought Claude was idle but it didn't respond — it's actually busy
+      setChannelBusy(true);
+    }
+  }, 60000);
+}
+
+function stopPassivePing() {
+  if (passivePingInterval !== null) { clearInterval(passivePingInterval); passivePingInterval = null; }
 }
 
 /** After debounce, try to trigger Claude. If busy, retry with backoff until idle. (HS-1453, HS-2049) */
