@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.13.1] - 2026-04-08
+
+- Fix sidebar command button E2E test: use shell target and skip if container missing
+
 ## [0.13.0] - 2026-04-08
 
 - Support for grouping custom commands (see experimental tab of settings)

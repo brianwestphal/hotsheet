@@ -1,6 +1,6 @@
 {
   "name": "hotsheet",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "A lightweight local project management tool. Create, categorize, and prioritize tickets with a fast bullet-list interface, then export an Up Next worklist for AI tools.",
   "type": "module",
   "license": "MIT",
