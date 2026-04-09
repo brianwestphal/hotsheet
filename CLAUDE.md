@@ -110,6 +110,10 @@ npm run test:all      # Unified coverage: unit + E2E server + E2E browser, merge
 - **Coverage target**: Maximize coverage from both test types. The `npm run test:all` script merges unit + E2E server + E2E browser coverage into a single report. Files showing low coverage should get both more unit tests AND more E2E test flows.
 - **Coverage collection**: Unit coverage via `@vitest/coverage-v8`. E2E server coverage via `NODE_V8_COVERAGE` with `node --import tsx`. E2E browser coverage via Playwright's `page.coverage.startJSCoverage()`, source-mapped from the esbuild bundle back to individual `.tsx` files.
 
+## Git
+
+- **NEVER create git commits unless the user explicitly asks.** Do not commit after completing work, do not commit as part of a workflow, do not commit "for convenience." Only run `git add` or `git commit` when the user says words like "commit this" or "make a commit." This is a strict, non-negotiable rule.
+
 ## Conventions
 
 - ESM modules (`"type": "module"` in package.json)
