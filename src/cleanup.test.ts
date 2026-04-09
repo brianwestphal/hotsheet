@@ -16,7 +16,7 @@ afterAll(async () => {
 });
 
 describe('cleanupAttachments', () => {
-  it('hard-deletes verified tickets past verified threshold', async () => {
+  it('auto-archives verified tickets past verified threshold', async () => {
     const db = await getDb();
     const t = await createTicket('Cleanup verified');
     await db.query(
@@ -24,7 +24,9 @@ describe('cleanupAttachments', () => {
       [t.id]
     );
     await cleanupAttachments();
-    expect(await getTicket(t.id)).toBeNull();
+    const updated = await getTicket(t.id);
+    expect(updated).not.toBeNull();
+    expect(updated!.status).toBe('archive');
   });
 
   it('hard-deletes deleted tickets past trash threshold', async () => {
@@ -49,7 +51,9 @@ describe('cleanupAttachments', () => {
       [t.id]
     );
     await cleanupAttachments();
-    expect(await getTicket(t.id)).toBeNull();
+    const updated = await getTicket(t.id);
+    expect(updated).not.toBeNull();
+    expect(updated!.status).toBe('archive');
 
     // Reset settings
     await updateSetting('verified_cleanup_days', '30');

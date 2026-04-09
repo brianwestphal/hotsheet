@@ -322,7 +322,7 @@ function renderNotes(ticketId: number, notes: NoteEntry[]) {
   container.innerHTML = '';
 
   if (notes.length === 0) {
-    container.innerHTML = '<div class="notes-empty">No notes added</div>';
+    container.replaceChildren(toElement(<div className="notes-empty">No notes added</div>));
     return;
   }
 
