@@ -34,6 +34,7 @@ Each ticket has the following properties:
 - **Soft Delete** — Sets status to `deleted` and records `deleted_at`. The ticket remains in the database and can be restored.
 - **Hard Delete** — Permanently removes the ticket record and cleans up associated attachment files from disk.
 - **Restore** — Returns a deleted ticket to `not_started` status, clearing deletion metadata.
+- **Copy / Cut / Paste** — Tickets can be copied or cut and pasted within or across projects. Paste creates new tickets with new numbers, copying title, details, category, priority, status, up_next, tags, and notes. Title deduplication appends " (Copy)", " (Copy 2)", etc. when a matching title exists. Cut deletes the originals after a successful paste. See [4-user-interface.md](4-user-interface.md) §4.12 for full details.
 
 ### 3.3 Status Lifecycle
 

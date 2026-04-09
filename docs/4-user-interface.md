@@ -34,6 +34,7 @@ The interface is divided into:
 - Default view: a flat bullet-list of tickets.
 - Each row displays: checkbox, category badge (3-letter color-coded abbreviation), ticket number, status icon, title, priority icon, and up_next star.
 - Clicking a ticket opens it in the detail panel.
+- Completed and verified ticket titles are displayed with strikethrough styling and muted text color.
 - Scroll position is preserved when the list re-renders (e.g., after data updates).
 
 ### 4.4 Column View (Kanban)
@@ -42,6 +43,7 @@ The interface is divided into:
 - Drag-and-drop cards between columns to change status.
 - Column headers show ticket count.
 - Cards display category badge, ticket number, priority, up_next star, title, and tags (if any, shown as small pills below the title).
+- Completed and verified ticket titles are displayed with strikethrough styling and muted text color.
 - Per-column scroll position is preserved across re-renders.
 - Available for views: All, Up Next, Open, Non-Verified.
 - Not available for: Completed, Verified, Trash, Backlog, Archive (single-status views).
@@ -58,7 +60,7 @@ The interface is divided into:
 ### 4.6 Detail Panel
 
 - Opens when a ticket is clicked; shows full ticket details.
-- **Position**: Side (default) or bottom, toggled via header button. Preference is persisted.
+- **Position**: Side (default) or bottom, toggled via header button. Preference is persisted. Clicking the already-active position segment hides the panel; clicking a different segment shows it in that position. The `detail_visible` setting is persisted so the panel stays hidden across page reloads.
 - **Resizable**: Drag the resize handle to adjust panel width (side) or height (bottom). Size is persisted.
 - **Editable fields**:
   - Title (text input, auto-saves with 300ms debounce)
@@ -146,7 +148,7 @@ Each built-in view has an icon to the left of the label:
 - Format: `HS-N: Title`, followed by details and notes (if present).
 - Multiple tickets separated by blank lines.
 - Respects native text selection in input fields (unless Alt/Option is held).
-- **Cmd/Ctrl+X** cuts selected tickets: same as copy but marks tickets for deletion on paste. Originals are deleted only after a successful paste.
+- **Cmd/Ctrl+X** cuts selected tickets: same as copy but marks tickets for deletion on paste. Originals are deleted only after a successful paste. Cut tickets are visually distinguished with reduced opacity; in column view, cut cards also use a dashed border.
 - **Cmd/Ctrl+V** pastes tickets from the internal clipboard into the current project:
   - Creates new tickets with new ticket numbers.
   - Copies title, details, category, priority, status, up_next, tags, and notes.
@@ -160,7 +162,7 @@ Each built-in view has an icon to the left of the label:
 
 - Opened via the gear icon in the header.
 - Uses a tabbed layout with Lucide icons and labels for each section:
-  - **General** (SlidersHorizontal icon) — Project name, auto-clear trash/verified days.
+  - **General** (SlidersHorizontal icon) — Project name, auto-clear trash/verified days, "Hide Verified column" checkbox (hides the Verified column in column view; verified tickets appear in the Completed column instead).
   - **Categories** (Tag icon) — Category management with inline editing and preset selector (see [3-ticket-management.md](3-ticket-management.md) §3.1).
   - **Backups** (HardDrive icon) — Backup location, backup list (see [7-backup-restore.md](7-backup-restore.md)).
   - **Context** (FileText icon) — Auto-context configuration for categories and tags (see §4.18).
