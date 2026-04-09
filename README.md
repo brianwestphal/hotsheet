@@ -21,7 +21,7 @@ No cloud. No logins. No JIRA. Just tickets and a tight feedback loop.
 | Linux | `.AppImage` / `.deb` |
 | Windows | `.msi` / `.exe` |
 
-After installing, open the app and click **Install CLI** to add the `hotsheet` command to your PATH.
+After installing, open the app and use **Open Folder** to get started — or click **Install CLI** to add the `hotsheet` command to your PATH for terminal launching.
 
 **Or install via npm:**
 
@@ -92,7 +92,7 @@ The loop stays tight because the AI always knows what to work on next.
   <img src="docs/demo-5.png" alt="Multiple tickets selected with the batch toolbar and context menu" width="900">
 </p>
 
-**Detail panel** — side or bottom orientation (toggle in the toolbar), resizable. Shows category, priority, status, and Up Next in a compact grid, plus title, details, tags, attachments, and editable notes. Click a note to edit inline; right-click to delete.
+**Detail panel** — side or bottom orientation (toggle in the toolbar), resizable, collapsible (click the active position to hide). Shows category, priority, status, and Up Next in a compact grid, plus title, details, tags, attachments, and editable notes. Click a note to edit inline; right-click to delete.
 
 <p align="center">
   <img src="docs/demo-6.png" alt="Detail panel in bottom orientation showing ticket details, tags, and notes" width="900">
@@ -118,16 +118,16 @@ The loop stays tight because the AI always knows what to work on next.
 - **Up Next flag** — star tickets to add them to the AI worklist
 - **Drag and drop** — drag tickets onto sidebar views to change category, priority, or status; drop files onto the detail panel to attach; reorder project tabs and custom views
 - **Right-click context menus** — full context menu on tickets with category/priority/status submenus, tags, duplicate, backlog, archive, delete — all with Lucide icons
-- **Search** — full-text search across ticket titles, details, and ticket numbers
+- **Search** — full-text search across ticket titles, details, ticket numbers, and tags
 - **Print** — print the dashboard, all tickets, selected tickets, or individual tickets in checklist, summary, or full-detail format
 - **Keyboard-driven** — `Enter` to create, `Cmd+I/B/F/R/K/G` for categories, `Alt+1-5` for priority, `Cmd+D` for Up Next, `Delete` to trash, `Cmd+P` to print, `Cmd+Z/Shift+Z` for undo/redo
 - **Undo/redo** — `Cmd+Z` and `Cmd+Shift+Z` for all operations including notes, batch changes, and deletions
 - **Animated transitions** — smooth FLIP animations when tickets reorder after property changes
-- **Copy for commits** — `Cmd+C` copies selected ticket info (number + title + details + notes) for use in commit messages
+- **Copy / cut / paste** — `Cmd+C` copies selected tickets (formatted text to clipboard + structured data for paste), `Cmd+X` cuts, `Cmd+V` pastes into the current project with title dedup. Works across projects.
 - **File attachments** — attach files via file picker or drag-and-drop onto the detail panel, reveal in file manager
 - **Markdown sync** — `worklist.md` and `open-tickets.md` auto-generated on every change
 - **Automatic backups** — tiered snapshots (every 5 min, hourly, daily) with preview-before-restore recovery
-- **Auto-cleanup** — configurable auto-deletion of old trash and verified items
+- **Auto-cleanup** — verified tickets auto-archive after a configurable number of days; trashed tickets auto-delete
 - **App icon variants** — 9 icon variants to choose from in Settings, applied instantly to the dock icon
 - **Fully local** — embedded PostgreSQL (PGLite), no network calls, no accounts, no telemetry
 
@@ -164,9 +164,9 @@ Hot Sheet automatically generates skill files for Claude Code (as well as Cursor
 Hot Sheet can push events directly to a running Claude Code session via MCP channels. Enable it in Settings → Experimental:
 
 - **Play button** — appears in the sidebar. Single-click sends the worklist to Claude on demand.
-- **Auto mode** — double-click the play button to enable automatic mode. When you star a ticket for Up Next, Claude is notified after a 5-second debounce and picks up the work automatically. Exponential backoff prevents runaway retries.
+- **Auto mode** — double-click the play button to enable automatic mode. Claude is triggered immediately, then continues monitoring for new Up Next items with debounce. Exponential backoff prevents runaway retries.
 - **Auto-prioritize** — when no tickets are flagged as Up Next, Claude automatically evaluates open tickets and picks the most important ones to work on.
-- **Custom commands** — create named buttons that send custom prompts to Claude **or run shell commands** directly. Toggle between "Claude Code" and "Shell" targets per command. Shell commands execute server-side with stdout/stderr captured to the commands log.
+- **Custom commands** — create named buttons that send custom prompts to Claude **or run shell commands** directly. Organize into collapsible groups. Toggle between "Claude Code" and "Shell" targets per command. Shell commands execute server-side with stdout/stderr captured to the commands log.
 - **Permission relay** — when Claude needs tool approval (Bash, Edit, etc.), a full-screen overlay shows the tool name and command preview with Allow/Deny/Dismiss buttons — no need to switch to the terminal.
 - **Commands log** — a resizable bottom panel that records all communication: triggers, completions, permission requests, and shell command output. Filter by type, search, and copy entries. Shell commands show a stop button for running processes.
 - **Status indicator** — shows "Claude working" / "Shell running" / idle in the footer.
@@ -256,7 +256,7 @@ Only one Hot Sheet instance can use a data directory at a time. If you accidenta
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/brianwestphal/hotsheet/releases).
 
-On first launch, the app will prompt you to install the `hotsheet` CLI command. This creates a symlink so you can launch the desktop app from any project directory. You can also install it manually:
+On first launch, use **Open Folder** to point the app at your project directory. The app remembers your projects and reopens them on subsequent launches. Optionally install the CLI for terminal-based launching:
 
 **macOS:**
 ```bash
@@ -340,6 +340,8 @@ All settings can also be changed from the settings panel UI.
 | `Cmd+D` | Toggle Up Next |
 | `Delete` / `Backspace` | Delete selected tickets |
 | `Cmd+C` | Copy ticket info |
+| `Cmd+X` | Cut tickets |
+| `Cmd+V` | Paste tickets |
 | `Cmd+A` | Select all |
 | `Cmd+Z` | Undo |
 | `Cmd+Shift+Z` | Redo |
@@ -381,14 +383,14 @@ npm install
 npm run dev              # Build client assets, then run via tsx
 npm run build            # Build to dist/cli.js
 npm test                 # Unit tests with coverage (446 tests)
-npm run test:e2e         # E2E browser tests (55 tests)
+npm run test:e2e         # E2E browser tests (64 tests)
 npm run test:all         # Merged coverage report (unit + E2E)
 npm run lint             # ESLint
 npm run clean            # Remove dist and caches
 npm link                 # Symlink for global 'hotsheet' command
 ```
 
-The project has comprehensive test coverage with 446 unit tests (vitest) and 55 Playwright E2E browser tests, plus 12 smoke tests for production install verification.
+The project has comprehensive test coverage with 446 unit tests (vitest) and 64 Playwright E2E browser tests, plus 12 smoke tests for production install verification.
 
 ---
 

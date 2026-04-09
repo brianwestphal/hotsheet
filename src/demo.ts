@@ -648,9 +648,14 @@ const SCENARIO_3_VIEWS = [
 
 const SCENARIO_9_COMMANDS = [
   { name: 'Commit Changes', prompt: 'Make a commit for the recently completed tickets.', icon: 'git-commit-horizontal', color: '#6b7280' },
-  { name: 'Run Tests', prompt: 'Run the test suite and report any failures.', icon: 'test-tubes', color: '#3b82f6' },
-  { name: 'Code Review', prompt: 'Review the recent changes for code quality and potential issues.', icon: 'search-code', color: '#8b5cf6' },
-  { name: 'Deploy Staging', prompt: 'Deploy the current branch to the staging environment.', icon: 'rocket', color: '#f97316' },
+  { type: 'group', name: 'Testing', children: [
+    { name: 'Run Tests', prompt: 'Run the test suite and report any failures.', icon: 'test-tubes', color: '#3b82f6' },
+    { name: 'Code Review', prompt: 'Review the recent changes for code quality and potential issues.', icon: 'search-code', color: '#8b5cf6' },
+  ]},
+  { type: 'group', name: 'Deploy', children: [
+    { name: 'Deploy Staging', prompt: 'Deploy the current branch to the staging environment.', icon: 'rocket', color: '#f97316' },
+    { name: 'Deploy Production', prompt: 'Deploy to production after staging verification.', icon: 'rocket', color: '#ef4444', target: 'shell' },
+  ]},
 ];
 
 // --- Seeding ---
@@ -745,17 +750,16 @@ export async function seedDemoExtraProjects(scenario: number, primaryDataDir: st
   const path = await import('path');
   const { registerProject } = await import('./projects.js');
   const { writeFileSettings } = await import('./file-settings.js');
-  const { setDataDir: setDir, getDb: getDatabase } = await import('./db/connection.js');
+  const { getDbForDir } = await import('./db/connection.js');
 
   const baseDir = path.dirname(primaryDataDir);
 
   for (const extra of EXTRA_PROJECTS) {
-    const extraDataDir = path.join(baseDir, `hotsheet-demo-${extra.appName.toLowerCase().replace(/\s+/g, '-')}`);
+    const extraDataDir = path.join(baseDir, `${path.basename(primaryDataDir)}-${extra.appName.toLowerCase().replace(/\s+/g, '-')}`);
     fs.mkdirSync(extraDataDir, { recursive: true });
 
-    // Initialize DB for this project
-    setDir(extraDataDir);
-    const db = await getDatabase();
+    // Get a DB instance directly for this specific data dir
+    const db = await getDbForDir(extraDataDir);
 
     // Seed tickets
     for (let i = 0; i < extra.tickets.length; i++) {
@@ -778,11 +782,6 @@ export async function seedDemoExtraProjects(scenario: number, primaryDataDir: st
     writeFileSettings(extraDataDir, { appName: extra.appName });
 
     // Register with the running server
-    // Reset dataDir to primary so registerProject can work correctly
-    setDir(primaryDataDir);
     await registerProject(extraDataDir, port);
   }
-
-  // Restore primary dataDir context
-  setDir(primaryDataDir);
 }
