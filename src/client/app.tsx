@@ -184,11 +184,28 @@ function bindDetailPositionToggle() {
   toggle.querySelectorAll('.layout-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const position = (btn as HTMLElement).dataset.position as AppSettings['detail_position'];
+      // If clicking the already-active position, toggle the detail panel off
+      if (position === state.settings.detail_position && state.settings.detail_visible !== false) {
+        state.settings.detail_visible = false;
+        const panel = document.getElementById('detail-panel');
+        const handle = document.getElementById('detail-resize-handle');
+        if (panel) panel.style.display = 'none';
+        if (handle) handle.style.display = 'none';
+        toggle.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
+        void api('/settings', { method: 'PATCH', body: { detail_visible: 'false' } });
+        return;
+      }
+      // Switching position or re-enabling
+      state.settings.detail_visible = true;
       state.settings.detail_position = position;
+      const panel = document.getElementById('detail-panel');
+      const handle = document.getElementById('detail-resize-handle');
+      if (panel) panel.style.display = '';
+      if (handle) handle.style.display = '';
       applyDetailPosition(position);
       applyDetailSize();
       updateDetailPositionToggle();
-      void api('/settings', { method: 'PATCH', body: { detail_position: position } });
+      void api('/settings', { method: 'PATCH', body: { detail_position: position, detail_visible: 'true' } });
     });
   });
   updateDetailPositionToggle();

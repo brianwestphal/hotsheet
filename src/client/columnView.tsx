@@ -1,5 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { suppressAnimation } from './animate.js';
+import { getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
@@ -68,6 +69,13 @@ export function getColumnsForView(): { status: string; label: string }[] {
       { status: 'completed', label: 'Completed' },
     ];
   }
+  if (state.settings.hide_verified_column) {
+    return [
+      { status: 'not_started', label: 'Not Started' },
+      { status: 'started', label: 'Started' },
+      { status: 'completed', label: 'Completed' },  // Will also include verified items
+    ];
+  }
   return [
     { status: 'not_started', label: 'Not Started' },
     { status: 'started', label: 'Started' },
@@ -86,12 +94,15 @@ export function renderPreviewColumnView() {
 
   const columns = getColumnsForView();
   const knownStatuses = new Set(columns.map(c => c.status));
+  // When verified column is hidden, verified items go into the completed column
+  if (state.settings.hide_verified_column) knownStatuses.add('verified');
   const columnsContainer = toElement(<div className="columns-container"></div>);
 
   for (const col of columns) {
+    const includeVerified = state.settings.hide_verified_column && col.status === 'completed';
     const colTickets = col === columns[0]
       ? state.tickets.filter(t => t.status === col.status || !knownStatuses.has(t.status))
-      : state.tickets.filter(t => t.status === col.status);
+      : state.tickets.filter(t => t.status === col.status || (includeVerified && t.status === 'verified'));
     const column = toElement(
       <div className="column" data-status={col.status}>
         <div className="column-header">
@@ -123,7 +134,7 @@ export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
 
   const card = toElement(
     <div
-      className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}`}
+      className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}${getCutTicketIds().has(ticket.id) ? ' cut-pending' : ''} status-${ticket.status}`}
       data-id={String(ticket.id)}
     >
       <div className="column-card-header">
@@ -172,13 +183,16 @@ export function renderColumnView() {
 
   const columns = getColumnsForView();
   const knownStatuses = new Set(columns.map(c => c.status));
+  // When verified column is hidden, verified items go into the completed column
+  if (state.settings.hide_verified_column) knownStatuses.add('verified');
   const columnsContainer = toElement(<div className="columns-container"></div>);
 
   for (const col of columns) {
     // First column also gets tickets with unrecognized statuses so nothing is silently dropped
+    const includeVerified = state.settings.hide_verified_column && col.status === 'completed';
     const colTickets = col === columns[0]
       ? state.tickets.filter(t => t.status === col.status || !knownStatuses.has(t.status))
-      : state.tickets.filter(t => t.status === col.status);
+      : state.tickets.filter(t => t.status === col.status || (includeVerified && t.status === 'verified'));
     const column = toElement(
       <div className="column" data-status={col.status}>
         <div className="column-header">
@@ -235,7 +249,7 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
 
   const card = toElement(
     <div
-      className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}`}
+      className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}${getCutTicketIds().has(ticket.id) ? ' cut-pending' : ''} status-${ticket.status}`}
       data-id={String(ticket.id)}
     >
       <div className="column-card-header">

@@ -1254,6 +1254,10 @@ input, select, textarea {
     background: var(--bg-selected);
   }
 
+  &.cut-pending {
+    opacity: 0.45;
+  }
+
   &.completed .ticket-title-input {
     text-decoration: line-through;
     color: var(--text-muted);
@@ -3152,6 +3156,17 @@ input, select, textarea {
   font-size: 13px;
   line-height: 1.4;
   word-break: break-word;
+}
+
+.column-card.cut-pending {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+.column-card.status-completed .column-card-title,
+.column-card.status-verified .column-card-title {
+  text-decoration: line-through;
+  color: var(--text-muted);
 }
 
 .column-card-tags {

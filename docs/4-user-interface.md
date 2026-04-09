@@ -134,16 +134,27 @@ Each built-in view has an icon to the left of the label:
 | Cmd/Ctrl+F | Focus search input |
 | Cmd/Ctrl+A | Select all visible tickets |
 | Cmd/Ctrl+D | Toggle up_next for selected tickets |
-| Cmd/Ctrl+C | Copy selected ticket(s) to clipboard (formatted text) |
+| Cmd/Ctrl+C | Copy selected ticket(s) to clipboard (formatted text + internal structured data) |
+| Cmd/Ctrl+X | Cut selected ticket(s) (copy + delete on paste) |
+| Cmd/Ctrl+V | Paste tickets from internal clipboard (creates new tickets) |
 | Cmd/Ctrl+Alt+C | Force ticket copy even when in a text field |
 | Escape | Close settings dialog, or deselect all tickets |
 
-### 4.12 Clipboard Copy
+### 4.12 Clipboard Copy, Cut & Paste
 
-- Cmd/Ctrl+C copies selected tickets as formatted plain text.
+- **Cmd/Ctrl+C** copies selected tickets as formatted plain text to the system clipboard AND stores full structured ticket data in an internal clipboard for cross-project paste.
 - Format: `HS-N: Title`, followed by details and notes (if present).
 - Multiple tickets separated by blank lines.
 - Respects native text selection in input fields (unless Alt/Option is held).
+- **Cmd/Ctrl+X** cuts selected tickets: same as copy but marks tickets for deletion on paste. Originals are deleted only after a successful paste.
+- **Cmd/Ctrl+V** pastes tickets from the internal clipboard into the current project:
+  - Creates new tickets with new ticket numbers.
+  - Copies title, details, category, priority, status, up_next, tags, and notes.
+  - Title deduplication: if a ticket with the same title exists, appends " (Copy)", " (Copy 2)", etc.
+  - Deleted tickets are pasted as "not_started".
+  - After paste, newly created tickets are selected.
+  - Works across projects (copy in one project tab, paste in another).
+  - Only activates when not focused on an input field and the internal clipboard has tickets.
 
 ### 4.13 Settings Dialog
 

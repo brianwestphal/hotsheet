@@ -36,6 +36,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     (document.getElementById('settings-trash-days') as HTMLInputElement).value = String(state.settings.trash_cleanup_days);
     (document.getElementById('settings-verified-days') as HTMLInputElement).value = String(state.settings.verified_cleanup_days);
     (document.getElementById('settings-auto-order') as HTMLInputElement).checked = state.settings.auto_order;
+    (document.getElementById('settings-hide-verified-column') as HTMLInputElement).checked = state.settings.hide_verified_column;
     (document.getElementById('settings-notify-permission') as HTMLSelectElement).value = state.settings.notify_permission;
     (document.getElementById('settings-notify-completed') as HTMLSelectElement).value = state.settings.notify_completed;
     overlay.style.display = 'flex';
@@ -150,6 +151,16 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   autoOrderCheckbox.addEventListener('change', () => {
     state.settings.auto_order = autoOrderCheckbox.checked;
     void api('/settings', { method: 'PATCH', body: { auto_order: String(autoOrderCheckbox.checked) } });
+  });
+
+  // Hide verified column toggle
+  const hideVerifiedCheckbox = document.getElementById('settings-hide-verified-column') as HTMLInputElement;
+  hideVerifiedCheckbox.addEventListener('change', async () => {
+    state.settings.hide_verified_column = hideVerifiedCheckbox.checked;
+    await api('/settings', { method: 'PATCH', body: { hide_verified_column: String(hideVerifiedCheckbox.checked) } });
+    // Re-render to apply column change immediately
+    const { renderTicketList } = await import('./ticketList.js');
+    renderTicketList();
   });
 
   // Notification dropdowns

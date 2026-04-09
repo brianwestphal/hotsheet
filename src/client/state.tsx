@@ -64,6 +64,7 @@ export type NotifyLevel = 'none' | 'once' | 'persistent';
 
 export interface AppSettings {
   detail_position: 'side' | 'bottom';
+  detail_visible: boolean;
   detail_width: number;
   detail_height: number;
   trash_cleanup_days: number;
@@ -71,10 +72,12 @@ export interface AppSettings {
   notify_permission: NotifyLevel;
   notify_completed: NotifyLevel;
   auto_order: boolean;
+  hide_verified_column: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   detail_position: 'side',
+  detail_visible: true,
   detail_width: 360,
   detail_height: 300,
   trash_cleanup_days: 3,
@@ -82,6 +85,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notify_permission: 'persistent',
   notify_completed: 'once',
   auto_order: true,
+  hide_verified_column: false,
 };
 
 export interface AppState {

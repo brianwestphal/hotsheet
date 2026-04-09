@@ -13,6 +13,9 @@ export async function loadSettings() {
     if (settings.detail_position === 'side' || settings.detail_position === 'bottom') {
       state.settings.detail_position = settings.detail_position;
     }
+    if (settings.detail_visible !== undefined && settings.detail_visible !== '') {
+      state.settings.detail_visible = settings.detail_visible !== 'false';
+    }
     if (settings.detail_width !== '') state.settings.detail_width = parseInt(settings.detail_width, 10) || 360;
     if (settings.detail_height !== '') state.settings.detail_height = parseInt(settings.detail_height, 10) || 300;
     if (settings.trash_cleanup_days !== '') state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || 3;
@@ -27,6 +30,9 @@ export async function loadSettings() {
     if (settings.auto_order !== '') {
       state.settings.auto_order = settings.auto_order !== 'false';
     }
+    if (settings.hide_verified_column !== undefined && settings.hide_verified_column !== '') {
+      state.settings.hide_verified_column = settings.hide_verified_column === 'true';
+    }
     if (settings.sort_by) state.sortBy = settings.sort_by;
     if (settings.sort_dir) state.sortDir = settings.sort_dir;
   } catch { /* use defaults */ }
@@ -37,6 +43,13 @@ export async function loadSettings() {
 
   applyDetailPosition(state.settings.detail_position);
   applyDetailSize();
+  // Apply detail panel visibility
+  if (state.settings.detail_visible === false) {
+    const panel = document.getElementById('detail-panel');
+    const handle = document.getElementById('detail-resize-handle');
+    if (panel) panel.style.display = 'none';
+    if (handle) handle.style.display = 'none';
+  }
 }
 
 /** Load category definitions and rebuild the UI. */

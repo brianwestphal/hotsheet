@@ -305,6 +305,10 @@ pageRoutes.get('/', (c) => {
                 <label><input type="checkbox" id="settings-auto-order" checked /> Auto-prioritize tickets</label>
                 <span className="settings-hint">When no Up Next items exist, the AI will evaluate open tickets and choose what to work on next.</span>
               </div>
+              <div className="settings-field settings-field-checkbox">
+                <label><input type="checkbox" id="settings-hide-verified-column" /> Hide Verified column in column view</label>
+                <span className="settings-hint">Hides the Verified column in column view. Verified tickets will appear in the Completed column instead.</span>
+              </div>
               <div className="settings-field">
                 <label>When Claude needs permission</label>
                 <select id="settings-notify-permission">

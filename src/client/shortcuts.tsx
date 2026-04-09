@@ -1,3 +1,4 @@
+import { copyTickets, hasClipboardTickets, pasteTickets } from './clipboard.js';
 import { formatTicketForClipboard } from './clipboardUtil.js';
 import { showOpenFolderDialog } from './openFolder.js';
 import { showPrintDialog } from './print.js';
@@ -171,11 +172,38 @@ export function bindKeyboardShortcuts() {
         else {
           e.preventDefault();
           const selected = state.tickets.filter(t => state.selectedIds.has(t.id));
+          // Store structured data in internal clipboard for cross-project paste
+          copyTickets(selected, false);
+          // Also write text to system clipboard for external paste
           const text = selected.map(formatTicketForClipboard).join('\n\n');
           void navigator.clipboard.writeText(text);
           return;
         }
       }
+    }
+
+    // Cmd/Ctrl+X: cut selected tickets (copy + mark for deletion on paste)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'x' && state.selectedIds.size > 0) {
+      if (isInput && !e.altKey) { /* native cut */ }
+      else {
+        const sel = !e.altKey ? window.getSelection() : null;
+        if (sel !== null && !sel.isCollapsed && sel.toString().trim() !== '') { /* native cut */ }
+        else {
+          e.preventDefault();
+          const selected = state.tickets.filter(t => state.selectedIds.has(t.id));
+          copyTickets(selected, true);
+          const text = selected.map(formatTicketForClipboard).join('\n\n');
+          void navigator.clipboard.writeText(text);
+          return;
+        }
+      }
+    }
+
+    // Cmd/Ctrl+V: paste tickets from internal clipboard
+    if ((e.metaKey || e.ctrlKey) && e.key === 'v' && !isInput && hasClipboardTickets()) {
+      e.preventDefault();
+      void pasteTickets();
+      return;
     }
 
     // Cmd/Ctrl+N: focus draft input (works everywhere)

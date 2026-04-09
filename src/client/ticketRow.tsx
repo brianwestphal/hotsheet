@@ -1,5 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
+import { getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
@@ -22,10 +23,11 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
   const isSelected = state.selectedIds.has(ticket.id);
   const isDone = ticket.status === 'completed' || ticket.status === 'verified';
   const isVerified = ticket.status === 'verified';
+  const isCut = getCutTicketIds().has(ticket.id);
 
   const row = toElement(
     <div
-      className={`ticket-row${isSelected ? ' selected' : ''}${isDone ? ' completed' : ''}${ticket.up_next ? ' up-next' : ''}`}
+      className={`ticket-row${isSelected ? ' selected' : ''}${isDone ? ' completed' : ''}${ticket.up_next ? ' up-next' : ''}${isCut ? ' cut-pending' : ''}`}
       data-id={String(ticket.id)}
     >
       <input type="checkbox" className="ticket-checkbox" checked={isSelected} />

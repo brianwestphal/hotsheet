@@ -122,7 +122,9 @@ vi.mock('../channel-config.js', () => ({
   registerChannelForAll: vi.fn(),
   unregisterChannel: vi.fn(),
   unregisterChannelForAll: vi.fn(),
+  shutdownChannel: vi.fn(() => Promise.resolve()),
   triggerChannel: vi.fn(() => Promise.resolve(true)),
+  checkChannelVersion: vi.fn(() => Promise.resolve(null)),
 }));
 
 // Mock global config so channel enable/disable tests don't modify the real ~/.hotsheet/config.json
