@@ -115,18 +115,19 @@ function mainSkillBody(projectRoot: string): string {
 
 // --- Claude Code permissions (.claude/settings.json) ---
 
-// Static patterns covering ports 4170-4189 (default 4174 + nearby auto-selected ports)
+// Static patterns covering ports 4170-4199 (default 4174 + auto-selected ports up to 4193, with margin)
 const HOTSHEET_ALLOW_PATTERNS = [
   'Bash(curl * http://localhost:417*/api/*)',
   'Bash(curl * http://localhost:418*/api/*)',
+  'Bash(curl * http://localhost:419*/api/*)',
 ];
 
 // Matches any old dynamic or current static Hot Sheet curl patterns
-const HOTSHEET_CURL_RE = /^Bash\(curl \* http:\/\/localhost:\d+\/api\/\*\)$|^Bash\(curl \* http:\/\/localhost:41[78]\*\/api\/\*\)$/;
+const HOTSHEET_CURL_RE = /^Bash\(curl \* http:\/\/localhost:\d+\/api\/\*\)$|^Bash\(curl \* http:\/\/localhost:41[789]\*\/api\/\*\)$/;
 
 function ensureClaudePermissions(cwd: string): boolean {
   // Only configure if port is in the expected range
-  if (skillPort < 4170 || skillPort > 4189) return false;
+  if (skillPort < 4170 || skillPort > 4199) return false;
 
   const settingsPath = join(cwd, '.claude', 'settings.json');
 

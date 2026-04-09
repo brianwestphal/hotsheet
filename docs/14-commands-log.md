@@ -30,7 +30,7 @@ Indexed on `created_at` for efficient newest-first queries.
 
 ## 14.4 UI — Log Button
 
-A terminal icon button in the footer toolbar (far right, before the channel status indicator). Shows a red dot indicator when new entries arrive while the panel is closed. The dot resets when the panel is opened.
+A panel icon button in the footer toolbar (far right, before the channel status indicator). Shows an accent-colored dot indicator when new entries arrive while the panel is closed. The dot resets when the panel is opened.
 
 ## 14.5 UI — Log Panel
 

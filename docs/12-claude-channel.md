@@ -144,7 +144,7 @@ Claude communicates back using:
 - When a trigger is sent, the status bar shows "Claude working" with a spinning loader icon.
 - When Claude calls `/api/channel/done`, the status changes to "✓ Claude idle" (auto-hides after 5 seconds).
 - The done flag is consumed on read (one-shot) and reset on each new trigger.
-- A 120-second timeout fallback clears the busy state if Claude never signals completion.
+- A 60-second timeout fallback clears the busy state if Claude never signals completion.
 
 ## 12.10 Ping-Based Busy Detection
 
@@ -248,7 +248,7 @@ Prompt: `Make a commit message for the recently completed tickets, without wrapp
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/channel/claude-check` | GET | Check if `claude` CLI is installed and meets minimum version (v2.1.80+) |
-| `/api/channel/status` | GET | Returns `{ enabled, alive, port, done }` — channel state and completion flag |
+| `/api/channel/status` | GET | Returns `{ enabled, alive, port, done, versionMismatch }` — channel state, completion flag, and version check |
 | `/api/channel/trigger` | POST | Send a worklist event to Claude via the channel server |
 | `/api/channel/done` | POST | Called by Claude to signal it has finished processing |
 | `/api/channel/enable` | POST | Enable the channel and register in `.mcp.json` |

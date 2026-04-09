@@ -82,6 +82,6 @@ Custom commands are stored in the `settings` table as a JSON string under the `c
 Shell commands use a single `shell_command` log entry that is updated in-place upon completion:
 
 - **Initial entry**: Created when the command starts, with `event_type: 'shell_command'`, `direction: 'outgoing'`, and the command text as the detail.
-- **On completion**: The same entry is updated — the summary is updated with the exit status (e.g., "exited with code 0"), and the detail field is updated with the stdout/stderr output appended after a `---SHELL_OUTPUT---` separator.
+- **On completion**: The same entry is updated — the summary is updated to `"label — Completed (exit 0)"` for success (or the appropriate exit status), and the detail field is updated with the stdout/stderr output appended after a `---SHELL_OUTPUT---` separator.
 
 These appear in the Commands Log panel alongside Claude Channel events, with the "shell" badge label.

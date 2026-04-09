@@ -391,11 +391,11 @@ export async function initChannel() {
     if (channelAutoMode) {
       playIcon.style.display = 'none';
       autoIcon.style.display = '';
-      btn.classList.add('auto-active');
+      btn.classList.add('auto-mode');
     } else {
       playIcon.style.display = '';
       autoIcon.style.display = 'none';
-      btn.classList.remove('auto-active');
+      btn.classList.remove('auto-mode');
     }
   }
   // Re-render the status indicator for the active project's busy state

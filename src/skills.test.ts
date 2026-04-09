@@ -246,6 +246,7 @@ describe('ensureClaudePermissions', () => {
         allow: [
           'Bash(curl * http://localhost:417*/api/*)',
           'Bash(curl * http://localhost:418*/api/*)',
+          'Bash(curl * http://localhost:419*/api/*)',
         ],
       },
     }));
@@ -255,7 +256,7 @@ describe('ensureClaudePermissions', () => {
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { permissions: { allow: string[] } };
     // Verify no duplicate patterns
     const curlPatterns = settings.permissions.allow.filter((p: string) => p.includes('curl'));
-    expect(curlPatterns).toHaveLength(2);
+    expect(curlPatterns).toHaveLength(3);
   });
 
   it('does not add permissions when port is out of range', () => {

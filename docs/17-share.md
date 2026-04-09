@@ -44,7 +44,6 @@ Stored in `~/.hotsheet/config.json` via the global config system:
 |-------|------|-------------|
 | `shareTotalSeconds` | number | Accumulated usage time across all sessions (seconds) |
 | `shareLastPrompted` | string | ISO timestamp of the last share prompt |
-| `shareDismissedAt` | string | ISO timestamp when the user dismissed the prompt |
 | `shareAccepted` | boolean | Whether the user has ever shared |
 
 ## 17.5 API Endpoints

@@ -56,6 +56,7 @@ settingsRoutes.patch('/settings', async (c) => {
   for (const [key, value] of Object.entries(parsed.data)) {
     await updateSetting(key, value);
   }
+  notifyChange();
   return c.json({ ok: true });
 });
 

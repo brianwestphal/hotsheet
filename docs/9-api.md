@@ -71,7 +71,7 @@ Notes can also be appended via the ticket PATCH endpoint's `notes` field (append
 |--------|------|-------------|
 | POST | `/api/tickets/duplicate` | Duplicate selected tickets (`{ ids: number[] }`) |
 
-Copies are created with " - Copy" suffix (incrementing if conflicts exist).
+Copies are created with " - Copy" suffix (incrementing if conflicts exist). The following fields are copied: `category`, `priority`, `details`, `up_next`. Fields that are NOT copied: `tags` (derived from title), `status` (reset to not_started), `notes`.
 
 ### 9.5 Attachment Endpoints
 

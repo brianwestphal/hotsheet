@@ -34,7 +34,7 @@
   - `appName` — Display name for the project (shown in UI title bar and tabs).
   - `backupDir` — Custom directory for storing backups (overrides default `.hotsheet/backups/`).
   - `appIcon` — Selected app icon variant (e.g., default, dark, colorful).
-  - `ticketPrefix` — Custom prefix for ticket numbers (default: `HS-`).
+  - `ticketPrefix` — Custom prefix for ticket numbers (default: `HS`). The dash separator is added automatically.
   - `secret` — Server-generated secret token for API authentication.
   - `secretPathHash` — Hashed path identifier used to scope the secret to a specific project.
   - `port` — Preferred port number for the server.

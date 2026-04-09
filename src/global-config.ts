@@ -6,7 +6,6 @@ export interface GlobalConfig {
   channelEnabled?: boolean;
   shareTotalSeconds?: number;
   shareLastPrompted?: string;
-  shareDismissedAt?: string;
   shareAccepted?: boolean;
 }
 
