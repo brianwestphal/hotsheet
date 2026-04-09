@@ -146,52 +146,7 @@ Claude communicates back using:
 - The done flag is consumed on read (one-shot) and reset on each new trigger.
 - A 60-second timeout fallback clears the busy state if Claude never signals completion.
 
-## 12.10 Ping-Based Busy Detection
-
-Hot Sheet can actively probe whether Claude is busy or idle by sending a lightweight "ping" through the channel. This is more reliable than inferring busy state from the done flag alone.
-
-### How it works
-
-1. Hot Sheet sends a channel event asking Claude to `curl` back to a `/api/channel/pong` endpoint with a unique nonce.
-2. If Claude is idle, it processes the ping immediately and curls back — Hot Sheet receives the pong within seconds.
-3. If Claude is busy (processing a task, waiting for permission, etc.), it cannot act on the ping until it finishes — the request times out.
-
-The ping has a **15-second timeout**. The result is one of three states:
-
-| Result | Meaning |
-|--------|---------|
-| `true` | Claude responded (idle) |
-| `false` | Claude did not respond in time (busy) |
-| `null` | No channel is active (channel not connected) |
-
-### Settings
-
-Ping-based busy detection is a per-project setting in **Settings → Experimental**: "Enable busy status detection (ping)". It is **unchecked by default**.
-
-### Activity gate
-
-Pings are only sent when the user has been active in Hot Sheet within the last **2 minutes**. This prevents unnecessary pings when the user has walked away.
-
-### Multi-project pings
-
-The `POST /api/projects/ping` endpoint pings all registered projects' Claude channels **in parallel**, returning results for each project. Each individual ping uses the same 15-second timeout.
-
-### Usage in automatic mode
-
-In automatic mode (§12.8), ping-based busy detection is used to verify Claude's busy state before entering backoff. When the ping setting is enabled, automatic mode pings Claude instead of relying solely on the done-flag heuristic. This prevents false backoff cycles when Claude has already finished but the done signal was missed.
-
-### Manual check
-
-Right-clicking the status bar shows a **"Check Claude Status"** context menu item. Clicking it triggers a manual ping and updates the busy/idle indicator with the result.
-
-### Channel server endpoints
-
-The channel server exposes two additional HTTP endpoints for ping support:
-
-- **`/ping`** — Accepts a POST with a nonce. Sends a channel event asking Claude to curl back with the nonce. Returns immediately (the response comes asynchronously via pong).
-- **`/shutdown`** — Gracefully shuts down the channel server.
-
-## 12.11 Permission Relay
+## 12.10 Permission Relay
 
 When Claude needs approval to run a tool (Bash, Write, Edit, etc.), the channel server receives a permission request notification and forwards it to Hot Sheet.
 
@@ -215,7 +170,7 @@ The pending permission expires on the server after 120 seconds if not acted on. 
 
 Note: The local terminal dialog stays open in parallel. Whichever is answered first (Hot Sheet or terminal) takes effect.
 
-## 12.12 Custom Commands
+## 12.11 Custom Commands
 
 When the Claude Channel is enabled, users can create custom command buttons that appear below the play button in the sidebar.
 
@@ -243,7 +198,7 @@ In Settings → Experimental → Custom Commands:
 Name: `Commit Changes`
 Prompt: `Make a commit message for the recently completed tickets, without wrapping long lines. Add all unstaged changes to the git commit. Git commit with the message you generated but don't push.`
 
-## 12.13 API Endpoints
+## 12.12 API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -258,10 +213,8 @@ Prompt: `Make a commit message for the recently completed tickets, without wrapp
 | `/api/channel/permission/dismiss` | POST | Dismiss a pending permission overlay without responding |
 | `/api/channel/notify` | POST | Notify long-poll of channel state changes (used internally by channel server) |
 | `/api/channel/permission/notify` | POST | Wake the permission long-poll when a new permission request arrives (used internally by channel server) |
-| `/api/channel/ping` | POST | Ping active project's Claude to check busy/idle (15s timeout) |
-| `/api/channel/pong` | POST | Pong callback from Claude (nonce-authenticated) |
 
-## 12.14 Requirements
+## 12.13 Requirements
 
 - Claude Code v2.1.80+ with claude.ai login
 - During research preview: `--dangerously-load-development-channels server:hotsheet-channel` flag

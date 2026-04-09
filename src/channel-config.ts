@@ -116,7 +116,7 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
 
 /** Expected channel server version — must match CHANNEL_VERSION in channel.ts.
  *  Duplicated here to avoid importing channel.ts (which has side effects). */
-const EXPECTED_CHANNEL_VERSION = 2;
+const EXPECTED_CHANNEL_VERSION = 3;
 
 /** Check if the running channel server's version matches the expected version.
  *  Returns null if no channel, true if matching, false if mismatched. */

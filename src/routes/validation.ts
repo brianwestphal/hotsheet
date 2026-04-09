@@ -131,6 +131,15 @@ export const PrintSchema = z.object({
   html: z.string(),
 });
 
+// --- Global Config ---
+
+export const GlobalConfigSchema = z.object({
+  channelEnabled: z.boolean().optional(),
+  shareTotalSeconds: z.number().optional(),
+  shareLastPrompted: z.string().optional(),
+  shareAccepted: z.boolean().optional(),
+}).strict();
+
 // --- Helper ---
 
 /** Parse request body with a Zod schema, returning 400 on validation failure. */

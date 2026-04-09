@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { api, apiWithSecret } from './api.js';
 import type { Ticket } from './state.js';
 import { getActiveProject, state } from './state.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
@@ -93,18 +93,16 @@ export async function pasteTickets(): Promise<void> {
   }
 
   // If cut, delete the originals from the SOURCE project and clear the clipboard
-  if (cut && internalClipboard !== null) {
+  if (cut) {
     const ids = clipboardTickets.map(t => t.id);
     const sourceSecret = internalClipboard.sourceProjectSecret;
     // Delete via API with the source project's secret (works cross-project)
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (sourceSecret !== undefined && sourceSecret !== '') headers['X-Hotsheet-Secret'] = sourceSecret;
     for (const id of ids) {
-      await fetch(`/api/tickets/${id}`, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({ status: 'deleted' }),
-      });
+      if (sourceSecret !== undefined && sourceSecret !== '') {
+        await apiWithSecret(`/tickets/${id}`, sourceSecret, { method: 'PATCH', body: { status: 'deleted' } });
+      } else {
+        await api(`/tickets/${id}`, { method: 'PATCH', body: { status: 'deleted' } });
+      }
     }
     internalClipboard = null;
   }

@@ -158,40 +158,6 @@ projectRoutes.get('/permissions', async (c) => {
   return c.json({ permissions: await checkAll(), v: getPermissionVersion() });
 });
 
-/** POST /api/projects/ping — ping all projects' channel servers to check busy/idle state */
-projectRoutes.post('/ping', async (c) => {
-  const { getChannelPort } = await import('../channel-config.js');
-  const { readGlobalConfig } = await import('../global-config.js');
-  const { readFileSettings } = await import('../file-settings.js');
-  const globalConfig = readGlobalConfig();
-  if (globalConfig.channelEnabled !== true) return c.json({ results: {} });
-
-  const projects = getAllProjects();
-  const serverPort = (() => {
-    // Read port from the first project's settings (all share the same server port)
-    if (projects.length > 0) {
-      const s = readFileSettings(projects[0].dataDir);
-      return s.port ?? 4174;
-    }
-    return 4174;
-  })();
-
-  // Import pendingPings from channel routes
-  const { pingChannelServer } = await import('./channel.js');
-
-  // Results: true = idle, false = busy, null = no channel / not connected
-  const results: Record<string, boolean | null> = {};
-  await Promise.all(projects.map(async (p) => {
-    const port = getChannelPort(p.dataDir);
-    if (port === null) { results[p.secret] = null; return; }
-    const settings = readFileSettings(p.dataDir);
-    const secret = settings.secret ?? '';
-    results[p.secret] = await pingChannelServer(port, serverPort, secret);
-  }));
-
-  return c.json({ results });
-});
-
 /** POST /api/projects/:secret/reveal — open the project folder in OS file manager */
 projectRoutes.post('/:secret/reveal', async (c) => {
   const secret = c.req.param('secret');

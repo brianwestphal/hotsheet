@@ -2,7 +2,7 @@ import { suppressAnimation } from './animate.js';
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI } from './backups.js';
 import { bindBatchToolbar } from './batch.js';
-import { bindStatusBarContextMenu, channelAutoTrigger, initChannel } from './channelUI.js';
+import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
 import { initCommandLog, refreshCommandLog } from './commandLog.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
@@ -110,14 +110,12 @@ async function init() {
   void initDashboardWidget();
   // Share prompt and toolbar button
   initShare();
-  // Status bar context menu for manual busy state sync
-  bindStatusBarContextMenu();
   // Auto-focus the draft input on load
   focusDraftInput();
   } catch (err) {
     console.error('Hot Sheet init failed:', err);
     const el = document.getElementById('ticket-list');
-    if (el) el.innerHTML = `<div style="padding:20px;color:red">Init error: ${String(err)}</div>`;
+    if (el) el.replaceChildren(toElement(<div style="padding:20px;color:red">Init error: {String(err)}</div>));
   }
 }
 
@@ -185,7 +183,7 @@ function bindDetailPositionToggle() {
     btn.addEventListener('click', () => {
       const position = (btn as HTMLElement).dataset.position as AppSettings['detail_position'];
       // If clicking the already-active position, toggle the detail panel off
-      if (position === state.settings.detail_position && state.settings.detail_visible !== false) {
+      if (position === state.settings.detail_position && state.settings.detail_visible) {
         state.settings.detail_visible = false;
         const panel = document.getElementById('detail-panel');
         const handle = document.getElementById('detail-resize-handle');

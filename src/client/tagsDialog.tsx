@@ -72,7 +72,7 @@ export async function showTagsDialog() {
       body.appendChild(row);
     }
     if (allTags.length === 0) {
-      body.innerHTML = '<div style="padding:12px 16px;color:var(--text-muted);font-size:13px">No tags yet. Create one below.</div>';
+      body.appendChild(toElement(<div style="padding:12px 16px;color:var(--text-muted);font-size:13px">No tags yet. Create one below.</div>));
     }
   }
 

@@ -294,11 +294,11 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint" id="settings-ticket-prefix-hint">Prefix for ticket numbers (e.g. HS-1). Alphanumeric, hyphens, underscores. Max 10 characters.</span>
               </div>
               <div className="settings-field">
-                <label>Auto-clear trash after (days)</label>
+                <label>Auto-delete trash after (days)</label>
                 <input type="number" id="settings-trash-days" min="1" value="3" />
               </div>
               <div className="settings-field">
-                <label>Auto-clear verified after (days)</label>
+                <label>Auto-archive verified after (days)</label>
                 <input type="number" id="settings-verified-days" min="1" value="30" />
               </div>
               <div className="settings-field settings-field-checkbox">
@@ -384,13 +384,6 @@ pageRoutes.get('/', (c) => {
                     <button className="btn btn-sm" id="settings-channel-copy-btn" title="Copy command">Copy</button>
                   </div>
                 </div>
-              </div>
-              <div id="settings-ping-section" className="settings-field" style="display:none">
-                <label className="settings-checkbox-label">
-                  <input type="checkbox" id="settings-ping-enabled" />
-                  Enable busy status detection (ping)
-                </label>
-                <span className="settings-hint">Periodically checks if Claude is busy by sending a lightweight ping through the channel. Uses AI tokens. Only active when you're using the app.</span>
               </div>
               <div id="settings-custom-commands-section" style="display:none">
                 <div className="settings-section" style="margin-top:16px">

@@ -21,13 +21,12 @@ interface DashboardData {
 let currentDays = 30;
 
 export async function renderDashboard(container: HTMLElement) {
-  container.innerHTML = '<div class="dashboard-loading">Loading dashboard...</div>';
+  container.replaceChildren(toElement(<div className="dashboard-loading">Loading dashboard...</div>));
   try {
     const data = await api<DashboardData>(`/dashboard?days=${currentDays}`);
-    container.innerHTML = '';
-    container.appendChild(buildDashboard(data));
+    container.replaceChildren(buildDashboard(data));
   } catch {
-    container.innerHTML = '<div class="dashboard-loading">Failed to load dashboard data.</div>';
+    container.replaceChildren(toElement(<div className="dashboard-loading">Failed to load dashboard data.</div>));
   }
 }
 

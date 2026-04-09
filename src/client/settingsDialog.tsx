@@ -295,7 +295,7 @@ function bindAutoContextSettings() {
   function renderEntries() {
     list.innerHTML = '';
     if (autoContextEntries.length === 0) {
-      list.innerHTML = '<div style="padding:12px 0;color:var(--text-muted);font-size:13px">No auto-context entries yet. Click + Add to create one.</div>';
+      list.replaceChildren(toElement(<div style="padding:12px 0;color:var(--text-muted);font-size:13px">No auto-context entries yet. Click + Add to create one.</div>));
       return;
     }
     for (let i = 0; i < autoContextEntries.length; i++) {
@@ -378,7 +378,7 @@ function bindAutoContextSettings() {
         optionsList.innerHTML = '';
         const filtered = filter ? options.filter(o => o.label.toLowerCase().includes(filter.toLowerCase())) : options;
         if (filtered.length === 0) {
-          optionsList.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:13px">No matching options</div>';
+          optionsList.replaceChildren(toElement(<div style="padding:8px;color:var(--text-muted);font-size:13px">No matching options</div>));
           return;
         }
         for (const opt of filtered) {

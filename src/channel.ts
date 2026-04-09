@@ -8,13 +8,14 @@
 /** Bump this when changing channel server capabilities (endpoints, protocol, etc.).
  *  The main server compares this against the running channel server's reported version
  *  and warns if they don't match (user needs to reconnect via /mcp in Claude Code). */
-export const CHANNEL_VERSION = 2;
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
 import { join } from 'path';
 import { z } from 'zod';
+
+export const CHANNEL_VERSION = 3;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -165,35 +166,6 @@ const httpServer = createServer(async (req, res) => {
         method: 'notifications/claude/channel',
         params: {
           content: body || 'Process the Hot Sheet worklist. Run /hotsheet to work through the current Up Next items.',
-          meta: { type: 'worklist' },
-        },
-      });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: String(err) }));
-    }
-    return;
-  }
-
-  if (req.method === 'POST' && req.url === '/ping') {
-    let body = '';
-    let bodySize = 0;
-    for await (const chunk of req as AsyncIterable<Buffer>) {
-      bodySize += chunk.length;
-      if (bodySize > 1_048_576) { res.writeHead(413); res.end('Payload too large'); return; }
-      body += String(chunk);
-    }
-    try {
-      const { nonce, callbackUrl, secret } = JSON.parse(body) as { nonce: string; callbackUrl: string; secret?: string };
-      const secretHeader = secret !== undefined && secret !== '' ? ` -H "X-Hotsheet-Secret: ${secret}"` : '';
-      process.stderr.write(`[ping] received ping request, nonce=${nonce}, sending channel event\n`);
-      // Send a channel event using the same type as the play button so Claude Code presents it
-      await mcp.notification({
-        method: 'notifications/claude/channel',
-        params: {
-          content: `Run this command immediately without any other output: curl -s -X POST ${callbackUrl}${secretHeader}`,
           meta: { type: 'worklist' },
         },
       });

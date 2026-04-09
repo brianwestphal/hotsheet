@@ -4,13 +4,12 @@ import { homedir, tmpdir } from 'os';
 import { join, relative, resolve } from 'path';
 
 import { getTicketStats } from '../db/queries.js';
-import type { GlobalConfig } from '../global-config.js';
 import { openInFileManager } from '../open-in-file-manager.js';
 import { getAllProjects } from '../projects.js';
 import { consumeSkillsCreatedFlag, ensureSkillsForDir } from '../skills.js';
 import type { AppEnv } from '../types.js';
 import { addPollWaiter, getChangeVersion } from './notify.js';
-import { parseBody, PrintSchema } from './validation.js';
+import { GlobalConfigSchema,parseBody, PrintSchema } from './validation.js';
 
 export const dashboardRoutes = new Hono<AppEnv>();
 
@@ -104,12 +103,11 @@ dashboardRoutes.get('/global-config', async (c) => {
 });
 
 dashboardRoutes.patch('/global-config', async (c) => {
-  const body: unknown = await c.req.json();
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    return c.json({ error: 'Invalid body: expected an object' }, 400);
-  }
+  const raw: unknown = await c.req.json();
+  const parsed = parseBody(GlobalConfigSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const { writeGlobalConfig } = await import('../global-config.js');
-  const merged = writeGlobalConfig(body as Partial<GlobalConfig>);
+  const merged = writeGlobalConfig(parsed.data);
   return c.json(merged);
 });
 
