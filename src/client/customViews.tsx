@@ -281,6 +281,7 @@ function showViewEditor(existing?: CustomView) {
   let logic: 'all' | 'any' = existing?.logic ?? 'all';
   let name = existing?.name ?? '';
   let tag = existing?.tag ?? '';
+  let includeArchived = existing?.includeArchived ?? false;
 
   void refreshAllKnownTags();
 
@@ -307,6 +308,9 @@ function showViewEditor(existing?: CustomView) {
               <input type="text" id="cv-tag" value={tag} placeholder="Optional tag..." autocomplete="off" />
               <div className="cv-tag-autocomplete" id="cv-tag-ac"></div>
             </div>
+          </div>
+          <div className="cv-logic-row">
+            <label><input type="checkbox" id="cv-include-archived" checked={includeArchived} /> Include archived tickets</label>
           </div>
           <div className="cv-logic-row">
             <span>Match</span>
@@ -403,6 +407,10 @@ function showViewEditor(existing?: CustomView) {
   const tagAc = overlay.querySelector('#cv-tag-ac') as HTMLElement;
   setupTagAutocomplete(tagInput, tagAc, (v) => { tag = v; });
 
+  // Include archived checkbox
+  const archivedCheckbox = overlay.querySelector('#cv-include-archived') as HTMLInputElement;
+  archivedCheckbox.addEventListener('change', () => { includeArchived = archivedCheckbox.checked; });
+
   // Logic radio
   overlay.querySelectorAll('input[name="cv-logic"]').forEach(r => {
     r.addEventListener('change', () => { logic = (r as HTMLInputElement).value as 'all' | 'any'; });
@@ -430,6 +438,7 @@ function showViewEditor(existing?: CustomView) {
       id: existing?.id ?? (name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `view-${Date.now()}`),
       name,
       ...(tag !== '' ? { tag } : {}),
+      ...(includeArchived ? { includeArchived } : {}),
       logic,
       conditions: conditions.filter(c => c.value !== ''),
     };

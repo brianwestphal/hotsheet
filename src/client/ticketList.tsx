@@ -287,6 +287,7 @@ export async function loadTickets() {
           sort_by: state.sortBy,
           sort_dir: state.sortDir,
           ...(viewTag !== undefined && viewTag !== '' ? { required_tag: viewTag } : {}),
+          ...(view.includeArchived === true ? { include_archived: true } : {}),
         },
       });
     } else {

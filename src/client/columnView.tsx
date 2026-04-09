@@ -69,19 +69,28 @@ export function getColumnsForView(): { status: string; label: string }[] {
       { status: 'completed', label: 'Completed' },
     ];
   }
+
+  // Check if active custom view has includeArchived
+  const customViewIncludesArchived = state.view.startsWith('custom:') &&
+    state.customViews.find(v => v.id === state.view.slice(7))?.includeArchived === true;
+
   if (state.settings.hide_verified_column) {
-    return [
+    const cols = [
       { status: 'not_started', label: 'Not Started' },
       { status: 'started', label: 'Started' },
       { status: 'completed', label: 'Completed' },  // Will also include verified items
     ];
+    if (customViewIncludesArchived) cols.push({ status: 'archive', label: 'Archived' });
+    return cols;
   }
-  return [
+  const cols = [
     { status: 'not_started', label: 'Not Started' },
     { status: 'started', label: 'Started' },
     { status: 'completed', label: 'Completed' },
     { status: 'verified', label: 'Verified' },
   ];
+  if (customViewIncludesArchived) cols.push({ status: 'archive', label: 'Archived' });
+  return cols;
 }
 
 // --- Preview column view ---

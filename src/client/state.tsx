@@ -56,6 +56,7 @@ export interface CustomView {
   id: string;
   name: string;
   tag?: string;
+  includeArchived?: boolean;
   logic: 'all' | 'any';
   conditions: CustomViewCondition[];
 }

@@ -310,21 +310,28 @@ export async function queryTickets(
   sortBy?: string,
   sortDir?: string,
   requiredTag?: string,
+  includeArchived?: boolean,
 ): Promise<Ticket[]> {
   const db = await getDb();
-  const where: string[] = [];
+  const systemWhere: string[] = [];
+  const userWhere: string[] = [];
   const values: unknown[] = [];
   let paramIdx = 1;
 
   // Always exclude deleted
-  where.push(`status != 'deleted'`);
+  systemWhere.push(`status != 'deleted'`);
+
+  // Exclude archived unless explicitly included
+  if (includeArchived !== true) {
+    systemWhere.push(`status != 'archive'`);
+  }
 
   for (const cond of conditions) {
     if (!QUERYABLE_FIELDS.has(cond.field)) continue;
     const field = cond.field;
 
     if (field === 'up_next') {
-      where.push(`up_next = $${paramIdx}`);
+      userWhere.push(`up_next = $${paramIdx}`);
       values.push(cond.value === 'true');
       paramIdx++;
       continue;
@@ -335,7 +342,7 @@ export async function queryTickets(
     const ordVal = ordExpr !== null ? ordinalValue(field, cond.value) : null;
     if (ordExpr !== null && ordVal !== null && ['lt', 'lte', 'gt', 'gte'].includes(cond.operator)) {
       const op = cond.operator === 'lt' ? '<' : cond.operator === 'lte' ? '<=' : cond.operator === 'gt' ? '>' : '>=';
-      where.push(`(${ordExpr}) ${op} $${paramIdx}`);
+      userWhere.push(`(${ordExpr}) ${op} $${paramIdx}`);
       values.push(ordVal);
       paramIdx++;
       continue;
@@ -343,22 +350,22 @@ export async function queryTickets(
 
     switch (cond.operator) {
       case 'equals':
-        where.push(`${field} = $${paramIdx}`);
+        userWhere.push(`${field} = $${paramIdx}`);
         values.push(cond.value);
         paramIdx++;
         break;
       case 'not_equals':
-        where.push(`${field} != $${paramIdx}`);
+        userWhere.push(`${field} != $${paramIdx}`);
         values.push(cond.value);
         paramIdx++;
         break;
       case 'contains':
-        where.push(`${field} ILIKE $${paramIdx}`);
+        userWhere.push(`${field} ILIKE $${paramIdx}`);
         values.push(`%${cond.value}%`);
         paramIdx++;
         break;
       case 'not_contains':
-        where.push(`${field} NOT ILIKE $${paramIdx}`);
+        userWhere.push(`${field} NOT ILIKE $${paramIdx}`);
         values.push(`%${cond.value}%`);
         paramIdx++;
         break;
@@ -367,17 +374,16 @@ export async function queryTickets(
 
   // Required tag filter — always AND'd regardless of logic
   if (requiredTag !== undefined && requiredTag !== '') {
-    where[0] += ` AND tags ILIKE $${paramIdx}`;
+    systemWhere.push(`tags ILIKE $${paramIdx}`);
     values.push(`%${requiredTag}%`);
     paramIdx++;
   }
 
   const joiner = logic === 'any' ? ' OR ' : ' AND ';
-  // The first condition (status != deleted) is always AND'd; user conditions are grouped
-  const userConditions = where.slice(1);
-  let whereClause = where[0];
-  if (userConditions.length > 0) {
-    whereClause += ` AND (${userConditions.join(joiner)})`;
+  // System conditions are always AND'd; user conditions are grouped by the chosen logic
+  let whereClause = systemWhere.join(' AND ');
+  if (userWhere.length > 0) {
+    whereClause += ` AND (${userWhere.join(joiner)})`;
   }
 
   let orderBy: string;

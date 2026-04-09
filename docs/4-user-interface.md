@@ -180,6 +180,7 @@ Each built-in view has an icon to the left of the label:
 - **View editor dialog:**
   - Name field for the view.
   - Optional **Tag** field with autocomplete. An info button explains: associating a tag shows a tag icon in the sidebar and enables dropping tickets onto the view to add the tag.
+  - **Include archived tickets** checkbox (unchecked by default). When checked, archived tickets are included in results and an "Archived" column appears in column view.
   - "All of" / "Any of" logic toggle (AND vs OR).
   - List of conditions, each with: field selector, operator selector, value input/selector.
   - Supported fields: Category, Priority, Status, Title, Details, Up Next, Tags.
@@ -192,6 +193,7 @@ Each built-in view has an icon to the left of the label:
   - Support drag-and-drop: dropping tickets onto the view adds the associated tag.
   - Auto-tag on create: tickets created while viewing a tag view automatically receive the view's tag.
 - Tag autocomplete fields show the first 100 tags alphabetically on focus (before typing), then filter as the user types.
+- **Filtering behavior:** Deleted tickets are always excluded from custom view results. Archived tickets are excluded by default unless the view's "Include archived tickets" checkbox is enabled.
 - Custom views are stored as JSON in the settings table (key: `custom_views`). The `tag` field is optional on the `CustomView` object.
 - API: `POST /api/tickets/query` accepts `{ logic, conditions, sort_by, sort_dir, required_tag }` and returns matching tickets via parameterized SQL. The `required_tag` parameter is always AND'd with the query.
 - Custom views support both list and column layouts.

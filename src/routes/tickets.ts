@@ -292,7 +292,7 @@ ticketRoutes.post('/tickets/query', async (c) => {
   const raw: unknown = await c.req.json();
   const parsed = parseBody(QueryTicketsSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  const { logic, conditions, sort_by, sort_dir, required_tag } = parsed.data;
-  const tickets = await queryTickets(logic, conditions, sort_by, sort_dir, required_tag);
+  const { logic, conditions, sort_by, sort_dir, required_tag, include_archived } = parsed.data;
+  const tickets = await queryTickets(logic, conditions, sort_by, sort_dir, required_tag, include_archived);
   return c.json(tickets);
 });

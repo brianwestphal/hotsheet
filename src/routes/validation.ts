@@ -60,6 +60,7 @@ export const QueryTicketsSchema = z.object({
   sort_by: z.string().optional(),
   sort_dir: SortDirSchema.optional(),
   required_tag: z.string().optional(),
+  include_archived: z.boolean().optional(),
 });
 
 // --- Settings ---
