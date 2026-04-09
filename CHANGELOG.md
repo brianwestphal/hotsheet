@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.14.0] - 2026-04-09
+
+- We no longer auto-delete verified items after a time period, now we auto-archive them
+- Various MCP / channel improvements
+- Completed and verified items are now struckthru in column view mode, like they were in list view mode
+- The detail panel is now closable (just tap the same segmented control option again)
+- There's a new option in general settings to hide the verified column
+- Cut, copy, and paste works on tickets now
+- Tab order is now better preserved
+
 ## [0.13.1] - 2026-04-08
 
 - Fix sidebar command button E2E test: use shell target and skip if container missing
