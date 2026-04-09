@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.14.1] - 2026-04-09
+
+- Custom views now exclude deleted and archived tickets
+  - Archived tickets can be re-included with an extra checkbox in the custom view's edit dialog if desired
+
 ## [0.14.0] - 2026-04-09
 
 - We no longer auto-delete verified items after a time period, now we auto-archive them
