@@ -110,6 +110,101 @@ test.describe('Plugin settings UI', () => {
     await expect(configDialog).toBeHidden();
   });
 
+  test('config dialog shows collapsible groups', async ({ page }) => {
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="plugins"]').click();
+
+    const githubRow = page.locator('.plugin-row', { hasText: 'GitHub Issues' });
+    await expect(githubRow).toBeVisible({ timeout: 15000 });
+    await githubRow.locator('.plugin-configure-btn').click();
+
+    const configDialog = page.locator('.custom-view-editor-overlay').last();
+    await expect(configDialog).toBeVisible({ timeout: 3000 });
+
+    // Should have Synchronization and Advanced groups
+    await expect(configDialog.locator('.config-group-title', { hasText: 'Synchronization' })).toBeVisible();
+    await expect(configDialog.locator('.config-group-title', { hasText: 'Advanced' })).toBeVisible();
+
+    // Advanced group should be collapsed by default
+    const advancedGroup = configDialog.locator('.config-group', { hasText: 'Advanced' });
+    const advancedBody = advancedGroup.locator('.config-group-body');
+    await expect(advancedBody).toBeHidden();
+
+    // Click to expand
+    await advancedGroup.locator('.config-group-header').click();
+    await expect(advancedBody).toBeVisible();
+
+    // Should have label prefix fields inside
+    await expect(advancedBody.locator('.plugin-pref-label', { hasText: 'Category Label Prefix' })).toBeVisible();
+
+    // Click to collapse again
+    await advancedGroup.locator('.config-group-header').click();
+    await expect(advancedBody).toBeHidden();
+
+    await configDialog.locator('.detail-close').click();
+  });
+
+  test('config dialog shows divider after token field', async ({ page }) => {
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="plugins"]').click();
+
+    const githubRow = page.locator('.plugin-row', { hasText: 'GitHub Issues' });
+    await expect(githubRow).toBeVisible({ timeout: 15000 });
+    await githubRow.locator('.plugin-configure-btn').click();
+
+    const configDialog = page.locator('.custom-view-editor-overlay').last();
+    await expect(configDialog).toBeVisible({ timeout: 3000 });
+
+    // Should have at least one divider
+    await expect(configDialog.locator('.config-divider').first()).toBeVisible();
+
+    await configDialog.locator('.detail-close').click();
+  });
+
+  test('Find Plugins dialog shows Official Plugins tab', async ({ page }) => {
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="plugins"]').click();
+
+    // Click "Find Plugins..." button
+    await page.locator('#plugin-install-btn').click();
+
+    const findDialog = page.locator('.custom-view-editor-overlay').last();
+    await expect(findDialog).toBeVisible({ timeout: 3000 });
+
+    // Should show "Official Plugins" and "From Disk" tabs
+    await expect(findDialog.locator('.find-plugins-tab', { hasText: 'Official Plugins' })).toBeVisible();
+    await expect(findDialog.locator('.find-plugins-tab', { hasText: 'From Disk' })).toBeVisible();
+
+    // Official plugins tab should be active by default
+    const officialTab = findDialog.locator('.find-plugins-tab', { hasText: 'Official Plugins' });
+    await expect(officialTab).toHaveClass(/active/);
+
+    // Should show GitHub Issues as installed
+    await expect(findDialog.locator('.bundled-plugin-name', { hasText: 'GitHub Issues' })).toBeVisible({ timeout: 5000 });
+    await expect(findDialog.locator('.bundled-plugin-installed')).toHaveText('Installed');
+
+    // Switch to From Disk tab
+    await findDialog.locator('.find-plugins-tab', { hasText: 'From Disk' }).click();
+    await expect(findDialog.locator('#install-path-input')).toBeVisible();
+    await expect(findDialog.locator('#install-browse-btn')).toBeVisible();
+
+    // Install button should be disabled without a path
+    const installBtn = findDialog.locator('.btn-install-primary').last();
+    await expect(installBtn).toBeDisabled();
+
+    // Close
+    await findDialog.locator('.detail-close').click();
+  });
+
+  test('plugin toolbar button renders when enabled', async ({ page }) => {
+    // The GitHub sync button should be in the toolbar
+    const toolbarBtn = page.locator('.plugin-toolbar-container .plugin-toolbar-btn');
+    await expect(toolbarBtn).toBeVisible({ timeout: 10000 });
+    // Should have a title attribute
+    const title = await toolbarBtn.getAttribute('title');
+    expect(title).toContain('Sync');
+  });
+
   test('context menu shows Configure, Enable/Disable, and Uninstall', async ({ page }) => {
     await page.locator('#settings-btn').click();
     await page.locator('.settings-tab[data-tab="plugins"]').click();
@@ -306,6 +401,216 @@ test.describe('GitHub Issues plugin — live integration', () => {
     const record = records.find(r => r.ticket_id === syncedTicket.id);
     expect(record).toBeTruthy();
     expect(record!.sync_status).toBe('synced');
+  });
+
+  test('synced ticket shows plugin icon in list view', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    // Sync to ensure we have synced tickets
+    await request.post('/api/plugins/github-issues/sync', { headers });
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+    // Check for sync icons in ticket rows
+    const syncIcons = page.locator('.ticket-sync-icon');
+    const count = await syncIcons.count();
+    if (count === 0) { test.skip(); return; }
+    const iconHtml = await syncIcons.first().innerHTML();
+    expect(iconHtml).toContain('svg');
+  });
+
+  test('push local ticket to GitHub via context menu API', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    // Create a local ticket
+    const createRes = await request.post('/api/tickets', {
+      headers, data: { title: `E2E push test ${Date.now()}`, defaults: { details: 'Push test details' } },
+    });
+    const ticket = await createRes.json() as { id: number };
+
+    // Push to GitHub
+    const pushRes = await request.post(`/api/plugins/github-issues/push-ticket/${ticket.id}`, { headers });
+    const pushResult = await pushRes.json();
+    expect(pushResult.ok).toBe(true);
+    expect(pushResult.remoteId).toBeTruthy();
+    expect(pushResult.remoteUrl).toContain('github.com');
+
+    // Verify sync record exists
+    const recordsRes = await request.get('/api/plugins/github-issues/sync', { headers });
+    const records = await recordsRes.json() as { ticket_id: number; remote_id: string }[];
+    expect(records.some(r => r.ticket_id === ticket.id)).toBe(true);
+
+    // Verify ticket now shows sync info
+    const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
+    const fullTicket = await ticketRes.json() as { syncInfo?: { pluginId: string; remoteUrl: string | null }[] };
+    expect(fullTicket.syncInfo).toBeTruthy();
+    expect(fullTicket.syncInfo!.length).toBeGreaterThan(0);
+    expect(fullTicket.syncInfo![0].pluginId).toBe('github-issues');
+  });
+
+  test('synced ticket map includes plugin icon', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = {};
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    // Sync first
+    await request.post('/api/plugins/github-issues/sync', { headers: { ...headers, 'Content-Type': 'application/json' } });
+
+    // Get sync map
+    const mapRes = await request.get('/api/sync/tickets', { headers });
+    const syncMap = await mapRes.json() as Record<string, { pluginId: string; icon?: string }>;
+
+    const entries = Object.values(syncMap);
+    if (entries.length === 0) { test.skip(); return; }
+
+    // Should have plugin ID and icon
+    expect(entries[0].pluginId).toBe('github-issues');
+    expect(entries[0].icon).toBeTruthy();
+    expect(entries[0].icon).toContain('<svg');
+  });
+
+  test('plugin UI elements served for enabled plugin', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = {};
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    const uiRes = await request.get('/api/plugins/ui', { headers });
+    const elements = await uiRes.json() as { id: string; type: string; location: string; _pluginId: string }[];
+
+    // Should include the GitHub sync toolbar button
+    const syncBtn = elements.find(e => e.id === 'sync-button');
+    expect(syncBtn).toBeTruthy();
+    expect(syncBtn!.type).toBe('button');
+    expect(syncBtn!.location).toBe('toolbar');
+    expect(syncBtn!._pluginId).toBe('github-issues');
+  });
+
+  test('plugin action endpoint handles sync redirect', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    const actionRes = await request.post('/api/plugins/github-issues/action', {
+      headers, data: { actionId: 'sync' },
+    });
+    const result = await actionRes.json() as { ok: boolean; result: { redirect: string } };
+    expect(result.ok).toBe(true);
+    expect(result.result.redirect).toBe('sync');
+  });
+
+  test('plugin action endpoint handles test_connection', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    const actionRes = await request.post('/api/plugins/github-issues/action', {
+      headers, data: { actionId: 'test_connection' },
+    });
+    const result = await actionRes.json() as { ok: boolean; result: { connected: boolean } };
+    expect(result.ok).toBe(true);
+    expect(result.result.connected).toBe(true);
+  });
+
+  test('backends endpoint includes icon', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = {};
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    const backendsRes = await request.get('/api/backends', { headers });
+    const backends = await backendsRes.json() as { id: string; name: string; icon?: string }[];
+
+    const github = backends.find(b => b.id === 'github-issues');
+    expect(github).toBeTruthy();
+    expect(github!.icon).toContain('<svg');
+  });
+
+  test('validate field endpoint returns feedback', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    // Valid token format
+    const validRes = await request.post('/api/plugins/validate/github-issues', {
+      headers, data: { key: 'token', value: 'github_pat_test123' },
+    });
+    const valid = await validRes.json() as { status: string; message: string };
+    expect(valid.status).toBe('success');
+
+    // Empty required field
+    const emptyRes = await request.post('/api/plugins/validate/github-issues', {
+      headers, data: { key: 'owner', value: '' },
+    });
+    const empty = await emptyRes.json() as { status: string; message: string };
+    expect(empty.status).toBe('error');
+
+    // Field with spaces
+    const spacesRes = await request.post('/api/plugins/validate/github-issues', {
+      headers, data: { key: 'repo', value: 'my repo' },
+    });
+    const spaces = await spacesRes.json() as { status: string; message: string };
+    expect(spaces.status).toBe('error');
+    expect(spaces.message).toContain('spaces');
+  });
+
+  test('disable plugin hides sync data for project', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    // Sync first to create records
+    await request.post('/api/plugins/github-issues/sync', { headers });
+
+    // Disable the plugin
+    await request.post('/api/plugins/github-issues/disable', { headers });
+
+    // Sync map should be empty (filtered by enabled state)
+    const mapRes = await request.get('/api/sync/tickets', { headers });
+    const syncMap = await mapRes.json() as Record<string, unknown>;
+    expect(Object.keys(syncMap).length).toBe(0);
+
+    // UI elements should be empty
+    const uiRes = await request.get('/api/plugins/ui', { headers });
+    const elements = await uiRes.json() as unknown[];
+    expect(elements.length).toBe(0);
+
+    // Re-enable for subsequent tests
+    await request.post('/api/plugins/github-issues/enable', { headers });
+    // Re-activate to pick up config
+    await request.post('/api/plugins/github-issues/reactivate', { headers });
+  });
+
+  test('bundled plugins endpoint lists available plugins', async ({ page, request }) => {
+    const bundledRes = await request.get('/api/plugins/bundled');
+    const bundled = await bundledRes.json() as { manifest: { id: string; name: string }; installed: boolean }[];
+
+    expect(bundled.length).toBeGreaterThan(0);
+    const github = bundled.find(b => b.manifest.id === 'github-issues');
+    expect(github).toBeTruthy();
+    expect(github!.installed).toBe(true);
+    expect(github!.manifest.name).toBe('GitHub Issues');
+  });
+
+  test('config labels endpoint returns dynamic labels', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    // Trigger test_connection to set the label
+    await request.post('/api/plugins/github-issues/action', {
+      headers, data: { actionId: 'test_connection' },
+    });
+
+    // Get config labels
+    const labelsRes = await request.get('/api/plugins/config-labels/github-issues', {
+      headers,
+    });
+    const labels = await labelsRes.json() as Record<string, string>;
+    expect(labels['connection-status']).toBeTruthy();
+    expect(labels['connection-status']).toContain('Connected');
   });
 
   test('pull overwrites local when only remote changed', async ({ page, request }) => {
