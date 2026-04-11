@@ -630,6 +630,14 @@ fn request_attention_once(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn pick_folder() -> Result<Option<String>, String> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Open Folder")
@@ -771,6 +779,7 @@ async fn open_project(app: tauri::AppHandle, data_dir: String) -> Result<(), Str
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(SidecarPid(Mutex::new(None)))
@@ -870,6 +879,7 @@ pub fn run() {
             request_attention,
             request_attention_once,
             pick_folder,
+            open_url,
             #[cfg(not(debug_assertions))]
             open_project
         ])

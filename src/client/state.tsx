@@ -29,6 +29,23 @@ export interface Ticket {
   attachments?: Attachment[];
 }
 
+export interface SyncInfo {
+  pluginId: string;
+  pluginName: string;
+  remoteId: string;
+  remoteUrl: string | null;
+  syncStatus: string;
+}
+
+export interface SyncedTicketInfo {
+  pluginId: string;
+  icon?: string;
+}
+
+/** Map of ticket ID → sync info for synced tickets (for list indicators) */
+export let syncedTicketMap: Record<number, SyncedTicketInfo> = {};
+export function setSyncedTicketMap(map: Record<number, SyncedTicketInfo>) { syncedTicketMap = map; }
+
 export interface Attachment {
   id: number;
   ticket_id: number;

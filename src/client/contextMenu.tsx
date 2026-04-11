@@ -1,9 +1,9 @@
 import { raw } from '../jsx-runtime.js';
-import { api } from './api.js';
+import { api, apiUpload } from './api.js';
 import { toElement } from './dom.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_TAG, ICON_TRASH } from './icons.js';
 import type { Ticket } from './state.js';
-import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from './state.js';
+import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS, syncedTicketMap, VERIFIED_SVG } from './state.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
 import { trackedBatch, trackedDelete, trackedPatch } from './undo/actions.js';
 
@@ -20,6 +20,34 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
   }
 
   const menu = toElement(<div className="context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}></div>);
+
+  // Completed ticket actions: Verified and Not Working
+  const allCompleted = Array.from(state.selectedIds).every(id => {
+    const t = state.tickets.find(tk => tk.id === id);
+    return t?.status === 'completed';
+  });
+  if (allCompleted && state.selectedIds.size > 0) {
+    addActionItem(menu, 'Verified', () => applyToSelected('status', 'verified'), {
+      icon: VERIFIED_SVG,
+    });
+
+    const notWorkingItem = toElement(
+      <div className={`context-menu-item${state.selectedIds.size > 1 ? ' disabled' : ''}`}>
+        <span className="dropdown-icon">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>')}</span>
+        <span className="context-menu-label">Not Working</span>
+      </div>
+    );
+    if (state.selectedIds.size === 1) {
+      notWorkingItem.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        closeContextMenu();
+        showNotWorkingDialog(ticket);
+      });
+    }
+    menu.appendChild(notWorkingItem);
+
+    addSeparator(menu);
+  }
 
   // Category submenu
   addSubmenuItem(menu, 'Category', state.categories.map(c => ({
@@ -69,6 +97,41 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
     for (const t of created) state.selectedIds.add(t.id);
     void loadTickets();
   }, { icon: ICON_COPY });
+
+  // Push to remote backend (only for unsynced single-ticket selection)
+  if (state.selectedIds.size === 1 && !syncedTicketMap[ticket.id]) {
+    void api<{ id: string; name: string; icon?: string }[]>('/backends').then(backends => {
+      if (backends.length === 0) return;
+      // Insert before the backlog separator (find the right position)
+      const separators = menu.querySelectorAll('.context-menu-separator');
+      const insertBefore = separators.length >= 2 ? separators[1] : null;
+      const pushSep = toElement(<div className="context-menu-separator"></div>);
+      if (insertBefore) menu.insertBefore(pushSep, insertBefore);
+      else menu.appendChild(pushSep);
+      for (const b of backends) {
+        const item = toElement(
+          <div className="context-menu-item">
+            {b.icon ? <span className="dropdown-icon">{raw(b.icon)}</span> : null}
+            <span className="context-menu-label">Push to {b.name}</span>
+          </div>
+        );
+        item.addEventListener('click', async () => {
+          closeContextMenu();
+          try {
+            const result = await api<{ ok: boolean; remoteId: string; remoteUrl: string | null }>(
+              `/plugins/${b.id}/push-ticket/${ticket.id}`, { method: 'POST' },
+            );
+            if (result.remoteUrl) window.open(result.remoteUrl, '_blank');
+            void loadTickets();
+          } catch (e) {
+            console.error('Failed to push ticket:', e);
+          }
+        });
+        if (insertBefore) menu.insertBefore(item, insertBefore);
+        else menu.appendChild(item);
+      }
+    });
+  }
 
   addSeparator(menu);
 
@@ -187,4 +250,105 @@ function addActionItem(menu: HTMLElement, label: string, action: () => void, opt
 
 function addSeparator(menu: HTMLElement) {
   menu.appendChild(toElement(<div className="context-menu-separator"></div>));
+}
+
+// --- Not Working dialog ---
+
+function showNotWorkingDialog(ticket: Ticket) {
+  const overlay = toElement(
+    <div className="custom-view-editor-overlay" style="z-index:2500">
+      <div className="custom-view-editor" style="width:480px">
+        <div className="custom-view-editor-header">
+          <span>Not Working — {ticket.ticket_number}</span>
+          <button className="detail-close" id="not-working-close">{'\u00d7'}</button>
+        </div>
+        <div className="custom-view-editor-body">
+          <div className="settings-field">
+            <label>What's wrong?</label>
+            <textarea id="not-working-text" className="settings-textarea" rows={4} placeholder="Describe the issue..." style="width:100%;resize:vertical"></textarea>
+          </div>
+          <div className="settings-field" style="margin-top:12px">
+            <label>Attachments</label>
+            <div id="not-working-files" className="not-working-file-list"></div>
+            <button className="btn btn-sm" id="not-working-add-file" style="margin-top:6px">Add File...</button>
+            <input type="file" id="not-working-file-input" multiple={true} style="display:none" />
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+            <button className="btn btn-sm" id="not-working-cancel">Cancel</button>
+            <button className="btn btn-sm btn-danger" id="not-working-submit">Report Not Working</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const pendingFiles: File[] = [];
+  const fileListEl = overlay.querySelector('#not-working-files')!;
+  const fileInput = overlay.querySelector('#not-working-file-input') as HTMLInputElement;
+
+  function renderFileList() {
+    fileListEl.innerHTML = '';
+    for (let i = 0; i < pendingFiles.length; i++) {
+      const file = pendingFiles[i];
+      const row = toElement(
+        <div className="not-working-file-row">
+          <span>{file.name}</span>
+          <button className="category-delete-btn" data-idx={String(i)}>{'\u00d7'}</button>
+        </div>
+      );
+      row.querySelector('button')!.addEventListener('click', () => {
+        pendingFiles.splice(i, 1);
+        renderFileList();
+      });
+      fileListEl.appendChild(row);
+    }
+  }
+
+  overlay.querySelector('#not-working-add-file')!.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files) {
+      for (const f of Array.from(fileInput.files)) pendingFiles.push(f);
+      renderFileList();
+    }
+    fileInput.value = '';
+  });
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#not-working-close')!.addEventListener('click', close);
+  overlay.querySelector('#not-working-cancel')!.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  overlay.querySelector('#not-working-submit')!.addEventListener('click', async () => {
+    const text = (overlay.querySelector('#not-working-text') as HTMLTextAreaElement).value.trim();
+    if (!text) {
+      (overlay.querySelector('#not-working-text') as HTMLTextAreaElement).focus();
+      return;
+    }
+
+    const submitBtn = overlay.querySelector('#not-working-submit') as HTMLButtonElement;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting...';
+
+    try {
+      // Add note
+      await api(`/tickets/${ticket.id}`, {
+        method: 'PATCH',
+        body: { notes: `Not working: ${text}`, status: 'not_started', up_next: true },
+      });
+
+      // Upload attachments
+      for (const file of pendingFiles) {
+        await apiUpload(`/tickets/${ticket.id}/attachments`, file);
+      }
+
+      close();
+      void loadTickets();
+    } catch {
+      submitBtn.textContent = 'Report Not Working';
+      submitBtn.disabled = false;
+    }
+  });
+
+  document.body.appendChild(overlay);
+  (overlay.querySelector('#not-working-text') as HTMLTextAreaElement).focus();
 }

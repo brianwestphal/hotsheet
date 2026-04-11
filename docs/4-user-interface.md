@@ -60,7 +60,7 @@ The interface is divided into:
 ### 4.6 Detail Panel
 
 - Opens when a ticket is clicked; shows full ticket details.
-- **Position**: Side (default) or bottom, toggled via header button. Preference is persisted. Clicking the already-active position segment hides the panel; clicking a different segment shows it in that position. The `detail_visible` setting is persisted so the panel stays hidden across page reloads.
+- **Position**: Side (default) or bottom, toggled via header button. The segmented control shows bottom first, then side. Preference is persisted. Clicking the already-active position segment hides the panel; clicking a different segment shows it in that position. The `detail_visible` setting is persisted so the panel stays hidden across page reloads.
 - **Resizable**: Drag the resize handle to adjust panel width (side) or height (bottom). Size is persisted.
 - **Editable fields**:
   - Title (text input, auto-saves with 300ms debounce)
@@ -166,6 +166,7 @@ Each built-in view has an icon to the left of the label:
   - **Categories** (Tag icon) — Category management with inline editing and preset selector (see [3-ticket-management.md](3-ticket-management.md) §3.1).
   - **Backups** (HardDrive icon) — Backup location, backup list (see [7-backup-restore.md](7-backup-restore.md)).
   - **Context** (FileText icon) — Auto-context configuration for categories and tags (see §4.18).
+  - **Plugins** (Plug icon) — Plugin management, configuration, sync controls, and conflict resolution (see [18-plugins.md](18-plugins.md) §18.10).
   - **Experimental** (Flask icon) — Claude Channel integration and custom commands (see [12-claude-channel.md](12-claude-channel.md)).
   - **Updates** (Download icon) — Software updates, shown only in the Tauri desktop app.
 - Tabs persist their selection while the dialog is open; resets to General when reopened.

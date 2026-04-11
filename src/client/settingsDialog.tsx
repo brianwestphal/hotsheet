@@ -1,3 +1,4 @@
+import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { api } from './api.js';
 import { loadBackupList } from './backups.js';
 import { toElement } from './dom.js';
@@ -31,6 +32,12 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     panels.forEach(p => p.classList.remove('active'));
     tabs[0].classList.add('active');
     panels[0].classList.add('active');
+
+    // Update dialog title with project name (from active tab, or app title if single project)
+    const activeTabName = document.querySelector('.project-tab.active .project-tab-name')?.textContent;
+    const projectName = activeTabName ?? document.querySelector('.app-title h1')?.textContent ?? 'Settings';
+    const titleEl = document.getElementById('settings-dialog-title');
+    if (titleEl) titleEl.textContent = `${projectName} Settings`;
 
     // Populate fields with current values
     (document.getElementById('settings-trash-days') as HTMLInputElement).value = String(state.settings.trash_cleanup_days);
@@ -253,6 +260,11 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
 
   // --- Context tab (auto-context) ---
   bindAutoContextSettings();
+
+  // --- Plugins tab ---
+  if (PLUGINS_ENABLED) {
+    import('./pluginSettings.js').then(({ bindPluginSettings }) => bindPluginSettings());
+  }
 
   // --- Experimental tab (channel + custom commands) ---
   bindExperimentalSettings();

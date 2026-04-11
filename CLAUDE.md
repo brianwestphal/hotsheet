@@ -114,6 +114,15 @@ npm run test:all      # Unified coverage: unit + E2E server + E2E browser, merge
 
 - **NEVER create git commits unless the user explicitly asks.** Do not commit after completing work, do not commit as part of a workflow, do not commit "for convenience." Only run `git add` or `git commit` when the user says words like "commit this" or "make a commit." This is a strict, non-negotiable rule.
 
+## Ticket-Driven Work
+
+When the user gives you work directly via the CLI (not via MCP channel or Hot Sheet events), analyze the request and create Hot Sheet tickets before starting implementation — especially for substantial or multi-step work. This keeps work visible, trackable, and consistent with the Hot Sheet workflow.
+
+- **Do create tickets** for: feature implementation, bug fixes, refactoring, multi-step tasks, anything that involves changing code.
+- **Don't create tickets** for: simple questions, git commits, quick lookups, trivial one-line changes.
+- **When in doubt, create the tickets.** The overhead is minimal and the tracking value is high.
+- Use the Hot Sheet API to create tickets, mark them as Up Next, then work through them normally (set status to "started", implement, set to "completed" with notes).
+
 ## Conventions
 
 - ESM modules (`"type": "module"` in package.json)
@@ -147,6 +156,8 @@ The `docs/` folder contains numbered requirements documents that describe the ap
   15. `15-shell-commands.md` — Shell command targets for custom commands, execution API
   16. `16-command-groups.md` — Custom command groups, collapsible sidebar, outline settings editor
   17. `17-share.md` — Share prompt, toolbar button, timing criteria
+  18. `18-plugins.md` — Plugin system, sync engine, UI extensions, conflict resolution
+- `docs/plugin-development-guide.md` — AI-focused guide for building plugins (ticketing backends and non-ticketing plugins). **Keep this guide up to date** whenever the plugin system changes — new interfaces, new manifest fields, new PluginContext methods, new UI extension points, or changes to the sync engine behavior. An AI reading this guide should be able to build a working plugin without looking at the source code.
 - **Section numbering** — each document uses `N.X` section numbers matching its file number (e.g., `3-ticket-management.md` uses §3.1, §3.2, etc.)
 - **Cross-references** — use relative markdown links between docs (e.g., `[3-ticket-management.md](3-ticket-management.md) §3.7`)
 

@@ -5,7 +5,8 @@ import { syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
 import type { Ticket } from './state.js';
-import { state } from './state.js';
+import type { SyncedTicketInfo } from './state.js';
+import { setSyncedTicketMap, state } from './state.js';
 import {
   draggedTicketIds as _draggedTicketIds,
 registerCallbacks,
@@ -331,6 +332,10 @@ export async function loadTickets() {
 
   const query = params.toString();
   state.tickets = await api<Ticket[]>(`/tickets${query ? '?' + query : ''}`);
+  // Fetch sync map before rendering so icons appear on first render
+  try {
+    setSyncedTicketMap(await api<Record<number, SyncedTicketInfo>>('/sync/tickets'));
+  } catch { /* non-critical */ }
   renderTicketList();
 }
 

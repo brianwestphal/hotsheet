@@ -100,3 +100,27 @@ export function showSkillsBanner() {
   const dismissBtn = document.getElementById('skills-banner-dismiss');
   dismissBtn?.addEventListener('click', () => { banner.style.display = 'none'; });
 }
+
+/** Intercept external link clicks and open them via Tauri shell or window.open. */
+export function bindExternalLinkHandler() {
+  document.addEventListener('click', (e) => {
+    const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
+    if (!anchor) return;
+    const href = anchor.href;
+    if (!href.startsWith('http://') && !href.startsWith('https://')) return;
+    // Don't intercept links to our own app
+    if (href.startsWith(window.location.origin)) return;
+
+    e.preventDefault();
+    const invoke = getTauriInvoke();
+    if (invoke) {
+      // Use Tauri's shell.open via a custom command
+      invoke('open_url', { url: href }).catch(() => {
+        // Fallback if the command isn't available
+        window.open(href, '_blank');
+      });
+    } else {
+      window.open(href, '_blank');
+    }
+  });
+}

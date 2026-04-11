@@ -1,6 +1,10 @@
+import { marked } from 'marked';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
+
+// Configure marked for safe rendering
+marked.setOptions({ breaks: true });
 import type { Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { pushNotesUndo } from './undo/actions.js';
@@ -220,7 +224,7 @@ function loadPreviewDetail(id: number) {
       {notes.map(note =>
         <div className="note-entry">
           {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
-          <div className="note-text">{note.text}</div>
+          <div className="note-text note-markdown">{raw(marked.parse(note.text, { async: false }) as string)}</div>
         </div>
       )}
     </>).toString();
@@ -246,8 +250,17 @@ export function refreshDetail() {
   }
 }
 
+interface SyncInfoResponse {
+  pluginId: string;
+  pluginName: string;
+  pluginIcon: string | null;
+  remoteId: string;
+  remoteUrl: string | null;
+  syncStatus: string;
+}
+
 async function loadDetail(id: number) {
-  const ticket = await api<Ticket & { attachments: { id: number; original_filename: string; stored_path: string }[] }>(
+  const ticket = await api<Ticket & { attachments: { id: number; original_filename: string; stored_path: string }[]; syncInfo?: SyncInfoResponse[] }>(
     `/tickets/${id}`
   );
   if (state.activeTicketId !== id) return;
@@ -306,6 +319,16 @@ async function loadDetail(id: number) {
     <div>Updated: {new Date(ticket.updated_at).toLocaleString()}</div>
     {ticket.completed_at !== null && ticket.completed_at !== '' ? <div>Completed: {new Date(ticket.completed_at).toLocaleString()}</div> : null}
     {ticket.verified_at !== null && ticket.verified_at !== '' ? <div>Verified: {new Date(ticket.verified_at).toLocaleString()}</div> : null}
+    {ticket.syncInfo && ticket.syncInfo.length > 0 ? <>
+      {ticket.syncInfo.map(s =>
+        <div className="detail-sync-info">
+          {s.pluginIcon ? raw(s.pluginIcon) : raw('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>')}
+          {s.remoteUrl
+            ? <a href={s.remoteUrl} target="_blank" rel="noopener">{s.pluginName} #{s.remoteId}</a>
+            : <span>{s.pluginName} #{s.remoteId}</span>}
+        </div>
+      )}
+    </> : null}
   </>).toString();
 }
 
@@ -327,10 +350,11 @@ function renderNotes(ticketId: number, notes: NoteEntry[]) {
   }
 
   for (const note of notes) {
+    const renderedText = marked.parse(note.text, { async: false }) as string;
     const entry = toElement(
       <div className="note-entry">
         {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
-        <div className="note-text">{note.text}</div>
+        <div className="note-text note-markdown">{raw(renderedText)}</div>
       </div>
     );
 

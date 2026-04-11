@@ -16,6 +16,7 @@ export default defineConfig([
     noExternal: [/^(?!@electric-sql|hono|@hono)/],
     define: {
       'process.env.BUILD_TIMESTAMP': JSON.stringify(new Date().toISOString()),
+      '__PLUGINS_ENABLED__': process.env.PLUGINS_ENABLED === 'true' ? 'true' : 'false',
     },
     esbuildOptions(options) {
       options.jsx = 'automatic';
@@ -52,6 +53,9 @@ export default defineConfig([
     clean: false,
     sourcemap: false,
     minify: true,
+    define: {
+      '__PLUGINS_ENABLED__': process.env.PLUGINS_ENABLED === 'true' ? 'true' : 'false',
+    },
     esbuildOptions(options) {
       options.jsx = 'automatic';
       options.jsxImportSource = '#jsx';
@@ -63,6 +67,21 @@ export default defineConfig([
       mkdirSync('dist/client/assets', { recursive: true });
       cpSync('src/client/assets', 'dist/client/assets', { recursive: true });
       execSync('npx sass src/client/styles.scss dist/client/styles.css --style compressed --no-source-map', { stdio: 'inherit' });
+    },
+  },
+  // Bundled plugins
+  {
+    entry: ['plugins/github-issues/src/index.ts'],
+    format: 'esm',
+    outDir: 'dist/plugins/github-issues',
+    target: 'node20',
+    platform: 'node',
+    splitting: false,
+    clean: false,
+    sourcemap: false,
+    onSuccess: async () => {
+      mkdirSync('dist/plugins/github-issues', { recursive: true });
+      cpSync('plugins/github-issues/manifest.json', 'dist/plugins/github-issues/manifest.json');
     },
   },
 ]);

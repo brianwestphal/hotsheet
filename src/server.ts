@@ -139,6 +139,13 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   app.route('/api/backups', backupRoutes);
   app.route('/api/projects', projectRoutes);
 
+  // Graceful shutdown endpoint (used by stale instance cleanup)
+  app.post('/api/shutdown', (c) => {
+    console.log('[server] Shutdown requested');
+    setTimeout(() => process.exit(0), 500);
+    return c.json({ ok: true });
+  });
+
   // Page routes
   app.route('/', pageRoutes);
 

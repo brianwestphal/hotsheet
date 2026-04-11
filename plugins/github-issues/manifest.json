@@ -1,0 +1,141 @@
+{
+  "id": "github-issues",
+  "name": "GitHub Issues",
+  "version": "0.5.1",
+  "description": "Sync tickets with GitHub Issues",
+  "author": "Hot Sheet",
+  "entry": "index.js",
+  "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\"><path d=\"M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z\"/></svg>",
+  "preferences": [
+    {
+      "key": "token",
+      "label": "Personal Access Token",
+      "type": "string",
+      "required": true,
+      "secret": true,
+      "scope": "global",
+      "description": "Fine-grained PAT with Issues (read/write) and Contents (read/write) permissions"
+    },
+    {
+      "key": "owner",
+      "label": "Repository Owner",
+      "type": "string",
+      "required": true,
+      "description": "GitHub username or organization (e.g. 'octocat')"
+    },
+    {
+      "key": "repo",
+      "label": "Repository Name",
+      "type": "string",
+      "required": true,
+      "description": "Repository name (e.g. 'my-project')"
+    },
+    {
+      "key": "label_prefix_category",
+      "label": "Category Label Prefix",
+      "type": "string",
+      "default": "category:",
+      "description": "Prefix for category labels (e.g. 'category:bug')"
+    },
+    {
+      "key": "label_prefix_priority",
+      "label": "Priority Label Prefix",
+      "type": "string",
+      "default": "priority:",
+      "description": "Prefix for priority labels (e.g. 'priority:high')"
+    },
+    {
+      "key": "label_prefix_status",
+      "label": "Status Label Prefix",
+      "type": "string",
+      "default": "status:",
+      "description": "Prefix for status labels (e.g. 'status:started') for lossless status sync"
+    },
+    {
+      "key": "milestone_tag_prefix",
+      "label": "Milestone Tag Prefix",
+      "type": "string",
+      "default": "milestone:",
+      "description": "Prefix for milestone tags (e.g. 'milestone:v1.0')"
+    },
+    {
+      "key": "up_next_label",
+      "label": "Up Next Label",
+      "type": "string",
+      "default": "up-next",
+      "description": "Label used to mark issues as Up Next"
+    },
+    {
+      "key": "auto_sync_new",
+      "label": "Auto-sync new tickets",
+      "type": "boolean",
+      "default": false,
+      "description": "Automatically push new tickets to GitHub when created"
+    },
+    {
+      "key": "attachment_repo",
+      "label": "Attachment Upload Repository",
+      "type": "string",
+      "default": "",
+      "description": "Repository for uploading attachments (owner/repo format, e.g. 'octocat/assets'). Leave empty to skip attachment uploads."
+    },
+    {
+      "key": "attachment_folder",
+      "label": "Attachment Folder",
+      "type": "string",
+      "default": "hotsheet-attachments",
+      "description": "Folder path within the repository for uploaded files"
+    },
+    {
+      "key": "attachment_branch",
+      "label": "Attachment Branch",
+      "type": "string",
+      "default": "main",
+      "description": "Branch to commit attachment files to"
+    },
+    {
+      "key": "sync_direction",
+      "label": "Sync Direction",
+      "type": "select",
+      "default": "bidirectional",
+      "options": [
+        { "value": "bidirectional", "label": "Bidirectional" },
+        { "value": "pull_only", "label": "Pull Only (read-only)" },
+        { "value": "push_only", "label": "Push Only" }
+      ]
+    },
+    {
+      "key": "filter_labels",
+      "label": "Filter by Labels",
+      "type": "string",
+      "default": "",
+      "description": "Only sync issues with these labels (comma-separated, empty = all issues)"
+    }
+  ],
+  "configLayout": [
+    { "type": "preference", "key": "token" },
+    { "type": "divider" },
+    { "type": "preference", "key": "owner" },
+    { "type": "preference", "key": "repo" },
+    { "type": "spacer" },
+    { "type": "label", "id": "connection-status", "text": "Not tested" },
+    { "type": "button", "id": "test-connection", "label": "Test Connection", "action": "test_connection" },
+    { "type": "group", "title": "Synchronization", "collapsed": false, "items": [
+      { "type": "preference", "key": "auto_sync_new" },
+      { "type": "preference", "key": "sync_direction" },
+      { "type": "preference", "key": "filter_labels" }
+    ]},
+    { "type": "group", "title": "Attachments", "collapsed": true, "items": [
+      { "type": "preference", "key": "attachment_repo" },
+      { "type": "preference", "key": "attachment_folder" },
+      { "type": "preference", "key": "attachment_branch" }
+    ]},
+    { "type": "group", "title": "Advanced", "collapsed": true, "items": [
+      { "type": "preference", "key": "label_prefix_category" },
+      { "type": "preference", "key": "label_prefix_priority" },
+      { "type": "preference", "key": "label_prefix_status" },
+      { "type": "preference", "key": "milestone_tag_prefix" },
+      { "type": "preference", "key": "up_next_label" }
+    ]}
+  ]
+}

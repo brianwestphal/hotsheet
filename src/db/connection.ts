@@ -189,4 +189,72 @@ async function initSchema(db: PGlite): Promise<void> {
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]';
   `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (columns):', e.message); });
+
+  // Plugin sync tables
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS ticket_sync (
+      id SERIAL PRIMARY KEY,
+      ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      plugin_id TEXT NOT NULL,
+      remote_id TEXT NOT NULL,
+      last_synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      remote_updated_at TIMESTAMPTZ,
+      local_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      sync_status TEXT NOT NULL DEFAULT 'synced',
+      conflict_data TEXT,
+      UNIQUE(ticket_id, plugin_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_sync_plugin ON ticket_sync(plugin_id);
+    CREATE INDEX IF NOT EXISTS idx_ticket_sync_status ON ticket_sync(sync_status);
+    CREATE INDEX IF NOT EXISTS idx_ticket_sync_remote ON ticket_sync(plugin_id, remote_id);
+
+    CREATE TABLE IF NOT EXISTS sync_outbox (
+      id SERIAL PRIMARY KEY,
+      ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      plugin_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      field_changes TEXT NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sync_outbox_plugin ON sync_outbox(plugin_id);
+
+    CREATE TABLE IF NOT EXISTS note_sync (
+      id SERIAL PRIMARY KEY,
+      ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      note_id TEXT NOT NULL,
+      plugin_id TEXT NOT NULL,
+      remote_comment_id TEXT NOT NULL,
+      last_synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(ticket_id, note_id, plugin_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_note_sync_ticket ON note_sync(ticket_id, plugin_id);
+  `);
+
+  // Migration: ensure all existing notes have stable persisted IDs
+  await migrateNoteIds(db);
+}
+
+async function migrateNoteIds(db: import('@electric-sql/pglite').PGlite): Promise<void> {
+  const result = await db.query<{ id: number; notes: string }>(
+    "SELECT id, notes FROM tickets WHERE notes != '' AND notes != '[]'"
+  );
+  let noteCounter = 0;
+  for (const row of result.rows) {
+    try {
+      const parsed = JSON.parse(row.notes);
+      if (!Array.isArray(parsed)) continue;
+      let changed = false;
+      for (const note of parsed) {
+        if (!note.id || note.id === '') {
+          note.id = `n_${Date.now().toString(36)}_${(noteCounter++).toString(36)}`;
+          changed = true;
+        }
+      }
+      if (changed) {
+        await db.query('UPDATE tickets SET notes = $1 WHERE id = $2', [JSON.stringify(parsed), row.id]);
+      }
+    } catch { /* skip malformed notes */ }
+  }
 }

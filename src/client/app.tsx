@@ -22,7 +22,8 @@ import { bindSearchInput, bindSidebar, bindSortControls } from './sidebar.js';
 import type { AppSettings, Ticket } from './state.js';
 import { allKnownTags, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, refreshAllKnownTags, state, STATUS_ITEMS } from './state.js';
 import { showTagsDialog } from './tagsDialog.js';
-import { checkForUpdate, restoreAppIcon } from './tauriIntegration.js';
+import { PLUGINS_ENABLED } from '../feature-flags.js';
+import { bindExternalLinkHandler, checkForUpdate, restoreAppIcon } from './tauriIntegration.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';
 
@@ -30,6 +31,21 @@ import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js
 setRestoreTicketListCallback(restoreTicketList);
 
 /** Reload all app state — used after project switch and during init. */
+async function reloadPluginToolbar() {
+  if (!PLUGINS_ENABLED) return;
+  const { loadPluginUI, renderPluginToolbarButtons } = await import('./pluginUI.js');
+  await loadPluginUI();
+  document.querySelectorAll('.plugin-toolbar-container').forEach(el => el.remove());
+  const glassboxBtn = document.getElementById('glassbox-btn');
+  const toolbarTarget = glassboxBtn?.parentElement;
+  if (toolbarTarget && glassboxBtn) {
+    const container = document.createElement('span');
+    container.className = 'plugin-toolbar-container';
+    toolbarTarget.insertBefore(container, glassboxBtn);
+    renderPluginToolbarButtons(container);
+  }
+}
+
 async function reloadAppState() {
   await loadSettings();
   // Sync toggle button UI to the new project's saved settings
@@ -46,6 +62,8 @@ async function reloadAppState() {
   void refreshDashboardWidget();
   // Re-init channel for the new project context
   void initChannel();
+  // Reload plugin UI for the new project
+  void reloadPluginToolbar();
 }
 
 async function init() {
@@ -76,6 +94,9 @@ async function init() {
   bindBackupsUI();
   bindCopyPrompt();
   bindOpenFolder();
+
+  // Load plugin UI elements and render toolbar buttons
+  void reloadPluginToolbar();
   bindGlassbox();
   initCustomViews(() => { void loadTickets(); });
   initResize();
@@ -102,6 +123,7 @@ async function init() {
   document.getElementById('print-btn')?.addEventListener('click', showPrintDialog);
   // Restore saved app icon variant in Tauri (Dock resets to bundle icon on launch)
   void restoreAppIcon();
+  bindExternalLinkHandler();
   // Claude Channel
   void initChannel();
   // Command log panel

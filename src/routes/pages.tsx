@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 
 import { Layout } from '../components/layout.js';
+import { PLUGINS_ENABLED } from '../feature-flags.js';
 import type { AppEnv } from '../types.js';
 
 export const pageRoutes = new Hono<AppEnv>();
@@ -32,8 +33,8 @@ pageRoutes.get('/', (c) => {
               </select>
             </div>
             <div className="layout-toggle" id="detail-position-toggle">
-              <button className="layout-btn active" data-position="side" title="Detail panel on side"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg></button>
               <button className="layout-btn" data-position="bottom" title="Detail panel on bottom"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="15" x2="21" y2="15"/></svg></button>
+              <button className="layout-btn active" data-position="side" title="Detail panel on side"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg></button>
             </div>
             <button className="glassbox-btn" id="glassbox-btn" title="Open Glassbox" style="display:none"><img id="glassbox-icon" alt="Glassbox" /></button>
             <button className="settings-btn print-btn" id="print-btn" title="Print"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/></svg></button>
@@ -217,6 +218,7 @@ pageRoutes.get('/', (c) => {
           </div>
           <div className="status-bar-right">
             <div id="status-bar" className="status-bar"></div>
+            {PLUGINS_ENABLED ? <span id="plugin-busy-indicator" className="plugin-busy-indicator" style="display:none"></span> : null}
             <button id="command-log-btn" className="command-log-btn" title="Commands Log">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 15h18"/><path d="m9 10 3-3 3 3"/></svg>
               <span id="command-log-badge" className="command-log-badge" style="display:none"></span>
@@ -247,7 +249,7 @@ pageRoutes.get('/', (c) => {
       <div className="settings-overlay" id="settings-overlay" style="display:none">
         <div className="settings-dialog">
           <div className="settings-header">
-            <h2>Settings</h2>
+            <h2 id="settings-dialog-title">Settings</h2>
             <button className="detail-close" id="settings-close">{'\u00d7'}</button>
           </div>
           <div className="settings-tabs" id="settings-tabs">
@@ -267,6 +269,10 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>
               <span>Context</span>
             </button>
+            {PLUGINS_ENABLED ? <button className="settings-tab" data-tab="plugins" id="settings-tab-plugins">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
+              <span>Plugins</span>
+            </button> : null}
             <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>
               <span>Experimental</span>
@@ -370,6 +376,21 @@ pageRoutes.get('/', (c) => {
               <span className="settings-hint" style="margin-bottom:12px;display:block">Automatically prepend instructions to ticket details in the worklist, based on category or tag. Category context appears first, then tag context in alphabetical order.</span>
               <div id="auto-context-list"></div>
             </div>
+            {PLUGINS_ENABLED ? <div className="settings-tab-panel" data-panel="plugins" id="settings-plugins-panel">
+              <div className="settings-section-header" style="margin-bottom:12px">
+                <h3>Installed Plugins</h3>
+                <button className="btn btn-sm" id="plugin-install-btn">Find Plugins...</button>
+              </div>
+              <div id="plugin-list" className="plugin-list">
+                <div style="padding:12px 0;color:var(--text-muted);font-size:13px">No plugins installed. Place plugins in <code>~/.hotsheet/plugins/</code> and restart.</div>
+              </div>
+              <div id="plugin-conflicts-section" style="display:none">
+                <div className="settings-section-header" style="margin-top:16px">
+                  <h3>Sync Conflicts <span className="plugin-conflict-badge" id="plugin-conflict-count"></span></h3>
+                </div>
+                <div id="plugin-conflict-list"></div>
+              </div>
+            </div> : null}
             <div className="settings-tab-panel" data-panel="experimental" id="settings-experimental-panel">
               <div className="settings-field">
                 <label className="settings-checkbox-label">

@@ -6,12 +6,13 @@ import { join, resolve } from 'path';
 
 import { initBackupScheduler } from './backup.js';
 import { cleanupAttachments } from './cleanup.js';
+import { PLUGINS_ENABLED } from './feature-flags.js';
 import { getDb, setDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
 import { ensureSecret, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
-import { isInstanceRunning, readInstanceFile, removeInstanceFile, writeInstanceFile } from './instance.js';
+import { cleanupStaleInstance, isInstanceRunning, readInstanceFile, removeInstanceFile, writeInstanceFile } from './instance.js';
 import { acquireLock } from './lock.js';
 import { addToProjectList, readProjectList } from './project-list.js';
 import { registerExistingProject, registerProject } from './projects.js';
@@ -288,6 +289,12 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
     console.log('  Restart your AI tool to pick up the new ticket creation skills.\n');
   }
 
+  // Load plugins (non-critical, feature-flagged)
+  if (PLUGINS_ENABLED || process.env.PLUGINS_ENABLED === 'true') {
+    import('./plugins/loader.js').then(({ loadAllPlugins }) => loadAllPlugins())
+      .catch(e => console.warn(`[plugins] Failed to load plugins: ${e instanceof Error ? e.message : e}`));
+  }
+
   // Non-critical background tasks
   runWith(dataDir, () => import('./db/commandLog.js').then(({ pruneLog }) => pruneLog(1000))).catch(() => { /* non-critical */ });
   runWith(dataDir, () => import('./db/stats.js').then(async ({ recordDailySnapshot, backfillSnapshots }) => {
@@ -431,6 +438,9 @@ async function main() {
 
   // Multi-project: check for an already-running instance (skip in demo mode)
   if (demo === null) {
+    // Clean up stale instances (dead PID but port still occupied)
+    await cleanupStaleInstance();
+
     const instance = readInstanceFile();
     if (instance !== null) {
       const running = await isInstanceRunning(instance.port);

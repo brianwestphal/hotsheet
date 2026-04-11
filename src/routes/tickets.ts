@@ -22,6 +22,10 @@ import {
   toggleUpNext,
   updateTicket,
 } from '../db/queries.js';
+import { PLUGINS_ENABLED } from '../feature-flags.js';
+import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
+import { isPluginEnabledForProject } from './plugins.js';
+import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
 import type { AppEnv, TicketFilters, TicketStatus } from '../types.js';
 import { notifyMutation } from './notify.js';
 import {
@@ -112,6 +116,7 @@ ticketRoutes.post('/tickets', async (c) => {
 
   const ticket = await createTicket(title, defaults as Parameters<typeof createTicket>[1], prefix);
   notifyMutation(c.get('dataDir'));
+  void onTicketCreated(ticket.id).catch(() => {});
   return c.json(ticket, 201);
 });
 
@@ -122,7 +127,29 @@ ticketRoutes.get('/tickets/:id', async (c) => {
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   const attachments = await getAttachments(id);
   const notes = parseNotes(ticket.notes);
-  return c.json({ ...ticket, notes: JSON.stringify(notes), attachments });
+
+  // Include sync info if this ticket is synced
+  const { getDb: getSyncDb } = await import('../db/connection.js');
+  const db = await getSyncDb();
+  const syncResult = await db.query<{ plugin_id: string; remote_id: string; sync_status: string }>(
+    'SELECT plugin_id, remote_id, sync_status FROM ticket_sync WHERE ticket_id = $1', [id],
+  );
+  const syncInfoRaw = await Promise.all(syncResult.rows.map(async r => {
+    if (!await isPluginEnabledForProject(r.plugin_id)) return null;
+    const backend = getBackendForPlugin(r.plugin_id);
+    const pluginMeta = getPluginMeta(r.plugin_id);
+    return {
+      pluginId: r.plugin_id,
+      pluginName: backend?.name ?? r.plugin_id,
+      pluginIcon: pluginMeta?.manifest.icon ?? null,
+      remoteId: r.remote_id,
+      remoteUrl: backend?.getRemoteUrl?.(r.remote_id) ?? null,
+      syncStatus: r.sync_status,
+    };
+  }));
+  const syncInfo = syncInfoRaw.filter(s => s !== null);
+
+  return c.json({ ...ticket, notes: JSON.stringify(notes), attachments, syncInfo });
 });
 
 ticketRoutes.patch('/tickets/:id', async (c) => {
@@ -134,6 +161,7 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
   const ticket = await updateTicket(id, parsed.data);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
+  void onTicketChanged(id, parsed.data as Record<string, unknown>).catch(() => {});
   return c.json(ticket);
 });
 
@@ -142,6 +170,7 @@ ticketRoutes.delete('/tickets/:id', async (c) => {
   if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
   await deleteTicket(id);
   notifyMutation(c.get('dataDir'));
+  void onTicketDeleted(id).catch(() => {});
   return c.json({ ok: true });
 });
 
@@ -210,27 +239,32 @@ ticketRoutes.post('/tickets/batch', async (c) => {
   switch (action) {
     case 'delete':
       await batchDeleteTickets(ids);
+      for (const id of ids) void onTicketDeleted(id).catch(() => {});
       break;
     case 'restore':
       await batchRestoreTickets(ids);
       break;
     case 'category':
       await batchUpdateTickets(ids, { category: value as string });
+      for (const id of ids) void onTicketChanged(id, { category: value as string }).catch(() => {});
       break;
     case 'priority': {
       const p = TicketPrioritySchema.safeParse(value);
       if (!p.success) return c.json({ error: `Invalid priority "${value}"` }, 400);
       await batchUpdateTickets(ids, { priority: p.data });
+      for (const id of ids) void onTicketChanged(id, { priority: p.data }).catch(() => {});
       break;
     }
     case 'status': {
       const s = TicketStatusSchema.safeParse(value);
       if (!s.success) return c.json({ error: `Invalid status "${value}"` }, 400);
       await batchUpdateTickets(ids, { status: s.data });
+      for (const id of ids) void onTicketChanged(id, { status: s.data }).catch(() => {});
       break;
     }
     case 'up_next':
       await batchUpdateTickets(ids, { up_next: value as boolean });
+      for (const id of ids) void onTicketChanged(id, { up_next: value as boolean }).catch(() => {});
       break;
   }
 
@@ -283,6 +317,7 @@ ticketRoutes.post('/tickets/:id/up-next', async (c) => {
   const ticket = await toggleUpNext(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
+  void onTicketChanged(id, { up_next: ticket.up_next }).catch(() => {});
   return c.json(ticket);
 });
 

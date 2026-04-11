@@ -210,6 +210,31 @@ TICKET HS-15:
 
 ---
 
+## Plugins
+
+Hot Sheet supports plugins for syncing with external ticketing systems and adding custom functionality. Plugins are loaded from `~/.hotsheet/plugins/` and configured per-project.
+
+### GitHub Issues (bundled)
+
+The GitHub Issues plugin ships with Hot Sheet and syncs tickets bidirectionally:
+- Pull issues from GitHub, push local tickets to GitHub
+- Map categories, priorities, and statuses via configurable labels
+- Sync notes as GitHub comments, push attachments via the Contents API
+- Toolbar sync button with busy indicator
+
+Configure it in Settings → Plugins with your GitHub PAT and repository details.
+
+### Building Plugins
+
+Plugins are ESM JavaScript modules with a `manifest.json`. They can:
+- **Sync tickets** with any external system (Linear, Jira, Trello, Asana, etc.)
+- **Add UI elements** — toolbar buttons, sidebar actions, context menu items
+- **Run custom actions** — export, notifications, webhooks, automation
+
+See **[`docs/plugin-development-guide.md`](docs/plugin-development-guide.md)** for the complete plugin API reference, including a full Linear plugin skeleton and standalone TypeScript types. The guide is designed to be read by both humans and AI coding assistants — point Claude Code or another AI tool at it to generate plugins for systems it already knows.
+
+---
+
 ## Backups & Data Safety
 
 Hot Sheet automatically protects your data with tiered backups and instance locking.

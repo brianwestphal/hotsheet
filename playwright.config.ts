@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { defineConfig } from '@playwright/test';
 
 // When NO_WEB_SERVER is set, the coverage script manages the server lifecycle
@@ -27,7 +28,7 @@ export default defineConfig({
           // Use isolated HOME so global files (instance.json, projects.json, config.json)
           // don't interfere with any running Hot Sheet instance
           command:
-            'export HOME=$(mktemp -d) && npm run build:client && npx tsx src/cli.ts --data-dir /tmp/hotsheet-e2e-$(date +%s%N) --no-open --port 4190 --strict-port',
+            `export HOME=$(mktemp -d) && export PLUGINS_ENABLED=${process.env.PLUGINS_ENABLED ?? 'false'} && npm run build:client && npx tsx src/cli.ts --data-dir /tmp/hotsheet-e2e-$(date +%s%N) --no-open --port 4190 --strict-port`,
           port: 4190,
           reuseExistingServer: false,
           timeout: 30_000,
