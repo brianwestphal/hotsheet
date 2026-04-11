@@ -346,8 +346,14 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
           newLabels.push(statusLabelMap.toRemote[effectiveStatus]);
         }
         if (effectiveUpNext) newLabels.push(upNextLabel);
-        if (changes.tags) { for (const tag of changes.tags) newLabels.push(tag); }
-        else { for (const l of userLabels) newLabels.push(l); }
+        if (changes.tags) {
+          // Filter out milestone tags — they're not GitHub labels
+          for (const tag of changes.tags) {
+            if (!tag.startsWith(milestonePrefix)) newLabels.push(tag);
+          }
+        } else {
+          for (const l of userLabels) newLabels.push(l);
+        }
         update.labels = newLabels;
       }
 
