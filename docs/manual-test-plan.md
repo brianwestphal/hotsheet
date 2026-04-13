@@ -1,0 +1,194 @@
+# Manual Test Plan
+
+This document lists features that require manual verification before each release. These are things that can't be reliably automated in headless Playwright due to drag-and-drop limitations, platform-specific behavior, real-time timing, or visual appearance requirements.
+
+**When to run:** Before every release or after significant changes to the areas listed below.
+
+**How to use:** Walk through each section, check the items, note any failures. File tickets for anything broken.
+
+---
+
+## 1. Drag-and-Drop
+
+### Column/Kanban View
+- [ ] Drag a ticket card from "Not Started" column to "Started" — status updates
+- [ ] Drag a card to "Completed" — issue closes, strikethrough appears
+- [ ] Drop zone highlights visually on dragover
+- [ ] Per-column scroll position preserved during drag
+
+### Sidebar Drag Targets
+- [ ] Drag a ticket onto a sidebar status item (e.g., "Completed") — status changes
+- [ ] Drag a ticket onto a sidebar category item — category changes
+
+### File Attachments
+- [ ] Drag a file over the detail panel — dashed accent outline appears
+- [ ] Drag over nested child elements — outline stays stable (no flicker)
+- [ ] Drop one or more files — uploads sequentially, attachments list refreshes
+- [ ] Outline disappears on drag leave
+
+### Project Tabs
+- [ ] Drag a tab to reorder — drop indicator shows insertion point
+- [ ] Release — tab order persists across reload
+
+### Command Groups (Settings)
+- [ ] Drag a command to reorder within a group
+- [ ] Drag a command into a different group — membership changes
+- [ ] Drag a command out of a group to the top level
+- [ ] Drag a group header to reorder groups
+
+---
+
+## 2. Platform-Specific (Run on Each Target OS)
+
+### Reveal in Finder / File Manager
+- [ ] macOS: "Show in Finder" on an attachment opens Finder with file selected
+- [ ] Windows: opens Explorer with file selected
+- [ ] Linux: opens the containing directory with xdg-open
+
+### Tauri Desktop App
+- [ ] Native window title displays correctly (custom appName or "Hot Sheet")
+- [ ] Sidecar Node server starts and stops with the app
+- [ ] CLI installer works: `hotsheet` command available after install
+- [ ] "Check for Updates" button finds updates from GitHub releases
+- [ ] "Install Update" downloads and prompts for restart
+- [ ] Download links in notes open in system browser (not webview)
+
+### App Icon (Tauri Only)
+- [ ] Icon variant dropdown in Settings → General shows thumbnail grid
+- [ ] Clicking a variant updates the dock icon immediately (no relaunch)
+- [ ] Selected variant persists across restarts
+
+---
+
+## 3. Claude Channel
+
+### Play Button
+- [ ] Green play button appears in sidebar when channel is enabled
+- [ ] Single-click: triggers Claude to process Up Next (pulse animation)
+- [ ] Single-click with no Up Next: yellow warning banner appears, auto-dismisses after 4 seconds
+- [ ] Double-click: toggles automatic mode (icon changes to fast-forward)
+- [ ] Double-click again: returns to play icon (auto mode off)
+
+### Automatic Mode
+- [ ] When Up Next items are added, Claude is triggered after 5-second debounce
+- [ ] Backoff works: subsequent auto-triggers use increasing intervals (5s → 10s → 20s → ...)
+- [ ] "Claude working" spinner shows during processing
+- [ ] "✓ Claude idle" status appears on completion, auto-hides after 5 seconds
+
+### Permission Overlay
+- [ ] Full-screen overlay appears when Claude requests tool permission
+- [ ] "Allow" grants the permission; "Deny" rejects it
+- [ ] Dismissing the overlay leaves the CLI dialog open in the terminal
+
+### Visibility
+- [ ] Channel UI hidden if Claude CLI version < 2.1.80
+- [ ] Channel toggle in Settings → Experimental registers `.mcp.json`
+
+---
+
+## 4. Shell Commands
+
+- [ ] Shell command button in sidebar executes the configured command
+- [ ] "Shell running" busy indicator shows while process executes
+- [ ] Command log entry shows stdout/stderr with `---SHELL_OUTPUT---` separator
+- [ ] Stop button (square icon) appears for running processes
+- [ ] Stop sends SIGTERM; if process doesn't exit in 3 seconds, SIGKILL follows
+- [ ] Working directory is the project root (parent of `.hotsheet/`)
+
+---
+
+## 5. Command Groups (Sidebar)
+
+- [ ] Ungrouped commands appear at top level above group headers
+- [ ] Group header click toggles collapse/expand
+- [ ] Collapse state persists across page reload
+- [ ] Groups with no visible commands are hidden from sidebar
+- [ ] Inline group name editing: click name → edit → blur saves
+
+---
+
+## 6. Share Prompt
+
+- [ ] Footer link reads "Know someone who'd love this? Share Hot Sheet"
+- [ ] Clicking share link triggers Web Share API (or clipboard fallback)
+- [ ] Share banner appears after 5 minutes total usage + 1 minute current session
+- [ ] "Share" button sets shareAccepted: true (banner never shows again)
+- [ ] "Not now" records timestamp; banner reappears after 30 days
+- [ ] Banner does NOT appear if shareAccepted is already true
+
+---
+
+## 7. CLI / Server Startup
+
+- [ ] `hotsheet --port 5000` starts on port 5000
+- [ ] `hotsheet --data-dir /custom/path` stores data there
+- [ ] `hotsheet --no-open` starts without opening browser
+- [ ] Second `hotsheet` launch in a different directory reuses the running instance
+- [ ] `hotsheet --list` shows registered projects with ticket counts
+- [ ] `hotsheet --close` unregisters the current project
+- [ ] Stale lock files from crashed processes are cleaned up on startup
+- [ ] Port fallback: if 4174 is in use, tries 4175–4193
+
+---
+
+## 8. Demo Mode
+
+- [ ] `hotsheet --demo:1` loads sample tickets in list view
+- [ ] `hotsheet --demo:7` loads in column/kanban view
+- [ ] `hotsheet --demo:10` shows multiple project tabs
+- [ ] Browser title shows "Hot Sheet Demo"
+- [ ] Demo data is ephemeral (gone after closing)
+
+---
+
+## 9. Backup / Restore
+
+- [ ] Preview mode: clicking "Preview" on a backup shows a banner with backup date
+- [ ] Detail panel is read-only during preview (inputs disabled)
+- [ ] "Cancel Preview" returns to live data
+- [ ] Restore: safety backup is created before restoring
+- [ ] Restored state matches the backup (post-backup tickets are gone)
+- [ ] Custom backupDir setting stores backups in the configured location
+
+---
+
+## 10. Visual / Styling
+
+- [ ] Completed/verified tickets show strikethrough + muted text
+- [ ] Detail panel resize handle works (drag to resize, size persists)
+- [ ] Search input animates wider on focus, shrinks on blur
+- [ ] Dropdown menus position correctly (clamped to viewport)
+- [ ] Plugin toolbar buttons: icon-only in toolbar, icon+label elsewhere
+- [ ] Toast notifications slide up from bottom, auto-dismiss after 3 seconds
+- [ ] Combo box dropdown in plugin settings shows filtered options, selects on click
+
+---
+
+## 11. Keychain / Secure Storage
+
+- [ ] On macOS: plugin secret (e.g., GitHub PAT) is stored in Keychain after first read
+- [ ] Verify via `security find-generic-password -s com.hotsheet.plugin.github-issues -a token -w`
+- [ ] If Keychain is locked/unavailable, falls back to file storage silently
+- [ ] On Linux: `secret-tool lookup service com.hotsheet.plugin.github-issues account token` returns the value
+
+---
+
+## Automated Coverage Summary
+
+For reference, here's what IS covered by automated tests (no manual check needed):
+
+- Ticket CRUD (create, read, update, delete, batch operations)
+- Status lifecycle transitions
+- Tag add/remove
+- Note add/edit/delete
+- Attachment upload via file picker
+- Clipboard copy/cut/paste (Cmd+C/X/V)
+- Keyboard shortcuts (Cmd+F, Cmd+A, Cmd+D, Cmd+Z, N, Delete, Escape)
+- Sort dropdown order change
+- Detail panel position toggle (side/bottom)
+- Long-poll auto-refresh
+- Plugin sync: full field roundtrip, conflict resolution, note/comment sync, attachment sync
+- Plugin config: validation feedback, label colors, enable/disable, uninstall/reinstall
+- Plugin UI extensions: toolbar, detail_top/bottom, context_menu, status_bar, sidebar
+- Backup create + preview data
+- Settings dialog: tabs, category list, checkbox persistence

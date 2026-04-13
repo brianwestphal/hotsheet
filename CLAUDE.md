@@ -109,6 +109,7 @@ npm run test:all      # Unified coverage: unit + E2E server + E2E browser, merge
 - **E2E tests** (`e2e/*.spec.ts`): Use Playwright with Chromium. Start a real Hot Sheet server with a temp data directory. Test through the browser — create tickets, click buttons, verify UI state. Minimize mocks; the whole point is exercising the real stack.
 - **Coverage target**: Maximize coverage from both test types. The `npm run test:all` script merges unit + E2E server + E2E browser coverage into a single report. Files showing low coverage should get both more unit tests AND more E2E test flows.
 - **Coverage collection**: Unit coverage via `@vitest/coverage-v8`. E2E server coverage via `NODE_V8_COVERAGE` with `node --import tsx`. E2E browser coverage via Playwright's `page.coverage.startJSCoverage()`, source-mapped from the esbuild bundle back to individual `.tsx` files.
+- **Manual test plan** (`docs/manual-test-plan.md`): Lists features that can't be reliably automated (drag-and-drop, platform-specific behavior, Tauri desktop, Claude Channel UI, visual styling). **Keep this document up to date** — when adding features that involve drag-and-drop, platform-specific behavior, real-time timing, or visual appearance that automated tests can't cover, add them to the manual test plan. When adding automated test coverage for a previously-manual item, remove it from the manual plan and note it in the "Automated Coverage Summary" section.
 
 ## Git
 
