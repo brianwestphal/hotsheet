@@ -7,7 +7,7 @@ import { getDb, runWithDataDir } from '../db/connection.js';
 import { getConflicts, getSyncRecordsForPlugin, upsertSyncRecord  } from '../db/sync.js';
 import { getTicket } from '../db/tickets.js';
 import {
-  disablePlugin, enablePlugin, getAllBackends, getAllPluginUIElements,
+  disablePlugin, enablePlugin, getAllBackends,
   getGlobalPluginSetting, getLoadedPlugins,
   getPluginById, reactivatePlugin, setGlobalPluginSetting,
 } from '../plugins/loader.js';
@@ -39,7 +39,7 @@ async function setPluginEnabledForProject(pluginId: string, enabled: boolean): P
 }
 
 async function checkMissingRequiredPrefs(plugin: LoadedPlugin): Promise<string[]> {
-  const required = (plugin.manifest.preferences ?? []).filter(p => p.required);
+  const required = (plugin.manifest.preferences ?? []).filter(p => p.required === true);
   if (required.length === 0) return [];
   const missing: string[] = [];
   const db = await getDb();
@@ -99,7 +99,7 @@ pluginRoutes.post('/plugins/:id/action', async (c) => {
   let plugin = getPluginById(pluginId);
   if (!plugin) return c.json({ error: 'Plugin not found' }, 404);
   if (!plugin.instance.onAction) return c.json({ error: 'Plugin does not handle actions' }, 400);
-  const body = await c.req.json();
+  const body: { actionId: string; ticketIds?: number[]; value?: unknown } = await c.req.json();
 
   // Re-activate to pick up any setting changes made since last activation.
   // Plugins commonly capture settings in closures during activate(), so without
@@ -125,7 +125,7 @@ pluginRoutes.post('/plugins/:id/action', async (c) => {
 pluginRoutes.post('/plugins/validate/:id', async (c) => {
   const plugin = getPluginById(c.req.param('id'));
   if (!plugin?.instance.validateField) return c.json(null);
-  const body = await c.req.json();
+  const body: { key: string; value: string } = await c.req.json();
   try {
     const result = await plugin.instance.validateField(body.key, body.value);
     return c.json(result);
@@ -137,7 +137,7 @@ pluginRoutes.post('/plugins/validate/:id', async (c) => {
 /** Show plugin directory in file manager. */
 pluginRoutes.post('/plugins/reveal/:id', async (c) => {
   const plugin = getPluginById(c.req.param('id'));
-  if (!plugin?.path) return c.json({ error: 'Plugin not found' }, 404);
+  if (plugin?.path == null || plugin.path === '') return c.json({ error: 'Plugin not found' }, 404);
   const { openInFileManager } = await import('../open-in-file-manager.js');
   await openInFileManager(plugin.path);
   return c.json({ ok: true });
@@ -155,9 +155,9 @@ pluginRoutes.get('/plugins/config-labels/:id', async (c) => {
     for (const item of items) {
       if (item.type === 'label' && item.id) {
         const override = getConfigLabelOverride(pluginId, item.id);
-        if (override) labels[item.id] = { text: override.text, color: override.color };
+        if (override != null) labels[item.id] = { text: override.text, color: override.color };
       }
-      if (item.type === 'group' && item.items) findLabels(item.items);
+      if (item.type === 'group') findLabels(item.items);
     }
   };
   findLabels(layout);
@@ -353,7 +353,7 @@ pluginRoutes.post('/plugins/:id/sync/schedule', async (c) => {
   const pluginId = c.req.param('id');
   const plugin = getPluginById(pluginId);
   if (!plugin) return c.json({ error: 'Plugin not found' }, 404);
-  const body = await c.req.json();
+  const body: { interval_minutes: number | null } = await c.req.json();
   if (body.interval_minutes === null || body.interval_minutes === 0) {
     stopScheduledSync(pluginId);
     return c.json({ ok: true, scheduled: false });
@@ -364,7 +364,7 @@ pluginRoutes.post('/plugins/:id/sync/schedule', async (c) => {
 });
 
 /** List all active backends. */
-pluginRoutes.get('/backends', async (c) => {
+pluginRoutes.get('/backends', (c) => {
   const backends = getAllBackends().map(b => {
     const plugin = getPluginById(b.id);
     return {
@@ -403,8 +403,8 @@ pluginRoutes.get('/sync/conflicts', async (c) => {
 /** Resolve a sync conflict. */
 pluginRoutes.post('/sync/conflicts/:ticketId/resolve', async (c) => {
   const ticketId = parseInt(c.req.param('ticketId'), 10);
-  const body = await c.req.json();
-  if (!body.plugin_id || !body.resolution) {
+  const body: { plugin_id?: string; resolution?: 'keep_local' | 'keep_remote' } = await c.req.json();
+  if (body.plugin_id == null || body.plugin_id === '' || body.resolution == null) {
     return c.json({ error: 'plugin_id and resolution required' }, 400);
   }
   await resolveConflict(ticketId, body.plugin_id, body.resolution);
@@ -413,8 +413,8 @@ pluginRoutes.post('/sync/conflicts/:ticketId/resolve', async (c) => {
 
 /** Install a plugin by symlinking from a local path into ~/.hotsheet/plugins/. */
 pluginRoutes.post('/plugins/install', async (c) => {
-  const body = await c.req.json();
-  if (!body.path) return c.json({ error: 'path is required' }, 400);
+  const body: { path?: string } = await c.req.json();
+  if (body.path == null || body.path === '') return c.json({ error: 'path is required' }, 400);
 
   const sourcePath = body.path;
   if (!existsSync(sourcePath)) {
@@ -427,7 +427,7 @@ pluginRoutes.post('/plugins/install', async (c) => {
     const pkgPath = join(sourcePath, 'package.json');
     if (!existsSync(pkgPath)) return false;
     try {
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { hotsheet?: unknown };
       return pkg.hotsheet !== undefined;
     } catch { return false; }
   })();
@@ -448,8 +448,8 @@ pluginRoutes.post('/plugins/install', async (c) => {
 
   try {
     symlinkSync(sourcePath, linkPath, 'dir');
-  } catch (e) {
-    return c.json({ error: `Failed to create symlink: ${e instanceof Error ? e.message : e}` }, 500);
+  } catch (e: unknown) {
+    return c.json({ error: `Failed to create symlink: ${e instanceof Error ? e.message : String(e)}` }, 500);
   }
 
   // Clear dismiss flag if re-installing a previously dismissed plugin
@@ -465,7 +465,7 @@ pluginRoutes.post('/plugins/:id/uninstall', async (c) => {
   const plugin = getPluginById(pluginId);
 
   // Disable first if enabled
-  if (plugin?.enabled) {
+  if (plugin?.enabled === true) {
     await disablePlugin(pluginId);
   }
 
@@ -518,15 +518,15 @@ pluginRoutes.get('/plugins/:id/global-config/:key', async (c) => {
 /** Set a global plugin setting. For secret preferences, also stores in the OS keychain. */
 pluginRoutes.post('/plugins/:id/global-config', async (c) => {
   const pluginId = c.req.param('id');
-  const body = await c.req.json();
-  if (!body.key) return c.json({ error: 'key is required' }, 400);
+  const body: { key?: string; value: string } = await c.req.json();
+  if (body.key == null || body.key === '') return c.json({ error: 'key is required' }, 400);
   const plugin = getPluginById(pluginId);
-  const isSecret = plugin?.manifest.preferences?.find(p => p.key === (body as { key: string }).key)?.secret === true;
+  const isSecret = plugin?.manifest.preferences?.find(p => p.key === body.key)?.secret === true;
   if (isSecret) {
     const { keychainSet } = await import('../keychain.js');
-    await keychainSet(pluginId, (body as { key: string }).key, (body as { key: string; value: string }).value);
+    await keychainSet(pluginId, body.key, body.value);
   }
-  setGlobalPluginSetting(pluginId, (body as { key: string }).key, (body as { key: string; value: string }).value);
+  setGlobalPluginSetting(pluginId, body.key, body.value);
   return c.json({ ok: true });
 });
 
@@ -537,7 +537,7 @@ pluginRoutes.post('/plugins/:id/global-config', async (c) => {
 pluginRoutes.get('/plugins/:id/image-proxy', async (c) => {
   const pluginId = c.req.param('id');
   const url = c.req.query('url');
-  if (!url) return c.json({ error: 'url query parameter required' }, 400);
+  if (url == null || url === '') return c.json({ error: 'url query parameter required' }, 400);
 
   // Security: only proxy URLs from known GitHub domains.
   let parsed: URL;
@@ -556,7 +556,7 @@ pluginRoutes.get('/plugins/:id/image-proxy', async (c) => {
 
   // Read the plugin's PAT from global config.
   const token = getGlobalPluginSetting(pluginId, 'token');
-  if (!token) return c.json({ error: 'No token configured for plugin' }, 400);
+  if (token == null || token === '') return c.json({ error: 'No token configured for plugin' }, 400);
 
   try {
     let fetchUrl = url;
@@ -568,9 +568,9 @@ pluginRoutes.get('/plugins/:id/image-proxy', async (c) => {
     // by finding the comment that contains this UUID.
     if (parsed.hostname === 'github.com' && parsed.pathname.startsWith('/user-attachments/')) {
       const uuid = parsed.pathname.split('/').pop();
-      if (uuid) {
+      if (uuid != null && uuid !== '') {
         const resolved = await resolveUserAttachmentUrl(pluginId, token, uuid);
-        if (!resolved) return c.json({ error: 'Could not resolve user-attachment URL' }, 502);
+        if (resolved == null || resolved === '') return c.json({ error: 'Could not resolve user-attachment URL' }, 502);
         fetchUrl = resolved;
       }
     }
@@ -644,7 +644,7 @@ async function resolveUserAttachmentUrl(pluginId: string, token: string, uuid: s
   const comments = await res.json() as { body_html?: string }[];
 
   for (const comment of comments) {
-    if (!comment.body_html || !comment.body_html.includes(uuid)) continue;
+    if (comment.body_html == null || comment.body_html === '' || !comment.body_html.includes(uuid)) continue;
     // Extract the signed URL from body_html — it's in an <img src="..."> tag.
     const match = comment.body_html.match(
       /src="(https:\/\/private-user-images\.githubusercontent\.com\/[^"]+)"/,

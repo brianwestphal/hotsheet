@@ -22,8 +22,8 @@ async function spawn(args: string[], opts?: { timeout?: number; env?: Record<str
       env: { ...process.env, ...opts?.env },
     }, (error, stdout, stderr) => {
       resolve({
-        stdout: stdout?.toString() ?? '',
-        stderr: stderr?.toString() ?? '',
+        stdout,
+        stderr,
         exitCode: error ? (error as { status?: number }).status ?? 1 : 0,
       });
     });

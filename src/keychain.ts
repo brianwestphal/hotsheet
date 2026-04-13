@@ -17,7 +17,7 @@ function makeService(pluginId: string): string {
 function exec(cmd: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
   return new Promise((resolve) => {
     execFile(cmd, args, { timeout: 5000 }, (error, stdout) => {
-      resolve({ stdout: stdout?.trim() ?? '', exitCode: error ? (error as { status?: number }).status ?? 1 : 0 });
+      resolve({ stdout: stdout.trim(), exitCode: error ? (error as { status?: number }).status ?? 1 : 0 });
     });
   });
 }

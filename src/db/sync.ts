@@ -32,7 +32,7 @@ export async function getSyncRecordsForPlugin(pluginId: string): Promise<TicketS
 
 export async function getConflicts(pluginId?: string): Promise<TicketSyncRecord[]> {
   const db = await getDb();
-  if (pluginId) {
+  if (pluginId != null && pluginId !== '') {
     const result = await db.query<TicketSyncRecord>(
       'SELECT * FROM ticket_sync WHERE plugin_id = $1 AND sync_status = $2',
       [pluginId, 'conflict'],

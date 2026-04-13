@@ -22,7 +22,6 @@ import {
   toggleUpNext,
   updateTicket,
 } from '../db/queries.js';
-import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
 import type { AppEnv, TicketFilters, TicketStatus } from '../types.js';

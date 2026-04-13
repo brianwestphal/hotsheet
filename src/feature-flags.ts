@@ -9,7 +9,7 @@ function resolvePluginsEnabled(): boolean {
   // Build-time define (production builds)
   if (typeof __PLUGINS_ENABLED__ !== 'undefined') return __PLUGINS_ENABLED__;
   // Runtime env var (tsx dev mode, Node.js)
-  if (typeof process !== 'undefined') return process.env?.PLUGINS_ENABLED === 'true';
+  if (typeof process !== 'undefined') return process.env.PLUGINS_ENABLED === 'true';
   // Browser without build-time define
   return false;
 }

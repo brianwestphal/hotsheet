@@ -19,7 +19,7 @@ export function getConfigLabelOverride(pluginId: string, labelId: string): Confi
 }
 
 export function getPluginUIElements(pluginId?: string): PluginUIRegistration[] {
-  if (pluginId) {
+  if (pluginId != null && pluginId !== '') {
     const elements = pluginUIRegistry.get(pluginId);
     return elements ? [{ pluginId, elements }] : [];
   }
@@ -89,10 +89,10 @@ function readManifest(pluginPath: string): PluginManifest | null {
   const manifestPath = join(pluginPath, 'manifest.json');
   if (existsSync(manifestPath)) {
     try {
-      const raw = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+      const raw: unknown = JSON.parse(readFileSync(manifestPath, 'utf-8'));
       return validateManifest(raw);
     } catch (e) {
-      console.warn(`[plugins] Invalid manifest.json in ${pluginPath}: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[plugins] Invalid manifest.json in ${pluginPath}: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   }
@@ -101,20 +101,22 @@ function readManifest(pluginPath: string): PluginManifest | null {
   const pkgPath = join(pluginPath, 'package.json');
   if (existsSync(pkgPath)) {
     try {
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-      if (pkg.hotsheet) {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>;
+      const hotsheet = pkg.hotsheet as Record<string, unknown> | undefined;
+      if (hotsheet != null) {
+        const author = pkg.author as Record<string, unknown> | string | null | undefined;
         return validateManifest({
-          id: pkg.hotsheet.id ?? pkg.name,
-          name: pkg.hotsheet.name ?? pkg.name,
+          id: hotsheet.id ?? pkg.name,
+          name: hotsheet.name ?? pkg.name,
           version: pkg.version ?? '0.0.0',
           description: pkg.description,
-          author: pkg.author?.name ?? pkg.author,
-          entry: pkg.hotsheet.entry ?? pkg.main ?? 'index.js',
-          preferences: pkg.hotsheet.preferences,
+          author: typeof author === 'object' && author !== null ? author.name : author,
+          entry: hotsheet.entry ?? pkg.main ?? 'index.js',
+          preferences: hotsheet.preferences,
         });
       }
     } catch (e) {
-      console.warn(`[plugins] Invalid package.json in ${pluginPath}: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[plugins] Invalid package.json in ${pluginPath}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -149,7 +151,7 @@ function getDismissedPluginsPath(): string {
 function getDismissedPlugins(): Set<string> {
   const path = getDismissedPluginsPath();
   if (!existsSync(path)) return new Set();
-  try { return new Set(JSON.parse(readFileSync(path, 'utf-8'))); } catch { return new Set(); }
+  try { return new Set(JSON.parse(readFileSync(path, 'utf-8')) as string[]); } catch { return new Set(); }
 }
 
 export function dismissBundledPlugin(pluginId: string): void {
@@ -176,7 +178,7 @@ function getBundledDir(): string | null {
 /** List all bundled plugins with their install status. */
 export function listBundledPlugins(): { manifest: PluginManifest; installed: boolean; dismissed: boolean }[] {
   const bundledDir = getBundledDir();
-  if (!bundledDir) return [];
+  if (bundledDir == null) return [];
   const dismissed = getDismissedPlugins();
   const results: { manifest: PluginManifest; installed: boolean; dismissed: boolean }[] = [];
   for (const entry of readdirSync(bundledDir, { withFileTypes: true })) {
@@ -195,7 +197,7 @@ export function listBundledPlugins(): { manifest: PluginManifest; installed: boo
 /** Install a specific bundled plugin by ID (un-dismisses and copies). */
 export function installBundledPlugin(pluginId: string): boolean {
   const bundledDir = getBundledDir();
-  if (!bundledDir) return false;
+  if (bundledDir == null) return false;
   const pluginDir = getPluginDir();
   mkdirSync(pluginDir, { recursive: true });
   for (const entry of readdirSync(bundledDir, { withFileTypes: true })) {
@@ -210,7 +212,7 @@ export function installBundledPlugin(pluginId: string): boolean {
       console.log(`[plugins] Installed bundled plugin: ${manifest.name}`);
       return true;
     } catch (e) {
-      console.warn(`[plugins] Failed to install bundled plugin ${pluginId}: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[plugins] Failed to install bundled plugin ${pluginId}: ${e instanceof Error ? e.message : String(e)}`);
       return false;
     }
   }
@@ -220,7 +222,7 @@ export function installBundledPlugin(pluginId: string): boolean {
 /** Copy bundled plugins from dist/plugins/ into ~/.hotsheet/plugins/ if not already present. */
 export function installBundledPlugins(): void {
   const bundledDir = getBundledDir();
-  if (!bundledDir) return;
+  if (bundledDir == null) return;
 
   const pluginDir = getPluginDir();
   mkdirSync(pluginDir, { recursive: true });
@@ -253,7 +255,7 @@ export function installBundledPlugins(): void {
       cpSync(sourcePath, targetPath, { recursive: true, force: true });
       console.log(`[plugins] Installed bundled plugin: ${entry.name}`);
     } catch (e) {
-      console.warn(`[plugins] Failed to install bundled plugin ${entry.name}: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[plugins] Failed to install bundled plugin ${entry.name}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }
@@ -283,7 +285,7 @@ async function loadPlugin(pluginPath: string, manifest: PluginManifest, enabled:
     loadedPlugins.set(manifest.id, {
       manifest,
       path: pluginPath,
-      instance: { activate: async () => {} },
+      instance: { activate: () => Promise.resolve(undefined) },
       backend: null,
       enabled: false,
       error: `Entry point ${entry} not found`,
@@ -325,7 +327,7 @@ async function loadPlugin(pluginPath: string, manifest: PluginManifest, enabled:
     loadedPlugins.set(manifest.id, {
       manifest,
       path: pluginPath,
-      instance: { activate: async () => {} },
+      instance: { activate: () => Promise.resolve(undefined) },
       backend: null,
       enabled: false,
       error,
@@ -339,13 +341,13 @@ function getGlobalConfigPath(): string {
   return join(homedir(), '.hotsheet', 'plugin-config.json');
 }
 
-function readGlobalConfig(): Record<string, Record<string, string>> {
+function readGlobalConfig(): Record<string, Record<string, string> | undefined> {
   const configPath = getGlobalConfigPath();
   if (!existsSync(configPath)) return {};
-  try { return JSON.parse(readFileSync(configPath, 'utf-8')); } catch { return {}; }
+  try { return JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, Record<string, string>>; } catch { return {}; }
 }
 
-function writeGlobalConfig(config: Record<string, Record<string, string>>): void {
+function writeGlobalConfig(config: Record<string, Record<string, string> | undefined>): void {
   const configPath = getGlobalConfigPath();
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify(config, null, 2));
@@ -358,8 +360,12 @@ export function getGlobalPluginSetting(pluginId: string, key: string): string | 
 
 export function setGlobalPluginSetting(pluginId: string, key: string, value: string): void {
   const config = readGlobalConfig();
-  if (!config[pluginId]) config[pluginId] = {};
-  config[pluginId][key] = value;
+  let pluginConfig = config[pluginId];
+  if (pluginConfig == null) {
+    pluginConfig = {};
+    config[pluginId] = pluginConfig;
+  }
+  pluginConfig[key] = value;
   writeGlobalConfig(config);
 }
 
@@ -435,7 +441,7 @@ export async function unloadAllPlugins(): Promise<void> {
     try {
       await plugin.instance.deactivate?.();
     } catch (e) {
-      console.warn(`[plugins] Error deactivating ${id}: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[plugins] Error deactivating ${id}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   loadedPlugins.clear();
@@ -448,7 +454,7 @@ export async function enablePlugin(id: string): Promise<boolean> {
   try {
     const context = createPluginContext(plugin.manifest);
     const result = await plugin.instance.activate(context);
-    plugin.backend = result ?? null;
+    plugin.backend = result != null ? result : null;
     plugin.enabled = true;
     plugin.error = null;
     console.log(`[plugins] Enabled: ${plugin.manifest.name}`);
@@ -467,7 +473,7 @@ export async function disablePlugin(id: string): Promise<boolean> {
   try {
     await plugin.instance.deactivate?.();
   } catch (e) {
-    console.warn(`[plugins] Error deactivating ${id}: ${e instanceof Error ? e.message : e}`);
+    console.warn(`[plugins] Error deactivating ${id}: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   plugin.backend = null;
@@ -490,7 +496,7 @@ export async function reactivatePlugin(id: string): Promise<boolean> {
   try {
     const context = createPluginContext(plugin.manifest);
     const result = await plugin.instance.activate(context);
-    plugin.backend = result ?? null;
+    plugin.backend = result != null ? result : null;
     plugin.enabled = true;
     plugin.error = null;
     console.log(`[plugins] Reactivated: ${plugin.manifest.name}`);

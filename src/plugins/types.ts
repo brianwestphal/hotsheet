@@ -1,4 +1,4 @@
-import type { Ticket, TicketCategory, TicketPriority, TicketStatus } from '../types.js';
+import type { Ticket, TicketPriority, TicketStatus } from '../types.js';
 
 // --- Plugin manifest ---
 
@@ -129,7 +129,7 @@ export type PluginUIElement =
 
 export interface HotSheetPlugin {
   /** Called when the plugin is loaded. Return a TicketingBackend if the plugin provides one. */
-  activate(context: PluginContext): Promise<TicketingBackend | void>;
+  activate(context: PluginContext): Promise<TicketingBackend | undefined>;
   /** Called when the plugin is unloaded or disabled. */
   deactivate?(): Promise<void>;
   /** Called when a UI element action is triggered. Return value is sent back to the client. */

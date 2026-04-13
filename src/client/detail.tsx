@@ -3,9 +3,9 @@ import { marked } from 'marked';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
+import { renderPluginDetailElements } from './pluginUI.js';
 import type { Ticket } from './state.js';
 import { getActiveProject, getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
-import { renderPluginDetailElements } from './pluginUI.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { pushNotesUndo } from './undo/actions.js';
 

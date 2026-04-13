@@ -100,7 +100,7 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
   }, { icon: ICON_COPY });
 
   // Push to remote backend (only for unsynced single-ticket selection)
-  if (state.selectedIds.size === 1 && !syncedTicketMap[ticket.id]) {
+  if (state.selectedIds.size === 1 && !(ticket.id in syncedTicketMap)) {
     void api<{ id: string; name: string; icon?: string }[]>('/backends').then(backends => {
       if (backends.length === 0) return;
       // Insert before the backlog separator (find the right position)
@@ -112,7 +112,7 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
       for (const b of backends) {
         const item = toElement(
           <div className="context-menu-item">
-            {b.icon ? <span className="dropdown-icon">{raw(b.icon)}</span> : null}
+            {b.icon != null && b.icon !== '' ? <span className="dropdown-icon">{raw(b.icon)}</span> : null}
             <span className="context-menu-label">Push to {b.name}</span>
           </div>
         );
@@ -122,7 +122,7 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
             const result = await api<{ ok: boolean; remoteId: string; remoteUrl: string | null }>(
               `/plugins/${b.id}/push-ticket/${ticket.id}`, { method: 'POST' },
             );
-            if (result.remoteUrl) window.open(result.remoteUrl, '_blank');
+            if (result.remoteUrl != null && result.remoteUrl !== '') window.open(result.remoteUrl, '_blank');
             void loadTickets();
           } catch (e) {
             console.error('Failed to push ticket:', e);

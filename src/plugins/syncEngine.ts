@@ -1,6 +1,6 @@
 import { parseNotes } from '../db/notes.js';
 import {
-  addToOutbox, clearOutbox, deleteNoteSyncRecord, deleteSyncRecord, getNoteSyncByRemoteId, getNoteSyncRecords,
+  addToOutbox, deleteNoteSyncRecord, deleteSyncRecord, getNoteSyncRecords,
   getOutboxEntries, getSyncRecord, getSyncRecordByRemoteId,
   getSyncRecordsForPlugin, incrementOutboxAttempts, removeOutboxEntry,
   updateSyncStatus, upsertNoteSyncRecord, upsertSyncRecord,
@@ -8,7 +8,7 @@ import {
 import { createTicket, getTicket, updateTicket } from '../db/tickets.js';
 import type { Ticket } from '../types.js';
 import { getAllBackends, getBackendForPlugin, reactivatePlugin } from './loader.js';
-import type { RemoteChange, RemoteTicketFields, SyncStatus, TicketingBackend } from './types.js';
+import type { RemoteChange, RemoteTicketFields, TicketingBackend } from './types.js';
 
 // --- Sync scheduling ---
 
@@ -18,7 +18,7 @@ export function startScheduledSync(pluginId: string, intervalMs: number, dataDir
   stopScheduledSync(pluginId);
   const timer = setInterval(async () => {
     // Run in the correct project context
-    if (dataDir) {
+    if (dataDir != null && dataDir !== '') {
       const { runWithDataDir } = await import('../db/connection.js');
       await runWithDataDir(dataDir, async () => {
         await reactivatePlugin(pluginId);
@@ -59,7 +59,7 @@ export async function runSync(pluginId: string): Promise<SyncResult> {
     result.conflicts = (result.conflicts ?? 0) + pullResult.conflicts;
   } catch (e) {
     result.ok = false;
-    result.error = `Pull failed: ${e instanceof Error ? e.message : e}`;
+    result.error = `Pull failed: ${e instanceof Error ? e.message : String(e)}`;
     console.error(`[sync] Pull failed for ${pluginId}: ${result.error}`);
   }
 
@@ -68,16 +68,16 @@ export async function runSync(pluginId: string): Promise<SyncResult> {
     result.pushed = pushResult.pushed;
   } catch (e) {
     result.ok = false;
-    result.error = (result.error ? result.error + '; ' : '') + `Push failed: ${e instanceof Error ? e.message : e}`;
+    result.error = (result.error != null && result.error !== '' ? result.error + '; ' : '') + `Push failed: ${e instanceof Error ? e.message : String(e)}`;
     console.error(`[sync] Push failed for ${pluginId}: ${result.error}`);
   }
 
   // Sync comments/notes for all synced tickets
-  if (backend.capabilities.comments && backend.getComments) {
+  if (backend.capabilities.comments === true && backend.getComments) {
     try {
       await syncComments(backend);
     } catch (e) {
-      console.error(`[sync] Comment sync failed for ${pluginId}: ${e instanceof Error ? e.message : e}`);
+      console.error(`[sync] Comment sync failed for ${pluginId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -87,7 +87,7 @@ export async function runSync(pluginId: string): Promise<SyncResult> {
       console.log(`[sync] Starting attachment sync for ${pluginId}`);
       await syncAttachments(backend);
     } catch (e) {
-      console.error(`[sync] Attachment sync failed for ${pluginId}: ${e instanceof Error ? e.message : e}`);
+      console.error(`[sync] Attachment sync failed for ${pluginId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   } else {
     console.log(`[sync] Skipping attachment sync: backend.uploadAttachment not defined for ${pluginId}`);
@@ -122,7 +122,7 @@ async function pullFromRemote(backend: TicketingBackend): Promise<{ applied: num
       if (result === 'conflict') conflicts++;
       else applied++;
     } catch (e) {
-      console.error(`[sync] Failed to apply change for remote ${change.remoteId}: ${e instanceof Error ? e.message : e}`);
+      console.error(`[sync] Failed to apply change for remote ${change.remoteId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -137,11 +137,11 @@ async function applyRemoteChange(
 
   if (!existingSync) {
     // New remote ticket — create locally
-    if (change.deleted) return 'skipped';
+    if (change.deleted === true) return 'skipped';
 
     // Dedup: check if a local ticket with the same title already exists
     // (prevents duplicates when repo config changes or sync records were lost)
-    if (change.fields.title) {
+    if (change.fields.title != null && change.fields.title !== '') {
       const { getDb: getDbForDedup } = await import('../db/connection.js');
       const db = await getDbForDedup();
       const existing = await db.query<{ id: number }>(
@@ -168,7 +168,7 @@ async function applyRemoteChange(
     return 'skipped';
   }
 
-  if (change.deleted) {
+  if (change.deleted === true) {
     await updateTicket(localTicket.id, { status: 'deleted' });
     await updateSyncStatus(localTicket.id, backend.id, 'synced');
     return 'applied';
@@ -234,7 +234,7 @@ function extractTicketFields(ticket: Ticket): Partial<RemoteTicketFields> {
     priority: ticket.priority,
     status: ticket.status,
     up_next: ticket.up_next,
-    tags: JSON.parse(ticket.tags || '[]'),
+    tags: JSON.parse(ticket.tags || '[]') as string[],
   };
 }
 
@@ -413,18 +413,18 @@ async function syncComments(backend: TicketingBackend): Promise<void> {
 
 /** Push notes and attachments for a single newly-synced ticket. */
 export async function syncSingleTicketContent(backend: TicketingBackend, ticketId: number, remoteId: string): Promise<void> {
-  if (backend.capabilities.comments && backend.getComments) {
+  if (backend.capabilities.comments === true && backend.getComments) {
     try {
       await syncTicketComments(backend, ticketId, remoteId);
     } catch (e) {
-      console.warn(`[sync] Comment sync failed for ticket ${ticketId}: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[sync] Comment sync failed for ticket ${ticketId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   if (backend.uploadAttachment) {
     try {
       await syncTicketAttachments(backend, ticketId, remoteId);
     } catch (e) {
-      console.warn(`[sync] Attachment sync failed for ticket ${ticketId}: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[sync] Attachment sync failed for ticket ${ticketId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }
@@ -453,7 +453,6 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
 
   const mappings = await getNoteSyncRecords(ticketId, backend.id);
   const noteIdToMapping = new Map(mappings.map(m => [m.note_id, m]));
-  const remoteIdToMapping = new Map(mappings.map(m => [m.remote_comment_id, m]));
 
   // Skip attachment mappings (att_ prefix) — they're managed by syncTicketAttachments.
   const isAttMapping = (noteId: string) => noteId.startsWith('att_');
@@ -489,7 +488,7 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
             await backend.updateComment(remoteId, mapping.remote_comment_id, localText);
             await upsertNoteSyncRecord(ticketId, mapping.note_id, backend.id, mapping.remote_comment_id, localText);
           } catch (e) {
-            console.warn(`[sync] Failed to update remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : e}`);
+            console.warn(`[sync] Failed to update remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
       } else if (remoteChanged && !localChanged) {
@@ -504,7 +503,7 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
             await backend.updateComment(remoteId, mapping.remote_comment_id, localText);
             await upsertNoteSyncRecord(ticketId, mapping.note_id, backend.id, mapping.remote_comment_id, localText);
           } catch (e) {
-            console.warn(`[sync] Failed to update remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : e}`);
+            console.warn(`[sync] Failed to update remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
       } else {
@@ -521,7 +520,7 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
         try {
           await backend.deleteComment(remoteId, mapping.remote_comment_id);
         } catch (e) {
-          console.warn(`[sync] Failed to delete remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : e}`);
+          console.warn(`[sync] Failed to delete remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
       await deleteNoteSyncRecord(ticketId, mapping.note_id, backend.id);
@@ -599,7 +598,7 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
       remoteTexts.add(note.text.trim());
       mappedRemoteIdsAfterPull.add(remoteCommentId);
     } catch (e) {
-      console.warn(`[sync] Failed to push note ${note.id} for ticket ${ticketId}: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[sync] Failed to push note ${note.id} for ticket ${ticketId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -667,7 +666,7 @@ async function syncTicketAttachments(backend: TicketingBackend, ticketId: number
       const mimeType = mimeMap[ext] ?? 'application/octet-stream';
 
       const url = await backend.uploadAttachment(att.original_filename, content, mimeType);
-      if (!url) continue;
+      if (url == null || url === '') continue;
 
       // Post a comment with the attachment link
       const isImage = mimeType.startsWith('image/');
@@ -677,7 +676,7 @@ async function syncTicketAttachments(backend: TicketingBackend, ticketId: number
       const commentId = await backend.createComment(remoteId, markdown);
       await upsertNoteSyncRecord(ticketId, attSyncId, backend.id, commentId);
     } catch (e) {
-      console.warn(`[sync] Failed to upload attachment ${att.original_filename}: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[sync] Failed to upload attachment ${att.original_filename}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }
@@ -694,7 +693,7 @@ export async function resolveConflict(
   const syncRecord = records.find(r => r.ticket_id === ticketId);
   if (!syncRecord || syncRecord.sync_status !== 'conflict') return;
 
-  const conflictData = syncRecord.conflict_data ? JSON.parse(syncRecord.conflict_data) as {
+  const conflictData = (syncRecord.conflict_data != null && syncRecord.conflict_data !== '') ? JSON.parse(syncRecord.conflict_data) as {
     local: Partial<RemoteTicketFields>;
     remote: Partial<RemoteTicketFields>;
   } : null;
@@ -725,7 +724,7 @@ export async function resolveConflict(
       pluginId,
       syncRecord.remote_id,
       'synced',
-      syncRecord.remote_updated_at ? new Date(syncRecord.remote_updated_at) : null,
+      syncRecord.remote_updated_at != null && syncRecord.remote_updated_at !== '' ? new Date(syncRecord.remote_updated_at) : null,
     );
   }
 }

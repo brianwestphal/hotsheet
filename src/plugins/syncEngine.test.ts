@@ -7,7 +7,7 @@ import {
   getSyncRecordByRemoteId, upsertSyncRecord,
 } from '../db/sync.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import type { LoadedPlugin, RemoteChange, RemoteTicketFields, TicketingBackend  } from './types.js';
+import type { LoadedPlugin, RemoteTicketFields, TicketingBackend  } from './types.js';
 
 // We need to mock the loader module so the sync engine can find our test backend
 vi.mock('./loader.js', () => {
@@ -26,10 +26,11 @@ vi.mock('./loader.js', () => {
 // Mock per-project enabled check — default to enabled, can be toggled per test
 let pluginEnabledForProject = true;
 vi.mock('../routes/plugins.js', () => ({
-  isPluginEnabledForProject: async () => pluginEnabledForProject,
+  isPluginEnabledForProject: () => Promise.resolve(pluginEnabledForProject),
 }));
 
 // Import after mocking
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
 const loaderMock = await import('./loader.js') as typeof import('./loader.js') & {
   __registerBackend: (b: TicketingBackend) => void;
   __clearBackends: () => void;
@@ -64,7 +65,7 @@ function createMockBackend(issues: MockIssue[] = []): TicketingBackend & { issue
       priority: { toRemote: {}, toLocal: {} },
       status: { toRemote: {}, toLocal: {} },
     },
-    async createRemote(ticket) {
+    createRemote(ticket) {
       const id = `mock-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       issues.push({
         id,
@@ -74,40 +75,42 @@ function createMockBackend(issues: MockIssue[] = []): TicketingBackend & { issue
           category: ticket.category,
           priority: ticket.priority,
           status: ticket.status,
-          tags: JSON.parse(ticket.tags || '[]'),
+          tags: JSON.parse(ticket.tags || '[]') as string[],
           up_next: ticket.up_next,
         },
         updatedAt: new Date(),
         deleted: false,
       });
-      return id;
+      return Promise.resolve(id);
     },
-    async updateRemote(remoteId, changes) {
+    updateRemote(remoteId, changes) {
       const issue = issues.find(i => i.id === remoteId);
       if (!issue) throw new Error(`Issue ${remoteId} not found`);
       Object.assign(issue.fields, changes);
       issue.updatedAt = new Date();
+      return Promise.resolve();
     },
-    async deleteRemote(remoteId) {
+    deleteRemote(remoteId) {
       const issue = issues.find(i => i.id === remoteId);
       if (issue) { issue.deleted = true; issue.updatedAt = new Date(); }
+      return Promise.resolve();
     },
-    async pullChanges(since) {
-      return issues
+    pullChanges(since) {
+      return Promise.resolve(issues
         .filter(i => !since || i.updatedAt > since)
         .map(i => ({
           remoteId: i.id,
           fields: { ...i.fields },
           remoteUpdatedAt: i.updatedAt,
           deleted: i.deleted,
-        }));
+        })));
     },
-    async getRemoteTicket(remoteId) {
+    getRemoteTicket(remoteId) {
       const issue = issues.find(i => i.id === remoteId);
-      return issue ? { ...issue.fields } : null;
+      return Promise.resolve(issue ? { ...issue.fields } : null);
     },
-    async checkConnection() {
-      return { connected: true };
+    checkConnection() {
+      return Promise.resolve({ connected: true });
     },
   };
   return backend;
@@ -230,7 +233,10 @@ describe('sync engine — pull', () => {
     const syncRec = await getSyncRecord(ticket.id, 'mock-backend');
     expect(syncRec!.sync_status).toBe('conflict');
     expect(syncRec!.conflict_data).toBeTruthy();
-    const conflictData = JSON.parse(syncRec!.conflict_data!);
+    const conflictData = JSON.parse(syncRec!.conflict_data!) as {
+      local: Partial<RemoteTicketFields>;
+      remote: Partial<RemoteTicketFields>;
+    };
     expect(conflictData.local.title).toBe('Local version');
     expect(conflictData.remote.title).toBe('Remote version');
   });
@@ -427,7 +433,7 @@ describe('sync engine — error handling', () => {
 
   it('handles pull errors gracefully', async () => {
     const backend = createMockBackend();
-    backend.pullChanges = async () => { throw new Error('Network error'); };
+    backend.pullChanges = () => Promise.reject(new Error('Network error'));
     loaderMock.__registerBackend(backend);
 
     const result = await runSync('mock-backend');
@@ -437,7 +443,7 @@ describe('sync engine — error handling', () => {
 
   it('handles push errors gracefully', async () => {
     const backend = createMockBackend();
-    backend.createRemote = async () => { throw new Error('Auth failed'); };
+    backend.createRemote = () => Promise.reject(new Error('Auth failed'));
     loaderMock.__registerBackend(backend);
 
     const ticket = await createTicket('Push fail');
@@ -448,7 +454,7 @@ describe('sync engine — error handling', () => {
     const ourEntry = beforeEntries.find(e => e.ticket_id === ticket.id);
     expect(ourEntry).toBeTruthy();
 
-    const result = await runSync('mock-backend');
+    await runSync('mock-backend');
 
     // Outbox entry should still be there with incremented attempts
     const entries = await getOutboxEntries('mock-backend');
@@ -465,9 +471,7 @@ describe('sync engine — HS-5058: stale records & outbox exhaustion', () => {
     // User expectation: if a synced issue is gone from the remote, Hot Sheet
     // stops trying to sync the broken link.
     const backend = createMockBackend();
-    backend.updateRemote = async () => {
-      throw new Error('GitHub API error 404: Not Found');
-    };
+    backend.updateRemote = () => Promise.reject(new Error('GitHub API error 404: Not Found'));
     loaderMock.__registerBackend(backend);
 
     const ticket = await createTicket('Stale push cleanup');
@@ -488,9 +492,7 @@ describe('sync engine — HS-5058: stale records & outbox exhaustion', () => {
     // This is the path via syncComments catching the 404 from getComments.
     const backend = createMockBackend();
     backend.capabilities.comments = true;
-    backend.getComments = async () => {
-      throw new Error('GitHub API error 404: Not Found');
-    };
+    backend.getComments = () => Promise.reject(new Error('GitHub API error 404: Not Found'));
     loaderMock.__registerBackend(backend);
 
     const ticket = await createTicket('Stale comment cleanup');
@@ -507,10 +509,10 @@ describe('sync engine — HS-5058: stale records & outbox exhaustion', () => {
     // User expectation: "if I schedule a sync, it actually runs on its own."
     const backend = createMockBackend();
     let pullCount = 0;
-    const originalPull = backend.pullChanges;
-    backend.pullChanges = async (since) => {
+    const originalPull = backend.pullChanges.bind(backend);
+    backend.pullChanges = (since) => {
       pullCount++;
-      return originalPull.call(backend, since);
+      return originalPull(since);
     };
     loaderMock.__registerBackend(backend);
 
@@ -572,7 +574,7 @@ describe('sync engine — HS-5058: stale records & outbox exhaustion', () => {
     // User expectation: if a sync keeps failing for the same ticket, it
     // eventually gives up instead of churning forever.
     const backend = createMockBackend();
-    backend.createRemote = async () => { throw new Error('Always fails'); };
+    backend.createRemote = () => Promise.reject(new Error('Always fails'));
     loaderMock.__registerBackend(backend);
 
     const ticket = await createTicket('Exhaustion test');

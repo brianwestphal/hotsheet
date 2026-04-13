@@ -40,7 +40,7 @@ async function reloadPluginToolbar() {
   if (!document.querySelector('.plugin-toolbar-container')) {
     const glassboxBtn = document.getElementById('glassbox-btn');
     const toolbarTarget = glassboxBtn?.parentElement;
-    if (toolbarTarget && glassboxBtn) {
+    if (toolbarTarget) {
       const container = document.createElement('span');
       container.className = 'plugin-toolbar-container';
       toolbarTarget.insertBefore(container, glassboxBtn);

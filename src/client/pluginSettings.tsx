@@ -142,10 +142,10 @@ function showFindPluginsDialog() {
       const row = toElement(
         <div className="bundled-plugin-row">
           <div className="bundled-plugin-info">
-            {bp.manifest.icon ? <span className="bundled-plugin-icon">{raw(bp.manifest.icon)}</span> : null}
+            {bp.manifest.icon != null && bp.manifest.icon !== '' ? <span className="bundled-plugin-icon">{raw(bp.manifest.icon)}</span> : null}
             <div>
               <div className="bundled-plugin-name">{bp.manifest.name} <span className="plugin-version">v{bp.manifest.version}</span></div>
-              {bp.manifest.description ? <div className="bundled-plugin-desc">{bp.manifest.description}</div> : null}
+              {bp.manifest.description != null && bp.manifest.description !== '' ? <div className="bundled-plugin-desc">{bp.manifest.description}</div> : null}
             </div>
           </div>
           <div className="bundled-plugin-action">
@@ -191,7 +191,7 @@ function showFindPluginsDialog() {
     if (invoke) {
       try {
         const selected = (await invoke('pick_folder')) as string | null;
-        if (selected) { pathInput.value = selected; confirmBtn.disabled = false; }
+        if (selected != null && selected !== '') { pathInput.value = selected; confirmBtn.disabled = false; }
       } catch { /* cancelled */ }
     } else {
       pathInput.focus();
@@ -247,15 +247,15 @@ async function loadPlugins() {
 }
 
 function createPluginRow(plugin: PluginInfo): HTMLElement {
-  const statusHtml = plugin.error
+  const statusHtml = plugin.error != null && plugin.error !== ''
     ? STATUS_DOT.error
-    : plugin.needsConfiguration
+    : plugin.needsConfiguration === true
       ? STATUS_DOT.needsConfig
       : plugin.enabled ? STATUS_DOT.connected : STATUS_DOT.disconnected;
 
-  const statusLabel = plugin.error
+  const statusLabel = plugin.error != null && plugin.error !== ''
     ? null
-    : plugin.needsConfiguration
+    : plugin.needsConfiguration === true
       ? 'Needs Configuration'
       : null;
 
@@ -272,8 +272,8 @@ function createPluginRow(plugin: PluginInfo): HTMLElement {
           {raw('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>')}
         </button>
       </div>
-      {plugin.description ? <div className="plugin-description">{plugin.description}</div> : null}
-      {plugin.error ? <div className="plugin-error">{plugin.error}</div> : null}
+      {plugin.description != null && plugin.description !== '' ? <div className="plugin-description">{plugin.description}</div> : null}
+      {plugin.error != null && plugin.error !== '' ? <div className="plugin-error">{plugin.error}</div> : null}
     </div>
   );
 
@@ -381,7 +381,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
   menu.appendChild(uninstallItem);
 
   // Show in Finder
-  if (plugin.path) {
+  if (plugin.path != null && plugin.path !== '') {
     menu.appendChild(toElement(<div className="context-menu-separator"></div>));
     const revealItem = toElement(<div className="context-menu-item">Show in Finder</div>);
     revealItem.addEventListener('click', async () => {
@@ -445,7 +445,7 @@ function renderConfigLayout(container: HTMLElement, items: ConfigLayoutItem[], p
   for (const item of items) {
     switch (item.type) {
       case 'preference': {
-        const pref = item.key ? prefsMap.get(item.key) : undefined;
+        const pref = item.key != null && item.key !== '' ? prefsMap.get(item.key) : undefined;
         if (pref) container.appendChild(createPreferenceRow(pluginId, pref));
         break;
       }
@@ -463,12 +463,12 @@ function renderConfigLayout(container: HTMLElement, items: ConfigLayoutItem[], p
       case 'button': {
         const btn = toElement(
           <button className={`btn btn-sm${item.style === 'primary' ? ' btn-primary' : ''}`}>
-            {item.icon ? raw(item.icon) : null}
+            {item.icon != null && item.icon !== '' ? raw(item.icon) : null}
             {item.label ?? 'Action'}
           </button>
         );
         btn.addEventListener('click', async () => {
-          if (!item.action) return;
+          if (item.action == null || item.action === '') return;
           (btn as HTMLButtonElement).disabled = true;
           try {
             await api(`/plugins/${pluginId}/action`, {
@@ -528,10 +528,10 @@ function createPreferenceRow(pluginId: string, pref: PluginPreference): HTMLElem
     <div className="plugin-pref-row">
       <label className="plugin-pref-label">
         {pref.label}
-        {pref.required ? <span className="plugin-pref-required">*</span> : null}
+        {pref.required === true ? <span className="plugin-pref-required">*</span> : null}
         {isGlobal ? <span className="global-setting-badge">Global</span> : null}
       </label>
-      {pref.description ? <span className="settings-hint">{pref.description}</span> : null}
+      {pref.description != null && pref.description !== '' ? <span className="settings-hint">{pref.description}</span> : null}
       <div className="plugin-pref-input" id={`pref-input-${pluginId}-${pref.key}`}></div>
       <div className="plugin-pref-validation" id={`pref-validation-${pluginId}-${pref.key}`}></div>
     </div>
@@ -636,7 +636,7 @@ function renderPrefInput(container: HTMLElement, pluginId: string, pref: PluginP
   } else {
     const textInput = toElement(
       <input
-        type={pref.secret ? 'password' : 'text'}
+        type={pref.secret === true ? 'password' : 'text'}
         className="settings-input"
         value={currentValue}
         placeholder={pref.description ?? ''}
@@ -719,9 +719,9 @@ async function loadConflicts() {
 }
 
 function createConflictRow(conflict: SyncConflict): HTMLElement {
-  const data = conflict.conflict_data ? JSON.parse(conflict.conflict_data) as {
-    local: Record<string, unknown>;
-    remote: Record<string, unknown>;
+  const data = conflict.conflict_data != null && conflict.conflict_data !== '' ? JSON.parse(conflict.conflict_data) as {
+    local: Record<string, string | number | boolean | null>;
+    remote: Record<string, string | number | boolean | null>;
   } : null;
 
   const conflictFields = data
@@ -740,8 +740,8 @@ function createConflictRow(conflict: SyncConflict): HTMLElement {
           {conflictFields.map(field => (
             <div className="conflict-field">
               <span className="conflict-field-name">{field}</span>
-              <span className="conflict-field-local">Local: {String(data!.local[field] ?? '(empty)')}</span>
-              <span className="conflict-field-remote">Remote: {String(data!.remote[field] ?? '(empty)')}</span>
+              <span className="conflict-field-local">Local: {data!.local[field] != null ? String(data!.local[field]) : '(empty)'}</span>
+              <span className="conflict-field-remote">Remote: {data!.remote[field] != null ? String(data!.remote[field]) : '(empty)'}</span>
             </div>
           ))}
         </div>

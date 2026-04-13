@@ -263,7 +263,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
 
   // --- Plugins tab ---
   if (PLUGINS_ENABLED) {
-    import('./pluginSettings.js').then(({ bindPluginSettings }) => bindPluginSettings());
+    void import('./pluginSettings.js').then(({ bindPluginSettings }) => bindPluginSettings());
   }
 
   // --- Experimental tab (channel + custom commands) ---

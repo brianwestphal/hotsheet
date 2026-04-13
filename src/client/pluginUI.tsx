@@ -48,7 +48,7 @@ function updateBusyIndicator() {
     claudeIndicator.classList.contains('busy');
 
   let label: string;
-  if (claudeBusy) {
+  if (claudeBusy === true) {
     label = [...names, 'Claude'].join(' and ') + ' Working';
   } else {
     label = names.join(' and ') + ' Working';
@@ -116,9 +116,10 @@ export function renderPluginToolbarButtons(container: HTMLElement): void {
 
 /** Render plugin UI elements for the detail panel (top or bottom). */
 export function renderPluginDetailElements(container: HTMLElement, location: 'detail_top' | 'detail_bottom', ticketIds: number[]): void {
+  void ticketIds; // reserved for future per-ticket element rendering
   const elements = getPluginUIForLocation(location);
   for (const el of elements) {
-    const rendered = createPluginElement(el, ticketIds);
+    const rendered = createPluginElement(el);
     if (rendered) container.appendChild(rendered);
   }
 }
@@ -152,12 +153,12 @@ function createPluginButton(el: PluginUIElement): HTMLElement | null {
   return btn;
 }
 
-function createPluginElement(el: PluginUIElement, ticketIds?: number[]): HTMLElement | null {
+function createPluginElement(el: PluginUIElement): HTMLElement | null {
   if (el.type === 'button') return createPluginButton(el);
-  if (el.type === 'link' && el.url) {
+  if (el.type === 'link' && el.url != null && el.url !== '') {
     const link = toElement(
       <a className="plugin-ui-link" href={el.url} target="_blank" rel="noopener" title={el.title ?? ''}>
-        {el.icon ? raw(el.icon) : null}
+        {el.icon != null && el.icon !== '' ? raw(el.icon) : null}
         {el.label ?? el.url}
       </a>
     );
@@ -167,7 +168,7 @@ function createPluginElement(el: PluginUIElement, ticketIds?: number[]): HTMLEle
 }
 
 async function triggerAction(el: PluginUIElement, ticketIds?: number[]): Promise<void> {
-  if (!el.action || !el._pluginId) return;
+  if (el.action == null || el.action === '' || el._pluginId == null || el._pluginId === '') return;
 
   // Resolve display name from the element's plugin
   const pluginName = el.title?.replace('Sync with ', '') ?? el._pluginId;
@@ -191,7 +192,7 @@ async function triggerAction(el: PluginUIElement, ticketIds?: number[]): Promise
       showToast(result.result.message);
     }
   } catch (e) {
-    console.error(`Plugin action failed: ${e instanceof Error ? e.message : e}`);
+    console.error(`Plugin action failed: ${e instanceof Error ? e.message : String(e)}`);
     setPluginBusy(el._pluginId, pluginName, false);
   }
 }

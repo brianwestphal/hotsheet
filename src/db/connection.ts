@@ -239,18 +239,18 @@ async function initSchema(db: PGlite): Promise<void> {
   await migrateNoteIds(db);
 }
 
-async function migrateNoteIds(db: import('@electric-sql/pglite').PGlite): Promise<void> {
+async function migrateNoteIds(db: PGlite): Promise<void> {
   const result = await db.query<{ id: number; notes: string }>(
     "SELECT id, notes FROM tickets WHERE notes != '' AND notes != '[]'"
   );
   let noteCounter = 0;
   for (const row of result.rows) {
     try {
-      const parsed = JSON.parse(row.notes);
+      const parsed: unknown = JSON.parse(row.notes);
       if (!Array.isArray(parsed)) continue;
       let changed = false;
-      for (const note of parsed) {
-        if (!note.id || note.id === '') {
+      for (const note of parsed as { id?: string }[]) {
+        if (note.id == null || note.id === '') {
           note.id = `n_${Date.now().toString(36)}_${(noteCounter++).toString(36)}`;
           changed = true;
         }

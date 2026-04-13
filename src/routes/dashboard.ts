@@ -143,10 +143,10 @@ dashboardRoutes.get('/glassbox/status', async (c) => {
 dashboardRoutes.post('/glassbox/launch', async (c) => {
   if (glassboxAvailable !== true) return c.json({ error: 'Glassbox not available' }, 404);
   const { spawn } = await import('child_process');
-  const { dirname } = await import('path');
+  const path = await import('path');
   // Use the active project's root directory (parent of .hotsheet/), not
   // process.cwd() which is always the server's startup directory.
-  const projectRoot = dirname(c.get('dataDir'));
+  const projectRoot = path.dirname(c.get('dataDir'));
   spawn('glassbox', [], {
     cwd: projectRoot,
     detached: true,

@@ -38,7 +38,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
       <button className={`ticket-status-btn${isVerified ? ' verified' : ''}`} title={ticket.status.replace('_', ' ')}>
         {raw(isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status))}
       </button>
-      {syncedTicketMap[ticket.id] ? <span className="ticket-sync-icon" title={`Synced via ${syncedTicketMap[ticket.id].pluginId}`}>{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}
+      {ticket.id in syncedTicketMap ? <span className="ticket-sync-icon" title={`Synced via ${syncedTicketMap[ticket.id].pluginId}`}>{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}
       <input type="text" className="ticket-title-input" value={ticket.title} />
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`} title={ticket.priority}>
         {raw(getPriorityIcon(ticket.priority))}

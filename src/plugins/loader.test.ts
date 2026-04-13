@@ -1,12 +1,14 @@
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
-import { tmpdir } from 'os';
+import * as os from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { tmpdir } = os;
 
 // Mock homedir to use a temp directory for plugin discovery tests
 const tempHome = join(tmpdir(), `hs-plugin-test-${Date.now()}`);
 vi.mock('os', async (importOriginal) => {
-  const actual = await importOriginal() as Record<string, unknown>;
+  const actual = await importOriginal<typeof os>();
   return { ...actual, homedir: () => tempHome };
 });
 
