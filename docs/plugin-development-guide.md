@@ -122,7 +122,7 @@ The `configLayout` array controls how the config dialog is structured. If omitte
 |------|--------|-------------|
 | `preference` | `key` | Renders the preference input for the given key |
 | `divider` | | Horizontal line |
-| `spacer` | | Vertical gap (8px) |
+| `spacer` | | Vertical gap (12px) |
 | `label` | `id`, `text`, `color?` | Dynamic text label. `color` is one of `default`, `success`, `error`, `warning`, `transient`. Update via `context.updateConfigLabel` |
 | `button` | `id`, `label`, `action`, `icon?`, `style?` | Clickable button that triggers `onAction` |
 | `group` | `title`, `collapsed?`, `items` | Collapsible group containing other layout items |

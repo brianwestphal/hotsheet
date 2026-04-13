@@ -87,7 +87,7 @@ Tickets progress through these statuses:
 
 - On startup, the application runs cleanup for stale tickets:
   - Tickets in `deleted` status older than a configurable threshold (default: 3 days) are hard-deleted.
-  - Tickets in `verified` status older than a configurable threshold (default: 30 days) are hard-deleted.
+  - Tickets in `verified` status older than a configurable threshold (default: 30 days) are archived.
 - Cleanup also removes orphaned attachment files from disk.
 - Cleanup thresholds are configurable via settings.
 
