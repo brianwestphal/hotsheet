@@ -7,7 +7,7 @@ import { bindCopyPrompt } from './clipboardUtil.js';
 import { initCommandLog, refreshCommandLog } from './commandLog.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
-import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, parseTags, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
+import { applyDetailPosition, applyDetailSize, closeDetail, displayTag, hasTag, initResize, normalizeTag, openDetail, openDetailAndFocusNote, parseTags, renderDetailTags, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { bindOpenFolder } from './openFolder.js';
@@ -376,15 +376,7 @@ function bindDetailNotes() {
     });
     pushNotesUndo({ ...ticket, notes: beforeNotes } as Ticket, 'Add note', newNotesJson);
     ticket.notes = newNotesJson;
-    await openDetail(state.activeTicketId);
-
-    // After re-render: scroll the new note into view and put it into edit mode.
-    requestAnimationFrame(() => {
-      const noteEl = document.querySelector(`#detail-notes [data-note-id="${newNoteId}"]`) as HTMLElement | null;
-      if (!noteEl) return;
-      noteEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      noteEl.click();
-    });
+    openDetailAndFocusNote(state.activeTicketId, newNoteId);
   });
 }
 

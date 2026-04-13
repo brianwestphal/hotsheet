@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { clearProjectAttention, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
+import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
 import { toElement } from './dom.js';
 import { getActiveProject, state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
@@ -39,14 +39,26 @@ export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof set
         showPermissionOverlay(activePerm, channelBusyTimeout, setChannelBusyTimeoutRef);
       }
 
-      // Mark attention dots for all projects with pending permissions
+      // Mark attention dots for projects with pending permissions, clear all others.
+      // Must clear ALL tracked projects — not just ones in the response — otherwise
+      // dots from a previous poll stick when the response is empty (e.g. channel
+      // disabled, session ended, or the permissions map only includes a subset).
+      const pendingSecrets = new Set<string>();
       for (const [secret, perm] of Object.entries(data.permissions)) {
         if (perm !== null) {
+          pendingSecrets.add(secret);
           markProjectAttention(secret);
         } else {
           clearProjectAttention(secret);
         }
       }
+      // Clear any attention dots for projects NOT in the response at all.
+      for (const secret of [...getProjectAttentionSecrets()]) {
+        if (!pendingSecrets.has(secret)) {
+          clearProjectAttention(secret);
+        }
+      }
+
     } catch {
       await new Promise(r => setTimeout(r, 5000));
     }

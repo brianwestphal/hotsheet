@@ -112,7 +112,17 @@ export function updateDetailStatus(value: string) {
 
 // --- Detail panel ---
 
+/** Note ID to scroll-to and focus after the next renderNotes pass. */
+let pendingFocusNoteId: string | null = null;
+
 export function openDetail(id: number) {
+  state.activeTicketId = id;
+  void loadDetail(id);
+}
+
+/** Open detail and, after notes render, scroll to and focus a specific note. */
+export function openDetailAndFocusNote(id: number, noteId: string) {
+  pendingFocusNoteId = noteId;
   state.activeTicketId = id;
   void loadDetail(id);
 }
@@ -433,6 +443,18 @@ function renderNotes(ticketId: number, notes: NoteEntry[]) {
     appendImageDownloadLinks(entry);
 
     container.appendChild(entry);
+  }
+
+  // If a note was just created, scroll to it and open edit mode.
+  if (pendingFocusNoteId) {
+    const targetId = pendingFocusNoteId;
+    pendingFocusNoteId = null;
+    requestAnimationFrame(() => {
+      const noteEl = container.querySelector(`[data-note-id="${targetId}"]`) as HTMLElement | null;
+      if (!noteEl) return;
+      noteEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      noteEl.click();
+    });
   }
 }
 
