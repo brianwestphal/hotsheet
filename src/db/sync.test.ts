@@ -28,6 +28,11 @@ describe('ticket_sync table', () => {
     expect(record.remote_id).toBe('remote-1');
     expect(record.sync_status).toBe('synced');
     expect(record.remote_updated_at).toBeTruthy();
+    // Read back from DB to verify persistence (not just the returned object)
+    const readBack = await getSyncRecord(ticket.id, 'test-plugin');
+    expect(readBack).not.toBeNull();
+    expect(readBack!.remote_id).toBe('remote-1');
+    expect(readBack!.sync_status).toBe('synced');
   });
 
   it('updates existing record on upsert (same ticket+plugin)', async () => {
@@ -36,6 +41,10 @@ describe('ticket_sync table', () => {
     const updated = await upsertSyncRecord(ticket.id, 'test-plugin', 'remote-B', 'pending_push');
     expect(updated.remote_id).toBe('remote-B');
     expect(updated.sync_status).toBe('pending_push');
+    // Read back from DB to verify the update persisted
+    const readBack = await getSyncRecord(ticket.id, 'test-plugin');
+    expect(readBack!.remote_id).toBe('remote-B');
+    expect(readBack!.sync_status).toBe('pending_push');
   });
 
   it('gets a sync record by ticket ID and plugin ID', async () => {
@@ -114,6 +123,11 @@ describe('sync_outbox table', () => {
     expect(entry.action).toBe('update');
     expect(JSON.parse(entry.field_changes)).toEqual({ title: 'New title' });
     expect(entry.attempts).toBe(0);
+    // Read back from DB to verify persistence
+    const entries = await getOutboxEntries('plugin-out');
+    const persisted = entries.find(e => e.id === entry.id);
+    expect(persisted).toBeTruthy();
+    expect(JSON.parse(persisted!.field_changes)).toEqual({ title: 'New title' });
   });
 
   it('gets outbox entries for a plugin ordered by created_at', async () => {

@@ -326,6 +326,14 @@ test.describe('GitHub Issues plugin — live integration', () => {
     const syncRes = await request.post('/api/plugins/github-issues/sync', { headers });
     const syncResult = await syncRes.json();
     expect(syncResult.ok).toBe(true);
+
+    // Read back: verify sync actually produced records (not just ok=true)
+    const recordsRes = await request.get('/api/plugins/github-issues/sync', { headers });
+    const records = await recordsRes.json() as { ticket_id: number; sync_status: string }[];
+    // After a successful sync, there should be at least one synced record
+    // (the test repo has at least one issue from prior test runs)
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.every(r => r.sync_status === 'synced' || r.sync_status === 'conflict')).toBe(true);
   });
 
   test('plugin status endpoint returns connected', async ({ page, request }) => {
@@ -744,13 +752,17 @@ test.describe('GitHub Issues plugin — live integration', () => {
     const status = await statusRes.json();
     expect(status.connected).toBe(true);
 
-    // Use the push-ticket mechanism: modify via GitHub API directly
-    // We'll use a PATCH to update details then push, then change on GitHub side
-    // Actually, let's just sync twice — the second sync should see no conflicts
-    // since we haven't locally modified since the first sync
+    // Sync twice — no local changes, so second sync should have 0 conflicts, 0 pushes.
     const sync2Res = await request.post('/api/plugins/github-issues/sync', { headers });
     const sync2 = await sync2Res.json();
     expect(sync2.ok).toBe(true);
     expect(sync2.conflicts ?? 0).toBe(0);
+
+    // Read back: verify the local ticket still exists and has valid data
+    // (not corrupted by the pull-then-no-op cycle).
+    const ticketRes = await request.get(`/api/tickets/${syncedTicket.id}`, { headers });
+    const ticket = await ticketRes.json() as { id: number; title: string };
+    expect(ticket.id).toBe(syncedTicket.id);
+    expect(ticket.title).toBeTruthy();
   });
 });
