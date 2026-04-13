@@ -122,6 +122,7 @@ When the user gives you work directly via the CLI (not via MCP channel or Hot Sh
 - **Don't create tickets** for: simple questions, git commits, quick lookups, trivial one-line changes.
 - **When in doubt, create the tickets.** The overhead is minimal and the tracking value is high.
 - Use the Hot Sheet API to create tickets, mark them as Up Next, then work through them normally (set status to "started", implement, set to "completed" with notes).
+- **Always create follow-up tickets** for work that isn't completed in the current session: unfinished implementation steps, open design questions needing answers, known gaps discovered during work, features designed but not yet built (e.g., a requirements doc without implementation). Never leave follow-up work undocumented — if it's not in a ticket, it will be forgotten.
 
 ## Conventions
 

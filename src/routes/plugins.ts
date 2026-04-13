@@ -500,17 +500,33 @@ pluginRoutes.post('/plugins/:id/uninstall', async (c) => {
   return c.json({ ok: true });
 });
 
-/** Get a global plugin setting. */
+/** Get a global plugin setting. For secret preferences, checks the OS keychain first. */
 pluginRoutes.get('/plugins/:id/global-config/:key', async (c) => {
-  const value = getGlobalPluginSetting(c.req.param('id'), c.req.param('key'));
+  const pluginId = c.req.param('id');
+  const key = c.req.param('key');
+  const plugin = getPluginById(pluginId);
+  const isSecret = plugin?.manifest.preferences?.find(p => p.key === key)?.secret === true;
+  if (isSecret) {
+    const { keychainGet } = await import('../keychain.js');
+    const keychainValue = await keychainGet(pluginId, key);
+    if (keychainValue !== null) return c.json({ value: keychainValue });
+  }
+  const value = getGlobalPluginSetting(pluginId, key);
   return c.json({ value });
 });
 
-/** Set a global plugin setting. */
+/** Set a global plugin setting. For secret preferences, also stores in the OS keychain. */
 pluginRoutes.post('/plugins/:id/global-config', async (c) => {
+  const pluginId = c.req.param('id');
   const body = await c.req.json();
   if (!body.key) return c.json({ error: 'key is required' }, 400);
-  setGlobalPluginSetting(c.req.param('id'), body.key, body.value);
+  const plugin = getPluginById(pluginId);
+  const isSecret = plugin?.manifest.preferences?.find(p => p.key === (body as { key: string }).key)?.secret === true;
+  if (isSecret) {
+    const { keychainSet } = await import('../keychain.js');
+    await keychainSet(pluginId, (body as { key: string }).key, (body as { key: string; value: string }).value);
+  }
+  setGlobalPluginSetting(pluginId, (body as { key: string }).key, (body as { key: string; value: string }).value);
   return c.json({ ok: true });
 });
 

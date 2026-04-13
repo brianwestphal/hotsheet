@@ -4194,7 +4194,7 @@ input, select, textarea {
     pre code { background: none; padding: 0; }
     blockquote { border-left: 3px solid var(--border); padding-left: 12px; margin: 4px 0; color: var(--text-muted); }
     a { color: var(--accent); text-decoration: none; &:hover { text-decoration: underline; } }
-    img { max-width: 100%; border-radius: var(--radius); }
+    img { max-width: 100%; height: auto; border-radius: var(--radius); }
   }
 }
 

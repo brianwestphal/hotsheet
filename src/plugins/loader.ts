@@ -367,6 +367,10 @@ function isGlobalPref(manifest: PluginManifest, key: string): boolean {
   return manifest.preferences?.find(p => p.key === key)?.scope === 'global';
 }
 
+function isSecretPref(manifest: PluginManifest, key: string): boolean {
+  return manifest.preferences?.find(p => p.key === key)?.secret === true;
+}
+
 function createPluginContext(manifest: PluginManifest): PluginContext {
   const prefix = `plugin:${manifest.id}:`;
   return {
@@ -376,8 +380,21 @@ function createPluginContext(manifest: PluginManifest): PluginContext {
       fn(`[plugin:${manifest.id}] ${message}`);
     },
     async getSetting(key) {
+      // For secret preferences, try the OS keychain first (§20 secure storage).
+      if (isSecretPref(manifest, key)) {
+        const { keychainGet } = await import('../keychain.js');
+        const keychainValue = await keychainGet(manifest.id, key);
+        if (keychainValue !== null) return keychainValue;
+        // Fall through to file/DB — and migrate to keychain if found there.
+      }
       if (isGlobalPref(manifest, key)) {
-        return getGlobalPluginSetting(manifest.id, key);
+        const value = getGlobalPluginSetting(manifest.id, key);
+        // Opportunistic migration: if found in file but not keychain, store in keychain.
+        if (value !== null && isSecretPref(manifest, key)) {
+          const { keychainSet } = await import('../keychain.js');
+          void keychainSet(manifest.id, key, value);
+        }
+        return value;
       }
       const { getDb } = await import('../db/connection.js');
       const db = await getDb();
@@ -385,6 +402,12 @@ function createPluginContext(manifest: PluginManifest): PluginContext {
       return result.rows[0]?.value ?? null;
     },
     async setSetting(key, value) {
+      // For secret preferences, store in the OS keychain when available.
+      if (isSecretPref(manifest, key)) {
+        const { keychainSet } = await import('../keychain.js');
+        await keychainSet(manifest.id, key, value);
+      }
+      // Always also write to file/DB as fallback (browser mode, keychain unavailable).
       if (isGlobalPref(manifest, key)) {
         setGlobalPluginSetting(manifest.id, key, value);
         return;
