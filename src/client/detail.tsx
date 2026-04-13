@@ -5,6 +5,7 @@ import { api } from './api.js';
 import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
 import { getActiveProject, getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
+import { renderPluginDetailElements } from './pluginUI.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { pushNotesUndo } from './undo/actions.js';
 
@@ -342,6 +343,12 @@ async function loadDetail(id: number) {
       )}
     </> : null}
   </>).toString();
+
+  // Render plugin UI extensions for the detail panel
+  const detailTop = document.getElementById('plugin-detail-top');
+  const detailBottom = document.getElementById('plugin-detail-bottom');
+  if (detailTop) { detailTop.innerHTML = ''; renderPluginDetailElements(detailTop, 'detail_top', [ticket.id]); }
+  if (detailBottom) { detailBottom.innerHTML = ''; renderPluginDetailElements(detailBottom, 'detail_bottom', [ticket.id]); }
 }
 
 type NoteEntry = { id?: string; text: string; created_at: string };

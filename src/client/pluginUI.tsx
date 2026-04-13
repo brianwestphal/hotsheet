@@ -80,6 +80,31 @@ export function getPluginUIForLocation(location: string): PluginUIElement[] {
   return cachedElements.filter(e => e.location === location);
 }
 
+/** Reload plugin UI elements from the server and re-render all plugin UI locations.
+ *  Call after enable/disable to refresh visible plugin controls. */
+export async function refreshPluginUI(): Promise<void> {
+  await loadPluginUI();
+  // Re-render toolbar
+  const toolbar = document.querySelector('.plugin-toolbar-container');
+  if (toolbar) { toolbar.innerHTML = ''; renderPluginToolbarButtons(toolbar as HTMLElement); }
+  // Re-render status bar, sidebar top/bottom
+  renderPluginLocationElements('plugin-status-bar', 'status_bar');
+  renderPluginLocationElements('plugin-sidebar-top', 'sidebar_actions_top');
+  renderPluginLocationElements('plugin-sidebar-bottom', 'sidebar_actions_bottom');
+}
+
+/** Render plugin UI elements into a container by DOM id and plugin location. */
+function renderPluginLocationElements(containerId: string, location: string): void {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = '';
+  const elements = getPluginUIForLocation(location);
+  for (const el of elements) {
+    const rendered = createPluginElement(el);
+    if (rendered) container.appendChild(rendered);
+  }
+}
+
 /** Render plugin UI elements into a toolbar container. */
 export function renderPluginToolbarButtons(container: HTMLElement): void {
   const elements = getPluginUIForLocation('toolbar');
@@ -111,13 +136,15 @@ export function getPluginContextMenuItems(ticketIds: number[]): { label: string;
 function createPluginButton(el: PluginUIElement): HTMLElement | null {
   if (el.type !== 'button') return null;
 
+  // Toolbar: icon-only (compact). All other locations: show icon + label.
+  const isToolbar = el.location === 'toolbar';
   const btn = toElement(
     <button
       className={`plugin-toolbar-btn${el.style === 'primary' ? ' primary' : ''}${el.style === 'danger' ? ' danger' : ''}`}
       title={el.title ?? el.label ?? ''}
     >
-      {el.icon ? raw(el.icon) : null}
-      {el.label && !el.icon ? el.label : null}
+      {el.icon != null ? raw(el.icon) : null}
+      {el.label != null && (!isToolbar || el.icon == null) ? <span>{el.label}</span> : null}
     </button>
   );
 
@@ -146,7 +173,7 @@ async function triggerAction(el: PluginUIElement, ticketIds?: number[]): Promise
   const pluginName = el.title?.replace('Sync with ', '') ?? el._pluginId;
 
   try {
-    const result = await api<{ ok: boolean; result?: { redirect?: string } }>(
+    const result = await api<{ ok: boolean; result?: { redirect?: string; message?: string } }>(
       `/plugins/${el._pluginId}/action`,
       { method: 'POST', body: { actionId: el.action, ticketIds } },
     );
@@ -160,9 +187,25 @@ async function triggerAction(el: PluginUIElement, ticketIds?: number[]): Promise
       } finally {
         setPluginBusy(el._pluginId, pluginName, false);
       }
+    } else if (result.result?.message != null && result.result.message !== '') {
+      showToast(result.result.message);
     }
   } catch (e) {
     console.error(`Plugin action failed: ${e instanceof Error ? e.message : e}`);
     setPluginBusy(el._pluginId, pluginName, false);
   }
+}
+
+/** Show a brief toast notification that auto-dismisses. */
+function showToast(message: string, durationMs = 3000) {
+  // Remove any existing toast
+  document.querySelector('.plugin-toast')?.remove();
+  const toast = toElement(<div className="plugin-toast">{message}</div>);
+  document.body.appendChild(toast);
+  // Trigger enter animation on next frame
+  requestAnimationFrame(() => toast.classList.add('visible'));
+  setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => toast.remove(), 300);
+  }, durationMs);
 }

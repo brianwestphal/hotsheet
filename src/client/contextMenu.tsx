@@ -2,6 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
 import { toElement } from './dom.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_TAG, ICON_TRASH } from './icons.js';
+import { getPluginContextMenuItems } from './pluginUI.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS, syncedTicketMap, VERIFIED_SVG } from './state.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
@@ -143,6 +144,17 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
   addActionItem(menu, 'Archive', () => applyToSelected('status', 'archive'), {
     icon: ICON_ARCHIVE,
   });
+
+  // Plugin context menu items
+  const pluginItems = getPluginContextMenuItems(Array.from(state.selectedIds));
+  if (pluginItems.length > 0) {
+    addSeparator(menu);
+    for (const item of pluginItems) {
+      addActionItem(menu, item.label, () => { item.action(); }, {
+        icon: item.icon,
+      });
+    }
+  }
 
   addSeparator(menu);
 

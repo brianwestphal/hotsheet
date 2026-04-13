@@ -89,9 +89,46 @@ test.describe('Plugin UI extension locations (HS-5066)', () => {
     await expect(toolbarBtn).toBeVisible({ timeout: 10000 });
   });
 
-  // NOTE: detail_top, detail_bottom, and context_menu locations are declared in
-  // the plugin types but the client rendering code (renderPluginDetailElements,
-  // renderPluginContextMenuItems) is defined but never wired into the actual
-  // detail panel or context menu flows. Tests for those locations are blocked
-  // until the rendering integration is implemented. See follow-up ticket.
+  test('detail_top and detail_bottom buttons render in the detail panel', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+    // Create a ticket and wait for it to appear in the list
+    const draftInput = page.locator('.draft-input');
+    await draftInput.fill('UI location test ticket');
+    await draftInput.press('Enter');
+    const ticketRow = page.locator('.ticket-row[data-id]').first();
+    await expect(ticketRow).toBeVisible({ timeout: 5000 });
+    await ticketRow.locator('.ticket-number').click();
+    await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });
+
+    // detail_top button should render above the fields
+    const detailTop = page.locator('#plugin-detail-top [title="Fixture Detail Top"]');
+    await expect(detailTop).toBeVisible({ timeout: 5000 });
+
+    // detail_bottom button should render below meta
+    const detailBottom = page.locator('#plugin-detail-bottom [title="Fixture Detail Bottom"]');
+    await expect(detailBottom).toBeVisible({ timeout: 5000 });
+  });
+
+  test('context_menu button renders in the right-click menu', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+    // Create a ticket and wait for it to appear
+    const draftInput = page.locator('.draft-input');
+    await draftInput.fill('Context menu test ticket');
+    await draftInput.press('Enter');
+    const ticketRow = page.locator('.ticket-row[data-id]').first();
+    await expect(ticketRow).toBeVisible({ timeout: 5000 });
+
+    // Right-click the ticket row
+    await ticketRow.click({ button: 'right' });
+
+    // The context menu should contain the fixture button
+    const contextMenu = page.locator('.context-menu');
+    await expect(contextMenu).toBeVisible({ timeout: 3000 });
+    const fixtureItem = contextMenu.locator('.context-menu-item', { hasText: 'Context Fixture' });
+    await expect(fixtureItem).toBeVisible();
+  });
 });

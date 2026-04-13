@@ -82,6 +82,7 @@ pageRoutes.get('/', (c) => {
               </button>
             </div>
             <div id="channel-commands-container"></div>
+            {PLUGINS_ENABLED ? <div id="plugin-sidebar-top" className="plugin-sidebar-actions"></div> : null}
             <div className="sidebar-copy-prompt" id="copy-prompt-section" style="display:none">
               <button className="copy-prompt-btn" id="copy-prompt-btn" title="Copy worklist prompt to clipboard">
                 <span className="copy-prompt-icon" id="copy-prompt-icon"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
@@ -131,6 +132,7 @@ pageRoutes.get('/', (c) => {
               <button className="sidebar-item" data-view="priority:low"><span className="sidebar-icon" style="color:#3b82f6"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg></span> Low</button>
               <button className="sidebar-item" data-view="priority:lowest"><span className="sidebar-icon" style="color:#94a3b8"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 7 5 5 5-5"/><path d="m7 13 5 5 5-5"/></svg></span> Lowest</button>
             </div>
+            {PLUGINS_ENABLED ? <div id="plugin-sidebar-bottom" className="plugin-sidebar-actions"></div> : null}
             <div className="sidebar-stats" id="stats-bar"></div>
           </nav>
 
@@ -163,6 +165,7 @@ pageRoutes.get('/', (c) => {
                 <button className="detail-close" id="detail-close" title="Close">{'\u00d7'}</button>
               </div>
               <div className="detail-body" id="detail-body" style="display:none">
+                <div className="plugin-detail-top" id="plugin-detail-top"></div>
                 <div className="detail-fields-row">
                   <div className="detail-field">
                     <label>Category</label>
@@ -207,6 +210,7 @@ pageRoutes.get('/', (c) => {
                   <div id="detail-notes" className="detail-notes"></div>
                 </div>
                 <div className="detail-meta detail-field-full" id="detail-meta"></div>
+                <div className="plugin-detail-bottom" id="plugin-detail-bottom"></div>
               </div>
             </aside>
           </div>
@@ -219,6 +223,7 @@ pageRoutes.get('/', (c) => {
           <div className="status-bar-right">
             <div id="status-bar" className="status-bar"></div>
             {PLUGINS_ENABLED ? <span id="plugin-busy-indicator" className="plugin-busy-indicator" style="display:none"></span> : null}
+            {PLUGINS_ENABLED ? <span id="plugin-status-bar" className="plugin-status-bar"></span> : null}
             <button id="command-log-btn" className="command-log-btn" title="Commands Log">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 15h18"/><path d="m9 10 3-3 3 3"/></svg>
               <span id="command-log-badge" className="command-log-badge" style="display:none"></span>

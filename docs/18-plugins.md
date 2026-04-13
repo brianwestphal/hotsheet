@@ -329,11 +329,13 @@ Plugins can register custom UI elements rendered at predefined locations.
 | `batch_menu` | Selection | Batch toolbar "..." menu |
 | `context_menu` | Selection | Right-click ticket context menu |
 
-**Element types:** button, toggle, switch, link, segmented_control.
+All 8 locations are wired up in the client: toolbar buttons render in the header, status_bar and sidebar elements render via `refreshPluginUI()` on init and enable/disable, detail_top/detail_bottom render per-ticket in `loadDetail()`, context_menu items are injected into the right-click menu, and batch_menu items appear in the batch "..." menu. Toolbar buttons show icon only; all other locations show icon + label.
+
+**Element types:** `button` and `link` are rendered. `toggle`, `switch`, and `segmented_control` are declared in the type system but not yet rendered by the client.
 
 **Registration:** `context.registerUI(elements)` during `activate()`. Served via `GET /api/plugins/ui` filtered by per-project enabled state.
 
-**Actions:** `POST /api/plugins/:id/action` with `{ actionId, ticketIds?, value? }`. Return `{ redirect: 'sync' }` to trigger a sync.
+**Actions:** `POST /api/plugins/:id/action` with `{ actionId, ticketIds?, value? }`. Return `{ redirect: 'sync' }` to trigger a sync. Return `{ message: '...' }` to show a toast notification to the user.
 
 **Busy indicator:** When a plugin action triggers sync, a "GitHub Working" label with spinner appears in the footer status bar. The toolbar button is disabled during sync. Multiple busy labels combine (e.g. "GitHub and Claude Working").
 

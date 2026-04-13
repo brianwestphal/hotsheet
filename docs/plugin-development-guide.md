@@ -218,7 +218,9 @@ Plugins can register UI elements at these locations:
 
 **Toggle, Switch, Link, Segmented Control** — see `src/plugins/types.ts` for full definitions.
 
-When a user clicks a button, the app calls `POST /api/plugins/:id/action` with `{ actionId }`, which invokes the plugin's `onAction` handler. Return `{ redirect: 'sync' }` to trigger a sync operation.
+When a user clicks a button, the app calls `POST /api/plugins/:id/action` with `{ actionId }`, which invokes the plugin's `onAction` handler. Return `{ redirect: 'sync' }` to trigger a sync operation, or return `{ message: '...' }` to show a brief toast notification to the user.
+
+**Location rendering:** Toolbar buttons show icon only (compact). All other locations (status_bar, sidebar, detail, context_menu, batch_menu) show icon + label together. `button` and `link` types are rendered; `toggle`, `switch`, and `segmented_control` are declared but not yet rendered.
 
 ---
 

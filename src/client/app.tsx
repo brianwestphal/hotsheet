@@ -33,16 +33,19 @@ setRestoreTicketListCallback(restoreTicketList);
 /** Reload all app state — used after project switch and during init. */
 async function reloadPluginToolbar() {
   if (!PLUGINS_ENABLED) return;
-  const { loadPluginUI, renderPluginToolbarButtons } = await import('./pluginUI.js');
-  await loadPluginUI();
-  document.querySelectorAll('.plugin-toolbar-container').forEach(el => el.remove());
-  const glassboxBtn = document.getElementById('glassbox-btn');
-  const toolbarTarget = glassboxBtn?.parentElement;
-  if (toolbarTarget && glassboxBtn) {
-    const container = document.createElement('span');
-    container.className = 'plugin-toolbar-container';
-    toolbarTarget.insertBefore(container, glassboxBtn);
-    renderPluginToolbarButtons(container);
+  const { refreshPluginUI, renderPluginToolbarButtons } = await import('./pluginUI.js');
+  // refreshPluginUI reloads from API and re-renders toolbar, status_bar, sidebar
+  await refreshPluginUI();
+  // Ensure the toolbar container exists in the DOM
+  if (!document.querySelector('.plugin-toolbar-container')) {
+    const glassboxBtn = document.getElementById('glassbox-btn');
+    const toolbarTarget = glassboxBtn?.parentElement;
+    if (toolbarTarget && glassboxBtn) {
+      const container = document.createElement('span');
+      container.className = 'plugin-toolbar-container';
+      toolbarTarget.insertBefore(container, glassboxBtn);
+      renderPluginToolbarButtons(container);
+    }
   }
 }
 

@@ -1,0 +1,106 @@
+{
+  "id": "demo-plugin",
+  "name": "Demo Plugin",
+  "version": "1.0.0",
+  "description": "Demonstrates all plugin features — settings UI types, config layout, UI extensions, label colors, and field validation. For local development and testing only.",
+  "author": "Hot Sheet",
+  "entry": "index.js",
+  "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polygon points=\"13 2 3 14 12 14 11 22 21 10 12 10 13 2\"/></svg>",
+  "preferences": [
+    {
+      "key": "api_key",
+      "label": "API Key",
+      "type": "string",
+      "required": true,
+      "secret": true,
+      "scope": "global",
+      "description": "A secret API key (demonstrates global-scoped secret fields)"
+    },
+    {
+      "key": "username",
+      "label": "Username",
+      "type": "string",
+      "required": true,
+      "description": "Your username (demonstrates required string validation)"
+    },
+    {
+      "key": "auto_greet",
+      "label": "Auto-greet on sync",
+      "type": "boolean",
+      "default": true,
+      "description": "Show a greeting when sync runs (demonstrates boolean toggle)"
+    },
+    {
+      "key": "max_items",
+      "label": "Max Items",
+      "type": "number",
+      "default": 10,
+      "description": "Maximum number of items to process (demonstrates number input)"
+    },
+    {
+      "key": "theme",
+      "label": "Color Theme",
+      "type": "select",
+      "default": "blue",
+      "options": [
+        { "value": "blue", "label": "Ocean Blue" },
+        { "value": "green", "label": "Forest Green" },
+        { "value": "purple", "label": "Cosmic Purple" },
+        { "value": "orange", "label": "Sunset Orange" }
+      ],
+      "description": "Visual theme (demonstrates select/dropdown)"
+    },
+    {
+      "key": "region",
+      "label": "Region",
+      "type": "combo",
+      "default": "us-east",
+      "options": [
+        { "value": "us-east", "label": "US East" },
+        { "value": "us-west", "label": "US West" },
+        { "value": "eu-west", "label": "EU West" },
+        { "value": "ap-south", "label": "Asia Pacific" }
+      ],
+      "description": "Server region — pick from list or type a custom value (demonstrates combo box)"
+    },
+    {
+      "key": "sync_mode",
+      "label": "Sync Mode",
+      "type": "dropdown",
+      "default": "auto",
+      "options": [
+        { "value": "auto", "label": "Automatic" },
+        { "value": "manual", "label": "Manual Only" },
+        { "value": "scheduled", "label": "Scheduled" }
+      ],
+      "description": "When to sync (demonstrates dropdown, alias for select)"
+    },
+    {
+      "key": "webhook_url",
+      "label": "Webhook URL",
+      "type": "string",
+      "default": "",
+      "description": "Optional callback URL (demonstrates non-required string with URL validation)"
+    }
+  ],
+  "configLayout": [
+    { "type": "preference", "key": "api_key" },
+    { "type": "divider" },
+    { "type": "preference", "key": "username" },
+    { "type": "preference", "key": "auto_greet" },
+    { "type": "spacer" },
+    { "type": "label", "id": "connection-status", "text": "Not tested", "color": "transient" },
+    { "type": "button", "id": "test-btn", "label": "Test Connection", "action": "test_connection" },
+    { "type": "group", "title": "Appearance", "collapsed": false, "items": [
+      { "type": "preference", "key": "theme" },
+      { "type": "preference", "key": "max_items" }
+    ]},
+    { "type": "group", "title": "Sync Settings", "collapsed": true, "items": [
+      { "type": "preference", "key": "sync_mode" },
+      { "type": "preference", "key": "region" }
+    ]},
+    { "type": "group", "title": "Advanced", "collapsed": true, "items": [
+      { "type": "preference", "key": "webhook_url" }
+    ]}
+  ]
+}

@@ -7,6 +7,7 @@
 }
 
 :root {
+  color-scheme: light;
   --bg: #ffffff;
   --bg-secondary: #f9fafb;
   --bg-hover: #f3f4f6;
@@ -2455,14 +2456,6 @@ input, select, textarea {
   flex-shrink: 0;
 }
 
-@media (prefers-color-scheme: dark) {
-  .skills-banner {
-    background: #1e293b;
-    border-bottom-color: #3b82f6;
-    color: #93c5fd;
-  }
-}
-
 // --- Update Banner ---
 
 .update-banner {
@@ -2476,14 +2469,6 @@ input, select, textarea {
   font-size: 13px;
   color: #166534;
   flex-shrink: 0;
-}
-
-@media (prefers-color-scheme: dark) {
-  .update-banner {
-    background: #14532d;
-    border-bottom-color: #22c55e;
-    color: #86efac;
-  }
 }
 
 .update-banner-actions {
@@ -2520,14 +2505,6 @@ input, select, textarea {
   font-weight: 500;
   color: #92400e;
   flex-shrink: 0;
-}
-
-@media (prefers-color-scheme: dark) {
-  .backup-preview-banner {
-    background: #451a03;
-    border-bottom-color: #d97706;
-    color: #fbbf24;
-  }
 }
 
 .backup-preview-actions {
@@ -3575,6 +3552,29 @@ input, select, textarea {
   }
 }
 
+.plugin-combo-dropdown {
+  display: none;
+  position: fixed;
+  z-index: 3000;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  max-height: 180px;
+  overflow-y: auto;
+  margin-top: 2px;
+}
+
+.plugin-combo-option {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+
+  &:hover { background: var(--bg-hover); }
+  &.active { background: var(--bg-selected); color: var(--accent); }
+}
+
 .plugin-sync-schedule {
   font-size: 13px;
   padding: 4px 8px;
@@ -3608,6 +3608,81 @@ input, select, textarea {
   margin-left: 6px;
 }
 
+// --- Plugin toast ---
+
+.plugin-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  background: var(--text);
+  color: var(--bg);
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 4000;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+
+  &.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+// --- Plugin detail panel extensions ---
+
+.plugin-detail-top,
+.plugin-detail-bottom {
+  &:empty { display: none; }
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 4px 0;
+
+  // Match detail-sync-info sizing so plugin buttons align with sync links
+  .plugin-toolbar-btn {
+    padding: 2px 0;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+}
+
+// --- Plugin sidebar + status bar extensions ---
+
+.plugin-sidebar-actions {
+  &:empty { display: none; }
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+.plugin-status-bar {
+  &:empty { display: none; }
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.plugin-ui-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 3px 6px;
+  border-radius: var(--radius);
+
+  &:hover { text-decoration: underline; background: var(--bg-hover); }
+
+  svg { flex-shrink: 0; }
+}
+
 // --- Plugin toolbar buttons ---
 
 .plugin-toolbar-container {
@@ -3626,8 +3701,10 @@ input, select, textarea {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  font-size: 12px;
 
-  &:hover { color: var(--text); background: var(--hover); }
+  &:hover { color: var(--text); background: var(--bg-hover); }
   &.primary { color: var(--accent); }
   &.danger { color: var(--danger); }
   &:disabled { opacity: 0.4; cursor: default; }
@@ -4522,14 +4599,6 @@ input, select, textarea {
   font-size: 13px;
   color: #4c1d95;
   flex-shrink: 0;
-}
-
-@media (prefers-color-scheme: dark) {
-  .share-banner {
-    background: #2e1065;
-    border-bottom-color: #8b5cf6;
-    color: #c4b5fd;
-  }
 }
 
 .share-banner-actions {

@@ -1,6 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
+import { refreshPluginUI } from './pluginUI.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 
 type ConfigLabelColor = 'default' | 'success' | 'error' | 'warning' | 'transient';
@@ -312,6 +313,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
       menu.remove();
       await api(`/plugins/${plugin.id}/disable`, { method: 'POST' });
       void loadPlugins();
+      void refreshPluginUI();
     });
     menu.appendChild(disableItem);
   } else {
@@ -320,6 +322,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
       menu.remove();
       await api(`/plugins/${plugin.id}/enable`, { method: 'POST' });
       void loadPlugins();
+      void refreshPluginUI();
     });
     menu.appendChild(enableItem);
   }
@@ -332,6 +335,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
     menu.remove();
     await api(`/plugins/${plugin.id}/enable-all`, { method: 'POST' });
     void loadPlugins();
+    void refreshPluginUI();
   });
   menu.appendChild(enableAllItem);
 
@@ -340,6 +344,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
     menu.remove();
     await api(`/plugins/${plugin.id}/disable-all`, { method: 'POST' });
     void loadPlugins();
+    void refreshPluginUI();
   });
   menu.appendChild(disableAllItem);
 
@@ -569,23 +574,54 @@ function renderPrefInput(container: HTMLElement, pluginId: string, pref: PluginP
     select.addEventListener('change', () => savePrefValue(pluginId, pref, select.value));
     input = select;
   } else if (pref.type === 'combo' && pref.options) {
-    // Combo box: dropdown with option to type custom value
+    // Combo box: text input with a custom dropdown (not native <datalist>,
+    // which has platform-specific dark mode rendering bugs in Tauri/WKWebView).
     const wrapper = toElement(<div className="plugin-combo-wrapper"></div>);
     const textInput = toElement(
-      <input type="text" className="settings-input plugin-combo-input" value={currentValue} list={`combo-${pluginId}-${pref.key}`} />
+      <input type="text" className="settings-input plugin-combo-input" value={currentValue} autocomplete="off" />
     ) as HTMLInputElement;
-    const datalist = toElement(
-      <datalist id={`combo-${pluginId}-${pref.key}`}>
-        {pref.options.map(opt => <option value={opt.value}>{opt.label}</option>)}
-      </datalist>
-    );
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    textInput.addEventListener('input', () => {
-      if (timeout) clearTimeout(timeout);
-      timeout = setTimeout(() => savePrefValue(pluginId, pref, textInput.value), 500);
+    const dropdown = toElement(<div className="plugin-combo-dropdown"></div>);
+
+    function positionDropdown() {
+      const rect = textInput.getBoundingClientRect();
+      dropdown.style.left = `${rect.left}px`;
+      dropdown.style.top = `${rect.bottom + 2}px`;
+      dropdown.style.width = `${rect.width}px`;
+    }
+
+    function renderOptions(filter = '') {
+      dropdown.innerHTML = '';
+      const lower = filter.toLowerCase();
+      const filtered = pref.options!.filter(opt =>
+        lower === '' || opt.label.toLowerCase().includes(lower) || opt.value.toLowerCase().includes(lower),
+      );
+      if (filtered.length === 0) { dropdown.style.display = 'none'; return; }
+      for (const opt of filtered) {
+        const item = toElement(
+          <div className={`plugin-combo-option${opt.value === textInput.value ? ' active' : ''}`}>{opt.label}</div>,
+        );
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault(); // prevent blur before value is set
+          textInput.value = opt.value;
+          dropdown.style.display = 'none';
+          savePrefValue(pluginId, pref, opt.value);
+        });
+        dropdown.appendChild(item);
+      }
+      positionDropdown();
+      dropdown.style.display = 'block';
+    }
+
+    textInput.addEventListener('focus', () => renderOptions(textInput.value));
+    textInput.addEventListener('input', () => renderOptions(textInput.value));
+    textInput.addEventListener('blur', () => {
+      setTimeout(() => { dropdown.style.display = 'none'; }, 150);
+      savePrefValue(pluginId, pref, textInput.value);
     });
+
+    // Append dropdown to body (not wrapper) so it escapes overflow-clipping parents
     wrapper.appendChild(textInput);
-    wrapper.appendChild(datalist);
+    document.body.appendChild(dropdown);
     input = wrapper;
   } else if (pref.type === 'boolean') {
     const checkbox = toElement(
