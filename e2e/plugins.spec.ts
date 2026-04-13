@@ -267,8 +267,10 @@ test.describe('GitHub Issues plugin — live integration', () => {
     });
     expect(settingsRes.ok()).toBe(true);
 
-    // Force re-activate the plugin to pick up new config
-    await request.post('/api/plugins/github-issues/reactivate', { headers });
+    // HS-5061: intentionally do NOT call /reactivate here. Every endpoint that
+    // uses the backend (status, sync, action, push-ticket) now reactivates
+    // internally. If a test fails because the old config was stale, it's a
+    // production regression, not a fixture bug.
   });
 
   test('connection test succeeds with valid credentials', async ({ page }) => {
@@ -452,6 +454,78 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(fullTicket.syncInfo![0].pluginId).toBe('github-issues');
   });
 
+  test('push local ticket pushes notes and attachments too (HS-5052)', async ({ request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+    const headersNoCT: Record<string, string> = {};
+    if (secret) headersNoCT['X-Hotsheet-Secret'] = secret;
+
+    // 1. Create a local ticket
+    const noteText = `E2E note ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const createRes = await request.post('/api/tickets', {
+      headers, data: { title: `E2E note+attachment push ${Date.now()}`, defaults: { details: 'has note and attachment' } },
+    });
+    const ticket = await createRes.json() as { id: number };
+
+    // 2. Add a note
+    const noteId = `n_${Date.now().toString(36)}_e2e`;
+    const notes = JSON.stringify([{ id: noteId, text: noteText, created_at: new Date().toISOString() }]);
+    const notesRes = await request.put(`/api/tickets/${ticket.id}/notes-bulk`, { headers, data: { notes } });
+    expect(notesRes.ok()).toBe(true);
+
+    // 3. Upload an attachment (small text file)
+    const attachmentFilename = `e2e-attachment-${Date.now()}.txt`;
+    const attachmentContent = `attachment body ${Date.now()}`;
+    const attachRes = await request.post(`/api/tickets/${ticket.id}/attachments`, {
+      headers: headersNoCT,
+      multipart: {
+        file: { name: attachmentFilename, mimeType: 'text/plain', buffer: Buffer.from(attachmentContent) },
+      },
+    });
+    expect(attachRes.ok()).toBe(true);
+
+    // 4. Push to GitHub
+    const pushRes = await request.post(`/api/plugins/github-issues/push-ticket/${ticket.id}`, { headers });
+    const pushResult = await pushRes.json() as { ok: boolean; remoteId: string };
+    expect(pushResult.ok).toBe(true);
+    const remoteId = pushResult.remoteId;
+
+    // 5. Verify the note shows up as a GitHub comment.
+    // Use the GitHub API directly so we exercise what really got pushed.
+    const ghHeaders: Record<string, string> = {
+      Accept: 'application/vnd.github.v3+json',
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      'User-Agent': 'HotSheet-E2E-Test',
+    };
+    const commentsRes = await request.get(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/issues/${remoteId}/comments?per_page=100`,
+      { headers: ghHeaders },
+    );
+    expect(commentsRes.ok()).toBe(true);
+    const comments = await commentsRes.json() as { body: string }[];
+    const noteComment = comments.find(c => c.body.includes(noteText));
+    expect(noteComment, `Expected note "${noteText}" to be pushed as a GitHub comment. Found: ${comments.map(c => c.body).join(' | ')}`).toBeTruthy();
+
+    // 6. Verify the attachment was pushed: there should be a comment containing
+    // the attachment filename (rendered as a markdown link). If attachment_repo
+    // isn't configured, the github-issues plugin returns null from
+    // uploadAttachment and skips silently — so we only assert when we can tell
+    // a comment was emitted.
+    const attComment = comments.find(c => c.body.includes(attachmentFilename));
+    if (!attComment) {
+      console.log('[E2E] attachment_repo not configured — attachment push skipped');
+    } else {
+      expect(attComment.body).toContain('](');
+    }
+
+    // Cleanup: close the issue we just created so it doesn't pollute the repo.
+    await request.patch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/issues/${remoteId}`,
+      { headers: { ...ghHeaders, 'Content-Type': 'application/json' }, data: { state: 'closed' } },
+    );
+  });
+
   test('synced ticket map includes plugin icon', async ({ page, request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = {};
@@ -513,6 +587,34 @@ test.describe('GitHub Issues plugin — live integration', () => {
     const result = await actionRes.json() as { ok: boolean; result: { connected: boolean } };
     expect(result.ok).toBe(true);
     expect(result.result.connected).toBe(true);
+  });
+
+  test('action endpoint reactivates so it sees fresh settings (HS-5017)', async ({ page, request }) => {
+    const secret = projectSecret;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Hotsheet-Secret'] = secret;
+
+    // Change owner to a value that will fail. Crucially: do NOT call /reactivate.
+    // Plugins like github-issues capture settings in closures during activate(),
+    // so without the action endpoint reactivating internally, it would still see
+    // the previous (working) values and incorrectly report connected.
+    await request.patch('/api/settings', {
+      headers, data: { 'plugin:github-issues:owner': 'definitely-not-a-real-owner-xyz-hs5017' },
+    });
+    try {
+      const actionRes = await request.post('/api/plugins/github-issues/action', {
+        headers, data: { actionId: 'test_connection' },
+      });
+      const result = await actionRes.json() as { ok: boolean; result: { connected: boolean } };
+      expect(result.ok).toBe(true);
+      expect(result.result.connected).toBe(false);
+    } finally {
+      // Restore correct owner so subsequent tests aren't broken.
+      await request.patch('/api/settings', {
+        headers, data: { 'plugin:github-issues:owner': GITHUB_OWNER },
+      });
+      await request.post('/api/plugins/github-issues/reactivate', { headers });
+    }
   });
 
   test('backends endpoint includes icon', async ({ page, request }) => {
@@ -594,7 +696,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(github!.manifest.name).toBe('GitHub Issues');
   });
 
-  test('config labels endpoint returns dynamic labels', async ({ page, request }) => {
+  test('config labels endpoint returns dynamic labels with color', async ({ page, request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -604,13 +706,14 @@ test.describe('GitHub Issues plugin — live integration', () => {
       headers, data: { actionId: 'test_connection' },
     });
 
-    // Get config labels
+    // Get config labels — payload is now { text, color? } per label
     const labelsRes = await request.get('/api/plugins/config-labels/github-issues', {
       headers,
     });
-    const labels = await labelsRes.json() as Record<string, string>;
+    const labels = await labelsRes.json() as Record<string, { text: string; color?: string }>;
     expect(labels['connection-status']).toBeTruthy();
-    expect(labels['connection-status']).toContain('Connected');
+    expect(labels['connection-status'].text).toContain('Connected');
+    expect(labels['connection-status'].color).toBe('success');
   });
 
   test('pull overwrites local when only remote changed', async ({ page, request }) => {

@@ -3665,12 +3665,22 @@ input, select, textarea {
 
 .config-label {
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--text);
   padding: 4px 0;
+
+  // Plugin-set tones — defaults to --text (label-color-default).
+  &.label-color-transient { color: var(--text-muted); }
+  &.label-color-success { color: #16a34a; }   // green-600
+  &.label-color-error { color: var(--danger); }
+  &.label-color-warning { color: #f97316; }   // orange-500
 }
 
 .config-group {
-  margin: 20px 0;
+  margin: 48px 0;
+
+  &.collapsed {
+    margin: 16px 0;
+  }
 
   &:first-child { margin-top: 8px; }
   &:last-child { margin-bottom: 0; }
@@ -3679,26 +3689,31 @@ input, select, textarea {
 .config-group-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  padding: 4px 0;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text);
-  padding: 6px 0;
-  user-select: none;
-
-  &:hover { color: var(--accent); }
-}
-
-.config-group-chevron {
-  font-size: 10px;
-  width: 12px;
-  text-align: center;
   color: var(--text-muted);
+  user-select: none;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+
+  &:hover { color: var(--text-secondary); }
+
+  .config-group-title {
+    flex: 1;
+  }
+
+  .config-group-chevron {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    opacity: 0.6;
+  }
 }
 
 .config-group-body {
-  padding-left: 18px;
   padding-top: 8px;
 }
 
@@ -4017,6 +4032,36 @@ input, select, textarea {
   cursor: pointer;
 
   &:hover { background: var(--bg-hover); }
+
+  &.note-empty { border-left-color: var(--border); }
+}
+
+.note-placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.note-image-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.note-image-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+
+  &:hover { text-decoration: underline; }
+
+  svg { flex-shrink: 0; }
 }
 
 .notes-empty {

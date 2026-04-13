@@ -68,7 +68,7 @@ Tickets progress through these statuses:
 
 - Each note is a `{ id, text, created_at }` entry stored in a JSON array in the `notes` column.
 - Note IDs are auto-generated server-side (`n_<timestamp>_<counter>`). Legacy notes without IDs get auto-assigned on read.
-- **Add**: Via the + button in the detail panel (appends a new note), or via ticket PATCH `notes` field (append-only, for AI tool compatibility).
+- **Add**: Via the + button in the detail panel — appends an empty note, scrolls it into view, and immediately puts it into edit mode with the textarea focused. Empty/unfocused notes render with muted placeholder text. Tickets can also be appended to via the ticket PATCH `notes` field (append-only, for AI tool compatibility).
 - **Edit**: Click a note in the detail panel to inline-edit. Saves on blur or Cmd+Enter. API: `PATCH /api/tickets/:id/notes/:noteId`.
 - **Delete**: Right-click a note for "Delete Note" context menu. API: `DELETE /api/tickets/:id/notes/:noteId`.
 - **Bulk replace**: `PUT /api/tickets/:id/notes-bulk` replaces the entire notes array (used by undo system).

@@ -15,7 +15,7 @@ import {
 } from '../plugins/loader.js';
 import type { LoadedPlugin } from '../plugins/types.js';
 import {
-  resolveConflict, runSync, startScheduledSync, stopScheduledSync,
+  resolveConflict, runSync, startScheduledSync, stopScheduledSync, syncSingleTicketContent,
 } from '../plugins/syncEngine.js';
 import { notifyMutation } from './notify.js';
 import type { AppEnv } from '../types.js';
@@ -94,13 +94,22 @@ pluginRoutes.get('/plugins/ui', async (c) => {
   return c.json(filtered);
 });
 
-/** Trigger a plugin UI action. */
+/** Trigger a plugin UI action. Always re-activates first so the action sees current config. */
 pluginRoutes.post('/plugins/:id/action', async (c) => {
   const pluginId = c.req.param('id');
-  const plugin = getPluginById(pluginId);
+  let plugin = getPluginById(pluginId);
   if (!plugin) return c.json({ error: 'Plugin not found' }, 404);
   if (!plugin.instance.onAction) return c.json({ error: 'Plugin does not handle actions' }, 400);
   const body = await c.req.json() as { actionId: string; ticketIds?: number[]; value?: unknown };
+
+  // Re-activate to pick up any setting changes made since last activation.
+  // Plugins commonly capture settings in closures during activate(), so without
+  // this they would see stale values when the user clicks an action button right
+  // after editing fields in the config dialog.
+  await reactivatePlugin(pluginId);
+  plugin = getPluginById(pluginId)!;
+  if (!plugin.instance.onAction) return c.json({ error: 'Plugin does not handle actions' }, 400);
+
   try {
     const result = await plugin.instance.onAction(body.actionId, {
       ticketIds: body.ticketIds,
@@ -141,13 +150,13 @@ pluginRoutes.get('/plugins/config-labels/:id', async (c) => {
   const pluginId = c.req.param('id');
   const plugin = getPluginById(pluginId);
   if (!plugin) return c.json({});
-  const labels: Record<string, string> = {};
+  const labels: Record<string, { text: string; color?: string }> = {};
   const layout = plugin.manifest.configLayout ?? [];
   const findLabels = (items: typeof layout) => {
     for (const item of items) {
       if (item.type === 'label' && item.id) {
         const override = getConfigLabelOverride(pluginId, item.id);
-        if (override) labels[item.id] = override;
+        if (override) labels[item.id] = { text: override.text, color: override.color };
       }
       if (item.type === 'group' && item.items) findLabels(item.items);
     }
@@ -331,6 +340,10 @@ pluginRoutes.post('/plugins/:id/push-ticket/:ticketId', async (c) => {
   const remoteId = await plugin.backend.createRemote(ticket);
   await upsertSyncRecord(ticketId, pluginId, remoteId, 'synced');
 
+  // Push notes and attachments — createRemote only pushes core fields,
+  // so without this they would be silently dropped on first push.
+  await syncSingleTicketContent(plugin.backend, ticketId, remoteId);
+
   const remoteUrl = plugin.backend.getRemoteUrl?.(remoteId) ?? null;
   notifyMutation(c.get('dataDir'));
   return c.json({ ok: true, remoteId, remoteUrl });
@@ -501,3 +514,125 @@ pluginRoutes.post('/plugins/:id/global-config', async (c) => {
   setGlobalPluginSetting(c.req.param('id'), body.key, body.value);
   return c.json({ ok: true });
 });
+
+/** Proxy an image URL through the server using the plugin's stored token.
+ *  Private GitHub repos serve images (raw.githubusercontent.com etc.) behind
+ *  auth, so the browser can't fetch them directly. This endpoint fetches the
+ *  image server-side with the PAT and streams it back. */
+pluginRoutes.get('/plugins/:id/image-proxy', async (c) => {
+  const pluginId = c.req.param('id');
+  const url = c.req.query('url');
+  if (!url) return c.json({ error: 'url query parameter required' }, 400);
+
+  // Security: only proxy URLs from known GitHub domains.
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return c.json({ error: 'Invalid URL' }, 400); }
+  const ALLOWED_HOSTS = new Set([
+    'raw.githubusercontent.com',
+    'user-images.githubusercontent.com',
+    'private-user-images.githubusercontent.com',
+    'github.com',
+    'objects.githubusercontent.com',
+    'avatars.githubusercontent.com',
+  ]);
+  if (!ALLOWED_HOSTS.has(parsed.hostname)) {
+    return c.json({ error: 'URL host not allowed' }, 403);
+  }
+
+  // Read the plugin's PAT from global config.
+  const token = getGlobalPluginSetting(pluginId, 'token');
+  if (!token) return c.json({ error: 'No token configured for plugin' }, 400);
+
+  try {
+    let fetchUrl = url;
+
+    // github.com/user-attachments/assets/UUID can't be fetched with a PAT
+    // directly — GitHub requires browser session cookies. But the API's
+    // rendered-HTML response (body_html) contains a JWT-signed URL on
+    // private-user-images.githubusercontent.com that DOES work. Resolve it
+    // by finding the comment that contains this UUID.
+    if (parsed.hostname === 'github.com' && parsed.pathname.startsWith('/user-attachments/')) {
+      const uuid = parsed.pathname.split('/').pop();
+      if (uuid) {
+        const resolved = await resolveUserAttachmentUrl(pluginId, token, uuid);
+        if (!resolved) return c.json({ error: 'Could not resolve user-attachment URL' }, 502);
+        fetchUrl = resolved;
+      }
+    }
+
+    const reqHeaders: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      Accept: '*/*',
+      'User-Agent': 'HotSheet-Image-Proxy/1.0',
+    };
+    const res = await fetch(fetchUrl, { headers: reqHeaders });
+    if (!res.ok) return c.json({ error: `Upstream ${res.status}` }, 502);
+
+    const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
+    const body = await res.arrayBuffer();
+    return new Response(body, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'private, max-age=3600',
+      },
+    });
+  } catch (e) {
+    return c.json({ error: `Proxy fetch failed: ${e instanceof Error ? e.message : e}` }, 502);
+  }
+});
+
+/** Resolve a github.com/user-attachments/assets/UUID URL to a signed
+ *  private-user-images.githubusercontent.com URL by finding the comment
+ *  that contains it and reading its body_html from the API. */
+async function resolveUserAttachmentUrl(pluginId: string, token: string, uuid: string): Promise<string | null> {
+  // Find which ticket/issue contains this UUID by scanning local notes.
+  const db = await getDb();
+  const notesResult = await db.query<{ id: number; notes: string }>(
+    "SELECT id, notes FROM tickets WHERE notes LIKE $1 AND status != 'deleted' LIMIT 1",
+    [`%${uuid}%`],
+  );
+  if (notesResult.rows.length === 0) return null;
+
+  // Look up the sync record to get the remote issue number.
+  const syncResult = await db.query<{ remote_id: string }>(
+    'SELECT remote_id FROM ticket_sync WHERE ticket_id = $1 AND plugin_id = $2',
+    [notesResult.rows[0].id, pluginId],
+  );
+  if (syncResult.rows.length === 0) return null;
+  const remoteId = syncResult.rows[0].remote_id;
+
+  // Read plugin settings for owner/repo.
+  const plugin = getPluginById(pluginId);
+  if (!plugin) return null;
+  const settingsResult = await db.query<{ key: string; value: string }>(
+    "SELECT key, value FROM settings WHERE key IN ($1, $2)",
+    [`plugin:${pluginId}:owner`, `plugin:${pluginId}:repo`],
+  );
+  const settings = Object.fromEntries(settingsResult.rows.map(r => [r.key.split(':').pop(), r.value]));
+  const owner = settings['owner'] ?? '';
+  const repo = settings['repo'] ?? '';
+  if (!owner || !repo) return null;
+
+  // Fetch comments for this issue with body_html to get the signed URL.
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/issues/${remoteId}/comments?per_page=100`;
+  const res = await fetch(apiUrl, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github.v3.html+json',
+      'User-Agent': 'HotSheet-Image-Proxy/1.0',
+    },
+  });
+  if (!res.ok) return null;
+  const comments = await res.json() as { body_html?: string }[];
+
+  for (const comment of comments) {
+    if (!comment.body_html || !comment.body_html.includes(uuid)) continue;
+    // Extract the signed URL from body_html — it's in an <img src="..."> tag.
+    const match = comment.body_html.match(
+      /src="(https:\/\/private-user-images\.githubusercontent\.com\/[^"]+)"/,
+    );
+    if (match) return match[1];
+  }
+  return null;
+}

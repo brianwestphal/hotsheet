@@ -32,12 +32,15 @@ export interface PluginPreference {
   options?: { value: string; label: string }[];
 }
 
+/** Predefined label color tones. The actual CSS color is bound by the host. */
+export type ConfigLabelColor = 'default' | 'success' | 'error' | 'warning' | 'transient';
+
 /** Items in the config dialog layout. */
 export type ConfigLayoutItem =
   | { type: 'preference'; key: string }
   | { type: 'divider' }
   | { type: 'spacer' }
-  | { type: 'label'; id: string; text: string }
+  | { type: 'label'; id: string; text: string; color?: ConfigLabelColor }
   | { type: 'button'; id: string; label: string; action: string; icon?: string; style?: string }
   | { type: 'group'; title: string; collapsed?: boolean; items: ConfigLayoutItem[] };
 
@@ -157,8 +160,8 @@ export interface PluginContext {
   setSetting(key: string, value: string): Promise<void>;
   /** Register UI elements for this plugin. */
   registerUI(elements: PluginUIElement[]): void;
-  /** Dynamically update a config layout label's text. */
-  updateConfigLabel(labelId: string, text: string): void;
+  /** Dynamically update a config layout label's text and optional color. */
+  updateConfigLabel(labelId: string, text: string, color?: ConfigLabelColor): void;
 }
 
 // --- Ticketing backend interface ---

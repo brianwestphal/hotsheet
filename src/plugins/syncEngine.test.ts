@@ -35,7 +35,7 @@ const loaderMock = await import('./loader.js') as typeof import('./loader.js') &
   __registerBackend: (b: TicketingBackend) => void;
   __clearBackends: () => void;
 };
-const { runSync, resolveConflict, onTicketChanged, onTicketCreated, stopAllScheduledSyncs, cancelPendingPush } = await import('./syncEngine.js');
+const { runSync, resolveConflict, onTicketChanged, onTicketCreated, stopAllScheduledSyncs, cancelPendingPush, startScheduledSync, stopScheduledSync } = await import('./syncEngine.js');
 
 let tempDir: string;
 
@@ -458,5 +458,145 @@ describe('sync engine — error handling', () => {
     // The entry may or may not have been processed depending on ordering
     // with entries from other tests; just verify it wasn't removed
     expect(entry!.attempts).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('sync engine — HS-5058: stale records & outbox exhaustion', () => {
+  it('push 404 removes the stale sync record', async () => {
+    // User expectation: if a synced issue is gone from the remote, Hot Sheet
+    // stops trying to sync the broken link.
+    const backend = createMockBackend();
+    backend.updateRemote = async () => {
+      throw new Error('GitHub API error 404: Not Found');
+    };
+    loaderMock.__registerBackend(backend);
+
+    const ticket = await createTicket('Stale push cleanup');
+    await upsertSyncRecord(ticket.id, 'mock-backend', 'gone-remote-id', 'synced');
+    // Force local update so pushToRemote attempts an updateRemote call.
+    await updateTicket(ticket.id, { title: 'Edited to trigger push' });
+
+    await runSync('mock-backend');
+
+    // Sync record should be gone.
+    const rec = await getSyncRecord(ticket.id, 'mock-backend');
+    expect(rec).toBeNull();
+  });
+
+  it('comment-sync 404 removes the stale sync record even without a local edit', async () => {
+    // User expectation: even if I don't edit the ticket, if the remote issue
+    // is deleted externally, the broken link gets cleaned up on the next sync.
+    // This is the path via syncComments catching the 404 from getComments.
+    const backend = createMockBackend();
+    backend.capabilities.comments = true;
+    backend.getComments = async () => {
+      throw new Error('GitHub API error 404: Not Found');
+    };
+    loaderMock.__registerBackend(backend);
+
+    const ticket = await createTicket('Stale comment cleanup');
+    // Sync record points to a remote that 404s. No local edit (no push push).
+    await upsertSyncRecord(ticket.id, 'mock-backend', 'gone-remote-2', 'synced');
+
+    await runSync('mock-backend');
+
+    const rec = await getSyncRecord(ticket.id, 'mock-backend');
+    expect(rec).toBeNull();
+  });
+
+  it('scheduled sync fires on the configured interval and stops when cancelled', async () => {
+    // User expectation: "if I schedule a sync, it actually runs on its own."
+    const backend = createMockBackend();
+    let pullCount = 0;
+    const originalPull = backend.pullChanges;
+    backend.pullChanges = async (since) => {
+      pullCount++;
+      return originalPull.call(backend, since);
+    };
+    loaderMock.__registerBackend(backend);
+
+    // Start a very fast schedule (150ms). The public route's interval_minutes
+    // floors at 1 minute, but the underlying startScheduledSync accepts ms.
+    startScheduledSync('mock-backend', 150);
+
+    // Wait long enough for at least 2 ticks.
+    await new Promise(r => setTimeout(r, 400));
+    expect(pullCount).toBeGreaterThanOrEqual(2);
+
+    // Stop the schedule and confirm it actually stops.
+    stopScheduledSync('mock-backend');
+    const countAfterStop = pullCount;
+    await new Promise(r => setTimeout(r, 300));
+    expect(pullCount).toBe(countAfterStop);
+  });
+
+  it('outbox create entry is skipped when ticket already has a sync record (HS-5083)', async () => {
+    // Exact repro: user creates a ticket (onTicketCreated queues a create outbox
+    // entry via the legacy auto-create path), then pushes via push-ticket (which
+    // creates the remote issue + sync record directly). On the next sync, the
+    // stale outbox entry must be skipped — not processed as a second create.
+    const backend = createMockBackend();
+    loaderMock.__registerBackend(backend);
+
+    // Simulate the legacy auto-create: a create outbox entry exists...
+    const ticket = await createTicket('HS-5083 repro');
+    await addToOutbox(ticket.id, 'mock-backend', 'create', {});
+
+    // ...but push-ticket already created the remote and established a sync record.
+    const firstRemoteId = 'existing-remote-from-push-ticket';
+    backend.issues.push({
+      id: firstRemoteId,
+      fields: { title: ticket.title, details: '', category: 'issue', priority: 'default', status: 'not_started', tags: [], up_next: false },
+      updatedAt: new Date(),
+      deleted: false,
+    });
+    await upsertSyncRecord(ticket.id, 'mock-backend', firstRemoteId, 'synced');
+
+    // Run sync — the outbox create entry must NOT create a second remote issue.
+    const result = await runSync('mock-backend');
+    expect(result.ok).toBe(true);
+
+    // The mock backend should NOT have a second issue — only the one from push-ticket.
+    const createdByOutbox = backend.issues.filter(i => i.id !== firstRemoteId);
+    expect(createdByOutbox.length).toBe(0);
+
+    // The sync record should still point to the original remote issue.
+    const syncRec = await getSyncRecord(ticket.id, 'mock-backend');
+    expect(syncRec!.remote_id).toBe(firstRemoteId);
+
+    // The outbox entry should be removed (not left dangling).
+    const remaining = await getOutboxEntries('mock-backend');
+    expect(remaining.find(e => e.ticket_id === ticket.id)).toBeUndefined();
+  });
+
+  it('outbox create entry is permanently removed after 5 failed attempts', async () => {
+    // User expectation: if a sync keeps failing for the same ticket, it
+    // eventually gives up instead of churning forever.
+    const backend = createMockBackend();
+    backend.createRemote = async () => { throw new Error('Always fails'); };
+    loaderMock.__registerBackend(backend);
+
+    const ticket = await createTicket('Exhaustion test');
+    await addToOutbox(ticket.id, 'mock-backend', 'create', {});
+
+    // Each runSync call tries once, fails, increments attempts by 1.
+    // After 5 failures attempts == 5. The 6th run should remove the entry
+    // before even attempting the operation.
+    for (let i = 0; i < 5; i++) {
+      await runSync('mock-backend');
+    }
+
+    // After 5 failed runs, the entry should still exist with attempts == 5.
+    let entries = await getOutboxEntries('mock-backend');
+    let entry = entries.find(e => e.ticket_id === ticket.id);
+    expect(entry).toBeTruthy();
+    expect(entry!.attempts).toBe(5);
+
+    // The 6th run should REMOVE the entry (the check `if (attempts >= 5)` at
+    // the top of the outbox loop fires before the try block).
+    await runSync('mock-backend');
+    entries = await getOutboxEntries('mock-backend');
+    entry = entries.find(e => e.ticket_id === ticket.id);
+    expect(entry).toBeUndefined();
   });
 });

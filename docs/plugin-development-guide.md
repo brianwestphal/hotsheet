@@ -123,7 +123,7 @@ The `configLayout` array controls how the config dialog is structured. If omitte
 | `preference` | `key` | Renders the preference input for the given key |
 | `divider` | | Horizontal line |
 | `spacer` | | Vertical gap (8px) |
-| `label` | `id`, `text` | Dynamic text label (can be updated via `context.updateConfigLabel`) |
+| `label` | `id`, `text`, `color?` | Dynamic text label. `color` is one of `default`, `success`, `error`, `warning`, `transient`. Update via `context.updateConfigLabel` |
 | `button` | `id`, `label`, `action`, `icon?`, `style?` | Clickable button that triggers `onAction` |
 | `group` | `title`, `collapsed?`, `items` | Collapsible group containing other layout items |
 
@@ -169,8 +169,8 @@ export async function activate(ctx: PluginContext): Promise<TicketingBackend | v
 export async function onAction(actionId: string, actionContext: { ticketIds?: number[]; value?: unknown }): Promise<unknown> {
   if (actionId === 'sync') return { redirect: 'sync' };
   if (actionId === 'test_connection') {
-    // test and update label
-    context.updateConfigLabel('connection-status', 'Connected');
+    // test and update label (third arg is one of: default | success | error | warning | transient)
+    context.updateConfigLabel('connection-status', 'Connected', 'success');
     return { connected: true };
   }
   return null;
@@ -192,7 +192,7 @@ The `context` object passed to `activate`:
 | `setSetting(key, value)` | Write a preference value |
 | `log(level, message)` | Log attributed to this plugin (`'info'`, `'warn'`, `'error'`) |
 | `registerUI(elements)` | Register UI elements (toolbar buttons, etc.) |
-| `updateConfigLabel(labelId, text)` | Dynamically update a label in the config dialog |
+| `updateConfigLabel(labelId, text, color?)` | Dynamically update a label in the config dialog. `color` is `default` \| `success` \| `error` \| `warning` \| `transient` |
 
 ## UI Extension Points
 
@@ -289,11 +289,23 @@ The sync engine handles the complexity. Your plugin just needs to implement the 
 
 ### Comments
 
-If `capabilities.comments` is true and comment methods are implemented:
-1. Engine calls `getComments(remoteId)` to get remote comments
-2. New remote comments → create local notes
-3. New local notes → call `createComment(remoteId, text)`
-4. Text-based deduplication prevents duplicates
+If `capabilities.comments` is true and comment methods are implemented, the sync engine runs a three-way merge using `last_synced_text` in the `note_sync` table:
+
+**Create (bidirectional):**
+1. New remote comments (unmapped) → create local notes. Text-based dedup: if a local note already has identical text, it's linked instead of duplicated.
+2. New local notes (unmapped) → call `createComment(remoteId, text)`. Text-based dedup applies in reverse.
+
+**Edit (bidirectional):**
+3. For each existing mapping, compares current local text and remote text against the `last_synced_text` baseline.
+4. Only local changed → calls `updateComment(remoteId, commentId, newText)`.
+5. Only remote changed → updates the local note text.
+6. Both changed → push-wins (local overwrites remote via `updateComment`).
+
+**Delete (bidirectional):**
+7. Local note deleted (mapping exists, note gone) → calls `deleteComment(remoteId, commentId)`.
+8. Remote comment deleted (mapping exists, comment gone) → removes the local note.
+
+Attachment mappings (note IDs with `att_` prefix) are skipped by the comment sync.
 
 ### Attachments
 
@@ -301,6 +313,7 @@ If `uploadAttachment` is implemented:
 1. Engine reads local attachments for each synced ticket
 2. Calls `uploadAttachment(filename, content, mimeType)` → returns a URL
 3. Posts a markdown comment on the remote issue with the file link
+4. Returned URLs should be permanent (not short-lived tokens) — the host may cache or proxy them
 
 ## Field Mappings
 
@@ -512,13 +525,15 @@ export interface FieldValidation {
   message: string;
 }
 
+export type ConfigLabelColor = 'default' | 'success' | 'error' | 'warning' | 'transient';
+
 export interface PluginContext {
   config: Record<string, unknown>;
   log(level: 'info' | 'warn' | 'error', message: string): void;
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
   registerUI(elements: PluginUIElement[]): void;
-  updateConfigLabel(labelId: string, text: string): void;
+  updateConfigLabel(labelId: string, text: string, color?: ConfigLabelColor): void;
 }
 
 export interface TicketingBackend {

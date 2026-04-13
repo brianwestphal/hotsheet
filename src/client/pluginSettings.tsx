@@ -3,11 +3,14 @@ import { api } from './api.js';
 import { toElement } from './dom.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 
+type ConfigLabelColor = 'default' | 'success' | 'error' | 'warning' | 'transient';
+
 interface ConfigLayoutItem {
   type: 'preference' | 'divider' | 'spacer' | 'label' | 'button' | 'group';
   key?: string;
   id?: string;
   text?: string;
+  color?: ConfigLabelColor;
   label?: string;
   action?: string;
   icon?: string;
@@ -15,6 +18,11 @@ interface ConfigLayoutItem {
   title?: string;
   collapsed?: boolean;
   items?: ConfigLayoutItem[];
+}
+
+function labelColorClass(color: string | undefined): string {
+  if (color == null || color === '' || color === 'default') return 'config-label';
+  return `config-label label-color-${color}`;
 }
 
 interface PluginInfo {
@@ -444,7 +452,7 @@ function renderConfigLayout(container: HTMLElement, items: ConfigLayoutItem[], p
         break;
       case 'label':
         container.appendChild(toElement(
-          <div className="config-label" id={`config-label-${pluginId}-${item.id}`}>{item.text ?? ''}</div>
+          <div className={labelColorClass(item.color)} id={`config-label-${pluginId}-${item.id}`}>{item.text ?? ''}</div>
         ));
         break;
       case 'button': {
@@ -461,11 +469,14 @@ function renderConfigLayout(container: HTMLElement, items: ConfigLayoutItem[], p
             await api(`/plugins/${pluginId}/action`, {
               method: 'POST', body: { actionId: item.action },
             });
-            // Refresh dynamic labels
-            const labelsRes = await api<Record<string, string>>(`/plugins/config-labels/${pluginId}`);
-            for (const [labelId, text] of Object.entries(labelsRes)) {
+            // Refresh dynamic labels (text + color)
+            const labelsRes = await api<Record<string, { text: string; color?: string }>>(`/plugins/config-labels/${pluginId}`);
+            for (const [labelId, payload] of Object.entries(labelsRes)) {
               const el = container.querySelector(`#config-label-${pluginId}-${labelId}`);
-              if (el) el.textContent = text;
+              if (el) {
+                el.textContent = payload.text;
+                el.className = labelColorClass(payload.color);
+              }
             }
           } catch (e) {
             console.error('Config action failed:', e);
@@ -477,21 +488,23 @@ function renderConfigLayout(container: HTMLElement, items: ConfigLayoutItem[], p
       }
       case 'group': {
         const collapsed = item.collapsed === true;
+        const chevronRight = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
+        const chevronDown = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
         const group = toElement(
           <div className={`config-group${collapsed ? ' collapsed' : ''}`}>
             <div className="config-group-header">
-              <span className="config-group-chevron">{collapsed ? '\u25B8' : '\u25BE'}</span>
               <span className="config-group-title">{item.title ?? 'Group'}</span>
+              <span className="config-group-chevron">{raw(collapsed ? chevronRight : chevronDown)}</span>
             </div>
             <div className="config-group-body" style={collapsed ? 'display:none' : ''}></div>
           </div>
         );
         group.querySelector('.config-group-header')!.addEventListener('click', () => {
           const bodyEl = group.querySelector('.config-group-body') as HTMLElement;
-          const chevron = group.querySelector('.config-group-chevron')!;
+          const chevron = group.querySelector('.config-group-chevron') as HTMLElement;
           const isCollapsed = bodyEl.style.display === 'none';
           bodyEl.style.display = isCollapsed ? '' : 'none';
-          chevron.textContent = isCollapsed ? '\u25BE' : '\u25B8';
+          chevron.innerHTML = isCollapsed ? chevronDown : chevronRight;
           group.classList.toggle('collapsed', !isCollapsed);
         });
         if (item.items) {

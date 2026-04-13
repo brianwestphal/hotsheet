@@ -1,5 +1,5 @@
 import {
-  addToOutbox, clearOutbox, deleteSyncRecord, getNoteSyncByRemoteId, getNoteSyncRecords,
+  addToOutbox, clearOutbox, deleteNoteSyncRecord, deleteSyncRecord, getNoteSyncByRemoteId, getNoteSyncRecords,
   getOutboxEntries, getSyncRecord, getSyncRecordByRemoteId,
   getSyncRecordsForPlugin, incrementOutboxAttempts, removeOutboxEntry,
   updateSyncStatus, upsertNoteSyncRecord, upsertSyncRecord,
@@ -287,8 +287,20 @@ async function pushToRemote(backend: TicketingBackend): Promise<{ pushed: number
       if (entry.action === 'create') {
         const ticket = await getTicket(entry.ticket_id);
         if (ticket && backend.capabilities.create) {
+          // Skip if the ticket already has a sync record — push-ticket or a
+          // prior sync may have created the remote while this outbox entry sat
+          // in the queue. Without this check, we'd create a DUPLICATE remote
+          // issue and overwrite the sync record to point at it, losing the
+          // association to the original and causing comment-sync to delete local
+          // notes that appear "missing" on the wrong remote issue.
+          const existingSync = await getSyncRecord(ticket.id, backend.id);
+          if (existingSync) {
+            await removeOutboxEntry(entry.id);
+            continue;
+          }
           const remoteId = await backend.createRemote(ticket);
           await upsertSyncRecord(ticket.id, backend.id, remoteId, 'synced');
+          await syncSingleTicketContent(backend, ticket.id, remoteId);
           pushed++;
         }
       } else if (entry.action === 'delete') {
@@ -400,6 +412,24 @@ async function syncComments(backend: TicketingBackend): Promise<void> {
   }
 }
 
+/** Push notes and attachments for a single newly-synced ticket. */
+export async function syncSingleTicketContent(backend: TicketingBackend, ticketId: number, remoteId: string): Promise<void> {
+  if (backend.capabilities.comments && backend.getComments) {
+    try {
+      await syncTicketComments(backend, ticketId, remoteId);
+    } catch (e) {
+      console.warn(`[sync] Comment sync failed for ticket ${ticketId}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  if (backend.uploadAttachment) {
+    try {
+      await syncTicketAttachments(backend, ticketId, remoteId);
+    } catch (e) {
+      console.warn(`[sync] Attachment sync failed for ticket ${ticketId}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+}
+
 async function syncTicketComments(backend: TicketingBackend, ticketId: number, remoteId: string): Promise<void> {
   if (!backend.getComments) return;
 
@@ -407,60 +437,168 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
   if (!ticket) return;
   const localNotes = parseNotes(ticket.notes);
 
-  // Get remote comments (404 means the issue doesn't exist in the current repo — skip)
+  // Get remote comments. If the remote issue is gone (404/410), re-throw so
+  // the outer syncComments loop can clean up the stale sync record. Other
+  // errors are swallowed silently (rate limit, transient network) so one bad
+  // ticket doesn't break the whole sync pass.
   let remoteComments;
   try {
     remoteComments = await backend.getComments(remoteId);
-  } catch {
-    return; // Remote issue not found, skip comment sync
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404') || msg.includes('410') || msg.includes('Not Found')) {
+      throw e;
+    }
+    return;
   }
 
   const mappings = await getNoteSyncRecords(ticketId, backend.id);
-  const mappedNoteIds = new Set(mappings.map(m => m.note_id));
-  const mappedRemoteIds = new Set(mappings.map(m => m.remote_comment_id));
+  const noteIdToMapping = new Map(mappings.map(m => [m.note_id, m]));
+  const remoteIdToMapping = new Map(mappings.map(m => [m.remote_comment_id, m]));
+
+  // Skip attachment mappings (att_ prefix) — they're managed by syncTicketAttachments.
+  const isAttMapping = (noteId: string) => noteId.startsWith('att_');
 
   let changed = false;
+  const localNoteById = new Map(localNotes.map(n => [n.id, n]));
+  const remoteCommentById = new Map(remoteComments.map(c => [c.id, c]));
 
-  // Pull: remote comments not yet mapped → create local notes
-  // Deduplicate: skip if a local note already has identical text
+  // Pass 1: handle existing mappings — detect edits and deletes on both sides.
+  for (const mapping of mappings) {
+    if (isAttMapping(mapping.note_id)) continue;
+
+    const localNote = localNoteById.get(mapping.note_id);
+    const remoteComment = remoteCommentById.get(mapping.remote_comment_id);
+    const base = mapping.last_synced_text ?? null;
+
+    // Both sides still exist → check for edits
+    if (localNote && remoteComment) {
+      const localText = localNote.text;
+      const remoteText = remoteComment.text;
+      const localChanged = base !== null && localText !== base;
+      const remoteChanged = base !== null && remoteText !== base;
+
+      if (localText === remoteText) {
+        // No divergence — make sure the baseline is up to date.
+        if (base !== localText) {
+          await upsertNoteSyncRecord(ticketId, mapping.note_id, backend.id, mapping.remote_comment_id, localText);
+        }
+      } else if (localChanged && !remoteChanged) {
+        // Push local edit to remote
+        if (backend.updateComment) {
+          try {
+            await backend.updateComment(remoteId, mapping.remote_comment_id, localText);
+            await upsertNoteSyncRecord(ticketId, mapping.note_id, backend.id, mapping.remote_comment_id, localText);
+          } catch (e) {
+            console.warn(`[sync] Failed to update remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : e}`);
+          }
+        }
+      } else if (remoteChanged && !localChanged) {
+        // Pull remote edit into local note
+        localNote.text = remoteText;
+        changed = true;
+        await upsertNoteSyncRecord(ticketId, mapping.note_id, backend.id, mapping.remote_comment_id, remoteText);
+      } else if (localChanged && remoteChanged) {
+        // Both edited — push-wins policy. Keep the local value and overwrite remote.
+        if (backend.updateComment) {
+          try {
+            await backend.updateComment(remoteId, mapping.remote_comment_id, localText);
+            await upsertNoteSyncRecord(ticketId, mapping.note_id, backend.id, mapping.remote_comment_id, localText);
+          } catch (e) {
+            console.warn(`[sync] Failed to update remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : e}`);
+          }
+        }
+      } else {
+        // Neither changed vs base (base may be null from older records) — just
+        // refresh the baseline with the current text so future edits are detectable.
+        await upsertNoteSyncRecord(ticketId, mapping.note_id, backend.id, mapping.remote_comment_id, localText);
+      }
+      continue;
+    }
+
+    if (!localNote && remoteComment) {
+      // Local note deleted → delete the remote comment.
+      if (backend.deleteComment) {
+        try {
+          await backend.deleteComment(remoteId, mapping.remote_comment_id);
+        } catch (e) {
+          console.warn(`[sync] Failed to delete remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : e}`);
+        }
+      }
+      await deleteNoteSyncRecord(ticketId, mapping.note_id, backend.id);
+      continue;
+    }
+
+    if (localNote && !remoteComment) {
+      // Remote comment deleted → remove the local note to keep sides in sync.
+      const idx = localNotes.findIndex(n => n.id === mapping.note_id);
+      if (idx >= 0) {
+        localNotes.splice(idx, 1);
+        localNoteById.delete(mapping.note_id);
+        changed = true;
+      }
+      await deleteNoteSyncRecord(ticketId, mapping.note_id, backend.id);
+      continue;
+    }
+
+    // Both sides gone — clean up the stale mapping.
+    await deleteNoteSyncRecord(ticketId, mapping.note_id, backend.id);
+  }
+
+  // Pass 2: pull NEW remote comments into local notes (unmapped on the remote side).
+  const mappedRemoteIds = new Set(mappings.map(m => m.remote_comment_id));
   const localTexts = new Set(localNotes.map(n => n.text.trim()));
   for (const comment of remoteComments) {
     if (mappedRemoteIds.has(comment.id)) continue;
     if (localTexts.has(comment.text.trim())) {
-      // Text already exists locally — just create the mapping without duplicating
-      const existing = localNotes.find(n => n.text.trim() === comment.text.trim() && !mappedNoteIds.has(n.id));
+      // Text-based dedup: a local note with the same text already exists. Just map it.
+      const existing = localNotes.find(
+        n => n.text.trim() === comment.text.trim() && !noteIdToMapping.has(n.id),
+      );
       if (existing) {
-        await upsertNoteSyncRecord(ticketId, existing.id, backend.id, comment.id);
-        mappedNoteIds.add(existing.id);
+        await upsertNoteSyncRecord(ticketId, existing.id, backend.id, comment.id, existing.text);
+        noteIdToMapping.set(existing.id, {
+          id: 0, ticket_id: ticketId, note_id: existing.id, plugin_id: backend.id,
+          remote_comment_id: comment.id, last_synced_at: new Date().toISOString(),
+          last_synced_text: existing.text,
+        });
       }
       continue;
     }
     const noteId = `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     localNotes.push({ id: noteId, text: comment.text, created_at: comment.createdAt.toISOString() });
-    await upsertNoteSyncRecord(ticketId, noteId, backend.id, comment.id);
+    localNoteById.set(noteId, localNotes[localNotes.length - 1]);
+    await upsertNoteSyncRecord(ticketId, noteId, backend.id, comment.id, comment.text);
     localTexts.add(comment.text.trim());
     changed = true;
   }
 
-  // Push: local notes not yet mapped → create remote comments
-  // Deduplicate: skip if remote already has identical text
+  // Pass 3: push NEW local notes to remote (unmapped on the local side).
   const remoteTexts = new Set(remoteComments.map(c => c.text.trim()));
+  const mappedRemoteIdsAfterPull = new Set([
+    ...mappedRemoteIds,
+    ...Array.from(noteIdToMapping.values()).map(m => m.remote_comment_id),
+  ]);
   for (const note of localNotes) {
-    if (mappedNoteIds.has(note.id)) continue;
+    if (isAttMapping(note.id)) continue;
+    if (noteIdToMapping.has(note.id)) continue;
     if (!backend.createComment) continue;
     if (remoteTexts.has(note.text.trim())) {
-      // Text already exists remotely — just create the mapping
-      const existing = remoteComments.find(c => c.text.trim() === note.text.trim() && !mappedRemoteIds.has(c.id));
+      // Text already exists remotely — map it.
+      const existing = remoteComments.find(
+        c => c.text.trim() === note.text.trim() && !mappedRemoteIdsAfterPull.has(c.id),
+      );
       if (existing) {
-        await upsertNoteSyncRecord(ticketId, note.id, backend.id, existing.id);
-        mappedRemoteIds.add(existing.id);
+        await upsertNoteSyncRecord(ticketId, note.id, backend.id, existing.id, note.text);
+        mappedRemoteIdsAfterPull.add(existing.id);
       }
       continue;
     }
     try {
       const remoteCommentId = await backend.createComment(remoteId, note.text);
-      await upsertNoteSyncRecord(ticketId, note.id, backend.id, remoteCommentId);
+      await upsertNoteSyncRecord(ticketId, note.id, backend.id, remoteCommentId, note.text);
       remoteTexts.add(note.text.trim());
+      mappedRemoteIdsAfterPull.add(remoteCommentId);
     } catch (e) {
       console.warn(`[sync] Failed to push note ${note.id} for ticket ${ticketId}: ${e instanceof Error ? e.message : e}`);
     }
@@ -568,15 +706,27 @@ export async function resolveConflict(
   }
 
   if (resolution === 'keep_local') {
-    // Push local values to remote
+    // Mark as synced FIRST, then push. pushToRemote's direct-compare loop
+    // skips any record with sync_status='conflict', so without clearing the
+    // status first the immediate push would silently do nothing and the user
+    // would have to click Sync again to actually propagate their choice.
+    await updateSyncStatus(ticketId, pluginId, 'synced');
     if (backend) {
-      await addToOutbox(ticketId, pluginId, 'update', conflictData.local);
-      try { await pushToRemote(backend); } catch { /* will retry */ }
+      try { await pushToRemote(backend); } catch { /* will retry on next sync */ }
     }
   } else {
-    // Apply remote values locally
+    // Apply remote values to the local ticket, then re-baseline the sync
+    // record to the ticket's NEW updated_at. Without re-baselining, the next
+    // push's direct-compare loop would see ticket.updated_at > local_updated_at
+    // and pointlessly PATCH GitHub with the same values we just pulled in
+    // (churn on every sync after a keep_remote resolution).
     await applyFieldsToTicket(ticketId, conflictData.remote);
+    await upsertSyncRecord(
+      ticketId,
+      pluginId,
+      syncRecord.remote_id,
+      'synced',
+      syncRecord.remote_updated_at ? new Date(syncRecord.remote_updated_at) : null,
+    );
   }
-
-  await updateSyncStatus(ticketId, pluginId, 'synced');
 }

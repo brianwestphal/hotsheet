@@ -142,6 +142,7 @@ export interface NoteSyncRecord {
   plugin_id: string;
   remote_comment_id: string;
   last_synced_at: string;
+  last_synced_text: string | null;
 }
 
 export async function getNoteSyncRecords(ticketId: number, pluginId: string): Promise<NoteSyncRecord[]> {
@@ -163,15 +164,17 @@ export async function getNoteSyncByRemoteId(ticketId: number, pluginId: string, 
 }
 
 export async function upsertNoteSyncRecord(
-  ticketId: number, noteId: string, pluginId: string, remoteCommentId: string,
+  ticketId: number, noteId: string, pluginId: string, remoteCommentId: string, lastSyncedText?: string,
 ): Promise<void> {
   const db = await getDb();
   await db.query(
-    `INSERT INTO note_sync (ticket_id, note_id, plugin_id, remote_comment_id)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO note_sync (ticket_id, note_id, plugin_id, remote_comment_id, last_synced_text)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (ticket_id, note_id, plugin_id) DO UPDATE SET
-       remote_comment_id = $4, last_synced_at = NOW()`,
-    [ticketId, noteId, pluginId, remoteCommentId],
+       remote_comment_id = $4,
+       last_synced_text = COALESCE($5, note_sync.last_synced_text),
+       last_synced_at = NOW()`,
+    [ticketId, noteId, pluginId, remoteCommentId, lastSyncedText ?? null],
   );
 }
 

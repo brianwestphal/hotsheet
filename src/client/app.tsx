@@ -355,19 +355,36 @@ function bindDetailNotes() {
   document.getElementById('detail-add-note-btn')?.addEventListener('click', async () => {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
-    if (ticket) {
-      // Snapshot before for undo (after will be computed once we know the new note)
-      const beforeNotes = ticket.notes;
-      await api(`/tickets/${state.activeTicketId}`, {
-        method: 'PATCH',
-        body: { notes: '(new note)' },
-      });
-      // Fetch the updated ticket to get the after-state notes with the new ID
-      const updated = await api<{ notes: string }>(`/tickets/${state.activeTicketId}`);
-      pushNotesUndo({ ...ticket, notes: beforeNotes } as Ticket, 'Add note', updated.notes);
-      ticket.notes = updated.notes;
-    }
-    openDetail(state.activeTicketId);
+    if (!ticket) return;
+
+    // Build the new notes array client-side and PUT in bulk so we can:
+    //   1. control the new note's id (so we can find its element after re-render)
+    //   2. start it empty (no default text)
+    const beforeNotes = ticket.notes;
+    type NoteEntry = { id: string; text: string; created_at: string };
+    let parsed: NoteEntry[] = [];
+    try {
+      const raw: unknown = JSON.parse(beforeNotes || '[]');
+      if (Array.isArray(raw)) parsed = raw as NoteEntry[];
+    } catch { /* legacy raw text — ignore */ }
+    const newNoteId = `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const newNotes: NoteEntry[] = [...parsed, { id: newNoteId, text: '', created_at: new Date().toISOString() }];
+    const newNotesJson = JSON.stringify(newNotes);
+    await api(`/tickets/${state.activeTicketId}/notes-bulk`, {
+      method: 'PUT',
+      body: { notes: newNotesJson },
+    });
+    pushNotesUndo({ ...ticket, notes: beforeNotes } as Ticket, 'Add note', newNotesJson);
+    ticket.notes = newNotesJson;
+    await openDetail(state.activeTicketId);
+
+    // After re-render: scroll the new note into view and put it into edit mode.
+    requestAnimationFrame(() => {
+      const noteEl = document.querySelector(`#detail-notes [data-note-id="${newNoteId}"]`) as HTMLElement | null;
+      if (!noteEl) return;
+      noteEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      noteEl.click();
+    });
   });
 }
 

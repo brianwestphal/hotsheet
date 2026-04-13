@@ -67,7 +67,7 @@ The interface is divided into:
   - Details (textarea, auto-saves with 300ms debounce)
   - Category, Priority, Status (dropdowns, save immediately on change)
   - Up Next (checkbox, with smart re-opening logic for completed/verified tickets)
-- **Notes display**: Timestamped entries in reverse chronological order, formatted per user locale.
+- **Notes display**: Timestamped entries rendered as Markdown via `marked`. Empty notes show muted placeholder text. Notes containing images from remote plugins (GitHub) are proxied through the server for private repo auth, and render clickable download links below the note content (web: blob download; Tauri: opens in system browser).
 - **Metadata**: Created, updated, completed, and verified timestamps.
 - **Attachments**: List of attached files with upload, reveal-in-finder, and delete actions.
 - **Read-only mode**: During backup preview, all editing is disabled.

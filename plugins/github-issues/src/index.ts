@@ -316,6 +316,21 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
         if (ghState) update.state = ghState;
       }
 
+      // Milestone handling: tags carry milestone:<name>; updateRemote must propagate
+      // both setting and clearing the milestone to GitHub. Without this, milestone
+      // edits on an existing synced ticket silently never reach the remote.
+      if (changes.tags !== undefined) {
+        const milestoneTag = changes.tags.find((t: string) => t.startsWith(milestonePrefix));
+        if (milestoneTag) {
+          const name = milestoneTag.slice(milestonePrefix.length);
+          const milestoneNum = await getMilestoneNumber(name);
+          if (milestoneNum != null) update.milestone = milestoneNum;
+        } else {
+          // No milestone tag present — clear it on GitHub.
+          update.milestone = null;
+        }
+      }
+
       // Labels need updating for category, priority, status, up_next, or tags changes.
       // We must rebuild the full label set (not just changed fields) to avoid dropping existing labels.
       if (changes.category !== undefined || changes.priority !== undefined ||
@@ -488,8 +503,14 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
             branch: attachmentBranch,
           }),
         });
-        const data = await res.json() as { content?: { download_url?: string; html_url?: string } };
-        const url = data.content?.download_url ?? data.content?.html_url;
+        const data = await res.json() as { content?: { download_url?: string; html_url?: string; path?: string } };
+        // Use the permanent raw URL, not download_url which contains a
+        // short-lived ?token= that expires after minutes. The permanent URL
+        // requires auth (Bearer token or browser session) but the image proxy
+        // handles that, and GitHub.com renders it for logged-in users.
+        const url = data.content?.path
+          ? `https://raw.githubusercontent.com/${attOwner}/${attRepo}/${attachmentBranch}/${data.content.path}`
+          : data.content?.html_url;
         if (url) {
           context.log('info', `Uploaded attachment: ${filename} → ${url}`);
           return url;
@@ -550,16 +571,20 @@ export async function onAction(actionId: string, _actionContext: { ticketIds?: n
   }
   if (actionId === 'test_connection') {
     if (!_backend) {
-      _context?.updateConfigLabel('connection-status', 'Not configured');
+      _context?.updateConfigLabel('connection-status', 'Not configured', 'warning');
       return { connected: false, error: 'Plugin not activated' };
     }
     try {
       const result = await _backend.checkConnection();
-      _context?.updateConfigLabel('connection-status', result.connected ? 'Connected' : `Disconnected: ${result.error ?? 'Unknown'}`);
+      if (result.connected) {
+        _context?.updateConfigLabel('connection-status', 'Connected', 'success');
+      } else {
+        _context?.updateConfigLabel('connection-status', `Disconnected: ${result.error ?? 'Unknown'}`, 'error');
+      }
       return result;
     } catch (e) {
       const msg = `Error: ${e instanceof Error ? e.message : String(e)}`;
-      _context?.updateConfigLabel('connection-status', msg);
+      _context?.updateConfigLabel('connection-status', msg, 'error');
       return { connected: false, error: msg };
     }
   }

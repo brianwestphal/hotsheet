@@ -14,13 +14,15 @@ export interface FieldValidation {
   message: string;
 }
 
+export type ConfigLabelColor = 'default' | 'success' | 'error' | 'warning' | 'transient';
+
 export interface PluginContext {
   config: Record<string, unknown>;
   log(level: 'info' | 'warn' | 'error', message: string): void;
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
   registerUI(elements: PluginUIElement[]): void;
-  updateConfigLabel(labelId: string, text: string): void;
+  updateConfigLabel(labelId: string, text: string, color?: ConfigLabelColor): void;
 }
 
 export interface TicketingBackend {

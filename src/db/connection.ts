@@ -230,6 +230,9 @@ async function initSchema(db: PGlite): Promise<void> {
       UNIQUE(ticket_id, note_id, plugin_id)
     );
     CREATE INDEX IF NOT EXISTS idx_note_sync_ticket ON note_sync(ticket_id, plugin_id);
+    -- HS-5056: last_synced_text enables three-way edit/delete detection for notes.
+    -- Without it we can only tell if a note is new — we can't tell which side edited it.
+    ALTER TABLE note_sync ADD COLUMN IF NOT EXISTS last_synced_text TEXT;
   `);
 
   // Migration: ensure all existing notes have stable persisted IDs

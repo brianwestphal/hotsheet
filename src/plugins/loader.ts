@@ -3,17 +3,18 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
-import type { HotSheetPlugin, LoadedPlugin, PluginContext, PluginManifest, PluginUIElement, PluginUIRegistration, TicketingBackend } from './types.js';
+import type { ConfigLabelColor, HotSheetPlugin, LoadedPlugin, PluginContext, PluginManifest, PluginUIElement, PluginUIRegistration, TicketingBackend } from './types.js';
 
 // --- Global plugin registry ---
 
 // UI elements registered by plugins
 const pluginUIRegistry = new Map<string, PluginUIElement[]>();
 
-// Dynamic config label overrides (pluginId:labelId → text)
-const configLabelOverrides = new Map<string, string>();
+// Dynamic config label overrides (pluginId:labelId → { text, color? })
+interface ConfigLabelOverride { text: string; color?: ConfigLabelColor }
+const configLabelOverrides = new Map<string, ConfigLabelOverride>();
 
-export function getConfigLabelOverride(pluginId: string, labelId: string): string | undefined {
+export function getConfigLabelOverride(pluginId: string, labelId: string): ConfigLabelOverride | undefined {
   return configLabelOverrides.get(`${pluginId}:${labelId}`);
 }
 
@@ -398,8 +399,8 @@ function createPluginContext(manifest: PluginManifest): PluginContext {
     registerUI(elements) {
       pluginUIRegistry.set(manifest.id, elements);
     },
-    updateConfigLabel(labelId, text) {
-      configLabelOverrides.set(`${manifest.id}:${labelId}`, text);
+    updateConfigLabel(labelId, text, color) {
+      configLabelOverrides.set(`${manifest.id}:${labelId}`, { text, color });
     },
   };
 }

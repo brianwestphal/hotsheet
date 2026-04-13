@@ -118,7 +118,35 @@ test.describe('Detail panel interactions', () => {
     await page.locator('#detail-add-note-btn').click();
 
     // A note entry should appear in the notes container
-    await expect(page.locator('#detail-notes .note-entry')).toBeVisible({ timeout: 5000 });
+    const noteEntry = page.locator('#detail-notes .note-entry').first();
+    await expect(noteEntry).toBeVisible({ timeout: 5000 });
+
+    // HS-5051: the new note should immediately enter edit mode (textarea focused
+    // for typing) with no default text, not show a "(new note)" placeholder string.
+    const textarea = noteEntry.locator('textarea.note-edit-area');
+    await expect(textarea).toBeVisible({ timeout: 2000 });
+    await expect(textarea).toBeFocused();
+    await expect(textarea).toHaveValue('');
+
+    // Type into the focused textarea and blur — the note should save with that text.
+    await textarea.fill('Typed into the new note');
+    await page.locator('#detail-body').click({ position: { x: 5, y: 5 } });
+    await expect(noteEntry.locator('.note-text')).toContainText('Typed into the new note', { timeout: 5000 });
+  });
+
+  test('empty note shows placeholder when unfocused', async ({ page }) => {
+    await createTicket(page, 'Empty note ticket');
+    await openDetail(page, 'Empty note ticket');
+
+    // Add a new note but don't type anything; blur immediately.
+    await page.locator('#detail-add-note-btn').click();
+    const noteEntry = page.locator('#detail-notes .note-entry').first();
+    await expect(noteEntry.locator('textarea.note-edit-area')).toBeFocused();
+    await page.locator('#detail-body').click({ position: { x: 5, y: 5 } });
+
+    // The note should still exist and show placeholder text in its unfocused state.
+    await expect(noteEntry).toHaveClass(/note-empty/, { timeout: 3000 });
+    await expect(noteEntry.locator('.note-placeholder')).toBeVisible();
   });
 
   test('upload file attachment via file input', async ({ page }) => {

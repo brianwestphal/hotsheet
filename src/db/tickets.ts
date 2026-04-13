@@ -60,11 +60,18 @@ export async function updateTicket(id: number, updates: Partial<{
   const values: unknown[] = [];
   let paramIdx = 1;
 
+  // Columns that the status-transition block below may set unconditionally.
+  // If status is being updated, skip these in the general loop to avoid
+  // "multiple assignments to same column" SQL errors.
+  const STATUS_MANAGED = new Set(['completed_at', 'verified_at', 'deleted_at', 'up_next']);
+  const statusChanging = updates.status !== undefined;
+
   const ALLOWED_COLUMNS = new Set(['title', 'details', 'tags', 'category', 'priority', 'status', 'up_next', 'notes', 'completed_at', 'verified_at', 'deleted_at']);
   for (const [key, value] of Object.entries(updates) as [string, unknown][]) {
     if (value === undefined) continue;
     if (!ALLOWED_COLUMNS.has(key)) continue;
     if (key === 'notes') continue; // handled separately below
+    if (statusChanging && STATUS_MANAGED.has(key)) continue; // handled by status-transition block
     sets.push(`${key} = $${paramIdx}`);
     values.push(value);
     paramIdx++;

@@ -152,15 +152,12 @@ async function applySnapshots(snapshots: TicketSnapshot[]): Promise<void> {
 let undoRedoInFlight = false;
 
 export async function performUndo(): Promise<void> {
-  console.log('[undo] performUndo, inFlight:', undoRedoInFlight, 'canUndo:', undoStack.canUndo());
-  if (undoRedoInFlight) { console.log('[undo] skipped — already in flight'); return; }
+  if (undoRedoInFlight) return;
   const entry = undoStack.popUndo();
-  if (!entry) { console.log('[undo] skipped — stack empty'); return; }
-  console.log('[undo] applying before-state:', entry.label, JSON.stringify(entry.before));
+  if (!entry) return;
   undoRedoInFlight = true;
   try {
     await applySnapshots(entry.before);
-    console.log('[undo] applySnapshots done, reloading tickets');
     await loadTickets();
     // Force detail panel to re-fetch after the render cycle settles
     setTimeout(() => refreshDetail(), 50);
@@ -170,15 +167,12 @@ export async function performUndo(): Promise<void> {
 }
 
 export async function performRedo(): Promise<void> {
-  console.log('[undo] performRedo, inFlight:', undoRedoInFlight, 'canRedo:', undoStack.canRedo());
-  if (undoRedoInFlight) { console.log('[undo] skipped — already in flight'); return; }
+  if (undoRedoInFlight) return;
   const entry = undoStack.popRedo();
-  if (!entry) { console.log('[undo] skipped — stack empty'); return; }
-  console.log('[undo] applying after-state:', entry.label, JSON.stringify(entry.after));
+  if (!entry) return;
   undoRedoInFlight = true;
   try {
     await applySnapshots(entry.after);
-    console.log('[undo] applySnapshots done, reloading tickets');
     await loadTickets();
     setTimeout(() => refreshDetail(), 50);
   } finally {

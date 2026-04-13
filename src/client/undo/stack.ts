@@ -8,7 +8,6 @@ class UndoStack {
   private redoStack: UndoEntry[] = [];
 
   push(entry: UndoEntry) {
-    console.log('[undo] push:', entry.label, 'stack depth:', this.undoStack.length + 1, 'before:', JSON.stringify(entry.before), 'after:', JSON.stringify(entry.after));
     this.undoStack.push(entry);
     if (this.undoStack.length > MAX_STACK_DEPTH) {
       this.undoStack.shift();

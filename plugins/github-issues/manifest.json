@@ -118,7 +118,7 @@
     { "type": "preference", "key": "owner" },
     { "type": "preference", "key": "repo" },
     { "type": "spacer" },
-    { "type": "label", "id": "connection-status", "text": "Not tested" },
+    { "type": "label", "id": "connection-status", "text": "Not tested", "color": "transient" },
     { "type": "button", "id": "test-connection", "label": "Test Connection", "action": "test_connection" },
     { "type": "group", "title": "Synchronization", "collapsed": false, "items": [
       { "type": "preference", "key": "auto_sync_new" },

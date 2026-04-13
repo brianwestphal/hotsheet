@@ -42,7 +42,7 @@ Plugins are directories containing either:
 - **Discovery**: On server startup, scan `~/.hotsheet/plugins/` for directories with valid manifests (including symlinks).
 - **Loading**: Import each plugin's entry point and call `activate(context)`. If the plugin returns a `TicketingBackend`, it is registered as a sync backend. If it exports `onAction`, `validateField`, those are also registered.
 - **Enable/Disable**: Per-project. Stored in the project's settings table as `plugin_enabled:{id}`. Default: enabled. Disabling cleans up `ticket_sync` and `sync_outbox` records for that project. Context menu includes "Enable on All Projects" and "Disable on All Projects" (affects open projects only).
-- **Reactivation**: The `reactivatePlugin()` function deactivates and re-activates a plugin to pick up config changes. Called automatically by the status check and sync endpoints.
+- **Reactivation**: The `reactivatePlugin()` function deactivates and re-activates a plugin to pick up config changes. Called automatically by the status check, sync, action, and push-ticket endpoints — so after the user edits a setting, the next operation always sees the new value without requiring a manual reload.
 - **Uninstall**: Removes from disk, removes from in-memory registry, dismisses bundled plugins. Right-click context menu shows inline confirmation.
 - **Unloading**: On server shutdown, all plugins are deactivated.
 
@@ -133,13 +133,15 @@ The `configLayout` array in the manifest controls how the config dialog is struc
 | `preference` | `key` | Renders the preference input for the given key |
 | `divider` | | Horizontal line separator |
 | `spacer` | | Vertical gap (12px) |
-| `label` | `id`, `text` | Dynamic text label (can be updated via `context.updateConfigLabel`) |
+| `label` | `id`, `text`, `color?` | Dynamic text label (can be updated via `context.updateConfigLabel`) |
 | `button` | `id`, `label`, `action`, `icon?`, `style?` | Clickable button that triggers `onAction` |
 | `group` | `title`, `collapsed?`, `items` | Collapsible group containing other layout items |
 
 Groups are collapsible with a chevron toggle. The `collapsed` field sets the default state (resets on dialog reopen).
 
-Dynamic labels are updated via `context.updateConfigLabel(labelId, text)` from the plugin's `onAction` handler. The client fetches updates via `GET /api/plugins/config-labels/:id`.
+Dynamic labels are updated via `context.updateConfigLabel(labelId, text, color?)` from the plugin's `onAction` handler. The client fetches updates via `GET /api/plugins/config-labels/:id`.
+
+**Label colors** — `color` is one of `default` (regular text), `success` (green), `error` (red), `warning` (orange), or `transient` (light gray, for "pending" / "not tested" placeholder states). Plugins should set the color tone semantically; the host maps each tone to the actual UI color so labels stay consistent across plugins.
 
 ### 18.7 Field Mappings
 
@@ -194,6 +196,7 @@ Entries with 5+ failed attempts are permanently removed.
 | `plugin_id` | text | Which plugin owns this mapping |
 | `remote_comment_id` | text | Remote comment ID |
 | `last_synced_at` | timestamptz | When last synced |
+| `last_synced_text` | text | Note text at last sync (enables three-way edit detection) |
 
 Unique constraint on `(ticket_id, note_id, plugin_id)`. Also used for attachment tracking with `att_` prefixed note IDs.
 
@@ -205,7 +208,7 @@ The sync engine orchestrates bidirectional synchronization between the local dat
 - Uses direct comparison: for each synced ticket, compares `ticket.updated_at` with `ticket_sync.local_updated_at`.
 - If the local ticket was modified since last sync, pushes ALL current field values via `updateRemote()`.
 - After push, `local_updated_at` is updated to the ticket's current `updated_at`.
-- Create/delete operations use the `sync_outbox` queue.
+- Create/delete operations use the `sync_outbox` queue. Outbox create entries are skipped if the ticket already has a sync record (prevents duplicates when push-ticket and auto-create race).
 - Stale outbox entries (5+ failures) are permanently removed.
 
 **Pull (remote → local):**
@@ -215,24 +218,48 @@ The sync engine orchestrates bidirectional synchronization between the local dat
   - If a sync record exists: compares timestamps to detect conflicts.
   - If only remote modified → applies remote changes.
   - If both modified → creates a conflict record.
-- Stale sync records (404/410 from remote) are automatically cleaned up.
+- Stale sync records (404/410 from remote) are automatically cleaned up — both via push errors (updateRemote throws 404) and via comment sync (getComments throws 404).
+
+**Conflict resolution:**
+- When a conflict is detected, `sync_status` is set to `conflict` and both local and remote field snapshots are stored in `conflict_data`.
+- `keep_local`: sets status to `synced` first, then calls `pushToRemote()` so the direct-comparison loop immediately pushes the local values to the remote.
+- `keep_remote`: applies remote values to the local ticket, then re-baselines the sync record's `local_updated_at` to the ticket's new `updated_at` so the next sync doesn't pointlessly re-push the same values back (no churn).
 
 **Comments/Notes sync:**
 - Runs after pull/push for backends with `capabilities.comments`.
-- Pull: new remote comments → create local notes (text-based dedup prevents duplicates).
-- Push: new local notes → create remote comments (text-based dedup).
+- Uses three-way merge via `last_synced_text` in the `note_sync` table:
+  - For each existing mapping: compares local note text and remote comment text against the `last_synced_text` baseline.
+  - Only local changed → pushes edit to remote via `updateComment()`.
+  - Only remote changed → pulls edit into local note.
+  - Both changed → push-wins (local overwrites remote).
+  - Local note deleted (mapping exists, note gone) → calls `deleteComment()` on remote.
+  - Remote comment deleted (mapping exists, comment gone) → removes the local note.
+- New unmapped remote comments → create local notes (text-based dedup prevents duplicates).
+- New unmapped local notes → create remote comments (text-based dedup).
+- Attachment mappings (note IDs with `att_` prefix) are skipped by the comment sync — managed separately by attachment sync.
 - Notes rendered as Markdown in the UI via `marked` library.
 
 **Attachment sync:**
 - Runs after comment sync for backends with `uploadAttachment`.
 - Reads local attachments, uploads via the backend's `uploadAttachment` method.
 - Posts a markdown comment with the file link (image syntax for images).
+- Attachment URLs should be permanent (not short-lived tokens). The GitHub plugin uses the raw URL format (`raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}`) instead of GitHub's `download_url` which contains expiring `?token=` parameters.
 - Tracked via `note_sync` with `att_` prefixed IDs to avoid re-uploading.
+
+**First-push of a single ticket:**
+- The "Push to remote" context-menu action and the create-outbox flow both call `createRemote()` to push core fields, then immediately push notes and attachments for that ticket via `syncSingleTicketContent()` — otherwise notes and attachments would be silently dropped on the first push and only catch up on the next full sync.
+
+**Image proxy:**
+- `GET /api/plugins/:id/image-proxy?url=&project=` proxies images from private GitHub repos using the plugin's stored PAT.
+- For `raw.githubusercontent.com` URLs: fetches directly with Bearer auth (handles expired `?token=` parameters in old URLs).
+- For `github.com/user-attachments/assets/UUID` URLs: resolves the UUID by fetching the relevant comment with `Accept: application/vnd.github.v3.html+json` to obtain a JWT-signed `private-user-images.githubusercontent.com` URL, then fetches that.
+- The client rewrites `<img>` tags in rendered note markdown to go through the proxy, including the `project` query param for multi-project routing (since `<img>` tags can't send custom headers).
+- Notes containing images also render download links below the content (web: blob download via programmatic `<a download>`; Tauri: opens in system browser via `invoke('open_url')`).
 
 **Sync triggers:**
 - **Manual**: Toolbar sync button (registered by plugin via UI extensions) or API.
 - **Scheduled**: Configurable interval via `POST /plugins/:id/sync/schedule`. Runs in the correct project context via `runWithDataDir`.
-- **Per-project isolation**: All sync operations check `isPluginEnabledForProject`. The sync endpoint re-activates the plugin before syncing to read the current project's config.
+- **Per-project isolation**: All sync operations check `isPluginEnabledForProject`. The sync, status, action, and push-ticket endpoints re-activate the plugin before operating to read the current project's config.
 
 **Auto-sync new tickets:**
 - Backends can implement `shouldAutoSync(ticket)` to auto-push new local tickets.
@@ -261,7 +288,8 @@ The sync engine orchestrates bidirectional synchronization between the local dat
 | `POST` | `/api/plugins/:id/sync` | Trigger sync (re-activates, checks per-project enabled) |
 | `POST` | `/api/plugins/:id/sync/schedule` | Set sync schedule |
 | `POST` | `/api/plugins/:id/push-ticket/:ticketId` | Push a local ticket to remote |
-| `POST` | `/api/plugins/:id/action` | Trigger a plugin UI action |
+| `POST` | `/api/plugins/:id/action` | Trigger a plugin UI action (re-activates first) |
+| `GET` | `/api/plugins/:id/image-proxy` | Proxy a GitHub image URL using stored PAT (`url` + `project` query params) |
 | `POST` | `/api/plugins/:id/uninstall` | Uninstall (removes from disk + registry) |
 | `GET` | `/api/plugins/:id/global-config/:key` | Get a global setting |
 | `POST` | `/api/plugins/:id/global-config` | Set a global setting |
