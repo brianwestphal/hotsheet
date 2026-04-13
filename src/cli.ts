@@ -6,10 +6,10 @@ import { join, resolve } from 'path';
 
 import { initBackupScheduler } from './backup.js';
 import { cleanupAttachments } from './cleanup.js';
-import { PLUGINS_ENABLED } from './feature-flags.js';
 import { getDb, setDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
+import { PLUGINS_ENABLED } from './feature-flags.js';
 import { ensureSecret, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
 import { cleanupStaleInstance, isInstanceRunning, readInstanceFile, removeInstanceFile, writeInstanceFile } from './instance.js';

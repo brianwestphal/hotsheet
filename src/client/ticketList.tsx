@@ -4,8 +4,7 @@ import { renderColumnView, renderPreviewColumnView, updateColumnSelectionClasses
 import { syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
-import type { Ticket } from './state.js';
-import type { SyncedTicketInfo } from './state.js';
+import type { SyncedTicketInfo,Ticket  } from './state.js';
 import { setSyncedTicketMap, state } from './state.js';
 import {
   draggedTicketIds as _draggedTicketIds,

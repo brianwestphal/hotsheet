@@ -1,5 +1,4 @@
 import type { SyncOutboxEntry, SyncStatus, TicketSyncRecord } from '../plugins/types.js';
-
 import { getDb } from './connection.js';
 
 // --- ticket_sync ---

@@ -1,3 +1,4 @@
+import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { suppressAnimation } from './animate.js';
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI } from './backups.js';
@@ -22,7 +23,6 @@ import { bindSearchInput, bindSidebar, bindSortControls } from './sidebar.js';
 import type { AppSettings, Ticket } from './state.js';
 import { allKnownTags, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, refreshAllKnownTags, state, STATUS_ITEMS } from './state.js';
 import { showTagsDialog } from './tagsDialog.js';
-import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { bindExternalLinkHandler, checkForUpdate, restoreAppIcon } from './tauriIntegration.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';

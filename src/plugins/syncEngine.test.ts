@@ -7,8 +7,7 @@ import {
   getSyncRecordByRemoteId, upsertSyncRecord,
 } from '../db/sync.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import type { LoadedPlugin } from './types.js';
-import type { RemoteChange, RemoteTicketFields, TicketingBackend } from './types.js';
+import type { LoadedPlugin, RemoteChange, RemoteTicketFields, TicketingBackend  } from './types.js';
 
 // We need to mock the loader module so the sync engine can find our test backend
 vi.mock('./loader.js', () => {

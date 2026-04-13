@@ -247,7 +247,7 @@ export interface BackendCapabilities {
 
 export interface FieldMappings {
   /** Map local category IDs to remote values */
-  category: FieldMap<TicketCategory>;
+  category: FieldMap;
   /** Map local priority values to remote values */
   priority: FieldMap<TicketPriority>;
   /** Map local status values to remote values */

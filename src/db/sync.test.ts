@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { createTicket } from './queries.js';
 import {
   addToOutbox, clearOutbox, deleteSyncRecord, getConflicts,
@@ -7,7 +8,6 @@ import {
   getSyncRecordsForPlugin, incrementOutboxAttempts,
   removeOutboxEntry, updateSyncStatus, upsertSyncRecord,
 } from './sync.js';
-import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 
 let tempDir: string;
 

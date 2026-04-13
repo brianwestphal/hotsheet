@@ -1,14 +1,15 @@
 import { marked } from 'marked';
+
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
+import type { Ticket } from './state.js';
+import { getActiveProject, getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
+import { pushNotesUndo } from './undo/actions.js';
 
 // Configure marked for safe rendering
 marked.setOptions({ breaks: true });
-import type { Ticket } from './state.js';
-import { getActiveProject, getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
-import { pushNotesUndo } from './undo/actions.js';
 
 // --- Tags helpers ---
 
@@ -235,7 +236,7 @@ function loadPreviewDetail(id: number) {
       {notes.map(note =>
         <div className="note-entry">
           {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
-          <div className="note-text note-markdown">{raw(marked.parse(note.text, { async: false }) as string)}</div>
+          <div className="note-text note-markdown">{raw(marked.parse(note.text, { async: false }))}</div>
         </div>
       )}
     </>).toString();
@@ -333,8 +334,8 @@ async function loadDetail(id: number) {
     {ticket.syncInfo && ticket.syncInfo.length > 0 ? <>
       {ticket.syncInfo.map(s =>
         <div className="detail-sync-info">
-          {s.pluginIcon ? raw(s.pluginIcon) : raw('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>')}
-          {s.remoteUrl
+          {s.pluginIcon != null && s.pluginIcon !== '' ? raw(s.pluginIcon) : raw('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>')}
+          {s.remoteUrl != null && s.remoteUrl !== ''
             ? <a href={s.remoteUrl} target="_blank" rel="noopener">{s.pluginName} #{s.remoteId}</a>
             : <span>{s.pluginName} #{s.remoteId}</span>}
         </div>
@@ -362,7 +363,7 @@ function renderNotes(ticketId: number, notes: NoteEntry[]) {
 
   for (const note of notes) {
     const isEmpty = note.text.trim() === '';
-    const renderedText = isEmpty ? '' : marked.parse(note.text, { async: false }) as string;
+    const renderedText = isEmpty ? '' : marked.parse(note.text, { async: false });
     const entry = toElement(
       <div className={`note-entry${isEmpty ? ' note-empty' : ''}`} data-note-id={note.id ?? ''}>
         {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
@@ -446,11 +447,11 @@ function renderNotes(ticketId: number, notes: NoteEntry[]) {
   }
 
   // If a note was just created, scroll to it and open edit mode.
-  if (pendingFocusNoteId) {
+  if (pendingFocusNoteId != null && pendingFocusNoteId !== '') {
     const targetId = pendingFocusNoteId;
     pendingFocusNoteId = null;
     requestAnimationFrame(() => {
-      const noteEl = container.querySelector(`[data-note-id="${targetId}"]`) as HTMLElement | null;
+      const noteEl = container.querySelector<HTMLElement>(`[data-note-id="${targetId}"]`);
       if (!noteEl) return;
       noteEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       noteEl.click();
@@ -476,7 +477,7 @@ function proxyGitHubImages(container: HTMLElement) {
       const url = new URL(img.src);
       if (!GITHUB_HOSTS.has(url.hostname)) continue;
       let proxyUrl = `/api/plugins/github-issues/image-proxy?url=${encodeURIComponent(img.src)}`;
-      if (projectParam) proxyUrl += `&project=${encodeURIComponent(projectParam)}`;
+      if (projectParam != null && projectParam !== '') proxyUrl += `&project=${encodeURIComponent(projectParam)}`;
       img.src = proxyUrl;
     } catch { /* ignore invalid URLs */ }
   }

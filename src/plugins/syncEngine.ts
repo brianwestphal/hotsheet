@@ -1,13 +1,12 @@
+import { parseNotes } from '../db/notes.js';
 import {
   addToOutbox, clearOutbox, deleteNoteSyncRecord, deleteSyncRecord, getNoteSyncByRemoteId, getNoteSyncRecords,
   getOutboxEntries, getSyncRecord, getSyncRecordByRemoteId,
   getSyncRecordsForPlugin, incrementOutboxAttempts, removeOutboxEntry,
   updateSyncStatus, upsertNoteSyncRecord, upsertSyncRecord,
 } from '../db/sync.js';
-import { parseNotes } from '../db/notes.js';
 import { createTicket, getTicket, updateTicket } from '../db/tickets.js';
 import type { Ticket } from '../types.js';
-
 import { getAllBackends, getBackendForPlugin, reactivatePlugin } from './loader.js';
 import type { RemoteChange, RemoteTicketFields, SyncStatus, TicketingBackend } from './types.js';
 

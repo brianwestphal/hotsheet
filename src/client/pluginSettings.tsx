@@ -508,23 +508,12 @@ function renderConfigLayout(container: HTMLElement, items: ConfigLayoutItem[], p
           group.classList.toggle('collapsed', !isCollapsed);
         });
         if (item.items) {
-          renderConfigLayout(group.querySelector('.config-group-body')! as HTMLElement, item.items, pluginId, prefsMap);
+          renderConfigLayout(group.querySelector('.config-group-body')!, item.items, pluginId, prefsMap);
         }
         container.appendChild(group);
         break;
       }
     }
-  }
-}
-
-async function doConnectionCheck(pluginId: string, el: HTMLElement) {
-  try {
-    const status = await api<{ connected: boolean; error?: string }>(`/plugins/${pluginId}/status`);
-    el.textContent = status.connected ? 'Connected' : `Disconnected${status.error ? `: ${status.error}` : ''}`;
-    el.className = `plugin-connection-status ${status.connected ? 'connected' : 'disconnected'}`;
-  } catch {
-    el.textContent = 'Error checking connection';
-    el.className = 'plugin-connection-status error';
   }
 }
 

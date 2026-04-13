@@ -24,10 +24,10 @@ import {
 } from '../db/queries.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
-import { isPluginEnabledForProject } from './plugins.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
 import type { AppEnv, TicketFilters, TicketStatus } from '../types.js';
 import { notifyMutation } from './notify.js';
+import { isPluginEnabledForProject } from './plugins.js';
 import {
   BatchActionSchema, CreateTicketSchema, DuplicateSchema,
   NotesBulkSchema, NotesEditSchema,   parseBody,

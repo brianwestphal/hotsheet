@@ -104,7 +104,7 @@ export function showSkillsBanner() {
 /** Intercept external link clicks and open them via Tauri shell or window.open. */
 export function bindExternalLinkHandler() {
   document.addEventListener('click', (e) => {
-    const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
+    const anchor = (e.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
     if (!anchor) return;
     const href = anchor.href;
     if (!href.startsWith('http://') && !href.startsWith('https://')) return;

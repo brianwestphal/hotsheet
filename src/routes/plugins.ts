@@ -1,24 +1,23 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'fs';
+import { Hono } from 'hono';
 import { homedir } from 'os';
 import { basename, join } from 'path';
-import { Hono } from 'hono';
 
-import { getConflicts, getSyncRecordsForPlugin } from '../db/sync.js';
 import { getDb, runWithDataDir } from '../db/connection.js';
-import { upsertSyncRecord } from '../db/sync.js';
+import { getConflicts, getSyncRecordsForPlugin, upsertSyncRecord  } from '../db/sync.js';
 import { getTicket } from '../db/tickets.js';
-import { getAllProjects } from '../projects.js';
 import {
   disablePlugin, enablePlugin, getAllBackends, getAllPluginUIElements,
   getGlobalPluginSetting, getLoadedPlugins,
   getPluginById, reactivatePlugin, setGlobalPluginSetting,
 } from '../plugins/loader.js';
-import type { LoadedPlugin } from '../plugins/types.js';
 import {
   resolveConflict, runSync, startScheduledSync, stopScheduledSync, syncSingleTicketContent,
 } from '../plugins/syncEngine.js';
-import { notifyMutation } from './notify.js';
+import type { LoadedPlugin } from '../plugins/types.js';
+import { getAllProjects } from '../projects.js';
 import type { AppEnv } from '../types.js';
+import { notifyMutation } from './notify.js';
 
 export const pluginRoutes = new Hono<AppEnv>();
 
@@ -100,7 +99,7 @@ pluginRoutes.post('/plugins/:id/action', async (c) => {
   let plugin = getPluginById(pluginId);
   if (!plugin) return c.json({ error: 'Plugin not found' }, 404);
   if (!plugin.instance.onAction) return c.json({ error: 'Plugin does not handle actions' }, 400);
-  const body = await c.req.json() as { actionId: string; ticketIds?: number[]; value?: unknown };
+  const body = await c.req.json();
 
   // Re-activate to pick up any setting changes made since last activation.
   // Plugins commonly capture settings in closures during activate(), so without
@@ -126,7 +125,7 @@ pluginRoutes.post('/plugins/:id/action', async (c) => {
 pluginRoutes.post('/plugins/validate/:id', async (c) => {
   const plugin = getPluginById(c.req.param('id'));
   if (!plugin?.instance.validateField) return c.json(null);
-  const body = await c.req.json() as { key: string; value: string };
+  const body = await c.req.json();
   try {
     const result = await plugin.instance.validateField(body.key, body.value);
     return c.json(result);
@@ -354,7 +353,7 @@ pluginRoutes.post('/plugins/:id/sync/schedule', async (c) => {
   const pluginId = c.req.param('id');
   const plugin = getPluginById(pluginId);
   if (!plugin) return c.json({ error: 'Plugin not found' }, 404);
-  const body = await c.req.json() as { interval_minutes: number | null };
+  const body = await c.req.json();
   if (body.interval_minutes === null || body.interval_minutes === 0) {
     stopScheduledSync(pluginId);
     return c.json({ ok: true, scheduled: false });
@@ -404,7 +403,7 @@ pluginRoutes.get('/sync/conflicts', async (c) => {
 /** Resolve a sync conflict. */
 pluginRoutes.post('/sync/conflicts/:ticketId/resolve', async (c) => {
   const ticketId = parseInt(c.req.param('ticketId'), 10);
-  const body = await c.req.json() as { plugin_id: string; resolution: 'keep_local' | 'keep_remote' };
+  const body = await c.req.json();
   if (!body.plugin_id || !body.resolution) {
     return c.json({ error: 'plugin_id and resolution required' }, 400);
   }
@@ -414,7 +413,7 @@ pluginRoutes.post('/sync/conflicts/:ticketId/resolve', async (c) => {
 
 /** Install a plugin by symlinking from a local path into ~/.hotsheet/plugins/. */
 pluginRoutes.post('/plugins/install', async (c) => {
-  const body = await c.req.json() as { path: string };
+  const body = await c.req.json();
   if (!body.path) return c.json({ error: 'path is required' }, 400);
 
   const sourcePath = body.path;
@@ -509,7 +508,7 @@ pluginRoutes.get('/plugins/:id/global-config/:key', async (c) => {
 
 /** Set a global plugin setting. */
 pluginRoutes.post('/plugins/:id/global-config', async (c) => {
-  const body = await c.req.json() as { key: string; value: string };
+  const body = await c.req.json();
   if (!body.key) return c.json({ error: 'key is required' }, 400);
   setGlobalPluginSetting(c.req.param('id'), body.key, body.value);
   return c.json({ ok: true });
@@ -577,8 +576,8 @@ pluginRoutes.get('/plugins/:id/image-proxy', async (c) => {
         'Cache-Control': 'private, max-age=3600',
       },
     });
-  } catch (e) {
-    return c.json({ error: `Proxy fetch failed: ${e instanceof Error ? e.message : e}` }, 502);
+  } catch (e: unknown) {
+    return c.json({ error: `Proxy fetch failed: ${e instanceof Error ? e.message : String(e)}` }, 502);
   }
 });
 
@@ -609,10 +608,12 @@ async function resolveUserAttachmentUrl(pluginId: string, token: string, uuid: s
     "SELECT key, value FROM settings WHERE key IN ($1, $2)",
     [`plugin:${pluginId}:owner`, `plugin:${pluginId}:repo`],
   );
-  const settings = Object.fromEntries(settingsResult.rows.map(r => [r.key.split(':').pop(), r.value]));
+  const settings: Record<string, string> = Object.fromEntries(
+    settingsResult.rows.map(r => [r.key.split(':').pop() ?? '', r.value]),
+  );
   const owner = settings['owner'] ?? '';
   const repo = settings['repo'] ?? '';
-  if (!owner || !repo) return null;
+  if (owner === '' || repo === '') return null;
 
   // Fetch comments for this issue with body_html to get the signed URL.
   const apiUrl = `https://api.github.com/repos/${owner}/${repo}/issues/${remoteId}/comments?per_page=100`;
