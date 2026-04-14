@@ -80,12 +80,16 @@ async function linuxDelete(service: string, account: string): Promise<boolean> {
 
 let _available: boolean | null = null;
 
-/** Check if OS keychain is available on this platform. */
+/** Check if OS keychain is available and usable on this platform.
+ *  On macOS, verifies the default keychain exists (not just that the security
+ *  command works — a temp HOME has no user keychain and pops system dialogs). */
 export async function isKeychainAvailable(): Promise<boolean> {
   if (_available !== null) return _available;
   const os = platform();
   if (os === 'darwin') {
-    const { exitCode } = await exec('security', ['list-keychains']);
+    // `security default-keychain` fails if no user keychain exists (e.g., temp HOME in e2e tests).
+    // This prevents system dialog popups from `add-generic-password` on missing keychains.
+    const { exitCode } = await exec('security', ['default-keychain']);
     _available = exitCode === 0;
   } else if (os === 'linux') {
     const { exitCode } = await exec('which', ['secret-tool']);

@@ -10,13 +10,14 @@ import {
 } from '../db/queries.js';
 import { revealInFileManager } from '../open-in-file-manager.js';
 import type { AppEnv } from '../types.js';
+import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 
 export const attachmentRoutes = new Hono<AppEnv>();
 
 attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid attachment ticket ID' }, 400);
+  const id = parseIntParam(c, 'id');
+  if (id === null) return c.json({ error: 'Invalid attachment ticket ID' }, 400);
   const ticket = await getTicket(id);
   if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
 
@@ -47,8 +48,8 @@ attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
 });
 
 attachmentRoutes.delete('/attachments/:id', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid attachment ID' }, 400);
+  const id = parseIntParam(c, 'id');
+  if (id === null) return c.json({ error: 'Invalid attachment ID' }, 400);
   const attachment = await deleteAttachment(id);
   if (!attachment) return c.json({ error: 'Not found' }, 404);
 
@@ -61,8 +62,8 @@ attachmentRoutes.delete('/attachments/:id', async (c) => {
 
 // Reveal attachment in OS file manager
 attachmentRoutes.post('/attachments/:id/reveal', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid attachment ID' }, 400);
+  const id = parseIntParam(c, 'id');
+  if (id === null) return c.json({ error: 'Invalid attachment ID' }, 400);
   const attachment = await getAttachment(id);
   if (!attachment) return c.json({ error: 'Not found' }, 404);
   if (!existsSync(attachment.stored_path)) return c.json({ error: 'File not found on disk' }, 404);

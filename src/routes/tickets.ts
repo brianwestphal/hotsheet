@@ -25,6 +25,7 @@ import {
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
 import type { AppEnv, TicketFilters, TicketStatus } from '../types.js';
+import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 import { isPluginEnabledForProject } from './plugins.js';
 import {
@@ -120,8 +121,8 @@ ticketRoutes.post('/tickets', async (c) => {
 });
 
 ticketRoutes.get('/tickets/:id', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const ticket = await getTicket(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   const attachments = await getAttachments(id);
@@ -152,8 +153,8 @@ ticketRoutes.get('/tickets/:id', async (c) => {
 });
 
 ticketRoutes.patch('/tickets/:id', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const raw: unknown = await c.req.json();
   const parsed = parseBody(UpdateTicketSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
@@ -165,8 +166,8 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
 });
 
 ticketRoutes.delete('/tickets/:id', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   await deleteTicket(id);
   notifyMutation(c.get('dataDir'));
   void onTicketDeleted(id).catch(() => {});
@@ -176,8 +177,8 @@ ticketRoutes.delete('/tickets/:id', async (c) => {
 // --- Notes ---
 
 ticketRoutes.put('/tickets/:id/notes-bulk', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const raw: unknown = await c.req.json();
   const parsed = parseBody(NotesBulkSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
@@ -193,8 +194,8 @@ ticketRoutes.put('/tickets/:id/notes-bulk', async (c) => {
 });
 
 ticketRoutes.patch('/tickets/:id/notes/:noteId', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const noteId = c.req.param('noteId');
   const raw: unknown = await c.req.json();
   const parsed = parseBody(NotesEditSchema, raw);
@@ -206,8 +207,8 @@ ticketRoutes.patch('/tickets/:id/notes/:noteId', async (c) => {
 });
 
 ticketRoutes.delete('/tickets/:id/notes/:noteId', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const noteId = c.req.param('noteId');
   const notes = await deleteNote(id, noteId);
   if (!notes) return c.json({ error: 'Not found' }, 404);
@@ -216,8 +217,8 @@ ticketRoutes.delete('/tickets/:id/notes/:noteId', async (c) => {
 });
 
 ticketRoutes.delete('/tickets/:id/hard', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const attachments = await getAttachments(id);
   for (const att of attachments) {
     try { rmSync(att.stored_path, { force: true }); } catch { /* ignore */ }
@@ -285,8 +286,8 @@ ticketRoutes.post('/tickets/duplicate', async (c) => {
 // --- Restore from trash ---
 
 ticketRoutes.post('/tickets/:id/restore', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const ticket = await restoreTicket(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
@@ -311,8 +312,8 @@ ticketRoutes.post('/trash/empty', async (c) => {
 // --- Up Next toggle ---
 
 ticketRoutes.post('/tickets/:id/up-next', async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
-  if (isNaN(id)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const ticket = await toggleUpNext(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));

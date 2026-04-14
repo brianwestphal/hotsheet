@@ -7,9 +7,17 @@ import { parseBody, ShellExecSchema, ShellKillSchema } from './validation.js';
 
 export const shellRoutes = new Hono<AppEnv>();
 
-// Track running shell processes by their command_log entry id
+/** Running shell processes keyed by their command_log entry ID.
+ *  Entries are added by /shell/exec on spawn and removed by the child's
+ *  'close' event handler. Entries should never accumulate — if a process
+ *  exits without triggering 'close', the entry becomes stale.
+ *  Modified by: /shell/exec (add), child.on('close') (remove). */
 const runningProcesses = new Map<number, ChildProcess>();
-const killedProcesses = new Set<number>(); // Processes explicitly killed by user
+
+/** IDs of processes the user explicitly killed via /shell/kill.
+ *  Used to distinguish "Canceled" from "Killed by signal" in log summaries.
+ *  Modified by: /shell/kill (add), child.on('close') (remove). */
+const killedProcesses = new Set<number>();
 
 shellRoutes.post('/shell/exec', async (c) => {
   const { spawn } = await import('child_process');

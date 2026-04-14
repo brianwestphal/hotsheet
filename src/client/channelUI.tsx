@@ -99,7 +99,9 @@ export function isPermissionPending(): boolean {
   return overlay !== null && overlay.style.display !== 'none';
 }
 
-// Per-project busy/attention tracking for tab status dots
+/** Per-project busy/attention tracking for tab status dots.
+ *  busyProjects: projects with active Claude work. Modified by markProjectBusy/clearProjectBusy.
+ *  attentionProjects: projects with pending permissions. Modified by markProjectAttention/clearProjectAttention + permission poll. */
 const busyProjects = new Set<string>();
 const attentionProjects = new Set<string>();
 

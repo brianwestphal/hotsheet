@@ -1,74 +1,10 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
+import type { ConfigLayoutItem, PluginInfo, PluginPreference, SyncConflict } from './pluginTypes.js';
+import { labelColorClass, STATUS_DOT } from './pluginTypes.js';
 import { refreshPluginUI } from './pluginUI.js';
 import { getTauriInvoke } from './tauriIntegration.js';
-
-type ConfigLabelColor = 'default' | 'success' | 'error' | 'warning' | 'transient';
-
-interface ConfigLayoutItem {
-  type: 'preference' | 'divider' | 'spacer' | 'label' | 'button' | 'group';
-  key?: string;
-  id?: string;
-  text?: string;
-  color?: ConfigLabelColor;
-  label?: string;
-  action?: string;
-  icon?: string;
-  style?: string;
-  title?: string;
-  collapsed?: boolean;
-  items?: ConfigLayoutItem[];
-}
-
-function labelColorClass(color: string | undefined): string {
-  if (color == null || color === '' || color === 'default') return 'config-label';
-  return `config-label label-color-${color}`;
-}
-
-interface PluginInfo {
-  id: string;
-  name: string;
-  version: string;
-  description: string | null;
-  author: string | null;
-  enabled: boolean;
-  hasBackend: boolean;
-  error: string | null;
-  preferences: PluginPreference[];
-  configLayout?: ConfigLayoutItem[];
-  path?: string;
-  needsConfiguration?: boolean;
-  missingFields?: string[];
-}
-
-interface PluginPreference {
-  key: string;
-  label: string;
-  type: 'string' | 'boolean' | 'number' | 'select' | 'dropdown' | 'combo';
-  default?: string | boolean | number;
-  description?: string;
-  required?: boolean;
-  secret?: boolean;
-  scope?: 'global' | 'project';
-  options?: { value: string; label: string }[];
-}
-
-interface SyncConflict {
-  id: number;
-  ticket_id: number;
-  plugin_id: string;
-  remote_id: string;
-  sync_status: string;
-  conflict_data: string | null;
-}
-
-const STATUS_DOT = {
-  connected: '<span class="plugin-status-dot connected" title="Connected"></span>',
-  disconnected: '<span class="plugin-status-dot disconnected" title="Disconnected"></span>',
-  error: '<span class="plugin-status-dot error" title="Error"></span>',
-  needsConfig: '<span class="plugin-status-dot needs-config" title="Needs Configuration"></span>',
-};
 
 export function bindPluginSettings() {
   const settingsBtn = document.getElementById('settings-btn')!;
@@ -564,93 +500,107 @@ function renderPrefInput(container: HTMLElement, pluginId: string, pref: PluginP
   let input: HTMLElement;
 
   if ((pref.type === 'select' || pref.type === 'dropdown') && pref.options) {
-    const select = toElement(
-      <select className="settings-select">
-        {pref.options.map(opt =>
-          <option value={opt.value} selected={opt.value === currentValue}>{opt.label}</option>
-        )}
-      </select>
-    ) as HTMLSelectElement;
-    select.addEventListener('change', () => savePrefValue(pluginId, pref, select.value));
-    input = select;
+    input = createSelectInput(pluginId, pref, currentValue);
   } else if (pref.type === 'combo' && pref.options) {
-    // Combo box: text input with a custom dropdown (not native <datalist>,
-    // which has platform-specific dark mode rendering bugs in Tauri/WKWebView).
-    const wrapper = toElement(<div className="plugin-combo-wrapper"></div>);
-    const textInput = toElement(
-      <input type="text" className="settings-input plugin-combo-input" value={currentValue} autocomplete="off" />
-    ) as HTMLInputElement;
-    const dropdown = toElement(<div className="plugin-combo-dropdown"></div>);
-
-    function positionDropdown() {
-      const rect = textInput.getBoundingClientRect();
-      dropdown.style.left = `${rect.left}px`;
-      dropdown.style.top = `${rect.bottom + 2}px`;
-      dropdown.style.width = `${rect.width}px`;
-    }
-
-    function renderOptions(filter = '') {
-      dropdown.innerHTML = '';
-      const lower = filter.toLowerCase();
-      const filtered = pref.options!.filter(opt =>
-        lower === '' || opt.label.toLowerCase().includes(lower) || opt.value.toLowerCase().includes(lower),
-      );
-      if (filtered.length === 0) { dropdown.style.display = 'none'; return; }
-      for (const opt of filtered) {
-        const item = toElement(
-          <div className={`plugin-combo-option${opt.value === textInput.value ? ' active' : ''}`}>{opt.label}</div>,
-        );
-        item.addEventListener('mousedown', (e) => {
-          e.preventDefault(); // prevent blur before value is set
-          textInput.value = opt.value;
-          dropdown.style.display = 'none';
-          savePrefValue(pluginId, pref, opt.value);
-        });
-        dropdown.appendChild(item);
-      }
-      positionDropdown();
-      dropdown.style.display = 'block';
-    }
-
-    textInput.addEventListener('focus', () => renderOptions(textInput.value));
-    textInput.addEventListener('input', () => renderOptions(textInput.value));
-    textInput.addEventListener('blur', () => {
-      setTimeout(() => { dropdown.style.display = 'none'; }, 150);
-      savePrefValue(pluginId, pref, textInput.value);
-    });
-
-    // Append dropdown to body (not wrapper) so it escapes overflow-clipping parents
-    wrapper.appendChild(textInput);
-    document.body.appendChild(dropdown);
-    input = wrapper;
+    input = createComboInput(pluginId, pref, currentValue);
   } else if (pref.type === 'boolean') {
-    const checkbox = toElement(
-      <label className="settings-checkbox-label">
-        <input type="checkbox" checked={currentValue === 'true'} />
-        <span>{pref.label}</span>
-      </label>
-    );
-    const cb = checkbox.querySelector('input')!;
-    cb.addEventListener('change', () => savePrefValue(pluginId, pref, String(cb.checked)));
-    input = checkbox;
+    input = createBooleanInput(pluginId, pref, currentValue);
   } else {
-    const textInput = toElement(
-      <input
-        type={pref.secret === true ? 'password' : 'text'}
-        className="settings-input"
-        value={currentValue}
-        placeholder={pref.description ?? ''}
-      />
-    ) as HTMLInputElement;
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    textInput.addEventListener('input', () => {
-      if (timeout) clearTimeout(timeout);
-      timeout = setTimeout(() => savePrefValue(pluginId, pref, textInput.value), 500);
-    });
-    input = textInput;
+    input = createTextInput(pluginId, pref, currentValue);
   }
 
   container.appendChild(input);
+}
+
+function createSelectInput(pluginId: string, pref: PluginPreference, currentValue: string): HTMLElement {
+  const select = toElement(
+    <select className="settings-select">
+      {pref.options!.map(opt =>
+        <option value={opt.value} selected={opt.value === currentValue}>{opt.label}</option>
+      )}
+    </select>
+  ) as HTMLSelectElement;
+  select.addEventListener('change', () => savePrefValue(pluginId, pref, select.value));
+  return select;
+}
+
+function createComboInput(pluginId: string, pref: PluginPreference, currentValue: string): HTMLElement {
+  // Custom dropdown (not native <datalist>, which has dark mode bugs in Tauri/WKWebView).
+  const wrapper = toElement(<div className="plugin-combo-wrapper"></div>);
+  const textInput = toElement(
+    <input type="text" className="settings-input plugin-combo-input" value={currentValue} autocomplete="off" />
+  ) as HTMLInputElement;
+  const dropdown = toElement(<div className="plugin-combo-dropdown"></div>);
+
+  function positionDropdown() {
+    const rect = textInput.getBoundingClientRect();
+    dropdown.style.left = `${rect.left}px`;
+    dropdown.style.top = `${rect.bottom + 2}px`;
+    dropdown.style.width = `${rect.width}px`;
+  }
+
+  function renderOptions(filter = '') {
+    dropdown.innerHTML = '';
+    const lower = filter.toLowerCase();
+    const filtered = pref.options!.filter(opt =>
+      lower === '' || opt.label.toLowerCase().includes(lower) || opt.value.toLowerCase().includes(lower),
+    );
+    if (filtered.length === 0) { dropdown.style.display = 'none'; return; }
+    for (const opt of filtered) {
+      const item = toElement(
+        <div className={`plugin-combo-option${opt.value === textInput.value ? ' active' : ''}`}>{opt.label}</div>,
+      );
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        textInput.value = opt.value;
+        dropdown.style.display = 'none';
+        savePrefValue(pluginId, pref, opt.value);
+      });
+      dropdown.appendChild(item);
+    }
+    positionDropdown();
+    dropdown.style.display = 'block';
+  }
+
+  textInput.addEventListener('focus', () => renderOptions(textInput.value));
+  textInput.addEventListener('input', () => renderOptions(textInput.value));
+  textInput.addEventListener('blur', () => {
+    setTimeout(() => { dropdown.style.display = 'none'; }, 150);
+    savePrefValue(pluginId, pref, textInput.value);
+  });
+
+  wrapper.appendChild(textInput);
+  document.body.appendChild(dropdown);
+  return wrapper;
+}
+
+function createBooleanInput(pluginId: string, pref: PluginPreference, currentValue: string): HTMLElement {
+  const checkbox = toElement(
+    <label className="settings-checkbox-label">
+      <input type="checkbox" checked={currentValue === 'true'} />
+      <span>{pref.label}</span>
+    </label>
+  );
+  const cb = checkbox.querySelector('input')!;
+  cb.addEventListener('change', () => savePrefValue(pluginId, pref, String(cb.checked)));
+  return checkbox;
+}
+
+function createTextInput(pluginId: string, pref: PluginPreference, currentValue: string): HTMLElement {
+  const textInput = toElement(
+    <input
+      type={pref.secret === true ? 'password' : 'text'}
+      className="settings-input"
+      value={currentValue}
+      placeholder={pref.description ?? ''}
+    />
+  ) as HTMLInputElement;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  textInput.addEventListener('input', () => {
+    if (timeout) clearTimeout(timeout);
+    timeout = setTimeout(() => savePrefValue(pluginId, pref, textInput.value), 500);
+  });
+  return textInput;
 }
 
 function savePrefValue(pluginId: string, pref: PluginPreference, value: string) {

@@ -32,6 +32,10 @@ export function getAllPluginUIElements(): PluginUIElement[] {
   return all;
 }
 
+/** Global plugin registry. Shared across all projects — plugins are loaded once
+ *  per server process. Per-project enabled state is tracked separately in each
+ *  project's DB via `plugin_enabled:{id}` settings.
+ *  Modified by: loadPlugin(), enablePlugin(), disablePlugin(), reactivatePlugin(), unregisterPlugin(). */
 const loadedPlugins = new Map<string, LoadedPlugin>();
 
 export function getLoadedPlugins(): LoadedPlugin[] {

@@ -29,6 +29,9 @@ interface BackupState {
   dailyInterval: ReturnType<typeof setInterval> | null;
 }
 
+/** Per-project backup scheduler state. Each project gets its own timers.
+ *  Modified by: getOrCreateState() (create), initBackupScheduler() (set timers),
+ *  scheduleFiveMinBackup() (reset fiveMinTimer). */
 const backupStates = new Map<string, BackupState>();
 
 function getOrCreateState(dataDir: string): BackupState {
@@ -40,7 +43,10 @@ function getOrCreateState(dataDir: string): BackupState {
   return state;
 }
 
-// Per-project preview state, keyed by dataDir
+/** Active backup previews keyed by dataDir. Stores the temporary PGlite
+ *  instance used for read-only preview. Both the DB and dataDir must be
+ *  cleaned up together via cleanupPreview().
+ *  Modified by: loadBackupForPreview() (add), cleanupPreview() (clear all). */
 const previewDbs = new Map<string, PGlite>();
 const previewDataDirs = new Set<string>();
 

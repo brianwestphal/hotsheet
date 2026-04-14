@@ -17,6 +17,7 @@ import {
 import type { LoadedPlugin } from '../plugins/types.js';
 import { getAllProjects } from '../projects.js';
 import type { AppEnv } from '../types.js';
+import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 
 export const pluginRoutes = new Hono<AppEnv>();
@@ -306,8 +307,8 @@ pluginRoutes.post('/plugins/:id/sync', async (c) => {
 /** Push a local-only ticket to a remote backend. */
 pluginRoutes.post('/plugins/:id/push-ticket/:ticketId', async (c) => {
   const pluginId = c.req.param('id');
-  const ticketId = parseInt(c.req.param('ticketId'), 10);
-  if (isNaN(ticketId)) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const ticketId = parseIntParam(c, 'ticketId');
+  if (ticketId === null) return c.json({ error: 'Invalid ticket ID' }, 400);
 
   let plugin = getPluginById(pluginId);
   if (!plugin) return c.json({ error: 'Plugin not found' }, 404);
@@ -402,7 +403,8 @@ pluginRoutes.get('/sync/conflicts', async (c) => {
 
 /** Resolve a sync conflict. */
 pluginRoutes.post('/sync/conflicts/:ticketId/resolve', async (c) => {
-  const ticketId = parseInt(c.req.param('ticketId'), 10);
+  const ticketId = parseIntParam(c, 'ticketId');
+  if (ticketId === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const body: { plugin_id?: string; resolution?: 'keep_local' | 'keep_remote' } = await c.req.json();
   if (body.plugin_id == null || body.plugin_id === '' || body.resolution == null) {
     return c.json({ error: 'plugin_id and resolution required' }, 400);

@@ -12,6 +12,11 @@ import type { RemoteChange, RemoteTicketFields, TicketingBackend } from './types
 
 // --- Sync scheduling ---
 
+/** Per-plugin sync timers. Each scheduled sync replaces any previous timer for
+ *  the same pluginId (startScheduledSync calls stopScheduledSync first).
+ *  No guard against overlapping sync execution — if a timer fires while a
+ *  previous sync is still running, both run concurrently.
+ *  Modified by: startScheduledSync(), stopScheduledSync(), stopAllScheduledSyncs(). */
 const syncTimers = new Map<string, ReturnType<typeof setInterval>>();
 
 export function startScheduledSync(pluginId: string, intervalMs: number, dataDir?: string): void {

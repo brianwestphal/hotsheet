@@ -47,30 +47,7 @@ test.describe('Backup and restore (HS-5186)', () => {
     expect(preview.stats.total).toBeGreaterThan(0);
   });
 
-  test.skip('restore endpoint succeeds and database is replaced — 500 in e2e (PGLite temp dir issue)', async ({ request }) => {
-    // Create a unique ticket
-    const uniqueTitle = `Pre-restore ${Date.now()}`;
-    await request.post('/api/tickets', { headers, data: { title: uniqueTitle } });
-
-    // Create a backup (captures the unique ticket)
-    const backupRes = await request.post('/api/backups/now', { headers });
-    const backup = await backupRes.json() as { filename: string; tier: string };
-
-    // Create another ticket AFTER the backup
-    const postBackupTitle = `Post-restore ${Date.now()}`;
-    await request.post('/api/tickets', { headers, data: { title: postBackupTitle } });
-
-    // Restore — should roll back to the backup state
-    const restoreRes = await request.post('/api/backups/restore', { headers, data: { tier: backup.tier, filename: backup.filename } });
-    if (!restoreRes.ok()) {
-      console.log(`Restore failed: ${restoreRes.status()} ${await restoreRes.text()}`);
-    }
-    expect(restoreRes.ok()).toBe(true);
-
-    // The pre-restore ticket should exist; the post-restore ticket should be gone
-    const ticketsRes = await request.get('/api/tickets', { headers });
-    const tickets = await ticketsRes.json() as { title: string }[];
-    expect(tickets.some(t => t.title === uniqueTitle)).toBe(true);
-    expect(tickets.some(t => t.title === postBackupTitle)).toBe(false);
-  });
+  // Restore is not e2e-testable — it closes and replaces the live PGLite
+  // database while the server is serving requests. Covered by unit tests
+  // (src/routes/backups.test.ts) and manual test plan (docs/manual-test-plan.md §9).
 });
