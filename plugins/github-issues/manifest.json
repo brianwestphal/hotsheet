@@ -1,7 +1,7 @@
 {
   "id": "github-issues",
   "name": "GitHub Issues",
-  "version": "0.5.1",
+  "version": "0.5.5",
   "description": "Sync tickets with GitHub Issues",
   "author": "Hot Sheet",
   "entry": "index.js",

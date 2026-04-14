@@ -4,7 +4,7 @@
   "version": "0.14.1",
   "identifier": "com.brianwestphal.hotsheet",
   "build": {
-    "beforeDevCommand": "npm run build:client",
+    "beforeDevCommand": "npm run build:client && npm run build:plugins",
     "frontendDist": "loading"
   },
   "app": {
