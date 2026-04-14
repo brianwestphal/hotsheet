@@ -4,7 +4,7 @@
 
 Hot Sheet supports plugins that integrate with external ticketing systems (GitHub Issues, Linear, Jira, etc.) via a bidirectional sync engine, and non-ticketing plugins that add custom UI and functionality. Plugins are loaded at server startup from a global directory and configured per-project.
 
-Plugin support is behind a build-time feature flag (`PLUGINS_ENABLED`). Set `PLUGINS_ENABLED=true` at build time to enable. Default builds ship with plugins disabled.
+Plugin support is enabled by default. It can be disabled at build time by setting `PLUGINS_ENABLED=false`. The feature flag (`PLUGINS_ENABLED`) controls route mounting, UI elements, and plugin loading.
 
 ## Functional Requirements
 
@@ -348,11 +348,11 @@ All 8 locations are wired up in the client: toolbar buttons render in the header
 
 ### 18.14 Feature Flag
 
-All plugin functionality is behind the `PLUGINS_ENABLED` build-time flag:
+Plugin functionality is controlled by the `PLUGINS_ENABLED` build-time flag, **enabled by default**:
 
-- **Build**: `PLUGINS_ENABLED=true npm run build` or `PLUGINS_ENABLED=true npm run dev`
-- **Default**: Plugins disabled — no routes mounted, no UI tab, no sync hooks, no toolbar buttons
-- **Implementation**: `src/feature-flags.ts` exports `PLUGINS_ENABLED` constant. Uses `__PLUGINS_ENABLED__` define token (replaced at build time). Falls back to `process.env.PLUGINS_ENABLED` in tsx dev mode. Safe in browser (no `process` reference).
+- **Build**: Plugins enabled automatically. Disable with `PLUGINS_ENABLED=false npm run build` or `PLUGINS_ENABLED=false npm run dev`
+- **Default**: Plugins enabled — routes mounted, UI tab visible, sync hooks active, toolbar buttons shown
+- **Implementation**: `src/feature-flags.ts` exports `PLUGINS_ENABLED` constant. Uses `__PLUGINS_ENABLED__` define token (replaced at build time). Falls back to `process.env.PLUGINS_ENABLED` in tsx dev mode (enabled unless explicitly set to `'false'`). Safe in browser (no `process` reference).
 - **Guards**: `api.ts` (route mounting), `cli.ts` (plugin loading), `pages.tsx` (settings tab/panel, busy indicator), `settingsDialog.tsx` (bind plugin settings), `app.tsx` (toolbar buttons), E2E tests (skip when disabled).
 
 ## Non-Functional Requirements

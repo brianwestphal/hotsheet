@@ -290,7 +290,7 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   }
 
   // Load plugins (non-critical, feature-flagged)
-  if (PLUGINS_ENABLED || process.env.PLUGINS_ENABLED === 'true') {
+  if (PLUGINS_ENABLED) {
     import('./plugins/loader.js').then(({ loadAllPlugins }) => loadAllPlugins())
       .catch((e: unknown) => console.warn(`[plugins] Failed to load plugins: ${e instanceof Error ? e.message : String(e)}`));
   }

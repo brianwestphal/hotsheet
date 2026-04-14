@@ -619,7 +619,7 @@ describe('createPluginContext via real plugin', () => {
 
     const elements = getPluginUIElements('ui-plugin');
     expect(elements.length).toBe(1);
-    expect(elements[0].elements[0].label).toBe('Test');
+    expect((elements[0].elements[0] as { label: string }).label).toBe('Test');
   });
 
   it('plugin can update config labels', async () => {

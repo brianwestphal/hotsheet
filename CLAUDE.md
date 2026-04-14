@@ -104,7 +104,7 @@ npm run test:e2e:fast # E2E only, skipping GitHub plugin / live integration test
 npm run test:all      # Unified coverage: unit + E2E server + E2E browser, merged report
 ```
 
-The `test:fast` and `test:e2e:fast` scripts exclude tests that require GitHub API credentials or `PLUGINS_ENABLED=true`. These are the scripts that should run in CI (GitHub Actions) by default. The full `test:e2e` suite including live GitHub integration tests should only run locally when credentials are configured.
+The `test:fast` and `test:e2e:fast` scripts exclude tests that require GitHub API credentials (plugin sync, live integration). These are the scripts that should run in CI (GitHub Actions) by default. The full `test:e2e` suite including live GitHub integration tests should only run locally when credentials are configured.
 
 ### Testing Philosophy
 

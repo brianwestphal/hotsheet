@@ -30,7 +30,7 @@
   "scripts": {
     "dev": "npm run build:client && npm run build:plugins && tsx --tsconfig tsconfig.json src/cli.ts",
     "build": "tsup",
-    "build:client": "mkdir -p dist/client/assets && cp src/client/assets/* dist/client/assets/ && npx esbuild src/client/app.tsx --bundle --format=iife --outfile=dist/client/app.global.js --target=es2020 --jsx=automatic --jsx-import-source=#jsx --alias:#jsx/jsx-runtime=./src/jsx-runtime.ts --define:__PLUGINS_ENABLED__=${PLUGINS_ENABLED:-false} --sourcemap && npx sass src/client/styles.scss dist/client/styles.css --style compressed --no-source-map",
+    "build:client": "mkdir -p dist/client/assets && cp src/client/assets/* dist/client/assets/ && npx esbuild src/client/app.tsx --bundle --format=iife --outfile=dist/client/app.global.js --target=es2020 --jsx=automatic --jsx-import-source=#jsx --alias:#jsx/jsx-runtime=./src/jsx-runtime.ts --define:__PLUGINS_ENABLED__=${PLUGINS_ENABLED:-true} --sourcemap && npx sass src/client/styles.scss dist/client/styles.css --style compressed --no-source-map",
     "build:plugins": "for d in plugins/*/; do if [ -f \"$d/manifest.json\" ]; then name=$(basename $d); mkdir -p dist/plugins/$name && npx esbuild $d/src/index.ts --bundle --format=esm --outfile=dist/plugins/$name/index.js --platform=node --target=node20 && cp $d/manifest.json dist/plugins/$name/; fi; done",
     "test": "vitest run --coverage",
     "test:watch": "vitest",

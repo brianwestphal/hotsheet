@@ -16,7 +16,7 @@ export default defineConfig([
     noExternal: [/^(?!@electric-sql|hono|@hono)/],
     define: {
       'process.env.BUILD_TIMESTAMP': JSON.stringify(new Date().toISOString()),
-      '__PLUGINS_ENABLED__': process.env.PLUGINS_ENABLED === 'true' ? 'true' : 'false',
+      '__PLUGINS_ENABLED__': process.env.PLUGINS_ENABLED === 'false' ? 'false' : 'true',
     },
     esbuildOptions(options) {
       options.jsx = 'automatic';
@@ -54,7 +54,7 @@ export default defineConfig([
     sourcemap: false,
     minify: true,
     define: {
-      '__PLUGINS_ENABLED__': process.env.PLUGINS_ENABLED === 'true' ? 'true' : 'false',
+      '__PLUGINS_ENABLED__': process.env.PLUGINS_ENABLED === 'false' ? 'false' : 'true',
     },
     esbuildOptions(options) {
       options.jsx = 'automatic';
