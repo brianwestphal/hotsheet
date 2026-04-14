@@ -43,12 +43,9 @@ function getOrCreateState(dataDir: string): BackupState {
   return state;
 }
 
-/** Active backup previews keyed by dataDir. Stores the temporary PGlite
- *  instance used for read-only preview. Both the DB and dataDir must be
- *  cleaned up together via cleanupPreview().
- *  Modified by: loadBackupForPreview() (add), cleanupPreview() (clear all). */
-const previewDbs = new Map<string, PGlite>();
-const previewDataDirs = new Set<string>();
+/** Active backup previews keyed by dataDir. Stores the temporary PGlite instance.
+ *  Modified by: loadBackupForPreview() (add), cleanupPreview() (clear). */
+const activePreviews = new Map<string, PGlite>();
 
 function backupsDir(dataDir: string): string {
   return getBackupDir(dataDir);
@@ -188,8 +185,7 @@ export async function loadBackupForPreview(dataDir: string, tier: string, filena
 
   const db = new PGlite(previewDir, { loadDataDir: blob });
   await db.waitReady;
-  previewDbs.set(dataDir, db);
-  previewDataDirs.add(dataDir);
+  activePreviews.set(dataDir, db);
 
   const tickets = await db.query<Record<string, unknown>>(
     `SELECT * FROM tickets WHERE status != 'deleted' ORDER BY created_at DESC`
@@ -216,14 +212,13 @@ export async function loadBackupForPreview(dataDir: string, tier: string, filena
 
 export async function cleanupPreview(dataDir?: string): Promise<void> {
   // If a specific dataDir is given, clean up just that one
-  const dirs = dataDir !== undefined ? [dataDir] : Array.from(previewDataDirs);
+  const dirs = dataDir !== undefined ? [dataDir] : Array.from(activePreviews.keys());
   for (const dir of dirs) {
-    const db = previewDbs.get(dir);
+    const db = activePreviews.get(dir);
     if (db) {
       try { await db.close(); } catch { /* ignore */ }
-      previewDbs.delete(dir);
+      activePreviews.delete(dir);
     }
-    previewDataDirs.delete(dir);
     const previewDir = join(backupsDir(dir), '_preview');
     if (existsSync(previewDir)) {
       rmSync(previewDir, { recursive: true, force: true });

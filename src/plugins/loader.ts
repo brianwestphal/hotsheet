@@ -493,7 +493,9 @@ export async function reactivatePlugin(id: string): Promise<boolean> {
 
   // Deactivate if currently active
   if (plugin.enabled) {
-    try { await plugin.instance.deactivate?.(); } catch { /* ignore */ }
+    try { await plugin.instance.deactivate?.(); } catch (e: unknown) {
+      console.warn(`[plugins] Error deactivating ${id} during reactivation: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // Re-activate with fresh context (re-reads settings)

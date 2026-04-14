@@ -311,93 +311,14 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
 async function postStartup(dataDir: string, actualPort: number, demo: number | null, noOpen: boolean): Promise<void> {
   if (demo === null) {
     initBackupScheduler(dataDir);
-  }
-
-  if (demo === null) {
     addToProjectList(dataDir);
-
-    // Restore previously registered projects (other tabs from last session)
-    // Preserve the existing list order — the current project is already in the list
-    const previousProjects = readProjectList();
-    const absDataDir = resolve(dataDir);
-    const validProjects: string[] = [];
-    for (const prevDir of previousProjects) {
-      if (prevDir === absDataDir) {
-        validProjects.push(prevDir);
-        continue; // Already registered by registerExistingProject above
-      }
-      if (!existsSync(prevDir)) continue;
-      try {
-        await registerProject(prevDir, actualPort);
-        validProjects.push(prevDir);
-      } catch {
-        // Non-critical — skip projects that fail to register
-      }
-    }
-    if (validProjects.length !== previousProjects.length) {
-      const { reorderProjectList } = await import('./project-list.js');
-      reorderProjectList(validProjects);
-    }
-
-    // Reorder the in-memory project Map to match the persisted list order.
-    // registerExistingProject runs before the loop, so the current project
-    // is always first in the Map regardless of its position in projects.json.
-    if (validProjects.length > 1) {
-      const { getProjectByDataDir: getByDir, reorderProjects: reorder } = await import('./projects.js');
-      const secrets = validProjects
-        .map(dir => getByDir(dir)?.secret)
-        .filter((s): s is string => s !== undefined);
-      if (secrets.length > 1) reorder(secrets);
-    }
-
-    if (validProjects.length > 1) {
-      const { notifyChange } = await import('./routes/notify.js');
-      notifyChange();
-    }
-
-    // One-time migration: if no global channelEnabled, read from first project's DB
-    const { readGlobalConfig, writeGlobalConfig } = await import('./global-config.js');
-    const globalConfig = readGlobalConfig();
-    if (globalConfig.channelEnabled === undefined) {
-      const { getSettings } = await import('./db/queries.js');
-      const settings = await getSettings();
-      const legacy = settings.channel_enabled === 'true';
-      writeGlobalConfig({ channelEnabled: legacy });
-    }
-
-    // Clean up stale channel servers from previous sessions
-    {
-      const { cleanupStaleChannel } = await import('./channel-config.js');
-      const { getAllProjects: allProjects } = await import('./projects.js');
-      for (const p of allProjects()) {
-        await cleanupStaleChannel(p.dataDir);
-      }
-    }
-
-    // Ensure skills and .mcp.json for all restored projects
-    {
-      const { getAllProjects } = await import('./projects.js');
-      const { ensureSkillsForDir } = await import('./skills.js');
-      for (const p of getAllProjects()) {
-        const root = p.dataDir.replace(/\/.hotsheet\/?$/, '');
-        ensureSkillsForDir(root);
-      }
-      if (readGlobalConfig().channelEnabled === true) {
-        const { registerChannelForAll } = await import('./channel-config.js');
-        registerChannelForAll(getAllProjects().map(p => p.dataDir));
-      }
-    }
-
-    writeInstanceFile(actualPort);
-
-    // Clean up instance file on exit
-    const cleanupInstance = () => removeInstanceFile();
-    process.on('exit', cleanupInstance);
-    process.on('SIGINT', () => { cleanupInstance(); process.exit(0); });
-    process.on('SIGTERM', () => { cleanupInstance(); process.exit(0); });
+    await restorePreviousProjects(dataDir, actualPort);
+    await migrateGlobalConfig();
+    await cleanupStaleChannels();
+    await setupSkillsAndChannels();
+    setupInstanceLifecycle(actualPort);
   }
 
-  // Open browser AFTER all projects are restored (so tabs are ready when the page loads)
   if (!noOpen) {
     const url = `http://localhost:${actualPort}`;
     const openCmd = process.platform === 'darwin' ? 'open'
@@ -405,6 +326,85 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
       : 'xdg-open';
     execFile(openCmd, [url]);
   }
+}
+
+/** Restore projects from the previous session's project list. */
+async function restorePreviousProjects(dataDir: string, actualPort: number): Promise<void> {
+  const previousProjects = readProjectList();
+  const absDataDir = resolve(dataDir);
+  const validProjects: string[] = [];
+
+  for (const prevDir of previousProjects) {
+    if (prevDir === absDataDir) { validProjects.push(prevDir); continue; }
+    if (!existsSync(prevDir)) continue;
+    try {
+      await registerProject(prevDir, actualPort);
+      validProjects.push(prevDir);
+    } catch (e: unknown) {
+      console.warn(`[startup] Failed to restore project ${prevDir}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  if (validProjects.length !== previousProjects.length) {
+    const { reorderProjectList } = await import('./project-list.js');
+    reorderProjectList(validProjects);
+  }
+
+  // Reorder in-memory Map to match persisted list order
+  if (validProjects.length > 1) {
+    const { getProjectByDataDir: getByDir, reorderProjects: reorder } = await import('./projects.js');
+    const secrets = validProjects
+      .map(dir => getByDir(dir)?.secret)
+      .filter((s): s is string => s !== undefined);
+    if (secrets.length > 1) reorder(secrets);
+    const { notifyChange } = await import('./routes/notify.js');
+    notifyChange();
+  }
+}
+
+/** One-time migration: read channelEnabled from first project's DB if not set globally. */
+async function migrateGlobalConfig(): Promise<void> {
+  const { readGlobalConfig, writeGlobalConfig } = await import('./global-config.js');
+  const globalConfig = readGlobalConfig();
+  if (globalConfig.channelEnabled === undefined) {
+    const { getSettings } = await import('./db/queries.js');
+    const settings = await getSettings();
+    const legacy = settings.channel_enabled === 'true';
+    writeGlobalConfig({ channelEnabled: legacy });
+  }
+}
+
+/** Clean up stale channel servers from previous sessions. */
+async function cleanupStaleChannels(): Promise<void> {
+  const { cleanupStaleChannel } = await import('./channel-config.js');
+  const { getAllProjects } = await import('./projects.js');
+  for (const p of getAllProjects()) {
+    await cleanupStaleChannel(p.dataDir);
+  }
+}
+
+/** Ensure skills and .mcp.json are set up for all projects. */
+async function setupSkillsAndChannels(): Promise<void> {
+  const { getAllProjects } = await import('./projects.js');
+  const { ensureSkillsForDir } = await import('./skills.js');
+  for (const p of getAllProjects()) {
+    const root = p.dataDir.replace(/\/.hotsheet\/?$/, '');
+    ensureSkillsForDir(root);
+  }
+  const { readGlobalConfig } = await import('./global-config.js');
+  if (readGlobalConfig().channelEnabled === true) {
+    const { registerChannelForAll } = await import('./channel-config.js');
+    registerChannelForAll(getAllProjects().map(p => p.dataDir));
+  }
+}
+
+/** Write instance file and register exit cleanup handlers. */
+function setupInstanceLifecycle(actualPort: number): void {
+  writeInstanceFile(actualPort);
+  const cleanupInstance = () => removeInstanceFile();
+  process.on('exit', cleanupInstance);
+  process.on('SIGINT', () => { cleanupInstance(); process.exit(0); });
+  process.on('SIGTERM', () => { cleanupInstance(); process.exit(0); });
 }
 
 async function main() {

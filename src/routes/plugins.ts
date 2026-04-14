@@ -22,6 +22,15 @@ import { notifyMutation } from './notify.js';
 
 export const pluginRoutes = new Hono<AppEnv>();
 
+/** Re-activate a plugin and return the refreshed LoadedPlugin with its backend.
+ *  Returns null if the plugin doesn't exist or has no backend after reactivation. */
+async function getActivatedBackend(pluginId: string): Promise<LoadedPlugin | null> {
+  await reactivatePlugin(pluginId);
+  const plugin = getPluginById(pluginId);
+  if (!plugin || !plugin.backend) return null;
+  return plugin;
+}
+
 // --- Per-project plugin enabled state ---
 
 export async function isPluginEnabledForProject(pluginId: string): Promise<boolean> {
@@ -130,7 +139,8 @@ pluginRoutes.post('/plugins/validate/:id', async (c) => {
   try {
     const result = await plugin.instance.validateField(body.key, body.value);
     return c.json(result);
-  } catch {
+  } catch (e: unknown) {
+    console.warn(`[plugins] validateField failed for ${c.req.param('id')}:${body.key}: ${e instanceof Error ? e.message : String(e)}`);
     return c.json(null);
   }
 });
@@ -255,7 +265,7 @@ pluginRoutes.post('/plugins/:id/disable-all', async (c) => {
 /** Check backend connection status. Always re-activates to pick up config changes. */
 pluginRoutes.get('/plugins/:id/status', async (c) => {
   const pluginId = c.req.param('id');
-  let plugin = getPluginById(pluginId);
+  const plugin = getPluginById(pluginId);
   if (!plugin) return c.json({ error: 'Plugin not found' }, 404);
 
   // Check required fields before re-activating
@@ -264,14 +274,14 @@ pluginRoutes.get('/plugins/:id/status', async (c) => {
     return c.json({ connected: false, error: `Missing required fields: ${missing.join(', ')}` });
   }
 
-  // Always re-activate to pick up config changes (activate() re-reads settings)
-  await reactivatePlugin(pluginId);
-  plugin = getPluginById(pluginId)!;
-  if (!plugin.backend) {
-    return c.json({ connected: false, error: plugin.error ?? 'Backend not available' });
+  // Re-activate to pick up config changes
+  const activated = await getActivatedBackend(pluginId);
+  if (!activated) {
+    const err = getPluginById(pluginId)?.error;
+    return c.json({ connected: false, error: err ?? 'Backend not available' });
   }
 
-  const status = await plugin.backend.checkConnection();
+  const status = await activated.backend!.checkConnection();
   return c.json(status);
 });
 
@@ -292,10 +302,9 @@ pluginRoutes.post('/plugins/:id/sync', async (c) => {
     return c.json({ error: 'Plugin is disabled for this project' }, 400);
   }
 
-  // Always re-activate to read the current project's config (owner, repo, etc.)
-  await reactivatePlugin(pluginId);
-  const reloaded = getPluginById(pluginId)!;
-  if (!reloaded.backend) return c.json({ error: reloaded.error ?? 'No backend' }, 400);
+  // Re-activate to read the current project's config
+  const reloaded = await getActivatedBackend(pluginId);
+  if (!reloaded) return c.json({ error: getPluginById(pluginId)?.error ?? 'No backend' }, 400);
 
   const result = await runSync(pluginId);
   if ((result.pulled ?? 0) > 0 || (result.pushed ?? 0) > 0) {
@@ -319,11 +328,11 @@ pluginRoutes.post('/plugins/:id/push-ticket/:ticketId', async (c) => {
     return c.json({ error: `Missing required fields: ${missing.join(', ')}` }, 400);
   }
 
-  // Always re-activate to pick up latest config
-  await reactivatePlugin(pluginId);
-  plugin = getPluginById(pluginId)!;
-  if (!plugin.backend) return c.json({ error: plugin.error ?? 'No backend' }, 400);
-  if (!plugin.backend.capabilities.create) {
+  // Re-activate to pick up latest config
+  const activated = await getActivatedBackend(pluginId);
+  if (!activated) return c.json({ error: getPluginById(pluginId)?.error ?? 'No backend' }, 400);
+  plugin = activated;
+  if (!plugin.backend!.capabilities.create) {
     return c.json({ error: 'Backend does not support creating tickets' }, 400);
   }
 
@@ -337,14 +346,15 @@ pluginRoutes.post('/plugins/:id/push-ticket/:ticketId', async (c) => {
     return c.json({ error: 'Ticket is already synced with this plugin' }, 400);
   }
 
-  const remoteId = await plugin.backend.createRemote(ticket);
+  const backend = plugin.backend!;
+  const remoteId = await backend.createRemote(ticket);
   await upsertSyncRecord(ticketId, pluginId, remoteId, 'synced');
 
   // Push notes and attachments — createRemote only pushes core fields,
   // so without this they would be silently dropped on first push.
-  await syncSingleTicketContent(plugin.backend, ticketId, remoteId);
+  await syncSingleTicketContent(backend, ticketId, remoteId);
 
-  const remoteUrl = plugin.backend.getRemoteUrl?.(remoteId) ?? null;
+  const remoteUrl = backend.getRemoteUrl?.(remoteId) ?? null;
   notifyMutation(c.get('dataDir'));
   return c.json({ ok: true, remoteId, remoteUrl });
 });

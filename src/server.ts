@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 
 import { runWithDataDir } from './db/connection.js';
 import { readFileSettings } from './file-settings.js';
+import { getMimeType } from './mime-types.js';
 import { getProjectBySecret } from './projects.js';
 import { apiRoutes } from './routes/api.js';
 import { backupRoutes } from './routes/backups.js';
@@ -76,8 +77,7 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     if (!existsSync(filePath)) return c.notFound();
     const content = readFileSync(filePath);
     const ext = filename.split('.').pop() ?? '';
-    const mimeTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', svg: 'image/svg+xml' };
-    return new Response(content, { headers: { 'Content-Type': mimeTypes[ext] ?? 'application/octet-stream', 'Cache-Control': 'max-age=86400' } });
+    return new Response(content, { headers: { 'Content-Type': getMimeType(ext), 'Cache-Control': 'max-age=86400' } });
   });
 
   // Secret validation middleware for API routes (HS-1684, HS-1982, HS-2083)

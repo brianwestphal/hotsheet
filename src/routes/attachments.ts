@@ -8,6 +8,7 @@ import {
   getAttachment,
   getTicket,
 } from '../db/queries.js';
+import { getMimeType } from '../mime-types.js';
 import { revealInFileManager } from '../open-in-file-manager.js';
 import type { AppEnv } from '../types.js';
 import { parseIntParam } from './helpers.js';
@@ -91,12 +92,7 @@ attachmentRoutes.get('/attachments/file/*', async (c) => {
   const { readFileSync } = await import('fs');
   const content = readFileSync(fullPath);
   const ext = extname(fullPath).toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif', '.svg': 'image/svg+xml', '.pdf': 'application/pdf',
-    '.txt': 'text/plain', '.md': 'text/markdown', '.json': 'application/json',
-  };
-  const contentType = mimeTypes[ext] || 'application/octet-stream';
+  const contentType = getMimeType(ext);
 
   return new Response(content, {
     headers: { 'Content-Type': contentType },

@@ -8,7 +8,7 @@ import {
 import { createTicket, getTicket, updateTicket } from '../db/tickets.js';
 import type { Ticket } from '../types.js';
 import { getAllBackends, getBackendForPlugin, reactivatePlugin } from './loader.js';
-import type { RemoteChange, RemoteTicketFields, TicketingBackend } from './types.js';
+import type { RemoteChange, RemoteTicketFields, TicketingBackend,TicketSyncRecord } from './types.js';
 
 // --- Sync scheduling ---
 
@@ -139,37 +139,45 @@ async function applyRemoteChange(
   change: RemoteChange,
 ): Promise<'applied' | 'conflict' | 'skipped'> {
   const existingSync = await getSyncRecordByRemoteId(backend.id, change.remoteId);
+  if (!existingSync) return handleNewRemote(backend, change);
+  return handleExistingRemote(backend, change, existingSync);
+}
 
-  if (!existingSync) {
-    // New remote ticket — create locally
-    if (change.deleted === true) return 'skipped';
+/** Handle a remote change that has no existing sync record — create or dedup. */
+async function handleNewRemote(
+  backend: TicketingBackend,
+  change: RemoteChange,
+): Promise<'applied' | 'skipped'> {
+  if (change.deleted === true) return 'skipped';
 
-    // Dedup: check if a local ticket with the same title already exists
-    // (prevents duplicates when repo config changes or sync records were lost)
-    if (change.fields.title != null && change.fields.title !== '') {
-      const { getDb: getDbForDedup } = await import('../db/connection.js');
-      const db = await getDbForDedup();
-      const existing = await db.query<{ id: number }>(
-        "SELECT id FROM tickets WHERE title = $1 AND status != 'deleted' LIMIT 1",
-        [change.fields.title],
-      );
-      if (existing.rows.length > 0) {
-        // Link existing ticket instead of creating a duplicate
-        await upsertSyncRecord(existing.rows[0].id, backend.id, change.remoteId, 'synced', change.remoteUpdatedAt);
-        return 'applied';
-      }
+  // Dedup: check if a local ticket with the same title already exists
+  if (change.fields.title != null && change.fields.title !== '') {
+    const { getDb: getDbForDedup } = await import('../db/connection.js');
+    const db = await getDbForDedup();
+    const existing = await db.query<{ id: number }>(
+      "SELECT id FROM tickets WHERE title = $1 AND status != 'deleted' LIMIT 1",
+      [change.fields.title],
+    );
+    if (existing.rows.length > 0) {
+      await upsertSyncRecord(existing.rows[0].id, backend.id, change.remoteId, 'synced', change.remoteUpdatedAt);
+      return 'applied';
     }
-
-    const localTicket = await createTicketFromRemote(change.fields);
-    await upsertSyncRecord(localTicket.id, backend.id, change.remoteId, 'synced', change.remoteUpdatedAt);
-    return 'applied';
   }
 
-  // Existing synced ticket
-  const localTicket = await getTicket(existingSync.ticket_id);
+  const localTicket = await createTicketFromRemote(change.fields);
+  await upsertSyncRecord(localTicket.id, backend.id, change.remoteId, 'synced', change.remoteUpdatedAt);
+  return 'applied';
+}
+
+/** Handle a remote change for an already-synced ticket — detect conflicts or apply. */
+async function handleExistingRemote(
+  backend: TicketingBackend,
+  change: RemoteChange,
+  syncRecord: TicketSyncRecord,
+): Promise<'applied' | 'conflict' | 'skipped'> {
+  const localTicket = await getTicket(syncRecord.ticket_id);
   if (!localTicket) {
-    // Local ticket was deleted — clean up sync record
-    await updateSyncStatus(existingSync.ticket_id, backend.id, 'synced');
+    await updateSyncStatus(syncRecord.ticket_id, backend.id, 'synced');
     return 'skipped';
   }
 
@@ -179,29 +187,25 @@ async function applyRemoteChange(
     return 'applied';
   }
 
-  // Check for conflict: local modified since last sync?
-  const localModified = new Date(localTicket.updated_at).getTime() > new Date(existingSync.local_updated_at).getTime();
-  const remoteModified = change.remoteUpdatedAt.getTime() > new Date(existingSync.remote_updated_at ?? existingSync.last_synced_at).getTime();
+  const localModified = new Date(localTicket.updated_at).getTime() > new Date(syncRecord.local_updated_at).getTime();
+  const remoteModified = change.remoteUpdatedAt.getTime() > new Date(syncRecord.remote_updated_at ?? syncRecord.last_synced_at).getTime();
 
   if (localModified && remoteModified) {
-    // Both sides modified — conflict
     const conflictData = JSON.stringify({
       local: extractTicketFields(localTicket),
       remote: change.fields,
-      base_synced_at: existingSync.last_synced_at,
+      base_synced_at: syncRecord.last_synced_at,
     });
     await updateSyncStatus(localTicket.id, backend.id, 'conflict', conflictData);
     return 'conflict';
   }
 
   if (remoteModified) {
-    // Only remote changed — apply
     await applyFieldsToTicket(localTicket.id, change.fields);
     await upsertSyncRecord(localTicket.id, backend.id, change.remoteId, 'synced', change.remoteUpdatedAt);
     return 'applied';
   }
 
-  // Only local changed or neither changed — skip (push will handle local changes)
   return 'skipped';
 }
 
@@ -663,12 +667,8 @@ async function syncTicketAttachments(backend: TicketingBackend, ticketId: number
       const { readFileSync } = await import('fs');
       const content = readFileSync(att.stored_path);
       const ext = att.original_filename.split('.').pop()?.toLowerCase() ?? '';
-      const mimeMap: Record<string, string> = {
-        png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
-        svg: 'image/svg+xml', pdf: 'application/pdf', txt: 'text/plain',
-        zip: 'application/zip', json: 'application/json',
-      };
-      const mimeType = mimeMap[ext] ?? 'application/octet-stream';
+      const { getMimeType } = await import('../mime-types.js');
+      const mimeType = getMimeType(ext);
 
       const url = await backend.uploadAttachment(att.original_filename, content, mimeType);
       if (url == null || url === '') continue;
