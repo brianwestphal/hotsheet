@@ -99,8 +99,12 @@ The build produces:
 npm test              # Unit tests with coverage (vitest)
 npm run test:watch    # Unit tests in watch mode
 npm run test:e2e      # E2E browser tests (Playwright)
+npm run test:fast     # Unit tests + fast E2E (skips GitHub plugin / live integration tests)
+npm run test:e2e:fast # E2E only, skipping GitHub plugin / live integration tests
 npm run test:all      # Unified coverage: unit + E2E server + E2E browser, merged report
 ```
+
+The `test:fast` and `test:e2e:fast` scripts exclude tests that require GitHub API credentials or `PLUGINS_ENABLED=true`. These are the scripts that should run in CI (GitHub Actions) by default. The full `test:e2e` suite including live GitHub integration tests should only run locally when credentials are configured.
 
 ### Testing Philosophy
 

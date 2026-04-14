@@ -328,7 +328,8 @@ function showNotWorkingDialog(ticket: Ticket) {
   const close = () => overlay.remove();
   overlay.querySelector('#not-working-close')!.addEventListener('click', close);
   overlay.querySelector('#not-working-cancel')!.addEventListener('click', close);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  // Intentionally no click-outside-to-dismiss — this dialog has form data
+  // (text + attachments) that would be lost on accidental clicks.
 
   overlay.querySelector('#not-working-submit')!.addEventListener('click', async () => {
     const text = (overlay.querySelector('#not-working-text') as HTMLTextAreaElement).value.trim();
