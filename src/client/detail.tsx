@@ -3,83 +3,18 @@ import { marked } from 'marked';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
+import { parseNotesJson, renderNotes, setPendingFocusNoteId } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
 import type { Ticket } from './state.js';
-import { getActiveProject, getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
-import { getTauriInvoke } from './tauriIntegration.js';
-import { pushNotesUndo } from './undo/actions.js';
+import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
+import { parseTags, renderDetailTags } from './tags.js';
+
+// Re-export extracted modules for consumers that import from detail.js
+export { displayTag, extractBracketTags, hasTag, normalizeTag, parseTags, renderDetailTags } from './tags.js';
+export type { NoteEntry } from './noteRenderer.js';
 
 // Configure marked for safe rendering
 marked.setOptions({ breaks: true });
-
-// --- Tags helpers ---
-
-/** Normalize a tag: collapse non-alphanumeric runs to single space, lowercase, trim. */
-export function normalizeTag(input: string): string {
-  return input.replace(/[^a-zA-Z0-9]+/g, ' ').trim().toLowerCase();
-}
-
-/** Display a tag in Title Case. */
-export function displayTag(tag: string): string {
-  return tag.replace(/\b\w/g, c => c.toUpperCase());
-}
-
-/** Check if a tag already exists in a list (case-insensitive, normalized). */
-export function hasTag(tags: string[], tag: string): boolean {
-  const norm = normalizeTag(tag);
-  return tags.some(t => normalizeTag(t) === norm);
-}
-
-/** Extract bracket tags from a title, returning cleaned title and tag list.
- *  e.g. " [admin ] this is a ticket [dashboard] " returns \{ title: "this is a ticket", tags: ["admin", "dashboard"] \} */
-export function extractBracketTags(input: string): { title: string; tags: string[] } {
-  const tags: string[] = [];
-  // Extract all [tag] patterns
-  const cleaned = input.replace(/\[([^\]]*)\]/g, (_match, content: string) => {
-    const tag = normalizeTag(content);
-    if (tag && !tags.some(t => t === tag)) tags.push(tag);
-    return ' '; // replace bracket with space
-  });
-  // Clean up extra whitespace
-  const title = cleaned.replace(/\s+/g, ' ').trim();
-  return { title, tags };
-}
-
-export function parseTags(raw: string): string[] {
-  if (raw === '' || raw === '[]') return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) return (parsed as unknown[]).filter((t): t is string => typeof t === 'string' && t.trim() !== '');
-  } catch { /* ignore */ }
-  return [];
-}
-
-export function renderDetailTags(tags: string[], readOnly: boolean) {
-  const container = document.getElementById('detail-tags');
-  if (!container) return;
-  container.innerHTML = '';
-  for (const tag of tags) {
-    const chip = toElement(
-      <span className="tag-chip">
-        {displayTag(tag)}
-        {readOnly ? null : <button className="tag-chip-remove" data-tag={tag} title="Remove tag">{'\u00d7'}</button>}
-      </span>
-    );
-    if (!readOnly) {
-      chip.querySelector('.tag-chip-remove')!.addEventListener('click', async () => {
-        if (state.activeTicketId == null) return;
-        const ticket = state.tickets.find(t => t.id === state.activeTicketId);
-        if (!ticket) return;
-        const currentTags = parseTags(ticket.tags);
-        const updated = currentTags.filter(t => t !== tag);
-        await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { tags: JSON.stringify(updated) } });
-        ticket.tags = JSON.stringify(updated);
-        renderDetailTags(updated, false);
-      });
-    }
-    container.appendChild(chip);
-  }
-}
 
 // --- Detail field button helpers ---
 
@@ -114,9 +49,6 @@ export function updateDetailStatus(value: string) {
 
 // --- Detail panel ---
 
-/** Note ID to scroll-to and focus after the next renderNotes pass. */
-let pendingFocusNoteId: string | null = null;
-
 export function openDetail(id: number) {
   state.activeTicketId = id;
   void loadDetail(id);
@@ -124,7 +56,7 @@ export function openDetail(id: number) {
 
 /** Open detail and, after notes render, scroll to and focus a specific note. */
 export function openDetailAndFocusNote(id: number, noteId: string) {
-  pendingFocusNoteId = noteId;
+  setPendingFocusNoteId(noteId);
   state.activeTicketId = id;
   void loadDetail(id);
 }
@@ -349,229 +281,6 @@ async function loadDetail(id: number) {
   const detailBottom = document.getElementById('plugin-detail-bottom');
   if (detailTop) { detailTop.innerHTML = ''; renderPluginDetailElements(detailTop, 'detail_top', [ticket.id]); }
   if (detailBottom) { detailBottom.innerHTML = ''; renderPluginDetailElements(detailBottom, 'detail_bottom', [ticket.id]); }
-}
-
-type NoteEntry = { id?: string; text: string; created_at: string };
-
-function syncNotesToState(ticketId: number, notes: NoteEntry[]) {
-  const ticket = state.tickets.find(t => t.id === ticketId);
-  if (ticket) ticket.notes = JSON.stringify(notes);
-}
-
-function renderNotes(ticketId: number, notes: NoteEntry[]) {
-  const container = document.getElementById('detail-notes');
-  if (!container) return;
-  container.innerHTML = '';
-
-  if (notes.length === 0) {
-    container.replaceChildren(toElement(<div className="notes-empty">No notes added</div>));
-    return;
-  }
-
-  for (const note of notes) {
-    const isEmpty = note.text.trim() === '';
-    const renderedText = isEmpty ? '' : marked.parse(note.text, { async: false });
-    const entry = toElement(
-      <div className={`note-entry${isEmpty ? ' note-empty' : ''}`} data-note-id={note.id ?? ''}>
-        {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
-        <div className="note-text note-markdown">
-          {isEmpty ? <span className="note-placeholder">Click to add a note...</span> : raw(renderedText)}
-        </div>
-      </div>
-    );
-
-    // Click to edit
-    {
-      entry.addEventListener('click', () => {
-        const textEl = entry.querySelector('.note-text') as HTMLElement;
-        if (entry.querySelector('.note-edit-area')) return;
-        const textarea = toElement(<textarea className="note-edit-area" rows={3}></textarea>) as HTMLTextAreaElement;
-        textarea.value = note.text;
-        textEl.style.display = 'none';
-        entry.appendChild(textarea);
-        textarea.focus();
-
-        const save = async () => {
-          const newText = textarea.value.trim();
-          if (newText && newText !== note.text) {
-            const ticket = state.tickets.find(t => t.id === ticketId);
-            const afterNotes = notes.map(n => n.id === note.id ? { ...n, text: newText } : n);
-            if (ticket) pushNotesUndo(ticket, 'Edit note', JSON.stringify(afterNotes));
-            await api(`/tickets/${ticketId}/notes/${note.id}`, { method: 'PATCH', body: { text: newText } });
-            note.text = newText;
-            syncNotesToState(ticketId, notes);
-          }
-          renderNotes(ticketId, notes);
-        };
-
-        textarea.addEventListener('blur', () => { void save(); });
-        textarea.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void save(); }
-          if (e.key === 'Escape') { e.stopPropagation(); textarea.blur(); }
-        });
-      });
-
-      // Right-click to delete
-      entry.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        document.querySelectorAll('.note-context-menu').forEach(m => m.remove());
-
-        const menu = toElement(
-          <div className="note-context-menu context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}>
-            <div className="context-menu-item danger">
-              <span className="context-menu-label">Delete Note</span>
-            </div>
-          </div>
-        );
-        menu.querySelector('.context-menu-item')!.addEventListener('click', async (ev) => {
-          ev.stopPropagation();
-          menu.remove();
-          const ticket = state.tickets.find(t => t.id === ticketId);
-          const afterNotes = notes.filter(n => n.id !== note.id);
-          if (ticket) pushNotesUndo(ticket, 'Delete note', JSON.stringify(afterNotes));
-          await api(`/tickets/${ticketId}/notes/${note.id}`, { method: 'DELETE' });
-          const idx = notes.indexOf(note);
-          if (idx >= 0) notes.splice(idx, 1);
-          syncNotesToState(ticketId, notes);
-          renderNotes(ticketId, notes);
-        });
-        document.body.appendChild(menu);
-        setTimeout(() => {
-          const close = () => { menu.remove(); document.removeEventListener('click', close); };
-          document.addEventListener('click', close);
-        }, 0);
-      });
-    }
-
-    // Rewrite GitHub image URLs to go through the server-side proxy so private
-    // repo images render (the browser can't fetch them without the PAT).
-    proxyGitHubImages(entry);
-
-    // Add clickable download links for any images in the note.
-    appendImageDownloadLinks(entry);
-
-    container.appendChild(entry);
-  }
-
-  // If a note was just created, scroll to it and open edit mode.
-  if (pendingFocusNoteId != null && pendingFocusNoteId !== '') {
-    const targetId = pendingFocusNoteId;
-    pendingFocusNoteId = null;
-    requestAnimationFrame(() => {
-      const noteEl = container.querySelector<HTMLElement>(`[data-note-id="${targetId}"]`);
-      if (!noteEl) return;
-      noteEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      noteEl.click();
-    });
-  }
-}
-
-/** Rewrite <img> src attributes that point to GitHub domains to go through
- *  the /api/plugins/github-issues/image-proxy endpoint. Includes the project
- *  secret as a query param so the server resolves the correct project context
- *  (img tags can't send custom headers). */
-function proxyGitHubImages(container: HTMLElement) {
-  const GITHUB_HOSTS = new Set([
-    'github.com',
-    'raw.githubusercontent.com',
-    'user-images.githubusercontent.com',
-    'private-user-images.githubusercontent.com',
-    'objects.githubusercontent.com',
-  ]);
-  const projectParam = getActiveProject()?.secret;
-  for (const img of container.querySelectorAll('img')) {
-    try {
-      const url = new URL(img.src);
-      if (!GITHUB_HOSTS.has(url.hostname)) continue;
-      let proxyUrl = `/api/plugins/github-issues/image-proxy?url=${encodeURIComponent(img.src)}`;
-      if (projectParam != null && projectParam !== '') proxyUrl += `&project=${encodeURIComponent(projectParam)}`;
-      img.src = proxyUrl;
-    } catch { /* ignore invalid URLs */ }
-  }
-}
-
-/** For notes containing images, append a list of clickable download links
- *  below the note content. Extracts filenames from alt text or URL path. */
-function appendImageDownloadLinks(entry: HTMLElement) {
-  const imgs = entry.querySelectorAll('.note-text img');
-  if (imgs.length === 0) return;
-
-  const links = toElement(<div className="note-image-links"></div>);
-  for (const img of imgs) {
-    const src = (img as HTMLImageElement).src;
-    const alt = (img as HTMLImageElement).alt;
-    // Derive a display name: prefer alt text, fall back to filename from URL path.
-    let name = alt && alt !== 'Image' ? alt : '';
-    if (!name) {
-      try {
-        const path = new URL(src).pathname;
-        const lastSegment = path.split('/').pop() ?? '';
-        // Strip timestamp prefix (e.g. "mnwdok95-") from Hot Sheet uploads.
-        name = lastSegment.replace(/^[a-z0-9]+-/i, '') || lastSegment || 'image';
-      } catch { name = 'image'; }
-    }
-    const link = toElement(
-      <button className="note-image-link" title={`Download ${name}`}>
-        {raw('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>')}
-        <span>{name}</span>
-      </button>
-    );
-    link.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      void downloadImage(src, name);
-    });
-    links.appendChild(link);
-  }
-  entry.appendChild(links);
-}
-
-/** Download an image — works in both web browsers and Tauri's webview. */
-async function downloadImage(src: string, name: string) {
-  const invoke = getTauriInvoke();
-  if (invoke) {
-    // Tauri: WKWebView doesn't support <a download>. Open the image in the
-    // system browser where the user can save-as.
-    const fullUrl = src.startsWith('/') ? window.location.origin + src : src;
-    try { await invoke('open_url', { url: fullUrl }); } catch { /* ignore */ }
-    return;
-  }
-  // Web: fetch the image as a blob and trigger a download via a temporary <a>.
-  try {
-    const res = await fetch(src);
-    if (!res.ok) throw new Error(`${res.status}`);
-    const blob = await res.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = name;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 100);
-  } catch {
-    // Last resort: navigate directly
-    window.open(src, '_blank');
-  }
-}
-
-let noteIdCounter = 0;
-function clientNoteId(): string { return `cn_${Date.now().toString(36)}_${(noteIdCounter++).toString(36)}`; }
-
-function parseNotesJson(raw: string): NoteEntry[] {
-  if (raw === '') return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return (parsed as { id?: string; text: string; created_at: string }[]).map((n) => ({
-        id: n.id ?? clientNoteId(),
-        text: n.text,
-        created_at: n.created_at,
-      }));
-    }
-  } catch { /* not JSON */ }
-  if (raw.trim()) return [{ id: clientNoteId(), text: raw, created_at: '' }];
-  return [];
 }
 
 // --- Stats ---
