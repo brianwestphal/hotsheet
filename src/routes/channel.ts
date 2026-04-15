@@ -69,6 +69,9 @@ channelRoutes.post('/channel/trigger', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   channelDoneFlags.delete(c.get('projectSecret')); // Reset done flag on new trigger
   loggedPermissionRequests.clear(); // Reset dedup set for new session
+  // Flush pending markdown syncs so worklist/open-tickets are up to date before Claude reads them
+  const { flushPendingSyncs } = await import('../sync/markdown.js');
+  await flushPendingSyncs(dataDir);
   const ok = await triggerChannel(dataDir, serverPort, parsed.data.message);
   const summary = parsed.data.message !== undefined && parsed.data.message !== '' ? parsed.data.message.slice(0, 200) : 'Worklist trigger';
   addLogEntry('trigger', 'outgoing', summary, parsed.data.message ?? '').catch(() => {});

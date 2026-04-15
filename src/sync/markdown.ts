@@ -70,6 +70,25 @@ export function scheduleAllSync(dir?: string) {
   scheduleOpenTicketsSync(dir);
 }
 
+/** Flush any pending debounced syncs immediately. Call before triggering Claude
+ *  so the worklist/open-tickets files are up to date when the AI reads them. */
+export async function flushPendingSyncs(dir?: string): Promise<void> {
+  const state = resolveState(dir);
+  if (!state) return;
+  const promises: Promise<void>[] = [];
+  if (state.worklistTimeout) {
+    clearTimeout(state.worklistTimeout);
+    state.worklistTimeout = null;
+    promises.push(runWithDataDir(state.dataDir, () => syncWorklist(state)));
+  }
+  if (state.openTicketsTimeout) {
+    clearTimeout(state.openTicketsTimeout);
+    state.openTicketsTimeout = null;
+    promises.push(runWithDataDir(state.dataDir, () => syncOpenTickets(state)));
+  }
+  await Promise.all(promises);
+}
+
 /** Get the sync state for a given dataDir. Used by ProjectContext. */
 export function getSyncState(dir: string): { worklistTimeout: ReturnType<typeof setTimeout> | null; openTicketsTimeout: ReturnType<typeof setTimeout> | null } | undefined {
   return syncStates.get(dir);

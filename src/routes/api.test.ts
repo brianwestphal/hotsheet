@@ -103,6 +103,7 @@ vi.mock('../sync/markdown.js', () => ({
   scheduleAllSync: vi.fn(),
   scheduleWorklistSync: vi.fn(),
   scheduleOpenTicketsSync: vi.fn(),
+  flushPendingSyncs: vi.fn(() => Promise.resolve()),
   initMarkdownSync: vi.fn(),
 }));
 
