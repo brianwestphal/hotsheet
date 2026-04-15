@@ -60,9 +60,9 @@ The workflow:
 1. **You** create and prioritize tickets in Hot Sheet
 2. **Hot Sheet** syncs an `Up Next` worklist to `.hotsheet/worklist.md`
 3. **Your AI tool** reads the worklist and works through it
-4. **You** mark tickets complete and add new ones
+4. **You** review, give feedback, and add new tickets
 
-The loop stays tight because the AI always knows what to work on next.
+The loop stays tight because the AI always knows what to work on next — and you always know what it's doing.
 
 ---
 
@@ -80,23 +80,25 @@ The loop stays tight because the AI always knows what to work on next.
   <img src="docs/demo-3.png" alt="Sidebar with custom views and category filtering" width="900">
 </p>
 
-**Column view** — switch to a kanban-style board grouped by status. Drag tickets between columns to change status, or drag onto sidebar items to set category, priority, or view.
+**Column view** — switch to a kanban-style board grouped by status. Drag tickets between columns to change status. Click column headers to select all tickets in a column. Drag onto sidebar items to set category, priority, or view.
 
 <p align="center">
   <img src="docs/demo-7.png" alt="Column view showing tickets organized by status in a kanban board" width="900">
 </p>
 
-**Batch operations** — select multiple tickets to bulk-update category, priority, status, or Up Next. The overflow menu (⋯) provides duplicate, tags, move to backlog, and archive actions. Right-click any ticket for a full context menu with submenus.
+**Batch operations** — select multiple tickets to bulk-update category, priority, status, or Up Next. The overflow menu provides duplicate, tags, mark as read/unread, move to backlog, and archive actions — all with icons. Right-click any ticket for a full context menu with submenus.
 
 <p align="center">
   <img src="docs/demo-5.png" alt="Multiple tickets selected with the batch toolbar and context menu" width="900">
 </p>
 
-**Detail panel** — side or bottom orientation (toggle in the toolbar), resizable, collapsible (click the active position to hide). Shows category, priority, status, and Up Next in a compact grid, plus title, details, tags, attachments, and editable notes. Click a note to edit inline; right-click to delete.
+**Detail panel** — side or bottom orientation (toggle in the toolbar), resizable, collapsible. Shows category, priority, status, and Up Next in a compact grid, plus title, details, tags, attachments, and editable notes. Click a note to edit inline; right-click to delete.
 
 <p align="center">
   <img src="docs/demo-6.png" alt="Detail panel in bottom orientation showing ticket details, tags, and notes" width="900">
 </p>
+
+**Unread indicators** — when tickets are created or updated externally (by AI tools, sync plugins, or the API), a blue dot appears next to the title. Your own edits in the UI never trigger unread status. Mark as Read/Unread from the context menu or batch toolbar. Tickets are automatically marked as read when you open them in the detail panel.
 
 **Stats dashboard** — click the sidebar widget to open a full analytics page with throughput charts, created-vs-completed trends, cumulative flow diagram, category breakdown, and cycle time scatter plot. Hover any chart for detailed tooltips.
 
@@ -104,7 +106,7 @@ The loop stays tight because the AI always knows what to work on next.
   <img src="docs/demo-8.png" alt="Stats dashboard showing throughput, flow, and cycle time charts" width="900">
 </p>
 
-**Multi-project tabs** — open multiple projects in a single window. Tabs appear automatically when you register a second project via the Open Folder dialog (`Cmd+O`). Drag tabs to reorder, right-click for close options and "Show in Finder," and switch with `Cmd+Shift+[/]`. Each project has independent settings, sort preferences, and views.
+**Multi-project tabs** — open multiple projects in a single window. Each project remembers its own sidebar view, settings, sort preferences, and layout. Tabs appear automatically when you register a second project via Open Folder (`Cmd+O`). Drag tabs to reorder, right-click for close options and "Show in Finder," switch with `Cmd+Shift+[/]`.
 
 <p align="center">
   <img src="docs/demo-10.png" alt="Multiple project tabs showing independent ticket lists with tab context menu" width="900">
@@ -117,7 +119,7 @@ The loop stays tight because the AI always knows what to work on next.
 - **Five priority levels** — Highest to Lowest, with Lucide chevron icons, sortable and filterable
 - **Up Next flag** — star tickets to add them to the AI worklist
 - **Drag and drop** — drag tickets onto sidebar views to change category, priority, or status; drop files onto the detail panel to attach; reorder project tabs and custom views
-- **Right-click context menus** — full context menu on tickets with category/priority/status submenus, tags, duplicate, backlog, archive, delete — all with Lucide icons
+- **Right-click context menus** — full context menu on tickets with category/priority/status submenus, tags, duplicate, mark as read/unread, backlog, archive, delete
 - **Search** — full-text search across ticket titles, details, ticket numbers, and tags
 - **Print** — print the dashboard, all tickets, selected tickets, or individual tickets in checklist, summary, or full-detail format
 - **Keyboard-driven** — `Enter` to create, `Cmd+I/B/F/R/K/G` for categories, `Alt+1-5` for priority, `Cmd+D` for Up Next, `Delete` to trash, `Cmd+P` to print, `Cmd+Z/Shift+Z` for undo/redo
@@ -128,6 +130,7 @@ The loop stays tight because the AI always knows what to work on next.
 - **Markdown sync** — `worklist.md` and `open-tickets.md` auto-generated on every change
 - **Automatic backups** — tiered snapshots (every 5 min, hourly, daily) with preview-before-restore recovery
 - **Auto-cleanup** — verified tickets auto-archive after a configurable number of days; trashed tickets auto-delete
+- **Portable settings** — all project settings stored in `settings.json` for easy copying between projects
 - **App icon variants** — 9 icon variants to choose from in Settings, applied instantly to the dock icon
 - **Fully local** — embedded PostgreSQL (PGLite), no network calls, no accounts, no telemetry
 
@@ -137,7 +140,7 @@ The loop stays tight because the AI always knows what to work on next.
 
 The exported worklist is plain markdown. Any AI tool that can read files can use it.
 
-Star tickets as "Up Next" and they appear in the worklist, sorted by priority. As the AI works, it updates ticket status and appends notes — visible right in the detail panel.
+Star tickets as "Up Next" and they appear in the worklist, sorted by priority. As the AI works, it updates ticket status and appends notes — visible right in the detail panel. Tickets modified by the AI show a blue unread dot so you know what to review.
 
 <p align="center">
   <img src="docs/demo-4.png" alt="Up Next view showing prioritized tickets with AI progress notes in the detail panel" width="900">
@@ -161,11 +164,12 @@ Hot Sheet automatically generates skill files for Claude Code (as well as Cursor
 
 ### Claude Channel Integration (Experimental)
 
-Hot Sheet can push events directly to a running Claude Code session via MCP channels. Enable it in Settings → Experimental:
+Hot Sheet can push events directly to a running Claude Code session via MCP channels. Enable it in Settings:
 
-- **Play button** — appears in the sidebar. Single-click sends the worklist to Claude on demand.
+- **Play button** — appears in the sidebar. Single-click sends the worklist to Claude on demand. Pending worklist changes are flushed immediately so the AI always reads up-to-date data.
 - **Auto mode** — double-click the play button to enable automatic mode. Claude is triggered immediately, then continues monitoring for new Up Next items with debounce. Exponential backoff prevents runaway retries.
 - **Auto-prioritize** — when no tickets are flagged as Up Next, Claude automatically evaluates open tickets and picks the most important ones to work on.
+- **Feedback loop** — Claude can request user input by adding notes prefixed with `FEEDBACK NEEDED:` or `IMMEDIATE FEEDBACK NEEDED:`. A dialog appears in the UI for the user to respond, and Claude is automatically re-triggered with the feedback. Blue dots on project tabs indicate pending feedback.
 - **Custom commands** — create named buttons that send custom prompts to Claude **or run shell commands** directly. Organize into collapsible groups. Toggle between "Claude Code" and "Shell" targets per command. Shell commands execute server-side with stdout/stderr captured to the commands log.
 - **Permission relay** — when Claude needs tool approval (Bash, Edit, etc.), a full-screen overlay shows the tool name and command preview with Allow/Deny/Dismiss buttons — no need to switch to the terminal.
 - **Commands log** — a resizable bottom panel that records all communication: triggers, completions, permission requests, and shell command output. Filter by type, search, and copy entries. Shell commands show a stop button for running processes.
@@ -337,11 +341,12 @@ hotsheet --browser
 
 ### Settings file
 
-Create `.hotsheet/settings.json` to configure per-project options:
+All project settings are stored in `.hotsheet/settings.json`. You can copy this file between projects to share configuration:
 
 ```json
 {
   "appName": "HS - My Project",
+  "ticketPrefix": "PROJ",
   "backupDir": "/path/to/backup/location"
 }
 ```
@@ -352,6 +357,8 @@ Create `.hotsheet/settings.json` to configure per-project options:
 | `backupDir` | Backup storage path (defaults to `.hotsheet/backups/`) |
 | `ticketPrefix` | Custom ticket number prefix (defaults to `HS`) |
 | `appIcon` | Icon variant (`default`, `variant-1` through `variant-9`) |
+
+UI preferences (detail panel position, sort order, categories, custom views, custom commands, etc.) are also stored in this file and transfer automatically when you copy it.
 
 All settings can also be changed from the settings panel UI.
 
@@ -391,7 +398,7 @@ All settings can also be changed from the settings panel UI.
 | Database | PGLite (embedded PostgreSQL) |
 | UI | Custom server-side JSX (no React), vanilla client JS |
 | Charts | Inline SVG (no external chart library) |
-| Build | tsup (server + client bundles), sass (SCSS → CSS) |
+| Build | tsup (server + client bundles), sass (SCSS) |
 | Storage | `.hotsheet/` in your project directory |
 
 Data stays local. No network calls, no accounts, no telemetry.
@@ -407,15 +414,16 @@ npm install
 
 npm run dev              # Build client assets, then run via tsx
 npm run build            # Build to dist/cli.js
-npm test                 # Unit tests with coverage (446 tests)
-npm run test:e2e         # E2E browser tests (64 tests)
+npm test                 # Unit tests with coverage (626 tests)
+npm run test:e2e         # E2E browser tests (120+ tests)
+npm run test:fast        # Unit + fast E2E (skips GitHub plugin tests)
 npm run test:all         # Merged coverage report (unit + E2E)
 npm run lint             # ESLint
 npm run clean            # Remove dist and caches
 npm link                 # Symlink for global 'hotsheet' command
 ```
 
-The project has comprehensive test coverage with 446 unit tests (vitest) and 64 Playwright E2E browser tests, plus 12 smoke tests for production install verification.
+The project has comprehensive test coverage with 626 unit tests (vitest) and 120+ Playwright E2E browser tests, plus smoke tests for production install verification.
 
 ---
 
