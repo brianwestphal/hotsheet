@@ -16,122 +16,8 @@ import {
   saveCommandItems,
   updateCommand,
 } from './experimentalSettings.js';
+import { showColorDropdown, showIconPicker } from './iconPicker.js';
 import { renderIconSvg } from './icons.js';
-
-function showColorDropdown(anchor: HTMLElement, ref: ItemRef) {
-  document.querySelectorAll('.color-dropdown-popup').forEach(p => p.remove());
-  const cmd = resolveCommand(ref);
-  const popup = toElement(
-    <div className="color-dropdown-popup">
-      {CMD_COLORS.map(c =>
-        <button className={`color-dropdown-item${(cmd.color ?? CMD_COLORS[0].value) === c.value ? ' active' : ''}`} data-color={c.value}>
-          <span className="command-color-swatch" style={`background:${c.value}`}></span>
-          <span>{c.label}</span>
-        </button>
-      )}
-    </div>
-  );
-  popup.querySelectorAll('.color-dropdown-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const color = (item as HTMLElement).dataset.color!;
-      updateCommand(ref, c => { c.color = color; });
-      anchor.style.background = color;
-      popup.remove();
-      void saveCommandItems();
-    });
-  });
-  const rect = anchor.getBoundingClientRect();
-  popup.style.position = 'fixed';
-  popup.style.zIndex = '3000';
-  document.body.appendChild(popup);
-  // Clamp to viewport
-  const popupRect = popup.getBoundingClientRect();
-  let top = rect.bottom + 4;
-  if (top + popupRect.height > window.innerHeight - 8) top = rect.top - popupRect.height - 4;
-  popup.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - popupRect.width - 8))}px`;
-  popup.style.top = `${Math.max(8, top)}px`;
-  setTimeout(() => {
-    const close = (e: MouseEvent) => {
-      if (!popup.contains(e.target as Node)) { popup.remove(); document.removeEventListener('click', close); }
-    };
-    document.addEventListener('click', close);
-  }, 0);
-}
-
-function showIconPicker(anchor: HTMLElement, ref: ItemRef) {
-  // Remove any existing picker
-  document.querySelectorAll('.icon-picker-popup').forEach(p => p.remove());
-
-  const popup = toElement(
-    <div className="icon-picker-popup">
-      <input type="text" className="icon-picker-search" placeholder="Search icons..." />
-      <div className="icon-picker-grid"></div>
-    </div>
-  );
-
-  const grid = popup.querySelector('.icon-picker-grid') as HTMLElement;
-  const searchInput = popup.querySelector('.icon-picker-search') as HTMLInputElement;
-
-  const FEATURED = ['terminal', 'git-commit', 'git-branch', 'git-pull-request', 'code', 'play', 'send', 'upload', 'download', 'refresh-cw', 'check', 'save', 'rocket', 'zap', 'search', 'file-text', 'clipboard', 'trash', 'edit', 'settings', 'bug', 'test-tube', 'database', 'lock'];
-
-  const cmd = resolveCommand(ref);
-
-  function renderIcons(filter = '') {
-    grid.innerHTML = '';
-    let icons: typeof CMD_ICONS;
-    if (filter) {
-      icons = CMD_ICONS.filter(ic => ic.name.includes(filter.toLowerCase()));
-    } else {
-      // Show featured icons first, then a separator, then all
-      const featured = FEATURED.map(name => CMD_ICONS.find(ic => ic.name === name)).filter(Boolean) as typeof CMD_ICONS;
-      const sep = toElement(<div className="icon-picker-separator"></div>);
-      addIconButtons(featured);
-      grid.appendChild(sep);
-      icons = CMD_ICONS.filter(ic => !FEATURED.includes(ic.name));
-    }
-    addIconButtons(icons);
-  }
-
-  function addIconButtons(icons: typeof CMD_ICONS) {
-    for (const ic of icons) {
-      const btn = toElement(
-        <button className={`icon-picker-item${cmd.icon === ic.name ? ' active' : ''}`} title={ic.name}>
-          {raw(renderIconSvg(ic.svg, 18))}
-        </button>
-      );
-      btn.addEventListener('click', () => {
-        updateCommand(ref, c => { c.icon = ic.name; });
-        anchor.innerHTML = renderIconSvg(ic.svg, 16);
-        popup.remove();
-        void saveCommandItems();
-      });
-      grid.appendChild(btn);
-    }
-  }
-
-  renderIcons();
-  searchInput.addEventListener('input', () => renderIcons(searchInput.value));
-
-  // Position below anchor, clamped to viewport
-  const rect = anchor.getBoundingClientRect();
-  popup.style.position = 'fixed';
-  popup.style.zIndex = '3000';
-  document.body.appendChild(popup);
-  const popupRect = popup.getBoundingClientRect();
-  let top = rect.bottom + 4;
-  if (top + popupRect.height > window.innerHeight - 8) top = rect.top - popupRect.height - 4;
-  popup.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - popupRect.width - 8))}px`;
-  popup.style.top = `${Math.max(8, top)}px`;
-  searchInput.focus();
-
-  // Close on outside click
-  setTimeout(() => {
-    const close = (e: MouseEvent) => {
-      if (!popup.contains(e.target as Node)) { popup.remove(); document.removeEventListener('click', close); }
-    };
-    document.addEventListener('click', close);
-  }, 0);
-}
 
 /** Show the command editor as a modal dialog overlay. */
 export function showCommandEditorModal(ref: ItemRef) {
@@ -183,11 +69,8 @@ export function showCommandEditorModal(ref: ItemRef) {
     renderCustomCommandSettings();
   };
 
-  // Close button
   overlay.querySelector('.cmd-editor-close-btn')!.addEventListener('click', closeModal);
-  // Done button
   overlay.querySelector('.cmd-editor-done-btn')!.addEventListener('click', closeModal);
-  // Click outside dialog to close
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closeModal();
   });
@@ -201,10 +84,7 @@ export function showCommandEditorModal(ref: ItemRef) {
   const claudeWarning = overlay.querySelector('.command-claude-warning') as HTMLElement;
 
   const save = () => {
-    updateCommand(ref, c => {
-      c.name = nameInput.value;
-      c.prompt = promptArea.value;
-    });
+    updateCommand(ref, c => { c.name = nameInput.value; c.prompt = promptArea.value; });
     void saveCommandItems();
   };
 
@@ -230,14 +110,8 @@ export function showCommandEditorModal(ref: ItemRef) {
     });
   }
 
-  // Color dropdown
   const colorBtn = overlay.querySelector('.command-color-dropdown-btn') as HTMLElement;
-  colorBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    showColorDropdown(colorBtn, ref);
-  });
-
-  // Icon picker
+  colorBtn.addEventListener('click', (e) => { e.stopPropagation(); showColorDropdown(colorBtn, ref); });
   overlay.querySelector('.command-icon-picker-btn')!.addEventListener('click', (e) => {
     e.stopPropagation();
     showIconPicker(overlay.querySelector('.command-icon-picker-btn') as HTMLElement, ref);
@@ -249,7 +123,6 @@ export function showCommandEditorModal(ref: ItemRef) {
 
 // --- Outline list rendering and drag-and-drop ---
 
-// Drag state uses ItemRef to track source and target
 let draggedRef: ItemRef | null = null;
 let dropTargetRef: ItemRef | null = null;
 let dropPosition: 'above' | 'below' | 'into-group' | null = null;
@@ -267,7 +140,6 @@ function refEqual(a: ItemRef | null, b: ItemRef | null): boolean {
   return false;
 }
 
-/** Render the outline row for a command in the settings list. */
 function renderCommandOutlineRow(ref: ItemRef): HTMLElement {
   const cmd = resolveCommand(ref);
   const currentIcon = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
@@ -297,13 +169,10 @@ function renderCommandOutlineRow(ref: ItemRef): HTMLElement {
     void saveCommandItems();
   });
 
-  // Drag and drop reordering
   addDragHandlers(row, ref);
-
   return row;
 }
 
-/** Render the outline row for a group header in the settings list. */
 function renderGroupOutlineRow(topIndex: number): HTMLElement {
   const commandItems = getCommandItems();
   const group = commandItems[topIndex] as CommandGroup;
@@ -320,15 +189,10 @@ function renderGroupOutlineRow(topIndex: number): HTMLElement {
     </div>
   );
 
-  // Inline editing of group name
   const nameEl = row.querySelector('.cmd-outline-group-name') as HTMLElement;
   nameEl.addEventListener('blur', () => {
     const newName = nameEl.textContent.trim();
-    if (newName === '') {
-      // Revert to old name if empty
-      nameEl.textContent = group.name;
-      return;
-    }
+    if (newName === '') { nameEl.textContent = group.name; return; }
     if (newName !== group.name) {
       (commandItems[topIndex] as CommandGroup).name = newName;
       void saveCommandItems();
@@ -339,7 +203,6 @@ function renderGroupOutlineRow(topIndex: number): HTMLElement {
     if (e.key === 'Escape') { nameEl.textContent = group.name; nameEl.blur(); }
   });
 
-  // Delete button (only for empty groups)
   if (group.children.length === 0) {
     row.querySelector('.cmd-outline-delete-btn')!.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -349,13 +212,10 @@ function renderGroupOutlineRow(topIndex: number): HTMLElement {
     });
   }
 
-  // Drag and drop
   addDragHandlers(row, ref);
-
   return row;
 }
 
-/** Add drag-and-drop handlers to a row element. */
 function addDragHandlers(row: HTMLElement, ref: ItemRef) {
   const commandItems = getCommandItems();
   const item = ref.type === 'top' ? commandItems[ref.index] : resolveCommand(ref);
@@ -384,14 +244,11 @@ function addDragHandlers(row: HTMLElement, ref: ItemRef) {
     const draggedItem = draggedRef.type === 'top' ? commandItems[draggedRef.index] : resolveCommand(draggedRef);
     const draggedIsGroup = isGroup(draggedItem);
 
-    // Calculate mouse position relative to this row
     const rect = row.getBoundingClientRect();
-    const mouseY = e.clientY - rect.top;
-    const fraction = mouseY / rect.height;
+    const fraction = (e.clientY - rect.top) / rect.height;
 
     clearAllDropIndicators();
 
-    // Group header: if a command is being dragged and mouse is in middle zone, show "drop into"
     if (isGroupRow && !draggedIsGroup && fraction > 0.25 && fraction < 0.75) {
       dropTargetRef = ref;
       dropPosition = 'into-group';
@@ -408,13 +265,9 @@ function addDragHandlers(row: HTMLElement, ref: ItemRef) {
   });
 
   row.addEventListener('dragleave', (e) => {
-    // Only clear if actually leaving this row (not entering a child)
     if (row.contains(e.relatedTarget as Node)) return;
     row.classList.remove('drop-above', 'drop-below', 'drop-into');
-    if (refEqual(dropTargetRef, ref)) {
-      dropTargetRef = null;
-      dropPosition = null;
-    }
+    if (refEqual(dropTargetRef, ref)) { dropTargetRef = null; dropPosition = null; }
   });
 
   row.addEventListener('drop', (e) => {
@@ -426,53 +279,37 @@ function addDragHandlers(row: HTMLElement, ref: ItemRef) {
     const draggedItem = draggedRef.type === 'top' ? commandItems[draggedRef.index] : resolveCommand(draggedRef);
     const draggedIsGroup = isGroup(draggedItem);
 
-    // Validate: groups can't be dropped into groups
     if (draggedIsGroup && dropPosition === 'into-group') {
-      draggedRef = null;
-      dropTargetRef = null;
-      dropPosition = null;
+      draggedRef = null; dropTargetRef = null; dropPosition = null;
       return;
     }
 
-    // Only commands (not groups) can be dragged; groups can be reordered at top level
     if (draggedIsGroup) {
-      // Reorder a group at the top level
       const fromIdx = (draggedRef as { type: 'top'; index: number }).index;
       const [movedGroup] = commandItems.splice(fromIdx, 1);
-
-      // Target must also be top-level for group reordering
       let targetIdx: number;
       if (dropTargetRef.type === 'top') {
         targetIdx = fromIdx < dropTargetRef.index ? dropTargetRef.index - 1 : dropTargetRef.index;
       } else {
-        // Dropped on a child row -- treat as dropping at the group's position
         targetIdx = fromIdx < dropTargetRef.groupIndex ? dropTargetRef.groupIndex - 1 : dropTargetRef.groupIndex;
       }
       if (dropPosition === 'below') targetIdx += 1;
       commandItems.splice(targetIdx, 0, movedGroup);
     } else if (dropPosition === 'into-group') {
-      // Drop a command into a group
       const cmd = removeCommandAtRef(draggedRef, commandItems);
-      // Recalculate target index after removal
       const groupIdx = dropTargetRef.type === 'top' ? dropTargetRef.index : dropTargetRef.groupIndex;
       const adjustedGroupIdx = draggedRef.type === 'top' && draggedRef.index < groupIdx ? groupIdx - 1 : groupIdx;
       (commandItems[adjustedGroupIdx] as CommandGroup).children.splice(0, 0, cmd);
     } else {
-      // Positional reorder: above or below target
       if (dropTargetRef.type === 'child') {
-        // Dropping near a child item -- insert within the same group
         const cmd = removeCommandAtRef(draggedRef, commandItems);
         const groupIdx = draggedRef.type === 'top' && draggedRef.index < dropTargetRef.groupIndex
           ? dropTargetRef.groupIndex - 1 : dropTargetRef.groupIndex;
         let childIdx = dropTargetRef.childIndex;
-        // Same-group child reorder: adjust for the removed child
-        if (draggedRef.type === 'child' && draggedRef.groupIndex === dropTargetRef.groupIndex && draggedRef.childIndex < childIdx) {
-          childIdx--;
-        }
+        if (draggedRef.type === 'child' && draggedRef.groupIndex === dropTargetRef.groupIndex && draggedRef.childIndex < childIdx) childIdx--;
         if (dropPosition === 'below') childIdx++;
         (commandItems[groupIdx] as CommandGroup).children.splice(childIdx, 0, cmd);
       } else {
-        // Dropping near a top-level item -- insert at top level
         const cmd = removeCommandAtRef(draggedRef, commandItems);
         let targetIdx = dropTargetRef.index;
         if (draggedRef.type === 'top' && draggedRef.index < targetIdx) targetIdx--;
@@ -481,19 +318,14 @@ function addDragHandlers(row: HTMLElement, ref: ItemRef) {
       }
     }
 
-    draggedRef = null;
-    dropTargetRef = null;
-    dropPosition = null;
+    draggedRef = null; dropTargetRef = null; dropPosition = null;
     renderCustomCommandSettings();
     void saveCommandItems();
   });
 }
 
-/** Remove a command from wherever it lives, returning the command. */
 function removeCommandAtRef(ref: ItemRef, commandItems: CommandItem[]): CustomCommand {
-  if (ref.type === 'top') {
-    return commandItems.splice(ref.index, 1)[0] as CustomCommand;
-  }
+  if (ref.type === 'top') return commandItems.splice(ref.index, 1)[0] as CustomCommand;
   const group = commandItems[ref.groupIndex] as CommandGroup;
   return group.children.splice(ref.childIndex, 1)[0];
 }
@@ -504,23 +336,18 @@ export function renderCustomCommandSettings() {
   if (!list) return;
   list.innerHTML = '';
 
-  // Render all top-level items; for groups, also render their children indented
   for (let i = 0; i < commandItems.length; i++) {
     const item = commandItems[i];
     if (isGroup(item)) {
       list.appendChild(renderGroupOutlineRow(i));
-      // Render children indented under the group
       for (let j = 0; j < item.children.length; j++) {
-        const childRef: ItemRef = { type: 'child', groupIndex: i, childIndex: j };
-        list.appendChild(renderCommandOutlineRow(childRef));
+        list.appendChild(renderCommandOutlineRow({ type: 'child', groupIndex: i, childIndex: j }));
       }
     } else {
-      const topRef: ItemRef = { type: 'top', index: i };
-      list.appendChild(renderCommandOutlineRow(topRef));
+      list.appendChild(renderCommandOutlineRow({ type: 'top', index: i }));
     }
   }
 
-  // Add Command and Add Group buttons at the bottom
   const btnRow = toElement(
     <div className="cmd-outline-btn-row">
       <button className="btn btn-sm cmd-outline-add-btn">Add Command</button>
@@ -532,8 +359,7 @@ export function renderCustomCommandSettings() {
   btnRow.querySelector('.cmd-outline-add-btn')!.addEventListener('click', () => {
     const defaultTarget = channelCheckbox?.checked === true ? undefined : 'shell' as const;
     commandItems.push({ name: '', prompt: '', target: defaultTarget });
-    const newRef: ItemRef = { type: 'top', index: commandItems.length - 1 };
-    showCommandEditorModal(newRef);
+    showCommandEditorModal({ type: 'top', index: commandItems.length - 1 });
     renderCustomCommandSettings();
   });
 
