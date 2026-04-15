@@ -20,7 +20,7 @@ import { bindSettingsDialog } from './settingsDialog.js';
 import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
 import { initShare } from './share.js';
 import { bindKeyboardShortcuts, getDetailSaveTimeout, setDetailSaveTimeout } from './shortcuts.js';
-import { bindSearchInput, bindSidebar, bindSortControls } from './sidebar.js';
+import { bindSearchInput, bindSidebar, bindSortControls, syncSidebarActiveState } from './sidebar.js';
 import type { AppSettings, Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from './state.js';
 import { bindDetailTagInput } from './tagAutocomplete.js'; // .tsx file, JSX enabled
@@ -57,6 +57,15 @@ async function reloadAppState() {
   updateDetailPositionToggle();
   await loadCategories(rebuildCategoryUI);
   await loadCustomViews();
+  // If the restored view is a custom view that doesn't exist in this project, fall back to 'all'
+  if (state.view.startsWith('custom:')) {
+    const viewId = state.view.slice(7);
+    if (!state.customViews.some(v => v.id === viewId)) {
+      state.view = 'all';
+    }
+  }
+  // Sync sidebar highlight to the restored per-project view
+  syncSidebarActiveState();
   void loadAppName();
   suppressAnimation();
   await loadTickets();
@@ -115,7 +124,7 @@ async function init() {
   document.getElementById('ticket-list')!.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
     // Only deselect if the click landed directly on the container or a column body/gap, not on a ticket row
-    if (!target.closest('.ticket-row') && !target.closest('.column-card') && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+    if (!target.closest('.ticket-row') && !target.closest('.column-card') && !target.closest('.column-header') && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (state.selectedIds.size > 0) {
         state.selectedIds.clear();
         renderTicketList();

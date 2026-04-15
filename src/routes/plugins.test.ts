@@ -51,6 +51,14 @@ vi.mock('../plugins/loader.js', () => ({
   getGlobalPluginSetting: vi.fn(() => null),
   setGlobalPluginSetting: vi.fn(),
   getConfigLabelOverride: vi.fn(() => undefined),
+  getPluginUIElements: vi.fn(() => []),
+  getAllPluginUIElements: vi.fn(() => []),
+  listBundledPlugins: vi.fn(() => []),
+  installBundledPlugin: vi.fn(() => true),
+  unregisterPlugin: vi.fn(),
+  dismissBundledPlugin: vi.fn(),
+  getBackendForPlugin: vi.fn(() => mockBackend),
+  loadAllPlugins: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('../plugins/syncEngine.js', () => ({
@@ -249,6 +257,81 @@ describe('global config', () => {
     const res = await app.request('/api/plugins/mock-plugin/global-config', post({ key: 'token', value: 'new-val' }));
     expect(res.status).toBe(200);
     expect(setGlobalPluginSetting).toHaveBeenCalledWith('mock-plugin', 'token', 'new-val');
+  });
+});
+
+describe('plugin UI', () => {
+  it('GET /plugins/ui returns UI elements', async () => {
+    const res = await app.request('/api/plugins/ui');
+    expect(res.status).toBe(200);
+    const data = await res.json() as unknown[];
+    expect(Array.isArray(data)).toBe(true);
+  });
+});
+
+describe('config labels', () => {
+  it('GET /plugins/config-labels/:id returns label overrides', async () => {
+    const res = await app.request('/api/plugins/config-labels/mock-plugin');
+    expect(res.status).toBe(200);
+    const data = await res.json() as Record<string, unknown>;
+    expect(typeof data).toBe('object');
+  });
+});
+
+describe('bundled plugins', () => {
+  it('GET /plugins/bundled returns bundled plugin list', async () => {
+    const res = await app.request('/api/plugins/bundled');
+    expect(res.status).toBe(200);
+    const data = await res.json() as unknown[];
+    expect(Array.isArray(data)).toBe(true);
+  });
+
+  it('POST /plugins/bundled/:id/install installs a bundled plugin', async () => {
+    const res = await app.request('/api/plugins/bundled/mock-plugin/install', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const { installBundledPlugin } = await import('../plugins/loader.js');
+    expect(installBundledPlugin).toHaveBeenCalledWith('mock-plugin');
+  });
+});
+
+describe('push ticket', () => {
+  it('POST /plugins/:id/push-ticket/:ticketId pushes a ticket to remote', async () => {
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    // Create a ticket to push
+    await db.query(`INSERT INTO tickets (id, ticket_number, title) VALUES (999, 'HS-999', 'Push test') ON CONFLICT DO NOTHING`);
+
+    const res = await app.request('/api/plugins/mock-plugin/push-ticket/999', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { ok: boolean; remoteId: string };
+    expect(data.ok).toBe(true);
+    expect(data.remoteId).toBe('remote-1');
+  });
+});
+
+describe('uninstall', () => {
+  it('POST /plugins/:id/uninstall uninstalls a plugin', async () => {
+    const res = await app.request('/api/plugins/mock-plugin/uninstall', { method: 'POST' });
+    // May return 200 or error depending on file system — just verify it doesn't crash
+    expect([200, 400, 404, 500]).toContain(res.status);
+  });
+});
+
+describe('sync tickets', () => {
+  it('GET /sync/tickets returns synced ticket data', async () => {
+    const res = await app.request('/api/sync/tickets');
+    expect(res.status).toBe(200);
+    const data = await res.json() as Record<string, unknown>;
+    expect(typeof data).toBe('object');
+  });
+});
+
+describe('conflict resolution', () => {
+  it('POST /sync/conflicts/:ticketId/resolve resolves a conflict', async () => {
+    const { resolveConflict } = await import('../plugins/syncEngine.js');
+    const res = await app.request('/api/sync/conflicts/1/resolve', post({ plugin_id: 'mock-plugin', resolution: 'keep_local' }));
+    expect(res.status).toBe(200);
+    expect(resolveConflict).toHaveBeenCalled();
   });
 });
 

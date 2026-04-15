@@ -18,6 +18,7 @@ The interface is divided into:
 - A tab bar appears above the main content when 2 or more projects are registered in the instance. Hidden for a single project.
 - Clicking a tab name switches the active project, reloading all data (tickets, settings, views).
 - Each project has independent settings (detail position, sort, etc.) that are restored on switch.
+- The active sidebar view (All, Up Next, category filter, custom view, etc.) is remembered per project and restored on switch. If a saved view references a custom view that doesn't exist in the target project, it falls back to "All".
 - The segmented controls (layout toggle, detail position toggle) update to reflect the switched project's saved settings.
 - Right-click on a tab shows a context menu with:
   - Close Tab, Close Other Tabs, Close Tabs to the Left, Close Tabs to the Right (disabled when not applicable).
@@ -42,7 +43,7 @@ The interface is divided into:
 
 - Tickets displayed in status-based columns (Not Started, Started, Completed, Verified).
 - Drag-and-drop cards between columns to change status.
-- Column headers show ticket count.
+- Column headers show ticket count. Clicking a column header selects all tickets in that column (or deselects all if every ticket is already selected).
 - Cards display category badge, ticket number, priority, up_next star, title, and tags (if any, shown as small pills below the title).
 - Completed and verified ticket titles are displayed with strikethrough styling and muted text color.
 - Per-column scroll position is preserved across re-renders.

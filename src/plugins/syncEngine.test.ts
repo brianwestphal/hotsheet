@@ -601,3 +601,59 @@ describe('sync engine — HS-5058: stale records & outbox exhaustion', () => {
     expect(entry).toBeUndefined();
   });
 });
+
+describe('sync engine — scheduled sync', () => {
+  afterEach(() => {
+    stopAllScheduledSyncs();
+  });
+
+  it('startScheduledSync and stopScheduledSync manage timers', () => {
+    const backend = createMockBackend();
+    loaderMock.__registerBackend(backend);
+
+    // Should not throw
+    startScheduledSync('mock-backend', 60000, tempDir);
+    // Starting again should replace the existing timer
+    startScheduledSync('mock-backend', 120000, tempDir);
+    // Stop should not throw
+    stopScheduledSync('mock-backend');
+    // Stopping again should be a no-op
+    stopScheduledSync('mock-backend');
+  });
+});
+
+describe('sync engine — cancelPendingPush', () => {
+  it('cancelPendingPush is callable (no-op debounce cancellation)', () => {
+    // cancelPendingPush is a no-op that cancels any pending debounced push timer
+    expect(() => cancelPendingPush()).not.toThrow();
+  });
+});
+
+describe('sync engine — resolveConflict keep_remote', () => {
+  it('keep_remote applies remote values to the local ticket', async () => {
+    const backend = createMockBackend();
+    loaderMock.__registerBackend(backend);
+
+    // Create and push a ticket
+    const ticket = await createTicket('Conflict remote test');
+    await addToOutbox(ticket.id, 'mock-backend', 'create', {});
+    await runSync('mock-backend');
+
+    const syncRec = await getSyncRecord(ticket.id, 'mock-backend');
+    expect(syncRec).toBeTruthy();
+
+    // Simulate a conflict by setting sync status
+    const db = await getDb();
+    await db.query(`UPDATE ticket_sync SET sync_status = 'conflict', conflict_data = $1 WHERE id = $2`, [
+      JSON.stringify({ local: { title: 'Local title' }, remote: { title: 'Remote title' } }),
+      syncRec!.id,
+    ]);
+
+    // Resolve as keep_remote
+    await resolveConflict(ticket.id, 'mock-backend', 'keep_remote');
+
+    // The sync record should now be 'synced'
+    const resolved = await getSyncRecord(ticket.id, 'mock-backend');
+    expect(resolved!.sync_status).toBe('synced');
+  });
+});

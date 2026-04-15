@@ -3157,6 +3157,9 @@ input, select, textarea {
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.3px;
+  cursor: pointer;
+  user-select: none;
+  &:hover { color: var(--text-primary); }
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   flex-shrink: 0;

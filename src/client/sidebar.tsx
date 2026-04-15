@@ -4,6 +4,16 @@ import { state } from './state.js';
 import { draggedTicketIds, loadTickets } from './ticketList.js';
 import { trackedBatch } from './undo/actions.js';
 
+/** Sync the sidebar highlight to match state.view. Called after project switch. */
+export function syncSidebarActiveState() {
+  document.querySelectorAll('.sidebar-item').forEach(item => {
+    const view = (item as HTMLElement).dataset.view;
+    if (view != null) {
+      item.classList.toggle('active', view === state.view);
+    }
+  });
+}
+
 function getDropAction(view: string): { action: string; value: unknown } | null {
   if (view === 'up-next') return { action: 'up_next', value: true };
   if (view === 'open') return { action: 'status', value: 'not_started' };

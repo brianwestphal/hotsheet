@@ -7,8 +7,21 @@ export interface ProjectInfo {
 // Active project context — use getActiveProject() in modules that need the current value
 // (esbuild IIFE bundling may not preserve ESM live bindings)
 export let activeProject: ProjectInfo | null = null;
-export function setActiveProject(project: ProjectInfo) { activeProject = project; }
 export function getActiveProject(): ProjectInfo | null { return activeProject; }
+
+/** Per-project saved view state (keyed by project secret). */
+const projectViews = new Map<string, string>();
+
+/** Switch active project, saving and restoring the sidebar view. */
+export function setActiveProject(project: ProjectInfo) {
+  // Save current project's view
+  if (activeProject != null) {
+    projectViews.set(activeProject.secret, state.view);
+  }
+  activeProject = project;
+  // Restore the new project's saved view (default to 'all')
+  state.view = projectViews.get(project.secret) ?? 'all';
+}
 
 export interface Ticket {
   id: number;

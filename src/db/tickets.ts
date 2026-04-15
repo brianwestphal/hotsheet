@@ -60,10 +60,16 @@ export async function updateTicket(id: number, updates: Partial<{
   // Don't bump updated_at when only last_read_at is being changed (read tracking shouldn't make tickets "unread")
   const onlyReadTracking = Object.keys(updates).length === 1 && updates.last_read_at !== undefined;
   const sets: string[] = onlyReadTracking ? [] : ['updated_at = NOW()'];
-  // When keepRead is true (user-initiated change), bump last_read_at so tickets that are
-  // currently read stay read. Don't bump for tickets that are currently unread (updated_at > last_read_at).
-  if (options?.keepRead === true && !onlyReadTracking && updates.last_read_at === undefined) {
-    sets.push('last_read_at = CASE WHEN last_read_at IS NOT NULL AND last_read_at >= updated_at THEN NOW() ELSE last_read_at END');
+  if (!onlyReadTracking && updates.last_read_at === undefined) {
+    if (options?.keepRead === true) {
+      // User-initiated change: bump last_read_at so currently-read tickets stay read.
+      // Don't bump for tickets that are currently unread (updated_at > last_read_at).
+      sets.push('last_read_at = CASE WHEN last_read_at IS NOT NULL AND last_read_at >= updated_at THEN NOW() ELSE last_read_at END');
+    } else {
+      // API/AI change: ensure last_read_at is set (to epoch) so the ticket shows as unread.
+      // If last_read_at is already set, leave it unchanged — updated_at bumping is enough.
+      sets.push("last_read_at = COALESCE(last_read_at, '1970-01-01T00:00:00Z')");
+    }
   }
   const values: unknown[] = [];
   let paramIdx = 1;

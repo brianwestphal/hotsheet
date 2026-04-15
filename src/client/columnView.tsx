@@ -212,6 +212,29 @@ export function renderColumnView() {
       </div>
     );
 
+    // Click column header to select/deselect all tickets in this column
+    column.querySelector('.column-header')!.addEventListener('click', (ev) => {
+      const e = ev as MouseEvent;
+      const colIds = new Set(colTickets.map(t => t.id));
+      const allSelected = colIds.size > 0 && [...colIds].every(id => state.selectedIds.has(id));
+
+      // Without modifier keys, clear selection from other columns first
+      if (!e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        for (const id of [...state.selectedIds]) {
+          if (!colIds.has(id)) state.selectedIds.delete(id);
+        }
+      }
+
+      if (allSelected) {
+        for (const id of colIds) state.selectedIds.delete(id);
+      } else {
+        for (const id of colIds) state.selectedIds.add(id);
+      }
+      callUpdateColumnSelectionClasses();
+      callUpdateBatchToolbar();
+      syncDetailPanel();
+    });
+
     const body = column.querySelector('.column-body')!;
     for (const ticket of colTickets) {
       body.appendChild(createColumnCard(ticket));

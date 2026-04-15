@@ -115,6 +115,13 @@ ticketRoutes.post('/tickets', async (c) => {
   const prefix = fileSettings.ticketPrefix !== undefined && fileSettings.ticketPrefix !== '' ? fileSettings.ticketPrefix : undefined;
 
   const ticket = await createTicket(title, defaults as Parameters<typeof createTicket>[1], prefix);
+
+  // When created via API/AI (no User-Action header), mark as unread so the user sees a blue dot
+  const isUserAction = c.req.header('X-Hotsheet-User-Action') === 'true';
+  if (!isUserAction) {
+    await updateTicket(ticket.id, { last_read_at: '1970-01-01T00:00:00Z' });
+  }
+
   notifyMutation(c.get('dataDir'));
   void onTicketCreated(ticket.id).catch(() => {});
   return c.json(ticket, 201);
