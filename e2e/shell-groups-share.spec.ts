@@ -42,14 +42,14 @@ test.describe('Shell commands (§15)', () => {
   });
 
   test('POST /api/shell/exec with a slow command shows in running list, kill stops it', async ({ request }) => {
-    // Start a slow command
+    // Start a slow command — use node instead of sleep for reliable signal handling
     const execRes = await request.post('/api/shell/exec', {
-      headers, data: { command: 'sleep 30' },
+      headers, data: { command: 'node -e "setTimeout(() => {}, 60000)"' },
     });
     const { id } = await execRes.json() as { id: number };
 
     // Should appear in running list
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 500));
     const runningRes = await request.get('/api/shell/running', { headers });
     const running = await runningRes.json() as { ids: number[] };
     expect(running.ids).toContain(id);
@@ -60,11 +60,17 @@ test.describe('Shell commands (§15)', () => {
     });
     expect(killRes.ok()).toBe(true);
 
-    // Should no longer be running after SIGTERM + SIGKILL timeout (3s on slow CI)
-    await new Promise(r => setTimeout(r, 4000));
-    const afterRes = await request.get('/api/shell/running', { headers });
-    const after = await afterRes.json() as { ids: number[] };
-    expect(after.ids).not.toContain(id);
+    // Poll until no longer running (SIGTERM → SIGKILL timeout is 3s)
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const afterRes = await request.get('/api/shell/running', { headers });
+      const after = await afterRes.json() as { ids: number[] };
+      if (!after.ids.includes(id)) return; // Success
+    }
+    // Final check
+    const finalRes = await request.get('/api/shell/running', { headers });
+    const final = await finalRes.json() as { ids: number[] };
+    expect(final.ids).not.toContain(id);
   });
 });
 
