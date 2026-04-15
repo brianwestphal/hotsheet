@@ -38,29 +38,26 @@ test.describe('Full ticket lifecycle (HS-5628)', () => {
     await createTicket(page, title);
     await selectTicket(page, title);
 
-    // Edit title in detail panel
+    // Edit title in detail panel — wait for debounced save before moving to next field
     const detailTitle = page.locator('#detail-title');
     await detailTitle.fill(editedTitle);
-    await page.waitForTimeout(500);
+    await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${editedTitle}"]`)).toBeVisible({ timeout: 5000 });
 
     // Edit details
     const detailDetails = page.locator('#detail-details');
     await detailDetails.fill('This is the description');
-    await page.waitForTimeout(500);
 
     // Change category via detail dropdown
     await page.locator('#detail-category').click();
     await page.locator('.dropdown-menu .dropdown-item').first().click();
-    await page.waitForTimeout(300);
 
     // Change priority via detail dropdown
     await page.locator('#detail-priority').click();
     const priorityItems = page.locator('.dropdown-menu .dropdown-item');
     await priorityItems.nth(1).click();
-    await page.waitForTimeout(300);
 
-    // Verify the title was saved by reading it back
-    await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${editedTitle}"]`)).toBeVisible({ timeout: 5000 });
+    // Verify the title was saved by reading it back (allow time for debounced save + re-render)
+    await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${editedTitle}"]`)).toBeVisible({ timeout: 8000 });
   });
 
   test('add note → edit note → delete note via context menu', async ({ page, request }) => {
@@ -90,7 +87,6 @@ test.describe('Full ticket lifecycle (HS-5628)', () => {
     await expect(noteEditor).toBeVisible({ timeout: 3000 });
     await noteEditor.fill('Edited note text');
     await noteEditor.press('Meta+Enter');
-    await page.waitForTimeout(500);
 
     // Verify the edited text appears
     await expect(page.locator('.note-entry .note-text')).toContainText('Edited note text', { timeout: 5000 });
@@ -99,7 +95,6 @@ test.describe('Full ticket lifecycle (HS-5628)', () => {
     await page.locator('.note-entry').first().click({ button: 'right' });
     await page.waitForTimeout(100);
     await page.locator('.note-context-menu .context-menu-item').click();
-    await page.waitForTimeout(500);
 
     // Note should be gone — "No notes added" shown
     await expect(page.locator('.notes-empty')).toBeVisible({ timeout: 5000 });
@@ -134,7 +129,6 @@ test.describe('Full ticket lifecycle (HS-5628)', () => {
     await page.waitForTimeout(100);
     const archiveItem = page.locator('.context-menu-item').filter({ hasText: 'Archive' });
     await archiveItem.click();
-    await page.waitForTimeout(500);
 
     // Ticket should no longer be visible in the active list
     await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${statusTitle}"]`)).toBeHidden({ timeout: 5000 });

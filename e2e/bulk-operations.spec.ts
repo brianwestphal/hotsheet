@@ -36,14 +36,15 @@ test.describe('Bulk operations (HS-5628)', () => {
 
     // Shift+click last row to select range
     await lastRow.locator('.ticket-number').click({ modifiers: ['Shift'] });
-    await page.waitForTimeout(300);
-
-    // Multiple rows should be selected
-    const selectedCount = await page.locator('.ticket-row.selected').count();
-    expect(selectedCount).toBeGreaterThanOrEqual(2);
 
     // Detail placeholder should show "N items selected"
     await expect(page.locator('#detail-placeholder-text')).toContainText('items selected', { timeout: 3000 });
+
+    // Multiple rows should be selected
+    await expect(async () => {
+      const selectedCount = await page.locator('.ticket-row.selected').count();
+      expect(selectedCount).toBeGreaterThanOrEqual(2);
+    }).toPass({ timeout: 3000 });
   });
 
   test('batch change status via context menu', async ({ page }) => {
@@ -64,7 +65,6 @@ test.describe('Bulk operations (HS-5628)', () => {
     const statusSubmenuContent = statusSubmenu.locator('.context-submenu');
     await expect(statusSubmenuContent).toBeVisible({ timeout: 3000 });
     await statusSubmenuContent.locator('.context-menu-item .context-menu-label').filter({ hasText: /^Started$/ }).click();
-    await page.waitForTimeout(500);
 
     // Both should now show started status
     await expect(rowA.locator('.ticket-status-btn')).toHaveAttribute('title', 'started', { timeout: 3000 });
@@ -84,7 +84,6 @@ test.describe('Bulk operations (HS-5628)', () => {
     await page.waitForTimeout(100);
     const deleteItem = page.locator('.context-menu-item.danger').filter({ hasText: 'Delete' });
     await deleteItem.click();
-    await page.waitForTimeout(500);
 
     // Both should be gone from the list
     await expect(page.locator(`.ticket-title-input[value="${titleA}"]`)).toBeHidden({ timeout: 5000 });

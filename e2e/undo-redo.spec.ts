@@ -36,7 +36,6 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
 
     // Undo with Cmd+Z
     await page.keyboard.press('Meta+z');
-    await page.waitForTimeout(500);
 
     // Should revert to not_started
     await expect(statusBtn).toHaveAttribute('title', 'not started', { timeout: 5000 });
@@ -61,7 +60,6 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
 
     // Undo delete
     await page.keyboard.press('Meta+z');
-    await page.waitForTimeout(500);
 
     // Ticket should reappear
     await expect(page.locator(`.ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 5000 });
@@ -87,7 +85,6 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
 
     // Undo — Cmd+Z works from anywhere, no need to refocus
     await page.keyboard.press('Meta+z');
-    await page.waitForTimeout(500);
 
     // Star should be off
     await expect(star).not.toHaveClass(/active/, { timeout: 5000 });

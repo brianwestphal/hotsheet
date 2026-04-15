@@ -41,7 +41,6 @@ test.describe('Multi-select detail panel (HS-5628)', () => {
 
     await rowA.locator('.ticket-number').click();
     await rowB.locator('.ticket-number').click({ modifiers: ['Meta'] });
-    await page.waitForTimeout(300);
 
     // Detail should show placeholder with item count
     await expect(page.locator('#detail-placeholder')).toBeVisible({ timeout: 3000 });
@@ -56,12 +55,10 @@ test.describe('Multi-select detail panel (HS-5628)', () => {
     // Select both
     await rowA.locator('.ticket-number').click();
     await rowB.locator('.ticket-number').click({ modifiers: ['Meta'] });
-    await page.waitForTimeout(300);
     await expect(page.locator('#detail-placeholder-text')).toContainText('2 items selected');
 
     // Click only B (without modifier) — deselects A, selects only B
     await rowB.locator('.ticket-number').click();
-    await page.waitForTimeout(300);
 
     // Detail should load for Multi B
     await expect(page.locator('#detail-header')).toBeVisible({ timeout: 3000 });
@@ -75,7 +72,6 @@ test.describe('Multi-select detail panel (HS-5628)', () => {
 
     // Press Escape to close detail
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
 
     await expect(page.locator('#detail-placeholder')).toBeVisible({ timeout: 3000 });
     await expect(page.locator('#detail-placeholder-text')).toContainText('Nothing selected');

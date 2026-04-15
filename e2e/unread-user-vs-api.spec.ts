@@ -78,14 +78,13 @@ test.describe('Unread: user vs API changes (HS-5776)', () => {
     await statusBtn.click();
     await expect(statusBtn).toHaveAttribute('title', 'started', { timeout: 3000 });
 
-    // Wait for the API call to complete
-    await page.waitForTimeout(500);
-
     // Ticket should still be read (no blue dot)
-    const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
-    const updated = await ticketRes.json() as { updated_at: string; last_read_at: string | null };
-    expect(updated.last_read_at).not.toBeNull();
-    expect(updated.updated_at <= updated.last_read_at!).toBe(true);
+    await expect(async () => {
+      const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
+      const updated = await ticketRes.json() as { updated_at: string; last_read_at: string | null };
+      expect(updated.last_read_at).not.toBeNull();
+      expect(updated.updated_at <= updated.last_read_at!).toBe(true);
+    }).toPass({ timeout: 3000 });
   });
 
   test('multi-ticket batch status change via context menu keeps tickets read', async ({ page, request }) => {
@@ -120,15 +119,16 @@ test.describe('Unread: user vs API changes (HS-5776)', () => {
     const statusSubmenuContent = statusSubmenu.locator('.context-submenu');
     await expect(statusSubmenuContent).toBeVisible({ timeout: 3000 });
     await statusSubmenuContent.locator('.context-menu-item .context-menu-label').filter({ hasText: /^Started$/ }).click();
-    await page.waitForTimeout(500);
 
     // Both tickets should still be read
-    for (const id of [ticketA.id, ticketB.id]) {
-      const ticketRes = await request.get(`/api/tickets/${id}`, { headers });
-      const updated = await ticketRes.json() as { updated_at: string; last_read_at: string | null };
-      expect(updated.last_read_at).not.toBeNull();
-      expect(updated.updated_at <= updated.last_read_at!).toBe(true);
-    }
+    await expect(async () => {
+      for (const id of [ticketA.id, ticketB.id]) {
+        const ticketRes = await request.get(`/api/tickets/${id}`, { headers });
+        const updated = await ticketRes.json() as { updated_at: string; last_read_at: string | null };
+        expect(updated.last_read_at).not.toBeNull();
+        expect(updated.updated_at <= updated.last_read_at!).toBe(true);
+      }
+    }).toPass({ timeout: 3000 });
   });
 
   test('editing title via detail panel does not mark ticket as unread', async ({ page, request }) => {
@@ -150,12 +150,15 @@ test.describe('Unread: user vs API changes (HS-5776)', () => {
 
     // Edit title
     await page.locator('#detail-title').fill(`${title} edited`);
-    await page.waitForTimeout(1000); // Wait for debounced save
 
-    // Ticket should still be read
-    const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
-    const updated = await ticketRes.json() as { updated_at: string; last_read_at: string | null };
-    expect(updated.last_read_at).not.toBeNull();
-    expect(updated.updated_at <= updated.last_read_at!).toBe(true);
+    // Ticket should still be read after debounced save completes
+    await expect(async () => {
+      const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
+      const updated = await ticketRes.json() as { updated_at: string; last_read_at: string | null; title: string };
+      expect(updated.last_read_at).not.toBeNull();
+      // Verify the title was actually saved (debounce completed)
+      expect(updated.title).toBe(`${title} edited`);
+      expect(updated.updated_at <= updated.last_read_at!).toBe(true);
+    }).toPass({ timeout: 5000 });
   });
 });

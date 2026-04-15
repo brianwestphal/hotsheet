@@ -27,15 +27,15 @@ test.describe('Column header select (HS-5909)', () => {
 
     const header = page.locator('.column-header').first();
     await header.click();
-    await page.waitForTimeout(500);
 
-    const selectedCount = await page.locator('.column-card.selected').count();
-    expect(selectedCount).toBeGreaterThan(0);
+    await expect(async () => {
+      const selectedCount = await page.locator('.column-card.selected').count();
+      expect(selectedCount).toBeGreaterThan(0);
+    }).toPass({ timeout: 3000 });
 
     // Click again to deselect
     await header.click();
-    await page.waitForTimeout(500);
-    expect(await page.locator('.column-card.selected').count()).toBe(0);
+    await expect(page.locator('.column-card.selected')).toHaveCount(0, { timeout: 3000 });
   });
 
   test('clicking column header without modifier deselects other columns', async ({ page, request }) => {
@@ -57,19 +57,21 @@ test.describe('Column header select (HS-5909)', () => {
     // Click first column header (Not Started) to select those tickets
     const firstHeader = page.locator('.column-header').first();
     await firstHeader.click();
-    await page.waitForTimeout(300);
-    const firstColSelected = await page.locator('.column-card.selected').count();
-    expect(firstColSelected).toBeGreaterThan(0);
+    await expect(async () => {
+      const firstColSelected = await page.locator('.column-card.selected').count();
+      expect(firstColSelected).toBeGreaterThan(0);
+    }).toPass({ timeout: 3000 });
 
     // Click second column header (Started) WITHOUT modifier
     const secondHeader = page.locator('.column-header').nth(1);
     await secondHeader.click();
-    await page.waitForTimeout(300);
 
     // Only the second column's tickets should be selected — first column deselected
     const firstCol = page.locator('.column').first();
     const secondCol = page.locator('.column').nth(1);
-    expect(await firstCol.locator('.column-card.selected').count()).toBe(0);
-    expect(await secondCol.locator('.column-card.selected').count()).toBeGreaterThan(0);
+    await expect(firstCol.locator('.column-card.selected')).toHaveCount(0, { timeout: 3000 });
+    await expect(async () => {
+      expect(await secondCol.locator('.column-card.selected').count()).toBeGreaterThan(0);
+    }).toPass({ timeout: 3000 });
   });
 });

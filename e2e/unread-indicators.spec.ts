@@ -67,15 +67,16 @@ test.describe('Unread ticket indicators (HS-5648)', () => {
     // Click to open detail
     await row.locator('.ticket-number').click();
     await expect(page.locator('#detail-header')).toBeVisible({ timeout: 3000 });
-    await page.waitForTimeout(500);
 
     // Verify via API that last_read_at was updated
-    const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
-    const updated = await ticketRes.json() as { last_read_at: string | null };
-    expect(updated.last_read_at).not.toBeNull();
-    // last_read_at should be recent (within the last 5 seconds)
-    const readTime = new Date(updated.last_read_at!).getTime();
-    expect(Date.now() - readTime).toBeLessThan(5000);
+    await expect(async () => {
+      const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
+      const updated = await ticketRes.json() as { last_read_at: string | null };
+      expect(updated.last_read_at).not.toBeNull();
+      // last_read_at should be recent (within the last 5 seconds)
+      const readTime = new Date(updated.last_read_at!).getTime();
+      expect(Date.now() - readTime).toBeLessThan(5000);
+    }).toPass({ timeout: 3000 });
   });
 
   test('context menu Mark as Unread sets last_read_at to null via API', async ({ page, request }) => {
@@ -97,14 +98,15 @@ test.describe('Unread ticket indicators (HS-5648)', () => {
     await row.locator('.ticket-number').click({ button: 'right' });
     await page.waitForTimeout(200);
     await page.locator('.context-menu-item').filter({ hasText: 'Mark as Unread' }).click();
-    await page.waitForTimeout(500);
 
     // Verify via API
-    const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
-    const updated = await ticketRes.json() as { last_read_at: string | null };
-    // Mark as unread uses epoch date (not null) so updated_at > last_read_at is true
-    expect(updated.last_read_at).toBeTruthy();
-    expect(new Date(updated.last_read_at!).getFullYear()).toBeLessThanOrEqual(1970);
+    await expect(async () => {
+      const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
+      const updated = await ticketRes.json() as { last_read_at: string | null };
+      // Mark as unread uses epoch date (not null) so updated_at > last_read_at is true
+      expect(updated.last_read_at).toBeTruthy();
+      expect(new Date(updated.last_read_at!).getFullYear()).toBeLessThanOrEqual(1970);
+    }).toPass({ timeout: 3000 });
   });
 
   test('context menu Mark as Read works after Mark as Unread', async ({ page, request }) => {
@@ -126,25 +128,27 @@ test.describe('Unread ticket indicators (HS-5648)', () => {
     await row.locator('.ticket-number').click({ button: 'right' });
     await page.waitForTimeout(200);
     await page.locator('.context-menu-item').filter({ hasText: 'Mark as Unread' }).click();
-    await page.waitForTimeout(500);
 
     // Verify unread via API
-    let ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
-    let updated = await ticketRes.json() as { last_read_at: string | null };
-    // Mark as unread uses epoch date (not null) so updated_at > last_read_at is true
-    expect(updated.last_read_at).toBeTruthy();
-    expect(new Date(updated.last_read_at!).getFullYear()).toBeLessThanOrEqual(1970);
+    await expect(async () => {
+      const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
+      const updated = await ticketRes.json() as { last_read_at: string | null };
+      // Mark as unread uses epoch date (not null) so updated_at > last_read_at is true
+      expect(updated.last_read_at).toBeTruthy();
+      expect(new Date(updated.last_read_at!).getFullYear()).toBeLessThanOrEqual(1970);
+    }).toPass({ timeout: 3000 });
 
     // Now mark as read via context menu
     await row.locator('.ticket-number').click({ button: 'right' });
     await page.waitForTimeout(200);
     await page.locator('.context-menu-item').filter({ hasText: 'Mark as Read' }).click();
-    await page.waitForTimeout(500);
 
     // Verify read via API
-    ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
-    updated = await ticketRes.json() as { last_read_at: string | null };
-    expect(updated.last_read_at).not.toBeNull();
+    await expect(async () => {
+      const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
+      const updated = await ticketRes.json() as { last_read_at: string | null };
+      expect(updated.last_read_at).not.toBeNull();
+    }).toPass({ timeout: 3000 });
   });
 
   test('batch toolbar shows only Mark as Unread for read tickets (not both)', async ({ page, request }) => {
@@ -165,7 +169,6 @@ test.describe('Unread ticket indicators (HS-5648)', () => {
 
     // Open batch "..." menu
     await page.locator('#batch-more').click();
-    await page.waitForTimeout(200);
 
     // Should show "Mark as Unread" (ticket is read) and NOT "Mark as Read"
     const items = page.locator('.dropdown-menu .dropdown-item');
@@ -199,7 +202,14 @@ test.describe('Unread ticket indicators (HS-5648)', () => {
     await row.locator('.ticket-number').click({ button: 'right' });
     await page.waitForTimeout(200);
     await page.locator('.context-menu-item').filter({ hasText: 'Mark as Unread' }).click();
-    await page.waitForTimeout(500);
+
+    // Verify it became unread via API before checking persistence
+    await expect(async () => {
+      const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
+      const updated = await ticketRes.json() as { last_read_at: string | null };
+      expect(updated.last_read_at).toBeTruthy();
+      expect(new Date(updated.last_read_at!).getFullYear()).toBeLessThanOrEqual(1970);
+    }).toPass({ timeout: 3000 });
 
     // Wait for any potential auto-read to fire (poll cycle)
     await page.waitForTimeout(1000);

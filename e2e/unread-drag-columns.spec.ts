@@ -115,7 +115,6 @@ test.describe('Unread: column drag does not mark as unread (HS-5810)', () => {
     const submenuContent = statusSubmenu.locator('.context-submenu');
     await expect(submenuContent).toBeVisible({ timeout: 3000 });
     await submenuContent.locator('.context-menu-item .context-menu-label').filter({ hasText: /^Started$/ }).click();
-    await page.waitForTimeout(1000); // Wait for API + loadTickets to complete
 
     // Neither ticket should show a blue dot after the status change
     const rowA2 = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${titles[0]}"]`) }).first();
