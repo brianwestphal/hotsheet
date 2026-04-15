@@ -60,14 +60,16 @@ test.describe('UI gaps (HS-5183)', () => {
   // --- Sort controls ---
 
   test('sort dropdown changes ticket order', async ({ page }) => {
-    await createTicket(page, 'Sort Z ticket');
-    await createTicket(page, 'Sort A ticket');
+    const prefix = `SortGap${Date.now()}`;
+    await createTicket(page, `${prefix} Z`);
+    await createTicket(page, `${prefix} A`);
 
-    // Default is "Newest First" — Sort A should be above Sort Z
+    // Default is "Newest First" — A should be above Z
     const titlesBefore = await page.locator('.ticket-title-input').evaluateAll(
-      els => els.map(el => (el as HTMLInputElement).value).filter(v => v.startsWith('Sort ')),
+      (els, p) => els.map(el => (el as HTMLInputElement).value).filter(v => v.startsWith(p)),
+      prefix,
     );
-    expect(titlesBefore[0]).toBe('Sort A ticket'); // newest first
+    expect(titlesBefore[0]).toBe(`${prefix} A`); // newest first
 
     // Change sort to "Oldest First"
     const sortSelect = page.locator('#sort-select');
@@ -75,9 +77,13 @@ test.describe('UI gaps (HS-5183)', () => {
     await page.waitForTimeout(300);
 
     const titlesAfter = await page.locator('.ticket-title-input').evaluateAll(
-      els => els.map(el => (el as HTMLInputElement).value).filter(v => v.startsWith('Sort ')),
+      (els, p) => els.map(el => (el as HTMLInputElement).value).filter(v => v.startsWith(p)),
+      prefix,
     );
-    expect(titlesAfter[0]).toBe('Sort Z ticket'); // oldest first
+    expect(titlesAfter[0]).toBe(`${prefix} Z`); // oldest first
+
+    // Reset sort to default
+    await sortSelect.selectOption('created:desc');
   });
 
   // --- Strikethrough on completed/verified ---

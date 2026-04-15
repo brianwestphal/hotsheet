@@ -35,10 +35,11 @@ test.describe('Unread ticket indicators (HS-5648)', () => {
     await expect(row.locator('.ticket-unread-dot')).toBeVisible({ timeout: 5000 });
   });
 
-  test('ticket without last_read_at does NOT show blue dot (new tickets start as read)', async ({ page, request }) => {
+  test('UI-created ticket does NOT show blue dot (user actions start as read)', async ({ page, request }) => {
     const suffix = Date.now();
     const title = `No dot ${suffix}`;
-    await request.post('/api/tickets', { headers, data: { title } });
+    // Simulate UI creation with User-Action header — should NOT set epoch last_read_at
+    await request.post('/api/tickets', { headers: { ...headers, 'X-Hotsheet-User-Action': 'true' }, data: { title } });
 
     await page.reload();
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });

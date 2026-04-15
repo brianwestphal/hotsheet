@@ -60,8 +60,8 @@ test.describe('Shell commands (§15)', () => {
     });
     expect(killRes.ok()).toBe(true);
 
-    // Should no longer be running after a moment
-    await new Promise(r => setTimeout(r, 500));
+    // Should no longer be running after SIGTERM + SIGKILL timeout (3s on slow CI)
+    await new Promise(r => setTimeout(r, 4000));
     const afterRes = await request.get('/api/shell/running', { headers });
     const after = await afterRes.json() as { ids: number[] };
     expect(after.ids).not.toContain(id);

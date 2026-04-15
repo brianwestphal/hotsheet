@@ -51,12 +51,12 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
 
     const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) }).first();
 
-    // Select the ticket, then ensure focus is on the list (not an input), then delete
+    // Select and delete via context menu (more reliable than keyboard on CI)
     await row.locator('.ticket-number').click();
     await expect(row).toHaveClass(/selected/, { timeout: 3000 });
-    await page.locator('#ticket-list').click({ position: { x: 5, y: 5 } });
-    await page.waitForTimeout(100);
-    await page.keyboard.press('Backspace');
+    await row.locator('.ticket-number').click({ button: 'right' });
+    await page.waitForTimeout(200);
+    await page.locator('.context-menu-item.danger').filter({ hasText: 'Delete' }).click();
     await expect(page.locator(`.ticket-title-input[value="${title}"]`)).toBeHidden({ timeout: 5000 });
 
     // Undo delete
