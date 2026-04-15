@@ -105,6 +105,7 @@ When running multiple Hot Sheet instances, AI tools can accidentally connect to 
 ### 6.10 Debouncing
 
 - Markdown sync is debounced to avoid excessive file writes during rapid changes (500ms for worklist, 5s for open-tickets).
+- A `flushPendingSyncs()` function cancels pending debounced timeouts and immediately writes both files. Called before channel triggers so Claude always reads up-to-date data.
 
 ### 6.11 Portability
 

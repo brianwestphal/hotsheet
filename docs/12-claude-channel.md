@@ -100,7 +100,7 @@ A green play button (Lucide "play" icon) appears in the sidebar above the custom
 
 ### Behavior
 
-- **Single click**: Checks for Up Next items first. If none, shows a yellow warning alert "No Up Next items to process" (auto-dismisses after 4 seconds). If items exist, sends a one-time event to Claude. Button pulses briefly.
+- **Single click**: Checks for Up Next items first. If none, shows a yellow warning alert "No Up Next items to process" (auto-dismisses after 4 seconds). If items exist, flushes any pending debounced markdown syncs (worklist.md, open-tickets.md) to ensure files are up to date, then sends a one-time event to Claude. Button pulses briefly.
 - **Double click**: Toggles automatic mode. The play icon swaps to a fast-forward icon.
 - **Single click while in auto mode**: Turns off automatic mode, restores play icon.
 
