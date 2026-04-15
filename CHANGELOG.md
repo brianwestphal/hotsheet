@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.15.0] - 2026-04-15
+
+- General UI/UX improvements
+- Unread indicators / tracking
+- AI tools can now request feedback on tickets
+- Mode code clean up and testing
+- Various bug fixes
+
+BETA FEATURES:
+- Support for plugins
+  - Includes beta plugin for GitHub issues integration
+
 ## [0.14.1] - 2026-04-09
 
 - Custom views now exclude deleted and archived tickets
