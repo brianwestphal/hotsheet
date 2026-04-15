@@ -129,6 +129,11 @@ input, select, textarea {
     background: #3b82f6; // blue
   }
 
+  &.feedback {
+    display: block;
+    background: #3b82f6; // blue (same as attention)
+  }
+
   &.busy {
     display: block;
     background: #eab308; // yellow
@@ -1326,6 +1331,17 @@ input, select, textarea {
   color: var(--text-muted);
   font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
   min-width: 5em;
+}
+
+.ticket-unread-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3b82f6;
+  flex-shrink: 0;
+  margin-right: 6px;
+  vertical-align: middle;
 }
 
 .ticket-title-input {
@@ -4111,6 +4127,41 @@ input, select, textarea {
   &:hover { background: var(--bg-hover); }
 
   &.note-empty { border-left-color: var(--border); }
+}
+
+.feedback-link {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 0;
+  color: #3b82f6;
+  cursor: pointer;
+  font-size: 12px;
+  background: none;
+  border: none;
+  text-decoration: underline;
+  &:hover { color: #2563eb; }
+}
+
+.feedback-later-link {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  text-decoration: underline;
+  &:hover { color: var(--text-primary); }
+}
+
+.feedback-prompt {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  border-left: 3px solid #3b82f6;
+
+  ol, ul { padding-left: 1.5em; margin: 0.5em 0; }
+  li { margin: 0.25em 0; }
 }
 
 .note-placeholder {

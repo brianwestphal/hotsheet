@@ -54,9 +54,17 @@ export async function updateTicket(id: number, updates: Partial<{
   priority: TicketPriority;
   status: TicketStatus;
   up_next: boolean;
-}>): Promise<Ticket | null> {
+  last_read_at: string | null;
+}>, options?: { keepRead?: boolean }): Promise<Ticket | null> {
   const db = await getDb();
-  const sets: string[] = ['updated_at = NOW()'];
+  // Don't bump updated_at when only last_read_at is being changed (read tracking shouldn't make tickets "unread")
+  const onlyReadTracking = Object.keys(updates).length === 1 && updates.last_read_at !== undefined;
+  const sets: string[] = onlyReadTracking ? [] : ['updated_at = NOW()'];
+  // When keepRead is true (user-initiated change), bump last_read_at so tickets that are
+  // currently read stay read. Don't bump for tickets that are currently unread (updated_at > last_read_at).
+  if (options?.keepRead === true && !onlyReadTracking && updates.last_read_at === undefined) {
+    sets.push('last_read_at = CASE WHEN last_read_at IS NOT NULL AND last_read_at >= updated_at THEN NOW() ELSE last_read_at END');
+  }
   const values: unknown[] = [];
   let paramIdx = 1;
 
@@ -66,7 +74,7 @@ export async function updateTicket(id: number, updates: Partial<{
   const STATUS_MANAGED = new Set(['completed_at', 'verified_at', 'deleted_at', 'up_next']);
   const statusChanging = updates.status !== undefined;
 
-  const ALLOWED_COLUMNS = new Set(['title', 'details', 'tags', 'category', 'priority', 'status', 'up_next', 'notes', 'completed_at', 'verified_at', 'deleted_at']);
+  const ALLOWED_COLUMNS = new Set(['title', 'details', 'tags', 'category', 'priority', 'status', 'up_next', 'notes', 'completed_at', 'verified_at', 'deleted_at', 'last_read_at']);
   for (const [key, value] of Object.entries(updates) as [string, unknown][]) {
     if (value === undefined) continue;
     if (!ALLOWED_COLUMNS.has(key)) continue;
@@ -245,10 +253,11 @@ export async function duplicateTickets(ids: number[]): Promise<Ticket[]> {
 
 export async function batchUpdateTickets(
   ids: number[],
-  updates: Partial<{ category: TicketCategory; priority: TicketPriority; status: TicketStatus; up_next: boolean }>
+  updates: Partial<{ category: TicketCategory; priority: TicketPriority; status: TicketStatus; up_next: boolean; last_read_at: string | null }>,
+  options?: { keepRead?: boolean },
 ): Promise<void> {
   for (const id of ids) {
-    await updateTicket(id, updates);
+    await updateTicket(id, updates, options);
   }
 }
 

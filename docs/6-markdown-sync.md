@@ -7,6 +7,8 @@
 - Tickets flagged as Up Next are exported to `.hotsheet/worklist.md`, sorted by priority.
 - The file includes:
   - Workflow instructions with curl examples for updating ticket status via the API.
+  - Ticket creation instructions with curl examples.
+  - Feedback request instructions (`FEEDBACK NEEDED:` and `IMMEDIATE FEEDBACK NEEDED:` note prefixes) — see [21-feedback.md](21-feedback.md).
   - Per-ticket details: ID, type, priority, status, title, details, notes (with timestamps), and attachment list.
   - A category descriptions reference.
   - Guidance that status updates and completion notes are required.

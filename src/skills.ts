@@ -5,7 +5,7 @@ import { readFileSettings } from './file-settings.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
 
-export const SKILL_VERSION = 6;
+export const SKILL_VERSION = 7;
 
 let skillPort: number;
 let skillCategories: CategoryDef[] = DEFAULT_CATEGORIES;

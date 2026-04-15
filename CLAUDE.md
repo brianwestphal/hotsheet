@@ -164,6 +164,7 @@ The `docs/` folder contains numbered requirements documents that describe the ap
   17. `17-share.md` — Share prompt, toolbar button, timing criteria
   18. `18-plugins.md` — Plugin system, sync engine, UI extensions, conflict resolution
   19. `19-demo-plugin.md` — Demo plugin: exercises all plugin features (settings types, UI locations, labels, validation)
+  21. `21-feedback.md` — Feedback needed notes, dialog, auto-select, channel notification, tab indicator
 - `docs/plugin-development-guide.md` — AI-focused guide for building plugins (ticketing backends and non-ticketing plugins). **Keep this guide up to date** whenever the plugin system changes — new interfaces, new manifest fields, new PluginContext methods, new UI extension points, or changes to the sync engine behavior. An AI reading this guide should be able to build a working plugin without looking at the source code.
 - **Section numbering** — each document uses `N.X` section numbers matching its file number (e.g., `3-ticket-management.md` uses §3.1, §3.2, etc.)
 - **Cross-references** — use relative markdown links between docs (e.g., `[3-ticket-management.md](3-ticket-management.md) §3.7`)

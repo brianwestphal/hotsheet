@@ -81,18 +81,28 @@ export async function showTagsDialog() {
 
   // Add new tag
   const newInput = overlay.querySelector('#tags-dialog-new-input') as HTMLInputElement;
+  const doneBtn = overlay.querySelector('#tags-dialog-done') as HTMLButtonElement;
+
+  function updateDoneState() {
+    const hasText = newInput.value.trim() !== '';
+    doneBtn.disabled = hasText;
+    doneBtn.title = hasText ? 'Add or clear the tag text first' : '';
+  }
+
   const addTag = () => {
     const val = normalizeTag(newInput.value);
-    if (!val || hasTag(allTags, val)) { newInput.value = ''; return; }
+    if (!val || hasTag(allTags, val)) { newInput.value = ''; updateDoneState(); return; }
     allTags.push(val);
     allTags.sort();
     currentStates.set(val, 'checked');
     originalStates.set(val, 'unchecked');
     newInput.value = '';
+    updateDoneState();
     renderTagRows();
   };
   overlay.querySelector('#tags-dialog-add-btn')!.addEventListener('click', addTag);
   newInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } });
+  newInput.addEventListener('input', updateDoneState);
 
   // Close/cancel
   const close = () => overlay.remove();

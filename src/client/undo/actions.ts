@@ -71,6 +71,8 @@ export async function trackedBatch(
     else if (batchBody.action === 'status') a.status = batchBody.value as string;
     else if (batchBody.action === 'up_next') a.up_next = batchBody.value as boolean;
     else if (batchBody.action === 'delete') a.status = 'deleted';
+    else if (batchBody.action === 'mark_read') a.last_read_at = new Date().toISOString();
+    else if (batchBody.action === 'mark_unread') a.last_read_at = '1970-01-01T00:00:00Z';
     return a;
   });
 

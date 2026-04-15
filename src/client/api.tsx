@@ -36,6 +36,8 @@ function buildHeaders(opts: { body?: unknown; method?: string }): Record<string,
   if (activeProj !== null && isMutation) {
     headers['X-Hotsheet-Secret'] = activeProj.secret;
   }
+  // Mark all UI mutations so the server knows to keep tickets read
+  if (isMutation) headers['X-Hotsheet-User-Action'] = 'true';
   return headers;
 }
 

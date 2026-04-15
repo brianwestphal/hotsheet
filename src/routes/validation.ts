@@ -30,11 +30,12 @@ export const UpdateTicketSchema = z.object({
   priority: TicketPrioritySchema.optional(),
   status: TicketStatusSchema.optional(),
   up_next: z.boolean().optional(),
+  last_read_at: z.string().nullable().optional(),
 });
 
 export const BatchActionSchema = z.object({
   ids: z.array(z.number().int()),
-  action: z.enum(['delete', 'restore', 'category', 'priority', 'status', 'up_next']),
+  action: z.enum(['delete', 'restore', 'category', 'priority', 'status', 'up_next', 'mark_read', 'mark_unread']),
   value: z.union([z.string(), z.boolean()]).optional(),
 });
 

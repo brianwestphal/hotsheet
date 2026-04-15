@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { checkChannelDone } from './channelUI.js';
 import { refreshDetail } from './detail.js';
+import { checkFeedbackState } from './feedbackDialog.js';
 import { refreshProjectChannelStatus, refreshProjectTabs } from './projectTabs.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
@@ -14,13 +15,12 @@ export function startLongPoll() {
       if (result.version > pollVersion) {
         pollVersion = result.version;
         if (state.backupPreview?.active !== true) {
-          void loadTickets();
+          await loadTickets();
           refreshDetail();
+          void checkFeedbackState();
         }
         checkChannelDone();
         void refreshProjectTabs();
-        // Channel connect/disconnect triggers notifyChange via /channel/notify,
-        // so the long-poll returns immediately and we refresh status here.
         void refreshProjectChannelStatus();
       }
     } catch {

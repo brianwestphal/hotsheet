@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { channelAutoTrigger } from './channelUI.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
+import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_TAG } from './icons.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from './state.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
@@ -105,15 +106,55 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
   batchMore.addEventListener('click', (e) => {
     e.stopPropagation();
     closeAllMenus();
+    // Check if any selected ticket is unread (same logic as context menu)
+    const hasUnread = Array.from(state.selectedIds).some(id => {
+      const t = state.tickets.find(tk => tk.id === id);
+      return t != null && t.last_read_at != null && t.updated_at > t.last_read_at;
+    });
+
+    const readUnreadItem = hasUnread
+      ? {
+          label: 'Mark as Read',
+          key: 'r',
+          icon: ICON_EYE,
+          action: () => {
+            void (async () => {
+              const ids = Array.from(state.selectedIds);
+              const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+              const readAt = new Date().toISOString();
+              for (const t of affected) t.last_read_at = readAt;
+              await trackedBatch(affected, { ids, action: 'mark_read' }, 'Mark as Read');
+              renderTicketList();
+            })();
+          },
+        }
+      : {
+          label: 'Mark as Unread',
+          key: 'u',
+          icon: ICON_EYE_OFF,
+          action: () => {
+            void (async () => {
+              const ids = Array.from(state.selectedIds);
+              const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+              const epoch = '1970-01-01T00:00:00Z';
+              for (const t of affected) t.last_read_at = epoch;
+              await trackedBatch(affected, { ids, action: 'mark_unread' }, 'Mark as Unread');
+              renderTicketList();
+            })();
+          },
+        };
+
     const menu = createDropdown(batchMore, [
       {
         label: 'Tags...',
         key: 't',
+        icon: ICON_TAG,
         action: () => { void showTagsDialog(); },
       },
       {
         label: 'Duplicate',
         key: 'd',
+        icon: ICON_COPY,
         action: () => {
           void (async () => {
             const ids = Array.from(state.selectedIds);
@@ -127,10 +168,12 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
           })();
         },
       },
+      readUnreadItem,
       { label: '', key: '', separator: true, action: () => {} },
       {
         label: 'Move to Backlog',
         key: 'b',
+        icon: ICON_CALENDAR,
         action: () => {
           void (async () => {
             const ids = Array.from(state.selectedIds);
@@ -144,6 +187,7 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
       {
         label: 'Archive',
         key: 'a',
+        icon: ICON_ARCHIVE,
         action: () => {
           void (async () => {
             const ids = Array.from(state.selectedIds);

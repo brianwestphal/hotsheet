@@ -3,6 +3,7 @@ import { marked } from 'marked';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
+import { getTicketFeedbackState, shouldAutoShowFeedback, showFeedbackDialog } from './feedbackDialog.js';
 import { parseNotesJson, renderNotes, setPendingFocusNoteId } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
 import type { Ticket } from './state.js';
@@ -12,6 +13,10 @@ import { parseTags, renderDetailTags } from './tags.js';
 // Re-export extracted modules for consumers that import from detail.js
 export type { NoteEntry } from './noteRenderer.js';
 export { displayTag, extractBracketTags, hasTag, normalizeTag, parseTags, renderDetailTags } from './tags.js';
+
+/** Suppress auto-read for the current ticket (set when user explicitly marks as unread). */
+let suppressAutoRead = false;
+export function setSuppressAutoRead(suppress: boolean) { suppressAutoRead = suppress; }
 
 // Configure marked for safe rendering
 marked.setOptions({ breaks: true });
@@ -50,6 +55,7 @@ export function updateDetailStatus(value: string) {
 // --- Detail panel ---
 
 export function openDetail(id: number) {
+  suppressAutoRead = false; // Reset when switching tickets
   state.activeTicketId = id;
   void loadDetail(id);
 }
@@ -210,6 +216,15 @@ async function loadDetail(id: number) {
   );
   if (state.activeTicketId !== id) return;
 
+  // Mark ticket as read — update both server and in-memory state
+  // Skip if the user explicitly marked this ticket as unread
+  if (!suppressAutoRead) {
+    const readAt = new Date().toISOString();
+    const inMemory = state.tickets.find(t => t.id === id);
+    if (inMemory) inMemory.last_read_at = readAt;
+    void api(`/tickets/${id}`, { method: 'PATCH', body: { last_read_at: readAt } }).catch(() => {});
+  }
+
   // Restore inputs to editable (in case we were in preview mode before)
   setDetailReadOnly(false);
 
@@ -253,8 +268,15 @@ async function loadDetail(id: number) {
   // Skip re-rendering notes if a note is currently being edited (HS-1454)
   const notesContainer = document.getElementById('detail-notes');
   const noteBeingEdited = notesContainer?.querySelector('.note-edit-area') as HTMLElement | null;
+  const parsedNotes = parseNotesJson(ticket.notes);
   if (!noteBeingEdited || document.activeElement !== noteBeingEdited) {
-    renderNotes(ticket.id, parseNotesJson(ticket.notes));
+    renderNotes(ticket.id, parsedNotes);
+  }
+
+  // Auto-show feedback dialog if the last note is a feedback request
+  const feedbackState = getTicketFeedbackState(parsedNotes);
+  if (feedbackState && shouldAutoShowFeedback(id, feedbackState.noteId)) {
+    requestAnimationFrame(() => showFeedbackDialog(id, ticket.ticket_number, feedbackState.prompt));
   }
 
   // Meta info

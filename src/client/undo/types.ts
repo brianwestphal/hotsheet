@@ -7,6 +7,7 @@ export interface TicketSnapshot {
   status: string;
   up_next: boolean;
   notes?: string;
+  last_read_at?: string | null;
 }
 
 export interface UndoEntry {

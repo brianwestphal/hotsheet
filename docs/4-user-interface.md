@@ -32,7 +32,8 @@ The interface is divided into:
 ### 4.3 List View
 
 - Default view: a flat bullet-list of tickets.
-- Each row displays: checkbox, category badge (3-letter color-coded abbreviation), ticket number, status icon, title, priority icon, and up_next star.
+- Each row displays: checkbox, category badge (3-letter color-coded abbreviation), ticket number, status icon, sync icon (if synced), unread dot (if unread), title, priority icon, and up_next star.
+- **Unread indicator**: A blue dot (6px, `#3b82f6`) appears before the title when a ticket has been updated since the user last read it (`updated_at > last_read_at`). Tickets are automatically marked as read when opened in the detail panel. Users can manually mark tickets as read/unread via the context menu.
 - Clicking a ticket opens it in the detail panel.
 - Completed and verified ticket titles are displayed with strikethrough styling and muted text color.
 - Scroll position is preserved when the list re-renders (e.g., after data updates).

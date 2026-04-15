@@ -15,6 +15,14 @@ Validated fields include:
 - **Backups**: `tier` must be one of `5min`, `hourly`, `daily`
 - **Projects**: `dataDir` must be a non-empty string
 
+### 9.0.1 Read Tracking Header
+
+Mutation requests (POST, PATCH, PUT, DELETE) can include an `X-Hotsheet-User-Action: true` header to indicate the change was made by the user through the UI (as opposed to an AI tool or external API client). When this header is present:
+
+- The server bumps `last_read_at` alongside `updated_at` for tickets that are currently read (`last_read_at >= updated_at`), preventing user-initiated changes from making tickets appear unread.
+- Tickets that are currently unread (explicitly marked via "Mark as Unread") retain their unread state.
+- The browser client automatically adds this header to all mutation requests.
+
 ### 9.1 Ticket Endpoints
 
 | Method | Path | Description |
@@ -53,7 +61,7 @@ Special status filter values:
 
 Request body: `{ ids: number[], action: string, value?: string | boolean }`
 
-Supported actions: `delete`, `restore`, `category`, `priority`, `status`, `up_next`.
+Supported actions: `delete`, `restore`, `category`, `priority`, `status`, `up_next`, `mark_read`, `mark_unread`.
 
 ### 9.3 Note Endpoints
 

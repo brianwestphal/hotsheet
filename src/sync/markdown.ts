@@ -203,6 +203,21 @@ async function buildWorkflowInstructions(port: number, secretHeader: string): Pr
   sections.push('You can also include `"details"` in the defaults object for longer descriptions.');
   sections.push('Set `up_next: true` only for items that should be prioritized immediately.');
   sections.push('');
+
+  // Feedback instructions
+  sections.push('## Requesting User Feedback');
+  sections.push('');
+  sections.push('When you need input from the user before continuing, add a note with a special prefix:');
+  sections.push('');
+  sections.push('- **Standard feedback**: Add a note starting with `FEEDBACK NEEDED:` followed by your question');
+  sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"notes": "FEEDBACK NEEDED: Your question here"}'\``);
+  sections.push('- **Urgent feedback** (auto-selects the ticket in the UI): Use `IMMEDIATE FEEDBACK NEEDED:` instead');
+  sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"notes": "IMMEDIATE FEEDBACK NEEDED: Your urgent question"}'\``);
+  sections.push('');
+  sections.push('After adding a feedback note, signal done and wait to be re-triggered. The user will see a dialog prompting them to respond. When they submit feedback, you will be re-triggered with a message indicating the ticket was updated.');
+  sections.push('');
+  sections.push('Only the most recent note is checked for feedback prefixes. Once the user responds (or clicks "No Response Needed"), the feedback state clears automatically.');
+  sections.push('');
   return sections;
 }
 

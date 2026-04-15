@@ -33,6 +33,7 @@ export interface Ticket {
   deleted_at: string | null;
   notes: string;
   tags: string;
+  last_read_at: string | null;
 }
 
 export interface Attachment {

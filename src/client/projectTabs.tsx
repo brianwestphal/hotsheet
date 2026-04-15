@@ -14,6 +14,15 @@ export function setProjectReloadCallback(cb: () => Promise<void>) {
   reloadCallback = cb;
 }
 
+/** Projects with pending feedback (managed by feedbackDialog.checkFeedbackState). */
+const feedbackSecrets = new Set<string>();
+
+export function setProjectFeedback(secret: string, hasFeedback: boolean) {
+  if (hasFeedback) feedbackSecrets.add(secret);
+  else feedbackSecrets.delete(secret);
+  updateStatusDots();
+}
+
 /** Cached project list from the server. */
 let projectList: ProjectInfo[] = [];
 
@@ -324,6 +333,8 @@ export function updateStatusDots() {
 
     if (attentionSecrets.has(secret)) {
       dot.className = 'project-tab-dot attention';
+    } else if (feedbackSecrets.has(secret)) {
+      dot.className = 'project-tab-dot feedback';
     } else if (busySecrets.has(secret)) {
       dot.className = 'project-tab-dot busy';
     } else {

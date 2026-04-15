@@ -19,12 +19,14 @@ Each ticket has the following properties:
   - **Normalization**: All tags are normalized on input — non-alphanumeric character runs are collapsed to a single space, leading/trailing whitespace is trimmed, and the result is stored in lowercase. Example: `"  This  is --- a TAG  "` → `"this is a tag"`.
   - **Display**: Tags are rendered in Title Case everywhere (chips, autocomplete, markdown sync). Example: `"this is a tag"` → `"This Is A Tag"`.
   - **Deduplication**: Case-insensitive — `"Admin"` and `"admin"` are treated as the same tag.
+  - **Tags dialog**: The Done button is disabled when text has been entered in the new-tag input but not yet added, preventing accidental tag loss. Re-enables when the text is cleared or added via the Add button/Enter key.
   - **Bracket syntax**: Ticket titles can include `[tag]` patterns during creation. Tags are extracted, normalized, and removed from the title. Example: `"[admin] fix the dashboard [urgent]"` creates a ticket with title `"fix the dashboard"` and tags `["admin", "urgent"]`. Multiple brackets and spacing around brackets are handled.
   - Detail panel: displays tags as removable chips with an input to add new tags by pressing Enter. Autocomplete shows first 100 tags on focus, filters as the user types.
   - Batch toolbar "..." menu: "Tags..." opens a dialog with check/uncheck/mixed-state checkboxes for all known tags. Mixed state means some selected tickets have the tag and others don't — mixed tags are left unchanged on save.
   - API: `GET /api/tags` returns all unique normalized tags, ticket PATCH accepts `tags` (JSON string), ticket POST accepts `tags` in defaults.
 - **Notes** — Timestamped entries stored as a JSON array. Each note has a unique ID, text, and created_at timestamp. Notes can be added, edited, and deleted.
-- **Timestamps** — created_at, updated_at, completed_at, verified_at, deleted_at.
+- **Timestamps** — created_at, updated_at, completed_at, verified_at, deleted_at, last_read_at.
+- **Read tracking** — `last_read_at` records when the user last viewed a ticket. When `updated_at > last_read_at`, the ticket displays an unread indicator (blue dot). Tickets are automatically marked as read when opened in the detail panel. Batch mark read/unread is available via the context menu.
 
 ### 3.2 CRUD Operations
 

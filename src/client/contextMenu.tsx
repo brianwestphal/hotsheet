@@ -1,7 +1,8 @@
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
+import { setSuppressAutoRead } from './detail.js';
 import { toElement } from './dom.js';
-import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_TAG, ICON_TRASH } from './icons.js';
+import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_TAG, ICON_TRASH } from './icons.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS, syncedTicketMap, VERIFIED_SVG } from './state.js';
@@ -98,6 +99,34 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
     for (const t of created) state.selectedIds.add(t.id);
     void loadTickets();
   }, { icon: ICON_COPY });
+
+  // Mark as Read / Unread
+  const hasUnread = Array.from(state.selectedIds).some(id => {
+    const t = state.tickets.find(tk => tk.id === id);
+    return t != null && t.last_read_at != null && t.updated_at > t.last_read_at;
+  });
+  if (hasUnread) {
+    addActionItem(menu, 'Mark as Read', async () => {
+      setSuppressAutoRead(false);
+      const ids = Array.from(state.selectedIds);
+      const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+      const readAt = new Date().toISOString();
+      for (const t of affected) t.last_read_at = readAt;
+      await trackedBatch(affected, { ids, action: 'mark_read' }, 'Mark as Read');
+      renderTicketList();
+    }, { icon: ICON_EYE });
+  } else {
+    addActionItem(menu, 'Mark as Unread', async () => {
+      setSuppressAutoRead(true);
+      const ids = Array.from(state.selectedIds);
+      const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+      // Use epoch date instead of null so updated_at > last_read_at is true (shows blue dot)
+      const epoch = '1970-01-01T00:00:00Z';
+      for (const t of affected) t.last_read_at = epoch;
+      await trackedBatch(affected, { ids, action: 'mark_unread' }, 'Mark as Unread');
+      renderTicketList();
+    }, { icon: ICON_EYE_OFF });
+  }
 
   // Push to remote backend (only for unsynced single-ticket selection)
   if (state.selectedIds.size === 1 && !(ticket.id in syncedTicketMap)) {

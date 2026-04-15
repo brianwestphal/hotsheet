@@ -3,6 +3,7 @@ import { marked } from 'marked';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
+import { parseFeedbackPrefix, showFeedbackDialog } from './feedbackDialog.js';
 import { appendImageDownloadLinks, proxyGitHubImages } from './imageProxy.js';
 import { state } from './state.js';
 import { pushNotesUndo } from './undo/actions.js';
@@ -131,6 +132,23 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
 
     // Add clickable download links for any images in the note.
     appendImageDownloadLinks(entry);
+
+    // If this is the last note and has a feedback prefix, add a "Provide Feedback" link
+    if (note === notes[notes.length - 1]) {
+      const feedback = parseFeedbackPrefix(note.text);
+      if (feedback) {
+        const ticket = state.tickets.find(t => t.id === ticketId);
+        const ticketNumber = ticket?.ticket_number ?? `#${ticketId}`;
+        const link = toElement(
+          <button className="feedback-link">Provide Feedback</button>
+        );
+        link.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showFeedbackDialog(ticketId, ticketNumber, feedback.prompt);
+        });
+        entry.appendChild(link);
+      }
+    }
 
     container.appendChild(entry);
   }

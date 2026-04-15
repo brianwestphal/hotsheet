@@ -11,7 +11,7 @@ import {
   callLoadTickets, callUpdateBatchToolbar, callUpdateColumnSelectionClasses,
   draggedTicketIds, setDraggedTicketIds,
 } from './ticketListState.js';
-import { showCategoryMenu, showPriorityMenu, toggleUpNext } from './ticketRow.js';
+import { showCategoryMenu, showPriorityMenu, showsIndicatorDot, toggleUpNext  } from './ticketRow.js';
 import { trackedBatch } from './undo/actions.js';
 
 // --- Column scroll state ---
@@ -158,7 +158,7 @@ export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
           {ticket.up_next ? '\u2605' : '\u2606'}
         </span>
       </div>
-      <div className="column-card-title">{ticket.id in syncedTicketMap ? <span className="ticket-sync-icon">{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}{ticket.title}</div>
+      <div className="column-card-title">{ticket.id in syncedTicketMap ? <span className="ticket-sync-icon">{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}{showsIndicatorDot(ticket) ? <span className="ticket-unread-dot"></span> : null}{ticket.title}</div>
       {parseTags(ticket.tags).length > 0 ? (
         <div className="column-card-tags">
           {parseTags(ticket.tags).map(tag => (
@@ -273,7 +273,7 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
           {ticket.up_next ? '\u2605' : '\u2606'}
         </button>
       </div>
-      <div className="column-card-title">{ticket.id in syncedTicketMap ? <span className="ticket-sync-icon">{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}{ticket.title}</div>
+      <div className="column-card-title">{ticket.id in syncedTicketMap ? <span className="ticket-sync-icon">{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}{showsIndicatorDot(ticket) ? <span className="ticket-unread-dot"></span> : null}{ticket.title}</div>
       {parseTags(ticket.tags).length > 0 ? (
         <div className="column-card-tags">
           {parseTags(ticket.tags).map(tag => (

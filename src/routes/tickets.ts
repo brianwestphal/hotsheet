@@ -158,7 +158,8 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
   const raw: unknown = await c.req.json();
   const parsed = parseBody(UpdateTicketSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  const ticket = await updateTicket(id, parsed.data);
+  const keepRead = c.req.header('X-Hotsheet-User-Action') === 'true';
+  const ticket = await updateTicket(id, parsed.data, { keepRead });
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
   void onTicketChanged(id, parsed.data as Record<string, unknown>).catch(() => {});
@@ -235,6 +236,7 @@ ticketRoutes.post('/tickets/batch', async (c) => {
   const parsed = parseBody(BatchActionSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const { ids, action, value } = parsed.data;
+  const keepRead = c.req.header('X-Hotsheet-User-Action') === 'true';
 
   switch (action) {
     case 'delete':
@@ -245,26 +247,33 @@ ticketRoutes.post('/tickets/batch', async (c) => {
       await batchRestoreTickets(ids);
       break;
     case 'category':
-      await batchUpdateTickets(ids, { category: value as string });
+      await batchUpdateTickets(ids, { category: value as string }, { keepRead });
       for (const id of ids) void onTicketChanged(id, { category: value as string }).catch(() => {});
       break;
     case 'priority': {
       const p = TicketPrioritySchema.safeParse(value);
       if (!p.success) return c.json({ error: `Invalid priority "${value}"` }, 400);
-      await batchUpdateTickets(ids, { priority: p.data });
+      await batchUpdateTickets(ids, { priority: p.data }, { keepRead });
       for (const id of ids) void onTicketChanged(id, { priority: p.data }).catch(() => {});
       break;
     }
     case 'status': {
       const s = TicketStatusSchema.safeParse(value);
       if (!s.success) return c.json({ error: `Invalid status "${value}"` }, 400);
-      await batchUpdateTickets(ids, { status: s.data });
+      await batchUpdateTickets(ids, { status: s.data }, { keepRead });
       for (const id of ids) void onTicketChanged(id, { status: s.data }).catch(() => {});
       break;
     }
     case 'up_next':
-      await batchUpdateTickets(ids, { up_next: value as boolean });
+      await batchUpdateTickets(ids, { up_next: value as boolean }, { keepRead });
       for (const id of ids) void onTicketChanged(id, { up_next: value as boolean }).catch(() => {});
+      break;
+    case 'mark_read':
+      await batchUpdateTickets(ids, { last_read_at: new Date().toISOString() });
+      break;
+    case 'mark_unread':
+      // Use epoch date so updated_at > last_read_at evaluates to true (shows unread dot)
+      await batchUpdateTickets(ids, { last_read_at: '1970-01-01T00:00:00Z' });
       break;
   }
 
