@@ -20,6 +20,15 @@ export function runWithDataDir<T>(dataDir: string, fn: () => T): T {
   return requestDataDir.run(dataDir, fn);
 }
 
+/** Get the current data directory from async context or legacy default.
+ *  Returns the `.hotsheet/` data directory path (NOT the db/ subdirectory). */
+export function getDataDir(): string {
+  const contextDataDir = requestDataDir.getStore();
+  if (contextDataDir !== undefined) return contextDataDir;
+  if (defaultDbPath !== null) return defaultDbPath.replace(/\/db$/, '');
+  throw new Error('Data directory not available. Call setDataDir() or use runWithDataDir().');
+}
+
 export function setDataDir(dataDir: string) {
   const dbDir = join(dataDir, 'db');
   mkdirSync(dbDir, { recursive: true });
@@ -145,12 +154,9 @@ async function initSchema(db: PGlite): Promise<void> {
       value TEXT NOT NULL
     );
 
-    INSERT INTO settings (key, value) VALUES ('detail_position', 'side') ON CONFLICT DO NOTHING;
-    INSERT INTO settings (key, value) VALUES ('detail_width', '360') ON CONFLICT DO NOTHING;
-    INSERT INTO settings (key, value) VALUES ('detail_height', '300') ON CONFLICT DO NOTHING;
-    INSERT INTO settings (key, value) VALUES ('trash_cleanup_days', '3') ON CONFLICT DO NOTHING;
-    INSERT INTO settings (key, value) VALUES ('verified_cleanup_days', '30') ON CONFLICT DO NOTHING;
   `);
+  // Default settings are now in settings.json (project settings).
+  // The settings table is retained for plugin settings only.
 
   // Stats snapshots table for historical charts
   await db.exec(`

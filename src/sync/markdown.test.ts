@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { getDb } from '../db/connection.js';
 import { addAttachment, createTicket, updateTicket } from '../db/queries.js';
+import { updateSetting } from '../db/settings.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { initMarkdownSync, scheduleOpenTicketsSync, scheduleWorklistSync } from './markdown.js';
 
@@ -199,16 +200,10 @@ describe('open tickets sync', () => {
 
 describe('auto-context in worklist', () => {
   it('includes auto_context content in ticket details', async () => {
-    const db = await getDb();
-    // Set up auto_context: a category context for 'bug'
     const autoContext = JSON.stringify([
       { type: 'category', key: 'bug', text: 'AUTO_CONTEXT_BUG_INFO: Always check regression tests.' },
     ]);
-    await db.query(
-      `INSERT INTO settings (key, value) VALUES ('auto_context', $1)
-       ON CONFLICT (key) DO UPDATE SET value = $1`,
-      [autoContext]
-    );
+    await updateSetting('auto_context', autoContext);
 
     // Create a bug ticket that is up_next
     await createTicket('Bug with context', { category: 'bug', up_next: true });
@@ -221,15 +216,10 @@ describe('auto-context in worklist', () => {
   });
 
   it('includes tag-based auto_context content', async () => {
-    const db = await getDb();
     const autoContext = JSON.stringify([
       { type: 'tag', key: 'frontend', text: 'TAG_CONTEXT_FRONTEND: Check browser compatibility.' },
     ]);
-    await db.query(
-      `INSERT INTO settings (key, value) VALUES ('auto_context', $1)
-       ON CONFLICT (key) DO UPDATE SET value = $1`,
-      [autoContext]
-    );
+    await updateSetting('auto_context', autoContext);
 
     // Create a ticket with the 'frontend' tag
     await createTicket('Frontend ticket', { category: 'task', up_next: true, tags: JSON.stringify(['frontend']) });
@@ -241,15 +231,10 @@ describe('auto-context in worklist', () => {
   });
 
   it('prepends auto_context before ticket details', async () => {
-    const db = await getDb();
     const autoContext = JSON.stringify([
       { type: 'category', key: 'feature', text: 'FEATURE_CONTEXT: Follow design system.' },
     ]);
-    await db.query(
-      `INSERT INTO settings (key, value) VALUES ('auto_context', $1)
-       ON CONFLICT (key) DO UPDATE SET value = $1`,
-      [autoContext]
-    );
+    await updateSetting('auto_context', autoContext);
 
     await createTicket('Feature with details', { category: 'feature', up_next: true, details: 'Implement the widget.' });
     scheduleWorklistSync();
@@ -265,15 +250,10 @@ describe('auto-context in worklist', () => {
   });
 
   it('ignores auto_context that does not match ticket category/tags', async () => {
-    const db = await getDb();
     const autoContext = JSON.stringify([
       { type: 'category', key: 'investigation', text: 'INVESTIGATION_ONLY_CONTEXT' },
     ]);
-    await db.query(
-      `INSERT INTO settings (key, value) VALUES ('auto_context', $1)
-       ON CONFLICT (key) DO UPDATE SET value = $1`,
-      [autoContext]
-    );
+    await updateSetting('auto_context', autoContext);
 
     await createTicket('Non-investigation ticket', { category: 'task', up_next: true });
     scheduleWorklistSync();
@@ -289,10 +269,7 @@ describe('auto_order disabled', () => {
   it('shows "No items" message instead of auto-prioritize when auto_order is false', async () => {
     const db = await getDb();
     // Disable auto_order
-    await db.query(
-      `INSERT INTO settings (key, value) VALUES ('auto_order', 'false')
-       ON CONFLICT (key) DO UPDATE SET value = 'false'`
-    );
+    await updateSetting('auto_order', 'false');
     // Ensure no up_next tickets
     await db.query(`UPDATE tickets SET up_next = false`);
 
@@ -304,10 +281,7 @@ describe('auto_order disabled', () => {
     expect(content).not.toContain('## Auto-Prioritize');
 
     // Re-enable auto_order for subsequent tests
-    await db.query(
-      `INSERT INTO settings (key, value) VALUES ('auto_order', 'true')
-       ON CONFLICT (key) DO UPDATE SET value = 'true'`
-    );
+    await updateSetting('auto_order', 'true');
   });
 });
 
@@ -315,7 +289,7 @@ describe('category descriptions', () => {
   it('lists only categories used by up_next tickets', async () => {
     const db = await getDb();
     // Clear auto_context so it doesn't interfere
-    await db.query(`DELETE FROM settings WHERE key = 'auto_context'`);
+    await updateSetting('auto_context', '[]');
     // Reset all tickets to not up_next
     await db.query(`UPDATE tickets SET up_next = false`);
 
@@ -380,7 +354,7 @@ describe('ticket formatting with notes and attachments', () => {
   it('formats ticket tags in title case', async () => {
     const db = await getDb();
     await db.query(`UPDATE tickets SET up_next = false`);
-    await db.query(`DELETE FROM settings WHERE key = 'auto_context'`);
+    await updateSetting('auto_context', '[]');
 
     await createTicket('Tagged ticket', { category: 'task', up_next: true, tags: JSON.stringify(['api', 'backend']) });
 

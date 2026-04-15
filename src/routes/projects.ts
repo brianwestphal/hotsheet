@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { resolve } from 'path';
 
 import { openInFileManager } from '../open-in-file-manager.js';
-import { addToProjectList, removeFromProjectList, reorderProjectList } from '../project-list.js';
+import { addToProjectList, readProjectList, removeFromProjectList, reorderProjectList } from '../project-list.js';
 import { getAllProjects, getProjectBySecret, registerProject, reorderProjects, unregisterProject } from '../projects.js';
 import type { AppEnv } from '../types.js';
 import { notifyChange } from './notify.js';
@@ -11,10 +11,27 @@ import { parseBody, RegisterProjectSchema, ReorderProjectsSchema } from './valid
 
 export const projectRoutes = new Hono<AppEnv>();
 
-/** GET /api/projects — list all registered projects */
+/** GET /api/projects — list all registered projects (auto-prunes stale entries) */
 projectRoutes.get('/', async (c) => {
+  // Auto-prune in-memory projects whose data directories no longer exist
   const projects = getAllProjects();
-  const result = await Promise.all(projects.map(async (p) => {
+  const stale = projects.filter(p => !existsSync(p.dataDir));
+  for (const p of stale) {
+    removeFromProjectList(p.dataDir);
+    unregisterProject(p.secret);
+  }
+
+  // Also prune persisted entries not in memory (e.g. from crashed test processes)
+  const persisted = readProjectList();
+  const inMemoryDirs = new Set(getAllProjects().map(p => p.dataDir));
+  for (const dir of persisted) {
+    if (!inMemoryDirs.has(dir) && !existsSync(dir)) {
+      removeFromProjectList(dir);
+    }
+  }
+
+  const live = stale.length > 0 ? getAllProjects() : projects;
+  const result = await Promise.all(live.map(async (p) => {
     let ticketCount = 0;
     try {
       const res = await p.db.query<{ count: string }>(`SELECT COUNT(*) as count FROM tickets WHERE status != 'deleted'`);

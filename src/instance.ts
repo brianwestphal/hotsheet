@@ -1,11 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { z } from 'zod';
 
-interface InstanceInfo {
-  port: number;
-  pid: number;
-}
+const InstanceInfoSchema = z.object({
+  port: z.number(),
+  pid: z.number(),
+});
+
+type InstanceInfo = z.infer<typeof InstanceInfoSchema>;
 
 function getInstanceFilePath(): string {
   return join(homedir(), '.hotsheet', 'instance.json');
@@ -21,9 +24,9 @@ export function readInstanceFile(): InstanceInfo | null {
   const path = getInstanceFilePath();
   if (!existsSync(path)) return null;
   try {
-    const data = JSON.parse(readFileSync(path, 'utf-8')) as InstanceInfo;
-    if (typeof data.port !== 'number' || typeof data.pid !== 'number') return null;
-    return data;
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+    const result = InstanceInfoSchema.safeParse(raw);
+    return result.success ? result.data : null;
   } catch {
     return null;
   }

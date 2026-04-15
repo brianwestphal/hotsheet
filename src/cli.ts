@@ -263,6 +263,9 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
 
   if (demo === null) {
     const { runWithDataDir } = await import('./db/connection.js');
+    // Migrate project settings from DB to settings.json (idempotent)
+    const { migrateDbSettingsToFile } = await import('./migrate-settings.js');
+    await runWithDataDir(dataDir, () => migrateDbSettingsToFile(dataDir));
     await runWithDataDir(dataDir, () => cleanupAttachments());
   }
 

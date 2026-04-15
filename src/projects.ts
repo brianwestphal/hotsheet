@@ -41,6 +41,10 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   // Initialize PGLite database for this dataDir (creates if needed)
   const db = await getDbForDir(absDataDir);
 
+  // Migrate project settings from DB to settings.json (idempotent)
+  const { migrateDbSettingsToFile } = await import('./migrate-settings.js');
+  await runWithDataDir(absDataDir, () => migrateDbSettingsToFile(absDataDir));
+
   // Ensure secret exists and write port to settings.json
   const secret = ensureSecret(absDataDir, port);
 

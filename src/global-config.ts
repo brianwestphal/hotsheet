@@ -1,13 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { z } from 'zod';
 
-export interface GlobalConfig {
-  channelEnabled?: boolean;
-  shareTotalSeconds?: number;
-  shareLastPrompted?: string;
-  shareAccepted?: boolean;
-}
+const GlobalConfigSchema = z.object({
+  channelEnabled: z.boolean().optional(),
+  shareTotalSeconds: z.number().optional(),
+  shareLastPrompted: z.string().optional(),
+  shareAccepted: z.boolean().optional(),
+}).strict();
+
+export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 
 function getConfigPath(): string {
   return join(homedir(), '.hotsheet', 'config.json');
@@ -17,7 +20,13 @@ export function readGlobalConfig(): GlobalConfig {
   const path = getConfigPath();
   if (!existsSync(path)) return {};
   try {
-    return JSON.parse(readFileSync(path, 'utf-8')) as GlobalConfig;
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+    const result = GlobalConfigSchema.safeParse(raw);
+    if (!result.success) {
+      console.warn(`[config] Invalid config.json: ${result.error.message}`);
+      return {};
+    }
+    return result.data;
   } catch {
     return {};
   }

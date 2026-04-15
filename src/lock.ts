@@ -1,5 +1,8 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { z } from 'zod';
+
+const LockFileSchema = z.object({ pid: z.number() });
 
 // Prevent EPIPE crashes when stdout/stderr pipe is closed (e.g., Tauri sidecar)
 process.stdout.on('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'EPIPE') throw err; });
@@ -21,30 +24,35 @@ export function acquireLock(dataDir: string): void {
 
   if (existsSync(lockPath)) {
     try {
-      const contents = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid: number };
-      const pid = contents.pid;
-
-      // Same process re-acquiring the lock (e.g., project re-registered after tab close)
-      if (pid === process.pid) {
-        lockPaths.add(lockPath);
-        return;
-      }
-
-      // Check if the process is still alive (signal 0 = test only)
-      try {
-        process.kill(pid, 0);
-        // Process is alive — another instance is running
-        console.error(`\n  Error: Another Hot Sheet instance (PID ${pid}) is already using this data directory.`);
-        console.error(`  Directory: ${dataDir}`);
-        console.error(`  Stop that instance first, or use --data-dir to point to a different location.\n`);
-        process.exit(1);
-      } catch {
-        // Process is dead — stale lock
-        console.log(`  Removing stale lock from PID ${pid}`);
+      const parsed = LockFileSchema.safeParse(JSON.parse(readFileSync(lockPath, 'utf-8')));
+      if (!parsed.success) {
+        // Corrupt lock file — remove and continue to acquire
         rmSync(lockPath, { force: true });
+      } else {
+        const pid = parsed.data.pid;
+
+        // Same process re-acquiring the lock (e.g., project re-registered after tab close)
+        if (pid === process.pid) {
+          lockPaths.add(lockPath);
+          return;
+        }
+
+        // Check if the process is still alive (signal 0 = test only)
+        try {
+          process.kill(pid, 0);
+          // Process is alive — another instance is running
+          console.error(`\n  Error: Another Hot Sheet instance (PID ${pid}) is already using this data directory.`);
+          console.error(`  Directory: ${dataDir}`);
+          console.error(`  Stop that instance first, or use --data-dir to point to a different location.\n`);
+          process.exit(1);
+        } catch {
+          // Process is dead — stale lock
+          console.log(`  Removing stale lock from PID ${pid}`);
+          rmSync(lockPath, { force: true });
+        }
       }
     } catch {
-      // Corrupt lock file — remove it
+      // JSON parse error — remove corrupt lock file
       rmSync(lockPath, { force: true });
     }
   }

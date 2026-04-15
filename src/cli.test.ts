@@ -62,11 +62,16 @@ describe('CLI — help and version', () => {
 
 describe('CLI — server startup with custom args', () => {
   const tempDir = join(tmpdir(), `hs-cli-test-${Date.now()}`);
+  const tempHome = join(tmpdir(), `hs-cli-home-${Date.now()}`);
   const dataDir = join(tempDir, '.hotsheet');
 
   afterAll(() => {
     try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { rmSync(tempHome, { recursive: true, force: true }); } catch { /* ignore */ }
   });
+
+  // Use isolated HOME so test servers don't pollute the real projects.json
+  const isolatedEnv = { HOME: tempHome };
 
   it('--port and --data-dir are accepted (server starts on custom port)', async () => {
     mkdirSync(dataDir, { recursive: true });
@@ -74,7 +79,7 @@ describe('CLI — server startup with custom args', () => {
     // If the args are accepted, stdout should show the startup message.
     const { stdout, stderr } = await spawn([
       '--port', '4199', '--data-dir', dataDir, '--no-open', '--strict-port',
-    ], { timeout: 4000 });
+    ], { timeout: 4000, env: isolatedEnv });
     // The server should print the running URL or at least not error on arg parsing
     const combined = stdout + stderr;
     expect(combined).not.toContain('Unknown option');
@@ -85,7 +90,7 @@ describe('CLI — server startup with custom args', () => {
     mkdirSync(dataDir, { recursive: true });
     const { stdout, stderr } = await spawn([
       '--port', '4198', '--data-dir', dataDir, '--no-open', '--strict-port',
-    ], { timeout: 4000 });
+    ], { timeout: 4000, env: isolatedEnv });
     // With --no-open, the server starts but doesn't call open().
     // We can't directly verify open() wasn't called, but we verify the flag is accepted.
     const combined = stdout + stderr;

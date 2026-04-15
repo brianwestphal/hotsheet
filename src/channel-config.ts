@@ -1,6 +1,11 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { z } from 'zod';
+
+const McpConfigSchema = z.object({
+  mcpServers: z.record(z.string(), z.unknown()).optional(),
+}).loose();
 
 const MCP_SERVER_KEY = 'hotsheet-channel';
 
@@ -38,10 +43,11 @@ export function registerChannel(dataDir: string): void {
   const mcpPath = join(root, '.mcp.json');
   const { command, args } = getChannelServerPath();
 
-  let config: { mcpServers?: Record<string, unknown>; [key: string]: unknown } = {};
+  let config: z.infer<typeof McpConfigSchema> = {};
   if (existsSync(mcpPath)) {
     try {
-      config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as typeof config;
+      const parsed = McpConfigSchema.safeParse(JSON.parse(readFileSync(mcpPath, 'utf-8')));
+      if (parsed.success) config = parsed.data;
     } catch { /* corrupt, overwrite */ }
   }
 
@@ -69,7 +75,7 @@ export function unregisterChannel(dataDir?: string): void {
   if (!existsSync(mcpPath)) return;
 
   try {
-    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers?: Record<string, unknown> };
+    const config = McpConfigSchema.parse(JSON.parse(readFileSync(mcpPath, 'utf-8')));
     if (config.mcpServers?.[MCP_SERVER_KEY] !== undefined) {
       const servers = { ...config.mcpServers };
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete

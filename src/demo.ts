@@ -683,18 +683,18 @@ export async function seedDemoData(scenario: number): Promise<void> {
   // Advance the sequence past seeded tickets so new ones don't collide
   await db.query(`SELECT setval('ticket_seq', $1)`, [tickets.length]);
 
-  // Scenario-specific settings
+  // Scenario-specific settings (written to settings.json)
+  const { getDataDir } = await import('./db/connection.js');
+  const { writeProjectSettings } = await import('./file-settings.js');
+  const dataDir = getDataDir();
   if (scenario === 3) {
-    // Add custom views
-    await db.query(`INSERT INTO settings (key, value) VALUES ('custom_views', $1) ON CONFLICT (key) DO UPDATE SET value = $1`,
-      [JSON.stringify(SCENARIO_3_VIEWS)]);
+    writeProjectSettings(dataDir, { custom_views: JSON.stringify(SCENARIO_3_VIEWS) });
   }
   if (scenario === 6) {
-    await db.query(`UPDATE settings SET value = 'bottom' WHERE key = 'detail_position'`);
-    await db.query(`UPDATE settings SET value = '280' WHERE key = 'detail_height'`);
+    writeProjectSettings(dataDir, { detail_position: 'bottom', detail_height: '280' });
   }
   if (scenario === 7) {
-    await db.query(`INSERT INTO settings (key, value) VALUES ('layout', 'columns') ON CONFLICT (key) DO UPDATE SET value = 'columns'`);
+    writeProjectSettings(dataDir, { layout: 'columns' });
   }
   if (scenario === 8) {
     // Backfill stats snapshots for dashboard charts
@@ -704,9 +704,10 @@ export async function seedDemoData(scenario: number): Promise<void> {
   }
   if (scenario === 9) {
     // Enable Claude Channel and add custom command buttons
-    await db.query(`INSERT INTO settings (key, value) VALUES ('channel_enabled', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true'`);
-    await db.query(`INSERT INTO settings (key, value) VALUES ('custom_commands', $1) ON CONFLICT (key) DO UPDATE SET value = $1`,
-      [JSON.stringify(SCENARIO_9_COMMANDS)]);
+    writeProjectSettings(dataDir, {
+      channel_enabled: 'true',
+      custom_commands: JSON.stringify(SCENARIO_9_COMMANDS),
+    });
   }
 }
 

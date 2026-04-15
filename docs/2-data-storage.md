@@ -26,11 +26,11 @@
 - Stores channel commands and shell command execution entries.
 
 #### Settings Table
-- Key-value store for application configuration (detail_position, detail_width, detail_height, trash_cleanup_days, verified_cleanup_days). Additional settings keys are created dynamically at runtime by the UI (layout, categories, custom_commands, custom_views, etc.).
+- Key-value store for **plugin settings only** (`plugin:*:*` and `plugin_enabled:*` keys). All other project settings have been migrated to file-based storage (see §2.3).
 
 ### 2.3 File-Based Settings
 
-- A separate `settings.json` file in the data directory stores settings that need to be readable without a database connection. Fields:
+- A `settings.json` file in the data directory stores all project configuration. This makes settings easy to copy between projects, inspect, and back up. Fields:
   - `appName` — Display name for the project (shown in UI title bar and tabs).
   - `backupDir` — Custom directory for storing backups (overrides default `.hotsheet/backups/`).
   - `appIcon` — Selected app icon variant (e.g., default, dark, colorful).
@@ -38,8 +38,17 @@
   - `secret` — Server-generated secret token for API authentication.
   - `secretPathHash` — Hashed path identifier used to scope the secret to a specific project.
   - `port` — Preferred port number for the server.
+  - `projectSettings` — Object containing all UI and behavior settings (detail_position, detail_width, detail_height, layout, sort_by, sort_dir, categories, custom_views, custom_commands, trash_cleanup_days, verified_cleanup_days, auto_order, etc.).
 
-### 2.4 Lock File
+### 2.4 Settings Migration
+
+- On startup, project settings are automatically migrated from the database settings table to `settings.json`.
+- The migration is idempotent and safe to run multiple times.
+- Values already in `settings.json` are never overridden by the migration (file values take precedence).
+- After migration, the project keys are deleted from the database. Only plugin keys remain.
+- This migration runs for both the primary project and all secondary projects registered via tabs.
+
+### 2.5 Lock File
 
 - A `hotsheet.lock` file prevents multiple instances from using the same database simultaneously.
 - Contains JSON with `pid` and `startedAt`.
@@ -47,19 +56,19 @@
 - If the lock file belongs to the current process (same PID), `acquireLock()` returns immediately instead of terminating. This allows a project to be re-registered after being removed from a tab without the server killing itself.
 - Lock is cleaned up on process exit.
 
-### 2.5 Instance File
+### 2.6 Instance File
 
 - An `instance.json` file is written to `~/.hotsheet/` on server startup and removed on exit.
 - Contains `port` and `pid` of the running server.
 - Used by the CLI for `--list` and `--close` commands, and for detecting whether a running instance can be joined instead of starting a new one.
 
-### 2.6 Projects Registry
+### 2.7 Projects Registry
 
 - A `projects.json` file in `~/.hotsheet/` persists the list of registered project `dataDir` paths across server restarts.
 - On startup, previously registered projects whose directories still exist are automatically re-registered.
 - When a project is added or removed via the API, the file is updated immediately.
 
-### 2.7 Gitignore Management
+### 2.8 Gitignore Management
 
 - On startup, detects if the project is a git repository.
 - Automatically adds `.hotsheet/` to `.gitignore` if not already present.
@@ -67,15 +76,15 @@
 
 ## Non-Functional Requirements
 
-### 2.8 Data Locality
+### 2.9 Data Locality
 
 - All data remains on the local machine. There is no cloud sync, external API dependency, or remote storage.
 
-### 2.9 Zero Configuration
+### 2.10 Zero Configuration
 
 - The database initializes automatically on first run with no manual setup, provisioning, or configuration required.
 
-### 2.10 Data Integrity
+### 2.11 Data Integrity
 
 - Only one application instance may access the database at a time, enforced by the lock file mechanism.
 - Soft-delete is the default for ticket removal; hard delete is a separate, explicit operation.

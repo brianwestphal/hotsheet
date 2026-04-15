@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join, resolve } from 'path';
+import { z } from 'zod';
 
 function getProjectListPath(): string {
   return join(homedir(), '.hotsheet', 'projects.json');
@@ -11,9 +12,9 @@ export function readProjectList(): string[] {
   const path = getProjectListPath();
   if (!existsSync(path)) return [];
   try {
-    const data: unknown = JSON.parse(readFileSync(path, 'utf-8'));
-    if (!Array.isArray(data)) return [];
-    return data.filter((d): d is string => typeof d === 'string');
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+    const result = z.array(z.string()).safeParse(raw);
+    return result.success ? result.data : [];
   } catch {
     return [];
   }

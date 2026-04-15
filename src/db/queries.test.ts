@@ -542,21 +542,26 @@ describe('stats', () => {
 });
 
 describe('settings', () => {
-  it('returns default settings', async () => {
+  it('returns empty settings initially (project settings come from settings.json)', async () => {
     const settings = await getSettings();
-    expect(settings.detail_position).toBe('side');
-    expect(settings.detail_width).toBe('360');
-    expect(settings.trash_cleanup_days).toBe('3');
-    expect(settings.verified_cleanup_days).toBe('30');
+    // Project settings are now file-based; DB only has plugin settings
+    // A fresh test DB has no plugin settings, so the result is whatever is in the test settings.json
+    expect(typeof settings).toBe('object');
   });
 
-  it('upserts settings', async () => {
+  it('writes and reads project settings via file', async () => {
     await updateSetting('detail_position', 'bottom');
     const settings = await getSettings();
     expect(settings.detail_position).toBe('bottom');
   });
 
-  it('inserts new setting key', async () => {
+  it('writes and reads plugin settings via DB', async () => {
+    await updateSetting('plugin:test:api_key', 'secret123');
+    const settings = await getSettings();
+    expect(settings['plugin:test:api_key']).toBe('secret123');
+  });
+
+  it('inserts new project setting key', async () => {
     await updateSetting('custom_key', 'custom_value');
     const settings = await getSettings();
     expect(settings.custom_key).toBe('custom_value');

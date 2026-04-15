@@ -2,6 +2,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { z } from 'zod';
 
 import { getErrorMessage } from '../utils/errorMessage.js';
 import type { ConfigLabelColor, HotSheetPlugin, LoadedPlugin, PluginContext, PluginManifest, PluginUIElement, PluginUIRegistration, TicketingBackend } from './types.js';
@@ -128,23 +129,22 @@ function readManifest(pluginPath: string): PluginManifest | null {
   return null;
 }
 
+const ManifestSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  version: z.string(),
+  description: z.string().optional(),
+  author: z.string().optional(),
+  entry: z.string().default('index.js'),
+  icon: z.string().optional(),
+  preferences: z.array(z.unknown()).optional(),
+  configLayout: z.array(z.unknown()).optional(),
+}).loose();
+
 function validateManifest(raw: unknown): PluginManifest | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const obj = raw as Record<string, unknown>;
-  if (typeof obj.id !== 'string' || obj.id === '') return null;
-  if (typeof obj.name !== 'string' || obj.name === '') return null;
-  if (typeof obj.version !== 'string') return null;
-  return {
-    id: obj.id,
-    name: obj.name,
-    version: obj.version,
-    description: typeof obj.description === 'string' ? obj.description : undefined,
-    author: typeof obj.author === 'string' ? obj.author : undefined,
-    entry: typeof obj.entry === 'string' ? obj.entry : 'index.js',
-    icon: typeof obj.icon === 'string' ? obj.icon : undefined,
-    preferences: Array.isArray(obj.preferences) ? obj.preferences : undefined,
-    configLayout: Array.isArray(obj.configLayout) ? obj.configLayout : undefined,
-  };
+  const result = ManifestSchema.safeParse(raw);
+  if (!result.success) return null;
+  return result.data as PluginManifest;
 }
 
 // --- Bundled plugin auto-install ---
@@ -156,7 +156,10 @@ function getDismissedPluginsPath(): string {
 function getDismissedPlugins(): Set<string> {
   const path = getDismissedPluginsPath();
   if (!existsSync(path)) return new Set();
-  try { return new Set(JSON.parse(readFileSync(path, 'utf-8')) as string[]); } catch { return new Set(); }
+  try {
+    const result = z.array(z.string()).safeParse(JSON.parse(readFileSync(path, 'utf-8')));
+    return result.success ? new Set(result.data) : new Set();
+  } catch { return new Set(); }
 }
 
 export function dismissBundledPlugin(pluginId: string): void {
@@ -349,7 +352,10 @@ function getGlobalConfigPath(): string {
 function readGlobalConfig(): Record<string, Record<string, string> | undefined> {
   const configPath = getGlobalConfigPath();
   if (!existsSync(configPath)) return {};
-  try { return JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, Record<string, string>>; } catch { return {}; }
+  try {
+    const result = z.record(z.string(), z.record(z.string(), z.string()).optional()).safeParse(JSON.parse(readFileSync(configPath, 'utf-8')));
+    return result.success ? result.data : {};
+  } catch { return {}; }
 }
 
 function writeGlobalConfig(config: Record<string, Record<string, string> | undefined>): void {
