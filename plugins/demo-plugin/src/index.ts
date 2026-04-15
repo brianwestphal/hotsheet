@@ -112,6 +112,17 @@ export async function activate(ctx: PluginContext): Promise<void> {
       action: 'sidebar_top_click',
     } as PluginUIElement,
 
+    // Sidebar bottom (after views)
+    {
+      id: 'demo-sidebar-bottom',
+      type: 'button',
+      location: 'sidebar_actions_bottom',
+      icon: INFO_ICON,
+      label: 'Demo Bottom',
+      title: 'Demo sidebar bottom button',
+      action: 'sidebar_bottom_click',
+    } as PluginUIElement,
+
     // --- Link ---
 
     {

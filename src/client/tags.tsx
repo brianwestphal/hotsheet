@@ -1,5 +1,5 @@
-import { toElement } from './dom.js';
 import { api } from './api.js';
+import { toElement } from './dom.js';
 import { state } from './state.js';
 
 /** Normalize a tag: collapse non-alphanumeric runs to single space, lowercase, trim. */

@@ -1,4 +1,5 @@
 import { raw } from '../jsx-runtime.js';
+import { getErrorMessage } from '../utils/errorMessage.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
 import { loadTickets } from './ticketList.js';
@@ -192,7 +193,7 @@ async function triggerAction(el: PluginUIElement, ticketIds?: number[]): Promise
       showToast(result.result.message);
     }
   } catch (e) {
-    console.error(`Plugin action failed: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`Plugin action failed: ${getErrorMessage(e)}`);
     setPluginBusy(el._pluginId, pluginName, false);
   }
 }

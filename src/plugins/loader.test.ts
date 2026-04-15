@@ -411,7 +411,7 @@ describe('loadAllPlugins', () => {
 // --- enablePlugin / disablePlugin / reactivatePlugin with loaded plugin ---
 
 describe('plugin lifecycle (enable/disable/reactivate)', () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     const pluginDir = join(tempHome, '.hotsheet', 'plugins');
     try { rmSync(pluginDir, { recursive: true, force: true }); } catch { /* ignore */ }
     mkdirSync(pluginDir, { recursive: true });
@@ -536,7 +536,7 @@ describe('plugin lifecycle (enable/disable/reactivate)', () => {
 // --- createPluginContext (tested via plugin that uses getSetting/setSetting) ---
 
 describe('createPluginContext via real plugin', () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     const pluginDir = join(tempHome, '.hotsheet', 'plugins');
     try { rmSync(pluginDir, { recursive: true, force: true }); } catch { /* ignore */ }
     mkdirSync(pluginDir, { recursive: true });

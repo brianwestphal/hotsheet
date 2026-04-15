@@ -7,8 +7,8 @@ export const commandLogRoutes = new Hono<AppEnv>();
 
 commandLogRoutes.get('/command-log', async (c) => {
   const url = new URL(c.req.url);
-  const limit = parseInt(url.searchParams.get('limit') ?? '100', 10);
-  const offset = parseInt(url.searchParams.get('offset') ?? '0', 10);
+  const limit = Math.max(1, Math.min(1000, parseInt(url.searchParams.get('limit') ?? '100', 10) || 100));
+  const offset = Math.max(0, parseInt(url.searchParams.get('offset') ?? '0', 10) || 0);
   const eventType = url.searchParams.get('event_type') ?? undefined;
   const search = url.searchParams.get('search') ?? undefined;
   const entries = await getLogEntries({ limit, offset, eventType, search });

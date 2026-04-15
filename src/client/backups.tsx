@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { toElement } from './dom.js';
+import type { Ticket } from './state.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
 
@@ -93,13 +94,13 @@ async function startPreview(tier: string, filename: string, createdAt: string): 
   banner.style.display = 'flex';
 
   try {
-    const result = await api<{ tickets: Array<Record<string, unknown>>; stats: { total: number; open: number; upNext: number } }>(
+    const result = await api<{ tickets: Ticket[]; stats: { total: number; open: number; upNext: number } }>(
       `/backups/preview/${tier}/${filename}`
     );
 
     state.backupPreview = {
       active: true,
-      tickets: result.tickets as unknown as typeof state.tickets,
+      tickets: result.tickets,
       timestamp: createdAt,
       tier,
       filename,

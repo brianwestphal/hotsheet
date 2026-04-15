@@ -1,5 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
+import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
 import type { ConfigLayoutItem, PluginInfo, PluginPreference, SyncConflict } from './pluginTypes.js';
 import { labelColorClass, STATUS_DOT } from './pluginTypes.js';
@@ -598,7 +599,7 @@ function createTextInput(pluginId: string, pref: PluginPreference, currentValue:
   let timeout: ReturnType<typeof setTimeout> | null = null;
   textInput.addEventListener('input', () => {
     if (timeout) clearTimeout(timeout);
-    timeout = setTimeout(() => savePrefValue(pluginId, pref, textInput.value), 500);
+    timeout = setTimeout(() => savePrefValue(pluginId, pref, textInput.value), TIMERS.PREF_SAVE_MS);
   });
   return textInput;
 }

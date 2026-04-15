@@ -10,8 +10,8 @@ import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRI
 import { parseTags, renderDetailTags } from './tags.js';
 
 // Re-export extracted modules for consumers that import from detail.js
-export { displayTag, extractBracketTags, hasTag, normalizeTag, parseTags, renderDetailTags } from './tags.js';
 export type { NoteEntry } from './noteRenderer.js';
+export { displayTag, extractBracketTags, hasTag, normalizeTag, parseTags, renderDetailTags } from './tags.js';
 
 // Configure marked for safe rendering
 marked.setOptions({ breaks: true });

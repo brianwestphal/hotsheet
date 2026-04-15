@@ -3,6 +3,7 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
+import { getErrorMessage } from '../utils/errorMessage.js';
 import type { ConfigLabelColor, HotSheetPlugin, LoadedPlugin, PluginContext, PluginManifest, PluginUIElement, PluginUIRegistration, TicketingBackend } from './types.js';
 
 // --- Global plugin registry ---
@@ -96,7 +97,7 @@ function readManifest(pluginPath: string): PluginManifest | null {
       const raw: unknown = JSON.parse(readFileSync(manifestPath, 'utf-8'));
       return validateManifest(raw);
     } catch (e) {
-      console.warn(`[plugins] Invalid manifest.json in ${pluginPath}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[plugins] Invalid manifest.json in ${pluginPath}: ${getErrorMessage(e)}`);
       return null;
     }
   }
@@ -120,7 +121,7 @@ function readManifest(pluginPath: string): PluginManifest | null {
         });
       }
     } catch (e) {
-      console.warn(`[plugins] Invalid package.json in ${pluginPath}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[plugins] Invalid package.json in ${pluginPath}: ${getErrorMessage(e)}`);
     }
   }
 
@@ -216,7 +217,7 @@ export function installBundledPlugin(pluginId: string): boolean {
       console.log(`[plugins] Installed bundled plugin: ${manifest.name}`);
       return true;
     } catch (e) {
-      console.warn(`[plugins] Failed to install bundled plugin ${pluginId}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[plugins] Failed to install bundled plugin ${pluginId}: ${getErrorMessage(e)}`);
       return false;
     }
   }
@@ -259,7 +260,7 @@ export function installBundledPlugins(): void {
       cpSync(sourcePath, targetPath, { recursive: true, force: true });
       console.log(`[plugins] Installed bundled plugin: ${entry.name}`);
     } catch (e) {
-      console.warn(`[plugins] Failed to install bundled plugin ${entry.name}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[plugins] Failed to install bundled plugin ${entry.name}: ${getErrorMessage(e)}`);
     }
   }
 }
@@ -312,7 +313,7 @@ async function loadPlugin(pluginPath: string, manifest: PluginManifest, enabled:
         if (result) backend = result;
         console.log(`[plugins] Loaded: ${manifest.name} v${manifest.version}${backend ? ' (backend)' : ''}`);
       } catch (e) {
-        error = e instanceof Error ? e.message : String(e);
+        error = getErrorMessage(e);
         console.error(`[plugins] Failed to activate ${manifest.id}: ${error}`);
       }
     }
@@ -326,7 +327,7 @@ async function loadPlugin(pluginPath: string, manifest: PluginManifest, enabled:
       error,
     });
   } catch (e) {
-    const error = e instanceof Error ? e.message : String(e);
+    const error = getErrorMessage(e);
     console.error(`[plugins] Failed to load ${manifest.id}: ${error}`);
     loadedPlugins.set(manifest.id, {
       manifest,
@@ -445,7 +446,7 @@ export async function unloadAllPlugins(): Promise<void> {
     try {
       await plugin.instance.deactivate?.();
     } catch (e) {
-      console.warn(`[plugins] Error deactivating ${id}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[plugins] Error deactivating ${id}: ${getErrorMessage(e)}`);
     }
   }
   loadedPlugins.clear();
@@ -464,7 +465,7 @@ export async function enablePlugin(id: string): Promise<boolean> {
     console.log(`[plugins] Enabled: ${plugin.manifest.name}`);
     return true;
   } catch (e) {
-    plugin.error = e instanceof Error ? e.message : String(e);
+    plugin.error = getErrorMessage(e);
     console.error(`[plugins] Failed to enable ${id}: ${plugin.error}`);
     return false;
   }
@@ -477,7 +478,7 @@ export async function disablePlugin(id: string): Promise<boolean> {
   try {
     await plugin.instance.deactivate?.();
   } catch (e) {
-    console.warn(`[plugins] Error deactivating ${id}: ${e instanceof Error ? e.message : String(e)}`);
+    console.warn(`[plugins] Error deactivating ${id}: ${getErrorMessage(e)}`);
   }
 
   plugin.backend = null;
@@ -494,7 +495,7 @@ export async function reactivatePlugin(id: string): Promise<boolean> {
   // Deactivate if currently active
   if (plugin.enabled) {
     try { await plugin.instance.deactivate?.(); } catch (e: unknown) {
-      console.warn(`[plugins] Error deactivating ${id} during reactivation: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[plugins] Error deactivating ${id} during reactivation: ${getErrorMessage(e)}`);
     }
   }
 
@@ -508,7 +509,7 @@ export async function reactivatePlugin(id: string): Promise<boolean> {
     console.log(`[plugins] Reactivated: ${plugin.manifest.name}`);
     return true;
   } catch (e) {
-    plugin.error = e instanceof Error ? e.message : String(e);
+    plugin.error = getErrorMessage(e);
     plugin.enabled = false;
     plugin.backend = null;
     console.error(`[plugins] Failed to reactivate ${id}: ${plugin.error}`);

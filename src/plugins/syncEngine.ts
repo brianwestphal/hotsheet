@@ -7,6 +7,7 @@ import {
 } from '../db/sync.js';
 import { createTicket, getTicket, updateTicket } from '../db/tickets.js';
 import type { Ticket } from '../types.js';
+import { getErrorMessage } from '../utils/errorMessage.js';
 import { getAllBackends, getBackendForPlugin, reactivatePlugin } from './loader.js';
 import type { RemoteChange, RemoteTicketFields, TicketingBackend,TicketSyncRecord } from './types.js';
 
@@ -64,7 +65,7 @@ export async function runSync(pluginId: string): Promise<SyncResult> {
     result.conflicts = (result.conflicts ?? 0) + pullResult.conflicts;
   } catch (e) {
     result.ok = false;
-    result.error = `Pull failed: ${e instanceof Error ? e.message : String(e)}`;
+    result.error = `Pull failed: ${getErrorMessage(e)}`;
     console.error(`[sync] Pull failed for ${pluginId}: ${result.error}`);
   }
 
@@ -73,7 +74,7 @@ export async function runSync(pluginId: string): Promise<SyncResult> {
     result.pushed = pushResult.pushed;
   } catch (e) {
     result.ok = false;
-    result.error = (result.error != null && result.error !== '' ? result.error + '; ' : '') + `Push failed: ${e instanceof Error ? e.message : String(e)}`;
+    result.error = (result.error != null && result.error !== '' ? result.error + '; ' : '') + `Push failed: ${getErrorMessage(e)}`;
     console.error(`[sync] Push failed for ${pluginId}: ${result.error}`);
   }
 
@@ -82,7 +83,7 @@ export async function runSync(pluginId: string): Promise<SyncResult> {
     try {
       await syncComments(backend);
     } catch (e) {
-      console.error(`[sync] Comment sync failed for ${pluginId}: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(`[sync] Comment sync failed for ${pluginId}: ${getErrorMessage(e)}`);
     }
   }
 
@@ -92,7 +93,7 @@ export async function runSync(pluginId: string): Promise<SyncResult> {
       console.log(`[sync] Starting attachment sync for ${pluginId}`);
       await syncAttachments(backend);
     } catch (e) {
-      console.error(`[sync] Attachment sync failed for ${pluginId}: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(`[sync] Attachment sync failed for ${pluginId}: ${getErrorMessage(e)}`);
     }
   } else {
     console.log(`[sync] Skipping attachment sync: backend.uploadAttachment not defined for ${pluginId}`);
@@ -127,7 +128,7 @@ async function pullFromRemote(backend: TicketingBackend): Promise<{ applied: num
       if (result === 'conflict') conflicts++;
       else applied++;
     } catch (e) {
-      console.error(`[sync] Failed to apply change for remote ${change.remoteId}: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(`[sync] Failed to apply change for remote ${change.remoteId}: ${getErrorMessage(e)}`);
     }
   }
 
@@ -274,7 +275,7 @@ async function pushToRemote(backend: TicketingBackend): Promise<{ pushed: number
       await upsertSyncRecord(ticket.id, backend.id, syncRecord.remote_id, 'synced');
       pushed++;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = getErrorMessage(e);
       if (msg.includes('404') || msg.includes('410') || msg.includes('Not Found') || msg.includes('deleted')) {
         console.warn(`[sync] Remote issue gone for ticket ${syncRecord.ticket_id}, removing sync record`);
         await deleteSyncRecord(syncRecord.ticket_id, backend.id);
@@ -321,7 +322,7 @@ async function pushToRemote(backend: TicketingBackend): Promise<{ pushed: number
       }
       await removeOutboxEntry(entry.id);
     } catch (e) {
-      await incrementOutboxAttempts(entry.id, e instanceof Error ? e.message : String(e));
+      await incrementOutboxAttempts(entry.id, getErrorMessage(e));
       break;
     }
   }
@@ -409,7 +410,7 @@ async function syncComments(backend: TicketingBackend): Promise<void> {
     try {
       await syncTicketComments(backend, syncRecord.ticket_id, syncRecord.remote_id);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = getErrorMessage(e);
       if (msg.includes('404') || msg.includes('410')) {
         console.warn(`[sync] Remote issue gone for ticket ${syncRecord.ticket_id}, removing sync record`);
         await deleteSyncRecord(syncRecord.ticket_id, backend.id);
@@ -426,14 +427,14 @@ export async function syncSingleTicketContent(backend: TicketingBackend, ticketI
     try {
       await syncTicketComments(backend, ticketId, remoteId);
     } catch (e) {
-      console.warn(`[sync] Comment sync failed for ticket ${ticketId}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[sync] Comment sync failed for ticket ${ticketId}: ${getErrorMessage(e)}`);
     }
   }
   if (backend.uploadAttachment) {
     try {
       await syncTicketAttachments(backend, ticketId, remoteId);
     } catch (e) {
-      console.warn(`[sync] Attachment sync failed for ticket ${ticketId}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[sync] Attachment sync failed for ticket ${ticketId}: ${getErrorMessage(e)}`);
     }
   }
 }
@@ -453,7 +454,7 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
   try {
     remoteComments = await backend.getComments(remoteId);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = getErrorMessage(e);
     if (msg.includes('404') || msg.includes('410') || msg.includes('Not Found')) {
       throw e;
     }
@@ -497,7 +498,7 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
             await backend.updateComment(remoteId, mapping.remote_comment_id, localText);
             await upsertNoteSyncRecord(ticketId, mapping.note_id, backend.id, mapping.remote_comment_id, localText);
           } catch (e) {
-            console.warn(`[sync] Failed to update remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : String(e)}`);
+            console.warn(`[sync] Failed to update remote comment ${mapping.remote_comment_id}: ${getErrorMessage(e)}`);
           }
         }
       } else if (remoteChanged && !localChanged) {
@@ -512,7 +513,7 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
             await backend.updateComment(remoteId, mapping.remote_comment_id, localText);
             await upsertNoteSyncRecord(ticketId, mapping.note_id, backend.id, mapping.remote_comment_id, localText);
           } catch (e) {
-            console.warn(`[sync] Failed to update remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : String(e)}`);
+            console.warn(`[sync] Failed to update remote comment ${mapping.remote_comment_id}: ${getErrorMessage(e)}`);
           }
         }
       } else {
@@ -529,7 +530,7 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
         try {
           await backend.deleteComment(remoteId, mapping.remote_comment_id);
         } catch (e) {
-          console.warn(`[sync] Failed to delete remote comment ${mapping.remote_comment_id}: ${e instanceof Error ? e.message : String(e)}`);
+          console.warn(`[sync] Failed to delete remote comment ${mapping.remote_comment_id}: ${getErrorMessage(e)}`);
         }
       }
       await deleteNoteSyncRecord(ticketId, mapping.note_id, backend.id);
@@ -607,7 +608,7 @@ async function syncTicketComments(backend: TicketingBackend, ticketId: number, r
       remoteTexts.add(note.text.trim());
       mappedRemoteIdsAfterPull.add(remoteCommentId);
     } catch (e) {
-      console.warn(`[sync] Failed to push note ${note.id} for ticket ${ticketId}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[sync] Failed to push note ${note.id} for ticket ${ticketId}: ${getErrorMessage(e)}`);
     }
   }
 
@@ -629,7 +630,7 @@ async function syncAttachments(backend: TicketingBackend): Promise<void> {
     try {
       await syncTicketAttachments(backend, syncRecord.ticket_id, syncRecord.remote_id);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = getErrorMessage(e);
       if (msg.includes('404') || msg.includes('410')) {
         console.warn(`[sync] Remote issue gone for ticket ${syncRecord.ticket_id}, removing sync record`);
         await deleteSyncRecord(syncRecord.ticket_id, backend.id);
@@ -681,7 +682,7 @@ async function syncTicketAttachments(backend: TicketingBackend, ticketId: number
       const commentId = await backend.createComment(remoteId, markdown);
       await upsertNoteSyncRecord(ticketId, attSyncId, backend.id, commentId);
     } catch (e) {
-      console.warn(`[sync] Failed to upload attachment ${att.original_filename}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[sync] Failed to upload attachment ${att.original_filename}: ${getErrorMessage(e)}`);
     }
   }
 }

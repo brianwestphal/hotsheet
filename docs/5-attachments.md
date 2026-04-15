@@ -21,7 +21,7 @@
 ### 5.3 File Serving
 
 - Attached files are served via the API with correct MIME types.
-- Supported MIME types: PNG, JPEG, GIF, SVG, PDF, plain text, markdown, JSON. All other types are served as `application/octet-stream`.
+- Supported MIME types: PNG, JPEG, GIF, SVG, WebP, PDF, plain text, markdown, JSON, ZIP, HTML, CSS, JS. All other types are served as `application/octet-stream`.
 
 ### 5.4 Reveal in File Manager
 

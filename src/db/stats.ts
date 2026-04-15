@@ -27,7 +27,7 @@ export async function recordDailySnapshot(): Promise<void> {
   const data: SnapshotData = { not_started: 0, started: 0, completed: 0, verified: 0, backlog: 0, archive: 0 };
   for (const row of result.rows) {
     if (row.status in data) {
-      (data as unknown as Record<string, number>)[row.status] = parseInt(row.count, 10);
+      data[row.status as keyof SnapshotData] = parseInt(row.count, 10);
     }
   }
 
@@ -80,7 +80,7 @@ export async function backfillSnapshots(): Promise<void> {
       const data: SnapshotData = { not_started: 0, started: 0, completed: 0, verified: 0, backlog: 0, archive: 0 };
       for (const row of result.rows) {
         if (row.status in data) {
-          (data as unknown as Record<string, number>)[row.status] = parseInt(row.count, 10);
+          data[row.status as keyof SnapshotData] = parseInt(row.count, 10);
         }
       }
 

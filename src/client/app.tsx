@@ -6,6 +6,7 @@ import { bindBatchToolbar } from './batch.js';
 import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
 import { initCommandLog, refreshCommandLog } from './commandLog.js';
+import { TIMERS } from './constants/timers.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, openDetailAndFocusNote, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
@@ -42,8 +43,7 @@ async function reloadPluginToolbar() {
     const glassboxBtn = document.getElementById('glassbox-btn');
     const toolbarTarget = glassboxBtn?.parentElement;
     if (toolbarTarget) {
-      const container = document.createElement('span');
-      container.className = 'plugin-toolbar-container';
+      const container = toElement(<span className="plugin-toolbar-container"></span>);
       toolbarTarget.insertBefore(container, glassboxBtn);
       renderPluginToolbarButtons(container);
     }
@@ -263,7 +263,7 @@ function bindDetailAutoSave() {
           method: 'PATCH',
           body: { [key]: el.value },
         }).then(() => void loadTickets());
-      }, 300);
+      }, TIMERS.DETAIL_SAVE_MS);
       setDetailSaveTimeout(newTimeout);
     });
   }
@@ -283,60 +283,35 @@ function bindDetailDropdowns() {
     openDetail(state.activeTicketId);
   }
 
-  document.getElementById('detail-category')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const btn = e.currentTarget as HTMLButtonElement;
-    if (btn.disabled) return;
-    closeAllMenus();
-    const current = btn.dataset.value ?? '';
-    const menu = createDropdown(btn, state.categories.map(c => ({
-      label: c.label,
-      key: c.shortcutKey,
-      color: c.color,
-      active: c.id === current,
-      action: () => { updateDetailCategory(c.id); void applyDetailChange('category', c.id); },
-    })));
-    document.body.appendChild(menu);
-    positionDropdown(menu, btn);
-    menu.style.visibility = '';
-  });
+  function bindDropdown(elementId: string, getItems: (current: string) => Parameters<typeof createDropdown>[1]) {
+    document.getElementById(elementId)!.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const btn = e.currentTarget as HTMLButtonElement;
+      if (btn.disabled) return;
+      closeAllMenus();
+      const current = btn.dataset.value ?? '';
+      const menu = createDropdown(btn, getItems(current));
+      document.body.appendChild(menu);
+      positionDropdown(menu, btn);
+      menu.style.visibility = '';
+    });
+  }
 
-  document.getElementById('detail-priority')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const btn = e.currentTarget as HTMLButtonElement;
-    if (btn.disabled) return;
-    closeAllMenus();
-    const current = btn.dataset.value ?? '';
-    const menu = createDropdown(btn, PRIORITY_ITEMS.map(p => ({
-      label: p.label,
-      key: p.key,
-      icon: getPriorityIcon(p.value),
-      iconColor: getPriorityColor(p.value),
-      active: p.value === current,
-      action: () => { updateDetailPriority(p.value); void applyDetailChange('priority', p.value); },
-    })));
-    document.body.appendChild(menu);
-    positionDropdown(menu, btn);
-    menu.style.visibility = '';
-  });
+  bindDropdown('detail-category', (current) => state.categories.map(c => ({
+    label: c.label, key: c.shortcutKey, color: c.color, active: c.id === current,
+    action: () => { updateDetailCategory(c.id); void applyDetailChange('category', c.id); },
+  })));
 
-  document.getElementById('detail-status')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const btn = e.currentTarget as HTMLButtonElement;
-    if (btn.disabled) return;
-    closeAllMenus();
-    const current = btn.dataset.value ?? '';
-    const menu = createDropdown(btn, STATUS_ITEMS.map(s => ({
-      label: s.label,
-      key: s.key,
-      icon: getStatusIcon(s.value),
-      active: s.value === current,
-      action: () => { updateDetailStatus(s.value); void applyDetailChange('status', s.value); },
-    })));
-    document.body.appendChild(menu);
-    positionDropdown(menu, btn);
-    menu.style.visibility = '';
-  });
+  bindDropdown('detail-priority', (current) => PRIORITY_ITEMS.map(p => ({
+    label: p.label, key: p.key, icon: getPriorityIcon(p.value), iconColor: getPriorityColor(p.value),
+    active: p.value === current,
+    action: () => { updateDetailPriority(p.value); void applyDetailChange('priority', p.value); },
+  })));
+
+  bindDropdown('detail-status', (current) => STATUS_ITEMS.map(s => ({
+    label: s.label, key: s.key, icon: getStatusIcon(s.value), active: s.value === current,
+    action: () => { updateDetailStatus(s.value); void applyDetailChange('status', s.value); },
+  })));
 }
 
 /** Up-next star toggle. */

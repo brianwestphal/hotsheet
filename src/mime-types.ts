@@ -8,6 +8,7 @@ export const MIME_TYPES: Record<string, string> = {
   '.webp': 'image/webp',
   '.pdf': 'application/pdf',
   '.txt': 'text/plain',
+  '.md': 'text/markdown',
   '.json': 'application/json',
   '.zip': 'application/zip',
   '.html': 'text/html',

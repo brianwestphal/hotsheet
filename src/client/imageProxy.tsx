@@ -1,4 +1,5 @@
 import { raw } from '../jsx-runtime.js';
+import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
@@ -79,13 +80,10 @@ async function downloadImage(src: string, name: string) {
     if (!res.ok) throw new Error(`${res.status}`);
     const blob = await res.blob();
     const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = name;
-    a.style.display = 'none';
+    const a = toElement(<a href={blobUrl} download={name} style="display:none"></a>) as HTMLAnchorElement;
     document.body.appendChild(a);
     a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 100);
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, TIMERS.IMAGE_DOWNLOAD_CLEANUP_MS);
   } catch {
     // Last resort: navigate directly
     window.open(src, '_blank');

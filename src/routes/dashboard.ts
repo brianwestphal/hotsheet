@@ -16,7 +16,7 @@ export const dashboardRoutes = new Hono<AppEnv>();
 // --- Long-poll ---
 
 dashboardRoutes.get('/poll', async (c) => {
-  const clientVersion = parseInt(c.req.query('version') ?? '0', 10);
+  const clientVersion = Math.max(0, parseInt(c.req.query('version') ?? '0', 10) || 0);
   const changeVersion = getChangeVersion();
   if (changeVersion > clientVersion) {
     return c.json({ version: changeVersion });
@@ -38,7 +38,7 @@ dashboardRoutes.get('/stats', async (c) => {
 
 dashboardRoutes.get('/dashboard', async (c) => {
   const { getDashboardStats, getSnapshots } = await import('../db/stats.js');
-  const days = parseInt(c.req.query('days') ?? '30', 10);
+  const days = Math.max(1, Math.min(365, parseInt(c.req.query('days') ?? '30', 10) || 30));
   const [stats, snapshots] = await Promise.all([
     getDashboardStats(days),
     getSnapshots(days),

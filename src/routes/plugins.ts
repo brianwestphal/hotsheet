@@ -17,6 +17,7 @@ import {
 import type { LoadedPlugin } from '../plugins/types.js';
 import { getAllProjects } from '../projects.js';
 import type { AppEnv } from '../types.js';
+import { getErrorMessage } from '../utils/errorMessage.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 
@@ -127,7 +128,7 @@ pluginRoutes.post('/plugins/:id/action', async (c) => {
     notifyMutation(c.get('dataDir'));
     return c.json({ ok: true, result });
   } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    return c.json({ error: getErrorMessage(e) }, 500);
   }
 });
 
@@ -140,7 +141,7 @@ pluginRoutes.post('/plugins/validate/:id', async (c) => {
     const result = await plugin.instance.validateField(body.key, body.value);
     return c.json(result);
   } catch (e: unknown) {
-    console.warn(`[plugins] validateField failed for ${c.req.param('id')}:${body.key}: ${e instanceof Error ? e.message : String(e)}`);
+    console.warn(`[plugins] validateField failed for ${c.req.param('id')}:${body.key}: ${getErrorMessage(e)}`);
     return c.json(null);
   }
 });
@@ -461,7 +462,7 @@ pluginRoutes.post('/plugins/install', async (c) => {
   try {
     symlinkSync(sourcePath, linkPath, 'dir');
   } catch (e: unknown) {
-    return c.json({ error: `Failed to create symlink: ${e instanceof Error ? e.message : String(e)}` }, 500);
+    return c.json({ error: `Failed to create symlink: ${getErrorMessage(e)}` }, 500);
   }
 
   // Clear dismiss flag if re-installing a previously dismissed plugin
@@ -605,7 +606,7 @@ pluginRoutes.get('/plugins/:id/image-proxy', async (c) => {
       },
     });
   } catch (e: unknown) {
-    return c.json({ error: `Proxy fetch failed: ${e instanceof Error ? e.message : String(e)}` }, 502);
+    return c.json({ error: `Proxy fetch failed: ${getErrorMessage(e)}` }, 502);
   }
 });
 

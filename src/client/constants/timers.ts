@@ -14,4 +14,6 @@ export const TIMERS = {
   TOAST_MS: 3000,
   /** Combo dropdown blur delay (allows mousedown to fire before hide). */
   COMBO_BLUR_MS: 150,
+  /** Image download link cleanup delay. */
+  IMAGE_DOWNLOAD_CLEANUP_MS: 100,
 } as const;
