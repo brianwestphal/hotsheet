@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.15.0] - 2026-04-16
 
+- Made an e2e test more resiliant for GitHub actions environment
+
+## [0.15.0] - 2026-04-16
+
 - Made a few e2e tests more resiliant for GitHub actions environment
 
 ## [0.15.0] - 2026-04-15
