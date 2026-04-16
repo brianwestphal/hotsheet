@@ -84,18 +84,6 @@ export default defineConfig([
       cpSync('plugins/github-issues/manifest.json', 'dist/plugins/github-issues/manifest.json');
     },
   },
-  {
-    entry: ['plugins/demo-plugin/src/index.ts'],
-    format: 'esm',
-    outDir: 'dist/plugins/demo-plugin',
-    target: 'node20',
-    platform: 'node',
-    splitting: false,
-    clean: false,
-    sourcemap: false,
-    onSuccess: async () => {
-      mkdirSync('dist/plugins/demo-plugin', { recursive: true });
-      cpSync('plugins/demo-plugin/manifest.json', 'dist/plugins/demo-plugin/manifest.json');
-    },
-  },
+  // Demo plugin is NOT bundled for production — it's only built locally via `npm run build:plugins`.
+  // Only the GitHub Issues plugin ships with the app.
 ]);
