@@ -136,7 +136,7 @@ import type { PluginContext, TicketingBackend } from './types.js';
 
 let context: PluginContext;
 
-export async function activate(ctx: PluginContext): Promise<TicketingBackend | void> {
+export async function activate(ctx: PluginContext): Promise<TicketingBackend | undefined> {
   context = ctx;
 
   // Read settings
@@ -206,7 +206,7 @@ Plugins can register UI elements at these locations:
 | `sidebar_actions_bottom` | Project | Sidebar, after last action |
 | `detail_top` | Ticket | Detail panel, above fields |
 | `detail_bottom` | Ticket | Detail panel, below attachments |
-| `batch_menu` | Selection | Batch toolbar "..." menu |
+| `batch_menu` | Selection | Batch toolbar "..." menu (not yet rendered) |
 | `context_menu` | Selection | Right-click ticket context menu |
 
 ### Element Types
@@ -220,7 +220,7 @@ Plugins can register UI elements at these locations:
 
 When a user clicks a button, the app calls `POST /api/plugins/:id/action` with `{ actionId }`, which invokes the plugin's `onAction` handler. Return `{ redirect: 'sync' }` to trigger a sync operation, or return `{ message: '...' }` to show a brief toast notification to the user.
 
-**Location rendering:** Toolbar buttons show icon only (compact). All other locations (status_bar, sidebar, detail, context_menu, batch_menu) show icon + label together. `button` and `link` types are rendered; `toggle`, `switch`, and `segmented_control` are declared but not yet rendered.
+**Location rendering:** Toolbar buttons show icon only (compact). All other locations (status_bar, sidebar, detail, context_menu) show icon + label together. `button` and `link` types are rendered; `toggle`, `switch`, and `segmented_control` are declared but not yet rendered. `batch_menu` is defined in the type system but not yet rendered in the UI.
 
 ---
 
@@ -536,6 +536,13 @@ export interface PluginContext {
   setSetting(key: string, value: string): Promise<void>;
   registerUI(elements: PluginUIElement[]): void;
   updateConfigLabel(labelId: string, text: string, color?: ConfigLabelColor): void;
+}
+
+export interface HotSheetPlugin {
+  activate(context: PluginContext): Promise<TicketingBackend | undefined>;
+  deactivate?(): Promise<void>;
+  onAction?(actionId: string, params: { ticketIds?: number[]; value?: unknown }): Promise<unknown>;
+  validateField?(key: string, value: string): Promise<FieldValidation | null>;
 }
 
 export interface TicketingBackend {
