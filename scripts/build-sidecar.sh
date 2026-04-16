@@ -81,6 +81,11 @@ if [ -d dist/client/assets ]; then
   cp -R dist/client/assets "$SERVER_DIR/client/"
 fi
 
+# Copy bundled plugins (GitHub Issues, etc.)
+if [ -d dist/plugins ]; then
+  cp -R dist/plugins "$SERVER_DIR/plugins"
+fi
+
 # Copy only the external runtime dependencies (PGLite, Hono, @hono)
 for pkg in @electric-sql/pglite hono @hono/node-server; do
   dest="$SERVER_DIR/node_modules/$pkg"
