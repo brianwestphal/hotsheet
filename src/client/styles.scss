@@ -3197,6 +3197,11 @@ input, select, textarea {
     border-color: var(--accent);
   }
 
+  &:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
   &.selected {
     border-color: var(--accent);
     background: var(--bg-selected);
