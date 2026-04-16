@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.15.2] - 2026-04-16
+
+- Fixed production built-in plugin bundling
+
 ## [0.15.1] - 2026-04-16
 
 - Removed Demo Plugin from production release
