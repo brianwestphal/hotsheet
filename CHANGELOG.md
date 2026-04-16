@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.15.1] - 2026-04-16
+
+- Removed Demo Plugin from production release
+
 ## [0.15.0] - 2026-04-16
 
 - Made an e2e test more resiliant for GitHub actions environment
