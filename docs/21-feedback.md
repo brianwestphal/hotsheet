@@ -40,14 +40,14 @@ AI tools and automated workflows can request user feedback by adding notes with 
 
 ### 21.5 Ticket Indicator Dot
 
-- Tickets with pending feedback (last note has a feedback prefix) show a blue dot in both list view and column view, using the same `.ticket-unread-dot` styling as unread indicators.
-- This is in addition to the unread dot — a ticket can show a dot for either reason.
+- Tickets with pending feedback (last note has a feedback prefix) show a purple dot (`#8b5cf6`) in both list view and column view.
+- The purple feedback dot takes priority over the blue unread dot — if a ticket is both unread and has pending feedback, only the purple dot is shown.
 
 ### 21.6 Project Tab Indicator
 
-- When any ticket in a project has pending feedback, a blue dot appears on the project tab (same style as the permissions attention dot).
+- When any ticket in a project has pending feedback, a purple dot appears on the project tab.
 - The dot clears when all feedback notes in the project are resolved (responded to, or "No Response Needed" added).
-- Priority order for tab dots: permissions attention > feedback > channel busy.
+- Priority order for tab dots: feedback (purple) > permissions attention (blue) > channel busy (yellow).
 
 ### 21.6 Channel Notification
 

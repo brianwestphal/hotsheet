@@ -331,10 +331,10 @@ export function updateStatusDots() {
     if (tab === null) continue;
     const secret = tab.dataset.secret ?? '';
 
-    if (attentionSecrets.has(secret)) {
-      dot.className = 'project-tab-dot attention';
-    } else if (feedbackSecrets.has(secret)) {
+    if (feedbackSecrets.has(secret)) {
       dot.className = 'project-tab-dot feedback';
+    } else if (attentionSecrets.has(secret)) {
+      dot.className = 'project-tab-dot attention';
     } else if (busySecrets.has(secret)) {
       dot.className = 'project-tab-dot busy';
     } else {

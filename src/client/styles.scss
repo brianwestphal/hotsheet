@@ -131,7 +131,7 @@ input, select, textarea {
 
   &.feedback {
     display: block;
-    background: #3b82f6; // blue (same as attention)
+    background: #8b5cf6; // purple
   }
 
   &.busy {
@@ -1342,6 +1342,10 @@ input, select, textarea {
   flex-shrink: 0;
   margin-right: 6px;
   vertical-align: middle;
+
+  &.feedback {
+    background: #8b5cf6; // purple — feedback takes priority over blue unread
+  }
 }
 
 .ticket-title-input {

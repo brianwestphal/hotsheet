@@ -17,21 +17,24 @@ setSuppressFocusSelect,
   suppressFocusSelect, } from './ticketListState.js';
 import { recordTextChange, trackedDelete, trackedPatch, trackedRestore } from './undo/actions.js';
 
-/** A ticket shows a blue dot if it's unread OR has pending feedback. */
-export function showsIndicatorDot(ticket: Ticket): boolean {
-  // Unread: updated since last read
-  if (ticket.last_read_at != null && ticket.updated_at > ticket.last_read_at) return true;
-  // Pending feedback: last note starts with FEEDBACK NEEDED: or IMMEDIATE FEEDBACK NEEDED:
-  if (ticket.notes !== '' && ticket.notes !== '[]') {
-    try {
-      const notes = JSON.parse(ticket.notes) as { text: string }[];
-      if (notes.length > 0) {
-        const last = notes[notes.length - 1].text.trim();
-        if (last.startsWith('FEEDBACK NEEDED:') || last.startsWith('IMMEDIATE FEEDBACK NEEDED:')) return true;
-      }
-    } catch { /* ignore */ }
-  }
+/** Check if a ticket has pending feedback (last note is a FEEDBACK NEEDED prefix). */
+export function hasPendingFeedback(ticket: Ticket): boolean {
+  if (ticket.notes === '' || ticket.notes === '[]') return false;
+  try {
+    const notes = JSON.parse(ticket.notes) as { text: string }[];
+    if (notes.length > 0) {
+      const last = notes[notes.length - 1].text.trim();
+      return last.startsWith('FEEDBACK NEEDED:') || last.startsWith('IMMEDIATE FEEDBACK NEEDED:');
+    }
+  } catch { /* ignore */ }
   return false;
+}
+
+/** Returns the indicator dot type: 'feedback' (purple, highest priority), 'unread' (blue), or null. */
+export function getIndicatorDotType(ticket: Ticket): 'feedback' | 'unread' | null {
+  if (hasPendingFeedback(ticket)) return 'feedback';
+  if (ticket.last_read_at != null && ticket.updated_at > ticket.last_read_at) return 'unread';
+  return null;
 }
 
 // --- Ticket row ---
@@ -56,7 +59,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
         {raw(isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status))}
       </button>
       {ticket.id in syncedTicketMap ? <span className="ticket-sync-icon" title={`Synced via ${syncedTicketMap[ticket.id].pluginId}`}>{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}
-      {showsIndicatorDot(ticket) ? <span className="ticket-unread-dot" title="Unread changes"></span> : null}
+      {getIndicatorDotType(ticket) != null ? <span className={`ticket-unread-dot${getIndicatorDotType(ticket) === 'feedback' ? ' feedback' : ''}`} title={getIndicatorDotType(ticket) === 'feedback' ? 'Feedback needed' : 'Unread changes'}></span> : null}
       <input type="text" className="ticket-title-input" value={ticket.title} />
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`} title={ticket.priority}>
         {raw(getPriorityIcon(ticket.priority))}
