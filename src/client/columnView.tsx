@@ -283,7 +283,6 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
     <div
       className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}${getCutTicketIds().has(ticket.id) ? ' cut-pending' : ''} status-${ticket.status}`}
       data-id={String(ticket.id)}
-      tabIndex={0}
     >
       <div className="column-card-header">
         <span className="ticket-category-badge" style={`background-color:${getCategoryColor(ticket.category)}`}>
@@ -380,33 +379,6 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
     callUpdateColumnSelectionClasses();
     callUpdateBatchToolbar();
     syncDetailPanel();
-  });
-
-  // Arrow key navigation between cards
-  card.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      const allCards = Array.from(document.querySelectorAll<HTMLElement>('.column-card[data-id]'));
-      const idx = allCards.indexOf(card);
-      if (idx === -1) return;
-      const nextIdx = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
-      if (nextIdx < 0 || nextIdx >= allCards.length) return;
-      const next = allCards[nextIdx];
-      {
-        const nextId = parseInt(next.dataset.id!, 10);
-        if (e.shiftKey) {
-          state.selectedIds.add(nextId);
-        } else {
-          state.selectedIds.clear();
-          state.selectedIds.add(nextId);
-        }
-        state.lastClickedId = nextId;
-        next.focus();
-        callUpdateColumnSelectionClasses();
-        callUpdateBatchToolbar();
-        syncDetailPanel();
-      }
-    }
   });
 
   return card;

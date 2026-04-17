@@ -122,6 +122,32 @@ export function bindKeyboardShortcuts() {
       return;
     }
 
+    // Arrow keys in column view: navigate between cards
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !isInput && state.layout === 'columns') {
+      const allCards = Array.from(document.querySelectorAll<HTMLElement>('.column-card[data-id]'));
+      if (allCards.length > 0 && state.selectedIds.size > 0) {
+        e.preventDefault();
+        // Find the currently selected card
+        const currentId = state.lastClickedId ?? Array.from(state.selectedIds)[0];
+        const currentIdx = allCards.findIndex(c => c.dataset.id === String(currentId));
+        const nextIdx = e.key === 'ArrowDown' ? currentIdx + 1 : currentIdx - 1;
+        if (nextIdx >= 0 && nextIdx < allCards.length) {
+          const nextCard = allCards[nextIdx];
+          const nextId = parseInt(nextCard.dataset.id!, 10);
+          if (e.shiftKey) {
+            state.selectedIds.add(nextId);
+          } else {
+            state.selectedIds.clear();
+            state.selectedIds.add(nextId);
+          }
+          state.lastClickedId = nextId;
+          nextCard.scrollIntoView({ block: 'nearest' });
+          renderTicketList();
+        }
+        return;
+      }
+    }
+
     // Cmd/Ctrl+A: select all visible tickets
     if ((e.metaKey || e.ctrlKey) && e.key === 'a' && !isInput) {
       e.preventDefault();
