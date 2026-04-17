@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.15.3] - 2026-04-17
+
+- Fix column view arrow key navigation by moving to document-level handler
+- Change feedback indicator dots from blue to purple, feedback takes priority over unread
+
 ## [0.15.2] - 2026-04-16
 
 - Fixed production built-in plugin bundling
