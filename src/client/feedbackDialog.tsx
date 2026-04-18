@@ -113,6 +113,16 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
     fileInput.value = '';
   });
 
+  // Drag-and-drop file support on the entire overlay
+  overlay.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer!.dropEffect = 'copy'; });
+  overlay.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer?.files) {
+      for (const f of Array.from(e.dataTransfer.files)) pendingFiles.push(f);
+      renderFileList();
+    }
+  });
+
   const close = () => overlay.remove();
   overlay.querySelector('#feedback-close')!.addEventListener('click', close);
   overlay.querySelector('#feedback-later')!.addEventListener('click', close);

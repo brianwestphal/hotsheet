@@ -168,8 +168,12 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
   const keepRead = c.req.header('X-Hotsheet-User-Action') === 'true';
   const ticket = await updateTicket(id, parsed.data, { keepRead });
   if (!ticket) return c.json({ error: 'Not found' }, 404);
-  notifyMutation(c.get('dataDir'));
-  void onTicketChanged(id, parsed.data as Record<string, unknown>).catch(() => {});
+  // Don't notify/sync for read-tracking-only changes (prevents poll loop)
+  const isReadTrackingOnly = Object.keys(parsed.data).length === 1 && parsed.data.last_read_at !== undefined;
+  if (!isReadTrackingOnly) {
+    notifyMutation(c.get('dataDir'));
+    void onTicketChanged(id, parsed.data as Record<string, unknown>).catch(() => {});
+  }
   return c.json(ticket);
 });
 

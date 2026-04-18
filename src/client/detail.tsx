@@ -216,13 +216,15 @@ async function loadDetail(id: number) {
   );
   if (state.activeTicketId !== id) return;
 
-  // Mark ticket as read — update both server and in-memory state
-  // Skip if the user explicitly marked this ticket as unread
+  // Mark ticket as read — only if it's currently unread (prevents unnecessary PATCHes on poll refresh)
   if (!suppressAutoRead) {
-    const readAt = new Date().toISOString();
     const inMemory = state.tickets.find(t => t.id === id);
-    if (inMemory) inMemory.last_read_at = readAt;
-    void api(`/tickets/${id}`, { method: 'PATCH', body: { last_read_at: readAt } }).catch(() => {});
+    const isUnread = inMemory != null && inMemory.last_read_at != null && inMemory.updated_at > inMemory.last_read_at;
+    if (isUnread) {
+      const readAt = new Date().toISOString();
+      inMemory.last_read_at = readAt;
+      void api(`/tickets/${id}`, { method: 'PATCH', body: { last_read_at: readAt } }).catch(() => {});
+    }
   }
 
   // Restore inputs to editable (in case we were in preview mode before)

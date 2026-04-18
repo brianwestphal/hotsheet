@@ -144,6 +144,38 @@ async function init() {
   bindExternalLinkHandler();
   // Claude Channel
   void initChannel();
+  // Prevent browser navigation when files are dropped outside valid drop targets.
+  // If a single ticket is selected, attach to it. Otherwise create a new ticket.
+  document.addEventListener('dragover', (e) => { e.preventDefault(); });
+  document.addEventListener('drop', async (e) => {
+    // Don't intercept drops on valid targets (detail panel, dialogs) — they handle their own drops
+    const target = e.target as HTMLElement;
+    if (target.closest('.detail-body') || target.closest('.custom-view-editor-overlay') || target.closest('.feedback-dialog-overlay')) return;
+
+    e.preventDefault();
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+
+    let ticketId: number;
+    if (state.selectedIds.size === 1) {
+      // Attach to the selected ticket
+      ticketId = Array.from(state.selectedIds)[0];
+    } else {
+      // Create a new ticket (use draft input text if available, otherwise empty)
+      const draftInput = document.querySelector<HTMLInputElement>('.draft-input');
+      const title = draftInput?.value.trim() ?? '';
+      const res = await api<{ id: number }>('/tickets', { method: 'POST', body: { title: title || 'Attachment' } });
+      ticketId = res.id;
+      if (draftInput && title !== '') draftInput.value = '';
+      void loadTickets();
+    }
+
+    for (const file of Array.from(files)) {
+      await apiUpload(`/tickets/${ticketId}/attachments`, file);
+    }
+    void loadTickets();
+  });
+
   // Command log panel
   initCommandLog();
   // Dashboard sidebar widget
@@ -453,6 +485,21 @@ function bindDetailAttachmentActions() {
 
 function bindDetailPanel() {
   document.getElementById('detail-close')!.addEventListener('click', closeDetail);
+
+  // Click ticket number to copy to clipboard
+  const ticketNumEl = document.getElementById('detail-ticket-number')!;
+  ticketNumEl.style.cursor = 'pointer';
+  ticketNumEl.title = 'Click to copy';
+  ticketNumEl.addEventListener('click', () => {
+    const num = ticketNumEl.textContent;
+    if (num !== '') {
+      void navigator.clipboard.writeText(num);
+      const original = ticketNumEl.textContent;
+      ticketNumEl.textContent = 'Copied!';
+      setTimeout(() => { ticketNumEl.textContent = original; }, 1000);
+    }
+  });
+
   bindDetailAutoSave();
   bindDetailDropdowns();
   bindDetailUpNext();
