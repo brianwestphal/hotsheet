@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.15.4] - 2026-04-18
+
+- Better attachment drag and drop support
+- Click ticket number in details panel to copy it
+- Fixed a bug with the UI refresh loop
+
 ## [0.15.3] - 2026-04-17
 
 - Fix column view arrow key navigation by moving to document-level handler
