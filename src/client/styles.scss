@@ -2136,6 +2136,65 @@ input, select, textarea {
   }
 }
 
+// --- Permission Popup (compact, for non-active tabs) ---
+
+.permission-popup {
+  position: fixed;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-size: 12px;
+  max-width: 480px;
+}
+
+.permission-popup-tool {
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.permission-popup-desc {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.permission-popup-allow, .permission-popup-deny {
+  flex-shrink: 0;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.permission-popup-allow {
+  background: #22c55e;
+  color: white;
+  &:hover { background: #16a34a; }
+}
+
+.permission-popup-deny {
+  background: #ef4444;
+  color: white;
+  &:hover { background: #dc2626; }
+}
+
+.project-tab.permission-highlight {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: #3b82f6;
+}
+
 // --- Context Menu ---
 
 .context-menu {

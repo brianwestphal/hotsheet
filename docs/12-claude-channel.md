@@ -170,6 +170,16 @@ The pending permission expires on the server after 120 seconds if not acted on. 
 
 Note: The local terminal dialog stays open in parallel. Whichever is answered first (Hot Sheet or terminal) takes effect.
 
+### Compact popup for non-active tabs
+
+When a permission request arrives for a project that is NOT the active tab, a small popup appears near the tab instead of the full-screen overlay:
+
+- Shows the tool name and first 100 characters of the description
+- Compact green Allow (checkmark) and red Deny (X) icon buttons
+- The associated project tab gets a highlighted background (blue border/tint) to indicate which tab the permission belongs to
+- Clicking outside the popup dismisses it — the permission remains pending in the tab (blue attention dot stays)
+- Responding via the popup clears the attention dot
+
 ## 12.11 Custom Commands
 
 When the Claude Channel is enabled, users can create custom command buttons that appear below the play button in the sidebar.
