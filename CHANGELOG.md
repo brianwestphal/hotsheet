@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - UX improvements for attachments, including quicklook previewing (use spacebar and arrow keys to select attachments)
 - Add Claude Code hooks for accurate busy/idle detection, clarify feedback prefix instructions
 
+## [0.16.0] - 2026-04-20
+
+- Add compact permission popup for non-active project tabs
+- UX improvements for attachments, including quicklook previewing (use spacebar and arrow keys to select attachments)
+- Add Claude Code hooks for accurate busy/idle detection, clarify feedback prefix instructions
+
 ## [0.15.4] - 2026-04-18
 
 - Better attachment drag and drop support
