@@ -58,7 +58,7 @@ export function writeFileSettings(dataDir: string, updates: Partial<FileSettings
   return merged;
 }
 
-/** Read project settings from settings.json as Record<string, string> for API compatibility.
+/** Read project settings from settings.json as Record\<string, string\> for API compatibility.
  *  JSON-valued keys are stringified. Reserved keys (appName, secret, etc.) are excluded. */
 export function readProjectSettings(dataDir: string): Record<string, string> {
   const all = readFileSettings(dataDir);

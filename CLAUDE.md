@@ -102,6 +102,7 @@ npm run test:e2e      # E2E browser tests (Playwright)
 npm run test:fast     # Unit tests + fast E2E (skips GitHub plugin / live integration tests)
 npm run test:e2e:fast # E2E only, skipping GitHub plugin / live integration tests
 npm run test:all      # Unified coverage: unit + E2E server + E2E browser, merged report
+npm run test:all-including-plugins  # Same as test:all but includes plugin tests in coverage
 ```
 
 The `test:fast` and `test:e2e:fast` scripts exclude tests that require GitHub API credentials (plugin sync, live integration). These are the scripts that should run in CI (GitHub Actions) by default. The full `test:e2e` suite including live GitHub integration tests should only run locally when credentials are configured.
@@ -114,6 +115,11 @@ The `test:fast` and `test:e2e:fast` scripts exclude tests that require GitHub AP
 - **Coverage target**: Maximize coverage from both test types. The `npm run test:all` script merges unit + E2E server + E2E browser coverage into a single report. Files showing low coverage should get both more unit tests AND more E2E test flows.
 - **Coverage collection**: Unit coverage via `@vitest/coverage-v8`. E2E server coverage via `NODE_V8_COVERAGE` with `node --import tsx`. E2E browser coverage via Playwright's `page.coverage.startJSCoverage()`, source-mapped from the esbuild bundle back to individual `.tsx` files.
 - **Manual test plan** (`docs/manual-test-plan.md`): Lists features that can't be reliably automated (drag-and-drop, platform-specific behavior, Tauri desktop, Claude Channel UI, visual styling). **Keep this document up to date** — when adding features that involve drag-and-drop, platform-specific behavior, real-time timing, or visual appearance that automated tests can't cover, add them to the manual test plan. When adding automated test coverage for a previously-manual item, remove it from the manual plan and note it in the "Automated Coverage Summary" section.
+
+## Code Quality Gates
+
+- **Always fix lint and type errors before finishing work.** Run `npx tsc --noEmit` and `npm run lint` before handing work back to the user. Both must pass with zero errors. Fix issues as you go rather than batching them up — if you introduce a lint or type error, fix it immediately.
+- **Plugin tests** live in `plugins/*/src/*.test.ts` and are only run when explicitly targeted (`npx vitest run plugins/*/src/*.test.ts`) or via `npm run test:all-including-plugins`. They are NOT included in `npm test`.
 
 ## Git
 

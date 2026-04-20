@@ -1,6 +1,5 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { getDb } from './db/connection.js';
@@ -157,7 +156,7 @@ describe('migrateDbSettingsToFile', () => {
     await migrateDbSettingsToFile(tempDir);
 
     // Read raw settings.json to verify JSON was stored as native JSON (via writeProjectSettings)
-    const raw = JSON.parse(readFileSync(join(tempDir, 'settings.json'), 'utf-8'));
+    const raw = JSON.parse(readFileSync(join(tempDir, 'settings.json'), 'utf-8')) as Record<string, unknown>;
     expect(raw.categories).toEqual([{ id: 'epic', label: 'Epic' }]);
   });
 

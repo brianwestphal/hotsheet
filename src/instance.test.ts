@@ -40,7 +40,7 @@ describe('writeInstanceFile', () => {
   it('writes correct JSON with port and PID', () => {
     writeInstanceFile(4174);
     expect(existsSync(instancePath)).toBe(true);
-    const data = JSON.parse(readFileSync(instancePath, 'utf-8'));
+    const data = JSON.parse(readFileSync(instancePath, 'utf-8')) as { port: number; pid: number };
     expect(data.port).toBe(4174);
     expect(data.pid).toBe(process.pid);
   });
@@ -112,17 +112,17 @@ describe('isInstanceRunning', () => {
   });
 
   it('returns true when fetch returns 200', async () => {
-    globalThis.fetch = (async () => ({ status: 200 })) as unknown as typeof fetch;
+    globalThis.fetch = (() => Promise.resolve({ status: 200 })) as unknown as typeof fetch;
     expect(await isInstanceRunning(4174)).toBe(true);
   });
 
   it('returns false when fetch returns non-200', async () => {
-    globalThis.fetch = (async () => ({ status: 500 })) as unknown as typeof fetch;
+    globalThis.fetch = (() => Promise.resolve({ status: 500 })) as unknown as typeof fetch;
     expect(await isInstanceRunning(4174)).toBe(false);
   });
 
   it('returns false on connection error', async () => {
-    globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
+    globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as unknown as typeof fetch;
     expect(await isInstanceRunning(4174)).toBe(false);
   });
 });
@@ -145,7 +145,7 @@ describe('cleanupStaleInstance', () => {
   it('returns false for a legitimate running instance (PID alive + port active)', async () => {
     // Use current process PID (known to be alive)
     writeFileSync(instancePath, JSON.stringify({ port: 4174, pid: process.pid }));
-    globalThis.fetch = (async () => ({ status: 200 })) as unknown as typeof fetch;
+    globalThis.fetch = (() => Promise.resolve({ status: 200 })) as unknown as typeof fetch;
 
     expect(await cleanupStaleInstance()).toBe(false);
     // Instance file should still exist
@@ -155,7 +155,7 @@ describe('cleanupStaleInstance', () => {
   it('cleans up when PID is dead and port is not active', async () => {
     // Use a PID that is almost certainly not alive
     writeFileSync(instancePath, JSON.stringify({ port: 4174, pid: 2147483647 }));
-    globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
+    globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as unknown as typeof fetch;
 
     const result = await cleanupStaleInstance();
     expect(result).toBe(true);
@@ -166,10 +166,10 @@ describe('cleanupStaleInstance', () => {
     writeFileSync(instancePath, JSON.stringify({ port: 4174, pid: 2147483647 }));
 
     const fetchCalls: string[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString();
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : (input instanceof URL ? input.href : input.url);
       fetchCalls.push(url);
-      return { status: 200 };
+      return Promise.resolve({ status: 200 });
     }) as unknown as typeof fetch;
 
     const result = await cleanupStaleInstance();

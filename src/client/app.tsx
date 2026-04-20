@@ -40,6 +40,7 @@ async function previewAttachment(item: HTMLElement) {
 
   // Tauri: use qlmanage for macOS Quicklook
   const invoke = getTauriInvoke();
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- no universal replacement for platform detection
   if (invoke && navigator.platform.includes('Mac')) {
     const storedPath = item.dataset.storedPath ?? '';
     if (storedPath !== '') {

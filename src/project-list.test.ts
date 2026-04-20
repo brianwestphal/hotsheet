@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'fs';
+import { rmSync } from 'fs';
 import * as os from 'os';
 import { join, resolve } from 'path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
