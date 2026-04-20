@@ -223,6 +223,15 @@ async function buildWorkflowInstructions(port: number, secretHeader: string): Pr
   sections.push('Set `up_next: true` only for items that should be prioritized immediately.');
   sections.push('');
 
+  // Attachment upload instructions
+  sections.push('## Uploading Attachments');
+  sections.push('');
+  sections.push('You can attach files to tickets via multipart form upload (NOT JSON):');
+  sections.push(`  \`curl -s -X POST http://localhost:${port}/api/tickets/{id}/attachments${secretHeader} -F "file=@/path/to/file.png"\``);
+  sections.push('');
+  sections.push('Do NOT set `Content-Type: application/json` — curl sets the multipart boundary automatically with `-F`.');
+  sections.push('');
+
   // Feedback instructions
   sections.push('## Requesting User Feedback');
   sections.push('');
