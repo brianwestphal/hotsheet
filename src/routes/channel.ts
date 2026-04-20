@@ -177,6 +177,7 @@ channelRoutes.post('/channel/enable', async (c) => {
   const dataDir = c.get('dataDir');
   writeGlobalConfig({ channelEnabled: true });
   // Register .mcp.json and ensure skills for ALL projects
+  const serverPort = parseInt(new URL(c.req.url).port || '4174', 10);
   try {
     const { getAllProjects } = await import('../projects.js');
     const { ensureSkillsForDir } = await import('../skills.js');
@@ -188,6 +189,9 @@ channelRoutes.post('/channel/enable', async (c) => {
   } catch {
     registerChannel(dataDir);
   }
+  // Install Claude Code hook for busy state detection
+  const { installHeartbeatHook } = await import('../claude-hooks.js');
+  installHeartbeatHook(serverPort);
   notifyChange();
   return c.json({ ok: true });
 });
@@ -201,7 +205,6 @@ channelRoutes.post('/channel/disable', async (c) => {
     const { getAllProjects } = await import('../projects.js');
     const projects = getAllProjects();
     unregisterChannelForAll(projects.map(p => p.dataDir));
-    // Shut down all channel servers
     for (const p of projects) {
       await shutdownChannel(p.dataDir);
     }
@@ -209,8 +212,44 @@ channelRoutes.post('/channel/disable', async (c) => {
     unregisterChannel(dataDir);
     await shutdownChannel(dataDir);
   }
+  // Remove Claude Code heartbeat hook
+  const { removeHeartbeatHook } = await import('../claude-hooks.js');
+  removeHeartbeatHook();
   notifyChange();
   return c.json({ ok: true });
+});
+
+/** Heartbeat from Claude Code hooks — reports busy/idle/heartbeat state for a project.
+ *  state: 'busy' (UserPromptSubmit), 'idle' (Stop), 'heartbeat' (PostToolUse) */
+channelRoutes.post('/channel/heartbeat', async (c) => {
+  const { getAllProjects } = await import('../projects.js');
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const body = raw as { projectDir?: string; state?: string };
+  const projectDir = body.projectDir;
+  const hookState = body.state ?? 'heartbeat';
+  if (typeof projectDir !== 'string' || projectDir === '') return c.json({ ok: false });
+
+  // Match projectDir against registered projects (projectDir is the root, dataDir is root/.hotsheet)
+  const projects = getAllProjects();
+  const match = projects.find(p => {
+    const rootDir = p.dataDir.replace(/\/.hotsheet\/?$/, '');
+    return rootDir === projectDir || projectDir.startsWith(rootDir + '/');
+  });
+  if (!match) return c.json({ ok: false });
+
+  // Store the state change for the client to consume
+  heartbeatUpdates.push({ secret: match.secret, state: hookState });
+  notifyChange();
+  return c.json({ ok: true, project: match.name });
+});
+
+/** Per-project heartbeat updates. Consumed and cleared by the client via /channel/heartbeat-status. */
+const heartbeatUpdates: { secret: string; state: string }[] = [];
+
+channelRoutes.get('/channel/heartbeat-status', (c) => {
+  const updates = [...heartbeatUpdates];
+  heartbeatUpdates.length = 0;
+  return c.json({ updates });
 });
 
 /** Called by the channel server process when it starts or stops, to wake the long-poll. */

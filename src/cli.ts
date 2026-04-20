@@ -319,7 +319,7 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     await restorePreviousProjects(dataDir, actualPort);
     await migrateGlobalConfig();
     await cleanupStaleChannels();
-    await setupSkillsAndChannels();
+    await setupSkillsAndChannels(actualPort);
     setupInstanceLifecycle(actualPort);
   }
 
@@ -388,7 +388,7 @@ async function cleanupStaleChannels(): Promise<void> {
 }
 
 /** Ensure skills and .mcp.json are set up for all projects. */
-async function setupSkillsAndChannels(): Promise<void> {
+async function setupSkillsAndChannels(port: number): Promise<void> {
   const { getAllProjects } = await import('./projects.js');
   const { ensureSkillsForDir } = await import('./skills.js');
   for (const p of getAllProjects()) {
@@ -399,6 +399,9 @@ async function setupSkillsAndChannels(): Promise<void> {
   if (readGlobalConfig().channelEnabled === true) {
     const { registerChannelForAll } = await import('./channel-config.js');
     registerChannelForAll(getAllProjects().map(p => p.dataDir));
+    // Install/update Claude Code heartbeat hook for busy state detection
+    const { installHeartbeatHook } = await import('./claude-hooks.js');
+    installHeartbeatHook(port);
   }
 }
 

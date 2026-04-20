@@ -226,12 +226,14 @@ async function buildWorkflowInstructions(port: number, secretHeader: string): Pr
   // Feedback instructions
   sections.push('## Requesting User Feedback');
   sections.push('');
-  sections.push('When you need input from the user before continuing, add a note with a special prefix:');
+  sections.push('When you need input from the user before continuing, add a note where the **entire note text begins** with one of these exact prefixes:');
   sections.push('');
-  sections.push('- **Standard feedback**: Add a note starting with `FEEDBACK NEEDED:` followed by your question');
+  sections.push('- **Standard feedback**: `FEEDBACK NEEDED: Your question here`');
   sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"notes": "FEEDBACK NEEDED: Your question here"}'\``);
-  sections.push('- **Urgent feedback** (auto-selects the ticket in the UI): Use `IMMEDIATE FEEDBACK NEEDED:` instead');
+  sections.push('- **Urgent feedback** (auto-selects the ticket in the UI): `IMMEDIATE FEEDBACK NEEDED: Your question here`');
   sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"notes": "IMMEDIATE FEEDBACK NEEDED: Your urgent question"}'\``);
+  sections.push('');
+  sections.push('**IMPORTANT:** The prefix must be the very first characters of the note — do not add any text before it. The note text sent in the `"notes"` field must start with `FEEDBACK NEEDED:` or `IMMEDIATE FEEDBACK NEEDED:` exactly.');
   sections.push('');
   sections.push('After adding a feedback note, signal done and wait to be re-triggered. The user will see a dialog prompting them to respond. When they submit feedback, you will be re-triggered with a message indicating the ticket was updated.');
   sections.push('');

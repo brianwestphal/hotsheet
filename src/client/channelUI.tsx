@@ -125,6 +125,46 @@ function clearProjectBusy(secret: string) {
   syncDots();
 }
 
+/** Per-project heartbeat timers. Each heartbeat extends the busy state for 30s.
+ *  If no heartbeat arrives within 30s, the project is marked idle. */
+const heartbeatTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Called when a heartbeat is received for a project (via PostToolUse hook).
+ *  Sets the project as busy and resets the 30s idle timer. */
+export function extendBusyForProject(secret: string) {
+  markProjectBusy(secret);
+  // Also set the global busy flag if this is the active project
+  const activeSecret = getActiveProject()?.secret;
+  if (secret === activeSecret) {
+    channelBusy = true;
+    updateStatusIndicator();
+  }
+  // Reset the 30s idle timer
+  const existing = heartbeatTimers.get(secret);
+  if (existing) clearTimeout(existing);
+  heartbeatTimers.set(secret, setTimeout(() => {
+    clearProjectBusy(secret);
+    heartbeatTimers.delete(secret);
+    if (secret === getActiveProject()?.secret) {
+      channelBusy = false;
+      updateStatusIndicator();
+    }
+  }, 30000));
+}
+
+/** Called when Claude stops processing (via Stop hook). Immediately clears busy. */
+export function clearBusyForProject(secret: string) {
+  // Clear the heartbeat timer
+  const timer = heartbeatTimers.get(secret);
+  if (timer) { clearTimeout(timer); heartbeatTimers.delete(secret); }
+  clearProjectBusy(secret);
+  const activeSecret = getActiveProject()?.secret;
+  if (secret === activeSecret) {
+    channelBusy = false;
+    updateStatusIndicator();
+  }
+}
+
 export function markProjectAttention(secret: string) {
   attentionProjects.add(secret);
   syncDots();

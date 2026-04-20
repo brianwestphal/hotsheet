@@ -86,7 +86,7 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   // Skip secret validation for /api/projects/* — these are management endpoints used by
   // the CLI for multi-project registration, accessible only from localhost.
   app.use('/api/*', async (c, next) => {
-    if (c.req.path.startsWith('/api/projects')) {
+    if (c.req.path.startsWith('/api/projects') || c.req.path === '/api/channel/heartbeat') {
       await next();
       return;
     }
