@@ -422,6 +422,19 @@ async function setupSkillsAndChannels(port: number): Promise<void> {
   }
 }
 
+/** Ensure Claude Code hooks are installed when joining a running instance.
+ *  The full hook installation only runs during primary startup (setupSkillsAndChannels),
+ *  so this lightweight check covers the join path. */
+async function ensureHooksForRunningInstance(port: number): Promise<void> {
+  try {
+    const { readGlobalConfig } = await import('./global-config.js');
+    if (readGlobalConfig().channelEnabled === true) {
+      const { installHeartbeatHook } = await import('./claude-hooks.js');
+      installHeartbeatHook(port);
+    }
+  } catch { /* non-critical */ }
+}
+
 /** Write instance file and register exit cleanup handlers. */
 function setupInstanceLifecycle(actualPort: number): void {
   writeInstanceFile(actualPort);
@@ -487,6 +500,10 @@ async function main() {
       const running = await isInstanceRunning(instance.port);
       console.error(`[startup ${elapsed()}] instance check: running=${running}`);
       if (running) {
+        // Ensure Claude Code hooks are installed even when joining an existing instance,
+        // since hook installation normally only happens during primary startup.
+        await ensureHooksForRunningInstance(instance.port);
+
         if (!noOpen) {
           await joinRunningInstance(instance.port, dataDir);
         } else {
