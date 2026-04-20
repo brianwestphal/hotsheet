@@ -65,6 +65,28 @@ test.describe('Multi-select detail panel (HS-5628)', () => {
     await expect(page.locator('#detail-title')).toHaveValue(titleB);
   });
 
+  test('right-click on selected ticket preserves multi-selection (HS-6257)', async ({ page }) => {
+    const rowA = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${titleA}"]`) }).first();
+    const rowB = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${titleB}"]`) }).first();
+
+    // Select A, then Cmd+click B to add to selection
+    await rowA.locator('.ticket-number').click();
+    await rowB.locator('.ticket-number').click({ modifiers: ['Meta'] });
+    await expect(rowA).toHaveClass(/selected/, { timeout: 3000 });
+    await expect(rowB).toHaveClass(/selected/);
+
+    // Right-click on A — selection should stay (both still selected)
+    await rowA.click({ button: 'right' });
+    await expect(rowA).toHaveClass(/selected/);
+    await expect(rowB).toHaveClass(/selected/);
+
+    // Context menu should be visible
+    await expect(page.locator('.context-menu')).toBeVisible({ timeout: 3000 });
+
+    // Close the context menu
+    await page.keyboard.press('Escape');
+  });
+
   test('Escape deselects all and shows "Nothing selected"', async ({ page }) => {
     const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${titleA}"]`) }).first();
     await row.locator('.ticket-number').click();

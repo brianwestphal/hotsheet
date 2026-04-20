@@ -139,7 +139,8 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
   const titleInput = row.querySelector('.ticket-title-input') as HTMLInputElement;
   titleInput.addEventListener('focus', () => {
     if (suppressFocusSelect) return;
-    if (state.selectedIds.size === 1 && state.selectedIds.has(ticket.id)) return;
+    // Don't clear multi-selection when this ticket is already selected (e.g., right-click on a selected row)
+    if (state.selectedIds.has(ticket.id)) return;
     state.selectedIds.clear();
     state.selectedIds.add(ticket.id);
     state.lastClickedId = ticket.id;
