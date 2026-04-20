@@ -247,6 +247,9 @@ async function handleEarlyFlags(args: ParsedArgs): Promise<boolean> {
  * Returns the initialized database instance.
  */
 async function initializeProject(dataDir: string, demo: number | null): Promise<PGlite> {
+  const t0 = Date.now();
+  const elapsed = () => `${Date.now() - t0}ms`;
+
   mkdirSync(dataDir, { recursive: true });
 
   if (demo === null) {
@@ -254,8 +257,10 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
     ensureGitignore(process.cwd());
   }
 
+  console.error(`[init-project ${elapsed()}] initializing DB...`);
   setDataDir(dataDir);
   const db = await getDb();
+  console.error(`[init-project ${elapsed()}] DB ready`);
 
   if (demo !== null) {
     await seedDemoData(demo);
@@ -264,9 +269,12 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
   if (demo === null) {
     const { runWithDataDir } = await import('./db/connection.js');
     // Migrate project settings from DB to settings.json (idempotent)
+    console.error(`[init-project ${elapsed()}] migrating settings...`);
     const { migrateDbSettingsToFile } = await import('./migrate-settings.js');
     await runWithDataDir(dataDir, () => migrateDbSettingsToFile(dataDir));
+    console.error(`[init-project ${elapsed()}] cleaning up attachments...`);
     await runWithDataDir(dataDir, () => cleanupAttachments());
+    console.error(`[init-project ${elapsed()}] done`);
   }
 
   console.log(`  Data directory: ${dataDir}`);
@@ -313,14 +321,23 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
  * Post-startup tasks: backup scheduling, project restore, instance file, browser open.
  */
 async function postStartup(dataDir: string, actualPort: number, demo: number | null, noOpen: boolean): Promise<void> {
+  const t0 = Date.now();
+  const elapsed = () => `${Date.now() - t0}ms`;
+
   if (demo === null) {
     initBackupScheduler(dataDir);
     addToProjectList(dataDir);
+    console.error(`[post-startup ${elapsed()}] restoring previous projects...`);
     await restorePreviousProjects(dataDir, actualPort);
+    console.error(`[post-startup ${elapsed()}] migrating global config...`);
     await migrateGlobalConfig();
+    console.error(`[post-startup ${elapsed()}] cleaning up stale channels...`);
     await cleanupStaleChannels();
+    console.error(`[post-startup ${elapsed()}] setting up skills and channels...`);
     await setupSkillsAndChannels(actualPort);
+    console.error(`[post-startup ${elapsed()}] setting up instance lifecycle...`);
     setupInstanceLifecycle(actualPort);
+    console.error(`[post-startup ${elapsed()}] done`);
   }
 
   if (!noOpen) {
@@ -415,6 +432,16 @@ function setupInstanceLifecycle(actualPort: number): void {
 }
 
 async function main() {
+  const t0 = Date.now();
+  const elapsed = () => `${Date.now() - t0}ms`;
+
+  // Watchdog: dump diagnostic if startup takes too long
+  const watchdog = setTimeout(() => {
+    console.error(`[startup] WARNING: startup has taken ${elapsed()} — still not ready`);
+    console.error('[startup] This may indicate a hang in DB init, network check, or project restore.');
+    console.error('[startup] Check the timing logs above to identify the stuck phase.');
+  }, 10_000);
+
   const parsed = parseArgs(process.argv);
   if (!parsed) {
     printUsage();
@@ -424,9 +451,13 @@ async function main() {
   const { port, demo, forceUpdateCheck, noOpen, strictPort } = parsed;
   let { dataDir } = parsed;
 
+  console.error(`[startup ${elapsed()}] parsed args`);
+
   await handleEarlyFlags(parsed);
 
+  console.error(`[startup ${elapsed()}] checking for updates...`);
   await checkForUpdates(forceUpdateCheck);
+  console.error(`[startup ${elapsed()}] update check done`);
 
   // Demo mode: use a fresh temp directory
   if (demo !== null) {
@@ -446,11 +477,15 @@ async function main() {
   // Multi-project: check for an already-running instance (skip in demo mode)
   if (demo === null) {
     // Clean up stale instances (dead PID but port still occupied)
+    console.error(`[startup ${elapsed()}] cleaning up stale instances...`);
     await cleanupStaleInstance();
+    console.error(`[startup ${elapsed()}] stale cleanup done`);
 
     const instance = readInstanceFile();
     if (instance !== null) {
+      console.error(`[startup ${elapsed()}] checking if instance on port ${instance.port} is running...`);
       const running = await isInstanceRunning(instance.port);
+      console.error(`[startup ${elapsed()}] instance check: running=${running}`);
       if (running) {
         if (!noOpen) {
           await joinRunningInstance(instance.port, dataDir);
@@ -475,13 +510,22 @@ async function main() {
     }
   }
 
+  console.error(`[startup ${elapsed()}] initializing project...`);
   const db = await initializeProject(dataDir, demo);
+  console.error(`[startup ${elapsed()}] project initialized`);
   if (demo !== null) {
     writeFileSettings(dataDir, { appName: 'Hot Sheet Demo' });
   }
+  console.error(`[startup ${elapsed()}] starting server...`);
   const { actualPort, secret } = await startAndConfigure(port, dataDir, strictPort);
+  console.error(`[startup ${elapsed()}] server started on port ${actualPort}`);
   registerExistingProject(dataDir, secret, db);
+  console.error(`[startup ${elapsed()}] running post-startup tasks...`);
   await postStartup(dataDir, actualPort, demo, noOpen);
+  console.error(`[startup ${elapsed()}] post-startup complete`);
+
+  clearTimeout(watchdog);
+  console.error(`[startup ${elapsed()}] startup finished`);
 
   // Multi-project demo: register additional projects after server is running
   if (demo !== null) {

@@ -48,7 +48,7 @@ test.describe('Unread ticket indicators (HS-5648)', () => {
     await expect(row.locator('.ticket-unread-dot')).toBeHidden();
   });
 
-  test('opening detail panel auto-marks ticket as read', async ({ page, request }) => {
+  test('opening detail panel auto-marks ticket as read and immediately hides blue dot', async ({ page, request }) => {
     const suffix = Date.now();
     const title = `Auto read ${suffix}`;
     const res = await request.post('/api/tickets', { headers, data: { title } });
@@ -67,6 +67,9 @@ test.describe('Unread ticket indicators (HS-5648)', () => {
     // Click to open detail
     await row.locator('.ticket-number').click();
     await expect(page.locator('#detail-header')).toBeVisible({ timeout: 3000 });
+
+    // Blue dot should disappear immediately from the list row (HS-6238)
+    await expect(row.locator('.ticket-unread-dot')).toBeHidden({ timeout: 3000 });
 
     // Verify via API that last_read_at was updated
     await expect(async () => {

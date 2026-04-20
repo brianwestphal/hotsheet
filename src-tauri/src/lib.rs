@@ -638,6 +638,28 @@ async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn quicklook(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("qlmanage")
+            .arg("-p")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // On non-macOS, open with default application via xdg-open/start
+        let cmd = if cfg!(target_os = "windows") { "start" } else { "xdg-open" };
+        std::process::Command::new(cmd)
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn pick_folder() -> Result<Option<String>, String> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Open Folder")
@@ -880,6 +902,7 @@ pub fn run() {
             request_attention_once,
             pick_folder,
             open_url,
+            quicklook,
             #[cfg(not(debug_assertions))]
             open_project
         ])
@@ -931,8 +954,18 @@ pub fn run() {
                     for line in reader.lines() {
                         let Ok(line) = line else { break };
                         println!("{}", line);
+                        // Case 1: server started fresh
                         if let Some(idx) = line.find("running at ") {
                             let url = line[idx + "running at ".len()..].trim().to_string();
+                            if let Ok(parsed) = url.parse() {
+                                let _ = window.navigate(parsed);
+                            }
+                            break;
+                        }
+                        // Case 2: joined an existing running instance
+                        if let Some(idx) = line.find("running instance on port ") {
+                            let port_str = line[idx + "running instance on port ".len()..].trim().to_string();
+                            let url = format!("http://localhost:{}", port_str);
                             if let Ok(parsed) = url.parse() {
                                 let _ = window.navigate(parsed);
                             }

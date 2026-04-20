@@ -9,6 +9,7 @@ import { renderPluginDetailElements } from './pluginUI.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { parseTags, renderDetailTags } from './tags.js';
+import { callRenderTicketList } from './ticketListState.js';
 
 // Re-export extracted modules for consumers that import from detail.js
 export type { NoteEntry } from './noteRenderer.js';
@@ -223,6 +224,7 @@ async function loadDetail(id: number) {
     if (isUnread) {
       const readAt = new Date().toISOString();
       inMemory.last_read_at = readAt;
+      callRenderTicketList(); // Immediately hide the blue dot in the list/column view
       void api(`/tickets/${id}`, { method: 'PATCH', body: { last_read_at: readAt } }).catch(() => {});
     }
   }
@@ -248,12 +250,12 @@ async function loadDetail(id: number) {
     detailsArea.value = ticket.details;
   }
 
-  // Render attachments via JSX
+  // Render attachments with selection support
   const attContainer = document.getElementById('detail-attachments')!;
   if (ticket.attachments.length > 0) {
     attContainer.innerHTML = (<>
       {ticket.attachments.map(att =>
-        <div className="attachment-item">
+        <div className="attachment-item" tabIndex={0} data-att-id={String(att.id)} data-stored-path={att.stored_path} data-filename={att.original_filename}>
           <span className="attachment-name">{att.original_filename}</span>
           <button className="attachment-reveal" data-att-id={String(att.id)} title="Show in file manager"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></button>
           <button className="attachment-delete" data-att-id={String(att.id)} title="Remove">{'\u00d7'}</button>

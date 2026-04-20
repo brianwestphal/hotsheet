@@ -123,7 +123,9 @@ export function bindKeyboardShortcuts() {
     }
 
     // Arrow keys in column view: navigate between cards
-    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !isInput && state.layout === 'columns') {
+    // Skip if an attachment item is focused — let the attachment handler navigate between attachments
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !isInput && state.layout === 'columns'
+      && !(document.activeElement instanceof HTMLElement && document.activeElement.classList.contains('attachment-item'))) {
       const allCards = Array.from(document.querySelectorAll<HTMLElement>('.column-card[data-id]'));
       if (allCards.length > 0 && state.selectedIds.size > 0) {
         e.preventDefault();

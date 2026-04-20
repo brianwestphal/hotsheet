@@ -180,6 +180,53 @@ test.describe('Detail panel interactions', () => {
     await expect(page.locator('#detail-placeholder')).toBeVisible();
   });
 
+  test('arrow keys navigate between attachments without switching tickets', async ({ page, request }) => {
+    const projectsRes = await request.get('/api/projects');
+    const projects = await projectsRes.json() as { secret: string }[];
+    const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projects[0]?.secret ?? '' };
+
+    // Create two tickets so arrow keys could switch between them
+    await createTicket(page, 'Attach nav ticket A');
+    await createTicket(page, 'Attach nav ticket B');
+    await openDetail(page, 'Attach nav ticket A');
+
+    // Upload two attachments
+    const fileInput = page.locator('#detail-file-input');
+    await fileInput.setInputFiles({
+      name: 'file-one.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('First file'),
+    });
+    await expect(page.locator('#detail-attachments .attachment-item').filter({ hasText: 'file-one.txt' })).toBeVisible({ timeout: 5000 });
+
+    await fileInput.setInputFiles({
+      name: 'file-two.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Second file'),
+    });
+    await expect(page.locator('#detail-attachments .attachment-item').filter({ hasText: 'file-two.txt' })).toBeVisible({ timeout: 5000 });
+
+    // Click the first attachment to select and focus it
+    const firstAtt = page.locator('#detail-attachments .attachment-item').first();
+    await firstAtt.click();
+    await expect(firstAtt).toHaveClass(/selected/, { timeout: 3000 });
+
+    // Press ArrowDown — should select second attachment, not switch tickets
+    await page.keyboard.press('ArrowDown');
+
+    const secondAtt = page.locator('#detail-attachments .attachment-item').nth(1);
+    await expect(secondAtt).toHaveClass(/selected/, { timeout: 3000 });
+    await expect(firstAtt).not.toHaveClass(/selected/);
+
+    // Detail panel should still show ticket A (not switched to B)
+    await expect(page.locator('#detail-title')).toHaveValue('Attach nav ticket A');
+
+    // Press ArrowUp — should go back to first attachment
+    await page.keyboard.press('ArrowUp');
+    await expect(firstAtt).toHaveClass(/selected/, { timeout: 3000 });
+    await expect(secondAtt).not.toHaveClass(/selected/);
+  });
+
   test('switch selection: click a different ticket updates detail panel', async ({ page }) => {
     await createTicket(page, 'Switch ticket A');
     await createTicket(page, 'Switch ticket B');

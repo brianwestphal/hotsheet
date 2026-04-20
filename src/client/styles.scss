@@ -1866,6 +1866,14 @@ input, select, textarea {
   border-radius: var(--radius);
   margin-bottom: 4px;
   font-size: 12px;
+  cursor: pointer;
+  outline: none;
+
+  &.selected, &:focus {
+    background: var(--accent-bg, rgba(59, 130, 246, 0.1));
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
 }
 
 .attachment-name {
