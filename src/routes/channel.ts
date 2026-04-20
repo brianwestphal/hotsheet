@@ -4,7 +4,7 @@ import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
 import type { AppEnv } from '../types.js';
 import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js';
-import { ChannelTriggerSchema, parseBody, PermissionRespondSchema } from './validation.js';
+import { ChannelHeartbeatSchema, ChannelTriggerSchema, parseBody, PermissionRespondSchema } from './validation.js';
 
 export const channelRoutes = new Hono<AppEnv>();
 
@@ -224,10 +224,11 @@ channelRoutes.post('/channel/disable', async (c) => {
 channelRoutes.post('/channel/heartbeat', async (c) => {
   const { getAllProjects } = await import('../projects.js');
   const raw: unknown = await c.req.json().catch(() => ({}));
-  const body = raw as { projectDir?: string; state?: string };
-  const projectDir = body.projectDir;
-  const hookState = body.state ?? 'heartbeat';
-  if (typeof projectDir !== 'string' || projectDir === '') return c.json({ ok: false });
+  const parsed = parseBody(ChannelHeartbeatSchema, raw);
+  if (!parsed.success) return c.json({ ok: false });
+  const projectDir = parsed.data.projectDir;
+  const hookState = parsed.data.state ?? 'heartbeat';
+  if (projectDir === undefined || projectDir === '') return c.json({ ok: false });
 
   // Match projectDir against registered projects (projectDir is the root, dataDir is root/.hotsheet)
   const projects = getAllProjects();

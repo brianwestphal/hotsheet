@@ -133,6 +133,7 @@ export interface CustomView {
   tag?: string;
   logic: 'all' | 'any';
   conditions: CustomViewCondition[];
+  includeArchived?: boolean;
 }
 
 // Legacy compat aliases used by server-rendered pages and older code

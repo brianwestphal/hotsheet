@@ -21,7 +21,8 @@ On app exit, the sidecar process is terminated:
 
 ### 10.3 Welcome Screen
 
-- If launched without `--data-dir` (e.g., double-clicking the app icon), a welcome/setup screen is shown instead of the main UI.
+- If launched without `--data-dir` (e.g., double-clicking the app icon), the app first checks `~/.hotsheet/projects.json` for previously opened projects and restores the most recent one.
+- If no previous projects exist, a welcome/setup screen is shown instead of the main UI.
 - The welcome screen navigates to `tauri://localhost/welcome.html`.
 
 ### 10.4 Window Title
@@ -57,6 +58,13 @@ On app exit, the sidecar process is terminated:
 | `get_pending_update` | Poll for a pending update version (stored from async check) |
 | `check_for_update` | Actively check for updates, return version or null |
 | `install_update` | Download and install the pending update |
+| `set_app_icon(variant: string)` | Set the dock/taskbar icon to a named variant |
+| `request_attention()` | Trigger critical dock bounce (macOS) |
+| `request_attention_once()` | Trigger informational dock bounce (macOS) |
+| `open_url(url: string)` | Open a URL in the default browser |
+| `quicklook(path: string)` | Open macOS Quick Look preview (qlmanage) |
+| `pick_folder()` | Show native folder picker dialog, return selected path |
+| `open_project(data_dir: string)` | Switch to a different project (production only) |
 
 ### 10.8 Capabilities
 

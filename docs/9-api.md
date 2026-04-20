@@ -116,7 +116,7 @@ Copies are created with " - Copy" suffix (incrementing if conflicts exist). The 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/tickets/query` | Query tickets with custom view conditions (`{ logic, conditions, sort_by, sort_dir, required_tag? }`). `required_tag` is always AND'd regardless of logic. |
+| POST | `/api/tickets/query` | Query tickets with custom view conditions (`{ logic, conditions, sort_by, sort_dir, required_tag?, include_archived? }`). `required_tag` is always AND'd regardless of logic. `include_archived` (boolean, default false) includes archived tickets in results when true. |
 
 ### 9.10 Settings Endpoints
 
@@ -173,6 +173,10 @@ See [12-claude-channel.md](12-claude-channel.md) §12.13 for the full channel AP
 | POST | `/api/channel/permission/dismiss` | Dismiss permission overlay |
 | POST | `/api/channel/notify` | Notify long-poll of channel state changes (used internally by channel server) |
 | POST | `/api/channel/permission/notify` | Wake the permission long-poll (used internally by channel server) |
+| POST | `/api/channel/heartbeat` | Receive busy/idle/heartbeat state from Claude Code hooks (`{ projectDir, state }`) |
+| GET | `/channel/heartbeat-status` | Return and clear pending heartbeat updates (`{ updates: [{ secret, state }] }`) |
+
+The heartbeat endpoint accepts `{ projectDir: string, state: "busy" | "idle" | "heartbeat" }` and does not require auth (skipped in middleware). The heartbeat-status endpoint returns accumulated updates and clears them.
 
 ### 9.14 Project Endpoints
 

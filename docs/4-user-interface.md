@@ -197,7 +197,7 @@ Each built-in view has an icon to the left of the label:
   - Auto-tag on create: tickets created while viewing a tag view automatically receive the view's tag.
 - Tag autocomplete fields show the first 100 tags alphabetically on focus (before typing), then filter as the user types.
 - **Filtering behavior:** Deleted tickets are always excluded from custom view results. Archived tickets are excluded by default unless the view's "Include archived tickets" checkbox is enabled.
-- Custom views are stored as JSON in the settings table (key: `custom_views`). The `tag` field is optional on the `CustomView` object.
+- Custom views are stored as JSON in `settings.json` (key: `custom_views`). The `tag` field is optional on the `CustomView` object.
 - API: `POST /api/tickets/query` accepts `{ logic, conditions, sort_by, sort_dir, required_tag }` and returns matching tickets via parameterized SQL. The `required_tag` parameter is always AND'd with the query.
 - Custom views support both list and column layouts.
 
@@ -243,7 +243,7 @@ Each has three options:
 
 - **Tauri implementation**: Two custom Rust commands (`request_attention` for Critical, `request_attention_once` for Informational) call `window.request_user_attention()` on the main window via `AppHandle`.
 - **Browser implementation**: Alternates `document.title` between the original title and a warning message. Only triggers when `!document.hasFocus()`.
-- **Settings storage**: `notify_permission` and `notify_completed` keys in the settings table. Values: `none`, `once`, `persistent`.
+- **Settings storage**: `notify_permission` and `notify_completed` keys in `settings.json`. Values: `none`, `once`, `persistent`.
 
 ### 4.18 Auto-Context
 

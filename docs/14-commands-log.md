@@ -73,4 +73,4 @@ Each entry shows:
 
 ## 14.9 Auto-Refresh
 
-When the panel is open, entries auto-refresh every 5 seconds. When closed, no polling occurs (only the badge count is updated periodically).
+When the panel is open, entries auto-refresh every 5 seconds. When closed, no polling occurs (the badge count is updated when channel or shell events occur).

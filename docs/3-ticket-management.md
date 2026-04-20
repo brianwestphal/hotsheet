@@ -10,7 +10,7 @@ Each ticket has the following properties:
 - **Title** — Short summary (required at creation).
 - **Details** — Longer description (optional).
 - **Category** — Configurable categories. Each has an id, display label, short label (badge), color, keyboard shortcut, and description. Defaults to a Software Development set (Issue, Bug, Feature, Req Change, Task, Investigation). Users can customize categories or load from presets (Design/Creative, Product Management, Marketing, Personal) via Settings.
-  - Categories are stored as JSON in the `settings` table (key: `categories`).
+  - Categories are stored as JSON in `settings.json` (key: `categories`).
   - API: `GET /api/categories`, `PUT /api/categories`, `GET /api/category-presets`.
 - **Priority** — One of five levels: Highest, High, Default, Low, Lowest.
 - **Status** — One of seven states (see §3.3).
@@ -80,7 +80,7 @@ Tickets progress through these statuses:
 ### 3.6 Batch Operations
 
 - Multiple tickets can be selected and acted on simultaneously.
-- Supported batch actions: change category, change priority, change status, toggle up_next, delete.
+- Supported batch actions: change category, change priority, change status, toggle up_next, delete, mark read, mark unread.
 - Batch restore of deleted tickets.
 - Batch up_next toggle uses smart logic: if any selected ticket is NOT up_next, set all to true; otherwise set all to false.
 - Batch up_next on completed/verified tickets re-opens them first.
@@ -90,7 +90,6 @@ Tickets progress through these statuses:
 - On startup, the application runs cleanup for stale tickets:
   - Tickets in `deleted` status older than a configurable threshold (default: 3 days) are hard-deleted.
   - Tickets in `verified` status older than a configurable threshold (default: 30 days) are archived.
-- Cleanup also removes orphaned attachment files from disk.
 - Cleanup thresholds are configurable via settings.
 
 ### 3.8 Trash Management

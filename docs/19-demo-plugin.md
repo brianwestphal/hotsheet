@@ -58,14 +58,18 @@ Registers a button at every supported location:
 - `toolbar` — bolt icon in the header toolbar
 - `status_bar` — shows "Demo: {username}" in the footer
 - `detail_top` — info button above ticket fields
-- `detail_bottom` — notify button below notes/meta
+- `detail_bottom` — notify button below notes/meta (button element)
+- `detail_bottom` — link element demonstrating the `link` type
 - `context_menu` — "Demo Action" in the right-click menu
+- `batch_menu` — "Demo Batch" in the batch toolbar menu
+- `sidebar_actions_top` — button above sidebar actions
+- `sidebar_actions_bottom` — button below sidebar actions
 
 All buttons log their action to the plugin log and return a result.
 
 ## 19.3 Installation
 
-The demo plugin is bundled with Hot Sheet and auto-installed on first run (like GitHub Issues). It can be uninstalled via the plugin context menu and reinstalled from the "Find Plugins" dialog.
+The demo plugin is available in the source repository (`plugins/demo-plugin/`) but is not bundled for production builds. It can be installed manually via "Find Plugins > From Disk" by selecting the plugin directory.
 
 ## 19.4 Build
 

@@ -2,10 +2,11 @@ import { api } from './api.js';
 import { channelAutoTrigger } from './channelUI.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_TAG } from './icons.js';
+import { getPluginBatchMenuItems } from './pluginUI.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from './state.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
-import { trackedBatch, trackedCompoundBatch } from './undo/actions.js';
+import { toggleReadState, toggleUpNext, trackedBatch } from './undo/actions.js';
 
 export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
   const batchCategory = document.getElementById('batch-category') as HTMLButtonElement;
@@ -71,24 +72,7 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
 
   document.getElementById('batch-upnext')!.addEventListener('click', async () => {
     const selectedTickets = state.tickets.filter(t => state.selectedIds.has(t.id));
-    const allUpNext = selectedTickets.every(t => t.up_next);
-    const settingUpNext = !allUpNext;
-    const ids = Array.from(state.selectedIds);
-
-    if (settingUpNext) {
-      const doneTickets = selectedTickets.filter(t => t.status === 'completed' || t.status === 'verified');
-      if (doneTickets.length > 0) {
-        const ops = [
-          { ids: doneTickets.map(t => t.id), action: 'status', value: 'not_started' },
-          { ids, action: 'up_next', value: true },
-        ];
-        await trackedCompoundBatch(selectedTickets, ops, 'Batch toggle up next');
-      } else {
-        await trackedBatch(selectedTickets, { ids, action: 'up_next', value: true }, 'Batch toggle up next');
-      }
-    } else {
-      await trackedBatch(selectedTickets, { ids, action: 'up_next', value: false }, 'Batch toggle up next');
-    }
+    await toggleUpNext(selectedTickets);
     void loadTickets();
     channelAutoTrigger();
   });
@@ -106,43 +90,20 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
   batchMore.addEventListener('click', (e) => {
     e.stopPropagation();
     closeAllMenus();
-    // Check if any selected ticket is unread (same logic as context menu)
     const hasUnread = Array.from(state.selectedIds).some(id => {
       const t = state.tickets.find(tk => tk.id === id);
       return t != null && t.last_read_at != null && t.updated_at > t.last_read_at;
     });
 
     const readUnreadItem = hasUnread
-      ? {
-          label: 'Mark as Read',
-          key: 'r',
-          icon: ICON_EYE,
-          action: () => {
-            void (async () => {
-              const ids = Array.from(state.selectedIds);
-              const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
-              const readAt = new Date().toISOString();
-              for (const t of affected) t.last_read_at = readAt;
-              await trackedBatch(affected, { ids, action: 'mark_read' }, 'Mark as Read');
-              renderTicketList();
-            })();
-          },
-        }
-      : {
-          label: 'Mark as Unread',
-          key: 'u',
-          icon: ICON_EYE_OFF,
-          action: () => {
-            void (async () => {
-              const ids = Array.from(state.selectedIds);
-              const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
-              const epoch = '1970-01-01T00:00:00Z';
-              for (const t of affected) t.last_read_at = epoch;
-              await trackedBatch(affected, { ids, action: 'mark_unread' }, 'Mark as Unread');
-              renderTicketList();
-            })();
-          },
-        };
+      ? { label: 'Mark as Read', key: 'r', icon: ICON_EYE, action: () => { void toggleReadState(Array.from(state.selectedIds)); } }
+      : { label: 'Mark as Unread', key: 'u', icon: ICON_EYE_OFF, action: () => { void toggleReadState(Array.from(state.selectedIds)); } };
+
+    // Build menu items: built-in items + plugin items (if any)
+    const pluginItems = getPluginBatchMenuItems(Array.from(state.selectedIds));
+    const pluginSection = pluginItems.length > 0
+      ? [{ label: '', key: '', separator: true, action: () => {} }, ...pluginItems]
+      : [];
 
     const menu = createDropdown(batchMore, [
       {
@@ -169,6 +130,7 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
         },
       },
       readUnreadItem,
+      ...pluginSection,
       { label: '', key: '', separator: true, action: () => {} },
       {
         label: 'Move to Backlog',

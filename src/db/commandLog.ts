@@ -34,7 +34,8 @@ function buildLogWhereClause(filters?: { eventType?: string; search?: string }):
   }
   if (filters?.search !== undefined && filters.search !== '') {
     conditions.push(`(summary ILIKE $${paramIdx} OR detail ILIKE $${paramIdx})`);
-    params.push(`%${filters.search}%`);
+    const escaped = filters.search.replace(/[%_\\]/g, '\\$&');
+    params.push(`%${escaped}%`);
     paramIdx++;
   }
 

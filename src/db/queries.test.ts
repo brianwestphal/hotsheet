@@ -342,6 +342,20 @@ describe('filtering', () => {
     expect(tickets.map(t => t.id)).toContain(t.id);
   });
 
+  it('search escapes ILIKE wildcards (% and _)', async () => {
+    const t = await createTicket('100% complete_task');
+    // Search for literal % — should match, not be treated as wildcard
+    const byPercent = await getTickets({ search: '100%' });
+    expect(byPercent.map(t => t.id)).toContain(t.id);
+    // Search for literal _ — should match, not be treated as single-char wildcard
+    const byUnderscore = await getTickets({ search: 'complete_task' });
+    expect(byUnderscore.map(t => t.id)).toContain(t.id);
+    // A wildcard-only search should not match everything
+    const byWildcard = await getTickets({ search: '%' });
+    // Should only match tickets that literally contain %
+    expect(byWildcard.every(t => t.title.includes('%') || t.details.includes('%') || t.tags.includes('%'))).toBe(true);
+  });
+
   it('filters combine with AND logic', async () => {
     const tickets = await getTickets({ category: 'investigation', status: 'started' as TicketStatus });
     const ids = tickets.map(t => t.id);

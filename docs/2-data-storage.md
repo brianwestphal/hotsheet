@@ -38,7 +38,7 @@
   - `secret` — Server-generated secret token for API authentication.
   - `secretPathHash` — Hashed path identifier used to scope the secret to a specific project.
   - `port` — Preferred port number for the server.
-  - `projectSettings` — Object containing all UI and behavior settings (detail_position, detail_width, detail_height, layout, sort_by, sort_dir, categories, custom_views, custom_commands, trash_cleanup_days, verified_cleanup_days, auto_order, etc.).
+  - All UI and behavior settings are stored as flat keys at the root level alongside the reserved keys above (e.g., `detail_position`, `detail_width`, `detail_height`, `layout`, `sort_by`, `sort_dir`, `categories`, `custom_views`, `custom_commands`, `trash_cleanup_days`, `verified_cleanup_days`, `auto_order`, etc.).
 
 ### 2.4 Settings Migration
 

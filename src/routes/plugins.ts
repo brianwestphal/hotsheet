@@ -20,6 +20,11 @@ import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
+import {
+  parseBody,
+  PluginActionSchema, PluginConflictResolveSchema, PluginGlobalConfigSchema,
+  PluginInstallSchema, PluginSyncScheduleSchema, PluginValidateSchema,
+} from './validation.js';
 
 export const pluginRoutes = new Hono<AppEnv>();
 
@@ -110,7 +115,10 @@ pluginRoutes.post('/plugins/:id/action', async (c) => {
   let plugin = getPluginById(pluginId);
   if (!plugin) return c.json({ error: 'Plugin not found' }, 404);
   if (!plugin.instance.onAction) return c.json({ error: 'Plugin does not handle actions' }, 400);
-  const body: { actionId: string; ticketIds?: number[]; value?: unknown } = await c.req.json();
+  const raw: unknown = await c.req.json();
+  const parsed = parseBody(PluginActionSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const body = parsed.data;
 
   // Re-activate to pick up any setting changes made since last activation.
   // Plugins commonly capture settings in closures during activate(), so without
@@ -136,7 +144,10 @@ pluginRoutes.post('/plugins/:id/action', async (c) => {
 pluginRoutes.post('/plugins/validate/:id', async (c) => {
   const plugin = getPluginById(c.req.param('id'));
   if (!plugin?.instance.validateField) return c.json(null);
-  const body: { key: string; value: string } = await c.req.json();
+  const raw: unknown = await c.req.json();
+  const parsed = parseBody(PluginValidateSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const body = parsed.data;
   try {
     const result = await plugin.instance.validateField(body.key, body.value);
     return c.json(result);
@@ -365,7 +376,10 @@ pluginRoutes.post('/plugins/:id/sync/schedule', async (c) => {
   const pluginId = c.req.param('id');
   const plugin = getPluginById(pluginId);
   if (!plugin) return c.json({ error: 'Plugin not found' }, 404);
-  const body: { interval_minutes: number | null } = await c.req.json();
+  const raw: unknown = await c.req.json();
+  const parsed = parseBody(PluginSyncScheduleSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const body = parsed.data;
   if (body.interval_minutes === null || body.interval_minutes === 0) {
     stopScheduledSync(pluginId);
     return c.json({ ok: true, scheduled: false });
@@ -416,18 +430,19 @@ pluginRoutes.get('/sync/conflicts', async (c) => {
 pluginRoutes.post('/sync/conflicts/:ticketId/resolve', async (c) => {
   const ticketId = parseIntParam(c, 'ticketId');
   if (ticketId === null) return c.json({ error: 'Invalid ticket ID' }, 400);
-  const body: { plugin_id?: string; resolution?: 'keep_local' | 'keep_remote' } = await c.req.json();
-  if (body.plugin_id == null || body.plugin_id === '' || body.resolution == null) {
-    return c.json({ error: 'plugin_id and resolution required' }, 400);
-  }
-  await resolveConflict(ticketId, body.plugin_id, body.resolution);
+  const raw: unknown = await c.req.json();
+  const parsed = parseBody(PluginConflictResolveSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  await resolveConflict(ticketId, parsed.data.plugin_id, parsed.data.resolution);
   return c.json({ ok: true });
 });
 
 /** Install a plugin by symlinking from a local path into ~/.hotsheet/plugins/. */
 pluginRoutes.post('/plugins/install', async (c) => {
-  const body: { path?: string } = await c.req.json();
-  if (body.path == null || body.path === '') return c.json({ error: 'path is required' }, 400);
+  const raw: unknown = await c.req.json();
+  const parsed = parseBody(PluginInstallSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const body = parsed.data;
 
   const sourcePath = body.path;
   if (!existsSync(sourcePath)) {
@@ -531,8 +546,10 @@ pluginRoutes.get('/plugins/:id/global-config/:key', async (c) => {
 /** Set a global plugin setting. For secret preferences, also stores in the OS keychain. */
 pluginRoutes.post('/plugins/:id/global-config', async (c) => {
   const pluginId = c.req.param('id');
-  const body: { key?: string; value: string } = await c.req.json();
-  if (body.key == null || body.key === '') return c.json({ error: 'key is required' }, 400);
+  const raw: unknown = await c.req.json();
+  const parsed = parseBody(PluginGlobalConfigSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const body = parsed.data;
   const plugin = getPluginById(pluginId);
   const isSecret = plugin?.manifest.preferences?.find(p => p.key === body.key)?.secret === true;
   if (isSecret) {

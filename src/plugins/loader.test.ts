@@ -20,6 +20,7 @@ vi.mock('../keychain.js', () => ({
 }));
 
 const {
+  compareSemver,
   discoverPlugins,
   dismissBundledPlugin,
   disablePlugin,
@@ -288,6 +289,40 @@ describe('reactivatePlugin', () => {
   it('returns false for unknown plugin', async () => {
     const result = await reactivatePlugin('nonexistent-plugin');
     expect(result).toBe(false);
+  });
+});
+
+// --- compareSemver ---
+
+describe('compareSemver', () => {
+  it('equal versions return 0', () => {
+    expect(compareSemver('1.0.0', '1.0.0')).toBe(0);
+    expect(compareSemver('0.5.3', '0.5.3')).toBe(0);
+  });
+
+  it('returns 1 when first is greater', () => {
+    expect(compareSemver('2.0.0', '1.0.0')).toBe(1);
+    expect(compareSemver('1.1.0', '1.0.0')).toBe(1);
+    expect(compareSemver('1.0.1', '1.0.0')).toBe(1);
+  });
+
+  it('returns -1 when first is lesser', () => {
+    expect(compareSemver('1.0.0', '2.0.0')).toBe(-1);
+    expect(compareSemver('1.0.0', '1.1.0')).toBe(-1);
+    expect(compareSemver('1.0.0', '1.0.1')).toBe(-1);
+  });
+
+  it('handles multi-digit version components correctly (the bug case)', () => {
+    // This was the original bug: string comparison "0.9.0" >= "0.10.0" is true
+    expect(compareSemver('0.9.0', '0.10.0')).toBe(-1);
+    expect(compareSemver('0.10.0', '0.9.0')).toBe(1);
+    expect(compareSemver('1.9.0', '1.10.0')).toBe(-1);
+    expect(compareSemver('1.0.9', '1.0.10')).toBe(-1);
+  });
+
+  it('handles missing patch/minor as 0', () => {
+    expect(compareSemver('1', '1.0.0')).toBe(0);
+    expect(compareSemver('1.0', '1.0.0')).toBe(0);
   });
 });
 

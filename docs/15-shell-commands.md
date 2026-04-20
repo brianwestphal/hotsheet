@@ -15,7 +15,7 @@ When Claude Channel is disabled, new commands default to Shell target. If a comm
 
 Shell commands always appear in the sidebar, regardless of Claude Channel status. Claude Code commands only appear when the channel is enabled. The custom commands settings section is always visible in the Experimental tab (even without Claude CLI installed).
 
-The target is selected via a dropdown in the command editor row, positioned before the prompt/command text field. When "Shell" is selected, the prompt label changes to "Shell command to run:" and the placeholder updates accordingly.
+The target is selected via a segmented control (two buttons: "Claude Code" and "Shell") in the command editor modal. When "Shell" is selected, the prompt label changes to "Shell command to run:" and the placeholder updates accordingly.
 
 ## 15.2 Shell Execution
 
@@ -83,5 +83,6 @@ Shell commands use a single `shell_command` log entry that is updated in-place u
 
 - **Initial entry**: Created when the command starts, with `event_type: 'shell_command'`, `direction: 'outgoing'`, and the command text as the detail.
 - **On completion**: The same entry is updated — the summary is updated to `"label — Completed (exit 0)"` for success (or the appropriate exit status), and the detail field is updated with the stdout/stderr output appended after a `---SHELL_OUTPUT---` separator.
+- **Auto-show on error**: When a shell command exits with a non-zero code, the Commands Log panel auto-opens regardless of the command's `autoShowLog` setting. This ensures failures are immediately visible to the user.
 
 These appear in the Commands Log panel alongside Claude Channel events, with the "shell" badge label.

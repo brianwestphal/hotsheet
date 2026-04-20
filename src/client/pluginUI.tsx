@@ -135,6 +135,17 @@ export function getPluginContextMenuItems(ticketIds: number[]): { label: string;
   }));
 }
 
+/** Get plugin batch menu items. */
+export function getPluginBatchMenuItems(ticketIds: number[]): { label: string; key: string; icon?: string; action: () => void }[] {
+  const elements = getPluginUIForLocation('batch_menu');
+  return elements.map(el => ({
+    label: el.label ?? el.title ?? el.id,
+    key: '',
+    icon: el.icon,
+    action: () => void triggerAction(el, ticketIds),
+  }));
+}
+
 function createPluginButton(el: PluginUIElement): HTMLElement | null {
   if (el.type !== 'button') return null;
 

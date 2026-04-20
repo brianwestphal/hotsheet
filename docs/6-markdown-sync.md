@@ -59,7 +59,7 @@ Skill installation is checked proactively at multiple points:
 
 #### Claude Code (`.claude/`)
 - Creates skill files in `.claude/skills/`: a main `hotsheet` skill (read worklist and work through items) and per-category ticket creation skills (hs-bug, hs-feature, hs-task, hs-issue, hs-investigation, hs-requirement-change).
-- Configures permissions in `.claude/settings.json` with curl access patterns covering ports 4170-4189.
+- Configures permissions in `.claude/settings.json` with curl access patterns covering ports 4170-4199.
 - Each skill has YAML frontmatter (name, description, allowed-tools).
 
 #### Cursor (`.cursor/`)
@@ -109,4 +109,4 @@ When running multiple Hot Sheet instances, AI tools can accidentally connect to 
 
 ### 6.11 Portability
 
-- Skill files use a port range pattern (4170-4189) rather than a specific port, so they remain valid across port changes.
+- Skill files use a port range pattern (4170-4199) rather than a specific port, so they remain valid across port changes.

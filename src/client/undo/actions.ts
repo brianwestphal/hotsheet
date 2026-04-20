@@ -1,7 +1,8 @@
 import { api } from '../api.js';
-import { refreshDetail } from '../detail.js';
+import { refreshDetail, setSuppressAutoRead } from '../detail.js';
 import type { Ticket } from '../state.js';
-import { loadTickets } from '../ticketList.js';
+import { state } from '../state.js';
+import { loadTickets, renderTicketList } from '../ticketList.js';
 import { undoStack } from './stack.js';
 import type { TicketSnapshot, UndoEntry } from './types.js';
 
@@ -195,4 +196,47 @@ export function canUndo(): boolean {
 
 export function canRedo(): boolean {
   return undoStack.canRedo();
+}
+
+// --- Shared batch operations ---
+
+/** Toggle up-next for the given tickets, reopening completed/verified ones if setting up-next. */
+export async function toggleUpNext(tickets: Ticket[]): Promise<void> {
+  const allUpNext = tickets.every(t => t.up_next);
+  const settingUpNext = !allUpNext;
+  const ids = tickets.map(t => t.id);
+
+  if (settingUpNext) {
+    const doneTickets = tickets.filter(t => t.status === 'completed' || t.status === 'verified');
+    if (doneTickets.length > 0) {
+      await trackedCompoundBatch(tickets, [
+        { ids: doneTickets.map(t => t.id), action: 'status', value: 'not_started' },
+        { ids, action: 'up_next', value: true },
+      ], 'Toggle up next');
+      return;
+    }
+  }
+  await trackedBatch(tickets, { ids, action: 'up_next', value: settingUpNext }, 'Toggle up next');
+}
+
+/** Mark selected tickets as read or unread based on current state.
+ *  Also manages suppressAutoRead so the detail panel doesn't override manual unread. */
+export async function toggleReadState(ticketIds: number[]): Promise<void> {
+  const hasUnread = ticketIds.some(id => {
+    const t = state.tickets.find(tk => tk.id === id);
+    return t != null && t.last_read_at != null && t.updated_at > t.last_read_at;
+  });
+  const affected = state.tickets.filter(t => ticketIds.includes(t.id));
+  if (hasUnread) {
+    setSuppressAutoRead(false);
+    const readAt = new Date().toISOString();
+    for (const t of affected) t.last_read_at = readAt;
+    await trackedBatch(affected, { ids: ticketIds, action: 'mark_read' }, 'Mark as Read');
+  } else {
+    setSuppressAutoRead(true);
+    const epoch = '1970-01-01T00:00:00Z';
+    for (const t of affected) t.last_read_at = epoch;
+    await trackedBatch(affected, { ids: ticketIds, action: 'mark_unread' }, 'Mark as Unread');
+  }
+  renderTicketList();
 }

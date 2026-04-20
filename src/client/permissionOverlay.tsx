@@ -40,6 +40,17 @@ export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof set
         showPermissionOverlay(activePerm, channelBusyTimeout, setChannelBusyTimeoutRef);
       }
 
+      // Auto-dismiss popup if its permission was handled elsewhere
+      if (activePopupRequestId !== null) {
+        const stillPending = Object.values(data.permissions).some(
+          p => p !== null && p.request_id === activePopupRequestId,
+        );
+        if (!stillPending) {
+          document.querySelector('.permission-popup')?.remove();
+          activePopupRequestId = null;
+        }
+      }
+
       // Mark attention dots and show popup for non-active projects with pending permissions
       const pendingSecrets = new Set<string>();
       for (const [secret, perm] of Object.entries(data.permissions)) {
@@ -161,9 +172,14 @@ function showPermissionPopup(
   channelBusyTimeout: ReturnType<typeof setTimeout> | null,
   setChannelBusyTimeoutRef: (t: ReturnType<typeof setTimeout> | null) => void,
 ) {
-  // Don't show if we already have a popup for this request or already responded
+  // Already showing this exact request — no-op
   if (activePopupRequestId === perm.request_id) return;
-  // Remove any existing popup
+  // Already responded to this request
+  if (respondedRequestIds.has(perm.request_id)) return;
+  // Another popup is already showing — don't replace it (prevents bouncing).
+  // The next poll cycle will show this one after the current is dismissed.
+  if (activePopupRequestId !== null) return;
+
   document.querySelector('.permission-popup')?.remove();
   activePopupRequestId = perm.request_id;
 

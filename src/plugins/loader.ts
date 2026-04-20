@@ -7,6 +7,17 @@ import { z } from 'zod';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import type { ConfigLabelColor, HotSheetPlugin, LoadedPlugin, PluginContext, PluginManifest, PluginUIElement, PluginUIRegistration, TicketingBackend } from './types.js';
 
+/** Compare two semver strings numerically. Returns -1, 0, or 1. */
+export function compareSemver(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+  }
+  return 0;
+}
+
 // --- Global plugin registry ---
 
 // UI elements registered by plugins
@@ -251,7 +262,7 @@ export function installBundledPlugins(): void {
       if (installedManifest && bundledManifest) {
         const entryFile = installedManifest.entry ?? 'index.js';
         const entryExists = existsSync(join(targetPath, entryFile));
-        if (entryExists && installedManifest.version >= bundledManifest.version) {
+        if (entryExists && compareSemver(installedManifest.version, bundledManifest.version) >= 0) {
           continue; // Valid install with same or newer version
         }
       }

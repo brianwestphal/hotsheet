@@ -2,7 +2,7 @@
 
 ## 17.1 Overview
 
-Hot Sheet prompts users to share the app after they've used it for a meaningful amount of time. A persistent share button in the toolbar also allows sharing at any time.
+Hot Sheet prompts users to share the app after they've used it for a meaningful amount of time. A persistent share link in the footer status bar also allows sharing at any time.
 
 ## 17.2 Share Link
 

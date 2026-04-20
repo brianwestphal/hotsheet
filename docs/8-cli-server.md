@@ -23,7 +23,7 @@ The application is launched from the command line via the `hotsheet` command (in
 ### 8.3 Port Selection
 
 - Default port: 4174.
-- If the default port is in use, the application automatically tries ports 4174–4193 until an available port is found.
+- If the specified port is in use, the application tries up to 20 consecutive ports starting from the specified port (default 4174, so 4174–4193 by default).
 - If `--strict-port` is set, the application fails with an error instead of trying alternative ports.
 - The actual port is communicated to the UI and used in markdown sync exports.
 
@@ -63,8 +63,13 @@ Project tabs are persisted to `~/.hotsheet/projects.json` and restored on restar
 12. Trigger initial markdown sync.
 13. Generate/update AI tool skill files.
 14. Start the automatic backup scheduler.
-15. Write the instance file (`~/.hotsheet/instance.json`).
-16. Open the browser (unless `--no-open`).
+15. Restore previous projects from `~/.hotsheet/projects.json`.
+16. Migrate global config (one-time migration from DB).
+17. Clean up stale channel servers.
+18. Set up skills and channel config for all projects.
+19. Install Claude Code heartbeat hooks (if channel enabled).
+20. Write the instance file (`~/.hotsheet/instance.json`).
+21. Open the browser (unless `--no-open`).
 
 ### 8.6 HTTP Server
 

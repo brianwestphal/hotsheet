@@ -5,7 +5,7 @@
 Hot Sheet can push events to a running Claude Code session via the Claude Channels protocol (MCP-based). This enables two workflows:
 
 - **On-demand**: User clicks the play button to tell Claude to process the Up Next worklist.
-- **Automatic**: When tickets are added to Up Next, Claude is automatically notified (with a 5-second debounce) to pick up the new work.
+- **Automatic**: When tickets are added to Up Next, Claude is automatically notified (with a debounced delay using exponential backoff) to pick up the new work.
 
 The feature is disabled by default and must be enabled in Settings. It is listed under an "Experimental" heading.
 
@@ -100,7 +100,7 @@ A green play button (Lucide "play" icon) appears in the sidebar above the custom
 
 ### Behavior
 
-- **Single click**: Checks for Up Next items first. If none, shows a yellow warning alert "No Up Next items to process" (auto-dismisses after 4 seconds). If items exist, flushes any pending debounced markdown syncs (worklist.md, open-tickets.md) to ensure files are up to date, then sends a one-time event to Claude. Button pulses briefly.
+- **Single click**: First verifies the channel is connected via `isChannelAlive()`. If disconnected, shows a "Claude is not connected" alert before proceeding. Then checks for Up Next items. If none, shows a yellow warning alert "No Up Next items to process" (auto-dismisses after 4 seconds). If items exist, flushes any pending debounced markdown syncs (worklist.md, open-tickets.md) to ensure files are up to date, then sends a one-time event to Claude. Button pulses briefly.
 - **Double click**: Toggles automatic mode. The play icon swaps to a fast-forward icon.
 - **Single click while in auto mode**: Turns off automatic mode, restores play icon.
 
@@ -109,7 +109,7 @@ A green play button (Lucide "play" icon) appears in the sidebar above the custom
 When automatic mode is active:
 
 1. **Immediate trigger** — When entering automatic mode (double-click), Claude is triggered immediately to process the current Up Next items.
-2. **Up Next watching** — Hot Sheet then monitors for subsequent `up_next` changes on tickets. Each change restarts the debounce.
+2. **Up Next watching** — Hot Sheet then monitors for subsequent `up_next` changes on tickets. Each change restarts the debounce. The initial debounce delay is 5 seconds, but subsequent delays follow the exponential backoff schedule (see below).
 3. **Trigger after debounce** — After the debounce expires, Hot Sheet checks for Up Next items and whether Claude is idle:
    - If Claude is idle and Up Next items exist, a channel event is sent immediately.
    - If Claude is busy, Hot Sheet retries with the current backoff delay until Claude becomes idle, then triggers.
@@ -145,6 +145,18 @@ Claude communicates back using:
 - When Claude calls `/api/channel/done`, the status changes to "✓ Claude idle" (auto-hides after 5 seconds).
 - The done flag is consumed on read (one-shot) and reset on each new trigger.
 - A 60-second timeout fallback clears the busy state if Claude never signals completion.
+
+### Heartbeat-Based Busy/Idle Detection
+
+Claude Code hooks are installed in `~/.claude/settings.json` when the channel is enabled to provide real-time busy/idle detection:
+
+- **PostToolUse** hook sends a "heartbeat" state signal
+- **UserPromptSubmit** hook sends a "busy" signal
+- **Stop** hook sends an "idle" signal
+
+Each heartbeat or busy signal extends a 30-second sliding timer per project. If no heartbeat is received within 30 seconds, the project is automatically marked idle. The Stop hook immediately clears the busy state without waiting for the timer.
+
+Hooks are installed and updated by `installHeartbeatHook()` during server startup and when the channel is enabled via settings.
 
 ## 12.10 Permission Relay
 
@@ -227,5 +239,4 @@ Prompt: `Make a commit message for the recently completed tickets, without wrapp
 ## 12.13 Requirements
 
 - Claude Code v2.1.80+ with claude.ai login
-- During research preview: `--dangerously-load-development-channels server:hotsheet-channel` flag
 - `@modelcontextprotocol/sdk` npm package (dependency of the channel server)

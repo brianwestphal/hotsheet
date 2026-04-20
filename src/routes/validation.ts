@@ -142,6 +142,42 @@ export const GlobalConfigSchema = z.object({
   shareAccepted: z.boolean().optional(),
 }).strict();
 
+// --- Plugin routes ---
+
+export const PluginActionSchema = z.object({
+  actionId: z.string(),
+  ticketIds: z.array(z.number().int()).optional(),
+  value: z.unknown().optional(),
+});
+
+export const PluginValidateSchema = z.object({
+  key: z.string(),
+  value: z.string(),
+});
+
+export const PluginSyncScheduleSchema = z.object({
+  interval_minutes: z.number().nullable(),
+});
+
+export const PluginConflictResolveSchema = z.object({
+  plugin_id: z.string().min(1, 'plugin_id is required'),
+  resolution: z.enum(['keep_local', 'keep_remote']),
+});
+
+export const PluginInstallSchema = z.object({
+  path: z.string().min(1, 'path is required'),
+});
+
+export const PluginGlobalConfigSchema = z.object({
+  key: z.string().min(1, 'key is required'),
+  value: z.string(),
+});
+
+export const ChannelHeartbeatSchema = z.object({
+  projectDir: z.string().optional(),
+  state: z.enum(['busy', 'idle', 'heartbeat']).optional(),
+});
+
 // --- Helper ---
 
 /** Parse request body with a Zod schema, returning 400 on validation failure. */

@@ -23,6 +23,8 @@ This per-key granularity allows individual secrets to be managed independently (
 
 ## 20.4 Tauri Integration
 
+> **Note:** The Tauri Rust keychain design described in this section (§20.4.1–20.4.3) was considered but not implemented. The actual approach uses Node.js platform commands (`security` on macOS, `secret-tool` on Linux) and is described in §20.8.
+
 ### 20.4.1 Rust Side
 
 Add the `keyring` crate to `src-tauri/Cargo.toml`:
@@ -95,5 +97,5 @@ On first read of a `secret: true` preference:
 
 1. **Platform commands, not native deps**: uses `security` on macOS and `secret-tool` on Linux via `execFile`. Zero native Node dependencies — no `node-gyp`, no `keytar`, no build issues. Works in both Tauri sidecar and standalone CLI.
 2. **File kept after migration**: the plain-text value is NOT removed from `plugin-config.json` after keychain migration. Both stores are written on every set (dual-write). This prioritizes reliability over maximum security — the keychain is checked first on read, so the file value is only used as fallback.
-3. **Global-scoped secrets only**: only global-scoped preferences with `secret: true` use the keychain (that's where PATs live). Project-scoped secrets remain in PGLite only.
+3. **All secret preferences**: all preferences with `secret: true` use the keychain, regardless of scope. The keychain is checked first on read; file/DB serves as fallback.
 4. **Implemented in**: `src/keychain.ts` (platform abstraction), `src/plugins/loader.ts` (getSetting/setSetting integration), `src/routes/plugins.ts` (global-config GET/POST routes).

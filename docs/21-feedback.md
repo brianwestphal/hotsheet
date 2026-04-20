@@ -49,12 +49,12 @@ AI tools and automated workflows can request user feedback by adding notes with 
 - The dot clears when all feedback notes in the project are resolved (responded to, or "No Response Needed" added).
 - Priority order for tab dots: feedback (purple) > permissions attention (blue) > channel busy (yellow).
 
-### 21.6 Channel Notification
+### 21.7 Channel Notification
 
 - When the user submits feedback and the Claude Channel is alive, `triggerChannelAndMarkBusy` is called with a message: `"Feedback was provided on ticket {ticketNumber}. Please re-read the worklist and continue work on this ticket."`
 - This re-triggers the AI to process the updated ticket.
 
-### 21.7 AI Tool Integration
+### 21.8 AI Tool Integration
 
 - The worklist.md includes a "Requesting User Feedback" section with curl examples for both standard and immediate feedback.
 - AI tool skill version is bumped so the skills regenerate with the new instructions.
@@ -62,7 +62,7 @@ AI tools and automated workflows can request user feedback by adding notes with 
 
 ## Non-Functional Requirements
 
-### 21.8 Implementation
+### 21.9 Implementation
 
 - Core module: `src/client/feedbackDialog.tsx` — parsing, dialog rendering, channel notification
 - Note rendering: `src/client/noteRenderer.tsx` — "Provide Feedback" link

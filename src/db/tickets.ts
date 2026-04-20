@@ -2,6 +2,11 @@ import type { Ticket, TicketCategory, TicketFilters, TicketPriority, TicketStatu
 import { getDb } from './connection.js';
 import { generateNoteId, parseNotes } from './notes.js';
 
+/** Escape SQL ILIKE wildcard characters so they match literally. */
+function escapeIlike(value: string): string {
+  return value.replace(/[%_\\]/g, '\\$&');
+}
+
 // --- Ticket number ---
 
 export async function nextTicketNumber(prefix = 'HS'): Promise<string> {
@@ -183,7 +188,7 @@ function buildTicketWhereClause(filters: TicketFilters): { where: string; values
 
   if (filters.search !== undefined && filters.search !== '') {
     conditions.push(`(title ILIKE $${paramIdx} OR details ILIKE $${paramIdx} OR ticket_number ILIKE $${paramIdx} OR tags ILIKE $${paramIdx})`);
-    values.push(`%${filters.search}%`);
+    values.push(`%${escapeIlike(filters.search)}%`);
     paramIdx++;
   }
 
@@ -383,12 +388,12 @@ export async function queryTickets(
         break;
       case 'contains':
         userWhere.push(`${field} ILIKE $${paramIdx}`);
-        values.push(`%${cond.value}%`);
+        values.push(`%${escapeIlike(cond.value)}%`);
         paramIdx++;
         break;
       case 'not_contains':
         userWhere.push(`${field} NOT ILIKE $${paramIdx}`);
-        values.push(`%${cond.value}%`);
+        values.push(`%${escapeIlike(cond.value)}%`);
         paramIdx++;
         break;
     }

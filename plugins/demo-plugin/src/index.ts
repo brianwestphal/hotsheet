@@ -191,7 +191,12 @@ export async function onAction(actionId: string, _actionContext: { ticketIds?: n
 
   if (actionId === 'sidebar_top_click') {
     context.log('info', 'Sidebar top button clicked');
-    return { message: 'Sidebar action executed' };
+    return { message: 'Sidebar top action executed' };
+  }
+
+  if (actionId === 'sidebar_bottom_click') {
+    context.log('info', 'Sidebar bottom button clicked');
+    return { message: 'Sidebar bottom action executed' };
   }
 
   if (actionId === 'batch_click') {

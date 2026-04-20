@@ -329,7 +329,7 @@ Plugins can register custom UI elements rendered at predefined locations.
 | `batch_menu` | Selection | Batch toolbar "..." menu |
 | `context_menu` | Selection | Right-click ticket context menu |
 
-All 8 locations are wired up in the client: toolbar buttons render in the header, status_bar and sidebar elements render via `refreshPluginUI()` on init and enable/disable, detail_top/detail_bottom render per-ticket in `loadDetail()`, context_menu items are injected into the right-click menu, and batch_menu items appear in the batch "..." menu. Toolbar buttons show icon only; all other locations show icon + label.
+All 8 locations are wired up in the client: toolbar buttons render in the header, status_bar and sidebar elements render via `refreshPluginUI()` on init and enable/disable, detail_top/detail_bottom render per-ticket in `loadDetail()`, context_menu items are injected into the right-click menu, batch_menu items appear in the batch "..." dropdown when tickets are selected. Toolbar buttons show icon only; all other locations show icon + label.
 
 **Element types:** `button` and `link` are rendered. `toggle`, `switch`, and `segmented_control` are declared in the type system but not yet rendered by the client.
 
@@ -360,7 +360,7 @@ Plugin functionality is controlled by the `PLUGINS_ENABLED` build-time flag, **e
 ### 18.15 Security
 
 - Plugin entry points are loaded via dynamic `import()`. Plugins run in the same Node.js process with full access.
-- Secret preferences (API tokens) are stored in the global config file or project settings table. The UI masks secret values.
+- Secret preferences (API tokens) are stored in the OS keychain as the primary store (macOS Keychain / Linux Secret Service), with fallback to the global config file or project settings table when the keychain is unavailable. See [20-secure-storage.md](20-secure-storage.md) for details. The UI masks secret values.
 - Plugin configuration is per-project — a plugin enabled for one project doesn't automatically have access to another project's data.
 
 ### 18.16 Error Handling

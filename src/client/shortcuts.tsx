@@ -6,7 +6,7 @@ import { closeActiveTab, switchTabByOffset } from './projectTabs.js';
 import { state } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { cancelPendingSave, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
-import { performRedo, performUndo, trackedBatch, trackedCompoundBatch } from './undo/actions.js';
+import { performRedo, performUndo, toggleUpNext, trackedBatch, trackedCompoundBatch } from './undo/actions.js';
 
 let detailSaveTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -166,24 +166,7 @@ export function bindKeyboardShortcuts() {
       if (state.selectedIds.size > 0) {
         e.preventDefault();
         const selectedTickets = state.tickets.filter(t => state.selectedIds.has(t.id));
-        const allUpNext = selectedTickets.every(t => t.up_next);
-        const settingUpNext = !allUpNext;
-        const ids = Array.from(state.selectedIds);
-        if (settingUpNext) {
-          const doneTickets = selectedTickets.filter(t => t.status === 'completed' || t.status === 'verified');
-          if (doneTickets.length > 0) {
-            void trackedCompoundBatch(selectedTickets, [
-              { ids: doneTickets.map(t => t.id), action: 'status', value: 'not_started' },
-              { ids, action: 'up_next', value: true },
-            ], 'Toggle up next').then(() => void loadTickets());
-            return;
-          }
-        }
-        void trackedBatch(
-          selectedTickets,
-          { ids, action: 'up_next', value: settingUpNext },
-          'Toggle up next',
-        ).then(() => void loadTickets());
+        void toggleUpNext(selectedTickets).then(() => void loadTickets());
       }
       return;
     }
