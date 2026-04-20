@@ -36,6 +36,7 @@
     "test:watch": "vitest",
     "test:fast": "vitest run && playwright test --grep-invert 'live integration|GitHub credentials|GITHUB_PLUGIN|hasGithubCreds|ATTACHMENT_REPO|PLUGINS_ENABLED'",
     "test:all": "bash scripts/test-all.sh",
+    "test:all-including-plugins": "bash scripts/test-all-with-plugins.sh",
     "test:e2e": "playwright test",
     "test:e2e:fast": "playwright test --grep-invert 'live integration|GitHub credentials|GITHUB_PLUGIN|hasGithubCreds|ATTACHMENT_REPO|PLUGINS_ENABLED'",
     "test:e2e:ui": "playwright test --ui",
