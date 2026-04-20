@@ -16,6 +16,7 @@ function getClaudeSettingsPath(): string {
 }
 
 interface HookEntry {
+  '//'?: string;
   type: string;
   command: string;
   timeout?: number;
@@ -88,7 +89,7 @@ export function installHeartbeatHook(port: number): void {
   for (const def of hookDefs) {
     if (!Array.isArray(settings.hooks[def.event])) settings.hooks[def.event] = [];
     (settings.hooks[def.event]).push({
-      hooks: [{ type: 'command', command: makeCommand(port, def.state), timeout: 5 }],
+      hooks: [{ '//': 'Hot Sheet', type: 'command', command: makeCommand(port, def.state), timeout: 5 }],
     });
   }
 
@@ -110,6 +111,10 @@ function updateHeartbeatHookPort(port: number): void {
           const updated = hook.command.replace(/localhost:\d+/, `localhost:${port}`);
           if (updated !== hook.command) {
             hook.command = updated;
+            changed = true;
+          }
+          if (hook['//'] === undefined) {
+            hook['//'] = 'Hot Sheet';
             changed = true;
           }
         }
