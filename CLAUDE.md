@@ -165,15 +165,32 @@ The `docs/` folder contains numbered requirements documents that describe the ap
   10. `10-desktop-app.md` — Tauri wrapper, updater, CLI installer
   12. `12-claude-channel.md` — Claude Channel integration, play button, auto mode
   13. `13-app-icon.md` — Dynamic app icon variants, settings UI, cross-platform switching
+  14. `14-commands-log.md` — Log viewer for Claude channel + shell command history
   15. `15-shell-commands.md` — Shell command targets for custom commands, execution API
   16. `16-command-groups.md` — Custom command groups, collapsible sidebar, outline settings editor
   17. `17-share.md` — Share prompt, toolbar button, timing criteria
   18. `18-plugins.md` — Plugin system, sync engine, UI extensions, conflict resolution
   19. `19-demo-plugin.md` — Demo plugin: exercises all plugin features (settings types, UI locations, labels, validation)
+  20. `20-secure-storage.md` — Keychain integration for plugin secrets with file/DB fallback
   21. `21-feedback.md` — Feedback needed notes, dialog, auto-select, channel notification, tab indicator
+- `docs/tauri-architecture.md` — Tauri v2 sidecar model, launch flows, CLI launchers, build pipeline, CI/CD signing
+- `docs/tauri-setup.md` — Tauri build prerequisites, updater signing keys, macOS code signing, release workflow
 - `docs/plugin-development-guide.md` — AI-focused guide for building plugins (ticketing backends and non-ticketing plugins). **Keep this guide up to date** whenever the plugin system changes — new interfaces, new manifest fields, new PluginContext methods, new UI extension points, or changes to the sync engine behavior. An AI reading this guide should be able to build a working plugin without looking at the source code.
 - **Section numbering** — each document uses `N.X` section numbers matching its file number (e.g., `3-ticket-management.md` uses §3.1, §3.2, etc.)
 - **Cross-references** — use relative markdown links between docs (e.g., `[3-ticket-management.md](3-ticket-management.md) §3.7`)
+
+### AI Summaries (`docs/ai/`)
+
+Two synthesis docs live under `docs/ai/` — read them at the start of a fresh session to orient quickly without opening every file. **These are maintained docs, not scratchpads** — keep them in sync with reality.
+
+- `docs/ai/code-summary.md` — codebase map (directory tree, API routes, DB schema, client bundle, plugin system, channel/Tauri, build, tests, settings, a "where do I look for X" reverse index).
+- `docs/ai/requirements-summary.md` — synthesized view of every requirements doc with per-entry status markers (Shipped / Partial / Design only / Deferred) and an at-a-glance implementation dashboard.
+
+**Update `docs/ai/code-summary.md` in the same change whenever** you: (1) add a file or subdirectory under `src/`, (2) add a route file or endpoint, (3) change the DB schema (`CREATE TABLE` / `ALTER TABLE` in `src/db/connection.ts`), (4) add a new command-log event type or channel endpoint (remember to bump `CHANNEL_VERSION` + `EXPECTED_CHANNEL_VERSION`), (5) add a client module under `src/client/`, (6) add a tsup bundle output, (7) add/change a plugin UI location, preference type, or `TicketingBackend` method, (8) add a Tauri `#[tauri::command]`, (9) add a new `.hotsheet/` or `~/.hotsheet/` file, (10) add a user- or plugin-facing setting key. See §17 of the code summary for the full trigger list.
+
+**Update `docs/ai/requirements-summary.md` in the same change whenever** you: (1) add a new requirements doc under `docs/` (also add it to the Reading order above), (2) ship a Design-only feature or defer/regress a Shipped one (update both the entry and the dashboard in §14), (3) supersede or rename a doc, (4) add a significant new sub-phase or feature to an existing doc. See §15 of the requirements summary for the full trigger list.
+
+Prefer small, targeted edits to either file over rewrites — they only earn their keep if they stay approachable. If the AI summary ever conflicts with the source doc or code, treat the source as authoritative and update the summary.
 
 ### Code Organization
 
