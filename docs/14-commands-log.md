@@ -30,15 +30,16 @@ Indexed on `created_at` for efficient newest-first queries.
 
 ## 14.4 UI — Log Button
 
-A panel icon button in the footer toolbar (far right, before the channel status indicator). Shows an accent-colored dot indicator when new entries arrive while the panel is closed. The dot resets when the panel is opened.
+A panel icon button in the footer toolbar (far right, before the channel status indicator) is the single toggle for the drawer — clicking it opens the drawer when closed, and closes it when open. Shows an accent-colored dot indicator when new entries arrive while the panel is closed; the dot resets when the panel is opened. When the drawer is open the icon rotates 180° to indicate "close / push down", and the tooltip changes to "Close Commands Log".
 
 ## 14.5 UI — Log Panel
 
 A resizable panel at the bottom of the app:
 
-- **Position**: Fixed at the bottom, full width, covers other UI elements (z-index above content)
-- **Default height**: 300px, resizable via drag handle at the top (min 150px, max 600px)
-- **Header bar**: Title "Commands Log", search input (debounced 300ms), multi-select filter dropdown with checkboxes and Select All/Deselect All toggle (client-side filtering), clear button (trash icon), minimize button (panel-minimize icon)
+- **Position**: In-flow between the main content area and the footer — opening the panel shrinks the main content (ticket list / column view / detail panel) to make room. The panel never overlays the ticket list.
+- **Stacking with bottom-docked detail panel**: When the detail panel is docked to the bottom (`detail_position = "bottom"`), the stack from top to bottom is: main ticket area → detail panel → commands log panel → footer. None of these overlap.
+- **Default height**: 300px, resizable via drag handle at the top (min 150px, max 600px). The main content area has `min-height: 0` / `overflow: hidden` so it remains scrollable at all drawer heights.
+- **Header bar**: Title "Commands Log", search input (debounced 300ms), multi-select filter dropdown with checkboxes and Select All/Deselect All toggle (client-side filtering), clear button (trash icon). No separate close button inside the drawer — see §14.4.
 - **Entry list**: Scrollable, newest first
 
 ### Log Entry Display

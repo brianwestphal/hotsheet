@@ -212,7 +212,7 @@ Adds a second tab to the footer drawer (alongside Commands Log) hosting an inter
 
 **Out of scope:** multiple concurrent terminals per project, per-window private terminals, session recording, SSH / remote targets, split panes. Cross-refs: §4 (drawer layout), §12 (channel gates command substitution), §14 (other drawer tab), §15 (one-shot shell stays separate).
 
-**Status:** Design only. Tickets: HS-6261 (this doc), HS-6262 (drawer push-up layout).
+**Status:** Partial — the prerequisite drawer push-up layout (HS-6262) has shipped; terminal implementation is still pending. Tickets: HS-6261 (this doc, shipped), HS-6262 (drawer push-up, shipped), HS-6263–HS-6270 (terminal implementation slices).
 
 ---
 
@@ -321,7 +321,7 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 19 — demo plugin | Shipped | — |
 | 20 — secure storage | Partial | Windows Credential Manager not implemented |
 | 21 — feedback | Shipped | — |
-| 22 — terminal | Design only | entire feature (HS-6261 req doc, HS-6262 drawer push-up prerequisite) |
+| 22 — terminal | Partial | drawer push-up (HS-6262) shipped; terminal implementation pending (HS-6263…HS-6270) |
 | tauri-architecture | Shipped | — |
 | tauri-setup | Shipped | — |
 | plugin-development-guide | Shipped (living doc) | — |

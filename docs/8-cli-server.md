@@ -14,6 +14,7 @@ The application is launched from the command line via the `hotsheet` command (in
 | `--data-dir <path>` | Store data in a custom directory (default: `.hotsheet/`) |
 | `--no-open` | Don't open the browser on startup (used by Tauri sidecar) |
 | `--strict-port` | Fail if the specified port is already in use (used by Tauri dev) |
+| `--replace` | Shut down any running Hot Sheet instance before starting a fresh one (used by `npm run tauri:dev`; see §8.4) |
 | `--close` | Unregister the current project from the running instance and exit |
 | `--list` | List all projects registered with the running instance and exit |
 | `--check-for-updates` | Check the npm registry for a newer version immediately |
@@ -37,6 +38,7 @@ Only one Hot Sheet server runs at a time. Subsequent invocations from other proj
 - **On server exit** (SIGTERM/SIGINT/exit): the instance file is removed if the PID matches.
 - **`--close`**: reads the instance file, finds the project's secret from its `settings.json`, and calls `DELETE /api/projects/:secret` to unregister the project. Cannot unregister the last remaining project.
 - **`--list`**: reads the instance file and calls `GET /api/projects` to display all registered projects with their ticket counts.
+- **`--replace`**: if a running instance is detected, `POST /api/shutdown` to it (localhost same-origin mutation exemption, so no secret is required), poll the port until it stops responding (10 s timeout), then fall through to fresh startup. If no running instance is found, behaves identically to normal startup. The Tauri dev build (`cfg(debug_assertions)`) passes this flag automatically so `npm run tauri:dev` always starts a clean server instead of joining an existing one.
 - **Demo mode** skips instance detection entirely and always starts a fresh server.
 
 ### 8.4.1 Request Routing via AsyncLocalStorage

@@ -357,10 +357,18 @@ async function loadEntries() {
 
 // --- Panel open/close ---
 
+function updateToggleIcon(isOpen: boolean) {
+  const btn = document.getElementById('command-log-btn');
+  if (!btn) return;
+  btn.classList.toggle('is-open', isOpen);
+  btn.setAttribute('title', isOpen ? 'Close Commands Log' : 'Commands Log');
+}
+
 function openPanel() {
   const panel = document.getElementById('command-log-panel')!;
   panel.style.display = '';
   panelOpen = true;
+  updateToggleIcon(true);
   void loadEntries();
   startPolling();
   // Mark all as seen
@@ -400,6 +408,7 @@ function closePanel() {
   const panel = document.getElementById('command-log-panel')!;
   panel.style.display = 'none';
   panelOpen = false;
+  updateToggleIcon(false);
   stopPolling();
   dismissContextMenu();
   dismissFilterDropdown();
@@ -462,17 +471,22 @@ function initResize() {
   const handle = document.getElementById('command-log-resize')!;
   const panel = document.getElementById('command-log-panel')!;
   let isResizing = false;
+  let startY = 0;
+  let startHeight = 0;
 
   handle.addEventListener('mousedown', (e) => {
     e.preventDefault();
     isResizing = true;
+    startY = e.clientY;
+    startHeight = panel.getBoundingClientRect().height;
     document.body.style.cursor = 'row-resize';
     document.body.style.userSelect = 'none';
   });
 
   document.addEventListener('mousemove', (e) => {
     if (!isResizing) return;
-    const newHeight = Math.max(150, Math.min(600, window.innerHeight - e.clientY));
+    const delta = e.clientY - startY;
+    const newHeight = Math.max(150, Math.min(600, startHeight - delta));
     panel.style.height = `${newHeight}px`;
   });
 
@@ -509,11 +523,8 @@ async function clearLogEntries() {
 
 /** Initialize the command log panel. Call from app.tsx init(). */
 export function initCommandLog() {
-  // Button click
+  // Button click — toggles drawer open/closed
   document.getElementById('command-log-btn')?.addEventListener('click', togglePanel);
-
-  // Close button
-  document.getElementById('command-log-close')?.addEventListener('click', closePanel);
 
   // Clear button
   document.getElementById('command-log-clear')?.addEventListener('click', () => { void clearLogEntries(); });

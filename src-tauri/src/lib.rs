@@ -921,12 +921,15 @@ pub fn run() {
                     .expect("main window not found");
 
                 let app_args: Vec<String> = std::env::args().collect();
+                // Dev builds always start a clean server: if a prior instance is running,
+                // --replace tells the CLI to shut it down before starting.
                 let mut server_args = vec![
                     "tsx".to_string(),
                     "--tsconfig".to_string(),
                     "tsconfig.json".to_string(),
                     "src/cli.ts".to_string(),
                     "--no-open".to_string(),
+                    "--replace".to_string(),
                 ];
                 if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
                     if let Some(dir) = app_args.get(i + 1) {

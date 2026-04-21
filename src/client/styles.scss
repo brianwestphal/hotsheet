@@ -4340,6 +4340,15 @@ input, select, textarea {
     color: var(--text);
     background: var(--bg-hover);
   }
+
+  .icon-close { display: none; }
+
+  &.is-open {
+    color: var(--text);
+
+    .icon-open { display: none; }
+    .icon-close { display: inline; }
+  }
 }
 
 .command-log-badge {
@@ -4356,17 +4365,13 @@ input, select, textarea {
 }
 
 .command-log-panel {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
   height: 300px;
+  flex-shrink: 0;
   background: var(--bg);
   border-top: 1px solid var(--border);
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
-  z-index: 500;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .command-log-resize-handle {

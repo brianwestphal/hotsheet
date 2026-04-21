@@ -34,6 +34,7 @@ Options:
   --data-dir <path>        Store data in an alternative location (default: .hotsheet/)
   --no-open                Don't open the browser on startup
   --strict-port            Fail if the requested port is in use (don't auto-select)
+  --replace                Shut down any running Hot Sheet instance before starting
   --close                  Unregister the current project from the running instance
   --list                   List all projects registered with the running instance
   --check-for-updates      Check for new versions now
@@ -45,6 +46,7 @@ Examples:
   hotsheet --data-dir ~/my-project/.hotsheet
   hotsheet --list
   hotsheet --close
+  hotsheet --replace
 `);
 }
 
@@ -55,6 +57,7 @@ interface ParsedArgs {
   forceUpdateCheck: boolean;
   noOpen: boolean;
   strictPort: boolean;
+  replace: boolean;
   close: boolean;
   list: boolean;
 }
@@ -67,6 +70,7 @@ function parseArgs(argv: string[]): ParsedArgs | null {
   let forceUpdateCheck = false;
   let noOpen = false;
   let strictPort = false;
+  let replace = false;
   let close = false;
   let list = false;
 
@@ -105,6 +109,9 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       case '--strict-port':
         strictPort = true;
         break;
+      case '--replace':
+        replace = true;
+        break;
       case '--close':
         close = true;
         break;
@@ -118,7 +125,32 @@ function parseArgs(argv: string[]): ParsedArgs | null {
     }
   }
 
-  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort, close, list };
+  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort, replace, close, list };
+}
+
+/**
+ * Shut down any running Hot Sheet instance and wait for its port to become free.
+ * Used by --replace. No-op if no instance is running.
+ */
+async function shutdownRunningInstance(instancePort: number): Promise<void> {
+  try {
+    // Origin header bypasses the secret-mutation guard (same-origin localhost exemption).
+    await fetch(`http://localhost:${instancePort}/api/shutdown`, {
+      method: 'POST',
+      headers: { 'Origin': `http://localhost:${instancePort}` },
+    });
+  } catch {
+    // Connection error means the server is already gone — fine.
+    return;
+  }
+
+  // Poll until the port stops responding (server has ~500ms between response and exit).
+  const deadlineMs = Date.now() + 10_000;
+  while (Date.now() < deadlineMs) {
+    await new Promise(resolve => setTimeout(resolve, 200));
+    if (!(await isInstanceRunning(instancePort))) return;
+  }
+  throw new Error(`Running Hot Sheet instance on port ${instancePort} did not exit within 10s`);
 }
 
 /**
@@ -461,7 +493,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { port, demo, forceUpdateCheck, noOpen, strictPort } = parsed;
+  const { port, demo, forceUpdateCheck, noOpen, strictPort, replace } = parsed;
   let { dataDir } = parsed;
 
   console.error(`[startup ${elapsed()}] parsed args`);
@@ -499,7 +531,12 @@ async function main() {
       console.error(`[startup ${elapsed()}] checking if instance on port ${instance.port} is running...`);
       const running = await isInstanceRunning(instance.port);
       console.error(`[startup ${elapsed()}] instance check: running=${running}`);
-      if (running) {
+      if (running && replace) {
+        console.error(`[startup ${elapsed()}] --replace: shutting down instance on port ${instance.port}...`);
+        await shutdownRunningInstance(instance.port);
+        console.error(`[startup ${elapsed()}] --replace: previous instance shut down`);
+        // Fall through to fresh startup below.
+      } else if (running) {
         // Ensure Claude Code hooks are installed even when joining an existing instance,
         // since hook installation normally only happens during primary startup.
         await ensureHooksForRunningInstance(instance.port);
