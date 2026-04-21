@@ -121,7 +121,9 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 
 **Settings / backups / icons:** `settingsDialog.tsx`, `settingsLoader.tsx`, `settingsCategories.tsx`, `experimentalSettings.tsx`, `iconPicker.tsx`, `backups.tsx`, `openFolder.tsx`.
 
-**Channel / commands / feedback:** `channelUI.tsx`, `permissionOverlay.tsx`, `commandLog.tsx`, `commandLogFilter.tsx`, `commandSidebar.tsx`, `commandEditor.tsx`, `feedbackDialog.tsx`.
+**Channel / commands / feedback:** `channelUI.tsx`, `permissionOverlay.tsx`, `commandLog.tsx` (drawer shell, delegates `terminal:<id>` tabs), `commandLogFilter.tsx`, `commandSidebar.tsx`, `commandEditor.tsx`, `feedbackDialog.tsx`.
+
+**Embedded terminal:** `terminal.tsx` (per-terminal tab state, xterm mount, WebSocket, stop/start power button), `terminalsSettings.tsx` (settings outline list + edit modal for configured default terminals).
 
 **Plugins:** `pluginSettings.tsx`, `pluginConfigDialog.tsx`, `pluginUI.tsx`.
 
@@ -133,10 +135,17 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 
 **Assets:** `assets/` — app icon PNGs (`icon-default.png`, `icon-variant-1..9.png`, plus `glassbox-icon.png`).
 
-### `src/plugins/`, `src/sync/`, `src/components/`, `src/utils/`
+### `src/plugins/`, `src/sync/`, `src/terminals/`, `src/components/`, `src/utils/`
 
 - `plugins/{types.ts,loader.ts,syncEngine.ts}` — plugin API types, discovery/activation, bi-directional sync.
 - `sync/markdown.ts` — debounced export of `worklist.md` / `open-tickets.md`.
+- `terminals/` — embedded terminal backend (see `docs/22-terminal.md`):
+  - `config.ts` — `TerminalConfig` type, `listTerminalConfigs` (reads `settings.terminals`, migrates legacy `terminal_command`/`terminal_cwd`), `findTerminalConfig`.
+  - `resolveCommand.ts` — resolves the chosen terminal's command template (`{{claudeCommand}}` substitution) + cwd; accepts optional `terminalId` and a `configOverride` for dynamic terminals.
+  - `ringBuffer.ts` — FIFO byte buffer capped at a max size for scrollback.
+  - `registry.ts` — `TerminalRegistry` keyed by `${secret}::${terminalId}`; lazy node-pty spawn, subscriber broadcast, restart / kill / destroy lifecycle, `listProjectTerminalIds`, `destroyProjectTerminals`. `setPtyFactory` for tests.
+  - `websocket.ts` — `wireTerminalWebSocket(httpServer)` attaches a `ws.Server` (noServer mode) to the Node HTTP server; authenticates upgrade by project secret and parses `?terminal=<id>`; bridges ws ⇄ registry per terminalId.
+  - Registered HTTP routes live in `src/routes/terminal.ts` (`/api/terminal/list`, `/status`, `/restart`, `/kill`, `/create`, `/destroy`). WebSocket endpoint is `/api/terminal/ws?project=<secret>&terminal=<id>`.
 - `components/layout.tsx` — the server HTML shell.
 - `utils/{escapeHtml.ts, errorMessage.ts}` — small shared helpers.
 
@@ -169,6 +178,8 @@ All API calls require header `X-Hotsheet-Secret: <settings.secret>` for non-loca
 **Command log:** `GET|DELETE /api/command-log`, `GET /api/command-log/count`.
 
 **Shell:** `POST /api/shell/exec`, `POST /api/shell/kill`, `GET /api/shell/running`.
+
+**Terminal:** `GET /api/terminal/list`, `GET /api/terminal/status`, `POST /api/terminal/restart`, `POST /api/terminal/kill` (body `{ signal?, terminalId? }`), `POST /api/terminal/create`, `POST /api/terminal/destroy`. WebSocket upgrade at `/api/terminal/ws?project=<secret>&terminal=<id>`.
 
 **Plugins:** `GET /api/plugins`, `GET /api/plugins/ui`, `POST /api/plugins/:id/{action,validate,config,test}`, `PATCH /api/plugins/:id/config`, `POST /api/plugins/sync/manual`, `GET /api/plugins/:id/conflicts`, `POST /api/plugins/:id/conflicts/:cid/resolve`, `PATCH /api/plugins/global-config`, `GET|POST|DELETE /api/plugins/schedules[...]`, `POST /api/plugins/bundled/:id/install`, `GET /api/plugins/:id/image-proxy`.
 

@@ -206,13 +206,13 @@ Bundled plugin that exercises every surface of the plugin API. Not connected to 
 
 ---
 
-## 22. Embedded terminal (`22-terminal.md`) — Design only
+## 22. Embedded terminal (`22-terminal.md`)
 
-Adds a second tab to the footer drawer (alongside Commands Log) hosting an interactive xterm.js terminal wired to a per-project PTY on the server. One terminal per project, server-owned so it survives drawer close / tab switch / browser reload / multi-window attach (tmux-like — multiple windows share the same session). Spawns lazily on first Terminal-tab open; scrollback kept in a 1 MiB (configurable) ring buffer on the server for reattach replay. Default command is a template `terminal_command` setting; `{{claudeCommand}}` resolves to `claude --dangerously-load-development-channels server:hotsheet-channel` when `channelEnabled` is true, else `claude`, else the user's shell. Transport is WebSocket (requires attaching `ws` to the underlying Node server since `@hono/node-server` doesn't ship WS upgrade); native dep is `node-pty` (first non-WASM native addon — adds work to the Tauri sidecar build). Prerequisite UI change: drawer must push the main UI up instead of overlaying (HS-6262) — tracked as a separate ticket but required for this feature to be usable.
+Adds Terminal tabs to the footer drawer (alongside Commands Log) hosting interactive xterm.js terminals wired to per-project PTYs on the server. Each project can run **multiple terminals**: (a) configured default terminals persisted in `settings.terminals` (editable outline list in Settings → Experimental), and (b) dynamic terminals created ad-hoc via a **+** button in the drawer tab strip and closed via an **×** button on the tab. Registry keys sessions by `${secret}::${terminalId}` so multiple terminals coexist. Terminals are server-owned so they survive drawer close / tab switch / browser reload / multi-window attach (tmux-like — multiple windows share the same session per terminal). Spawn is lazy (on first attach); scrollback kept in a 1 MiB (configurable) ring buffer on the server for reattach replay. Default command is a template `command` field per-terminal; `{{claudeCommand}}` resolves to `claude --dangerously-load-development-channels server:hotsheet-channel` when `channelEnabled` is true, else `claude`, else the user's shell. Power toggle (Stop/Start) replaces the earlier Restart button: first click sends SIGTERM, a latched second click prompts before escalating to SIGKILL, Start spawns a fresh PTY. Transport is WebSocket (`/api/terminal/ws?project=<secret>&terminal=<id>`); native dep is `node-pty` (first non-WASM native addon). Drawer-layout prerequisite (push-up, HS-6262) was delivered separately.
 
-**Out of scope:** multiple concurrent terminals per project, per-window private terminals, session recording, SSH / remote targets, split panes. Cross-refs: §4 (drawer layout), §12 (channel gates command substitution), §14 (other drawer tab), §15 (one-shot shell stays separate).
+**Out of scope:** per-window private terminals, session recording, SSH / remote targets, split panes, eager-spawn for non-lazy terminals (the `lazy` flag is persisted but behavior today is always lazy — see §22.14). Cross-refs: §4 (drawer layout), §12 (channel gates command substitution), §14 (Commands Log tab sits next to them), §15 (one-shot shell stays separate).
 
-**Status:** Partial — the prerequisite drawer push-up layout (HS-6262) has shipped; terminal implementation is still pending. Tickets: HS-6261 (this doc, shipped), HS-6262 (drawer push-up, shipped), HS-6263–HS-6270 (terminal implementation slices).
+**Status:** Shipped — full v1 end-to-end plus HS-6271 (configurable multi-terminal defaults) and HS-6306 (dynamic + button). Also HS-6304 (stop/start power button), HS-6305 (trash icon for clear), HS-6308 (no black strip below the xterm grid). Installed deps: `node-pty` (prod), `ws` (prod + @types/ws dev), `@xterm/xterm` + `@xterm/addon-fit` + `@xterm/addon-web-links` + `@xterm/addon-serialize` (prod). Server side: `src/terminals/{config,ringBuffer,resolveCommand,registry,websocket}.ts` + `src/routes/terminal.ts`; client side: `src/client/{terminal,terminalsSettings}.tsx`. 45 unit tests across 5 terminal modules. Deferred follow-ups: eager-spawn for `lazy:false` terminals, E2E smoke test, live Tauri per-platform smoke (manual-test-plan §12), Windows ConPTY verification.
 
 ---
 
@@ -321,7 +321,7 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 19 — demo plugin | Shipped | — |
 | 20 — secure storage | Partial | Windows Credential Manager not implemented |
 | 21 — feedback | Shipped | — |
-| 22 — terminal | Partial | drawer push-up (HS-6262) shipped; terminal implementation pending (HS-6263…HS-6270) |
+| 22 — terminal | Shipped | full v1 (HS-6261 through HS-6270); future: E2E smoke test, live Tauri per-platform verification |
 | tauri-architecture | Shipped | — |
 | tauri-setup | Shipped | — |
 | plugin-development-guide | Shipped (living doc) | — |

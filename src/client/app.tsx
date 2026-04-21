@@ -26,6 +26,7 @@ import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state
 import { bindDetailTagInput } from './tagAutocomplete.js'; // .tsx file, JSX enabled
 import { showTagsDialog } from './tagsDialog.js';
 import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, restoreAppIcon } from './tauriIntegration.js';
+import { initTerminal } from './terminal.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';
 
@@ -215,8 +216,9 @@ async function init() {
     void loadTickets();
   });
 
-  // Command log panel
+  // Command log panel + embedded terminal (tabs in the same drawer)
   initCommandLog();
+  initTerminal();
   // Dashboard sidebar widget
   void initDashboardWidget();
   // Share prompt and toolbar button

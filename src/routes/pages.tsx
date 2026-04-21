@@ -218,19 +218,32 @@ pageRoutes.get('/', (c) => {
 
         <div id="command-log-panel" className="command-log-panel" style="display:none">
           <div className="command-log-resize-handle" id="command-log-resize"></div>
-          <div className="command-log-header">
-            <span className="command-log-title">Commands Log</span>
-            <div className="command-log-search-box">
-              <svg className="command-log-search-icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-              <input type="text" id="command-log-search" placeholder="Search..." className="command-log-search" />
+          <div className="drawer-tabs">
+            <button className="drawer-tab active" data-drawer-tab="commands-log" id="drawer-tab-commands-log">Commands Log</button>
+            <div className="drawer-terminal-tabs-wrap" id="drawer-terminal-tabs-wrap" style="display:none">
+              <div className="drawer-terminal-tabs-scroll">
+                <div className="drawer-terminal-tabs" id="drawer-terminal-tabs"></div>
+              </div>
+              <button className="drawer-tab drawer-tab-add" id="drawer-add-terminal-btn" title="New terminal (default shell)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              </button>
             </div>
-            <button id="command-log-filter-btn" className="command-log-filter-btn" title="Filter by type">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-              <span>All types</span>
-            </button>
-            <button id="command-log-clear" className="command-log-clear-btn" title="Clear log"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
           </div>
-          <div id="command-log-entries" className="command-log-entries"></div>
+          <div className="drawer-tab-content" data-drawer-panel="commands-log" id="drawer-panel-commands-log">
+            <div className="command-log-header">
+              <div className="command-log-search-box">
+                <svg className="command-log-search-icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input type="text" id="command-log-search" placeholder="Search..." className="command-log-search" />
+              </div>
+              <button id="command-log-filter-btn" className="command-log-filter-btn" title="Filter by type">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                <span>All types</span>
+              </button>
+              <button id="command-log-clear" className="command-log-clear-btn" title="Clear log"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+            </div>
+            <div id="command-log-entries" className="command-log-entries"></div>
+          </div>
+          <div id="drawer-terminal-panes" className="drawer-terminal-panes"></div>
         </div>
 
         <footer className="app-footer">
@@ -418,6 +431,29 @@ pageRoutes.get('/', (c) => {
                   </div>
                   <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
                   <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
+                </div>
+              </div>
+              <div className="settings-section" style="margin-top:16px">
+                <div className="settings-section-header">
+                  <h3>Embedded Terminal</h3>
+                </div>
+                <div className="settings-field">
+                  <label className="settings-checkbox-label">
+                    <input type="checkbox" id="settings-terminal-enabled" />
+                    Show Terminal tabs in the bottom drawer
+                  </label>
+                  <span className="settings-hint">Adds Terminal tabs alongside the Commands Log. Each terminal's PTY is spawned lazily on first open unless you mark it eager (see docs/22-terminal.md).</span>
+                </div>
+                <div className="settings-field">
+                  <label>Default terminals</label>
+                  <span className="settings-hint" style="margin-bottom:6px;display:block">Each row is a tab in the drawer. Edit to change the name, command, working directory, or launch mode. Drag rows to reorder. The first row is the default terminal.</span>
+                  <div id="settings-terminals-list" className="settings-terminals-list"></div>
+                  <button id="settings-terminals-add-btn" className="btn btn-sm" style="margin-top:8px">Add Terminal</button>
+                </div>
+                <div className="settings-field">
+                  <label htmlFor="settings-terminal-scrollback">Scrollback (bytes)</label>
+                  <input type="number" id="settings-terminal-scrollback" min="65536" max="16777216" placeholder="1048576" />
+                  <span className="settings-hint">Server-side ring buffer for reattach replay. 65 536–16 777 216 bytes. Takes effect on next terminal restart.</span>
                 </div>
               </div>
             </div>

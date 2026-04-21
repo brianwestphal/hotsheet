@@ -30,7 +30,7 @@
   "scripts": {
     "dev": "npm run build:client && npm run build:plugins && tsx --tsconfig tsconfig.json src/cli.ts --replace",
     "build": "tsup",
-    "build:client": "mkdir -p dist/client/assets && cp src/client/assets/* dist/client/assets/ && npx esbuild src/client/app.tsx --bundle --format=iife --outfile=dist/client/app.global.js --target=es2020 --jsx=automatic --jsx-import-source=#jsx --alias:#jsx/jsx-runtime=./src/jsx-runtime.ts --define:__PLUGINS_ENABLED__=${PLUGINS_ENABLED:-true} --sourcemap && npx sass src/client/styles.scss dist/client/styles.css --style compressed --no-source-map",
+    "build:client": "mkdir -p dist/client/assets && cp src/client/assets/* dist/client/assets/ && npx esbuild src/client/app.tsx --bundle --format=iife --outfile=dist/client/app.global.js --target=es2020 --jsx=automatic --jsx-import-source=#jsx --alias:#jsx/jsx-runtime=./src/jsx-runtime.ts --define:__PLUGINS_ENABLED__=${PLUGINS_ENABLED:-true} --sourcemap && npx sass src/client/styles.scss dist/client/styles.css --style compressed --no-source-map && cat node_modules/@xterm/xterm/css/xterm.css >> dist/client/styles.css",
     "build:plugins": "for d in plugins/*/; do if [ -f \"$d/manifest.json\" ]; then name=$(basename $d); mkdir -p dist/plugins/$name && npx esbuild $d/src/index.ts --bundle --format=esm --outfile=dist/plugins/$name/index.js --platform=node --target=node20 && cp $d/manifest.json dist/plugins/$name/; fi; done",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
@@ -59,8 +59,14 @@
     "@electric-sql/pglite": "^0.3.15",
     "@hono/node-server": "^1.19.9",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
     "hono": "^4.12.2",
     "marked": "^18.0.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -69,6 +75,7 @@
     "@tauri-apps/cli": "^2",
     "@types/marked": "^5.0.2",
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.0",
     "c8": "^11.0.0",
     "dotenv": "^17.4.1",

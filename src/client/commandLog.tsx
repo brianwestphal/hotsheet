@@ -19,6 +19,11 @@ let panelOpen = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastSeenId = 0;
 let currentSearch = '';
+/**
+ * Active drawer tab id. `commands-log` selects the log pane; anything else is
+ * interpreted as `terminal:<id>` and routed through the embedded terminal module.
+ */
+let activeTab: string = 'commands-log';
 
 // --- Selection state (HS-2544) ---
 
@@ -361,7 +366,27 @@ function updateToggleIcon(isOpen: boolean) {
   const btn = document.getElementById('command-log-btn');
   if (!btn) return;
   btn.classList.toggle('is-open', isOpen);
-  btn.setAttribute('title', isOpen ? 'Close Commands Log' : 'Commands Log');
+  btn.setAttribute('title', isOpen ? 'Close drawer' : 'Commands Log');
+}
+
+/** Switch which drawer tab is visible. Both tab contents remain mounted.
+ *  tab id is `commands-log` or `terminal:<terminalId>`. */
+export function switchDrawerTab(tab: string) {
+  activeTab = tab;
+  for (const btn of document.querySelectorAll<HTMLElement>('.drawer-tab')) {
+    btn.classList.toggle('active', btn.dataset.drawerTab === tab);
+  }
+  for (const panel of document.querySelectorAll<HTMLElement>('.drawer-tab-content')) {
+    panel.style.display = panel.dataset.drawerPanel === tab ? '' : 'none';
+  }
+  if (tab === 'commands-log') {
+    // Entering commands-log: refresh + mark as seen.
+    updateBadge(false);
+    void loadEntries();
+  } else if (tab.startsWith('terminal:')) {
+    const terminalId = tab.slice('terminal:'.length);
+    void import('./terminal.js').then(({ activateTerminal }) => { activateTerminal(terminalId); });
+  }
 }
 
 function openPanel() {
@@ -369,10 +394,12 @@ function openPanel() {
   panel.style.display = '';
   panelOpen = true;
   updateToggleIcon(true);
-  void loadEntries();
   startPolling();
-  // Mark all as seen
-  updateBadge(false);
+  // Refresh the dynamic terminal tab list before restoring the active tab so
+  // the previously-active terminal (if any) exists in the DOM before we
+  // activate it.
+  void import('./terminal.js').then(({ loadAndRenderTerminalTabs }) => loadAndRenderTerminalTabs())
+    .finally(() => { switchDrawerTab(activeTab); });
 }
 
 /** Open the log panel and scroll to a specific entry, expanding it. */
@@ -536,9 +563,37 @@ export function initCommandLog() {
   const searchEl = document.getElementById('command-log-search') as HTMLInputElement | null;
   searchEl?.addEventListener('input', () => { onSearchInput(searchEl.value); });
 
+  // Drawer tab switching — supports `commands-log` and dynamic `terminal:<id>` ids.
+  document.getElementById('command-log-panel')?.addEventListener('click', (e) => {
+    const tabEl = (e.target as HTMLElement).closest<HTMLElement>('.drawer-tab');
+    if (!tabEl) return;
+    if ((e.target as HTMLElement).closest('.drawer-tab-close')) return;  // close button handled by terminal module
+    const t = tabEl.dataset.drawerTab;
+    if (typeof t === 'string' && t !== '') switchDrawerTab(t);
+  });
+
+  // Show terminal tabs only if terminal_enabled is true in file settings.
+  void applyTerminalTabVisibility();
+
   // Resize handle
   initResize();
 
   // Initialize badge baseline
   void refreshLogBadge();
+}
+
+/** Show or hide the terminal tab strip based on the terminal_enabled file setting. Exported so settings can refresh it live. */
+export async function applyTerminalTabVisibility() {
+  try {
+    const fs = await api<{ terminal_enabled?: string | boolean }>('/file-settings');
+    const enabled = fs.terminal_enabled === true || fs.terminal_enabled === 'true';
+    const tabsContainer = document.getElementById('drawer-terminal-tabs-wrap');
+    if (tabsContainer) tabsContainer.style.display = enabled ? '' : 'none';
+    // If the setting was flipped off while a terminal tab was active, fall back to Commands Log.
+    if (!enabled && activeTab.startsWith('terminal:')) switchDrawerTab('commands-log');
+    if (enabled) {
+      const mod = await import('./terminal.js');
+      await mod.loadAndRenderTerminalTabs();
+    }
+  } catch { /* ignore */ }
 }

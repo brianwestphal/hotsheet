@@ -8,25 +8,26 @@ Today the footer drawer contains a single panel (the Commands Log, [14-commands-
 
 **Core promises:**
 
-1. One terminal per project. Switching projects switches terminals (or creates one lazily).
-2. Switching drawer tabs or closing the drawer does **not** kill the terminal — it just hides it.
-3. The terminal survives browser reloads and network blips (reattach with replayed scrollback).
-4. Multiple browser windows/tabs on the same project share the same terminal (tmux-like).
+1. One or more terminals per project (see §22.17 for the multi-terminal model).
+2. Switching drawer tabs or closing the drawer does **not** kill any terminal — it just hides it.
+3. Terminals survive browser reloads and network blips (reattach with replayed scrollback).
+4. Multiple browser windows/tabs on the same project share the same terminals (tmux-like).
 5. The default command is user-configurable and channel-aware.
 
 ## 22.2 Architecture
 
-**Server side (`src/terminals/`, new):**
+**Server side (`src/terminals/`):**
 
-- Per-project `TerminalSession` keyed by project secret. Structure:
+- `TerminalSession` keyed by `(projectSecret, terminalId)`. Structure:
   - `pty` — the live `node-pty` process.
   - `scrollback` — ring buffer of raw bytes (default 1 MiB).
   - `subscribers` — set of open WebSocket connections.
   - `cols` / `rows` — current dimensions (consensus = max of any attached client, or last-resized).
-  - `startedAt`, `command`, `env`.
+  - `startedAt`, `command`, `env`, `terminalId`, `configOverride`.
 - `TerminalRegistry` (global within the Node process) holds the map and spawns lazily on first attach.
-- PTY is **not** created at server boot. It's created on the first WebSocket attach for a given project.
+- PTY is **not** created at server boot. It's created on the first WebSocket attach for a given terminal.
 - A single registry is shared across browser tabs and across Tauri windows (they all talk to the same Node server).
+- `configOverride` is used by dynamic terminals (§22.17) whose config is not persisted to `settings.json`.
 
 **Client side (`src/client/terminal.tsx`, new):**
 
@@ -61,14 +62,20 @@ Only one tab's content is visible at a time. Inactive tab content is hidden via 
 
 **Persist:** The PTY continues to run independently of any UI state. Closing the drawer, switching tabs, reloading the browser, quitting the Tauri window (without quitting the sidecar), or disconnecting the WebSocket does **not** kill the PTY.
 
-**Explicit restart:** A "Restart terminal" button in the Terminal tab header sends a control message that kills the PTY and spawns a fresh one. Scrollback is cleared.
+**Explicit stop / start toggle:** The Terminal tab header has a single power button whose icon reflects the session state:
 
-**Exit:** When the underlying process exits on its own (user types `exit` in the shell), the session enters a terminated state. The tab shows the exit code and a "Start again" button. A *new* PTY is spawned only when the user clicks the button or explicitly re-runs the default command.
+- **Alive:** button shows a Stop glyph. Clicking once POSTs `/api/terminal/kill` with `SIGTERM`, asking the PTY to shut down cleanly. The button enters a latched *stop-pending* state; its tooltip changes to "Stop again to force quit".
+- **Stop-pending (still alive):** clicking again opens a confirm dialog ("Force quit the process?"). If confirmed, the client POSTs `/api/terminal/kill` with `SIGKILL`. Any state transition away from `alive` clears the latch.
+- **Exited or never spawned:** button shows a Start glyph. Clicking POSTs `/api/terminal/restart`, which tears down leftover state, clears scrollback, and spawns a fresh PTY. The client optimistically sets status to `alive`; new output flows into the already-attached WebSocket subscriber.
+
+There is no separate "Restart" button — the stop/start toggle covers explicit process recycling (stop, wait for exit, start).
+
+**Exit:** When the underlying process exits on its own (user types `exit` in the shell), the session enters a terminated state. The tab shows the exit code; the power button flips to Start. A *new* PTY is spawned only when the user clicks Start or explicitly re-runs the default command.
 
 **Kill on:**
 - Project unregister (`DELETE /api/projects/:secret`).
 - Server shutdown (SIGTERM handler).
-- Explicit "Restart terminal".
+- Explicit Stop / Start cycle.
 
 **Do not kill on:**
 - Drawer close, tab switch, browser reload, WebSocket disconnect, multi-project focus change.
@@ -106,7 +113,7 @@ Additional per-project settings:
 
 - Project-scoped label: `claude · <appName>` (or the user's command name).
 - Status dot: green (alive), red (exited), gray (not yet spawned).
-- Buttons: Restart, Clear (clears the visual buffer only; does not kill the PTY).
+- Buttons: Stop/Start (power toggle — see §22.4), Clear (clears the visual buffer only; does not kill the PTY).
 
 ## 22.7 Scrollback & reattach
 
@@ -138,10 +145,19 @@ Keys on `.hotsheet/settings.json`:
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `terminal_enabled` | bool | `false` | Feature-flagged during development. When `false`, no Terminal tab appears. |
-| `terminal_command` | string | `"{{claudeCommand}}"` | Template; see §22.5 |
-| `terminal_cwd` | string | project root | Absolute path |
-| `terminal_scrollback_bytes` | number | `1048576` | Ring buffer size |
+| `terminal_enabled` | bool | `false` | Feature-flagged during development. When `false`, no Terminal tabs appear. |
+| `terminals` | `TerminalConfig[]` | single-entry `[{ id: 'default', name: 'Terminal', command: '{{claudeCommand}}' }]` | One row per configured tab (HS-6271). See §22.17 for the schema. |
+| `terminal_scrollback_bytes` | number | `1048576` | Ring buffer size (shared across terminals) |
+
+`TerminalConfig` fields:
+
+- `id` (string, required): stable identifier used as the registry key and client tab id. Generated when the row is added; preserved across renames.
+- `name` (string, optional): tab label. Defaults to a short form of the command's first word.
+- `command` (string): command template (see §22.5). Must be non-empty.
+- `cwd` (string, optional): working directory override. Blank = project root.
+- `lazy` (bool, default true): if true (current behavior), the PTY is spawned only on first tab activation. If false, the intent is that the server spawns as soon as the project loads. Eager spawning is declared here for forward compatibility; see §22.14 for status.
+
+**Legacy migration:** if `terminals` is absent but the older `terminal_command` / `terminal_cwd` keys are present (pre-HS-6271), `listTerminalConfigs()` synthesizes a single-entry list with id `default` carrying those values. The legacy keys are no longer written by the settings UI — the next save serializes to the `terminals` array and the old keys are left alone (they're simply not read).
 
 Settings UI lives initially in the Experimental tab ([4-user-interface.md](4-user-interface.md)). `terminal_enabled` graduates out of Experimental once the feature is stable.
 
@@ -160,7 +176,7 @@ New:
 
 - `GET /api/terminal/status?project=<secret>` — returns `{ alive: bool, startedAt, command, exitCode?, cols, rows, scrollbackBytes }`. Cheap, no-PTY-spawn.
 - `POST /api/terminal/restart` — kill the session and start fresh. Body: `{ command? }` (optional override for this invocation).
-- `POST /api/terminal/kill` — kill the session without restart.
+- `POST /api/terminal/kill` — kill the session without restart. Body: `{ signal? }` (default `SIGTERM`; pass `SIGKILL` to force-quit after a polite stop has stalled, see §22.4).
 - `GET /api/terminal/ws?project=<secret>` — WebSocket upgrade (see §22.9).
 
 Existing:
@@ -178,29 +194,95 @@ Existing:
 
 ## 22.14 Out of scope
 
-Deliberately not included in the v1 of this feature:
+Deliberately not included in the current iteration:
 
-- **Multiple concurrent terminals per project.** One per project only. Users can `tmux` inside it if they want.
-- **Per-user or per-tab private terminals.** Shared model only.
+- **Per-user or per-tab private terminals.** Shared model only — all clients attached to the same project/terminalId see the same stream.
 - **Session recording / playback to disk.** In-memory scrollback only.
 - **SSH / remote targets.** Local-only.
 - **File transfer / drag-drop into the terminal.**
-- **Split panes within the drawer.** One terminal, one log, one visible at a time.
+- **Split panes within the drawer.** One visible tab at a time (Commands Log *or* one terminal).
+- **Eager-spawn for terminals with `lazy:false`.** The setting is persisted but currently behaves the same as `lazy:true` (spawn on first attach). Upgrading this is tracked as a follow-up; it will require calling `attach` at project-boot for every eager terminal, plus reconnecting subscribers.
 - **Terminal in the Tauri-native terminal API.** Node sidecar owns the PTY; Tauri is just the webview host.
+
+**Now in scope (previously deferred):**
+
+- **Multiple terminals per project.** Delivered in HS-6271 (configurable defaults) and HS-6306 (ad-hoc dynamic terminals). See §22.17.
 
 ## 22.15 Implementation notes
 
 (Non-normative — the code may evolve independently.)
 
-- `src/terminals/registry.ts` — `TerminalRegistry` + `TerminalSession` types and PTY lifecycle.
-- `src/terminals/websocket.ts` — `ws` upgrade handler wired into the Node server.
-- `src/routes/terminal.ts` — HTTP endpoints (`status`, `restart`, `kill`).
-- `src/client/terminal.tsx` — xterm.js mount + WebSocket client + connection state machine.
-- `src/client/drawer.tsx` — refactored drawer with tab strip (currently `commandSidebar.tsx`). The push-up layout work in HS-6262 lands here too.
+- `src/terminals/registry.ts` — `TerminalRegistry` (keyed by `secret::terminalId`) + PTY lifecycle helpers.
+- `src/terminals/config.ts` — `TerminalConfig` type + `listTerminalConfigs` / `findTerminalConfig` (handles legacy migration).
+- `src/terminals/websocket.ts` — `ws` upgrade handler wired into the Node server; parses `?terminal=<id>`.
+- `src/routes/terminal.ts` — HTTP endpoints (`list`, `status`, `restart`, `kill`, `create`, `destroy`).
+- `src/client/terminal.tsx` — xterm.js mount + WebSocket client + per-tab state, tab lifecycle.
+- `src/client/terminalsSettings.tsx` — outline list + edit modal for the configured-defaults list.
+- `src/client/commandLog.tsx` — drawer shell; delegates any `terminal:<id>` tab to the terminal module.
 - Cleanup: `src/cleanup.ts` gains a `killProjectTerminal(secret)` call on project unregister.
 - DB: no schema changes required. Sessions are purely in-memory.
 
-## 22.16 Cross-references
+## 22.17 Multiple terminals per project (HS-6271, HS-6306)
+
+**Motivation.** A single terminal per project is sufficient for a solo Claude workflow but falls short for developers who want a separate pane for e.g. `npm run dev`, a REPL, and an interactive shell alongside Claude. The drawer is a natural place to host these without stealing real estate from the ticket list.
+
+### 22.17.1 Model
+
+- **Configured default terminals**: user-editable list stored in `.hotsheet/settings.json` under `terminals` (see §22.10). Each entry has a stable `id`, a tab name, a command template, an optional cwd override, and a per-terminal lazy flag. The list is rendered as an outline in Settings → Experimental → Embedded Terminal (one row per terminal, drag to reorder, edit-modal for the fields). Drag order in the list = left-to-right order in the drawer tab strip.
+- **Dynamic terminals**: ad-hoc terminals created at runtime via the drawer's **+** button. They are never written to `settings.json`. Their `TerminalConfig` lives in an in-memory map on the server (`dynamicConfigs`) keyed by `(secret, terminalId)`, and their PTY state lives in the same `TerminalRegistry` as configured terminals.
+
+### 22.17.2 Drawer tab strip
+
+Layout (left to right):
+
+1. `Commands Log` — pinned, not closable.
+2. One tab per configured default terminal, in settings order. Not closable from the drawer (remove them from Settings).
+3. One tab per dynamic terminal, in creation order. Each has an inline **×** close button.
+4. A **+** button that creates a new dynamic terminal (see §22.17.3).
+
+The group `(2, 3, 4)` lives inside a horizontally scrollable wrapper so the tab strip never overflows the drawer width. The scrollbar is thin and auto-hides when not needed.
+
+Only the configured + dynamic area is hidden when `terminal_enabled:false`; Commands Log remains visible.
+
+### 22.17.3 Creating dynamic terminals
+
+Click **+** → `POST /api/terminal/create` with an empty body. The server:
+
+1. Generates a unique `dyn-<tsBase36>-<rand>` terminal id.
+2. Allocates a `TerminalConfig` with the user's default shell as the command (resolved at spawn time via `$SHELL` / `%COMSPEC%`).
+3. Stores the config in the `dynamicConfigs` map and returns it.
+
+The client then refreshes its tab list (`/api/terminal/list`) and selects the new tab. Attach happens on the normal WebSocket flow — the registry spawns the PTY lazily on first connect.
+
+### 22.17.4 Closing dynamic terminals
+
+Click the tab's **×** → `POST /api/terminal/destroy` with the terminal id. The server:
+
+1. Calls `destroyTerminal(secret, terminalId)` — tears down the PTY if alive, removes the session from the registry.
+2. Removes the entry from `dynamicConfigs`.
+
+The client removes the tab button and pane from the DOM. If the closed terminal was the active tab, the drawer falls back to Commands Log.
+
+**Configured defaults cannot be closed from the drawer.** To remove one, edit the terminals list in Settings. When a configured default is removed in Settings, `loadAndRenderTerminalTabs()` detects the missing id and tears down the corresponding tab on its next refresh.
+
+### 22.17.5 Registry key format
+
+`TerminalRegistry` keys sessions by the string `${secret}::${terminalId}`. Helper functions:
+
+- `listProjectTerminalIds(secret)` — returns `terminalId`s currently known for a project (used by `/api/terminal/list` to detect dynamic terminals).
+- `destroyProjectTerminals(secret)` — mass cleanup on project unregister.
+
+All existing public functions (`attach`, `detach`, `killTerminal`, `restartTerminal`, `writeInput`, `resizeTerminal`, `getTerminalStatus`, `destroyTerminal`) accept an optional trailing `terminalId` parameter defaulting to `'default'`. This preserves the earlier single-terminal API signatures.
+
+### 22.17.6 Websocket addressing
+
+The upgrade URL is `GET /api/terminal/ws?project=<secret>&terminal=<terminalId>`. `terminal` defaults to `default` if omitted. `authenticate()` parses both; `handleConnection()` passes `terminalId` through every registry call on that socket (attach, detach, writeInput, resize).
+
+### 22.17.7 Lazy flag (per-terminal)
+
+`TerminalConfig.lazy` is persisted in settings. Currently the registry is always lazy (PTY spawns on first `attach`). When the eager path ships, the server will call `attach` for every non-lazy configured terminal as part of project load — likely through an internal stub subscriber that just drains output to scrollback until a real WebSocket takes over. Until then, the setting is declared but behavior is identical regardless of its value.
+
+## 22.18 Cross-references
 
 - [4-user-interface.md](4-user-interface.md) — drawer now has tabs; push-up layout affects ticket list region.
 - [8-cli-server.md](8-cli-server.md) — startup/shutdown lifecycle must kill live PTYs on SIGTERM.

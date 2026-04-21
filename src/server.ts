@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import { execFile } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { Hono } from 'hono';
+import type { Server as HttpServer } from 'http';
 import { basename, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -13,12 +14,13 @@ import { apiRoutes } from './routes/api.js';
 import { backupRoutes } from './routes/backups.js';
 import { pageRoutes } from './routes/pages.js';
 import { projectRoutes } from './routes/projects.js';
+import { wireTerminalWebSocket } from './terminals/websocket.js';
 import type { AppEnv } from './types.js';
 
-function tryServe(fetch: Hono['fetch'], port: number): Promise<number> {
+function tryServe(fetch: Hono['fetch'], port: number): Promise<{ port: number; server: HttpServer }> {
   return new Promise((resolve, reject) => {
     const server = serve({ fetch, port });
-    server.on('listening', () => { resolve(port); });
+    server.on('listening', () => { resolve({ port, server: server as HttpServer }); });
     server.on('error', (err: NodeJS.ErrnoException) => {
       reject(err);
     });
@@ -150,9 +152,12 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   app.route('/', pageRoutes);
 
   let actualPort = port;
+  let httpServer: HttpServer | null = null;
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      actualPort = await tryServe(app.fetch, port + attempt);
+      const result = await tryServe(app.fetch, port + attempt);
+      actualPort = result.port;
+      httpServer = result.server;
       break;
     } catch (err: unknown) {
       if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
@@ -169,6 +174,10 @@ export async function startServer(port: number, dataDir: string, options?: { noO
       }
       throw err;
     }
+  }
+
+  if (httpServer !== null) {
+    wireTerminalWebSocket(httpServer);
   }
 
   if (actualPort !== port) {

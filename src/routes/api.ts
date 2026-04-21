@@ -9,6 +9,7 @@ import { dashboardRoutes } from './dashboard.js';
 import { pluginRoutes } from './plugins.js';
 import { settingsRoutes } from './settings.js';
 import { shellRoutes } from './shell.js';
+import { terminalRoutes } from './terminal.js';
 import { ticketRoutes } from './tickets.js';
 
 export const apiRoutes = new Hono<AppEnv>();
@@ -20,4 +21,5 @@ apiRoutes.route('/', commandLogRoutes);
 apiRoutes.route('/', settingsRoutes);
 apiRoutes.route('/', dashboardRoutes);
 apiRoutes.route('/', shellRoutes);
+apiRoutes.route('/terminal', terminalRoutes);
 if (PLUGINS_ENABLED) apiRoutes.route('/', pluginRoutes);

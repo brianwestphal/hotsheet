@@ -86,12 +86,40 @@ if [ -d dist/plugins ]; then
   cp -R dist/plugins "$SERVER_DIR/plugins"
 fi
 
-# Copy only the external runtime dependencies (PGLite, Hono, @hono)
-for pkg in @electric-sql/pglite hono @hono/node-server; do
+# Copy only the external runtime dependencies (PGLite, Hono, @hono).
+#
+# node-pty is a native addon (build/Release/pty.node) required by the embedded
+# terminal feature. CI installs deps with `npm ci` on the matching target OS,
+# so node_modules/node-pty already contains the correct prebuilt binary for
+# this target. We copy the whole directory — `cp -R` preserves build/Release/.
+#
+# Optional packages are skipped if they're not yet installed so this script
+# stays usable on branches that haven't added the terminal deps yet.
+REQUIRED_DEPS=(@electric-sql/pglite hono @hono/node-server)
+OPTIONAL_DEPS=(node-pty ws @xterm/xterm @xterm/addon-fit @xterm/addon-web-links @xterm/addon-serialize)
+
+for pkg in "${REQUIRED_DEPS[@]}"; do
   dest="$SERVER_DIR/node_modules/$pkg"
   mkdir -p "$(dirname "$dest")"
   cp -R "node_modules/$pkg" "$dest"
 done
+
+for pkg in "${OPTIONAL_DEPS[@]}"; do
+  if [ -d "node_modules/$pkg" ]; then
+    dest="$SERVER_DIR/node_modules/$pkg"
+    mkdir -p "$(dirname "$dest")"
+    cp -R "node_modules/$pkg" "$dest"
+  fi
+done
+
+# Verify node-pty's native binary copied correctly (if present).
+# node-pty v1.x ships prebuilds/<platform>/pty.node via node-gyp-build.
+# Older versions use build/Release/. Check both so the warning stays accurate.
+if [ -d "$SERVER_DIR/node_modules/node-pty" ]; then
+  if [ -z "$(find "$SERVER_DIR/node_modules/node-pty/prebuilds" "$SERVER_DIR/node_modules/node-pty/build" -name 'pty.node' 2>/dev/null)" ]; then
+    echo "WARNING: node-pty copied but no pty.node binary found — terminal will fail to spawn." >&2
+  fi
+fi
 
 echo "Server resources: $SERVER_DIR/ ($(du -sh "$SERVER_DIR" | cut -f1))"
 echo "Done."

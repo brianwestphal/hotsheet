@@ -39,7 +39,8 @@ A resizable panel at the bottom of the app:
 - **Position**: In-flow between the main content area and the footer — opening the panel shrinks the main content (ticket list / column view / detail panel) to make room. The panel never overlays the ticket list.
 - **Stacking with bottom-docked detail panel**: When the detail panel is docked to the bottom (`detail_position = "bottom"`), the stack from top to bottom is: main ticket area → detail panel → commands log panel → footer. None of these overlap.
 - **Default height**: 300px, resizable via drag handle at the top (min 150px, max 600px). The main content area has `min-height: 0` / `overflow: hidden` so it remains scrollable at all drawer heights.
-- **Header bar**: Title "Commands Log", search input (debounced 300ms), multi-select filter dropdown with checkboxes and Select All/Deselect All toggle (client-side filtering), clear button (trash icon). No separate close button inside the drawer — see §14.4.
+- **Tab strip**: The drawer hosts two tabs (see [22-terminal.md](22-terminal.md)) — Commands Log (always shown) and Terminal (shown only when `terminal_enabled` is true in `.hotsheet/settings.json`). Inactive tab content is hidden via `display:none` but stays mounted: the Commands Log keeps auto-refreshing, and the Terminal keeps its WebSocket + xterm instance alive. Tab state persists across drawer close/open within a session.
+- **Header bar** (Commands Log tab): search input (debounced 300ms), multi-select filter dropdown with checkboxes and Select All/Deselect All toggle (client-side filtering), clear button (trash icon). No separate close button inside the drawer — see §14.4.
 - **Entry list**: Scrollable, newest first
 
 ### Log Entry Display

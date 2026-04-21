@@ -4374,6 +4374,252 @@ input, select, textarea {
   min-height: 0;
 }
 
+.drawer-tabs {
+  display: flex;
+  gap: 0;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  padding: 0 8px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.drawer-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.1s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+
+  &:hover { color: var(--text); }
+
+  &.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+}
+
+.drawer-tab-close {
+  background: transparent;
+  border: none;
+  color: inherit;
+  opacity: 0.5;
+  padding: 2px;
+  margin-left: 2px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+
+  &:hover {
+    opacity: 1;
+    background: var(--bg-hover);
+  }
+}
+
+// Terminal tab area — the tab list is horizontally scrollable but the `+` button
+// stays pinned at the right edge so it remains clickable when the list overflows.
+.drawer-terminal-tabs-wrap {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+}
+
+.drawer-terminal-tabs-scroll {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+
+  &::-webkit-scrollbar { height: 6px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+
+.drawer-terminal-tabs {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.drawer-tab-add {
+  padding: 8px 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  &:hover { color: var(--accent); }
+}
+
+.drawer-terminal-panes {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.drawer-terminal-pane {
+  // When inactive, display: none is set inline.
+  // The container needs the same flex semantics as .drawer-tab-content.
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+// Settings → Experimental → Embedded Terminal → list of configured default terminals.
+.settings-terminals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-terminal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  cursor: grab;
+
+  .settings-terminal-command {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.settings-terminals-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 8px 4px;
+}
+
+.drawer-tab-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.terminal-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 16px;
+  text-align: center;
+
+  code {
+    background: var(--bg-secondary);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+  }
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.terminal-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.terminal-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+
+  &.status-alive { background: #22c55e; }
+  &.status-connecting { background: #f59e0b; }
+  &.status-exited { background: #ef4444; }
+  &.status-not-connected { background: var(--text-muted); }
+}
+
+.terminal-header-spacer { flex: 1; }
+
+.terminal-header-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+
+  &:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+
+  // When a stop has been issued but the process is still alive, the next click
+  // force-quits. Flash the button red so the escalation is obvious.
+  &.is-stop-pending {
+    color: var(--danger);
+    &:hover { background: rgba(239, 68, 68, 0.12); }
+  }
+}
+
+.terminal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  padding: 4px 8px;
+  position: relative;
+
+  .xterm {
+    height: 100%;
+    width: 100%;
+    background: var(--bg);
+  }
+
+  // xterm.js applies its own inline/default styles to internal elements that can
+  // surface as a black strip below the rendered rows when the container is taller
+  // than rows × cellHeight. Force transparency so the `.terminal-body` background
+  // shows through instead (HS-6308).
+  .xterm-viewport,
+  .xterm-screen {
+    background-color: transparent !important;
+  }
+}
+
 .command-log-resize-handle {
   height: 4px;
   cursor: row-resize;

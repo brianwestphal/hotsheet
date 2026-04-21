@@ -171,6 +171,64 @@ This document lists features that require manual verification before each releas
 - [ ] If Keychain is locked/unavailable, falls back to file storage silently
 - [ ] On Linux: `secret-tool lookup service com.hotsheet.plugin.github-issues account token` returns the value
 
+## 12. Embedded Terminal
+
+See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hotsheet/settings.json` or via Settings → Experimental → Embedded Terminal.
+
+### Default command resolution (§22.5)
+- [ ] With `claude` on PATH + Claude Channel enabled: Terminal launches `claude --dangerously-load-development-channels server:hotsheet-channel` (verify from `ps` or from xterm header)
+- [ ] With `claude` on PATH + Channel disabled: Terminal launches plain `claude`
+- [ ] Without `claude` on PATH: Terminal launches `$SHELL` (Unix) / `%COMSPEC%` (Windows)
+- [ ] Custom `terminal_command` with no `{{claudeCommand}}` token is passed verbatim
+
+### Persistence and reattach (§22.4, §22.7)
+- [ ] Open Terminal tab, type a long-running command (`watch date` or similar), close drawer → reopen → still running, scrollback replayed
+- [ ] Switch to Commands Log tab and back → Terminal state preserved (process still alive, cursor position intact)
+- [ ] Reload the browser with terminal running → reattaches and replays scrollback (process keeps running on server)
+- [ ] Stop button (power toggle) while running: clicking once sends SIGTERM and the button enters stop-pending state
+- [ ] Stop-pending second click while still alive: confirm dialog appears; OK issues SIGKILL and the process dies
+- [ ] Once the process has exited, the button flips to Start and clicking it spawns a fresh PTY (scrollback cleared)
+- [ ] Running process exits on its own (`exit` in shell) → Terminal tab shows exit code, Start button spawns a new PTY
+
+### Multi-window sharing (§22.8)
+- [ ] Open the same project in a second browser window → both windows attach to the same PTY
+- [ ] Typing in either window reaches the PTY; both see the same output stream
+- [ ] Closing one window leaves the other connected; PTY stays alive
+
+### Lifecycle
+- [ ] `DELETE /api/projects/:secret` while a terminal is running → PTY is killed
+- [ ] Send SIGTERM to the Node server with a terminal running → PTY is killed cleanly (no orphan processes in `ps`)
+
+### Rendering and input (§22.6)
+- [ ] No black strip appears below the last rendered row (xterm viewport background matches the app theme even when container is taller than rows × cellHeight)
+- [ ] Drag drawer resize handle → xterm reflows, shell inside (e.g. `claude` UI, `htop`) resizes correctly
+- [ ] 256-color and true-color output renders (test with `echo -e "\033[38;5;196mred\033[0m"` and a truecolor printer)
+- [ ] Clickable URL detected and opens in browser on click
+- [ ] Copy (Cmd/Ctrl+C with selection) puts text on clipboard
+- [ ] SIGINT (Cmd/Ctrl+C with no selection) interrupts running process
+- [ ] Paste (Cmd/Ctrl+V) works correctly
+
+### Tauri desktop (§22.11)
+- [ ] Terminal works inside the Tauri window on macOS arm64 + x86_64
+- [ ] Terminal works inside the Tauri window on Linux x86_64
+- [ ] Terminal works inside the Tauri window on Windows (ConPTY via node-pty)
+- [ ] On a release build, open a Terminal tab and run a trivial command (echo hello / cmd /c echo hello) to verify the bundled `node-pty` native binary loads
+
+### Drawer tab visibility (§22.10)
+- [ ] With `terminal_enabled: false` (default): Terminal tabs are hidden in the drawer
+- [ ] Toggle `terminal_enabled` on in Settings → Experimental → Terminal tabs appear immediately (no reload)
+- [ ] Toggle off while a Terminal tab is active → drawer falls back to Commands Log
+
+### Multi-terminal UI (§22.17)
+- [ ] Configured default terminals in `settings.terminals` each get a tab in the drawer, in settings order
+- [ ] Adding a terminal in Settings → Experimental → Embedded Terminal appears as a tab on save (no reload)
+- [ ] Renaming a terminal in Settings updates the drawer tab label
+- [ ] Reordering via drag changes drawer tab order
+- [ ] The **+** button after the last tab creates a new dynamic terminal running the default shell; new tab is selected
+- [ ] Dynamic terminal tabs show an **×** close button; clicking tears down the PTY and removes the tab
+- [ ] Configured default terminal tabs do **not** show a close button (only removable via Settings)
+- [ ] Many tabs overflow → the tabs area scrolls horizontally (Commands Log stays pinned; **+** stays visible at the end when scrolled fully right)
+
 ---
 
 ## Automated Coverage Summary
@@ -192,3 +250,7 @@ For reference, here's what IS covered by automated tests (no manual check needed
 - Plugin UI extensions: toolbar, detail_top/bottom, context_menu, status_bar, sidebar
 - Backup create + preview data
 - Settings dialog: tabs, category list, checkbox persistence
+- Terminal command resolution branches (unit tests in `src/terminals/resolveCommand.test.ts`)
+- Terminal PTY lifecycle: spawn, kill, scrollback ring buffer, multi-subscriber broadcast, exit state (unit tests when HS-6264 lands)
+- Terminal WebSocket auth guard (reject missing/wrong secret with 403) and roundtrip (unit tests when HS-6265 lands)
+- Terminal drawer tab toggle (E2E when HS-6268 wires up the setting toggle)

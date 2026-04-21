@@ -1,6 +1,7 @@
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { api } from './api.js';
 import { loadBackupList } from './backups.js';
+import { applyTerminalTabVisibility } from './commandLog.js';
 import { toElement } from './dom.js';
 import { bindExperimentalSettings } from './experimentalSettings.js';
 import { bindCategorySettings } from './settingsCategories.js';
@@ -48,12 +49,24 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     (document.getElementById('settings-notify-completed') as HTMLSelectElement).value = state.settings.notify_completed;
     overlay.style.display = 'flex';
     void loadBackupList();
-    // Load file-based settings (app name, backup dir)
-    void api<{ appName?: string; backupDir?: string; ticketPrefix?: string }>('/file-settings').then((fs) => {
+    // Load file-based settings (app name, backup dir, terminal settings)
+    void api<{
+      appName?: string;
+      backupDir?: string;
+      ticketPrefix?: string;
+      terminal_enabled?: string | boolean;
+      terminal_scrollback_bytes?: string | number;
+    }>('/file-settings').then((fs) => {
       (document.getElementById('settings-app-name') as HTMLInputElement).value = fs.appName ?? '';
       (document.getElementById('settings-backup-dir') as HTMLInputElement).value = fs.backupDir ?? '';
       (document.getElementById('settings-ticket-prefix') as HTMLInputElement).value = fs.ticketPrefix ?? '';
+      (document.getElementById('settings-terminal-enabled') as HTMLInputElement).checked = fs.terminal_enabled === true || fs.terminal_enabled === 'true';
+      const scrollback = fs.terminal_scrollback_bytes;
+      const scrollbackInput = document.getElementById('settings-terminal-scrollback') as HTMLInputElement;
+      scrollbackInput.value = scrollback === undefined || scrollback === '' ? '' : String(scrollback);
     });
+    // Terminals outline list (HS-6271) — loads asynchronously.
+    void import('./terminalsSettings.js').then(({ loadAndRenderTerminalsSettings }) => loadAndRenderTerminalsSettings());
   });
 
   closeBtn.addEventListener('click', () => {
@@ -255,6 +268,36 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       void api('/file-settings', { method: 'PATCH', body: { backupDir: val } }).then(() => {
         backupDirHint.textContent = val ? 'Saved. New backups will use this location.' : 'Using default location inside the data directory.';
       });
+    }, 800);
+  });
+
+  // --- Embedded Terminal settings (HS-6268, docs/22-terminal.md §22.10) ---
+  const termEnabledInput = document.getElementById('settings-terminal-enabled') as HTMLInputElement;
+  termEnabledInput.addEventListener('change', () => {
+    void api('/file-settings', {
+      method: 'PATCH',
+      body: { terminal_enabled: termEnabledInput.checked ? 'true' : 'false' },
+    }).then(() => { void applyTerminalTabVisibility(); });
+  });
+
+  // Add Terminal button (the per-row editing lives in src/client/terminalsSettings.tsx).
+  document.getElementById('settings-terminals-add-btn')?.addEventListener('click', () => {
+    void import('./terminalsSettings.js').then(({ addTerminalEntry }) => addTerminalEntry());
+  });
+
+  const termScrollbackInput = document.getElementById('settings-terminal-scrollback') as HTMLInputElement;
+  let termScrollbackTimeout: ReturnType<typeof setTimeout> | null = null;
+  termScrollbackInput.addEventListener('input', () => {
+    if (termScrollbackTimeout) clearTimeout(termScrollbackTimeout);
+    termScrollbackTimeout = setTimeout(() => {
+      const raw = termScrollbackInput.value.trim();
+      if (raw === '') {
+        void api('/file-settings', { method: 'PATCH', body: { terminal_scrollback_bytes: '' } });
+        return;
+      }
+      const n = Math.max(65536, Math.min(16777216, parseInt(raw, 10) || 1048576));
+      termScrollbackInput.value = String(n);
+      void api('/file-settings', { method: 'PATCH', body: { terminal_scrollback_bytes: String(n) } });
     }, 800);
   });
 

@@ -470,10 +470,14 @@ async function ensureHooksForRunningInstance(port: number): Promise<void> {
 /** Write instance file and register exit cleanup handlers. */
 function setupInstanceLifecycle(actualPort: number): void {
   writeInstanceFile(actualPort);
-  const cleanupInstance = () => removeInstanceFile();
-  process.on('exit', cleanupInstance);
-  process.on('SIGINT', () => { cleanupInstance(); process.exit(0); });
-  process.on('SIGTERM', () => { cleanupInstance(); process.exit(0); });
+  const cleanupInstance = async () => {
+    const { destroyAllTerminals } = await import('./terminals/registry.js');
+    destroyAllTerminals();
+    removeInstanceFile();
+  };
+  process.on('exit', () => { removeInstanceFile(); });
+  process.on('SIGINT', () => { void cleanupInstance().finally(() => process.exit(0)); });
+  process.on('SIGTERM', () => { void cleanupInstance().finally(() => process.exit(0)); });
 }
 
 async function main() {
