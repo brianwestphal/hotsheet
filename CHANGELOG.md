@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.16.2] - 2026-04-21
+
+- Add attachment upload instructions to worklist template
+
 ## [0.16.1] - 2026-04-20
 
 - Fix right-click clearing multi-selection in list view
