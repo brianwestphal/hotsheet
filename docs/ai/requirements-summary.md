@@ -206,6 +206,16 @@ Bundled plugin that exercises every surface of the plugin API. Not connected to 
 
 ---
 
+## 22. Embedded terminal (`22-terminal.md`) — Design only
+
+Adds a second tab to the footer drawer (alongside Commands Log) hosting an interactive xterm.js terminal wired to a per-project PTY on the server. One terminal per project, server-owned so it survives drawer close / tab switch / browser reload / multi-window attach (tmux-like — multiple windows share the same session). Spawns lazily on first Terminal-tab open; scrollback kept in a 1 MiB (configurable) ring buffer on the server for reattach replay. Default command is a template `terminal_command` setting; `{{claudeCommand}}` resolves to `claude --dangerously-load-development-channels server:hotsheet-channel` when `channelEnabled` is true, else `claude`, else the user's shell. Transport is WebSocket (requires attaching `ws` to the underlying Node server since `@hono/node-server` doesn't ship WS upgrade); native dep is `node-pty` (first non-WASM native addon — adds work to the Tauri sidecar build). Prerequisite UI change: drawer must push the main UI up instead of overlaying (HS-6262) — tracked as a separate ticket but required for this feature to be usable.
+
+**Out of scope:** multiple concurrent terminals per project, per-window private terminals, session recording, SSH / remote targets, split panes. Cross-refs: §4 (drawer layout), §12 (channel gates command substitution), §14 (other drawer tab), §15 (one-shot shell stays separate).
+
+**Status:** Design only. Tickets: HS-6261 (this doc), HS-6262 (drawer push-up layout).
+
+---
+
 ## 21. Feedback notes (`21-feedback.md`)
 
 AI tools request user feedback by adding a note to a ticket whose text begins with a recognized prefix (checked only on the most recent note):
@@ -311,6 +321,7 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 19 — demo plugin | Shipped | — |
 | 20 — secure storage | Partial | Windows Credential Manager not implemented |
 | 21 — feedback | Shipped | — |
+| 22 — terminal | Design only | entire feature (HS-6261 req doc, HS-6262 drawer push-up prerequisite) |
 | tauri-architecture | Shipped | — |
 | tauri-setup | Shipped | — |
 | plugin-development-guide | Shipped (living doc) | — |
