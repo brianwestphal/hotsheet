@@ -187,6 +187,7 @@ The `docs/` folder contains numbered requirements documents that describe the ap
   21. `21-feedback.md` — Feedback needed notes, dialog, auto-select, channel notification, tab indicator
   22. `22-terminal.md` — Embedded terminal in footer drawer (per-project PTY, tabs alongside Commands Log)
   23. `23-terminal-titles-and-bell.md` — Title-change escape sequences + bell-character indicator on terminal tabs
+  24. `24-cross-project-bell.md` — Cross-project bell surfacing (Phase 2 of HS-6473): server-side `\x07` detection + project-tab indicator
 - `docs/tauri-architecture.md` — Tauri v2 sidecar model, launch flows, CLI launchers, build pipeline, CI/CD signing
 - `docs/tauri-setup.md` — Tauri build prerequisites, updater signing keys, macOS code signing, release workflow
 - `docs/plugin-development-guide.md` — AI-focused guide for building plugins (ticketing backends and non-ticketing plugins). **Keep this guide up to date** whenever the plugin system changes — new interfaces, new manifest fields, new PluginContext methods, new UI extension points, or changes to the sync engine behavior. An AI reading this guide should be able to build a working plugin without looking at the source code.

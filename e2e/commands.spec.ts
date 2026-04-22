@@ -205,4 +205,54 @@ test.describe('Custom commands', () => {
     await expect(btns).toHaveCount(1, { timeout: 5000 });
     await expect(btns.first()).toContainText('Sidebar Cmd');
   });
+
+  // HS-6636: a "Show log on completion" shell command must switch the drawer to
+  // the Commands Log tab if the user happens to be on a terminal tab when it
+  // finishes — otherwise the auto-show is silently invisible.
+  test('autoShowLog command switches drawer from terminal tab to commands-log on completion (HS-6636)', async ({ page, request }) => {
+    // Tauri stub so the terminal feature is enabled in the bundle.
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__TAURI__ = {
+        core: { invoke: async () => undefined },
+      };
+    });
+
+    // Find the project secret so we can patch file-settings directly.
+    const projectsRes = await request.get('/api/projects');
+    const projects = await projectsRes.json() as { secret: string }[];
+    const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projects[0]?.secret ?? '' };
+
+    // Configure: a terminal + a shell command with autoShowLog. Open the drawer
+    // pre-positioned on the terminal tab so the test exercises the bug case.
+    await request.patch('/api/file-settings', {
+      headers,
+      data: {
+        terminal_enabled: 'true',
+        drawer_open: 'true',
+        drawer_active_tab: 'terminal:default',
+        terminals: [
+          { id: 'default', name: 'Default', command: '/bin/echo configured', lazy: true },
+        ],
+      },
+    });
+    await setCommandsAndReload(page, [
+      { name: 'Quick Echo', prompt: '/bin/echo hello-world', target: 'shell', autoShowLog: true },
+    ]);
+
+    // Drawer should restore to the terminal tab.
+    await expect(page.locator('.drawer-tab[data-drawer-tab="terminal:default"]')).toHaveClass(/active/, { timeout: 5000 });
+    await expect(page.locator('.drawer-tab[data-drawer-tab="commands-log"]')).not.toHaveClass(/active/);
+
+    // Trigger the autoShow command by clicking it in the sidebar.
+    const btn = page.locator('#channel-commands-container .channel-command-btn', { hasText: 'Quick Echo' });
+    if (await btn.count() === 0) {
+      test.skip();
+      return;
+    }
+    await btn.click();
+
+    // Shell poll runs every 2s; give it room to detect completion + auto-show.
+    await expect(page.locator('.drawer-tab[data-drawer-tab="commands-log"]')).toHaveClass(/active/, { timeout: 8000 });
+    await expect(page.locator('.drawer-tab[data-drawer-tab="terminal:default"]')).not.toHaveClass(/active/);
+  });
 });

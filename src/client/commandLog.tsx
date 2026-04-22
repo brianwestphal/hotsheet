@@ -535,6 +535,10 @@ export async function applyPerProjectDrawerState(): Promise<void> {
 
 export function showLogEntryById(logId: number) {
   if (!panelOpen) openPanel();
+  // The drawer may currently be on a terminal tab — the user opted into "Show
+  // log on completion" precisely to see the entry, so switch to commands-log
+  // so it's actually visible (HS-6636).
+  if (activeTab !== 'commands-log') switchDrawerTab('commands-log');
   // Wait for entries to load, then scroll to and expand the entry
   setTimeout(() => {
     const entry = document.querySelector<HTMLElement>(`.command-log-entry[data-id="${logId}"]`);

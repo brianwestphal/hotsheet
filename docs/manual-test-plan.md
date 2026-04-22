@@ -213,6 +213,7 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 
 ### Rendering and input (§22.6)
 - [ ] No black strip appears below the last rendered row (xterm viewport background matches the app theme even when container is taller than rows × cellHeight)
+- [ ] Click into a terminal — focus ring (2 px accent border) appears on all four edges of the terminal pane, including the **bottom** (HS-6635 regression check). Click outside — ring disappears.
 - [ ] Drag drawer resize handle → xterm reflows, shell inside (e.g. `claude` UI, `htop`) resizes correctly
 - [ ] Commands Log tab vertically fills the entire drawer (no empty space below the entries area). HS-6404: was caused by `.drawer-terminal-panes` taking flex:1 alongside the commands-log pane; the wrapper now uses `display: contents` so only the active pane claims space.
 - [ ] Switching from Commands Log to a Terminal tab and back: each pane fills the full drawer height in turn

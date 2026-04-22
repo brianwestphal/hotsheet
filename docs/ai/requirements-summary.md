@@ -218,9 +218,17 @@ Adds Terminal tabs to the footer drawer (alongside Commands Log) hosting interac
 
 ## 23. Terminal titles and bell indicators (`23-terminal-titles-and-bell.md`)
 
-Two QOL surface enhancements on top of §22. (1) **Title-change escapes:** `term.onTitleChange` is wired so OSC 0 / OSC 2 (`\x1b]0;TITLE\x07`) updates `runtimeTitle` on the `TerminalInstance`, and the drawer tab + in-pane header label resolve to it via `effectiveTabLabel`. Falls back to the configured `name` (or derived basename) when the runtime title is empty; resets on PTY restart and on project switch. (2) **Bell indicator:** `term.onBell` sets `hasBell` on the `TerminalInstance`; when the firing terminal isn't the active drawer tab, a Lucide `bell` glyph wiggles into place next to the tab label and clears as soon as the tab is activated. The bell-during-active case is suppressed by an `isTerminalTabActive` guard. **Phase 2 (deferred to follow-up):** server-side `\x07` detection so bells fired in non-current projects (no client-side xterm mounted) can light up the project tab AND the in-drawer terminal tab — requires a per-terminal `bellPending` field, a `/api/terminal/clear-bell` endpoint, and a global poll/long-poll for bell state across projects.
+Two QOL surface enhancements on top of §22. (1) **Title-change escapes:** `term.onTitleChange` is wired so OSC 0 / OSC 2 (`\x1b]0;TITLE\x07`) updates `runtimeTitle` on the `TerminalInstance`, and the drawer tab + in-pane header label resolve to it via `effectiveTabLabel`. Falls back to the configured `name` (or derived basename) when the runtime title is empty; resets on PTY restart and on project switch. (2) **Bell indicator (Phase 1):** `term.onBell` sets `hasBell` on the `TerminalInstance`; when the firing terminal isn't the active drawer tab, a Lucide `bell` glyph wiggles into place next to the tab label and clears as soon as the tab is activated. The bell-during-active case is suppressed by an `isTerminalTabActive` guard. **Phase 2** is specified separately in §24.
 
-**Status:** Shipped Phase 1 — title escapes (full) + same-project bell indicator. Implementation in `src/client/terminal.tsx` (`runtimeTitle`, `hasBell`, `effectiveTabLabel`, `BELL_ICON`, `updateTabLabel`) and `src/client/styles.scss` (`.drawer-tab-bell` + `drawer-tab-bell-shake` keyframe). Cross-refs: §22 (base terminal feature). Deferred follow-up: cross-project bell detection (Phase 2).
+**Status:** Shipped Phase 1 — title escapes (full) + same-project bell indicator. Implementation in `src/client/terminal.tsx` (`runtimeTitle`, `hasBell`, `effectiveTabLabel`, `BELL_ICON`, `updateTabLabel`) and `src/client/styles.scss` (`.drawer-tab-bell` + `drawer-tab-bell-shake` keyframe). Cross-refs: §22 (base terminal feature), §24 (Phase 2 spec).
+
+---
+
+## 24. Cross-project bell indicator (`24-cross-project-bell.md`)
+
+Phase 2 of the bell indicator: surface bells fired in non-current projects (where no client xterm is mounted) and in not-yet-mounted terminals within a project. Server-side `\x07` detection is added to the `TerminalRegistry` PTY data handler, setting a per-session `bellPending: boolean` flag that survives until explicitly cleared. New endpoints: `POST /api/terminal/clear-bell` (acknowledge + clear), `GET /api/projects/bell-state` (cross-project long-poll mirroring `/api/projects/permissions`), and an extended `/api/terminal/list` that includes `bellPending` per session. Client gains a `src/client/bellPoll.tsx` long-poll loop that updates a per-project bell map and re-renders both the project-tab indicator (suppressed on the active project, shown on others) and the in-drawer per-terminal indicators. Activating a project hides the project-tab indicator without clearing per-terminal flags, so the user can still see which specific terminal wanted attention. Activating a terminal tab clears its server-side `bellPending`. In-memory only — server restart drops all pending bells (intentional). No new user settings in v1; possible follow-ups call out an audio chime, decay timer, and full suppression toggle.
+
+**Status:** Design only — requirements documented for HS-6603, no code yet. Cross-refs: §22 (base terminal), §23 (Phase 1).
 
 ---
 
@@ -330,6 +338,8 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 20 — secure storage | Partial | Windows Credential Manager not implemented |
 | 21 — feedback | Shipped | — |
 | 22 — terminal | Shipped | full v1 (HS-6261 through HS-6270); future: E2E smoke test, live Tauri per-platform verification |
+| 23 — terminal titles & bell | Shipped (Phase 1) | Phase 2 spec lives in §24 |
+| 24 — cross-project bell | Design only | server `\x07` detection, `bellPending` flag, `/api/projects/bell-state` long-poll, `/api/terminal/clear-bell`, project-tab indicator + bellPoll client (HS-6603) |
 | tauri-architecture | Shipped | — |
 | tauri-setup | Shipped | — |
 | plugin-development-guide | Shipped (living doc) | — |

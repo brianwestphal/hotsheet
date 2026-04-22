@@ -2,6 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
 import { toElement } from './dom.js';
+import { formatInputPreview } from './permissionPreview.js';
 import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
 
@@ -131,7 +132,11 @@ function showPermissionPopup(
   const checkIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const xIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 
-  const hasPreview = perm.input_preview !== undefined && perm.input_preview !== '';
+  // Format Claude's raw `input_preview` into a human-readable preview — Bash
+  // gets just the command line, other known tools get their primary field,
+  // generic JSON gets flattened key/value lines (HS-6634).
+  const previewText = perm.input_preview !== undefined ? formatInputPreview(perm.tool_name, perm.input_preview) : '';
+  const hasPreview = previewText !== '';
   const popup = toElement(
     <div className="permission-popup">
       <div className="permission-popup-body">
@@ -139,7 +144,7 @@ function showPermissionPopup(
           <span className="permission-popup-tool">{perm.tool_name}</span>
           <span className="permission-popup-desc">{perm.description}</span>
         </div>
-        {hasPreview ? <pre className="permission-popup-preview">{perm.input_preview}</pre> : ''}
+        {hasPreview ? <pre className="permission-popup-preview">{previewText}</pre> : ''}
       </div>
       <div className="permission-popup-actions">
         <button className="permission-popup-allow" title="Allow">{raw(checkIcon)}</button>

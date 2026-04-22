@@ -34,16 +34,9 @@ When the bell fires in a terminal whose tab is **not** the currently active draw
 
 The indicator clears when the user activates the tab (`activateTerminal` checks `inst.hasBell` and removes the icon + class). It also clears implicitly if the bell fires while the tab is already active — the `isTerminalTabActive` guard in the `onBell` handler suppresses the indicator in that case.
 
-### Phase 2 — cross-project terminals (deferred)
+### Phase 2 — cross-project terminals
 
-The same indicator is intended to appear on the **project tab** when any terminal in a non-current project fires a bell, and on the terminal tab inside that project's drawer once the user navigates to it. This requires server-side detection of `\x07` bytes in the PTY output stream (the client only sees bells for xterms that are mounted, which is none in non-active projects). Tracked separately as a follow-up because it adds:
-
-- A scan for `\x07` bytes inside `TerminalRegistry`'s data handler (negligible overhead but new code path)
-- A per-terminal `bellPending` field surfaced via `/api/terminal/list` and a global `/api/terminals/bell-state` long-poll (so non-active projects can be notified without each one opening a WebSocket per terminal)
-- A `POST /api/terminal/clear-bell` endpoint
-- Project tab indicator rendering and clear-on-activate semantics
-
-Until Phase 2 ships, bells in non-active projects are silently dropped and bells in non-active-but-not-yet-mounted terminals (lazy terminals never opened) are not surfaced.
+Specified in its own document: see [24-cross-project-bell.md](24-cross-project-bell.md). Tracked under HS-6603. Until shipped, bells in non-active projects are silently dropped and bells in non-active-but-not-yet-mounted terminals (lazy terminals never opened) are not surfaced.
 
 ## 23.4 Manual test plan
 
