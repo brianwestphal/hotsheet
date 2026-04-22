@@ -456,6 +456,11 @@ function renderTabs() {
 
     el.addEventListener('click', () => {
       void (async () => {
+        // HS-6832: clicking a project tab while the terminal dashboard is
+        // active exits the dashboard first and then navigates to the clicked
+        // project's normal ticket view (docs/25-terminal-dashboard.md §25.3).
+        const { exitDashboard } = await import('./terminalDashboard.js');
+        exitDashboard();
         await switchProject(project);
         // HS-6637: if this tab has a minimized permission popup, bring it back.
         reopenMinimizedForSecret(project.secret);

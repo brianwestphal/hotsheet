@@ -188,6 +188,303 @@ input, select, textarea {
   }
 }
 
+// --- Terminal Dashboard (docs/25-terminal-dashboard.md) ---
+// HS-6832: foundation — toolbar toggle button + body-class gate that hides the
+// rest of the chrome. Tile grid, zoom overlay, dedicated view are added by
+// HS-6833 through HS-6838.
+.terminal-dashboard-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  &.active {
+    background: color-mix(in srgb, var(--accent, #3b82f6) 15%, transparent);
+    border-color: var(--accent, #3b82f6);
+    color: var(--accent, #3b82f6);
+  }
+}
+
+.terminal-dashboard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--bg);
+  padding: 20px;
+  gap: 24px;
+  position: relative; // host for the HS-6836 dedicated-view overlay
+}
+
+.terminal-dashboard-loading,
+.terminal-dashboard-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 12px 0;
+}
+
+.terminal-dashboard-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.terminal-dashboard-heading {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  padding: 0;
+}
+
+.terminal-dashboard-empty-row {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 4px 0 4px 2px;
+  font-style: italic;
+}
+
+.terminal-dashboard-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.terminal-dashboard-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  // Width + preview height are applied inline by applyTileSizing() so the
+  // 4:3 ratio tracks the viewport across resizes.
+}
+
+.terminal-dashboard-tile-preview {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  position: relative;
+}
+
+.terminal-dashboard-tile-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+// HS-6838: lazy / exited placeholder — big play glyph + status string
+// centered in the preview area. Same 4:3 tile frame as live tiles so the
+// grid stays aligned. Click / dblclick on the tile triggers spawn-on-enlarge.
+.terminal-dashboard-tile-placeholder-cold {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+
+  svg { opacity: 0.55; }
+}
+
+.terminal-dashboard-tile-placeholder-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.terminal-dashboard-tile-placeholder-starting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  background: var(--bg-secondary);
+  width: 100%;
+  height: 100%;
+}
+
+// HS-6834: xterm grid at natural 80×60 size, visually scaled via
+// transform:scale from the tile's top-left. Grid-view tiles are strictly
+// non-interactive — pointer events only reach the tile root for the
+// click / double-click handlers owned by HS-6835 / HS-6836.
+.terminal-dashboard-tile:not(.centered) {
+  .terminal-dashboard-tile-xterm {
+    pointer-events: none;
+    user-select: none;
+    .xterm-helper-textarea { display: none !important; }
+    .xterm-cursor-layer { opacity: 0; }
+  }
+}
+
+.terminal-dashboard-tile {
+  cursor: pointer;
+  transition: box-shadow 120ms ease;
+
+  &:hover:not(.centered) .terminal-dashboard-tile-preview {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3b82f6) 60%, transparent);
+  }
+}
+
+.terminal-dashboard-tile-preview {
+  &:focus, &:focus-within { outline: none; }
+  transition: width 0.25s ease, height 0.25s ease;
+}
+
+// HS-6835: centered tile is pulled out of grid flow via position:fixed,
+// sits above the dim backdrop, and gets a larger tile preview so the xterm
+// grid is actually usable. Esc / click outside / click same tile collapses.
+.terminal-dashboard-tile.centered {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 500;
+  cursor: default;
+
+  .terminal-dashboard-tile-preview {
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  }
+
+  // Restore native pointer-events + textarea visibility so the xterm can
+  // actually receive keyboard focus.
+  .terminal-dashboard-tile-xterm { pointer-events: auto; user-select: text; }
+}
+
+.terminal-dashboard-center-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 499;
+  background: rgba(0, 0, 0, 0.55);
+  animation: terminal-dashboard-backdrop-fade 200ms ease-out;
+}
+
+@keyframes terminal-dashboard-backdrop-fade {
+  from { background: rgba(0, 0, 0, 0); }
+  to { background: rgba(0, 0, 0, 0.55); }
+}
+
+// HS-6837: bell indicator — one-shot bounce keyframe when the class is first
+// added, plus a persistent 2 px accent outline that lingers until the user
+// views the terminal more closely (center / dedicated / exit-then-drawer).
+.terminal-dashboard-tile.has-bell {
+  .terminal-dashboard-tile-preview {
+    box-shadow: 0 0 0 2px var(--accent, #3b82f6);
+  }
+  animation: terminal-dashboard-tile-bell-bounce 0.35s ease-out 1;
+}
+
+@keyframes terminal-dashboard-tile-bell-bounce {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.08); }
+}
+
+// HS-6836: dedicated view covers the dashboard content area. The project-tab
+// strip stays above (part of the app header), but the grid + tiles are
+// hidden beneath this overlay.
+.terminal-dashboard-dedicated {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-dashboard-dedicated-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.terminal-dashboard-dedicated-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+
+  &:hover { background: var(--bg-hover); }
+}
+
+.terminal-dashboard-dedicated-label {
+  display: inline-flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.terminal-dashboard-dedicated-sep {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.terminal-dashboard-dedicated-terminal {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.terminal-dashboard-dedicated-body {
+  flex: 1;
+  padding: 8px 12px 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.terminal-dashboard-tile-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+body.terminal-dashboard-active {
+  .header-controls,
+  .sidebar,
+  .content-area,
+  .app-body,
+  #batch-toolbar,
+  #detail-panel,
+  #detail-resize-handle,
+  #command-log-panel,
+  #backup-preview-banner,
+  #skills-banner,
+  #update-banner,
+  #share-banner,
+  .app-footer {
+    display: none !important;
+  }
+  .terminal-dashboard {
+    display: flex !important;
+  }
+}
+
 // Tab context menu
 .tab-context-menu {
   position: fixed;

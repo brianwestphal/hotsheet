@@ -28,6 +28,7 @@ import { bindDetailTagInput } from './tagAutocomplete.js'; // .tsx file, JSX ena
 import { showTagsDialog } from './tagsDialog.js';
 import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, restoreAppIcon } from './tauriIntegration.js';
 import { initTerminal } from './terminal.js';
+import { initTerminalDashboard } from './terminalDashboard.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';
 
@@ -223,6 +224,7 @@ async function init() {
   // Command log panel + embedded terminal (tabs in the same drawer)
   initCommandLog();
   initTerminal();
+  initTerminalDashboard();
   // Cross-project bell long-poll (HS-6603 §24.4.1) — surfaces server-side
   // bell state on project tabs and feeds the in-drawer indicator for
   // bells fired while the user is inside another project.

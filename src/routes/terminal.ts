@@ -10,6 +10,7 @@ import {
   killTerminal,
   listProjectTerminalIds,
   restartTerminal,
+  type TerminalState,
 } from '../terminals/registry.js';
 import type { AppEnv } from '../types.js';
 import { notifyBellWaiters } from './notify.js';
@@ -72,10 +73,24 @@ terminalRoutes.get('/list', (c) => {
   // HS-6603 §24.3.1 — annotate each entry with the current server-side
   // bellPending flag so the client can seed its in-drawer indicators on
   // initial render / project switch without waiting for a long-poll tick.
-  const withBell = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean })[] =>
-    items.map(item => ({ ...item, bellPending: getBellPending(secret, item.id) }));
+  // HS-6834 §25.5 — also include `state` so the terminal dashboard knows which
+  // entries it can safely open a WebSocket against (only `alive`) and which
+  // should render as placeholders (`not_spawned` / `exited`, HS-6838). This
+  // avoids accidentally spawning lazy-mode terminals when the dashboard opens.
+  // HS-6838 — exitCode accompanies `state === 'exited'` so the placeholder
+  // tile can display `Exited (code N)` without needing a second round-trip.
+  const annotate = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean; state: TerminalState; exitCode: number | null })[] =>
+    items.map(item => {
+      const status = getTerminalStatus(secret, dataDir, item.id);
+      return {
+        ...item,
+        bellPending: getBellPending(secret, item.id),
+        state: status.state,
+        exitCode: status.exitCode,
+      };
+    });
 
-  return c.json({ configured: withBell(configured), dynamic: withBell(dynamic) });
+  return c.json({ configured: annotate(configured), dynamic: annotate(dynamic) });
 });
 
 /**

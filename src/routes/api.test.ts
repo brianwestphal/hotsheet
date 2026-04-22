@@ -600,8 +600,8 @@ describe('settings', () => {
 });
 
 interface TerminalListResponse {
-  configured: { id: string; name?: string; command: string; lazy?: boolean; bellPending?: boolean }[];
-  dynamic: { id: string; name?: string; command: string; lazy?: boolean; bellPending?: boolean }[];
+  configured: { id: string; name?: string; command: string; lazy?: boolean; bellPending?: boolean; state?: 'alive' | 'exited' | 'not_spawned' }[];
+  dynamic: { id: string; name?: string; command: string; lazy?: boolean; bellPending?: boolean; state?: 'alive' | 'exited' | 'not_spawned' }[];
 }
 
 interface TerminalCreateResponse {
@@ -657,6 +657,20 @@ describe('terminal route', () => {
     for (const entry of [...data.configured, ...data.dynamic]) {
       expect(entry.bellPending).toBe(false);
     }
+  });
+
+  // HS-6834 §25.5 — /list includes session state so the terminal dashboard
+  // knows which entries are safe to WebSocket-attach vs. which render as
+  // placeholders (HS-6838). Freshly-registered / never-attached terminals
+  // should report `not_spawned`.
+  it('GET /api/terminal/list annotates each entry with state (default not_spawned)', async () => {
+    const create = await app.request('/api/terminal/create', { method: 'POST' });
+    const created = await create.json() as TerminalCreateResponse;
+    const list = await app.request('/api/terminal/list');
+    const data = await list.json() as TerminalListResponse;
+    const entry = data.dynamic.find(t => t.id === created.config.id);
+    expect(entry).toBeDefined();
+    expect(entry?.state).toBe('not_spawned');
   });
 
   it('POST /api/terminal/clear-bell returns { ok: true } even when no flag was set', async () => {

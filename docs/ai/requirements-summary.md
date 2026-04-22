@@ -232,6 +232,14 @@ Phase 2 of the bell indicator: surface bells fired in non-current projects (wher
 
 ---
 
+## 25. Terminal dashboard view (`25-terminal-dashboard.md`)
+
+A second top-level client view (alongside the normal per-project ticket view) for eyeballing every terminal across every registered project at once. Entered via a new `layout-panel-left` toolbar button placed before the first project tab (Tauri-only, hidden entirely on web). While active, only the toggle button and the project-tab strip remain visible in the top toolbar — settings, search, layout toggles, channel cluster, ticket area, detail panel, and per-project drawer are all hidden. Content area becomes a vertically scrollable column of per-project sections: project heading, then a flex-wrap grid of 4:3 terminal tiles with the terminal title centered below each tile. Every tile is identically sized — one global computation picks the largest width such that all tiles fit the viewport (min 100 px preview height; content scrolls vertically when even the floor doesn't fit). Tiles render a shared xterm instance pinned at **80 cols × 60 rows** and visually fit via `transform: scale(...)` — the PTY is untouched and other attachers (drawer, other windows) see no reflow. Single-click zooms a tile to ~70 % viewport centered overlay with focus + keyboard input; click outside / Esc / click same tile returns to grid; click a different tile swaps. Double-click enters a dedicated full-viewport view that _does_ `fit()` (PTY resized to match) and whose Back/Esc return to the grid. Bells bounce the tile once (350 ms keyframe) and persist an accent outline until the user centers the tile, enters its dedicated view, or exits dashboard and opens the drawer — any of which fires `POST /api/terminal/clear-bell` (reusing §24 transport). Lazy-unspawned and exited terminals render a placeholder tile (label + play glyph + status); spawning happens on enlarge (center or dedicated), not at dashboard open. Projects with zero terminals still render their heading plus an "open Settings → Terminal to add one" empty-state row. Exit paths: click the toggle again, press Esc on the bare grid, or click any project tab (auto-exits dashboard **and** navigates to that project's ticket view). No new server endpoints, no new settings — dashboard-open is an in-memory client-only flag that resets on reload.
+
+**Status:** Design only — this doc captures the intended v1. Implementation ticket: HS-6272. Out of scope for v1 (deferred): keyboard shortcut to toggle, drag-to-reorder tiles, per-tile lifecycle buttons, input into grid tiles, resizable centered overlay, persisted dashboard-open state, multi-select, audio bell. Cross-refs: §22 (base terminal), §23 (bell Phase 1 — same concept at tile granularity), §24 (bell-state long-poll reused verbatim), §4 (top toolbar chrome that gets hidden), §10 (Tauri-only gating pattern).
+
+---
+
 ## 21. Feedback notes (`21-feedback.md`)
 
 AI tools request user feedback by adding a note to a ticket whose text begins with a recognized prefix (checked only on the most recent note):
@@ -340,6 +348,7 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 22 — terminal | Shipped | full v1 (HS-6261 through HS-6270); future: E2E smoke test, live Tauri per-platform verification |
 | 23 — terminal titles & bell | Shipped (Phase 1) | Phase 2 spec lives in §24 |
 | 24 — cross-project bell | Shipped | server `0x07` detection + `bellPending` flag, `/api/projects/bell-state` long-poll, `/api/terminal/clear-bell`, project-tab `.has-bell` indicator, client bellPoll (HS-6603) |
+| 25 — terminal dashboard | Design only | entire feature pending implementation — toggle button, grid layout, center overlay, dedicated view, tile bell indicators, placeholder spawn-on-enlarge (HS-6272) |
 | tauri-architecture | Shipped | — |
 | tauri-setup | Shipped | — |
 | plugin-development-guide | Shipped (living doc) | — |
