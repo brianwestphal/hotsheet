@@ -94,7 +94,16 @@ export function syncDetailPanel() {
     return;
   }
 
-  // Always show the panel
+  // Respect the user's detail-panel visibility preference — if they've hidden
+  // the panel via the position toggle, don't re-show it just because a row was
+  // selected/deselected. The panel is only re-shown by explicit user action
+  // (clicking a position toggle).
+  if (!state.settings.detail_visible) {
+    panel.style.display = 'none';
+    if (handle) handle.style.display = 'none';
+    return;
+  }
+
   panel.style.display = 'flex';
   if (handle) handle.style.display = '';
 

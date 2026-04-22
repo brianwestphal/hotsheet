@@ -564,8 +564,8 @@ describe('settings', () => {
 });
 
 interface TerminalListResponse {
-  configured: { id: string; name?: string; command: string; lazy?: boolean }[];
-  dynamic: { id: string; name?: string; command: string; lazy?: boolean }[];
+  configured: { id: string; name?: string; command: string; lazy?: boolean; bellPending?: boolean }[];
+  dynamic: { id: string; name?: string; command: string; lazy?: boolean; bellPending?: boolean }[];
 }
 
 interface TerminalCreateResponse {
@@ -611,6 +611,27 @@ describe('terminal route', () => {
     const data = await list.json() as TerminalListResponse;
     const ids = data.dynamic.map(t => t.id);
     expect(ids).not.toContain(created.config.id);
+  });
+
+  // HS-6603 §24.3.1 / §24.3.2 — /list includes bellPending; clear-bell flips it.
+  it('GET /api/terminal/list annotates each entry with bellPending (default false)', async () => {
+    const list = await app.request('/api/terminal/list');
+    expect(list.status).toBe(200);
+    const data = await list.json() as TerminalListResponse;
+    for (const entry of [...data.configured, ...data.dynamic]) {
+      expect(entry.bellPending).toBe(false);
+    }
+  });
+
+  it('POST /api/terminal/clear-bell returns { ok: true } even when no flag was set', async () => {
+    const res = await app.request('/api/terminal/clear-bell', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ terminalId: 'does-not-exist' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean };
+    expect(body.ok).toBe(true);
   });
 });
 

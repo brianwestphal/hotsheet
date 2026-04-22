@@ -11,6 +11,13 @@ import { requestAttention } from './tauriIntegration.js';
  * full-screen overlay for the active project and a compact popup for
  * non-active projects. HS-6536 unified them — every pending permission
  * (active or not) uses the same popup anchored to its project tab.
+ *
+ * HS-6637: clicking outside the popup MINIMIZES it into a pulsating blue dot
+ * on the owning project's tab instead of dismissing it. Clicking the tab
+ * re-shows the same popup. The "No response needed" link at the popup's
+ * bottom-left dismisses outright (for cases where the user wants to respond
+ * via Claude directly). A minimized popup auto-dismisses after 2 minutes so
+ * it can't linger forever.
  */
 
 export type PermissionData = { request_id: string; tool_name: string; description: string; input_preview?: string };
@@ -21,18 +28,42 @@ export let permissionVersion = 0;
 // Track request IDs we've already responded to, so polling doesn't re-show them.
 export const respondedRequestIds = new Set<string>();
 
-// Track request IDs the user has explicitly dismissed (clicked outside the
-// popup) so the next poll cycle doesn't immediately re-show the same popup
-// while the channel server still has it pending. The user's intent in
-// dismissing was "I see it, I'll handle it elsewhere or later" — re-asserting
-// the popup every 100 ms produces a flickering-popup bug (HS-6436). Cleared
-// implicitly when the channel server reports the request is no longer
-// pending.
+// Request IDs the user has explicitly dismissed ("No response needed" link, or
+// auto-expired minimized popups). The channel-server request is still pending;
+// polling will not re-show the popup until it disappears server-side (HS-6436).
 export const dismissedRequestIds = new Set<string>();
+
+// Minimized popups — user clicked outside (or on the owning tab) without
+// responding. Indexed by request_id. The pulsating blue dot on the owning
+// project tab signals there is a waiting permission; clicking the tab
+// re-opens the popup (see reopenMinimizedForSecret). HS-6637.
+type MinimizedRecord = {
+  secret: string;
+  perm: PermissionData;
+  timeoutId: ReturnType<typeof setTimeout>;
+};
+const minimizedRequests = new Map<string, MinimizedRecord>();
+
+/** Two-minute timeout on minimized popups — after that they auto-dismiss. */
+const MINIMIZED_TIMEOUT_MS = 2 * 60 * 1000;
+
+/** Read-only view of which project secrets currently have a minimized popup. */
+export function getMinimizedPermissionSecrets(): Set<string> {
+  const secrets = new Set<string>();
+  for (const rec of minimizedRequests.values()) secrets.add(rec.secret);
+  return secrets;
+}
+
+/** Module-level channel-busy-timeout refs, captured at poll start so the
+ *  popup's reopen path can extend the timeout from anywhere. */
+let channelBusyTimeoutModule: ReturnType<typeof setTimeout> | null = null;
+let setChannelBusyTimeoutRefModule: (t: ReturnType<typeof setTimeout> | null) => void = () => {};
 
 export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof setTimeout> | null, setChannelBusyTimeoutRef: (t: ReturnType<typeof setTimeout> | null) => void) {
   if (permissionPollActive) return;
   permissionPollActive = true;
+  channelBusyTimeoutModule = channelBusyTimeout;
+  setChannelBusyTimeoutRefModule = (t) => { channelBusyTimeoutModule = t; setChannelBusyTimeoutRef(t); };
 
   async function poll() {
     if (!permissionPollActive) return;
@@ -59,8 +90,10 @@ export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof set
           pendingSecrets.add(secret);
           pendingRequestIds.add(perm.request_id);
           markProjectAttention(secret);
-          if (!respondedRequestIds.has(perm.request_id) && !dismissedRequestIds.has(perm.request_id)) {
-            showPermissionPopup(secret, perm, channelBusyTimeout, setChannelBusyTimeoutRef);
+          if (!respondedRequestIds.has(perm.request_id)
+              && !dismissedRequestIds.has(perm.request_id)
+              && !minimizedRequests.has(perm.request_id)) {
+            showPermissionPopup(secret, perm);
           }
         } else {
           clearProjectAttention(secret);
@@ -72,10 +105,18 @@ export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof set
           clearProjectAttention(secret);
         }
       }
-      // Garbage-collect dismissed-request bookkeeping for requests the channel
-      // server no longer reports — otherwise the set would grow unbounded.
+      // GC dismissed bookkeeping for requests the channel server no longer reports.
       for (const id of [...dismissedRequestIds]) {
         if (!pendingRequestIds.has(id)) dismissedRequestIds.delete(id);
+      }
+      // GC minimized bookkeeping likewise — if the server resolved the
+      // request while minimized, drop the record and update the tab dot.
+      for (const [id, rec] of [...minimizedRequests]) {
+        if (!pendingRequestIds.has(id)) {
+          clearTimeout(rec.timeoutId);
+          minimizedRequests.delete(id);
+          syncMinimizedDots();
+        }
       }
 
     } catch {
@@ -90,22 +131,37 @@ export function stopPermissionPolling() {
   permissionPollActive = false;
 }
 
+/** Re-open a minimized permission popup for the given project. Returns true
+ *  if a popup was re-opened. Called from projectTabs after a tab click. */
+export function reopenMinimizedForSecret(secret: string): boolean {
+  for (const [reqId, rec] of minimizedRequests) {
+    if (rec.secret === secret) {
+      clearTimeout(rec.timeoutId);
+      minimizedRequests.delete(reqId);
+      syncMinimizedDots();
+      showPermissionPopup(rec.secret, rec.perm);
+      return true;
+    }
+  }
+  return false;
+}
+
+function syncMinimizedDots() {
+  // Lazy import to avoid circular dep at module-init time.
+  import('./projectTabs.js').then(m => m.updateStatusDots()).catch(() => {});
+}
+
 // --- Permission popup (single codepath for active + non-active projects) ---
 
 let activePopupRequestId: string | null = null;
 
-function showPermissionPopup(
-  secret: string,
-  perm: PermissionData,
-  channelBusyTimeout: ReturnType<typeof setTimeout> | null,
-  setChannelBusyTimeoutRef: (t: ReturnType<typeof setTimeout> | null) => void,
-) {
+function showPermissionPopup(secret: string, perm: PermissionData) {
   // Already showing this exact request — no-op
   if (activePopupRequestId === perm.request_id) return;
   // Already responded to this request
   if (respondedRequestIds.has(perm.request_id)) return;
-  // User explicitly dismissed (clicked outside) this request — don't re-show
-  // until it disappears server-side (HS-6436).
+  // User explicitly dismissed this request — don't re-show until it
+  // disappears server-side (HS-6436).
   if (dismissedRequestIds.has(perm.request_id)) return;
   // Another popup is already showing — don't replace it (prevents bouncing).
   // The next poll cycle will show this one after the current is dismissed.
@@ -115,9 +171,9 @@ function showPermissionPopup(
   activePopupRequestId = perm.request_id;
 
   // A permission request is proof Claude is actively working — extend busy timeout.
-  if (channelBusyTimeout) {
-    clearTimeout(channelBusyTimeout);
-    setChannelBusyTimeoutRef(setTimeout(() => {
+  if (channelBusyTimeoutModule) {
+    clearTimeout(channelBusyTimeoutModule);
+    setChannelBusyTimeoutRefModule(setTimeout(() => {
       if (isChannelBusy()) setChannelBusy(false);
     }, 60000));
   }
@@ -145,6 +201,7 @@ function showPermissionPopup(
           <span className="permission-popup-desc">{perm.description}</span>
         </div>
         {hasPreview ? <pre className="permission-popup-preview">{previewText}</pre> : ''}
+        <a className="permission-popup-dismiss-link" href="#">No response needed</a>
       </div>
       <div className="permission-popup-actions">
         <button className="permission-popup-allow" title="Allow">{raw(checkIcon)}</button>
@@ -153,20 +210,41 @@ function showPermissionPopup(
     </div>
   );
 
-  function cleanup() {
+  function clearPopupOnly() {
     popup.remove();
     activePopupRequestId = null;
     if (tab) tab.classList.remove('permission-highlight');
-    document.removeEventListener('click', outsideClick);
+    document.removeEventListener('click', outsideClick, true);
+  }
+
+  function cleanupAndDismiss() {
+    dismissedRequestIds.add(perm.request_id);
+    clearPopupOnly();
+  }
+
+  function cleanupAndMinimize() {
+    clearPopupOnly();
+    const timeoutId = setTimeout(() => {
+      const rec = minimizedRequests.get(perm.request_id);
+      if (!rec) return;
+      minimizedRequests.delete(perm.request_id);
+      dismissedRequestIds.add(perm.request_id);
+      syncMinimizedDots();
+    }, MINIMIZED_TIMEOUT_MS);
+    minimizedRequests.set(perm.request_id, { secret, perm, timeoutId });
+    syncMinimizedDots();
   }
 
   function outsideClick(e: MouseEvent) {
-    if (!popup.contains(e.target as Node)) {
-      // Record the dismissal so the next poll cycle doesn't immediately
-      // re-show the same popup while the channel still has the request
-      // pending (HS-6436).
-      dismissedRequestIds.add(perm.request_id);
-      cleanup();
+    if (popup.contains(e.target as Node)) return;
+    // Click elsewhere → minimize the popup into a pulsating tab dot.
+    cleanupAndMinimize();
+    // If the click was on the owning tab, also swallow so the tab's own
+    // click handler doesn't immediately reopen what we just minimized
+    // (toggle semantics: tab click on open popup = minimize).
+    if (tab && tab.contains(e.target as Node)) {
+      e.stopPropagation();
+      e.preventDefault();
     }
   }
 
@@ -189,7 +267,10 @@ function showPermissionPopup(
       }),
     });
     clearProjectAttention(secret);
-    cleanup();
+    // Also drop any minimized bookkeeping for this request.
+    const rec = minimizedRequests.get(perm.request_id);
+    if (rec) { clearTimeout(rec.timeoutId); minimizedRequests.delete(perm.request_id); syncMinimizedDots(); }
+    clearPopupOnly();
   }
 
   popup.querySelector('.permission-popup-allow')!.addEventListener('click', (e) => {
@@ -200,6 +281,12 @@ function showPermissionPopup(
   popup.querySelector('.permission-popup-deny')!.addEventListener('click', (e) => {
     e.stopPropagation();
     respondToPermission('deny');
+  });
+
+  popup.querySelector('.permission-popup-dismiss-link')!.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    cleanupAndDismiss();
   });
 
   document.body.appendChild(popup);
@@ -219,6 +306,7 @@ function showPermissionPopup(
     requestAttention(state.settings.notify_permission);
   }
 
-  // Close on outside click (deferred so the current click doesn't immediately close).
-  setTimeout(() => document.addEventListener('click', outsideClick), 0);
+  // Close on outside click (deferred + capture phase so we can swallow the
+  // click on the owning tab and prevent toggle-bounce).
+  setTimeout(() => document.addEventListener('click', outsideClick, true), 0);
 }

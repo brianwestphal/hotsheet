@@ -53,3 +53,27 @@ export function notifyPermission() {
   permissionWaiters = [];
   for (const resolve of waiters) resolve();
 }
+
+// --- Cross-project bell long-poll support (HS-6603 §24.3.4) ---
+// Mirrors the permission-waiter pattern. Bumped any time a terminal's
+// bellPending flag flips in either direction (set by the PTY data handler
+// on 0x07; cleared by POST /api/terminal/clear-bell).
+
+let bellVersion = 0;
+let bellWaiters: Array<() => void> = [];
+
+export function getBellVersion() {
+  return bellVersion;
+}
+
+export function addBellWaiter(resolve: () => void) {
+  bellWaiters.push(resolve);
+}
+
+/** Wake all waiting bell-state long-poll connections. */
+export function notifyBellWaiters() {
+  bellVersion++;
+  const waiters = bellWaiters;
+  bellWaiters = [];
+  for (const resolve of waiters) resolve();
+}

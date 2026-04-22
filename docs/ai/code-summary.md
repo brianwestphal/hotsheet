@@ -88,8 +88,9 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `plugins.ts` | `GET /api/plugins`, `/ui`, `:id/{action,validate,config,test}`, `/sync/manual`, conflicts, schedules, `global-config`, `image-proxy`, bundled install |
 | `shell.ts` | `POST /api/shell/exec`, `/shell/kill`, `GET /api/shell/running` |
 | `backups.ts` | `GET /api/backups`, `POST /api/backups/restore/:id`, preview flow |
-| `projects.ts` | `/api/projects` register/list/unregister, reorder, per-project channel-status |
-| `notify.ts` | Shared long-poll + change-version bus |
+| `projects.ts` | `/api/projects` register/list/unregister, reorder, per-project channel-status, `/api/projects/permissions` long-poll, `/api/projects/bell-state` long-poll (HS-6638 §24.3.3 — aggregates per-project `bellPending`) |
+| `terminal.ts` | `GET /api/terminal/list` (includes `bellPending`), `/status`, `/restart`, `/kill`, `/create`, `/destroy`, `/clear-bell` (HS-6638 §24.3.2) |
+| `notify.ts` | Shared long-poll + change-version bus (change / permission / bell waiter lists; HS-6638 added `bellVersion` + `addBellWaiter` + `notifyBellWaiters`) |
 | `pages.tsx` | `GET /` server-rendered HTML |
 | `validation.ts` | Zod schemas for body/query validation |
 | `helpers.ts` | `parseIntParam`, header readers, etc. |
@@ -123,9 +124,9 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 
 **Dialogs / overlays:** `confirm.tsx` — `confirmDialog({message, title?, confirmLabel?, cancelLabel?, danger?}) → Promise<boolean>` in-app replacement for `window.confirm`, which is a silent no-op in Tauri WKWebView (always returns false without showing a dialog). Use this for every yes/no prompt.
 
-**Channel / commands / feedback:** `channelUI.tsx`, `permissionOverlay.tsx`, `commandLog.tsx` (drawer shell, delegates `terminal:<id>` tabs; exports `previewDrawerTab(tab)` that returns a restorer — used by Settings → Terminal delete to reveal the doomed terminal before the confirm), `commandLogFilter.tsx`, `commandSidebar.tsx`, `commandEditor.tsx`, `feedbackDialog.tsx`.
+**Channel / commands / feedback:** `channelUI.tsx`, `permissionOverlay.tsx` (permission popup, poll loop, HS-6637 minimize-to-pulsating-dot flow — exports `reopenMinimizedForSecret(secret)` called from the project tab click, `getMinimizedPermissionSecrets()` read by `updateStatusDots`; uses capture-phase outside-click handler so the owning-tab click minimizes without bouncing back open), `permissionPreview.ts` (`formatInputPreview(tool, raw)` — strips JSON wrapper off Claude's `input_preview`, with forgiving partial-JSON fallback for truncated Bash commands, HS-6634), `commandLog.tsx` (drawer shell, delegates `terminal:<id>` tabs; exports `previewDrawerTab(tab)` that returns a restorer — used by Settings → Terminal delete to reveal the doomed terminal before the confirm), `commandLogFilter.tsx`, `commandSidebar.tsx`, `commandEditor.tsx`, `feedbackDialog.tsx`.
 
-**Embedded terminal:** `terminal.tsx` (per-terminal tab state, xterm mount, WebSocket, stop/start power button, `onProjectSwitch` teardown so tabs rebuild per-project, `onTitleChange` → `runtimeTitle` and `onBell` → `hasBell` for HS-6473 — drawer tab label and in-pane header track the runtime title; bell glyph wiggles on the tab when the bell fires while the tab isn't active), `terminalsSettings.tsx` (settings outline list + edit modal for configured default terminals). Per-project drawer state (`drawer_open`, `drawer_active_tab`) persists in `settings.json` and is reapplied by `commandLog.applyPerProjectDrawerState` on project switch and on initial load.
+**Embedded terminal:** `terminal.tsx` (per-terminal tab state, xterm mount, WebSocket, stop/start power button, `onProjectSwitch` teardown so tabs rebuild per-project, `onTitleChange` → `runtimeTitle` and `onBell` → `hasBell` for HS-6473 — **only the in-pane terminal toolbar** tracks `runtimeTitle`; the drawer tab keeps its static configured/derived name so long per-cwd shell titles don't clutter the narrow tab (HS-6473 follow-up). Bell glyph wiggles on the drawer tab when the bell fires while the tab isn't active. Tab context menu (HS-6470) also includes a **Rename...** entry (HS-6668) that opens `promptRenameTerminal(inst)` — a transient in-memory rename that updates `config.name` on the client instance but never persists to `settings.json`), `terminalsSettings.tsx` (settings outline list + edit modal for configured default terminals). Per-project drawer state (`drawer_open`, `drawer_active_tab`) persists in `settings.json` and is reapplied by `commandLog.applyPerProjectDrawerState` on project switch and on initial load.
 
 **Plugins:** `pluginSettings.tsx`, `pluginConfigDialog.tsx`, `pluginUI.tsx`.
 
@@ -146,9 +147,9 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
   - `eagerSpawn.ts` — `eagerSpawnTerminals(secret, dataDir)` spawns every `lazy:false` configured terminal via `ensureSpawned`. Called from `cli.ts` at project registration and from `/file-settings` PATCH when `terminals` changes.
   - `resolveCommand.ts` — resolves the chosen terminal's command template (`{{claudeCommand}}` substitution) + cwd; accepts optional `terminalId` and a `configOverride` for dynamic terminals.
   - `ringBuffer.ts` — FIFO byte buffer capped at a max size for scrollback.
-  - `registry.ts` — `TerminalRegistry` keyed by `${secret}::${terminalId}`; lazy node-pty spawn, subscriber broadcast, restart / kill / destroy lifecycle, `ensureSpawned` (no-subscriber spawn for eager mode), `listProjectTerminalIds`, `destroyProjectTerminals`. `setPtyFactory` for tests.
+  - `registry.ts` — `TerminalRegistry` keyed by `${secret}::${terminalId}`; lazy node-pty spawn, subscriber broadcast, restart / kill / destroy lifecycle, `ensureSpawned` (no-subscriber spawn for eager mode), `listProjectTerminalIds`, `destroyProjectTerminals`. Session also carries a `bellPending` flag (HS-6638 §24.2): the PTY `onData` handler scans each chunk for `0x07` and flips it true (sticky); helpers `getBellPending`, `clearBellPending`, `listBellPendingForProject` expose it to the route layer; `restartTerminal` resets it. `setPtyFactory` for tests.
   - `websocket.ts` — `wireTerminalWebSocket(httpServer)` attaches a `ws.Server` (noServer mode) to the Node HTTP server; authenticates upgrade by project secret and parses `?terminal=<id>`; bridges ws ⇄ registry per terminalId.
-  - Registered HTTP routes live in `src/routes/terminal.ts` (`/api/terminal/list`, `/status`, `/restart`, `/kill`, `/create`, `/destroy`). WebSocket endpoint is `/api/terminal/ws?project=<secret>&terminal=<id>`.
+  - Registered HTTP routes live in `src/routes/terminal.ts` (`/api/terminal/list` — now includes `bellPending` per entry, `/status`, `/restart`, `/kill`, `/create`, `/destroy`, `/clear-bell`). WebSocket endpoint is `/api/terminal/ws?project=<secret>&terminal=<id>`. Cross-project bell aggregation is exposed via `/api/projects/bell-state` (long-poll) in `src/routes/projects.ts`.
 - `components/layout.tsx` — the server HTML shell.
 - `utils/{escapeHtml.ts, errorMessage.ts}` — small shared helpers.
 

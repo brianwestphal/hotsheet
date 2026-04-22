@@ -3,13 +3,16 @@ import { Hono } from 'hono';
 
 import { DEFAULT_TERMINAL_ID, listTerminalConfigs, type TerminalConfig } from '../terminals/config.js';
 import {
+  clearBellPending,
   destroyTerminal,
+  getBellPending,
   getTerminalStatus,
   killTerminal,
   listProjectTerminalIds,
   restartTerminal,
 } from '../terminals/registry.js';
 import type { AppEnv } from '../types.js';
+import { notifyBellWaiters } from './notify.js';
 
 export const terminalRoutes = new Hono<AppEnv>();
 
@@ -66,7 +69,28 @@ terminalRoutes.get('/list', (c) => {
     if (dyn) { dynamic.push(dyn); seen.add(id); }
   }
 
-  return c.json({ configured, dynamic });
+  // HS-6603 §24.3.1 — annotate each entry with the current server-side
+  // bellPending flag so the client can seed its in-drawer indicators on
+  // initial render / project switch without waiting for a long-poll tick.
+  const withBell = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean })[] =>
+    items.map(item => ({ ...item, bellPending: getBellPending(secret, item.id) }));
+
+  return c.json({ configured: withBell(configured), dynamic: withBell(dynamic) });
+});
+
+/**
+ * POST /api/terminal/clear-bell — drop the server-side bell-pending flag for
+ * a terminal (HS-6603 §24.3.2). Body: `{ terminalId: string }`. Returns
+ * `{ ok: true }` regardless of whether the flag was set; only bumps the
+ * bellVersion counter when there was an actual flip so idle pollers don't
+ * wake up for nothing.
+ */
+terminalRoutes.post('/clear-bell', async (c) => {
+  const secret = c.get('projectSecret');
+  const terminalId = await readTerminalId(c);
+  const flipped = clearBellPending(secret, terminalId);
+  if (flipped) notifyBellWaiters();
+  return c.json({ ok: true });
 });
 
 /** GET /api/terminal/status — cheap status lookup, no PTY spawn. */

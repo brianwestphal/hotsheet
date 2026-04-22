@@ -288,8 +288,10 @@ The client removes the tab button and pane from the DOM. If the closed terminal 
 - **Close Other Tabs** — destroys every dynamic tab except the clicked one. Configured defaults are never closed.
 - **Close Tabs to the Left** — destroys dynamic tabs positioned before the clicked one (left-to-right in the tab strip order). Configured defaults are skipped.
 - **Close Tabs to the Right** — destroys dynamic tabs positioned after the clicked one. Configured defaults are skipped.
+- *(separator)*
+- **Rename...** (HS-6668) — opens an in-app dialog pre-populated with the current tab label. Submitting updates the drawer-tab label immediately. The rename is **transient**: it updates the in-memory `TerminalTabConfig.name` on the client instance only, never persists to `settings.json`, and resets on page reload or project-tab switch. Clearing the input and submitting restores the default derivation (configured `name`, or the capitalized shell basename for dynamic tabs). Available for both configured defaults and dynamic tabs; the configured-default "stored setting value" is deliberately untouched so the user's saved terminal name remains the source of truth across sessions. Dialog closes via Enter, the Rename button, Escape, the Cancel button, or clicking the overlay backdrop. The in-pane header label still prefers any runtime OSC 0/2 title pushed by the process ([§23](23-terminal-titles-and-bell.md)); the rename only replaces the config-derived fallback.
 
-All four entries appear on every tab (including configured defaults) so the menu shape stays predictable; configured defaults simply disable "Close Tab" and are exempt from the bulk-close paths.
+The four close entries appear on every tab (including configured defaults) so the menu shape stays predictable; configured defaults simply disable "Close Tab" and are exempt from the bulk-close paths.
 
 ### 22.17.5 Registry key format
 

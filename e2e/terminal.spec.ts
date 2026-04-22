@@ -597,4 +597,68 @@ test.describe('Embedded terminal drawer', () => {
     await expect(page.locator('.drawer-terminal-tab[data-terminal-id="default"]')).toBeVisible();
     await expect(page.locator('.drawer-terminal-tab[data-terminal-id="second"]')).toBeVisible();
   });
+
+  // HS-6668: right-click tab → Rename... opens a dialog pre-populated with the
+  // current label; submitting updates the tab label. The rename is transient —
+  // reloading the page must restore the original configured name.
+  test('Rename... on tab context menu updates label and is transient (HS-6668)', async ({ page, request }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.locator('#command-log-btn').click();
+    const defaultTab = page.locator('.drawer-terminal-tab[data-terminal-id="default"]');
+    await expect(defaultTab).toBeVisible({ timeout: 5000 });
+    await expect(defaultTab.locator('.drawer-tab-label')).toHaveText('Default');
+
+    // Right-click the default (configured) terminal tab — Rename should be
+    // available even though Close Tab is disabled.
+    await defaultTab.click({ button: 'right' });
+    const menu = page.locator('.terminal-tab-context-menu');
+    await expect(menu).toBeVisible({ timeout: 3000 });
+    await expect(menu.locator('[data-action="rename"]')).not.toHaveClass(/disabled/);
+
+    await menu.locator('[data-action="rename"]').click();
+
+    const dialog = page.locator('.terminal-rename-overlay');
+    await expect(dialog).toBeVisible({ timeout: 3000 });
+
+    const input = dialog.locator('.term-rename-input');
+    await expect(input).toHaveValue('Default');
+    await input.fill('My Renamed Tab');
+    await dialog.locator('.cmd-editor-done-btn').click();
+
+    await expect(dialog).toBeHidden({ timeout: 3000 });
+    await expect(defaultTab.locator('.drawer-tab-label')).toHaveText('My Renamed Tab');
+
+    // Settings.json must NOT have been updated — the stored `name` stays "Default".
+    const settingsRes = await request.get('/api/file-settings', { headers });
+    const settings = await settingsRes.json() as { terminals?: { id: string; name?: string }[] };
+    const stored = settings.terminals?.find(t => t.id === 'default');
+    expect(stored?.name).toBe('Default');
+
+    // Reload the page — the rename is transient, so we should see "Default" again.
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.locator('#command-log-btn').click();
+    await expect(page.locator('.drawer-terminal-tab[data-terminal-id="default"] .drawer-tab-label'))
+      .toHaveText('Default', { timeout: 5000 });
+  });
+
+  // HS-6668: Escape in the rename dialog cancels without changing the label.
+  test('Rename... dialog Escape cancels (HS-6668)', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.locator('#command-log-btn').click();
+    const defaultTab = page.locator('.drawer-terminal-tab[data-terminal-id="default"]');
+    await expect(defaultTab).toBeVisible({ timeout: 5000 });
+
+    await defaultTab.click({ button: 'right' });
+    await page.locator('.terminal-tab-context-menu [data-action="rename"]').click();
+
+    const dialog = page.locator('.terminal-rename-overlay');
+    await expect(dialog).toBeVisible({ timeout: 3000 });
+    await dialog.locator('.term-rename-input').fill('Should Not Apply');
+    await dialog.locator('.term-rename-input').press('Escape');
+    await expect(dialog).toBeHidden({ timeout: 3000 });
+    await expect(defaultTab.locator('.drawer-tab-label')).toHaveText('Default');
+  });
 });

@@ -138,6 +138,37 @@ test.describe('UI gaps (HS-5183)', () => {
     await expect(contentArea).toHaveClass(/detail-side/, { timeout: 2000 });
   });
 
+  // HS-6669: once the user toggles the detail panel off, subsequent row
+  // selections must not force it back open. Previously syncDetailPanel()
+  // unconditionally set display:flex on every selection change.
+  test('toggling detail panel off stays off when clicking other tickets', async ({ page }) => {
+    await createTicket(page, `CloseStay A ${Date.now()}`);
+    await createTicket(page, `CloseStay B ${Date.now()}`);
+
+    // Open detail for the first ticket so the panel is visible
+    const rowA = page.locator('.ticket-row[data-id]').first();
+    await rowA.locator('.ticket-number').click();
+    const panel = page.locator('#detail-panel');
+    await expect(panel).toBeVisible({ timeout: 3000 });
+
+    // Click the active position toggle to hide the panel
+    const sideBtn = page.locator('#detail-position-toggle .layout-btn[data-position="side"]');
+    await expect(sideBtn).toHaveClass(/active/);
+    await sideBtn.click();
+    await expect(panel).toBeHidden({ timeout: 2000 });
+    await expect(sideBtn).not.toHaveClass(/active/);
+
+    // Click a different ticket — panel must stay hidden (this is the bug)
+    const rowB = page.locator('.ticket-row[data-id]').nth(1);
+    await rowB.locator('.ticket-number').click();
+    await page.waitForTimeout(300);
+    await expect(panel).toBeHidden();
+
+    // Re-activate by clicking the side toggle again — panel returns
+    await sideBtn.click();
+    await expect(panel).toBeVisible({ timeout: 2000 });
+  });
+
   // --- Long-poll auto-refresh ---
 
   test('ticket list auto-refreshes when data changes via API', async ({ page }) => {

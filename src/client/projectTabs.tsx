@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { toElement } from './dom.js';
 import { ICON_FOLDER } from './icons.js';
+import { getMinimizedPermissionSecrets, reopenMinimizedForSecret } from './permissionOverlay.js';
 import type { ProjectInfo } from './state.js';
 import { getActiveProject, setActiveProject } from './state.js';
 
@@ -325,6 +326,7 @@ export function isProjectAlive(secret: string): boolean {
 export function updateStatusDots() {
   const attentionSecrets = getProjectAttentionSecrets();
   const busySecrets = getProjectBusySecrets();
+  const minimizedSecrets = getMinimizedPermissionSecrets();
 
   for (const dot of document.querySelectorAll('.project-tab-dot')) {
     const tab = dot.closest<HTMLElement>('.project-tab');
@@ -333,6 +335,9 @@ export function updateStatusDots() {
 
     if (feedbackSecrets.has(secret)) {
       dot.className = 'project-tab-dot feedback';
+    } else if (minimizedSecrets.has(secret)) {
+      // Pulsating blue — a permission popup is waiting in the background (HS-6637).
+      dot.className = 'project-tab-dot attention minimized';
     } else if (attentionSecrets.has(secret)) {
       dot.className = 'project-tab-dot attention';
     } else if (busySecrets.has(secret)) {
@@ -411,7 +416,13 @@ function renderTabs() {
     const project = projectList.find(p => p.secret === secret);
     if (!project) continue;
 
-    el.addEventListener('click', () => void switchProject(project));
+    el.addEventListener('click', () => {
+      void (async () => {
+        await switchProject(project);
+        // HS-6637: if this tab has a minimized permission popup, bring it back.
+        reopenMinimizedForSecret(project.secret);
+      })();
+    });
     el.addEventListener('contextmenu', (e) => showTabContextMenu(e as MouseEvent, project));
     el.addEventListener('dragstart', (e) => handleDragStart(e, project));
     el.addEventListener('dragover', (e) => handleDragOver(e));

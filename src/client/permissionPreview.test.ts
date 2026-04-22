@@ -72,4 +72,32 @@ describe('formatInputPreview (HS-6634)', () => {
     const raw = '{"description":"no command here"}';
     expect(formatInputPreview('Bash', raw)).toBe('description: no command here');
   });
+
+  // Claude's channel can truncate `input_preview` mid-JSON for long Bash
+  // commands. We still recover the command prefix and append an ellipsis.
+  it('recovers the Bash command from truncated JSON and marks it truncated', () => {
+    const raw = '{"command":"jq -cn --arg n \\"Investigated; implementation deferred. Substantial refactor required\\nRoot cause review: CAPTURE_SCRIPT calls el.getBoundingClientRect() which r';
+    const out = formatInputPreview('Bash', raw);
+    expect(out.startsWith('jq -cn --arg n "Investigated; implementation deferred.')).toBe(true);
+    expect(out).toContain('\nRoot cause review: CAPTURE_SCRIPT calls el.getBoundingClientRect() which r');
+    expect(out.endsWith('…')).toBe(true);
+    // No raw JSON punctuation leaked through
+    expect(out.startsWith('{')).toBe(false);
+    expect(out).not.toContain('\\"');
+  });
+
+  it('recovers file_path for Read from truncated JSON', () => {
+    const raw = '{"file_path":"/tmp/a/very/long/pa';
+    expect(formatInputPreview('Read', raw)).toBe('/tmp/a/very/long/pa…');
+  });
+
+  it('keeps raw text when truncated JSON has no recognised primary field', () => {
+    const raw = '{"description":"half a string';
+    expect(formatInputPreview('Bash', raw)).toBe(raw);
+  });
+
+  it('handles truncated JSON when command field is not first', () => {
+    const raw = '{"description":"run build","command":"npm run build && npm';
+    expect(formatInputPreview('Bash', raw)).toBe('npm run build && npm…');
+  });
 });

@@ -302,21 +302,25 @@ function tabDisplayName(config: TerminalTabConfig): string {
   return base !== '' ? base : 'terminal';
 }
 
-/** The label actually shown on the drawer tab and the in-pane terminal header.
- *  Prefers the runtime title pushed via OSC 0/2 (HS-6473) — for shells like
- *  zsh that update their title with `cwd` or the running command, this is far
- *  more useful than the static configured name. Falls back to the configured
- *  name (or derived basename) when the process hasn't pushed a title. */
-function effectiveTabLabel(inst: TerminalInstance): string {
+/** The label for the in-pane terminal toolbar. Prefers the runtime title
+ *  pushed via OSC 0/2 (HS-6473) — for shells like zsh that update their title
+ *  with `cwd` or the running command, this is far more useful than the static
+ *  configured name. Falls back to the static drawer-tab name when no process
+ *  has pushed a title. */
+function effectiveHeaderLabel(inst: TerminalInstance): string {
   if (inst.runtimeTitle !== '') return inst.runtimeTitle;
   return tabDisplayName(inst.config);
 }
 
 function updateTabLabel(inst: TerminalInstance): void {
-  const name = effectiveTabLabel(inst);
+  // HS-6473 follow-up: the drawer tab keeps the static configured/derived
+  // name — only the in-pane toolbar follows the runtime title. Shells push
+  // noisy per-cwd titles that make the narrow drawer-tab label unreadable.
+  const tabName = tabDisplayName(inst.config);
+  const headerName = effectiveHeaderLabel(inst);
   const labelEl = inst.tabBtn.querySelector('.drawer-tab-label');
-  if (labelEl) labelEl.textContent = name;
-  inst.label.textContent = name;
+  if (labelEl) labelEl.textContent = tabName;
+  inst.label.textContent = headerName;
   inst.tabBtn.classList.toggle('has-bell', inst.hasBell);
 
   // Insert / remove the bell glyph as a sibling of the label. Built and
@@ -666,6 +670,8 @@ function showTabContextMenu(e: MouseEvent, clickedId: string): void {
       <div className="context-menu-item" data-action="close-others">Close Other Tabs</div>
       <div className="context-menu-item" data-action="close-left">Close Tabs to the Left</div>
       <div className="context-menu-item" data-action="close-right">Close Tabs to the Right</div>
+      <div className="context-menu-separator"></div>
+      <div className="context-menu-item" data-action="rename">Rename...</div>
     </div>
   );
 
@@ -693,6 +699,10 @@ function showTabContextMenu(e: MouseEvent, clickedId: string): void {
     if (idx < 0) return;
     void closeTabs(ids.slice(idx + 1).filter(isDynamic));
   });
+  bind('rename', () => {
+    const inst = instances.get(clickedId);
+    if (inst) promptRenameTerminal(inst);
+  });
 
   document.body.appendChild(menu);
 
@@ -718,4 +728,72 @@ async function closeTabs(ids: string[]): Promise<void> {
   for (const id of ids) {
     await closeDynamicTerminal(id);
   }
+}
+
+/**
+ * In-app rename dialog for a terminal tab (HS-6668). The rename is transient —
+ * it updates the in-memory `config.name` on the instance and re-renders the tab
+ * label, but does NOT persist to settings.json. A page reload or project-tab
+ * switch restores the original configured / server-derived name. This matches
+ * the "temporary for default terminals" requirement and keeps dynamic terminals
+ * consistent (the dynamic config is also in-memory-only on the server).
+ */
+function promptRenameTerminal(inst: TerminalInstance): void {
+  document.querySelectorAll('.terminal-rename-overlay').forEach(el => el.remove());
+  const current = tabDisplayName(inst.config);
+
+  const overlay = toElement(
+    <div className="cmd-editor-overlay terminal-rename-overlay">
+      <div className="cmd-editor-dialog">
+        <div className="cmd-editor-dialog-header">
+          <span>Rename Terminal</span>
+          <button className="cmd-editor-close-btn" title="Close">{'×'}</button>
+        </div>
+        <div className="cmd-editor-dialog-body">
+          <div className="settings-field">
+            <label>Tab name</label>
+            <input type="text" className="term-rename-input" value={current} />
+            <span className="settings-hint">This rename is temporary — it doesn't change saved settings and resets on reload or project switch.</span>
+          </div>
+        </div>
+        <div className="cmd-editor-dialog-footer">
+          <button className="btn btn-sm cmd-editor-cancel-btn">Cancel</button>
+          <button className="btn btn-sm btn-primary cmd-editor-done-btn">Rename</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const input = overlay.querySelector<HTMLInputElement>('.term-rename-input')!;
+
+  const apply = () => {
+    const next = input.value.trim();
+    // Update the in-memory config so tabDisplayName() picks up the new name on
+    // every subsequent updateTabLabel() call. Empty input falls back to the
+    // default derivation (effectively restoring the original).
+    if (next === '') {
+      const rest = { ...inst.config };
+      delete rest.name;
+      inst.config = rest;
+    } else {
+      inst.config = { ...inst.config, name: next };
+    }
+    updateTabLabel(inst);
+    overlay.remove();
+  };
+
+  const cancel = () => { overlay.remove(); };
+
+  overlay.querySelector('.cmd-editor-close-btn')?.addEventListener('click', cancel);
+  overlay.querySelector('.cmd-editor-cancel-btn')?.addEventListener('click', cancel);
+  overlay.querySelector('.cmd-editor-done-btn')?.addEventListener('click', apply);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) cancel(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); apply(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+
+  document.body.appendChild(overlay);
+  input.focus();
+  input.select();
 }

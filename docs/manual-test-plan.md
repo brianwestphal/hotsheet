@@ -78,10 +78,15 @@ This document lists features that require manual verification before each releas
 ### Permission Popup
 - [ ] Popup appears anchored to the owning project's tab when Claude requests tool permission (HS-6536 — same popup for active and background tabs; the old full-screen overlay is gone)
 - [ ] "Allow" grants the permission; "Deny" rejects it
-- [ ] Clicking outside the popup dismisses it locally (the popup goes away) and the channel server's request stays pending — the user can still answer in the terminal
-- [ ] After dismissing the popup once, the next poll cycle (~100 ms later) does **not** immediately re-show the same popup (HS-6436). The blue attention dot on the project tab stays
+- [ ] Clicking outside the popup **minimizes** it (not dismisses) — the popup disappears and the owning tab's blue dot starts pulsating (HS-6637)
+- [ ] Clicking the owning project tab while the popup is open also minimizes it (the tab's click does not bounce the popup back open)
+- [ ] Clicking the pulsating tab re-shows the exact same popup (and switches project if needed)
+- [ ] If the popup is minimized, the tab dot keeps pulsating until the user clicks the tab, responds, clicks "No response needed", or 2 minutes elapse (auto-dismiss)
+- [ ] Bottom-left **"No response needed"** link dismisses the popup without minimizing; attention dot stays blue (non-pulsating), and the popup does not re-appear until a new request_id arrives (HS-6637)
+- [ ] After dismissing via "No response needed" once, the next poll cycle (~100 ms later) does **not** immediately re-show the same popup (HS-6436)
 - [ ] When a different request_id arrives later (the channel server gets a new permission), the popup does show — dismissed-tracking is per-request, not per-project
 - [ ] Popup shows the full description (no 100-char truncation) and the input_preview block if Claude provided one (HS-6476)
+- [ ] For Bash permissions, the preview shows just the command (no `{"command":"…"}` JSON wrapper). Long/truncated commands show the recovered prefix with a trailing `…` (HS-6634)
 - [ ] Command log entry for the response includes the tool name, description, and input_preview — not just `{request_id, behavior}` (HS-6477)
 
 ### Visibility
@@ -204,8 +209,8 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Send SIGTERM to the Node server with a terminal running → PTY is killed cleanly (no orphan processes in `ps`)
 
 ### Title and bell (§23, HS-6473)
-- [ ] In a terminal, run `printf '\\033]0;custom-title\\007'` — the drawer tab and the in-pane terminal header both update to "custom-title"
-- [ ] Restart the PTY (Stop → Start) — the label reverts to the configured name (e.g. "claude" or "zsh") until the new process pushes its own title
+- [ ] In a terminal, run `printf '\\033]0;custom-title\\007'` — **only the in-pane terminal toolbar** switches to "custom-title". The drawer tab keeps its static name (HS-6473 follow-up: runtime titles apply to the toolbar only, since shell-pushed titles are per-cwd and would clutter the narrow drawer tab)
+- [ ] Restart the PTY (Stop → Start) — the toolbar reverts to the configured name (e.g. "claude" or "zsh") until the new process pushes its own title
 - [ ] In terminal A while terminal B is the active drawer tab, run `printf '\\007'` (or `tput bel`) — terminal A's tab gains a wiggling bell glyph
 - [ ] Click terminal A — the bell glyph clears as soon as the tab activates
 - [ ] Bell fired in the *currently active* terminal does not produce an indicator (the user is already looking)

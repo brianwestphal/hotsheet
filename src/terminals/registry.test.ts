@@ -5,12 +5,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   attach,
+  clearBellPending,
   destroyAllTerminals,
   destroyTerminal,
   detach,
   ensureSpawned,
+  getBellPending,
   getTerminalStatus,
   killTerminal,
+  listBellPendingForProject,
   type PtyFactory,
   type PtyLike,
   resizeTerminal,
@@ -387,5 +390,93 @@ describe('TerminalRegistry', () => {
     expect(bExit()).toBeNull();
     // ptyB should not be killed
     expect(ptyB.killed).toBe(false);
+  });
+
+  // HS-6603 §24.2 — server-side bell detection
+  describe('bell detection (HS-6603)', () => {
+    it('bellPending starts false and flips to true on a chunk containing 0x07', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-sec', d, sub);
+      expect(getBellPending('bell-sec')).toBe(false);
+      FakePty.lastSpawned!.emit('hello\x07world');
+      expect(getBellPending('bell-sec')).toBe(true);
+    });
+
+    it('subsequent bells on an already-pending session do not re-flip the flag', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-sec-2', d, sub);
+      FakePty.lastSpawned!.emit('\x07');
+      expect(getBellPending('bell-sec-2')).toBe(true);
+      // A second bell should not change state (still true, no flip).
+      FakePty.lastSpawned!.emit('more\x07bells\x07here');
+      expect(getBellPending('bell-sec-2')).toBe(true);
+    });
+
+    it('clearBellPending() flips the flag back to false and reports whether it flipped', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-sec-3', d, sub);
+      FakePty.lastSpawned!.emit('\x07');
+      expect(clearBellPending('bell-sec-3')).toBe(true);
+      expect(getBellPending('bell-sec-3')).toBe(false);
+      // Clearing an already-clear terminal is a no-op.
+      expect(clearBellPending('bell-sec-3')).toBe(false);
+    });
+
+    it('listBellPendingForProject returns only pending terminal ids for that project', () => {
+      const d = tmpDataDir();
+      const { sub: a } = makeSub();
+      const { sub: b } = makeSub();
+      const { sub: c } = makeSub();
+      attach('bell-sec-4', d, a, { configOverride: { id: 'alpha', command: '/bin/sh' } }, 'alpha');
+      const ptyAlpha = FakePty.lastSpawned!;
+      attach('bell-sec-4', d, b, { configOverride: { id: 'beta', command: '/bin/sh' } }, 'beta');
+      attach('bell-sec-4', d, c, { configOverride: { id: 'gamma', command: '/bin/sh' } }, 'gamma');
+      const ptyGamma = FakePty.lastSpawned!;
+
+      // Only alpha and gamma get bells.
+      ptyAlpha.emit('\x07');
+      ptyGamma.emit('hello\x07');
+
+      const pending = listBellPendingForProject('bell-sec-4').sort();
+      expect(pending).toEqual(['alpha', 'gamma']);
+    });
+
+    it('listBellPendingForProject ignores other projects', () => {
+      const d = tmpDataDir();
+      const { sub: a } = makeSub();
+      const { sub: b } = makeSub();
+      attach('proj-a', d, a);
+      const ptyA = FakePty.lastSpawned!;
+      attach('proj-b', d, b);
+      ptyA.emit('\x07');
+      expect(listBellPendingForProject('proj-a')).toEqual(['default']);
+      expect(listBellPendingForProject('proj-b')).toEqual([]);
+    });
+
+    it('restartTerminal resets bellPending (HS-6603 §24.6)', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-sec-5', d, sub);
+      FakePty.lastSpawned!.emit('\x07');
+      expect(getBellPending('bell-sec-5')).toBe(true);
+
+      restartTerminal('bell-sec-5', d);
+      expect(getBellPending('bell-sec-5')).toBe(false);
+    });
+
+    it('destroyTerminal drops bellPending state implicitly', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-sec-6', d, sub);
+      FakePty.lastSpawned!.emit('\x07');
+      expect(getBellPending('bell-sec-6')).toBe(true);
+
+      destroyTerminal('bell-sec-6');
+      expect(getBellPending('bell-sec-6')).toBe(false);
+      expect(listBellPendingForProject('bell-sec-6')).toEqual([]);
+    });
   });
 });

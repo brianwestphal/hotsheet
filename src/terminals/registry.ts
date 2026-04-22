@@ -90,6 +90,10 @@ interface SessionState {
   terminalId: string;
   /** Optional config override (used by dynamic terminals not in settings). */
   configOverride: TerminalConfig | null;
+  /** True when the process has rung the bell (`\x07`) since the flag was last
+   *  cleared via clearBellPending(). Set by the PTY data handler and consumed
+   *  by the in-drawer and cross-project bell indicators (HS-6603 / §24). */
+  bellPending: boolean;
 }
 
 const sessions = new Map<string, SessionState>();
@@ -259,14 +263,24 @@ export function restartTerminal(
 ): void {
   const key = sessionKey(secret, terminalId);
   let session = sessions.get(key);
+  let bellFlipped = false;
   if (!session) {
     session = createSession(dataDir, terminalId, null);
     sessions.set(key, session);
   } else {
     teardownPty(session);
     session.scrollback.clear();
+    // HS-6603 §24.6 — reset bellPending on restart. A bell from the previous
+    // process shouldn't leak into the freshly-spawned one.
+    if (session.bellPending) {
+      session.bellPending = false;
+      bellFlipped = true;
+    }
   }
   spawnIntoSession(session, dataDir);
+  if (bellFlipped) {
+    void import('../routes/notify.js').then(m => m.notifyBellWaiters()).catch(() => { /* ignore */ });
+  }
 }
 
 /** Fully remove the session (used on project unregister or on closing a dynamic terminal). Kills the PTY if alive. */
@@ -296,6 +310,45 @@ export function listProjectTerminalIds(secret: string): string[] {
   const out: string[] = [];
   for (const key of sessions.keys()) {
     if (key.startsWith(prefix)) out.push(key.slice(prefix.length));
+  }
+  return out;
+}
+
+/**
+ * HS-6603 §24 — bell helpers. `bellPending` is a per-session sticky flag set by
+ * the PTY data handler on `\x07`. These helpers let the route layer read it
+ * for `/api/terminal/list` + `/api/projects/bell-state` and clear it via
+ * `/api/terminal/clear-bell`.
+ */
+export function getBellPending(
+  secret: string,
+  terminalId: string = DEFAULT_TERMINAL_ID,
+): boolean {
+  return sessions.get(sessionKey(secret, terminalId))?.bellPending === true;
+}
+
+/**
+ * Clear the bell for one terminal. Returns true if the flag was flipped (so
+ * the caller knows whether to bump `bellVersion`). No-op when the session
+ * doesn't exist or the flag is already false.
+ */
+export function clearBellPending(
+  secret: string,
+  terminalId: string = DEFAULT_TERMINAL_ID,
+): boolean {
+  const s = sessions.get(sessionKey(secret, terminalId));
+  if (!s || !s.bellPending) return false;
+  s.bellPending = false;
+  return true;
+}
+
+/** List terminal ids with pending bells for a single project. */
+export function listBellPendingForProject(secret: string): string[] {
+  const prefix = `${secret}::`;
+  const out: string[] = [];
+  for (const [key, session] of sessions.entries()) {
+    if (!key.startsWith(prefix)) continue;
+    if (session.bellPending) out.push(key.slice(prefix.length));
   }
   return out;
 }
@@ -332,6 +385,7 @@ function createSession(
     subscribers: new Set(),
     terminalId,
     configOverride,
+    bellPending: false,
   };
 }
 
@@ -357,6 +411,15 @@ function spawnIntoSession(session: SessionState, dataDir: string): void {
   const dData = pty.onData((str) => {
     const chunk = Buffer.from(str, 'utf8');
     session.scrollback.push(chunk);
+    // HS-6603 §24.2 — server-side bell detection. If the chunk contains a BEL
+    // byte (0x07) and the session's bellPending flag is not already set, flip
+    // it and wake any waiting /api/projects/bell-state long-poll. Sticky: the
+    // flag stays true until clearBellPending() is called by the client.
+    if (!session.bellPending && chunk.includes(0x07)) {
+      session.bellPending = true;
+      // Lazy dynamic import to avoid a circular dep between registry ↔ routes.
+      void import('../routes/notify.js').then(m => m.notifyBellWaiters()).catch(() => { /* ignore */ });
+    }
     for (const sub of session.subscribers) {
       try { sub.onData(chunk); } catch { /* subscriber errors don't break the broadcast */ }
     }

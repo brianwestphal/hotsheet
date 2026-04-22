@@ -67,6 +67,13 @@ vi.mock('./notify.js', () => ({
   notifyChange: vi.fn(),
   addPermissionWaiter: vi.fn(),
   getPermissionVersion: vi.fn(() => 0),
+  addBellWaiter: vi.fn(),
+  getBellVersion: vi.fn(() => 0),
+}));
+
+const mockBellPending = new Map<string, string[]>();
+vi.mock('../terminals/registry.js', () => ({
+  listBellPendingForProject: vi.fn((secret: string) => mockBellPending.get(secret) ?? []),
 }));
 
 // Mock fs.existsSync to return true for our mock project dirs
@@ -251,5 +258,48 @@ describe('POST /projects/reorder', () => {
   it('returns 400 for invalid body', async () => {
     const res = await app.request('/api/projects/reorder', post({}));
     expect(res.status).toBe(400);
+  });
+});
+
+// HS-6603 §24.3.3 — /api/projects/bell-state long-poll.
+describe('GET /projects/bell-state', () => {
+  beforeEach(() => {
+    mockBellPending.clear();
+  });
+
+  it('returns an aggregate map keyed by project secret, each with anyTerminalPending + terminalIds', async () => {
+    mockBellPending.set('test-secret-123', ['default', 'second']);
+    mockBellPending.set('test-secret-456', []);
+
+    // Use a high client version to avoid the long-poll path (fast version-ahead return).
+    const { getBellVersion } = await import('./notify.js');
+    (getBellVersion as ReturnType<typeof vi.fn>).mockReturnValue(0);
+
+    const res = await app.request('/api/projects/bell-state?v=0');
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      bells: Record<string, { anyTerminalPending: boolean; terminalIds: string[] }>;
+      v: number;
+    };
+    expect(body.bells['test-secret-123'].anyTerminalPending).toBe(true);
+    expect(body.bells['test-secret-123'].terminalIds).toEqual(['default', 'second']);
+    expect(body.bells['test-secret-456'].anyTerminalPending).toBe(false);
+    expect(body.bells['test-secret-456'].terminalIds).toEqual([]);
+    expect(typeof body.v).toBe('number');
+  });
+
+  it('returns immediately on the fast path when server bellVersion is ahead of the client cursor', async () => {
+    const { getBellVersion } = await import('./notify.js');
+    (getBellVersion as ReturnType<typeof vi.fn>).mockReturnValue(42);
+
+    const start = Date.now();
+    const res = await app.request('/api/projects/bell-state?v=10');
+    const elapsed = Date.now() - start;
+    expect(res.status).toBe(200);
+    // Fast path should return immediately — allow 500ms buffer to avoid flakiness
+    // but still rule out the 3s long-poll timeout.
+    expect(elapsed).toBeLessThan(500);
+    const body = await res.json() as { v: number };
+    expect(body.v).toBe(42);
   });
 });

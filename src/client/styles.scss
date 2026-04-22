@@ -138,6 +138,23 @@ input, select, textarea {
     display: block;
     background: #eab308; // yellow
   }
+
+  // HS-6637: a permission popup has been minimized — pulse the blue dot
+  // so the user can see that a waiting check lives behind this tab.
+  &.minimized {
+    animation: project-tab-dot-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes project-tab-dot-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(59, 130, 246, 0);
+    transform: scale(1.35);
+  }
 }
 
 // Tab context menu
@@ -2151,6 +2168,21 @@ input, select, textarea {
   word-break: break-all;
   max-height: 240px;
   overflow-y: auto;
+}
+
+// HS-6637: bottom-left text link that dismisses the popup without
+// minimizing (for cases where the user will respond via Claude directly).
+.permission-popup-dismiss-link {
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: none;
+  margin-top: 2px;
+
+  &:hover {
+    text-decoration: underline;
+    color: var(--text-primary);
+  }
 }
 
 .permission-popup-actions {

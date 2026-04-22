@@ -175,6 +175,40 @@ projectRoutes.get('/permissions', async (c) => {
   return c.json({ permissions: await checkAll(), v: getPermissionVersion() });
 });
 
+// GET /api/projects/bell-state — long-poll (3 s) aggregating the server-side
+// bellPending flag across every registered project (HS-6603 §24.3.3). Mirrors
+// /api/projects/permissions. Response shape is `{ bells: { [secret]: { anyTerminalPending, terminalIds } }, v }`.
+projectRoutes.get('/bell-state', async (c) => {
+  const { addBellWaiter, getBellVersion } = await import('./notify.js');
+  const { listBellPendingForProject } = await import('../terminals/registry.js');
+
+  const clientVersion = parseInt(c.req.query('v') ?? '0', 10) || 0;
+
+  function snapshot(): Record<string, { anyTerminalPending: boolean; terminalIds: string[] }> {
+    const projects = getAllProjects();
+    const result: Record<string, { anyTerminalPending: boolean; terminalIds: string[] }> = {};
+    for (const p of projects) {
+      const ids = listBellPendingForProject(p.secret);
+      result[p.secret] = { anyTerminalPending: ids.length > 0, terminalIds: ids };
+    }
+    return result;
+  }
+
+  // Fast path — version already advanced past the client's cursor.
+  const versionBefore = getBellVersion();
+  if (versionBefore > clientVersion) {
+    return c.json({ bells: snapshot(), v: versionBefore });
+  }
+
+  // Otherwise wait for a wake or 3s timeout (matches /api/projects/permissions).
+  await Promise.race([
+    new Promise<void>((resolve) => { addBellWaiter(resolve); }),
+    new Promise<void>((resolve) => { setTimeout(resolve, 3000); }),
+  ]);
+
+  return c.json({ bells: snapshot(), v: getBellVersion() });
+});
+
 /** POST /api/projects/:secret/reveal — open the project folder in OS file manager */
 projectRoutes.post('/:secret/reveal', async (c) => {
   const secret = c.req.param('secret');

@@ -175,14 +175,16 @@ When Claude needs approval to run a tool (Bash, Write, Edit, etc.), the channel 
 Every pending permission — whether it arrived for the active project or a background one — renders as a popup anchored below the owning project's tab (HS-6536; the previous full-screen "Claude is waiting for permission" overlay was removed). The popup contains:
 
 - Tool name, full description (wraps to multiple lines), and — when present — the `input_preview` block in a monospace code box (HS-6476). Max popup width is the smaller of 640 px or the viewport minus 16 px; the preview block scrolls vertically if taller than 240 px
+- Claude's raw `input_preview` JSON is formatted for readability: Bash commands show just the `command` field; other known tools (Read, WebFetch, WebSearch, Glob, NotebookRead) show their most useful field; unrecognised JSON is flattened to `key: value` lines. Truncated JSON (common for long Bash commands) still gets primary-field extraction with a trailing ellipsis (HS-6634)
 - Compact green Allow (checkmark) and red Deny (X) icon buttons on the right
+- A **"No response needed"** text link at the bottom-left of the popup dismisses it outright (use this when the user plans to respond via Claude directly) — the request stays pending server-side, the attention dot stays blue, and the popup does not re-appear until the channel server resolves the request (HS-6637)
 - The associated project tab gets a highlighted background (blue border/tint) to indicate which tab the permission belongs to
 - Popup horizontal position is clamped to the viewport after layout so a wide popup opened from a right-edge tab does not overflow off-screen
-- Clicking outside the popup dismisses it locally — the permission remains pending on the channel server (blue attention dot stays); the user can still answer in the terminal dialog
+- **Clicking outside the popup minimizes it into the owning project tab's blue dot** instead of dismissing. The dot pulsates to advertise a waiting check; clicking the tab re-shows the same popup (switches to that project if needed). Minimized popups auto-dismiss after 2 minutes so they can't linger forever (HS-6637). Minimize is also the behavior when clicking the owning tab while the popup is open — the capture-phase outside-click handler swallows the event so the tab's own click doesn't immediately reopen what was just minimized
 - Responding via the popup clears the attention dot
 - Allow/Deny POST `/api/channel/permission/respond` with the **owning project's** secret in `X-Hotsheet-Secret`, so a response initiated from a background-project popup still routes correctly. The body also includes the `tool_name`, `description`, and `input_preview` the client already has, so the server-side command-log entry is detail-rich even if the respond races ahead of the long-poll's `permission_request` log entry (HS-6477)
 
-The pending permission expires on the channel server after 120 seconds if not acted on; the popup auto-closes the next poll cycle when the server reports no pending request.
+The pending permission expires on the channel server after 120 seconds if not acted on; the popup auto-closes the next poll cycle when the server reports no pending request. If the user had minimized the popup, the minimized record is GC'd the same way.
 
 Note: The local terminal dialog stays open in parallel. Whichever is answered first (Hot Sheet or terminal) takes effect.
 
