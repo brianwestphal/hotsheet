@@ -16,6 +16,9 @@ const POWER_ICON_STOP = '<svg xmlns="http://www.w3.org/2000/svg" width="14" heig
 const POWER_ICON_START = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
 const TRASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
 const CLOSE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+// Lucide `bell` glyph. Shown on drawer tabs when the process rings the bell
+// (\x07) while the tab isn't active (HS-6473).
+const BELL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
 
 export interface TerminalTabConfig {
   id: string;
@@ -47,6 +50,13 @@ interface TerminalInstance {
   stopRequested: boolean;
   /** Becomes true once the xterm DOM has been mounted (happens on first activation). */
   mounted: boolean;
+  /** Title pushed by the running process via OSC 0 / OSC 2 (`\x1b]0;TITLE\x07`).
+   *  When non-empty, takes precedence over the configured `name` for the tab label
+   *  (HS-6473, see docs/23-terminal-titles-and-bell.md). Reset on PTY restart. */
+  runtimeTitle: string;
+  /** True when the process has rung the bell (`\x07`) since this terminal tab
+   *  was last activated. Cleared by `activateTerminal` (HS-6473). */
+  hasBell: boolean;
 }
 
 const instances = new Map<string, TerminalInstance>();
@@ -151,10 +161,16 @@ export function activateTerminal(id: string): void {
   if (!inst) return;
   activeTerminalId = id;
 
-  // Hide other terminal panes; show this one.
+  // Hide other terminal panes; show this one. Clear the bell indicator on
+  // the now-active tab — viewing the terminal counts as "the user has
+  // acknowledged it" (HS-6473).
   for (const other of instances.values()) {
     other.pane.style.display = other.id === id ? '' : 'none';
     other.tabBtn.classList.toggle('active', other.id === id);
+  }
+  if (inst.hasBell) {
+    inst.hasBell = false;
+    updateTabLabel(inst);
   }
 
   const active = getActiveProject();
@@ -266,6 +282,8 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     exitCode: null,
     stopRequested: false,
     mounted: false,
+    runtimeTitle: '',
+    hasBell: false,
   };
 
   powerBtn.addEventListener('click', () => { void onPowerClick(inst); });
@@ -284,11 +302,40 @@ function tabDisplayName(config: TerminalTabConfig): string {
   return base !== '' ? base : 'terminal';
 }
 
+/** The label actually shown on the drawer tab and the in-pane terminal header.
+ *  Prefers the runtime title pushed via OSC 0/2 (HS-6473) — for shells like
+ *  zsh that update their title with `cwd` or the running command, this is far
+ *  more useful than the static configured name. Falls back to the configured
+ *  name (or derived basename) when the process hasn't pushed a title. */
+function effectiveTabLabel(inst: TerminalInstance): string {
+  if (inst.runtimeTitle !== '') return inst.runtimeTitle;
+  return tabDisplayName(inst.config);
+}
+
 function updateTabLabel(inst: TerminalInstance): void {
-  const name = tabDisplayName(inst.config);
+  const name = effectiveTabLabel(inst);
   const labelEl = inst.tabBtn.querySelector('.drawer-tab-label');
   if (labelEl) labelEl.textContent = name;
   inst.label.textContent = name;
+  inst.tabBtn.classList.toggle('has-bell', inst.hasBell);
+
+  // Insert / remove the bell glyph as a sibling of the label. Built and
+  // placed via DOM (not via re-rendering the whole tab) so the close button
+  // and event listeners survive (HS-6473).
+  let bellEl = inst.tabBtn.querySelector<HTMLElement>('.drawer-tab-bell');
+  if (inst.hasBell) {
+    if (bellEl === null) {
+      bellEl = document.createElement('span');
+      bellEl.className = 'drawer-tab-bell';
+      bellEl.setAttribute('title', 'Bell');
+      bellEl.setAttribute('aria-label', 'Terminal bell');
+      bellEl.innerHTML = BELL_ICON;
+      // Insert immediately after the label so the order is [label][bell][close?].
+      labelEl?.insertAdjacentElement('afterend', bellEl);
+    }
+  } else if (bellEl !== null) {
+    bellEl.remove();
+  }
 }
 
 function mountXterm(inst: TerminalInstance, secret: string): void {
@@ -317,6 +364,26 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
   term.onResize(({ cols, rows }) => {
     if (inst.ws !== null && inst.ws.readyState === WebSocket.OPEN) {
       inst.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    }
+  });
+
+  // OSC 0 / OSC 2 title-change escapes (HS-6473). xterm.js parses
+  // `\x1b]0;TITLE\x07` and `\x1b]2;TITLE\x07` for us; we just store the
+  // value and re-render the tab label. Empty string clears the runtime
+  // title and restores the config-derived name.
+  term.onTitleChange((newTitle) => {
+    inst.runtimeTitle = typeof newTitle === 'string' ? newTitle : '';
+    updateTabLabel(inst);
+  });
+
+  // Bell character `\x07` (HS-6473). Show a bell indicator on the tab when
+  // the bell rings while the terminal is NOT the active drawer tab — the
+  // user is looking elsewhere and would otherwise miss it. The bellStyle
+  // option defaults to 'none' so xterm itself won't beep.
+  term.onBell(() => {
+    if (!isTerminalTabActive(inst)) {
+      inst.hasBell = true;
+      updateTabLabel(inst);
     }
   });
 
@@ -459,6 +526,10 @@ async function onPowerClick(inst: TerminalInstance): Promise<void> {
     inst.term?.clear();
     inst.exitCode = null;
     setStatus(inst, 'alive');
+    // Restart wipes any title the previous process pushed via OSC; fall back
+    // to the configured/derived name until the new process pushes its own.
+    inst.runtimeTitle = '';
+    updateTabLabel(inst);
   } catch { /* ignore */ }
 }
 

@@ -216,6 +216,14 @@ Adds Terminal tabs to the footer drawer (alongside Commands Log) hosting interac
 
 ---
 
+## 23. Terminal titles and bell indicators (`23-terminal-titles-and-bell.md`)
+
+Two QOL surface enhancements on top of §22. (1) **Title-change escapes:** `term.onTitleChange` is wired so OSC 0 / OSC 2 (`\x1b]0;TITLE\x07`) updates `runtimeTitle` on the `TerminalInstance`, and the drawer tab + in-pane header label resolve to it via `effectiveTabLabel`. Falls back to the configured `name` (or derived basename) when the runtime title is empty; resets on PTY restart and on project switch. (2) **Bell indicator:** `term.onBell` sets `hasBell` on the `TerminalInstance`; when the firing terminal isn't the active drawer tab, a Lucide `bell` glyph wiggles into place next to the tab label and clears as soon as the tab is activated. The bell-during-active case is suppressed by an `isTerminalTabActive` guard. **Phase 2 (deferred to follow-up):** server-side `\x07` detection so bells fired in non-current projects (no client-side xterm mounted) can light up the project tab AND the in-drawer terminal tab — requires a per-terminal `bellPending` field, a `/api/terminal/clear-bell` endpoint, and a global poll/long-poll for bell state across projects.
+
+**Status:** Shipped Phase 1 — title escapes (full) + same-project bell indicator. Implementation in `src/client/terminal.tsx` (`runtimeTitle`, `hasBell`, `effectiveTabLabel`, `BELL_ICON`, `updateTabLabel`) and `src/client/styles.scss` (`.drawer-tab-bell` + `drawer-tab-bell-shake` keyframe). Cross-refs: §22 (base terminal feature). Deferred follow-up: cross-project bell detection (Phase 2).
+
+---
+
 ## 21. Feedback notes (`21-feedback.md`)
 
 AI tools request user feedback by adding a note to a ticket whose text begins with a recognized prefix (checked only on the most recent note):

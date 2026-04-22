@@ -94,11 +94,6 @@ export function setChannelAlive(alive: boolean) {
     if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
   }
 }
-export function isPermissionPending(): boolean {
-  const overlay = document.getElementById('permission-overlay');
-  return overlay !== null && overlay.style.display !== 'none';
-}
-
 /** Per-project busy/attention tracking for tab status dots.
  *  busyProjects: projects with active Claude work. Modified by markProjectBusy/clearProjectBusy.
  *  attentionProjects: projects with pending permissions. Modified by markProjectAttention/clearProjectAttention + permission poll. */

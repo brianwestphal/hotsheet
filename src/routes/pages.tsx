@@ -492,17 +492,6 @@ pageRoutes.get('/', (c) => {
         </div>
       </div>
 
-      <div className="permission-overlay" id="permission-overlay" style="display:none">
-        <div className="permission-overlay-content">
-          <div className="permission-overlay-text">Claude is waiting for permission</div>
-          <div className="permission-overlay-detail" id="permission-overlay-detail"></div>
-          <div className="permission-overlay-actions">
-            <button className="permission-overlay-btn permission-allow" id="permission-allow-btn">Allow</button>
-            <button className="permission-overlay-btn permission-deny" id="permission-deny-btn">Deny</button>
-            <button className="permission-overlay-btn permission-dismiss" id="permission-dismiss-btn">Dismiss</button>
-          </div>
-        </div>
-      </div>
     </Layout>
   );
   return c.html(html.toString());

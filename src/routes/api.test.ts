@@ -1151,6 +1151,52 @@ describe('channel endpoints', () => {
     const status = await (await app.request('/api/channel/status')).json() as { enabled: boolean };
     expect(status.enabled).toBe(false);
   });
+
+  // HS-6477: when /channel/permission/respond runs without a prior
+  // permission_request log entry (race against the long-poll, or channel
+  // restarted), it must still log a useful entry — tool name + description +
+  // input_preview from the body — instead of the bare {request_id, behavior}.
+  it('POST /api/channel/permission/respond writes detail-rich log entry when no prior request was logged', async () => {
+    const channelConfig = await import('../channel-config.js');
+    vi.mocked(channelConfig.getChannelPort).mockReturnValueOnce(65000);
+    // The channel server fetch will fail (no real server on 65000) — that
+    // returns 503 to the client, but the log entry path runs first.
+    const res = await app.request('/api/channel/permission/respond', post({
+      request_id: 'race-id-1',
+      behavior: 'allow',
+      tool_name: 'Bash',
+      description: 'Run npm test',
+      input_preview: 'npm test --watch=false',
+    }));
+    expect(res.status).toBe(503);
+
+    const logRes = await app.request('/api/command-log');
+    const log = await logRes.json() as { event_type: string; summary: string; detail: string }[];
+    const entry = log.find(e => e.event_type === 'permission_request' && !e.summary.includes('race-id-1') && e.summary.includes('Bash'));
+    expect(entry).toBeDefined();
+    expect(entry!.summary).toBe('Permission: Bash — Allowed');
+    expect(entry!.detail).toContain('Run npm test');
+    expect(entry!.detail).toContain('npm test --watch=false');
+    // Critical regression guard: the bare JSON body must not be the only thing logged.
+    expect(entry!.detail).not.toBe('{"request_id":"race-id-1","behavior":"allow","tool_name":"Bash","description":"Run npm test","input_preview":"npm test --watch=false"}');
+  });
+
+  it('POST /api/channel/permission/respond falls back to raw JSON when client sends no description/preview', async () => {
+    const channelConfig = await import('../channel-config.js');
+    vi.mocked(channelConfig.getChannelPort).mockReturnValueOnce(65000);
+    const res = await app.request('/api/channel/permission/respond', post({
+      request_id: 'race-id-2',
+      behavior: 'deny',
+    }));
+    expect(res.status).toBe(503);
+
+    const logRes = await app.request('/api/command-log');
+    const log = await logRes.json() as { event_type: string; summary: string; detail: string }[];
+    const entry = log.find(e => e.summary === 'Permission: tool — Denied');
+    expect(entry).toBeDefined();
+    // Pre-HS-6477 behavior preserved when no client context is available.
+    expect(entry!.detail).toContain('"request_id":"race-id-2"');
+  });
 });
 
 describe('print endpoint', () => {

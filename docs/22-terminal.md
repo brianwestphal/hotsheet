@@ -110,6 +110,7 @@ Additional per-project settings:
 - Add-ons: `@xterm/addon-fit` for resize, `@xterm/addon-web-links` for clickable URLs, `@xterm/addon-serialize` for scrollback replay.
 - Resize behavior: on drawer resize or tab show, call `fit.fit()` and send `{ type: "resize" }` to the server.
 - Copy/paste: standard terminal conventions (Cmd/Ctrl+C copies when a selection exists; falls back to SIGINT otherwise — xterm.js default).
+- **Focus outline (HS-6535).** When keyboard focus is inside the terminal pane (xterm's helper textarea is the active element), `.terminal-body` paints a 2 px inset accent-colored ring via `box-shadow`. The ring is inset (not a border) so it does not change layout or shift the xterm grid. It clears as soon as focus moves elsewhere. This makes it obvious which terminal will receive keystrokes when there are multiple tabs open.
 
 **Header row above the xterm instance:**
 

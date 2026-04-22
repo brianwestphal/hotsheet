@@ -106,6 +106,11 @@ export const PermissionRespondSchema = z.object({
   request_id: z.string(),
   behavior: z.enum(['allow', 'deny']),
   tool_name: z.string().optional(),
+  // Optional context the client already has (HS-6477) — used to populate the
+  // command-log entry when the server never logged a `permission_request`
+  // first (e.g. fast-respond before the long-poll's logging path ran).
+  description: z.string().optional(),
+  input_preview: z.string().optional(),
 });
 
 // --- Projects ---

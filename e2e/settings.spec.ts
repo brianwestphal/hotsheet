@@ -50,4 +50,34 @@ test.describe('Settings dialog', () => {
     await page.keyboard.press('Escape');
     await expect(overlay).toBeHidden({ timeout: 3000 });
   });
+
+  test('HS-6568: first settings-section in a tab panel has no top border', async ({ page }) => {
+    await page.locator('#settings-btn').click();
+    const overlay = page.locator('#settings-overlay');
+    await expect(overlay).toBeVisible({ timeout: 3000 });
+
+    // The Terminal tab button is Tauri-gated (hidden in a plain browser) but
+    // the panel HTML always exists. Force it visible so getComputedStyle can
+    // measure the first section's borders.
+    await page.evaluate(() => {
+      const panel = document.getElementById('settings-terminal-panel')!;
+      panel.classList.add('active');
+      panel.style.display = 'block';
+    });
+
+    const styles = await page.evaluate(() => {
+      const panel = document.getElementById('settings-terminal-panel')!;
+      const firstSection = panel.querySelector(':scope > .settings-section') as HTMLElement;
+      const cs = window.getComputedStyle(firstSection);
+      return {
+        borderTopWidth: cs.borderTopWidth,
+        paddingTop: cs.paddingTop,
+        marginTop: cs.marginTop,
+      };
+    });
+
+    expect(styles.borderTopWidth).toBe('0px');
+    expect(styles.paddingTop).toBe('0px');
+    expect(styles.marginTop).toBe('0px');
+  });
 });

@@ -2,19 +2,32 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
 import { toElement } from './dom.js';
-import { getActiveProject, state } from './state.js';
+import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
 
-// --- Permission Overlay ---
+/**
+ * Claude permission-request UI. Historically there were two variants: a
+ * full-screen overlay for the active project and a compact popup for
+ * non-active projects. HS-6536 unified them — every pending permission
+ * (active or not) uses the same popup anchored to its project tab.
+ */
 
 export type PermissionData = { request_id: string; tool_name: string; description: string; input_preview?: string };
 
 let permissionPollActive = false;
 export let permissionVersion = 0;
-export let currentOverlayRequestId: string | null = null;
 
-// Track request IDs we've already responded to, so polling doesn't re-show them
+// Track request IDs we've already responded to, so polling doesn't re-show them.
 export const respondedRequestIds = new Set<string>();
+
+// Track request IDs the user has explicitly dismissed (clicked outside the
+// popup) so the next poll cycle doesn't immediately re-show the same popup
+// while the channel server still has it pending. The user's intent in
+// dismissing was "I see it, I'll handle it elsewhere or later" — re-asserting
+// the popup every 100 ms produces a flickering-popup bug (HS-6436). Cleared
+// implicitly when the channel server reports the request is no longer
+// pending.
+export const dismissedRequestIds = new Set<string>();
 
 export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof setTimeout> | null, setChannelBusyTimeoutRef: (t: ReturnType<typeof setTimeout> | null) => void) {
   if (permissionPollActive) return;
@@ -25,22 +38,8 @@ export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof set
     try {
       const data = await api<{ permissions: Record<string, PermissionData | null>; v: number }>(`/projects/permissions?v=${permissionVersion}`);
       permissionVersion = data.v;
-      const activeSecret = getActiveProject()?.secret;
 
-      // Check the active project's permission state
-      const activePerm = activeSecret !== undefined ? (data.permissions[activeSecret] ?? null) : null;
-
-      // Auto-dismiss if the permission was handled elsewhere (e.g., in Claude Code)
-      if (currentOverlayRequestId !== null && (activePerm === null || activePerm.request_id !== currentOverlayRequestId)) {
-        dismissOverlay();
-      }
-
-      // Show/update overlay for the active project
-      if (activePerm !== null) {
-        showPermissionOverlay(activePerm, channelBusyTimeout, setChannelBusyTimeoutRef);
-      }
-
-      // Auto-dismiss popup if its permission was handled elsewhere
+      // Auto-dismiss an open popup if its backing permission was handled elsewhere.
       if (activePopupRequestId !== null) {
         const stillPending = Object.values(data.permissions).some(
           p => p !== null && p.request_id === activePopupRequestId,
@@ -51,14 +50,15 @@ export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof set
         }
       }
 
-      // Mark attention dots and show popup for non-active projects with pending permissions
+      // Mark attention dots and show popup for every project with a pending permission.
       const pendingSecrets = new Set<string>();
+      const pendingRequestIds = new Set<string>();
       for (const [secret, perm] of Object.entries(data.permissions)) {
         if (perm !== null) {
           pendingSecrets.add(secret);
+          pendingRequestIds.add(perm.request_id);
           markProjectAttention(secret);
-          // Show compact popup for non-active projects
-          if (secret !== activeSecret && !respondedRequestIds.has(perm.request_id)) {
+          if (!respondedRequestIds.has(perm.request_id) && !dismissedRequestIds.has(perm.request_id)) {
             showPermissionPopup(secret, perm, channelBusyTimeout, setChannelBusyTimeoutRef);
           }
         } else {
@@ -70,6 +70,11 @@ export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof set
         if (!pendingSecrets.has(secret)) {
           clearProjectAttention(secret);
         }
+      }
+      // Garbage-collect dismissed-request bookkeeping for requests the channel
+      // server no longer reports — otherwise the set would grow unbounded.
+      for (const id of [...dismissedRequestIds]) {
+        if (!pendingRequestIds.has(id)) dismissedRequestIds.delete(id);
       }
 
     } catch {
@@ -84,85 +89,7 @@ export function stopPermissionPolling() {
   permissionPollActive = false;
 }
 
-/** Dismiss the permission overlay without responding (e.g., permission handled elsewhere). */
-export function dismissOverlay() {
-  const overlay = document.getElementById('permission-overlay');
-  if (overlay) overlay.style.display = 'none';
-  currentOverlayRequestId = null;
-}
-
-function showPermissionOverlay(
-  perm: PermissionData,
-  channelBusyTimeout: ReturnType<typeof setTimeout> | null,
-  setChannelBusyTimeoutRef: (t: ReturnType<typeof setTimeout> | null) => void,
-) {
-  const overlay = document.getElementById('permission-overlay');
-  if (!overlay) return;
-  if (respondedRequestIds.has(perm.request_id)) return;
-
-  // A permission request is proof Claude is actively working — extend the busy timeout
-  if (channelBusyTimeout) {
-    clearTimeout(channelBusyTimeout);
-    setChannelBusyTimeoutRef(setTimeout(() => {
-      if (isChannelBusy()) setChannelBusy(false);
-    }, 60000));
-  }
-  // If we're not marked busy but got a permission request, mark busy now
-  if (!isChannelBusy()) setChannelBusy(true);
-
-  // Already showing this exact permission
-  if (currentOverlayRequestId === perm.request_id) return;
-  // New permission replaces any currently shown one
-  currentOverlayRequestId = perm.request_id;
-  if (state.settings.notify_permission !== 'none') {
-    requestAttention(state.settings.notify_permission);
-  }
-
-  const detail = document.getElementById('permission-overlay-detail');
-  if (detail) {
-    const content = toElement(
-      <div>
-        <div className="permission-tool">{perm.tool_name}: {perm.description}</div>
-        {perm.input_preview !== undefined && perm.input_preview !== ''
-          ? <pre className="permission-preview">{perm.input_preview}</pre>
-          : ''}
-      </div>
-    );
-    detail.innerHTML = '';
-    // Append each child node instead of using the wrapper div
-    while (content.firstChild) detail.appendChild(content.firstChild);
-  }
-
-  overlay.style.display = '';
-
-  function respond(behavior: 'allow' | 'deny') {
-    respondedRequestIds.add(perm.request_id);
-    currentOverlayRequestId = null;
-    void api('/channel/permission/respond', {
-      method: 'POST',
-      body: { request_id: perm.request_id, behavior },
-    });
-    overlay!.style.display = 'none';
-    const activeSecret = getActiveProject()?.secret;
-    if (activeSecret !== undefined && activeSecret !== '') clearProjectAttention(activeSecret);
-  }
-
-  function dismiss() {
-    respondedRequestIds.add(perm.request_id);
-    currentOverlayRequestId = null;
-    void api('/channel/permission/dismiss', { method: 'POST' });
-    overlay!.style.display = 'none';
-    const activeSecret = getActiveProject()?.secret;
-    if (activeSecret !== undefined && activeSecret !== '') clearProjectAttention(activeSecret);
-  }
-
-  // Use one-time click handlers via { once: true }
-  document.getElementById('permission-allow-btn')?.addEventListener('click', () => respond('allow'), { once: true });
-  document.getElementById('permission-deny-btn')?.addEventListener('click', () => respond('deny'), { once: true });
-  document.getElementById('permission-dismiss-btn')?.addEventListener('click', dismiss, { once: true });
-}
-
-// --- Compact permission popup for non-active project tabs ---
+// --- Permission popup (single codepath for active + non-active projects) ---
 
 let activePopupRequestId: string | null = null;
 
@@ -176,6 +103,9 @@ function showPermissionPopup(
   if (activePopupRequestId === perm.request_id) return;
   // Already responded to this request
   if (respondedRequestIds.has(perm.request_id)) return;
+  // User explicitly dismissed (clicked outside) this request — don't re-show
+  // until it disappears server-side (HS-6436).
+  if (dismissedRequestIds.has(perm.request_id)) return;
   // Another popup is already showing — don't replace it (prevents bouncing).
   // The next poll cycle will show this one after the current is dismissed.
   if (activePopupRequestId !== null) return;
@@ -183,7 +113,7 @@ function showPermissionPopup(
   document.querySelector('.permission-popup')?.remove();
   activePopupRequestId = perm.request_id;
 
-  // Extend busy timeout (same as the overlay)
+  // A permission request is proof Claude is actively working — extend busy timeout.
   if (channelBusyTimeout) {
     clearTimeout(channelBusyTimeout);
     setChannelBusyTimeoutRef(setTimeout(() => {
@@ -192,23 +122,29 @@ function showPermissionPopup(
   }
   if (!isChannelBusy()) setChannelBusy(true);
 
-  // Truncate the description to 100 chars of the first line
-  const firstLine = perm.description.split('\n')[0];
-  const truncated = firstLine.length > 100 ? firstLine.slice(0, 97) + '...' : firstLine;
-
-  // Find the tab element to position near and highlight
+  // Find the tab element to position near and highlight. The active tab has
+  // the same `.project-tab[data-secret=...]` selector — the popup renders
+  // the same way regardless of which tab is active (HS-6536).
   const tab = document.querySelector<HTMLElement>(`.project-tab[data-secret="${secret}"]`);
   if (tab) tab.classList.add('permission-highlight');
 
   const checkIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const xIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 
+  const hasPreview = perm.input_preview !== undefined && perm.input_preview !== '';
   const popup = toElement(
     <div className="permission-popup">
-      <span className="permission-popup-tool">{perm.tool_name}</span>
-      <span className="permission-popup-desc">{truncated}</span>
-      <button className="permission-popup-allow" title="Allow">{raw(checkIcon)}</button>
-      <button className="permission-popup-deny" title="Deny">{raw(xIcon)}</button>
+      <div className="permission-popup-body">
+        <div className="permission-popup-header">
+          <span className="permission-popup-tool">{perm.tool_name}</span>
+          <span className="permission-popup-desc">{perm.description}</span>
+        </div>
+        {hasPreview ? <pre className="permission-popup-preview">{perm.input_preview}</pre> : ''}
+      </div>
+      <div className="permission-popup-actions">
+        <button className="permission-popup-allow" title="Allow">{raw(checkIcon)}</button>
+        <button className="permission-popup-deny" title="Deny">{raw(xIcon)}</button>
+      </div>
     </div>
   );
 
@@ -220,16 +156,32 @@ function showPermissionPopup(
   }
 
   function outsideClick(e: MouseEvent) {
-    if (!popup.contains(e.target as Node)) cleanup();
+    if (!popup.contains(e.target as Node)) {
+      // Record the dismissal so the next poll cycle doesn't immediately
+      // re-show the same popup while the channel still has the request
+      // pending (HS-6436).
+      dismissedRequestIds.add(perm.request_id);
+      cleanup();
+    }
   }
 
   function respondToPermission(behavior: 'allow' | 'deny') {
     respondedRequestIds.add(perm.request_id);
-    // Use fetch directly with the correct project's secret (not the active project's)
+    // Send with the OWNING project's secret — not the active project's — so a
+    // response initiated from a background-project popup still routes.
+    // Include tool/description/input_preview the client already has so that
+    // the server-side command-log entry has useful detail even when the
+    // respond races ahead of the original permission_request log (HS-6477).
     void fetch('/api/channel/permission/respond', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret },
-      body: JSON.stringify({ request_id: perm.request_id, behavior }),
+      body: JSON.stringify({
+        request_id: perm.request_id,
+        behavior,
+        tool_name: perm.tool_name,
+        description: perm.description,
+        input_preview: perm.input_preview ?? '',
+      }),
     });
     clearProjectAttention(secret);
     cleanup();
@@ -247,18 +199,21 @@ function showPermissionPopup(
 
   document.body.appendChild(popup);
 
-  // Position below the tab (or at top-center if no tab found)
+  // Position below the tab (or at top-center if no tab found). After layout
+  // the full popup width is known — clamp horizontally so it never overflows.
   if (tab) {
     const tabRect = tab.getBoundingClientRect();
+    const popupRect = popup.getBoundingClientRect();
+    const maxLeft = Math.max(8, window.innerWidth - popupRect.width - 8);
     popup.style.top = `${tabRect.bottom + 4}px`;
-    popup.style.left = `${Math.max(8, tabRect.left)}px`;
+    popup.style.left = `${Math.min(Math.max(8, tabRect.left), maxLeft)}px`;
   }
 
-  // Notify via Tauri attention
+  // Notify via Tauri attention.
   if (state.settings.notify_permission !== 'none') {
     requestAttention(state.settings.notify_permission);
   }
 
-  // Close on outside click (deferred so the current click doesn't immediately close)
+  // Close on outside click (deferred so the current click doesn't immediately close).
   setTimeout(() => document.addEventListener('click', outsideClick), 0);
 }

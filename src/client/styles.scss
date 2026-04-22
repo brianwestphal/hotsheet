@@ -2093,118 +2093,36 @@ input, select, textarea {
   border-top: 1px solid var(--border);
 }
 
-// --- Permission Overlay ---
-
-.permission-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 5000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  -webkit-backdrop-filter: blur(12px) saturate(120%);
-  backdrop-filter: blur(12px) saturate(120%);
-  animation: permission-fade-in 0.3s ease-out;
-}
-
-@keyframes permission-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.permission-overlay-content {
-  text-align: center;
-  max-width: calc(100vw - 80px);
-  width: 100%;
-  padding: 40px;
-}
-
-.permission-overlay-text {
-  font-size: 28px;
-  font-weight: 700;
-  color: white;
-  margin-bottom: 12px;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
-.permission-overlay-detail {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.7);
-  margin-bottom: 24px;
-  line-height: 1.5;
-}
-
-.permission-tool {
-  margin-bottom: 12px;
-}
-
-.permission-preview {
-  text-align: left;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  padding: 12px 16px;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.85);
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 40vh;
-  overflow-y: auto;
-}
-
-.permission-overlay-actions {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-}
-
-.permission-overlay-btn {
-  padding: 10px 24px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  transition: all 0.15s;
-
-  &.permission-allow {
-    background: #22c55e;
-    color: white;
-    border-color: #22c55e;
-    &:hover { background: #16a34a; }
-  }
-
-  &.permission-deny {
-    background: #ef4444;
-    color: white;
-    border-color: #ef4444;
-    &:hover { background: #dc2626; }
-  }
-
-  &.permission-dismiss {
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.8);
-    &:hover { background: rgba(255, 255, 255, 0.2); }
-  }
-}
-
-// --- Permission Popup (compact, for non-active tabs) ---
+// --- Permission Popup (anchored to project tab, both active and non-active; HS-6536) ---
 
 .permission-popup {
   position: fixed;
   z-index: 3000;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   font-size: 12px;
-  max-width: 480px;
+  max-width: min(640px, calc(100vw - 16px));
+}
+
+.permission-popup-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.permission-popup-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .permission-popup-tool {
@@ -2215,11 +2133,31 @@ input, select, textarea {
 
 .permission-popup-desc {
   color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
   min-width: 0;
   flex: 1;
+}
+
+.permission-popup-preview {
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.permission-popup-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
 }
 
 .permission-popup-allow, .permission-popup-deny {
@@ -2653,6 +2591,19 @@ input, select, textarea {
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
+
+  // The top border exists to separate consecutive sections inside a single
+  // tab panel. When a section is the very first child of a panel it has
+  // nothing above it to divide from — the border was painting a stray
+  // horizontal rule right below the dialog tab bar (HS-6568, visible on
+  // the Terminal panel which has a single section). Scope the suppression
+  // to direct children of the tab panel so wrapper divs that contain a
+  // toggled-visible section still get their normal separator.
+  .settings-tab-panel > &:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
 
   h3 {
     font-size: 14px;
@@ -4528,6 +4479,28 @@ input, select, textarea {
   }
 }
 
+// Bell glyph shown on a terminal drawer tab when the running process rang
+// the bell (\x07) while the tab wasn't active (HS-6473). Tinted with the
+// accent color and given a one-shot wiggle so the user notices the new
+// indicator the first time it renders.
+.drawer-tab-bell {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent, #3b82f6);
+  margin-left: 2px;
+  animation: drawer-tab-bell-shake 0.35s ease-out 1;
+  transform-origin: 50% 0;
+}
+
+@keyframes drawer-tab-bell-shake {
+  0%   { transform: rotate(0deg); }
+  20%  { transform: rotate(15deg); }
+  40%  { transform: rotate(-12deg); }
+  60%  { transform: rotate(8deg); }
+  80%  { transform: rotate(-4deg); }
+  100% { transform: rotate(0deg); }
+}
+
 // Terminal tab area — the tab list is horizontally scrollable. The `+` button
 // lives inside the scroll container so it sits immediately after the last tab
 // (HS-6340) and scrolls with the list when it overflows.
@@ -4708,6 +4681,15 @@ input, select, textarea {
   background: var(--bg);
   padding: 4px 8px;
   position: relative;
+  // Inset focus ring: rendered as an inner box-shadow so it doesn't change
+  // layout (no border that would shift padding / xterm sizing) and never
+  // bleeds outside the pane (HS-6535). Active when the xterm helper textarea
+  // — which receives keyboard focus — is the active element.
+  transition: box-shadow 120ms ease;
+
+  &:focus-within {
+    box-shadow: inset 0 0 0 2px var(--accent, #3b82f6);
+  }
 
   .xterm {
     height: 100%;

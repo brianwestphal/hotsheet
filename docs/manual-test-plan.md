@@ -75,10 +75,14 @@ This document lists features that require manual verification before each releas
 - [ ] "Claude working" spinner shows during processing
 - [ ] "✓ Claude idle" status appears on completion, auto-hides after 5 seconds
 
-### Permission Overlay
-- [ ] Full-screen overlay appears when Claude requests tool permission
+### Permission Popup
+- [ ] Popup appears anchored to the owning project's tab when Claude requests tool permission (HS-6536 — same popup for active and background tabs; the old full-screen overlay is gone)
 - [ ] "Allow" grants the permission; "Deny" rejects it
-- [ ] Dismissing the overlay leaves the CLI dialog open in the terminal
+- [ ] Clicking outside the popup dismisses it locally (the popup goes away) and the channel server's request stays pending — the user can still answer in the terminal
+- [ ] After dismissing the popup once, the next poll cycle (~100 ms later) does **not** immediately re-show the same popup (HS-6436). The blue attention dot on the project tab stays
+- [ ] When a different request_id arrives later (the channel server gets a new permission), the popup does show — dismissed-tracking is per-request, not per-project
+- [ ] Popup shows the full description (no 100-char truncation) and the input_preview block if Claude provided one (HS-6476)
+- [ ] Command log entry for the response includes the tool name, description, and input_preview — not just `{request_id, behavior}` (HS-6477)
 
 ### Visibility
 - [ ] Channel UI hidden if Claude CLI version < 2.1.80
@@ -198,6 +202,14 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 ### Lifecycle
 - [ ] `DELETE /api/projects/:secret` while a terminal is running → PTY is killed
 - [ ] Send SIGTERM to the Node server with a terminal running → PTY is killed cleanly (no orphan processes in `ps`)
+
+### Title and bell (§23, HS-6473)
+- [ ] In a terminal, run `printf '\\033]0;custom-title\\007'` — the drawer tab and the in-pane terminal header both update to "custom-title"
+- [ ] Restart the PTY (Stop → Start) — the label reverts to the configured name (e.g. "claude" or "zsh") until the new process pushes its own title
+- [ ] In terminal A while terminal B is the active drawer tab, run `printf '\\007'` (or `tput bel`) — terminal A's tab gains a wiggling bell glyph
+- [ ] Click terminal A — the bell glyph clears as soon as the tab activates
+- [ ] Bell fired in the *currently active* terminal does not produce an indicator (the user is already looking)
+- [ ] Cross-project bell (deferred — see §23.3 Phase 2): a bell in a non-current project does not yet show on the project tab. Tracked as a follow-up
 
 ### Rendering and input (§22.6)
 - [ ] No black strip appears below the last rendered row (xterm viewport background matches the app theme even when container is taller than rows × cellHeight)

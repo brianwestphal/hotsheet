@@ -138,7 +138,21 @@ channelRoutes.post('/channel/permission/respond', async (c) => {
   if (logId !== undefined && logId > 0) {
     updateLogEntry(logId, { summary: `Permission: ${toolName} — ${action}` }).catch(() => {});
   } else {
-    addLogEntry('permission_request', 'incoming', `Permission: ${toolName} — ${action}`, JSON.stringify(parsed.data)).catch(() => {});
+    // Race: the respond came in before fetchPermission logged the original
+    // request (or the channel cleared it after the user answered in the
+    // terminal first). Build the detail body from whatever context the
+    // client provided so the log entry is still useful (HS-6477) — falling
+    // back to the raw body only if neither description nor input_preview
+    // came through.
+    const description = parsed.data.description ?? '';
+    const inputPreview = parsed.data.input_preview ?? '';
+    let detail: string;
+    if (description !== '' || inputPreview !== '') {
+      detail = (description !== '' ? description + '\n\n' : '') + inputPreview;
+    } else {
+      detail = JSON.stringify(parsed.data);
+    }
+    addLogEntry('permission_request', 'incoming', `Permission: ${toolName} — ${action}`, detail).catch(() => {});
   }
   try {
     const res = await fetch(`http://127.0.0.1:${port}/permission/respond`, {

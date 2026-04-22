@@ -125,7 +125,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 
 **Channel / commands / feedback:** `channelUI.tsx`, `permissionOverlay.tsx`, `commandLog.tsx` (drawer shell, delegates `terminal:<id>` tabs; exports `previewDrawerTab(tab)` that returns a restorer — used by Settings → Terminal delete to reveal the doomed terminal before the confirm), `commandLogFilter.tsx`, `commandSidebar.tsx`, `commandEditor.tsx`, `feedbackDialog.tsx`.
 
-**Embedded terminal:** `terminal.tsx` (per-terminal tab state, xterm mount, WebSocket, stop/start power button, `onProjectSwitch` teardown so tabs rebuild per-project), `terminalsSettings.tsx` (settings outline list + edit modal for configured default terminals). Per-project drawer state (`drawer_open`, `drawer_active_tab`) persists in `settings.json` and is reapplied by `commandLog.applyPerProjectDrawerState` on project switch and on initial load.
+**Embedded terminal:** `terminal.tsx` (per-terminal tab state, xterm mount, WebSocket, stop/start power button, `onProjectSwitch` teardown so tabs rebuild per-project, `onTitleChange` → `runtimeTitle` and `onBell` → `hasBell` for HS-6473 — drawer tab label and in-pane header track the runtime title; bell glyph wiggles on the tab when the bell fires while the tab isn't active), `terminalsSettings.tsx` (settings outline list + edit modal for configured default terminals). Per-project drawer state (`drawer_open`, `drawer_active_tab`) persists in `settings.json` and is reapplied by `commandLog.applyPerProjectDrawerState` on project switch and on initial load.
 
 **Plugins:** `pluginSettings.tsx`, `pluginConfigDialog.tsx`, `pluginUI.tsx`.
 

@@ -168,29 +168,23 @@ When Claude needs approval to run a tool (Bash, Write, Edit, etc.), the channel 
 2. When Claude calls a tool that needs approval, Claude Code sends `notifications/claude/channel/permission_request` to the channel server
 3. The channel server stores the pending request and exposes it via `GET /permission`
 4. Hot Sheet long-polls `GET /api/channel/permission` — the server holds the connection up to 3 seconds, returning immediately when a permission arrives (the channel server notifies via `POST /api/channel/permission/notify`)
-5. When a pending permission is detected, a full-screen overlay appears
+5. When a pending permission is detected, the popup described below appears anchored to the owning project's tab
 
-### Overlay
+### Popup (single codepath for active and non-active tabs)
 
-A dark, blurred overlay with large white text: "Claude is waiting for permission". Below it shows the tool name, description, and the `input_preview` (the actual command or file path being requested) in a monospace code block. The overlay content area uses the full available screen width (minus padding) so command previews are easy to read. Three buttons:
+Every pending permission — whether it arrived for the active project or a background one — renders as a popup anchored below the owning project's tab (HS-6536; the previous full-screen "Claude is waiting for permission" overlay was removed). The popup contains:
 
-- **Allow** — sends `behavior: 'allow'` back to Claude Code, tool proceeds
-- **Deny** — sends `behavior: 'deny'`, tool is rejected
-- **Dismiss** — closes the overlay without responding (the terminal dialog remains open for the user to handle there)
+- Tool name, full description (wraps to multiple lines), and — when present — the `input_preview` block in a monospace code box (HS-6476). Max popup width is the smaller of 640 px or the viewport minus 16 px; the preview block scrolls vertically if taller than 240 px
+- Compact green Allow (checkmark) and red Deny (X) icon buttons on the right
+- The associated project tab gets a highlighted background (blue border/tint) to indicate which tab the permission belongs to
+- Popup horizontal position is clamped to the viewport after layout so a wide popup opened from a right-edge tab does not overflow off-screen
+- Clicking outside the popup dismisses it locally — the permission remains pending on the channel server (blue attention dot stays); the user can still answer in the terminal dialog
+- Responding via the popup clears the attention dot
+- Allow/Deny POST `/api/channel/permission/respond` with the **owning project's** secret in `X-Hotsheet-Secret`, so a response initiated from a background-project popup still routes correctly. The body also includes the `tool_name`, `description`, and `input_preview` the client already has, so the server-side command-log entry is detail-rich even if the respond races ahead of the long-poll's `permission_request` log entry (HS-6477)
 
-The pending permission expires on the server after 120 seconds if not acted on. The client overlay reflects this by closing when the server reports no pending permission.
+The pending permission expires on the channel server after 120 seconds if not acted on; the popup auto-closes the next poll cycle when the server reports no pending request.
 
 Note: The local terminal dialog stays open in parallel. Whichever is answered first (Hot Sheet or terminal) takes effect.
-
-### Compact popup for non-active tabs
-
-When a permission request arrives for a project that is NOT the active tab, a small popup appears near the tab instead of the full-screen overlay:
-
-- Shows the tool name and first 100 characters of the description
-- Compact green Allow (checkmark) and red Deny (X) icon buttons
-- The associated project tab gets a highlighted background (blue border/tint) to indicate which tab the permission belongs to
-- Clicking outside the popup dismisses it — the permission remains pending in the tab (blue attention dot stays)
-- Responding via the popup clears the attention dot
 
 ## 12.11 Custom Commands
 
