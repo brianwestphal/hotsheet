@@ -94,6 +94,11 @@ interface SessionState {
    *  cleared via clearBellPending(). Set by the PTY data handler and consumed
    *  by the in-drawer and cross-project bell indicators (HS-6603 / §24). */
   bellPending: boolean;
+  /** Cross-chunk state for `scanForRealBell` — tracks whether the byte stream
+   *  is currently inside an OSC/DCS/APC/PM/SOS escape string (where a trailing
+   *  BEL is a terminator, not a user-visible bell). HS-6766. */
+  bellScanInString: boolean;
+  bellScanAfterEsc: boolean;
 }
 
 const sessions = new Map<string, SessionState>();
@@ -386,7 +391,71 @@ function createSession(
     terminalId,
     configOverride,
     bellPending: false,
+    bellScanInString: false,
+    bellScanAfterEsc: false,
   };
+}
+
+/**
+ * Scan a chunk of PTY output for a *real* bell, i.e. a `\x07` byte that isn't
+ * the terminator of an OSC/DCS/APC/PM/SOS escape string. Many shells emit OSC
+ * sequences like `\x1b]0;TITLE\x07` or `\x1b]7;file://host/cwd\x07` on every
+ * prompt (and on startup, via Apple Terminal's zshrc integration) — the
+ * trailing BEL is a terminator, not a user-visible bell. A naive
+ * `chunk.includes(0x07)` check treats those as bells, which is why a fresh
+ * dynamic terminal would show a bell indicator immediately on open (HS-6766).
+ *
+ * State is stored on the session so it carries across chunks — a shell could
+ * flush an OSC introducer in one write and the BEL terminator in the next.
+ * Returns true if any non-terminator BEL was seen in this chunk.
+ */
+function scanForRealBell(session: SessionState, chunk: Buffer): boolean {
+  let foundBell = false;
+  for (let i = 0; i < chunk.length; i++) {
+    const b = chunk[i];
+    if (session.bellScanInString) {
+      if (b === 0x07) {
+        // BEL = OSC-style terminator; ignore.
+        session.bellScanInString = false;
+        session.bellScanAfterEsc = false;
+        continue;
+      }
+      if (session.bellScanAfterEsc) {
+        session.bellScanAfterEsc = false;
+        if (b === 0x5C /* backslash */) {
+          // ESC\\ (ST) = terminator; ignore.
+          session.bellScanInString = false;
+          continue;
+        }
+        // ESC followed by other: the string is effectively broken, but to
+        // stay conservative we remain in string-state until a real terminator.
+      }
+      if (b === 0x1B) {
+        session.bellScanAfterEsc = true;
+      }
+      continue;
+    }
+    if (session.bellScanAfterEsc) {
+      session.bellScanAfterEsc = false;
+      // OSC=], DCS=P, APC=_, PM=^, SOS=X: introducers for string-type escapes
+      // whose contents (including 0x07) must not be interpreted as bells.
+      if (b === 0x5D || b === 0x50 || b === 0x5F || b === 0x5E || b === 0x58) {
+        session.bellScanInString = true;
+        continue;
+      }
+      // Any other ESC-prefixed byte is a non-string escape (CSI, SS3, charset
+      // switches like ESC(0, etc.) — drop back to normal scanning so the next
+      // iteration evaluates `b` against the bell check below.
+    }
+    if (b === 0x1B) {
+      session.bellScanAfterEsc = true;
+      continue;
+    }
+    if (b === 0x07) {
+      foundBell = true;
+    }
+  }
+  return foundBell;
 }
 
 function spawnIntoSession(session: SessionState, dataDir: string): void {
@@ -407,15 +476,20 @@ function spawnIntoSession(session: SessionState, dataDir: string): void {
   session.startedAt = Date.now();
   session.command = resolved.command;
   session.exitCode = null;
+  // Fresh PTY — drop any OSC-scan state left from a previous process.
+  session.bellScanInString = false;
+  session.bellScanAfterEsc = false;
 
   const dData = pty.onData((str) => {
     const chunk = Buffer.from(str, 'utf8');
     session.scrollback.push(chunk);
-    // HS-6603 §24.2 — server-side bell detection. If the chunk contains a BEL
-    // byte (0x07) and the session's bellPending flag is not already set, flip
-    // it and wake any waiting /api/projects/bell-state long-poll. Sticky: the
-    // flag stays true until clearBellPending() is called by the client.
-    if (!session.bellPending && chunk.includes(0x07)) {
+    // HS-6603 §24.2 — server-side bell detection. Always run the scanner so
+    // cross-chunk OSC/DCS/APC/PM/SOS state is tracked even when `bellPending`
+    // is already set (HS-6766). The scanner returns true only for BELs that
+    // aren't OSC-style terminators, so a shell emitting `\x1b]0;TITLE\x07`
+    // on every prompt no longer trips the indicator.
+    const realBell = scanForRealBell(session, chunk);
+    if (realBell && !session.bellPending) {
       session.bellPending = true;
       // Lazy dynamic import to avoid a circular dep between registry ↔ routes.
       void import('../routes/notify.js').then(m => m.notifyBellWaiters()).catch(() => { /* ignore */ });

@@ -106,6 +106,30 @@ npm run tauri:build
 
 The `.app` bundle lands in `src-tauri/target/release/bundle/macos/`.
 
+### Testing a local production build (macOS)
+
+Don't use `open "Hot Sheet.app"` or double-click the bundle. Locally-built `.app`s are signed with an ad-hoc identity, and Finder-launched ad-hoc apps inherit two TCC restrictions that break the sidecar:
+
+- V8 JIT / WASM is blocked (PGLite fails to initialize).
+- Filesystem access to `~/Documents` is denied unless the user explicitly grants it via System Settings → Privacy & Security.
+
+With either restriction, the Node sidecar never outputs `running at ...`, so the window stays on the "Starting Hot Sheet&hellip;" loading screen indefinitely.
+
+Launch the CLI wrapper directly from the terminal instead — it starts Node in the terminal context (no TCC restrictions) and passes the server URL into the Tauri window:
+
+```bash
+"src-tauri/target/release/bundle/macos/Hot Sheet.app/Contents/Resources/resources/hotsheet"
+```
+
+Or, from a project directory that has a `.hotsheet/` folder:
+
+```bash
+cd /path/to/project
+"/Users/you/Documents/hotsheet/src-tauri/target/release/bundle/macos/Hot Sheet.app/Contents/Resources/resources/hotsheet"
+```
+
+If you want to iterate on the Tauri shell itself, prefer `npm run tauri:dev` — dev mode launches the server via `tsx` in the terminal context, so TCC isn't a factor.
+
 ## Releasing
 
 Push a version tag to trigger the CI workflow:

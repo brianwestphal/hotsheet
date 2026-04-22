@@ -146,6 +146,31 @@ input, select, textarea {
   }
 }
 
+// Cross-project bell indicator (HS-6603 §24.4.2). Sits after the project
+// name inside each .project-tab; only materializes when the tab gains the
+// .has-bell class (the SVG is injected from JS at that moment). The one-shot
+// 350 ms wiggle mirrors the in-drawer terminal-tab bell (§23.3) so the two
+// bell affordances feel like one concept.
+.project-tab-bell {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent, #3b82f6);
+  margin-left: 4px;
+  transform-origin: 50% 0;
+}
+.project-tab.has-bell .project-tab-bell {
+  animation: project-tab-bell-shake 0.35s ease-out 1;
+}
+
+@keyframes project-tab-bell-shake {
+  0%   { transform: rotate(0deg); }
+  20%  { transform: rotate(15deg); }
+  40%  { transform: rotate(-12deg); }
+  60%  { transform: rotate(8deg); }
+  80%  { transform: rotate(-4deg); }
+  100% { transform: rotate(0deg); }
+}
+
 @keyframes project-tab-dot-pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
@@ -898,6 +923,7 @@ input, select, textarea {
 .cmd-editor-dialog-footer {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border);
 }

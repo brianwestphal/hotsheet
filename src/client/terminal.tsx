@@ -5,9 +5,11 @@ import { Terminal as XTerm } from '@xterm/xterm';
 
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
+import { subscribeToBellState } from './bellPoll.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
+import { replayHistoryToTerm } from './terminalReplay.js';
 
 type Status = 'not-connected' | 'connecting' | 'alive' | 'exited';
 
@@ -70,6 +72,8 @@ let lastKnownConfigs: { configured: TerminalTabConfig[]; dynamic: TerminalTabCon
 export function initTerminal(): void {
   // Wire up the new + button that creates dynamic terminals.
   document.getElementById('drawer-add-terminal-btn')?.addEventListener('click', () => { void createDynamicTerminal(); });
+  // Keep in-drawer bell indicators in sync with bellPoll (HS-6603 §24.4.3).
+  ensureBellSubscription();
   window.addEventListener('resize', () => {
     const active = activeTerminalId === null ? null : instances.get(activeTerminalId);
     if (active !== null && active !== undefined && isTerminalTabActive(active)) doFit(active);
@@ -109,7 +113,13 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   }
   currentProjectSecret = activeSecret;
 
-  type ListResponse = { configured: TerminalTabConfig[]; dynamic: TerminalTabConfig[] };
+  // HS-6603 §24.3.1: the list response carries a server-side `bellPending`
+  // flag per terminal. Phase 1's local onBell path only catches bells on a
+  // mounted xterm — the server-authoritative field is what lets us surface
+  // bells that fired before the xterm was mounted or while the project was
+  // inactive.
+  type ListEntry = TerminalTabConfig & { bellPending?: boolean };
+  type ListResponse = { configured: ListEntry[]; dynamic: ListEntry[] };
   let data: ListResponse;
   try {
     data = await api<ListResponse>('/terminal/list');
@@ -122,7 +132,7 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   const paneContainer = document.getElementById('drawer-terminal-panes');
   if (!tabStrip || !paneContainer) return;
 
-  const wanted = new Map<string, TerminalTabConfig>();
+  const wanted = new Map<string, ListEntry>();
   for (const c of data.configured) wanted.set(c.id, { ...c, dynamic: false });
   for (const c of data.dynamic) wanted.set(c.id, { ...c, dynamic: true });
 
@@ -135,7 +145,8 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   tabStrip.innerHTML = '';
   paneContainer.querySelectorAll('.drawer-terminal-pane').forEach(el => el.remove());
 
-  for (const config of wanted.values()) {
+  for (const entry of wanted.values()) {
+    const { bellPending, ...config } = entry;
     let inst = instances.get(config.id);
     if (!inst) {
       inst = createInstance(config);
@@ -143,6 +154,13 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
     } else {
       // Config may have changed; update label text if the user renamed.
       inst.config = { ...inst.config, ...config };
+      updateTabLabel(inst);
+    }
+    // Seed the bell indicator from the server so a tab that was hidden /
+    // unmounted while the bell fired still shows the glyph the first time
+    // the user sees it (HS-6603 §24.4.3).
+    if (bellPending === true && !inst.hasBell) {
+      inst.hasBell = true;
       updateTabLabel(inst);
     }
     tabStrip.appendChild(inst.tabBtn);
@@ -153,6 +171,36 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   if (activeTerminalId !== null && !wanted.has(activeTerminalId)) {
     activeTerminalId = null;
   }
+}
+
+/** HS-6603 §24.4.3: re-sync each active-project terminal's bell indicator
+ *  against the bellPoll snapshot. Driven by `subscribeToBellState` on every
+ *  long-poll tick. We only touch terminals for the *active* project — other
+ *  projects' bells surface via the project-tab indicator in projectTabs. */
+function syncInstancesWithBellState(bellStates: Map<string, { terminalIds: string[] }>): void {
+  const active = getActiveProject();
+  if (!active) return;
+  const entry = bellStates.get(active.secret);
+  const pendingIds = new Set(entry?.terminalIds ?? []);
+  for (const inst of instances.values()) {
+    const wantsBell = pendingIds.has(inst.id);
+    if (wantsBell && !inst.hasBell) {
+      inst.hasBell = true;
+      updateTabLabel(inst);
+    } else if (!wantsBell && inst.hasBell) {
+      // Poll cleared the flag (e.g., another tab acknowledged it) — drop the
+      // local indicator too so the two views stay in sync.
+      inst.hasBell = false;
+      updateTabLabel(inst);
+    }
+  }
+}
+
+let bellSubscribed = false;
+function ensureBellSubscription(): void {
+  if (bellSubscribed) return;
+  bellSubscribed = true;
+  subscribeToBellState(syncInstancesWithBellState);
 }
 
 /** Activate the named terminal tab (mount xterm + connect ws on first activation). */
@@ -171,6 +219,10 @@ export function activateTerminal(id: string): void {
   if (inst.hasBell) {
     inst.hasBell = false;
     updateTabLabel(inst);
+    // HS-6603 §24.4.3: also drop the server-side `bellPending` flag so the
+    // cross-project poll stops reporting this terminal as pending. The local
+    // indicator already cleared above; this call is fire-and-forget.
+    void api('/terminal/clear-bell', { method: 'POST', body: { terminalId: id } }).catch(() => {});
   }
 
   const active = getActiveProject();
@@ -435,17 +487,12 @@ interface ExitMessage { type: 'exit'; code: number }
 function handleControlMessage(inst: TerminalInstance, msg: { type: string; [k: string]: unknown }): void {
   if (msg.type === 'history') {
     const h = msg as unknown as HistoryMessage;
-    if (inst.term && h.bytes && h.bytes.length > 0) {
-      inst.term.write(base64ToUint8Array(h.bytes));
-    }
+    if (inst.term !== null) replayHistoryToTerm(inst.term, h);
     inst.exitCode = h.exitCode;
     setStatus(inst, h.alive ? 'alive' : 'exited');
     if (typeof h.command === 'string' && h.command !== '') {
       // Prefer the user-supplied name; fall back to resolved command for unnamed terminals.
       if ((inst.config.name ?? '') === '') inst.label.textContent = shortCommandName(h.command);
-    }
-    if (inst.term && Number.isFinite(h.cols) && Number.isFinite(h.rows) && h.cols > 0 && h.rows > 0) {
-      inst.term.resize(h.cols, h.rows);
     }
     requestAnimationFrame(() => doFit(inst));
     return;
@@ -591,13 +638,6 @@ function readTheme(): Record<string, string> {
   };
 }
 
-function base64ToUint8Array(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
-  return out;
-}
-
 // --- Dynamic terminal lifecycle (HS-6306) ---
 
 async function createDynamicTerminal(): Promise<void> {
@@ -608,7 +648,37 @@ async function createDynamicTerminal(): Promise<void> {
   } catch { /* ignore */ }
 }
 
-async function closeDynamicTerminal(id: string): Promise<void> {
+/**
+ * Close a dynamic terminal, confirming first if its PTY is still alive.
+ *
+ * HS-6701: closing a tab with a running process used to silently kill the PTY.
+ * Now matches the Settings → Embedded Terminal delete flow: reveal the tab in
+ * the drawer, show an in-app confirmDialog naming the tab, and only destroy on
+ * confirm. Tabs whose status is exited / not-connected close silently — there
+ * is no running process to interrupt. Pass `skipConfirm: true` to bypass the
+ * dialog (used by bulk flows that have already confirmed at a higher level).
+ */
+async function closeDynamicTerminal(id: string, skipConfirm = false): Promise<void> {
+  const inst = instances.get(id);
+
+  if (inst !== undefined && inst.status === 'alive' && !skipConfirm) {
+    const name = tabDisplayName(inst.config);
+    const mod = await import('./commandLog.js');
+    const restoreDrawer = mod.previewDrawerTab(`terminal:${id}`);
+    const confirmed = await confirmDialog({
+      title: 'Close terminal?',
+      message: `Close terminal "${name}"? Its running process will be stopped.`,
+      confirmLabel: 'Close',
+      danger: true,
+    });
+    if (!confirmed) {
+      restoreDrawer();
+      return;
+    }
+    // If the user confirmed, keep the revealed tab active — it's about to
+    // disappear anyway and the next selectDrawerTab() below handles fallback.
+  }
+
   try {
     await api('/terminal/destroy', { method: 'POST', body: { terminalId: id } });
   } catch { /* ignore */ }
@@ -724,10 +794,57 @@ function showTabContextMenu(e: MouseEvent, clickedId: string): void {
   }, 0);
 }
 
+/**
+ * Bulk-close a set of dynamic tabs (Close Others / Close Tabs to the Left /
+ * Close Tabs to the Right). HS-6701: when any of the target PTYs are alive,
+ * surface a confirm dialog before stopping their processes.
+ *
+ *   0 alive  → destroy all silently (nothing to interrupt).
+ *   1 alive  → reuse the single-tab confirm flow for that one; on confirm, also
+ *              destroy the inert tabs. On cancel, abort the whole bulk op.
+ *   2+ alive → single "Stop All" dialog listing the running tab names;
+ *              confirm destroys all, cancel aborts the whole bulk op.
+ */
 async function closeTabs(ids: string[]): Promise<void> {
-  for (const id of ids) {
-    await closeDynamicTerminal(id);
+  if (ids.length === 0) return;
+
+  const aliveIds = ids.filter(id => instances.get(id)?.status === 'alive');
+  const deadIds = ids.filter(id => !aliveIds.includes(id));
+
+  if (aliveIds.length === 0) {
+    for (const id of ids) await closeDynamicTerminal(id, true);
+    return;
   }
+
+  if (aliveIds.length === 1) {
+    // Fall through to the single-tab confirm UX — if the user cancels there,
+    // the whole bulk op aborts (no dead-tab destroys either). If they confirm,
+    // the alive tab is destroyed by closeDynamicTerminal; we then clean up the
+    // inert tabs.
+    const aliveId = aliveIds[0];
+    const before = instances.has(aliveId);
+    await closeDynamicTerminal(aliveId);
+    const confirmed = before && !instances.has(aliveId);
+    if (!confirmed) return;
+    for (const id of deadIds) await closeDynamicTerminal(id, true);
+    return;
+  }
+
+  const names = aliveIds
+    .map(id => {
+      const inst = instances.get(id);
+      return inst !== undefined ? tabDisplayName(inst.config) : id;
+    })
+    .map(n => `  • ${n}`)
+    .join('\n');
+  const confirmed = await confirmDialog({
+    title: 'Stop all running terminals?',
+    message: `The following terminals have running processes that will be stopped:\n\n${names}`,
+    confirmLabel: 'Stop All',
+    danger: true,
+  });
+  if (!confirmed) return;
+  for (const id of ids) await closeDynamicTerminal(id, true);
 }
 
 /**

@@ -275,6 +275,17 @@ Click the tab's **×** → `POST /api/terminal/destroy` with the terminal id. Th
 
 The client removes the tab button and pane from the DOM. If the closed terminal was the active tab, the drawer falls back to Commands Log.
 
+**Confirm-before-kill (HS-6701).** To match the Settings → Embedded Terminal delete flow (§22.17.4 above):
+
+- If the clicked tab's `TerminalInstance.status` is `alive` (the PTY has a live process), the client first calls `previewDrawerTab` to reveal the tab in the drawer, then shows an in-app confirm overlay: *"Close terminal "NAME"? Its running process will be stopped."* with a danger-styled **Close** button. Destroy only runs on confirm; on cancel, the drawer returns to whatever tab was active before.
+- If the status is `exited` or `not-connected`, there is no process to interrupt — the tab closes silently without a dialog.
+
+**Bulk close (Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right).** Same protection applied across the selection:
+
+- 0 alive in the selection → destroy all silently.
+- Exactly 1 alive → fall through to the single-tab confirm flow for that one tab; on confirm, the inert tabs in the selection are also destroyed; on cancel, the whole bulk operation aborts (no tab is destroyed, even the inert ones).
+- 2+ alive → single **"Stop all running terminals?"** dialog listing the running tab names by bullet; confirming stops and destroys every tab in the selection, canceling aborts the whole bulk operation.
+
 **Configured defaults cannot be closed from the drawer.** To remove one, edit the terminals list in Settings and click its trash icon. The delete flow (HS-6403):
 
 1. Temporarily hides the Settings dialog and opens the drawer to the target terminal so the user can see what they're about to remove.

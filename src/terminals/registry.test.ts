@@ -478,5 +478,95 @@ describe('TerminalRegistry', () => {
       expect(getBellPending('bell-sec-6')).toBe(false);
       expect(listBellPendingForProject('bell-sec-6')).toEqual([]);
     });
+
+    // HS-6766 — shells emit OSC title/CWD sequences (`\x1b]0;TITLE\x07`,
+    // `\x1b]7;file://host/cwd\x07`, etc.) on every prompt, and Apple
+    // Terminal's zshrc integration emits one at startup. The trailing
+    // BEL terminator must NOT trip the bell indicator.
+    it('ignores the BEL terminator of an OSC title sequence (HS-6766)', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-osc-1', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]0;my-shell-title\x07');
+      expect(getBellPending('bell-osc-1')).toBe(false);
+    });
+
+    it('ignores OSC 7 (working-directory) BEL terminators used by zsh on each prompt (HS-6766)', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-osc-2', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]7;file://host/Users/me/project\x07');
+      expect(getBellPending('bell-osc-2')).toBe(false);
+    });
+
+    it('ignores ST-terminated OSC sequences (ESC\\\\ terminator) (HS-6766)', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-osc-3', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]0;foo\x1b\\');
+      expect(getBellPending('bell-osc-3')).toBe(false);
+    });
+
+    it('still fires on a real BEL that is NOT inside an OSC string (HS-6766)', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-osc-4', d, sub);
+      // OSC terminator first, then a real bell after some text.
+      FakePty.lastSpawned!.emit('\x1b]0;title\x07hello\x07');
+      expect(getBellPending('bell-osc-4')).toBe(true);
+    });
+
+    it('tracks OSC state across chunk boundaries so a split BEL terminator does not fire (HS-6766)', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-osc-5', d, sub);
+      // OSC opens in chunk 1, continues in chunk 2, terminates in chunk 3.
+      FakePty.lastSpawned!.emit('\x1b]0;lo');
+      FakePty.lastSpawned!.emit('ng-title-split');
+      FakePty.lastSpawned!.emit('\x07');
+      expect(getBellPending('bell-osc-5')).toBe(false);
+      // A real BEL after the OSC closes must still register.
+      FakePty.lastSpawned!.emit('\x07');
+      expect(getBellPending('bell-osc-5')).toBe(true);
+    });
+
+    it('real BEL immediately followed by an OSC title (Apple Terminal integration pattern) fires once (HS-6766)', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-osc-6', d, sub);
+      // Real bell, then an OSC sequence whose BEL terminator must NOT
+      // re-arm the already-pending flag in a way that re-notifies on every
+      // prompt. The flag is sticky either way, but this guards the detector
+      // against mistakenly treating the terminator as a fresh bell event.
+      FakePty.lastSpawned!.emit('\x07\x1b]0;title\x07');
+      expect(getBellPending('bell-osc-6')).toBe(true);
+    });
+
+    it('resets OSC-scan state on restart so a mid-OSC process death does not poison the new PTY (HS-6766)', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-osc-7', d, sub);
+      // Process dies mid-OSC, leaving scanner in `inString` state.
+      FakePty.lastSpawned!.emit('\x1b]0;partial');
+      expect(getBellPending('bell-osc-7')).toBe(false);
+
+      restartTerminal('bell-osc-7', d);
+      // The fresh PTY emits a real bell (no OSC wrapping). The scanner must
+      // have reset on restart — otherwise it would still be "inString" and
+      // treat the BEL as an OSC terminator.
+      FakePty.lastSpawned!.emit('\x07');
+      expect(getBellPending('bell-osc-7')).toBe(true);
+    });
+
+    it('ignores DCS/APC/PM/SOS strings containing incidental BEL bytes (HS-6766)', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('bell-osc-8', d, sub);
+      // DCS = ESC P ... ESC\\. The spec only terminates with ST, but some
+      // emitters reuse BEL — either way, a BEL inside a DCS string should
+      // not bubble up as a user-visible bell.
+      FakePty.lastSpawned!.emit('\x1bP0;dcs-body\x07with-real\x1b\\');
+      expect(getBellPending('bell-osc-8')).toBe(false);
+    });
   });
 });

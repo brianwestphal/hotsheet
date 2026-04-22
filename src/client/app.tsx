@@ -3,6 +3,7 @@ import { suppressAnimation } from './animate.js';
 import { api, apiUpload } from './api.js';
 import { bindBackupsUI } from './backups.js';
 import { bindBatchToolbar } from './batch.js';
+import { startBellPolling } from './bellPoll.js';
 import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
 import { applyPerProjectDrawerState, initCommandLog, refreshCommandLog } from './commandLog.js';
@@ -222,6 +223,10 @@ async function init() {
   // Command log panel + embedded terminal (tabs in the same drawer)
   initCommandLog();
   initTerminal();
+  // Cross-project bell long-poll (HS-6603 §24.4.1) — surfaces server-side
+  // bell state on project tabs and feeds the in-drawer indicator for
+  // bells fired while the user is inside another project.
+  startBellPolling();
   // Dashboard sidebar widget
   void initDashboardWidget();
   // Share prompt and toolbar button

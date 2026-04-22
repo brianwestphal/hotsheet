@@ -228,7 +228,7 @@ Two QOL surface enhancements on top of §22. (1) **Title-change escapes:** `term
 
 Phase 2 of the bell indicator: surface bells fired in non-current projects (where no client xterm is mounted) and in not-yet-mounted terminals within a project. Server-side `\x07` detection is added to the `TerminalRegistry` PTY data handler, setting a per-session `bellPending: boolean` flag that survives until explicitly cleared. New endpoints: `POST /api/terminal/clear-bell` (acknowledge + clear), `GET /api/projects/bell-state` (cross-project long-poll mirroring `/api/projects/permissions`), and an extended `/api/terminal/list` that includes `bellPending` per session. Client gains a `src/client/bellPoll.tsx` long-poll loop that updates a per-project bell map and re-renders both the project-tab indicator (suppressed on the active project, shown on others) and the in-drawer per-terminal indicators. Activating a project hides the project-tab indicator without clearing per-terminal flags, so the user can still see which specific terminal wanted attention. Activating a terminal tab clears its server-side `bellPending`. In-memory only — server restart drops all pending bells (intentional). No new user settings in v1; possible follow-ups call out an audio chime, decay timer, and full suppression toggle.
 
-**Status:** Design only — requirements documented for HS-6603, no code yet. Cross-refs: §22 (base terminal), §23 (Phase 1).
+**Status:** Shipped. Server-side: `TerminalRegistry`'s PTY data handler flips a per-session `bellPending` flag on `0x07`; helpers (`getBellPending`, `clearBellPending`, `listBellPendingForProject`) are exposed to the route layer. `/api/terminal/list` now includes `bellPending` per entry; `/api/terminal/clear-bell` clears the flag; `/api/projects/bell-state` long-poll aggregates pending state across every registered project. Client-side: `src/client/bellPoll.tsx` runs the long-poll loop from app boot, populates a module-level `BellStateMap`, and fans out via `updateProjectBellIndicators` in `projectTabs.tsx` (adds `.has-bell` + Lucide bell SVG to non-active project tabs) and a `subscribeToBellState` callback in `terminal.tsx` (syncs in-drawer per-terminal indicators). `loadAndRenderTerminalTabs` seeds `inst.hasBell` from the list response's `bellPending` field; `activateTerminal` fires-and-forgets `/api/terminal/clear-bell` so the server flag drops. In-memory only — server restart clears all pending bells. Cross-refs: §22 (base terminal), §23 (Phase 1).
 
 ---
 
@@ -339,7 +339,7 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 21 — feedback | Shipped | — |
 | 22 — terminal | Shipped | full v1 (HS-6261 through HS-6270); future: E2E smoke test, live Tauri per-platform verification |
 | 23 — terminal titles & bell | Shipped (Phase 1) | Phase 2 spec lives in §24 |
-| 24 — cross-project bell | Design only | server `\x07` detection, `bellPending` flag, `/api/projects/bell-state` long-poll, `/api/terminal/clear-bell`, project-tab indicator + bellPoll client (HS-6603) |
+| 24 — cross-project bell | Shipped | server `0x07` detection + `bellPending` flag, `/api/projects/bell-state` long-poll, `/api/terminal/clear-bell`, project-tab `.has-bell` indicator, client bellPoll (HS-6603) |
 | tauri-architecture | Shipped | — |
 | tauri-setup | Shipped | — |
 | plugin-development-guide | Shipped (living doc) | — |

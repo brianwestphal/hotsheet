@@ -214,7 +214,15 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] In terminal A while terminal B is the active drawer tab, run `printf '\\007'` (or `tput bel`) — terminal A's tab gains a wiggling bell glyph
 - [ ] Click terminal A — the bell glyph clears as soon as the tab activates
 - [ ] Bell fired in the *currently active* terminal does not produce an indicator (the user is already looking)
-- [ ] Cross-project bell (deferred — see §23.3 Phase 2): a bell in a non-current project does not yet show on the project tab. Tracked as a follow-up
+
+#### Cross-project bell (§24, HS-6603)
+- [ ] In project A's terminal, run `printf '\007'` while project B is active — project A's tab gains a bell glyph (small Lucide bell, accent color, one-shot 350 ms wiggle)
+- [ ] Switch to project A — the project-tab bell clears immediately on activation
+- [ ] The in-drawer terminal tab for the bell-emitting terminal still shows its bell glyph after the project switch
+- [ ] Click that terminal tab — its bell glyph clears (both locally and server-side, so other polling clients observe the clear)
+- [ ] Switch back to project B — project A's tab no longer shows a bell (all its per-terminal bells were acknowledged in the previous step)
+- [ ] Bell fires in a lazy terminal that has never been spawned: no indicator anywhere (a lazy terminal without a session cannot run, so cannot bell)
+- [ ] Restart the Hot Sheet server while bells are pending — all indicators clear on restart (bellPending is in-memory only by design)
 
 ### Rendering and input (§22.6)
 - [ ] No black strip appears below the last rendered row (xterm viewport background matches the app theme even when container is taller than rows × cellHeight)

@@ -13,7 +13,18 @@ export default defineConfig([
     splitting: false,
     clean: true,
     sourcemap: true,
-    noExternal: [/^(?!@electric-sql|hono|@hono)/],
+    // Bundle everything EXCEPT the packages that build-sidecar.sh ships
+    // alongside cli.js under src-tauri/server/node_modules/ — they have to
+    // be resolved at runtime:
+    //   - @electric-sql/pglite needs filesystem access to its WASM.
+    //   - hono / @hono/node-server are tsup's original external set.
+    //   - node-pty is a CJS native addon that does `require('fs')`; if
+    //     esbuild bundles it into an ESM output, those calls become
+    //     `__require('fs')` and blow up with "Dynamic require of fs is
+    //     not supported" at boot (HS-6734).
+    //   - ws + @xterm/* travel with node-pty in the sidecar's node_modules
+    //     (OPTIONAL_DEPS in build-sidecar.sh), so they also stay external.
+    noExternal: [/^(?!@electric-sql|hono|@hono|node-pty|ws($|\/)|@xterm)/],
     define: {
       'process.env.BUILD_TIMESTAMP': JSON.stringify(new Date().toISOString()),
       '__PLUGINS_ENABLED__': process.env.PLUGINS_ENABLED === 'false' ? 'false' : 'true',

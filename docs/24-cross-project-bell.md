@@ -13,22 +13,30 @@ The unifying mechanism is **server-side bell detection** — the PTY data handle
 
 `TerminalRegistry` (`src/terminals/registry.ts`) gains a per-session `bellPending: boolean` field (default `false`).
 
-The PTY data handler — currently writes to the ring buffer + broadcasts to subscribers — adds a single check:
+The PTY data handler — currently writes to the ring buffer + broadcasts to subscribers — runs an OSC-aware bell scanner on each chunk. A naive `chunk.includes(0x07)` also fires on the BEL terminator of OSC/DCS/APC/PM/SOS escape strings, which shells (especially Apple Terminal's zshrc integration) emit on every prompt to update the window title (`\x1b]0;TITLE\x07`), icon, and working directory (`\x1b]7;file://host/cwd\x07`). Treating those terminators as real bells makes a freshly-opened terminal show a bell indicator immediately (HS-6766).
+
+`scanForRealBell` maintains two bits of state on the session (`bellScanInString`, `bellScanAfterEsc`) and walks the chunk byte-by-byte:
+
+- When an ESC introducer (`\x1b]` OSC, `\x1bP` DCS, `\x1b_` APC, `\x1b^` PM, `\x1bX` SOS) is seen, enter "string" state.
+- While in "string" state, a BEL (`\x07`) or ST (`\x1b\\`) terminator exits the state and is NOT reported as a bell.
+- A BEL (`\x07`) seen outside a string state is a real user-visible bell.
+
+Because state lives on the session, a string that straddles chunk boundaries (opening introducer in one chunk, terminator in the next) is handled correctly.
 
 ```ts
-if (chunk.includes(0x07)) {
-  if (!session.bellPending) {
-    session.bellPending = true;
-    notifyBellWaiters(); // wakes any pending /api/projects/bell-state long-poll
-  }
+const realBell = scanForRealBell(session, chunk);
+if (realBell && !session.bellPending) {
+  session.bellPending = true;
+  notifyBellWaiters(); // wakes any pending /api/projects/bell-state long-poll
 }
 ```
 
 Notes:
 
-- The check runs on raw PTY output bytes — it fires whether or not any client xterm is currently mounted.
+- The scanner runs on raw PTY output bytes — it fires whether or not any client xterm is currently mounted.
 - The flag is sticky: it stays `true` until explicitly cleared via the `clear-bell` endpoint. Re-firing a bell on an already-pending terminal is a no-op (no new wake event) — the indicator is binary, not a counter.
 - The flag is **in-memory only**. Server restart clears all pending bells. This is intentional: a stale bell across a process bounce is more annoying than informative.
+- OSC-scan state resets on PTY restart so a partial string left behind by a dying process doesn't poison the fresh PTY (HS-6766).
 
 ## 24.3 New API endpoints
 

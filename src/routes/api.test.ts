@@ -253,6 +253,42 @@ describe('ticket CRUD', () => {
     const check = await app.request(`/api/tickets/${t.id}`);
     expect(check.status).toBe(404);
   });
+
+  // HS-6700: malformed JSON bodies used to surface as an unhandled 500 + stack
+  // trace in the server log. The onError handler in apiRoutes now maps JSON
+  // parse errors to a clean 400.
+  it('PATCH /api/tickets/:id returns 400 for malformed JSON (bad escape)', async () => {
+    const res = await app.request(`/api/tickets/${ticketId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"notes": "bad \\x escape"}', // \x is not a valid JSON escape
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json() as { error: string };
+    expect(data.error).toMatch(/Invalid JSON body/);
+  });
+
+  it('PATCH /api/tickets/:id returns 400 for truncated JSON', async () => {
+    const res = await app.request(`/api/tickets/${ticketId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"title": "oops', // missing closing quote + brace
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json() as { error: string };
+    expect(data.error).toMatch(/Invalid JSON body/);
+  });
+
+  it('POST /api/tickets returns 400 for malformed JSON', async () => {
+    const res = await app.request('/api/tickets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"title": "bad \\q escape"}',
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json() as { error: string };
+    expect(data.error).toMatch(/Invalid JSON body/);
+  });
 });
 
 describe('filtering & sorting', () => {

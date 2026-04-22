@@ -370,11 +370,96 @@ test.describe('Embedded terminal drawer', () => {
     await expect(menu.locator('[data-action="close"]')).not.toHaveClass(/disabled/);
 
     await menu.locator('[data-action="close-others"]').click();
+
+    // HS-6701: dyn-0 and dyn-2 both have alive PTYs (each got selected at
+    // creation, which auto-connects the websocket and spawns the process).
+    // The bulk close now surfaces a "Stop all" confirm dialog that we must
+    // accept before anything is destroyed.
+    const stopAll = page.locator('.confirm-dialog-overlay');
+    await expect(stopAll).toBeVisible({ timeout: 3000 });
+    await stopAll.locator('.confirm-dialog-confirm').click();
+
     // Two configured defaults + the one dynamic we right-clicked should remain.
     await expect(tabs).toHaveCount(3, { timeout: 5000 });
     await expect(page.locator('.drawer-terminal-tab[data-terminal-id="default"]')).toBeVisible();
     await expect(page.locator('.drawer-terminal-tab[data-terminal-id="second"]')).toBeVisible();
     await expect(dyns).toHaveCount(1);
+  });
+
+  // HS-6701: closing a dynamic tab whose PTY is still alive should surface an
+  // in-app confirm before silently killing the process.
+  test('single-tab close on an alive PTY shows a confirm dialog that can be cancelled (HS-6701)', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+    await page.locator('#command-log-btn').click();
+    await expect(page.locator('#drawer-add-terminal-btn')).toBeVisible({ timeout: 5000 });
+    await page.locator('#drawer-add-terminal-btn').click();
+
+    const dyn = page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]').first();
+    await expect(dyn).toBeVisible({ timeout: 5000 });
+
+    // Wait for the PTY to reach alive status — the status dot on the active
+    // pane transitions to .status-alive once the server confirms the PTY.
+    await expect(page.locator('.drawer-terminal-pane .terminal-status-dot.status-alive').first()).toBeVisible({ timeout: 5000 });
+
+    // Right-click → Close Tab — confirm should appear and cancel keeps the tab.
+    await dyn.click({ button: 'right' });
+    let menu = page.locator('.terminal-tab-context-menu');
+    await expect(menu).toBeVisible({ timeout: 3000 });
+    await menu.locator('[data-action="close"]').click();
+
+    const overlay = page.locator('.confirm-dialog-overlay');
+    await expect(overlay).toBeVisible({ timeout: 3000 });
+    await expect(overlay).toContainText('Close terminal');
+    await overlay.locator('.confirm-dialog-cancel').click();
+    await expect(overlay).toBeHidden();
+    await expect(dyn).toBeVisible();
+
+    // Right-click → Close Tab again — this time confirm the close.
+    await dyn.click({ button: 'right' });
+    menu = page.locator('.terminal-tab-context-menu');
+    await expect(menu).toBeVisible({ timeout: 3000 });
+    await menu.locator('[data-action="close"]').click();
+    await expect(overlay).toBeVisible({ timeout: 3000 });
+    await overlay.locator('.confirm-dialog-confirm').click();
+    await expect(overlay).toBeHidden();
+    await expect(page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]')).toHaveCount(0, { timeout: 5000 });
+  });
+
+  // HS-6701: bulk close with 2+ alive PTYs shows a "Stop all" dialog listing
+  // the running tab names.
+  test('Close Others with 2+ alive tabs shows Stop All dialog listing names (HS-6701)', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+    await page.locator('#command-log-btn').click();
+    await expect(page.locator('#drawer-add-terminal-btn')).toBeVisible({ timeout: 5000 });
+    for (let i = 0; i < 3; i++) {
+      await page.locator('#drawer-add-terminal-btn').click();
+      await expect(page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]').nth(i)).toBeVisible({ timeout: 5000 });
+    }
+
+    const dyns = page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]');
+    await expect(dyns).toHaveCount(3);
+
+    // Right-click the middle tab → Close Others. With dyn-0 and dyn-2 both
+    // alive, the bulk confirm must list both of their labels as bullets.
+    await dyns.nth(1).click({ button: 'right' });
+    const menu = page.locator('.terminal-tab-context-menu');
+    await expect(menu).toBeVisible({ timeout: 3000 });
+    await menu.locator('[data-action="close-others"]').click();
+
+    const overlay = page.locator('.confirm-dialog-overlay');
+    await expect(overlay).toBeVisible({ timeout: 3000 });
+    await expect(overlay).toContainText('Stop all running terminals?');
+    // Two bullet-listed names in the body.
+    await expect(overlay.locator('.confirm-dialog-body')).toContainText('•');
+
+    // Cancel aborts the whole op.
+    await overlay.locator('.confirm-dialog-cancel').click();
+    await expect(overlay).toBeHidden();
+    await expect(dyns).toHaveCount(3);
   });
 
   // HS-6337: terminal options live on their own Settings tab, the enabled
@@ -593,6 +678,11 @@ test.describe('Embedded terminal drawer', () => {
     // Close Others: the default should remain, the dynamic should close, the
     // other configured ("second") should also remain (skip-configured semantics).
     await menu.locator('[data-action="close-others"]').click();
+    // HS-6701: the single live dynamic PTY triggers the single-tab confirm
+    // flow — accept it to proceed with the close.
+    const confirm = page.locator('.confirm-dialog-overlay');
+    await expect(confirm).toBeVisible({ timeout: 3000 });
+    await confirm.locator('.confirm-dialog-confirm').click();
     await expect(page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]')).toHaveCount(0, { timeout: 5000 });
     await expect(page.locator('.drawer-terminal-tab[data-terminal-id="default"]')).toBeVisible();
     await expect(page.locator('.drawer-terminal-tab[data-terminal-id="second"]')).toBeVisible();
