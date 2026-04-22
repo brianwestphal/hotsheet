@@ -230,12 +230,19 @@ export function activateTerminal(id: string): void {
 
   if (!inst.mounted) {
     mountXterm(inst, active.secret);
+    // HS-6799: fit the xterm to its pane BEFORE opening the WebSocket so the
+    // `?cols=&rows=` query reflects the real pane geometry. The server uses
+    // those dims to spawn (or resize) the PTY so its startup output is
+    // generated at the right width — avoiding the stray-glyph artifacts that
+    // appeared when history was replayed from a DEFAULT 80×24 buffer.
+    doFit(inst);
     connect(inst);
     inst.mounted = true;
   } else if (inst.wsSecret !== active.secret) {
     // Project switched — rebuild from scratch.
     teardown(inst);
     mountXterm(inst, active.secret);
+    doFit(inst);
     connect(inst);
   }
 
@@ -452,7 +459,15 @@ function connect(inst: TerminalInstance): void {
   if (inst.wsSecret === null) return;
   setStatus(inst, 'connecting');
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(inst.wsSecret)}&terminal=${encodeURIComponent(inst.id)}`;
+  // HS-6799: include post-fit xterm dims so the server can spawn / resize the
+  // PTY to match BEFORE sending the history frame. Without this the PTY ran
+  // at DEFAULT 80×24 and its startup output leaked through as stray chars at
+  // the top of the pane. Omits dims only if xterm hasn't been created yet
+  // (shouldn't happen — `connect()` is always called after `mountXterm`).
+  const dims = inst.term !== null && Number.isFinite(inst.term.cols) && Number.isFinite(inst.term.rows)
+    ? `&cols=${inst.term.cols}&rows=${inst.term.rows}`
+    : '';
+  const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(inst.wsSecret)}&terminal=${encodeURIComponent(inst.id)}${dims}`;
   const ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
   inst.ws = ws;

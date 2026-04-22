@@ -15,16 +15,20 @@ export interface ReplayableTerm {
 
 /**
  * Replay a `history` frame onto an xterm instance. Resizes the buffer to the
- * history's origin dims BEFORE writing the bytes — eager-spawned terminals
- * (`lazy:false`) accumulate PTY output at the server's default 80×24 long
- * before any client attaches, and the history bytes only render correctly
- * when the receiving buffer matches those dims. Writing first into xterm's
- * own default 80×24 buffer and THEN resizing causes cursor-positioning
- * escapes, zsh's PROMPT_SP EOL mark, and shell OSC-integration prefixes
- * (e.g. Apple Terminal's "Restored session: …") to clip or wrap against the
- * narrow buffer; the leftover glyphs survive the subsequent resize + `fit()`
- * and appear as stray characters at the top of the pane in production
- * builds (HS-6799).
+ * history's origin dims BEFORE writing the bytes — the bytes were produced
+ * at the server-side session's (cols × rows) and only render correctly when
+ * the receiving buffer matches those dims. Writing first into xterm's own
+ * default 80×24 buffer and THEN resizing clips / wraps escape sequences,
+ * zsh's PROMPT_SP EOL mark, and shell OSC-integration prefixes (e.g. Apple
+ * Terminal's "Restored session: …"), and the leftover glyphs survive the
+ * subsequent resize + `fit()` as stray characters at the top of the pane
+ * (HS-6799).
+ *
+ * Note: first-attach to an eager-spawned session is handled specially on the
+ * server — the registry resizes the PTY to the client's real dims, clears
+ * the stale 80×24 scrollback, and pokes the shell with Ctrl-L so the prompt
+ * is redrawn at the correct geometry. In that case the history frame is
+ * effectively empty and this helper is a no-op.
  */
 export function replayHistoryToTerm(
   term: ReplayableTerm,

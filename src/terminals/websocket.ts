@@ -36,12 +36,12 @@ export function wireTerminalWebSocket(httpServer: HttpServer): void {
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
-      handleConnection(ws, authResult.secret, authResult.dataDir, authResult.terminalId);
+      handleConnection(ws, authResult.secret, authResult.dataDir, authResult.terminalId, authResult.cols, authResult.rows);
     });
   });
 }
 
-export interface AuthOk { ok: true; secret: string; dataDir: string; terminalId: string }
+export interface AuthOk { ok: true; secret: string; dataDir: string; terminalId: string; cols: number | undefined; rows: number | undefined }
 export interface AuthFail { ok: false; status: number; reason: string }
 
 export function authenticate(req: IncomingMessage): AuthOk | AuthFail {
@@ -55,7 +55,26 @@ export function authenticate(req: IncomingMessage): AuthOk | AuthFail {
   const termQuery = typeof url.query.terminal === 'string' && url.query.terminal !== ''
     ? url.query.terminal
     : DEFAULT_TERMINAL_ID;
-  return { ok: true, secret, dataDir: project.dataDir, terminalId: termQuery };
+  // HS-6799: clients send their post-fit xterm dims here so the server can
+  // spawn / resize the PTY to match *before* emitting the history frame.
+  // Without this the PTY runs at DEFAULT 80×24 until the first resize message
+  // arrives on the open socket, and the startup output is all laid out for
+  // 80×24 — which leaves stray chars at the top of the client pane.
+  return {
+    ok: true,
+    secret,
+    dataDir: project.dataDir,
+    terminalId: termQuery,
+    cols: parsePositiveInt(url.query.cols),
+    rows: parsePositiveInt(url.query.rows),
+  };
+}
+
+function parsePositiveInt(v: unknown): number | undefined {
+  const s = typeof v === 'string' ? v : Array.isArray(v) && typeof v[0] === 'string' ? v[0] : '';
+  if (s === '') return undefined;
+  const n = parseInt(s, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 function readHeader(req: IncomingMessage, name: string): string | undefined {
@@ -69,7 +88,7 @@ function reject(socket: Duplex, status: number, reason: string): void {
   socket.destroy();
 }
 
-function handleConnection(ws: WebSocket, secret: string, dataDir: string, terminalId: string): void {
+function handleConnection(ws: WebSocket, secret: string, dataDir: string, terminalId: string, cols: number | undefined, rows: number | undefined): void {
   const subscriber: TerminalSubscriber = {
     onData(chunk) {
       if (ws.readyState === ws.OPEN) {
@@ -86,7 +105,7 @@ function handleConnection(ws: WebSocket, secret: string, dataDir: string, termin
   let result;
   try {
     const configOverride = getDynamicTerminalConfig(secret, terminalId) ?? undefined;
-    result = attach(secret, dataDir, subscriber, { configOverride }, terminalId);
+    result = attach(secret, dataDir, subscriber, { configOverride, cols, rows }, terminalId);
   } catch (err) {
     ws.send(JSON.stringify({ type: 'error', message: err instanceof Error ? err.message : String(err) }));
     ws.close(1011, 'attach failed');

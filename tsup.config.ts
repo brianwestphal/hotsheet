@@ -1,6 +1,6 @@
 import { defineConfig } from 'tsup';
 import { execSync } from 'child_process';
-import { cpSync, mkdirSync } from 'fs';
+import { appendFileSync, cpSync, mkdirSync, readFileSync } from 'fs';
 
 export default defineConfig([
   // Server bundle (CLI entry point)
@@ -78,6 +78,15 @@ export default defineConfig([
       mkdirSync('dist/client/assets', { recursive: true });
       cpSync('src/client/assets', 'dist/client/assets', { recursive: true });
       execSync('npx sass src/client/styles.scss dist/client/styles.css --style compressed --no-source-map', { stdio: 'inherit' });
+      // HS-6799: xterm.js ships a stylesheet that positions its internal layers
+      // (`.xterm-helper-textarea`, `.xterm-viewport`, `.xterm-screen`) absolutely
+      // and hides the IME helper textarea via `opacity: 0`. Without it the helper
+      // `<textarea>` renders as a visible, user-resizable box inside the terminal
+      // pane and xterm's canvas rows misalign — producing stray glyphs at the top
+      // of the pane in Tauri production builds. Append it here so `tsup`-driven
+      // builds (what `build-sidecar.sh` uses) match the dev path in `build:client`.
+      const xtermCss = readFileSync('node_modules/@xterm/xterm/css/xterm.css', 'utf8');
+      appendFileSync('dist/client/styles.css', xtermCss);
     },
   },
   // Bundled plugins

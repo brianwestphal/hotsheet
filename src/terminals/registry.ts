@@ -99,6 +99,12 @@ interface SessionState {
    *  BEL is a terminator, not a user-visible bell). HS-6766. */
   bellScanInString: boolean;
   bellScanAfterEsc: boolean;
+  /** True once a real client has attached. Used by the eager-spawn cleanup in
+   *  attach() — the first real attach clears scrollback, resizes the PTY to
+   *  the client's actual pane dims, and sends Ctrl-L so the shell redraws its
+   *  prompt at the right geometry instead of the startup-time 80×24 output
+   *  leaking through as stray characters (HS-6799). */
+  hasBeenAttached: boolean;
 }
 
 const sessions = new Map<string, SessionState>();
@@ -137,9 +143,44 @@ export function attach(
     spawnIntoSession(session, dataDir);
   } else if (session.pty === null && session.exitCode === null) {
     // Session exists but was never spawned — should be rare, but spawn now.
+    if (opts.cols !== undefined && opts.cols > 0) session.cols = opts.cols;
+    if (opts.rows !== undefined && opts.rows > 0) session.rows = opts.rows;
     spawnIntoSession(session, dataDir);
+  } else if (session.pty !== null && !session.hasBeenAttached && (opts.cols !== undefined || opts.rows !== undefined)) {
+    // HS-6799: first real client attach to an eager-spawned session. The PTY
+    // has been running at DEFAULT_COLS × DEFAULT_ROWS since project boot (nobody
+    // has called resize) so its startup output — shell welcome message, zsh
+    // PROMPT_SP EOL mark, Apple Terminal's "Restored session: …", prompt —
+    // is all laid out for an 80×24 buffer. Replaying those bytes into the
+    // client's actual (usually much wider) pane leaves artifacts at the top
+    // even when we resize the receiving xterm first: cursor-positioning
+    // escapes, charset shifts, and line wraps don't cleanly reflow.
+    //
+    // Instead: resize the PTY to the client's real dims, drop the stale
+    // scrollback, and poke the shell with Ctrl-L so it clears the screen and
+    // reprints its prompt at the correct geometry. The client's xterm now
+    // receives a fresh stream of bytes that were generated *for* its actual
+    // dimensions.
+    const newCols = opts.cols ?? session.cols;
+    const newRows = opts.rows ?? session.rows;
+    if (newCols > 0 && newRows > 0) {
+      if (newCols !== session.cols || newRows !== session.rows) {
+        session.cols = newCols;
+        session.rows = newRows;
+        session.pty.resize(newCols, newRows);
+      }
+      session.scrollback.clear();
+      // Ctrl-L / Form Feed. Interactive shells (zsh, bash, fish) interpret it
+      // as the `clear-screen` widget: emit `\x1b[2J\x1b[H` and redraw the
+      // prompt at the current cursor column. If the terminal is running a
+      // non-shell command that happens to ignore FF, the worst case is the
+      // same blank scrollback the user would have with a lazy-spawn anyway.
+      try { session.pty.write('\x0c'); } catch { /* pty closed mid-attach */ }
+    }
   } else if (session.pty !== null && (opts.cols !== undefined || opts.rows !== undefined)) {
-    // Alive session: adopt a larger geometry if this client is bigger.
+    // Alive session, not-first attach: adopt a larger geometry if this client
+    // is bigger. We never shrink — another subscriber might be at the wider
+    // size and would reflow badly.
     const newCols = Math.max(session.cols, opts.cols ?? session.cols);
     const newRows = Math.max(session.rows, opts.rows ?? session.rows);
     if (newCols !== session.cols || newRows !== session.rows) {
@@ -150,6 +191,7 @@ export function attach(
   }
 
   session.subscribers.add(subscriber);
+  session.hasBeenAttached = true;
 
   return {
     alive: session.pty !== null,
@@ -393,6 +435,7 @@ function createSession(
     bellPending: false,
     bellScanInString: false,
     bellScanAfterEsc: false,
+    hasBeenAttached: false,
   };
 }
 

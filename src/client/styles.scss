@@ -151,14 +151,20 @@ input, select, textarea {
 // .has-bell class (the SVG is injected from JS at that moment). The one-shot
 // 350 ms wiggle mirrors the in-drawer terminal-tab bell (§23.3) so the two
 // bell affordances feel like one concept.
+//
+// HS-6800: default to display:none so the empty span doesn't reserve layout
+// space (flex `gap` + the element's own `margin-left` otherwise padded the
+// right side of every project tab, even when no bell was pending). Swap to
+// inline-flex only when the tab gains `.has-bell`.
 .project-tab-bell {
-  display: inline-flex;
+  display: none;
   align-items: center;
   color: var(--accent, #3b82f6);
   margin-left: 4px;
   transform-origin: 50% 0;
 }
 .project-tab.has-bell .project-tab-bell {
+  display: inline-flex;
   animation: project-tab-bell-shake 0.35s ease-out 1;
 }
 

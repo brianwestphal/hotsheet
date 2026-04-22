@@ -62,6 +62,29 @@ describe('authenticate', () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.status).toBe(403);
   });
+
+  // HS-6799 — clients send their post-fit xterm dims on the URL so the server
+  // can spawn / resize the PTY to match before emitting the history frame.
+  it('parses cols and rows from the query string when present', () => {
+    const res = authenticate({ url: `/api/terminal/ws?project=${FAKE_SECRET}&cols=160&rows=50`, headers: {} } as never);
+    expect(res.ok).toBe(true);
+    if (res.ok) { expect(res.cols).toBe(160); expect(res.rows).toBe(50); }
+  });
+
+  it('leaves cols/rows undefined when not provided (backwards-compat)', () => {
+    const res = authenticate({ url: `/api/terminal/ws?project=${FAKE_SECRET}`, headers: {} } as never);
+    expect(res.ok).toBe(true);
+    if (res.ok) { expect(res.cols).toBeUndefined(); expect(res.rows).toBeUndefined(); }
+  });
+
+  it('rejects non-numeric, zero, or negative cols/rows as undefined (not poison values for the PTY)', () => {
+    const cases = ['abc', '0', '-5', ''];
+    for (const bad of cases) {
+      const res = authenticate({ url: `/api/terminal/ws?project=${FAKE_SECRET}&cols=${bad}&rows=${bad}`, headers: {} } as never);
+      expect(res.ok).toBe(true);
+      if (res.ok) { expect(res.cols).toBeUndefined(); expect(res.rows).toBeUndefined(); }
+    }
+  });
 });
 
 describe('WebSocket roundtrip (real http.Server)', () => {
@@ -162,6 +185,20 @@ describe('WebSocket roundtrip (real http.Server)', () => {
     ws.send(JSON.stringify({ type: 'resize', cols: 120, rows: 40 }));
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
     expect(FakePty.last!.resizes).toEqual([[120, 40]]);
+    ws.close();
+  });
+
+  // HS-6799 — the WS URL carries the client's post-fit xterm dims. On first
+  // attach to an eager-spawned PTY the server must resize the PTY to those
+  // dims, clear the scrollback, and send Ctrl-L to the PTY so the shell
+  // redraws its prompt at the correct geometry.
+  it('resizes the PTY to client dims from the WS URL at attach time (HS-6799)', async () => {
+    const { ws } = openWs(`?project=${FAKE_SECRET}&cols=160&rows=50`);
+    await new Promise<void>((resolve) => { if (ws.readyState === WebSocket.OPEN) resolve(); else ws.on('open', () => resolve()); });
+    // One small wait for the server-side attach to land before we inspect.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(FakePty.last!.cols).toBe(160);
+    expect(FakePty.last!.rows).toBe(50);
     ws.close();
   });
 

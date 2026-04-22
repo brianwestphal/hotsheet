@@ -569,4 +569,105 @@ describe('TerminalRegistry', () => {
       expect(getBellPending('bell-osc-8')).toBe(false);
     });
   });
+
+  // HS-6799 — the first real client attach to an eager-spawned PTY must clear
+  // the startup scrollback (shell welcome, PROMPT_SP EOL mark, OSC preamble)
+  // that was emitted at DEFAULT 80×24 before the client had dims, resize the
+  // PTY to the client's real pane geometry, and poke the shell with Ctrl-L
+  // so the prompt is redrawn at the correct width. Otherwise the 80×24 bytes
+  // replayed in a wider pane produce stray chars at the top.
+  describe('eager-spawn first-attach cleanup (HS-6799)', () => {
+    it('first real attach with dims clears scrollback accumulated during eager-spawn', () => {
+      const d = tmpDataDir();
+      ensureSpawned('eager-1', d, 'main');
+      const pty = FakePty.lastSpawned!;
+      // Simulate the shell emitting a welcome banner + prompt at 80×24
+      // before any client has attached.
+      pty.emit('Restored session: Wed Apr 22 13:25:15 PST 2026\r\n');
+      pty.emit('% '.repeat(40));
+      pty.emit('user@host %');
+      expect(getTerminalStatus('eager-1', d, 'main').scrollbackBytes).toBeGreaterThan(0);
+
+      const { sub } = makeSub();
+      const result = attach('eager-1', d, sub, { cols: 180, rows: 48 }, 'main');
+      expect(result.history.length).toBe(0);
+      expect(getTerminalStatus('eager-1', d, 'main').scrollbackBytes).toBe(0);
+    });
+
+    it('first real attach with dims resizes the eager-spawned PTY to the client geometry', () => {
+      const d = tmpDataDir();
+      ensureSpawned('eager-2', d, 'main');
+      const pty = FakePty.lastSpawned!;
+      expect(pty.cols).toBe(80);
+      expect(pty.rows).toBe(24);
+
+      const { sub } = makeSub();
+      attach('eager-2', d, sub, { cols: 160, rows: 50 }, 'main');
+      expect(pty.resizes).toContainEqual([160, 50]);
+      expect(getTerminalStatus('eager-2', d, 'main').cols).toBe(160);
+      expect(getTerminalStatus('eager-2', d, 'main').rows).toBe(50);
+    });
+
+    it('first real attach sends Ctrl-L (\\x0c) to the PTY so the shell redraws its prompt', () => {
+      const d = tmpDataDir();
+      ensureSpawned('eager-3', d, 'main');
+      const pty = FakePty.lastSpawned!;
+      expect(pty.writes).toEqual([]);
+
+      const { sub } = makeSub();
+      attach('eager-3', d, sub, { cols: 120, rows: 40 }, 'main');
+      expect(pty.writes).toContain('\x0c');
+    });
+
+    it('SECOND attach (re-attach) does NOT re-clear scrollback or re-send Ctrl-L', () => {
+      const d = tmpDataDir();
+      ensureSpawned('eager-4', d, 'main');
+      const pty = FakePty.lastSpawned!;
+
+      const { sub: first } = makeSub();
+      attach('eager-4', d, first, { cols: 120, rows: 40 }, 'main');
+      // Post-first-attach scrollback: shell's Ctrl-L response (we simulate).
+      pty.emit('\x1b[2J\x1b[Huser@host %');
+      const scrollbackBeforeReattach = getTerminalStatus('eager-4', d, 'main').scrollbackBytes;
+      expect(scrollbackBeforeReattach).toBeGreaterThan(0);
+      const writesBeforeReattach = pty.writes.length;
+
+      // Reconnect (e.g. browser refresh) — same terminal, second subscriber.
+      const { sub: second } = makeSub();
+      const result = attach('eager-4', d, second, { cols: 120, rows: 40 }, 'main');
+      expect(result.history.length).toBe(scrollbackBeforeReattach);
+      expect(getTerminalStatus('eager-4', d, 'main').scrollbackBytes).toBe(scrollbackBeforeReattach);
+      // No new Ctrl-L — the re-attach flow only sees live output.
+      expect(pty.writes.length).toBe(writesBeforeReattach);
+    });
+
+    it('lazy-spawn (no eager-spawn) does NOT trigger the cleanup — PTY is born at the client dims', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      // No ensureSpawned. Attach spawns fresh at the client's dims.
+      attach('lazy-1', d, sub, { cols: 140, rows: 44 }, 'main');
+      const pty = FakePty.lastSpawned!;
+      // PTY was born at the requested geometry — no resize on create.
+      expect(pty.cols).toBe(140);
+      expect(pty.rows).toBe(44);
+      expect(pty.resizes).toEqual([]);
+      // No stray Ctrl-L was sent.
+      expect(pty.writes).toEqual([]);
+    });
+
+    it('first attach WITHOUT client dims leaves the eager-spawned PTY untouched (history replayed as-is)', () => {
+      const d = tmpDataDir();
+      ensureSpawned('eager-5', d, 'main');
+      const pty = FakePty.lastSpawned!;
+      pty.emit('welcome');
+
+      const { sub } = makeSub();
+      const result = attach('eager-5', d, sub, {}, 'main');
+      // Without dims to resize to, we can't safely redraw — fall back to
+      // replaying whatever scrollback exists at the server's current dims.
+      expect(result.history.toString()).toBe('welcome');
+      expect(pty.writes).not.toContain('\x0c');
+      expect(pty.resizes).toEqual([]);
+    });
+  });
 });

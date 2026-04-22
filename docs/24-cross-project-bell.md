@@ -133,6 +133,8 @@ The bell span is empty by default. `updateProjectBellIndicators()`:
 - When the class is added, inject a Lucide `bell` SVG into `.project-tab-bell` and trigger the same one-shot 350 ms wiggle animation used by the in-drawer Phase 1 indicator.
 - When the class is removed, empty the span.
 
+The `.project-tab-bell` element is styled `display: none` by default and flipped to `display: inline-flex` only under `.project-tab.has-bell`. An empty span with `display: inline-flex` would otherwise reserve `margin-left` + the parent `gap` worth of horizontal space on every project tab (HS-6800).
+
 The visibility rule deliberately suppresses the indicator on the **active** project — the user is already looking at that project, so the in-drawer per-terminal bells are sufficient. Switching away from a project that still has pending terminal bells re-shows the project-tab indicator.
 
 ### 24.4.3 In-drawer terminal-tab indicator (Phase 1 + Phase 2 merge)

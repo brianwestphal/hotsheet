@@ -160,6 +160,38 @@ test.describe('Cross-project bell indicator', () => {
     // test plan entries in §24.7.
   });
 
+  // HS-6800: an empty .project-tab-bell span was reserving ~10px of right-edge
+  // space on every project tab — the span itself had margin-left + was a flex
+  // child so the parent's `gap: 6px` also fired. This regressed the tab's
+  // horizontal padding, producing a visible "weird extra space on the right".
+  // The fix hides the span (display: none) when the tab doesn't have .has-bell.
+  test('empty project-tab-bell takes zero layout width when no bell is pending (HS-6800)', async ({ page }) => {
+    // Stub bell-state with NO pending bells so nothing gets marked.
+    await page.route('**/api/projects/bell-state*', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ bells: {}, v: 1 }),
+      });
+    });
+
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+    await page.evaluate(() => {
+      const tab = document.createElement('div');
+      tab.className = 'project-tab';
+      tab.dataset.secret = 'no-bell-project';
+      tab.innerHTML = '<span class="project-tab-dot"></span><span class="project-tab-name">NoBell</span><span class="project-tab-bell"></span>';
+      document.body.appendChild(tab);
+    });
+
+    const bell = page.locator('.project-tab[data-secret="no-bell-project"] .project-tab-bell');
+    // display:none collapses the box — both width and height are 0.
+    const box = await bell.boundingBox();
+    expect(box).toBeNull();
+  });
+
   // HS-6640: seeding inst.hasBell from /api/terminal/list's bellPending field
   // must surface the in-drawer bell glyph without requiring a live onBell
   // event. Clicking the tab POSTs /api/terminal/clear-bell and drops the glyph.
