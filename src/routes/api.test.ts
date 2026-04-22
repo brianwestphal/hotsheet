@@ -542,6 +542,76 @@ describe('settings', () => {
     const data = await res.json() as FileSettingsResponse;
     expect(data.appName).toBe('Test App');
   });
+
+  // HS-6370 regression guard: when the client sends a native JSON array for
+  // `terminals` (or any other JSON-valued setting), it must be persisted to
+  // settings.json as a native array, not double-encoded as a JSON string.
+  it('PATCH /api/file-settings stores terminals as a native array (HS-6370)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const terminals = [
+      { id: 'main', name: 'Claude', command: '{{claudeCommand}}', lazy: true },
+      { id: 'logs', name: 'Logs', command: 'tail -f /tmp/app.log', lazy: false },
+    ];
+    const res = await app.request('/api/file-settings', patch({ terminals }));
+    expect(res.status).toBe(200);
+
+    const onDisk: unknown = JSON.parse(fs.readFileSync(path.join(tempDir, 'settings.json'), 'utf-8'));
+    const stored = (onDisk as { terminals: unknown }).terminals;
+    expect(Array.isArray(stored)).toBe(true);
+    expect(stored).toEqual(terminals);
+  });
+});
+
+interface TerminalListResponse {
+  configured: { id: string; name?: string; command: string; lazy?: boolean }[];
+  dynamic: { id: string; name?: string; command: string; lazy?: boolean }[];
+}
+
+interface TerminalCreateResponse {
+  config: { id: string; command: string; name?: string; cwd?: string };
+}
+
+describe('terminal route', () => {
+  // HS-6341: a freshly-created dynamic terminal must appear in /list before any
+  // websocket attaches. Without this, the client renders no tab for it but
+  // still switches the drawer to its (non-existent) panel — a blank drawer.
+  it('POST /api/terminal/create then GET /list includes the new dynamic terminal', async () => {
+    const create = await app.request('/api/terminal/create', { method: 'POST' });
+    expect(create.status).toBe(200);
+    const created = await create.json() as TerminalCreateResponse;
+    expect(created.config.id).toMatch(/^dyn-/);
+    expect(typeof created.config.command).toBe('string');
+    expect(created.config.command.length).toBeGreaterThan(0);
+    // Server must seed a name so the drawer tab has a visible label even
+    // before the websocket attaches and the PTY emits anything (HS-6341).
+    expect(typeof created.config.name).toBe('string');
+    expect(created.config.name?.length ?? 0).toBeGreaterThan(0);
+
+    const list = await app.request('/api/terminal/list');
+    expect(list.status).toBe(200);
+    const data = await list.json() as TerminalListResponse;
+    const ids = data.dynamic.map(t => t.id);
+    expect(ids).toContain(created.config.id);
+    const echoed = data.dynamic.find(t => t.id === created.config.id);
+    expect(echoed?.name).toBe(created.config.name);
+  });
+
+  it('POST /api/terminal/destroy removes the dynamic terminal from /list', async () => {
+    const create = await app.request('/api/terminal/create', { method: 'POST' });
+    const created = await create.json() as TerminalCreateResponse;
+
+    await app.request('/api/terminal/destroy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ terminalId: created.config.id }),
+    });
+
+    const list = await app.request('/api/terminal/list');
+    const data = await list.json() as TerminalListResponse;
+    const ids = data.dynamic.map(t => t.id);
+    expect(ids).not.toContain(created.config.id);
+  });
 });
 
 describe('long-poll', () => {

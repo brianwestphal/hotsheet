@@ -219,13 +219,22 @@ pageRoutes.get('/', (c) => {
         <div id="command-log-panel" className="command-log-panel" style="display:none">
           <div className="command-log-resize-handle" id="command-log-resize"></div>
           <div className="drawer-tabs">
-            <button className="drawer-tab active" data-drawer-tab="commands-log" id="drawer-tab-commands-log">Commands Log</button>
+            <button className="drawer-tab drawer-tab-icon active" data-drawer-tab="commands-log" id="drawer-tab-commands-log" title="Commands Log" aria-label="Commands Log">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-3"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>
+            </button>
+            <span className="drawer-tabs-divider" aria-hidden="true" style="display:none"></span>
             <div className="drawer-terminal-tabs-wrap" id="drawer-terminal-tabs-wrap" style="display:none">
               <div className="drawer-terminal-tabs-scroll">
                 <div className="drawer-terminal-tabs" id="drawer-terminal-tabs"></div>
+                <button className="drawer-tab drawer-tab-add" id="drawer-add-terminal-btn" title="New terminal (default shell)">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                </button>
               </div>
-              <button className="drawer-tab drawer-tab-add" id="drawer-add-terminal-btn" title="New terminal (default shell)">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+            </div>
+            <div className="drawer-tabs-end">
+              <button className="drawer-expand-btn" id="drawer-expand-btn" title="Expand drawer to full height">
+                <svg className="drawer-expand-icon-up" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 3h16"/><path d="M12 21V7"/><path d="m6 13 6-6 6 6"/></svg>
+                <svg className="drawer-expand-icon-down" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style="display:none"><path d="M4 21h16"/><path d="M12 3v14"/><path d="m6 11 6 6 6-6"/></svg>
               </button>
             </div>
           </div>
@@ -291,6 +300,10 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
               <span>Plugins</span>
             </button> : null}
+            <button className="settings-tab" data-tab="terminal" id="settings-tab-terminal" style="display:none">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+              <span>Terminal</span>
+            </button>
             <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>
               <span>Experimental</span>
@@ -433,20 +446,16 @@ pageRoutes.get('/', (c) => {
                   <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
                 </div>
               </div>
-              <div className="settings-section" style="margin-top:16px">
+            </div>
+            <div className="settings-tab-panel" data-panel="terminal" id="settings-terminal-panel">
+              <div className="settings-section">
                 <div className="settings-section-header">
                   <h3>Embedded Terminal</h3>
                 </div>
-                <div className="settings-field">
-                  <label className="settings-checkbox-label">
-                    <input type="checkbox" id="settings-terminal-enabled" />
-                    Show Terminal tabs in the bottom drawer
-                  </label>
-                  <span className="settings-hint">Adds Terminal tabs alongside the Commands Log. Each terminal's PTY is spawned lazily on first open unless you mark it eager (see docs/22-terminal.md).</span>
-                </div>
-                <div className="settings-field">
+                <span className="settings-hint">Terminal tabs appear alongside the Commands Log in the bottom drawer. Each terminal's PTY is spawned lazily on first open unless you mark it eager (see docs/22-terminal.md). This feature is desktop-only.</span>
+                <div className="settings-field" style="margin-top:12px">
                   <label>Default terminals</label>
-                  <span className="settings-hint" style="margin-bottom:6px;display:block">Each row is a tab in the drawer. Edit to change the name, command, working directory, or launch mode. Drag rows to reorder. The first row is the default terminal.</span>
+                  <span className="settings-hint" style="margin-bottom:6px;display:block">Each row is a tab in the drawer. Edit to change the name, command, working directory, or launch mode. Drag rows to reorder. Projects start with no terminals — add one to get a tab.</span>
                   <div id="settings-terminals-list" className="settings-terminals-list"></div>
                   <button id="settings-terminals-add-btn" className="btn btn-sm" style="margin-top:8px">Add Terminal</button>
                 </div>

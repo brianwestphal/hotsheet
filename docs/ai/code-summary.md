@@ -54,7 +54,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `channel.ts` | MCP server (stdio + HTTP). `CHANNEL_VERSION=3` |
 | `channel-config.ts` | `.mcp.json` registration + `EXPECTED_CHANNEL_VERSION` check |
 | `claude-hooks.ts` | Install/remove Claude hook entries in `~/.claude/settings.json` |
-| `jsx-runtime.ts` | `SafeHtml`, `raw()`, server/client shared JSX → HTML strings |
+| `jsx-runtime.ts` | `SafeHtml`, `raw()`, server/client shared JSX → HTML strings. **Footgun:** passing a DOM element as a JSX child throws — the runtime renders to strings, so DOM nodes can't be composed. Build trees in one JSX expression and `querySelector` after `toElement()` (HS-6341/HS-6342 root cause). |
 | `types.ts` | `Ticket`, `TicketCategory`, `TicketPriority`, `AppEnv` |
 | `projects.ts` / `project-list.ts` | Multi-project registry (secret ↔ dataDir) |
 | `instance.ts` | `~/.hotsheet/instance.json` PID + port; stale cleanup |
@@ -121,9 +121,11 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 
 **Settings / backups / icons:** `settingsDialog.tsx`, `settingsLoader.tsx`, `settingsCategories.tsx`, `experimentalSettings.tsx`, `iconPicker.tsx`, `backups.tsx`, `openFolder.tsx`.
 
-**Channel / commands / feedback:** `channelUI.tsx`, `permissionOverlay.tsx`, `commandLog.tsx` (drawer shell, delegates `terminal:<id>` tabs), `commandLogFilter.tsx`, `commandSidebar.tsx`, `commandEditor.tsx`, `feedbackDialog.tsx`.
+**Dialogs / overlays:** `confirm.tsx` — `confirmDialog({message, title?, confirmLabel?, cancelLabel?, danger?}) → Promise<boolean>` in-app replacement for `window.confirm`, which is a silent no-op in Tauri WKWebView (always returns false without showing a dialog). Use this for every yes/no prompt.
 
-**Embedded terminal:** `terminal.tsx` (per-terminal tab state, xterm mount, WebSocket, stop/start power button), `terminalsSettings.tsx` (settings outline list + edit modal for configured default terminals).
+**Channel / commands / feedback:** `channelUI.tsx`, `permissionOverlay.tsx`, `commandLog.tsx` (drawer shell, delegates `terminal:<id>` tabs; exports `previewDrawerTab(tab)` that returns a restorer — used by Settings → Terminal delete to reveal the doomed terminal before the confirm), `commandLogFilter.tsx`, `commandSidebar.tsx`, `commandEditor.tsx`, `feedbackDialog.tsx`.
+
+**Embedded terminal:** `terminal.tsx` (per-terminal tab state, xterm mount, WebSocket, stop/start power button, `onProjectSwitch` teardown so tabs rebuild per-project), `terminalsSettings.tsx` (settings outline list + edit modal for configured default terminals). Per-project drawer state (`drawer_open`, `drawer_active_tab`) persists in `settings.json` and is reapplied by `commandLog.applyPerProjectDrawerState` on project switch and on initial load.
 
 **Plugins:** `pluginSettings.tsx`, `pluginConfigDialog.tsx`, `pluginUI.tsx`.
 
@@ -141,9 +143,10 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 - `sync/markdown.ts` — debounced export of `worklist.md` / `open-tickets.md`.
 - `terminals/` — embedded terminal backend (see `docs/22-terminal.md`):
   - `config.ts` — `TerminalConfig` type, `listTerminalConfigs` (reads `settings.terminals`, migrates legacy `terminal_command`/`terminal_cwd`), `findTerminalConfig`.
+  - `eagerSpawn.ts` — `eagerSpawnTerminals(secret, dataDir)` spawns every `lazy:false` configured terminal via `ensureSpawned`. Called from `cli.ts` at project registration and from `/file-settings` PATCH when `terminals` changes.
   - `resolveCommand.ts` — resolves the chosen terminal's command template (`{{claudeCommand}}` substitution) + cwd; accepts optional `terminalId` and a `configOverride` for dynamic terminals.
   - `ringBuffer.ts` — FIFO byte buffer capped at a max size for scrollback.
-  - `registry.ts` — `TerminalRegistry` keyed by `${secret}::${terminalId}`; lazy node-pty spawn, subscriber broadcast, restart / kill / destroy lifecycle, `listProjectTerminalIds`, `destroyProjectTerminals`. `setPtyFactory` for tests.
+  - `registry.ts` — `TerminalRegistry` keyed by `${secret}::${terminalId}`; lazy node-pty spawn, subscriber broadcast, restart / kill / destroy lifecycle, `ensureSpawned` (no-subscriber spawn for eager mode), `listProjectTerminalIds`, `destroyProjectTerminals`. `setPtyFactory` for tests.
   - `websocket.ts` — `wireTerminalWebSocket(httpServer)` attaches a `ws.Server` (noServer mode) to the Node HTTP server; authenticates upgrade by project secret and parses `?terminal=<id>`; bridges ws ⇄ registry per terminalId.
   - Registered HTTP routes live in `src/routes/terminal.ts` (`/api/terminal/list`, `/status`, `/restart`, `/kill`, `/create`, `/destroy`). WebSocket endpoint is `/api/terminal/ws?project=<secret>&terminal=<id>`.
 - `components/layout.tsx` — the server HTML shell.
@@ -288,7 +291,7 @@ Env flags: `PLUGINS_ENABLED` (build/runtime toggle), `NO_WEB_SERVER` (E2E), `NOD
 ## 12. Settings & config locations
 
 **Per-project (`.hotsheet/`):**
-- `settings.json` — reserved: `appName`, `appIcon`, `backupDir`, `ticketPrefix`, `secret`, `secretPathHash`, `port`. User: `categories`, `custom_views`, `custom_commands`, `auto_context`, `auto_order`, layout/position/widths, etc.
+- `settings.json` — reserved: `appName`, `appIcon`, `backupDir`, `ticketPrefix`, `secret`, `secretPathHash`, `port`. User: `categories`, `custom_views`, `custom_commands`, `auto_context`, `auto_order`, `terminals` (defaults to `[]` per HS-6337 — no implicit default terminal), `terminal_scrollback_bytes`, `drawer_open`, `drawer_active_tab`, layout/position/widths, etc. The legacy `terminal_enabled` key is ignored on read (removed in HS-6337 when terminals moved to a dedicated Tauri-only Settings tab). JSON-typed keys (e.g. `terminals`, `custom_views`, `custom_commands`, `auto_context`, `categories`) are stored as native JSON arrays/objects, not stringified — `/api/file-settings` PATCH uses `UpdateFileSettingsSchema = z.record(z.string(), z.unknown())` to accept native values.
 - `db/` — PGLite database files.
 - `attachments/` — uploaded files.
 - `backups/{5min,hourly,daily}/` — tar.gz DB snapshots.

@@ -10,7 +10,7 @@ import {
 import type { AppEnv } from '../types.js';
 import { CATEGORY_PRESETS } from '../types.js';
 import { notifyChange, notifyMutation } from './notify.js';
-import { parseBody, UpdateCategoriesSchema,UpdateSettingsSchema } from './validation.js';
+import { parseBody, UpdateCategoriesSchema, UpdateFileSettingsSchema,UpdateSettingsSchema } from './validation.js';
 
 export const settingsRoutes = new Hono<AppEnv>();
 
@@ -78,18 +78,27 @@ settingsRoutes.patch('/file-settings', async (c) => {
   const { writeFileSettings } = await import('../file-settings.js');
   const { getProjectByDataDir } = await import('../projects.js');
   const dataDir = c.get('dataDir');
+  const secret = c.get('projectSecret');
   const raw: unknown = await c.req.json();
-  const parsed = parseBody(UpdateSettingsSchema, raw);
+  const parsed = parseBody(UpdateFileSettingsSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const updated = writeFileSettings(dataDir, parsed.data);
   // Update project tab name when appName changes
   if ('appName' in parsed.data) {
     const project = getProjectByDataDir(dataDir);
-    if (project) {
+    const newAppName = parsed.data.appName;
+    if (project && typeof newAppName === 'string') {
       const dirName = dataDir.replace(/\/.hotsheet\/?$/, '').split('/').pop() ?? dataDir;
-      project.name = parsed.data.appName !== '' ? parsed.data.appName : dirName;
+      project.name = newAppName !== '' ? newAppName : dirName;
       notifyChange(); // Refresh tabs with new name
     }
+  }
+  // When the terminals list changes, eager-spawn any non-lazy entries that are
+  // not yet running (HS-6310). Fires after the write so the new config is read
+  // by listTerminalConfigs.
+  if ('terminals' in parsed.data) {
+    const { eagerSpawnTerminals } = await import('../terminals/eagerSpawn.js');
+    eagerSpawnTerminals(secret, dataDir);
   }
   return c.json(updated);
 });

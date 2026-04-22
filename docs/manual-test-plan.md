@@ -202,6 +202,8 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 ### Rendering and input (§22.6)
 - [ ] No black strip appears below the last rendered row (xterm viewport background matches the app theme even when container is taller than rows × cellHeight)
 - [ ] Drag drawer resize handle → xterm reflows, shell inside (e.g. `claude` UI, `htop`) resizes correctly
+- [ ] Commands Log tab vertically fills the entire drawer (no empty space below the entries area). HS-6404: was caused by `.drawer-terminal-panes` taking flex:1 alongside the commands-log pane; the wrapper now uses `display: contents` so only the active pane claims space.
+- [ ] Switching from Commands Log to a Terminal tab and back: each pane fills the full drawer height in turn
 - [ ] 256-color and true-color output renders (test with `echo -e "\033[38;5;196mred\033[0m"` and a truecolor printer)
 - [ ] Clickable URL detected and opens in browser on click
 - [ ] Copy (Cmd/Ctrl+C with selection) puts text on clipboard
@@ -228,6 +230,20 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Dynamic terminal tabs show an **×** close button; clicking tears down the PTY and removes the tab
 - [ ] Configured default terminal tabs do **not** show a close button (only removable via Settings)
 - [ ] Many tabs overflow → the tabs area scrolls horizontally (Commands Log stays pinned; **+** stays visible at the end when scrolled fully right)
+
+### Eager-spawn (§22.17.8)
+- [ ] Set `lazy: false` on a configured terminal via Settings → Experimental; click Done. The terminal's PTY starts immediately (process visible in `ps`) without opening the drawer
+- [ ] Restart the Hot Sheet server with a non-lazy terminal configured. Inspect `ps`: the PTY is already running before any browser window opens
+- [ ] Open the drawer after an eager terminal has been running for a while: the terminal shows the accumulated scrollback on first attach
+- [ ] Flip a terminal from `lazy:false` to `lazy:true`: the running PTY keeps running (no retroactive kill) but subsequent restarts will be lazy
+- [ ] A broken command on an eager terminal surfaces in the xterm output on first attach; the server stays up (failure is best-effort)
+
+### Per-project drawer state (§22.17.7)
+- [ ] Open the drawer + activate a specific terminal tab in Project A; switch to Project B → drawer shows Project B's terminals (not A's); A's tabs are gone from the DOM
+- [ ] Project B remembers its own saved drawer state (open/closed + active tab) independently of A
+- [ ] Close the drawer in Project B, switch to A → A's drawer re-opens (if it was open when A was last active) with A's active tab selected
+- [ ] Reload the browser → the active project's drawer state is restored from settings
+- [ ] If the saved active tab is a `terminal:<id>` that was since removed in Settings, drawer falls back to Commands Log without error
 
 ---
 

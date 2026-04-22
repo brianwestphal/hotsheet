@@ -2,6 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { activeFilterTypes, ALL_FILTER_TYPES, dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
 import { toElement } from './dom.js';
+import { getTauriInvoke } from './tauriIntegration.js';
 
 let runningShellIds: number[] = [];
 const cancelingShellIds = new Set<number>();
@@ -372,6 +373,7 @@ function updateToggleIcon(isOpen: boolean) {
 /** Switch which drawer tab is visible. Both tab contents remain mounted.
  *  tab id is `commands-log` or `terminal:<terminalId>`. */
 export function switchDrawerTab(tab: string) {
+  const changed = tab !== activeTab;
   activeTab = tab;
   for (const btn of document.querySelectorAll<HTMLElement>('.drawer-tab')) {
     btn.classList.toggle('active', btn.dataset.drawerTab === tab);
@@ -387,6 +389,7 @@ export function switchDrawerTab(tab: string) {
     const terminalId = tab.slice('terminal:'.length);
     void import('./terminal.js').then(({ activateTerminal }) => { activateTerminal(terminalId); });
   }
+  if (changed) void saveDrawerState();
 }
 
 function openPanel() {
@@ -400,9 +403,28 @@ function openPanel() {
   // activate it.
   void import('./terminal.js').then(({ loadAndRenderTerminalTabs }) => loadAndRenderTerminalTabs())
     .finally(() => { switchDrawerTab(activeTab); });
+  void saveDrawerState();
 }
 
-/** Open the log panel and scroll to a specific entry, expanding it. */
+/**
+ * Temporarily show a drawer tab and return a disposer that restores the prior
+ * state. Used by Settings → Terminal delete flow (HS-6403) to reveal the
+ * terminal the user is about to remove before the confirm appears.
+ */
+export function previewDrawerTab(tab: string): () => void {
+  const prevOpen = panelOpen;
+  const prevTab = activeTab;
+  if (!panelOpen) openPanel();
+  switchDrawerTab(tab);
+  return () => {
+    if (!prevOpen) {
+      closePanel();
+    } else if (prevTab !== tab) {
+      switchDrawerTab(prevTab);
+    }
+  };
+}
+
 /** Refresh the command log contents (e.g., after switching projects). */
 export function refreshCommandLog() {
   const panel = document.getElementById('command-log-panel');
@@ -410,6 +432,105 @@ export function refreshCommandLog() {
     void loadEntries();
   }
   void refreshLogBadge();
+}
+
+// --- Per-project drawer state persistence (HS-6309) ---
+//
+// The open/closed state of the drawer and the id of the active tab are stored
+// in file-settings under `drawer_open` and `drawer_active_tab`. Both are
+// project-scoped so switching projects restores whatever the user last had
+// in view for that project (including which terminal tab was focused).
+
+/** True while applyPerProjectDrawerState is restoring state — prevents feedback loops. */
+let suspendSave = false;
+
+async function saveDrawerState(): Promise<void> {
+  if (suspendSave) return;
+  try {
+    await api('/file-settings', {
+      method: 'PATCH',
+      body: {
+        drawer_open: panelOpen ? 'true' : 'false',
+        drawer_active_tab: activeTab,
+        drawer_expanded: isDrawerExpanded() ? 'true' : 'false',
+      },
+    });
+  } catch { /* ignore — the user will open the drawer themselves next time */ }
+}
+
+// HS-6312: full-height drawer toggle. `.app.drawer-expanded` hides the ticket
+// area so the drawer claims everything below the header. Persisted per-project
+// alongside the existing drawer_open / drawer_active_tab keys.
+
+function isDrawerExpanded(): boolean {
+  return document.querySelector('.app')?.classList.contains('drawer-expanded') === true;
+}
+
+function setDrawerExpanded(expanded: boolean): void {
+  const app = document.querySelector('.app');
+  if (!app) return;
+  app.classList.toggle('drawer-expanded', expanded);
+  const btn = document.getElementById('drawer-expand-btn');
+  if (btn !== null) {
+    btn.title = expanded ? 'Restore tickets view' : 'Expand drawer to full height';
+    const up = btn.querySelector<HTMLElement>('.drawer-expand-icon-up');
+    const down = btn.querySelector<HTMLElement>('.drawer-expand-icon-down');
+    if (up !== null) up.style.display = expanded ? 'none' : '';
+    if (down !== null) down.style.display = expanded ? '' : 'none';
+  }
+}
+
+function toggleDrawerExpanded(): void {
+  const next = !isDrawerExpanded();
+  // Expanding makes no sense unless the drawer is visible; open it first.
+  if (next && !panelOpen) openPanel();
+  setDrawerExpanded(next);
+  void saveDrawerState();
+}
+
+/**
+ * Called by the app on project switch (see app.tsx `reloadAppState`). Tears down
+ * the old project's terminal instances, reloads the new project's terminal tabs,
+ * then applies the saved drawer state (visibility + active tab).
+ */
+export async function applyPerProjectDrawerState(): Promise<void> {
+  const { onProjectSwitch, loadAndRenderTerminalTabs } = await import('./terminal.js');
+  onProjectSwitch();
+
+  let fs: { drawer_open?: string | boolean; drawer_active_tab?: string; drawer_expanded?: string | boolean };
+  try {
+    fs = await api<{ drawer_open?: string | boolean; drawer_active_tab?: string; drawer_expanded?: string | boolean }>('/file-settings');
+  } catch {
+    fs = {};
+  }
+  const wantOpen = fs.drawer_open === true || fs.drawer_open === 'true';
+  const wantExpanded = fs.drawer_expanded === true || fs.drawer_expanded === 'true';
+  const savedTab = typeof fs.drawer_active_tab === 'string' && fs.drawer_active_tab !== ''
+    ? fs.drawer_active_tab
+    : 'commands-log';
+
+  suspendSave = true;
+  try {
+    // Close the panel first so the subsequent open (or no-op close) lands in a
+    // predictable state regardless of where we came from. Also collapse the
+    // expand state before reapplying so we never leave a stale full-height
+    // layout from the previous project.
+    if (panelOpen) closePanel();
+    setDrawerExpanded(false);
+
+    // Rebuild tabs from the new project before choosing the active tab so we
+    // can check whether the saved terminal:<id> still exists.
+    await loadAndRenderTerminalTabs();
+
+    const exists = savedTab === 'commands-log'
+      || document.querySelector(`.drawer-tab[data-drawer-tab="${CSS.escape(savedTab)}"]`) !== null;
+    activeTab = exists ? savedTab : 'commands-log';
+
+    if (wantOpen) openPanel(); // this will honor the pre-set activeTab
+    if (wantOpen && wantExpanded) setDrawerExpanded(true);
+  } finally {
+    suspendSave = false;
+  }
 }
 
 export function showLogEntryById(logId: number) {
@@ -435,10 +556,15 @@ function closePanel() {
   const panel = document.getElementById('command-log-panel')!;
   panel.style.display = 'none';
   panelOpen = false;
+  // A collapsed drawer cannot be "expanded" in any meaningful sense — clear
+  // the flag so reopening starts in the saved/default non-expanded layout
+  // unless the user explicitly re-expands it.
+  setDrawerExpanded(false);
   updateToggleIcon(false);
   stopPolling();
   dismissContextMenu();
   dismissFilterDropdown();
+  void saveDrawerState();
 }
 
 function togglePanel() {
@@ -553,6 +679,9 @@ export function initCommandLog() {
   // Button click — toggles drawer open/closed
   document.getElementById('command-log-btn')?.addEventListener('click', togglePanel);
 
+  // HS-6312: expand drawer to full height (hides ticket area).
+  document.getElementById('drawer-expand-btn')?.addEventListener('click', toggleDrawerExpanded);
+
   // Clear button
   document.getElementById('command-log-clear')?.addEventListener('click', () => { void clearLogEntries(); });
 
@@ -572,24 +701,39 @@ export function initCommandLog() {
     if (typeof t === 'string' && t !== '') switchDrawerTab(t);
   });
 
-  // Show terminal tabs only if terminal_enabled is true in file settings.
-  void applyTerminalTabVisibility();
-
   // Resize handle
   initResize();
 
   // Initialize badge baseline
   void refreshLogBadge();
+
+  // Drawer init must be sequential: visibility first (shows the terminal tabs
+  // wrap container so subsequent renders land in a visible parent), then the
+  // per-project drawer state (which spawns/teardowns terminal instances + picks
+  // the active tab). Running these in parallel raced loadAndRenderTerminalTabs
+  // calls against each other, sometimes leaving the tab strip empty (HS-6342).
+  void (async () => {
+    await applyTerminalTabVisibility();
+    await applyPerProjectDrawerState();
+  })();
 }
 
-/** Show or hide the terminal tab strip based on the terminal_enabled file setting. Exported so settings can refresh it live. */
+/**
+ * Show or hide the terminal tab strip. Gating is Tauri-only (HS-6437,
+ * HS-6337) — there is no per-user toggle anymore, the feature is simply on
+ * when the desktop app is running and off when a plain browser connects.
+ * Exported so settings can refresh the terminal strip after the user edits
+ * the configured list.
+ */
 export async function applyTerminalTabVisibility() {
   try {
-    const fs = await api<{ terminal_enabled?: string | boolean }>('/file-settings');
-    const enabled = fs.terminal_enabled === true || fs.terminal_enabled === 'true';
+    const enabled = getTauriInvoke() !== null;
     const tabsContainer = document.getElementById('drawer-terminal-tabs-wrap');
     if (tabsContainer) tabsContainer.style.display = enabled ? '' : 'none';
-    // If the setting was flipped off while a terminal tab was active, fall back to Commands Log.
+    // HS-6475: hide the divider alongside the terminal tab strip so it doesn't
+    // dangle next to a lone Commands Log icon when terminals are unavailable.
+    const divider = document.querySelector<HTMLElement>('.drawer-tabs-divider');
+    if (divider) divider.style.display = enabled ? '' : 'none';
     if (!enabled && activeTab.startsWith('terminal:')) switchDrawerTab('commands-log');
     if (enabled) {
       const mod = await import('./terminal.js');

@@ -1,7 +1,6 @@
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { api } from './api.js';
 import { loadBackupList } from './backups.js';
-import { applyTerminalTabVisibility } from './commandLog.js';
 import { toElement } from './dom.js';
 import { bindExperimentalSettings } from './experimentalSettings.js';
 import { bindCategorySettings } from './settingsCategories.js';
@@ -54,13 +53,11 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       appName?: string;
       backupDir?: string;
       ticketPrefix?: string;
-      terminal_enabled?: string | boolean;
       terminal_scrollback_bytes?: string | number;
     }>('/file-settings').then((fs) => {
       (document.getElementById('settings-app-name') as HTMLInputElement).value = fs.appName ?? '';
       (document.getElementById('settings-backup-dir') as HTMLInputElement).value = fs.backupDir ?? '';
       (document.getElementById('settings-ticket-prefix') as HTMLInputElement).value = fs.ticketPrefix ?? '';
-      (document.getElementById('settings-terminal-enabled') as HTMLInputElement).checked = fs.terminal_enabled === true || fs.terminal_enabled === 'true';
       const scrollback = fs.terminal_scrollback_bytes;
       const scrollbackInput = document.getElementById('settings-terminal-scrollback') as HTMLInputElement;
       scrollbackInput.value = scrollback === undefined || scrollback === '' ? '' : String(scrollback);
@@ -272,13 +269,12 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // --- Embedded Terminal settings (HS-6268, docs/22-terminal.md §22.10) ---
-  const termEnabledInput = document.getElementById('settings-terminal-enabled') as HTMLInputElement;
-  termEnabledInput.addEventListener('change', () => {
-    void api('/file-settings', {
-      method: 'PATCH',
-      body: { terminal_enabled: termEnabledInput.checked ? 'true' : 'false' },
-    }).then(() => { void applyTerminalTabVisibility(); });
-  });
+  // The Terminal settings tab is Tauri-only (HS-6437, HS-6337) — the backing
+  // PTY runs on the user's machine, so there is no sensible web-only UX. The
+  // feature is now always on in Tauri (no toggle): adding a terminal entry
+  // makes a tab appear; removing the last entry hides them again.
+  const termTabBtn = document.getElementById('settings-tab-terminal');
+  if (termTabBtn !== null) termTabBtn.style.display = getTauriInvoke() !== null ? '' : 'none';
 
   // Add Terminal button (the per-row editing lives in src/client/terminalsSettings.tsx).
   document.getElementById('settings-terminals-add-btn')?.addEventListener('click', () => {

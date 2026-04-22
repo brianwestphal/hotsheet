@@ -687,6 +687,52 @@ input, select, textarea {
   z-index: 2500;
 }
 
+// In-app confirm replaces window.confirm(), which is a silent no-op in
+// Tauri's WKWebView (HS-6403). Uses a higher z-index than other overlays so
+// it can sit on top of the settings dialog it's typically launched from.
+.confirm-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+
+.confirm-dialog {
+  background: var(--bg);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  width: 420px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.confirm-dialog-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.confirm-dialog-body {
+  padding: 16px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.confirm-dialog-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .cmd-editor-dialog {
   background: var(--bg);
   border-radius: 8px;
@@ -4374,6 +4420,20 @@ input, select, textarea {
   min-height: 0;
 }
 
+// HS-6312: full-height drawer. When the user clicks the expand button in the
+// drawer tab bar, `.app` gets `.drawer-expanded` — we hide the ticket area
+// (everything above the drawer: sidebar + main content + detail panel) and
+// let the drawer claim all remaining vertical space. The resize handle
+// becomes irrelevant in this mode, so it's hidden too.
+.app.drawer-expanded {
+  .app-body { display: none; }
+  .command-log-panel {
+    flex: 1;
+    height: auto;
+  }
+  .command-log-resize-handle { display: none; }
+}
+
 .drawer-tabs {
   display: flex;
   gap: 0;
@@ -4383,6 +4443,28 @@ input, select, textarea {
   padding: 0 8px;
   align-items: stretch;
   min-width: 0;
+}
+
+// HS-6312: the expand/collapse button lives at the far right of the drawer
+// tab bar. `margin-left: auto` pushes it past the Commands Log tab and the
+// terminal tabs wrap, regardless of how many tabs are present.
+.drawer-tabs-end {
+  margin-left: auto;
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+
+.drawer-expand-btn {
+  background: transparent;
+  border: none;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  &:hover { color: var(--text); background: var(--bg-hover); }
 }
 
 .drawer-tab {
@@ -4409,6 +4491,25 @@ input, select, textarea {
   }
 }
 
+// Icon-only Commands Log tab (HS-6474) — square-ish so the active underline
+// reads as a dedicated control rather than a wide text button.
+.drawer-tab-icon {
+  padding: 8px 10px;
+}
+
+// Vertical separator between the Commands Log tab and the terminal tabs (HS-6475).
+// A 1px rule at the border color, vertically centered via the parent's `align-items: stretch`
+// so it naturally fills the tab strip height minus a few pixels of breathing room.
+.drawer-tabs-divider {
+  display: inline-block;
+  align-self: center;
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
 .drawer-tab-close {
   background: transparent;
   border: none;
@@ -4427,8 +4528,9 @@ input, select, textarea {
   }
 }
 
-// Terminal tab area — the tab list is horizontally scrollable but the `+` button
-// stays pinned at the right edge so it remains clickable when the list overflows.
+// Terminal tab area — the tab list is horizontally scrollable. The `+` button
+// lives inside the scroll container so it sits immediately after the last tab
+// (HS-6340) and scrolls with the list when it overflows.
 .drawer-terminal-tabs-wrap {
   display: flex;
   align-items: stretch;
@@ -4452,7 +4554,7 @@ input, select, textarea {
 .drawer-terminal-tabs {
   display: flex;
   align-items: stretch;
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 .drawer-tab-add {
@@ -4462,11 +4564,14 @@ input, select, textarea {
   &:hover { color: var(--accent); }
 }
 
+// `display: contents` lets the active .drawer-terminal-pane (flex:1) become a
+// direct flex item of .command-log-panel, sharing space rules with the
+// .drawer-tab-content (commands-log) sibling. Without this, both the panes
+// wrapper AND the commands-log pane were flex:1 siblings, splitting the
+// drawer in half — Commands Log only filled half the available height even
+// when no terminal pane was visible (HS-6404).
 .drawer-terminal-panes {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+  display: contents;
 }
 
 .drawer-terminal-pane {

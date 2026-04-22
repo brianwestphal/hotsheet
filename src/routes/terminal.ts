@@ -40,15 +40,32 @@ terminalRoutes.get('/list', (c) => {
   const dataDir = c.get('dataDir');
   const secret = c.get('projectSecret');
   const configured = listTerminalConfigs(dataDir);
-  const runtimeIds = listProjectTerminalIds(secret);
-  // Dynamic: any runtime-known id that isn't in the configured list.
   const configuredIds = new Set(configured.map(c => c.id));
   const dynamic: TerminalConfig[] = [];
-  for (const id of runtimeIds) {
-    if (configuredIds.has(id)) continue;
-    const dyn = dynamicConfigs.get(`${secret}::${id}`);
-    if (dyn) dynamic.push(dyn);
+  const seen = new Set<string>();
+
+  // Include every dynamic config we know about for this project — even if its
+  // PTY hasn't spawned yet. POST /api/terminal/create registers the config but
+  // the registry only learns about it on first WebSocket attach. Without this
+  // pass, a freshly-created dynamic terminal would not appear in /list and the
+  // client could not render its tab (HS-6341).
+  const prefix = `${secret}::`;
+  for (const [key, config] of dynamicConfigs.entries()) {
+    if (!key.startsWith(prefix)) continue;
+    const id = key.slice(prefix.length);
+    if (configuredIds.has(id) || seen.has(id)) continue;
+    dynamic.push(config);
+    seen.add(id);
   }
+
+  // Defense in depth: surface any runtime-known dynamic ids whose config has
+  // somehow been lost (e.g. server restart with a stale registry entry).
+  for (const id of listProjectTerminalIds(secret)) {
+    if (configuredIds.has(id) || seen.has(id)) continue;
+    const dyn = dynamicConfigs.get(`${secret}::${id}`);
+    if (dyn) { dynamic.push(dyn); seen.add(id); }
+  }
+
   return c.json({ configured, dynamic });
 });
 
@@ -70,10 +87,14 @@ terminalRoutes.post('/restart', async (c) => {
   return c.json({ ok: true });
 });
 
-/** POST /api/terminal/kill — kill the current PTY without restart. Body `{ signal?, terminalId? }`. */
+/**
+ * POST /api/terminal/kill — kill the current PTY without restart. Body
+ * `{ signal?, terminalId? }`. Default is SIGHUP because interactive shells
+ * (zsh/bash/fish) ignore SIGTERM but exit cleanly on hang-up (HS-6471).
+ */
 terminalRoutes.post('/kill', async (c) => {
   const secret = c.get('projectSecret');
-  let signal: string = 'SIGTERM';
+  let signal: string = 'SIGHUP';
   let terminalId: string = c.req.query('terminalId') ?? DEFAULT_TERMINAL_ID;
   try {
     const body = await c.req.json<{ signal?: string; terminalId?: string } | undefined>();
@@ -98,8 +119,12 @@ terminalRoutes.post('/create', async (c) => {
   const command = typeof body?.command === 'string' && body.command !== ''
     ? body.command
     : defaultShellCommand();
-  const config: TerminalConfig = { id, command };
-  if (typeof body?.name === 'string' && body.name !== '') config.name = body.name;
+  // Always carry a friendly name so the drawer tab has a visible label even
+  // when the client renders the response before any websocket attach.
+  const name = typeof body?.name === 'string' && body.name !== ''
+    ? body.name
+    : friendlyShellName(command);
+  const config: TerminalConfig = { id, command, name };
   if (typeof body?.cwd === 'string' && body.cwd !== '') config.cwd = body.cwd;
   dynamicConfigs.set(`${secret}::${id}`, config);
   return c.json({ config });
@@ -117,4 +142,14 @@ terminalRoutes.post('/destroy', async (c) => {
 function defaultShellCommand(): string {
   if (process.platform === 'win32') return process.env.COMSPEC ?? 'cmd.exe';
   return process.env.SHELL ?? '/bin/sh';
+}
+
+/** Capitalize the basename of a shell path/command for use as a tab label. */
+function friendlyShellName(command: string): string {
+  const first = command.trim().split(/\s+/)[0] ?? '';
+  if (first === '') return 'Shell';
+  // Strip directory prefix and Windows .exe extension.
+  const base = first.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '');
+  if (base === '') return 'Shell';
+  return base.charAt(0).toUpperCase() + base.slice(1);
 }

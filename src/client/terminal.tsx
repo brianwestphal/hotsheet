@@ -5,6 +5,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
+import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 
@@ -50,6 +51,8 @@ interface TerminalInstance {
 
 const instances = new Map<string, TerminalInstance>();
 let activeTerminalId: string | null = null;
+/** The project secret the current instances were built for. Changes trigger a full rebuild (HS-6309). */
+let currentProjectSecret: string | null = null;
 /** Populated on each loadAndRenderTerminalTabs(). Consumed by settings-refresh flows. */
 let lastKnownConfigs: { configured: TerminalTabConfig[]; dynamic: TerminalTabConfig[] } = { configured: [], dynamic: [] };
 
@@ -61,6 +64,21 @@ export function initTerminal(): void {
     const active = activeTerminalId === null ? null : instances.get(activeTerminalId);
     if (active !== null && active !== undefined && isTerminalTabActive(active)) doFit(active);
   });
+
+  // HS-6502: refit the active terminal whenever the drawer panel changes size.
+  // The drawer can resize without a window-level resize event — users drag the
+  // top edge of the drawer (initResize in commandLog.tsx) and toggle the
+  // full-height expand button. Both of those adjust the drawer element's
+  // computed height directly, so we watch the drawer panel with a
+  // ResizeObserver and re-run FitAddon.fit() for the active terminal.
+  const drawerPanel = document.getElementById('command-log-panel');
+  if (drawerPanel !== null && typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => {
+      const active = activeTerminalId === null ? null : instances.get(activeTerminalId);
+      if (active !== null && active !== undefined && isTerminalTabActive(active)) doFit(active);
+    });
+    ro.observe(drawerPanel);
+  }
 }
 
 /**
@@ -69,6 +87,18 @@ export function initTerminal(): void {
  * whenever the user saves the Embedded Terminal settings.
  */
 export async function loadAndRenderTerminalTabs(): Promise<void> {
+  const active = getActiveProject();
+  const activeSecret = active?.secret ?? null;
+
+  // If the active project changed since the last render, every previously-mounted
+  // xterm/ws is bound to the old project — tear them all down before refetching.
+  // Otherwise `activateTerminal` would try to reuse stale instances keyed by id
+  // (a configured `default` terminal in project A shadowing project B's `default`).
+  if (currentProjectSecret !== null && currentProjectSecret !== activeSecret) {
+    disposeAllInstances();
+  }
+  currentProjectSecret = activeSecret;
+
   type ListResponse = { configured: TerminalTabConfig[]; dynamic: TerminalTabConfig[] };
   let data: ListResponse;
   try {
@@ -162,16 +192,23 @@ function isTerminalTabActive(inst: TerminalInstance): boolean {
 }
 
 function createInstance(config: TerminalTabConfig): TerminalInstance {
-  const label = toElement(<span className="drawer-tab-label">{tabDisplayName(config)}</span>);
-  const closeBtn = config.dynamic === true
-    ? toElement(<button className="drawer-tab-close" title="Close terminal">{raw(CLOSE_ICON)}</button>)
-    : null;
+  // IMPORTANT: the custom JSX runtime renders to an HTML string, so DOM elements
+  // passed as JSX children (e.g. `<button>{label}</button>` where `label` is an
+  // HTMLElement) silently render as empty strings — the resulting button has no
+  // children at all. Build each tree as a single JSX expression and query the
+  // inner pieces back out via querySelector. This is the root cause of HS-6342
+  // (configured tabs rendered as blank buttons) and HS-6341 (dynamic tab + xterm
+  // pane both rendered with no header / no label).
+  const tabName = tabDisplayName(config);
   const tabBtn = toElement(
     <button className="drawer-tab drawer-terminal-tab" data-drawer-tab={`terminal:${config.id}`} data-terminal-id={config.id}>
-      {label}
+      <span className="drawer-tab-label">{tabName}</span>
+      {config.dynamic === true
+        ? raw(`<button class="drawer-tab-close" title="Close terminal">${CLOSE_ICON}</button>`)
+        : null}
     </button>
   );
-  if (closeBtn) tabBtn.appendChild(closeBtn);
+  const closeBtn = tabBtn.querySelector<HTMLButtonElement>('.drawer-tab-close');
   tabBtn.addEventListener('click', (e) => {
     if ((e.target as HTMLElement).closest('.drawer-tab-close')) return;
     // Delegate to the drawer tab switcher so the Commands Log pane is hidden too.
@@ -181,35 +218,34 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     e.stopPropagation();
     void closeDynamicTerminal(config.id);
   });
+  tabBtn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showTabContextMenu(e, config.id);
+  });
 
-  const statusDot = toElement(<span className="terminal-status-dot" title="Not connected"></span>);
-  const labelText = toElement(<span className="terminal-label">{tabDisplayName(config)}</span>);
-  const powerBtn = toElement(
-    <button className="terminal-header-btn terminal-power-btn" title="Stop terminal">
-      <span className="terminal-power-icon">{raw(POWER_ICON_STOP)}</span>
-    </button>
-  );
-  const clearBtn = toElement(
-    <button className="terminal-header-btn" title="Clear screen (keeps process running)">
-      {raw(TRASH_ICON)}
-    </button>
-  );
-  const header = toElement(
-    <div className="terminal-header">
-      {statusDot}
-      {labelText}
-      <span className="terminal-header-spacer"></span>
-      {powerBtn}
-      {clearBtn}
-    </div>
-  );
-  const body = toElement(<div className="terminal-body"></div>);
   const pane = toElement(
     <div className="drawer-tab-content drawer-terminal-pane" data-drawer-panel={`terminal:${config.id}`} style="display:none">
-      {header}
-      {body}
+      <div className="terminal-header">
+        <span className="terminal-status-dot" title="Not connected"></span>
+        <span className="terminal-label">{tabName}</span>
+        <span className="terminal-header-spacer"></span>
+        <button className="terminal-header-btn terminal-power-btn" title="Stop terminal">
+          <span className="terminal-power-icon">{raw(POWER_ICON_STOP)}</span>
+        </button>
+        <button className="terminal-header-btn terminal-clear-btn" title="Clear screen (keeps process running)">
+          {raw(TRASH_ICON)}
+        </button>
+      </div>
+      <div className="terminal-body"></div>
     </div>
   );
+  const header = pane.querySelector<HTMLElement>('.terminal-header')!;
+  const body = pane.querySelector<HTMLElement>('.terminal-body')!;
+  const statusDot = pane.querySelector<HTMLElement>('.terminal-status-dot')!;
+  const labelText = pane.querySelector<HTMLElement>('.terminal-label')!;
+  const powerBtn = pane.querySelector<HTMLButtonElement>('.terminal-power-btn')!;
+  const clearBtn = pane.querySelector<HTMLButtonElement>('.terminal-clear-btn')!;
 
   const inst: TerminalInstance = {
     id: config.id,
@@ -243,7 +279,9 @@ function tabDisplayName(config: TerminalTabConfig): string {
   const word = config.command.trim().split(/\s+/)[0] ?? '';
   const clean = word.replace(/^{{|}}$/g, '');
   if (clean.toLowerCase().includes('claude')) return 'claude';
-  return clean !== '' ? clean : 'terminal';
+  // Path-style commands like /bin/zsh → "zsh"; .exe stripped on Windows.
+  const base = clean.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '');
+  return base !== '' ? base : 'terminal';
 }
 
 function updateTabLabel(inst: TerminalInstance): void {
@@ -396,12 +434,21 @@ async function onPowerClick(inst: TerminalInstance): Promise<void> {
   if (alive && !inst.stopRequested) {
     inst.stopRequested = true;
     updatePowerButton(inst);
-    try { await api('/terminal/kill', { method: 'POST', body: { terminalId: inst.id } }); } catch { /* ignore */ }
+    // SIGHUP — what a terminal emulator sends when the user closes the window.
+    // Interactive shells (zsh, bash, fish) respect SIGHUP and exit cleanly;
+    // they typically ignore SIGTERM, which made the Stop button appear to do
+    // nothing for dynamic shell terminals (HS-6471).
+    try { await api('/terminal/kill', { method: 'POST', body: { terminalId: inst.id, signal: 'SIGHUP' } }); } catch { /* ignore */ }
     return;
   }
 
   if (alive && inst.stopRequested) {
-    const confirmed = window.confirm('The terminal process has not stopped. Force quit (SIGKILL) the process?');
+    const confirmed = await confirmDialog({
+      title: 'Force quit terminal?',
+      message: 'The terminal process has not stopped. Force quit (SIGKILL) the process?',
+      confirmLabel: 'Force quit',
+      danger: true,
+    });
     if (!confirmed) return;
     try { await api('/terminal/kill', { method: 'POST', body: { terminalId: inst.id, signal: 'SIGKILL' } }); } catch { /* ignore */ }
     return;
@@ -435,6 +482,23 @@ function removeTerminalInstance(id: string): void {
   inst.pane.remove();
   instances.delete(id);
   if (activeTerminalId === id) activeTerminalId = null;
+}
+
+/** Tear down every client-side terminal instance. The server-side PTYs are untouched. */
+function disposeAllInstances(): void {
+  for (const id of [...instances.keys()]) removeTerminalInstance(id);
+  activeTerminalId = null;
+}
+
+/**
+ * Called by the app when the active project has changed. Tears down the old
+ * project's terminals on the next `loadAndRenderTerminalTabs()` and resets
+ * the cached `activeTerminalId` so the new project starts clean (HS-6309).
+ */
+export function onProjectSwitch(): void {
+  disposeAllInstances();
+  currentProjectSecret = null;
+  lastKnownConfigs = { configured: [], dynamic: [] };
 }
 
 function doFit(inst: TerminalInstance): void {
@@ -492,4 +556,95 @@ export async function refreshTerminalsAfterSettingsChange(): Promise<void> {
 /** Exposed for debugging / tests. */
 export function getLastKnownTerminalConfigs() {
   return lastKnownConfigs;
+}
+
+// --- Context menu (HS-6470) ---
+// Right-clicking a terminal tab opens a lightweight menu with the usual
+// "close tab / close others / close to the left / close to the right" entries.
+// Configured (default) terminals cannot be closed at all — the menu still
+// opens on them, but "Close Tab" is disabled, and the "Close Others/Left/Right"
+// actions skip configured tabs so only dynamic ones get torn down.
+
+function dismissTabContextMenu(): void {
+  document.querySelector('.terminal-tab-context-menu')?.remove();
+}
+
+function isDynamic(id: string): boolean {
+  return instances.get(id)?.config.dynamic === true;
+}
+
+/** Ordered list of tab ids, matching the visible left-to-right tab strip order. */
+function orderedTabIds(): string[] {
+  const strip = document.getElementById('drawer-terminal-tabs');
+  if (!strip) return [];
+  const out: string[] = [];
+  for (const el of Array.from(strip.children)) {
+    const id = (el as HTMLElement).dataset.terminalId;
+    if (typeof id === 'string' && id !== '') out.push(id);
+  }
+  return out;
+}
+
+function showTabContextMenu(e: MouseEvent, clickedId: string): void {
+  dismissTabContextMenu();
+  const isClickedDynamic = isDynamic(clickedId);
+
+  const menu = toElement(
+    <div className="terminal-tab-context-menu command-log-context-menu" style={`left:${e.clientX}px;top:${e.clientY}px`}>
+      <div className={`context-menu-item${isClickedDynamic ? '' : ' disabled'}`} data-action="close">Close Tab</div>
+      <div className="context-menu-item" data-action="close-others">Close Other Tabs</div>
+      <div className="context-menu-item" data-action="close-left">Close Tabs to the Left</div>
+      <div className="context-menu-item" data-action="close-right">Close Tabs to the Right</div>
+    </div>
+  );
+
+  const bind = (action: string, handler: () => void) => {
+    const el = menu.querySelector<HTMLElement>(`[data-action="${action}"]`);
+    if (!el) return;
+    if (el.classList.contains('disabled')) return;
+    el.addEventListener('click', () => {
+      dismissTabContextMenu();
+      handler();
+    });
+  };
+
+  bind('close', () => { void closeDynamicTerminal(clickedId); });
+  bind('close-others', () => { void closeTabs(orderedTabIds().filter(id => id !== clickedId && isDynamic(id))); });
+  bind('close-left', () => {
+    const ids = orderedTabIds();
+    const idx = ids.indexOf(clickedId);
+    if (idx < 0) return;
+    void closeTabs(ids.slice(0, idx).filter(isDynamic));
+  });
+  bind('close-right', () => {
+    const ids = orderedTabIds();
+    const idx = ids.indexOf(clickedId);
+    if (idx < 0) return;
+    void closeTabs(ids.slice(idx + 1).filter(isDynamic));
+  });
+
+  document.body.appendChild(menu);
+
+  // Clamp to viewport.
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 4}px`;
+  if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+
+  setTimeout(() => {
+    const close = (ev: MouseEvent) => {
+      if (!menu.contains(ev.target as Node)) {
+        dismissTabContextMenu();
+        document.removeEventListener('click', close, true);
+        document.removeEventListener('contextmenu', close, true);
+      }
+    };
+    document.addEventListener('click', close, true);
+    document.addEventListener('contextmenu', close, true);
+  }, 0);
+}
+
+async function closeTabs(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await closeDynamicTerminal(id);
+  }
 }

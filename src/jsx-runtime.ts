@@ -30,6 +30,21 @@ function renderChildren(children: Children): string {
   if (typeof children === "string") return escapeHtml(children);
   if (typeof children === "number") return String(children);
   if (Array.isArray(children)) return children.map(renderChildren).join("");
+  // Catch the common mistake of passing a DOM element (e.g. the result of
+  // toElement(...)) as a JSX child. The runtime renders to HTML strings, so
+  // DOM nodes can't be composed — they'd silently serialize to "" and their
+  // event listeners would be lost. Throw loudly so this can't sneak in again
+  // (HS-6341/HS-6342 root cause). The Children type doesn't include `object`
+  // so TS treats this branch as unreachable, but at runtime JSX may pass
+  // anything; the cast lets us probe for DOM-like objects defensively.
+  const maybeNode = children as unknown;
+  if (typeof maybeNode === "object" && maybeNode !== null
+      && ("nodeType" in maybeNode || "outerHTML" in maybeNode)) {
+    throw new Error(
+      "JSX: DOM elements cannot be passed as children (the JSX runtime renders to HTML strings). "
+      + "Build the tree in one JSX expression and use querySelector after toElement() to get element refs.",
+    );
+  }
   return "";
 }
 

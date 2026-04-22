@@ -25,7 +25,7 @@ The interface is divided into:
   - A separator, then "Show in Finder" with a folder icon. Opens the project's root folder (parent of `.hotsheet/`) using the OS file manager.
 - Keyboard shortcuts for tab management:
   - Cmd/Ctrl+Shift+[ or ] — Switch to previous/next tab (works even in text fields).
-  - Cmd/Ctrl+Shift+Arrow Left/Right — Switch to previous/next tab (ignored when focus is in a text field, to preserve native text selection).
+  - Cmd/Ctrl+Shift+Arrow Left/Right — Switch to previous/next tab (ignored when focus is in a text field, to preserve native text selection). When focus is inside an embedded terminal, this shortcut cycles terminal tabs instead — hold Alt/Option to force project-tab navigation. See [22-terminal.md §22.18](22-terminal.md).
   - Cmd/Ctrl+Alt+W — Close active tab.
 - Tabs can be reordered by drag-and-drop. A drop indicator shows the insertion point. Order is persisted to the server.
 - Tab order is preserved across restarts. New projects are appended to the end of the tab bar. Re-opening an existing project does not reorder tabs.

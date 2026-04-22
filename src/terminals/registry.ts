@@ -212,6 +212,31 @@ export function getTerminalStatus(
   };
 }
 
+/**
+ * Ensure a PTY exists for `(secret, terminalId)` without attaching a subscriber.
+ * Used by the eager-spawn path (HS-6310) so non-lazy terminals launch at project
+ * boot without needing a WebSocket. If the session already exists (alive or
+ * exited), this is a no-op — we never auto-respawn an exited PTY.
+ */
+export function ensureSpawned(
+  secret: string,
+  dataDir: string,
+  terminalId: string = DEFAULT_TERMINAL_ID,
+  configOverride: TerminalConfig | null = null,
+): void {
+  const key = sessionKey(secret, terminalId);
+  let session = sessions.get(key);
+  if (!session) {
+    session = createSession(dataDir, terminalId, configOverride);
+    sessions.set(key, session);
+    spawnIntoSession(session, dataDir);
+    return;
+  }
+  if (session.pty === null && session.exitCode === null) {
+    spawnIntoSession(session, dataDir);
+  }
+}
+
 /** Explicit kill — PTY exits, subscribers receive onExit. Session remains in `exited` state. */
 export function killTerminal(
   secret: string,

@@ -5,7 +5,7 @@ import { bindBackupsUI } from './backups.js';
 import { bindBatchToolbar } from './batch.js';
 import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { bindCopyPrompt } from './clipboardUtil.js';
-import { initCommandLog, refreshCommandLog } from './commandLog.js';
+import { applyPerProjectDrawerState, initCommandLog, refreshCommandLog } from './commandLog.js';
 import { TIMERS } from './constants/timers.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
@@ -111,6 +111,9 @@ async function reloadAppState() {
   await loadTickets();
   // Refresh command log for the new project context
   refreshCommandLog();
+  // Tear down the old project's terminals, rebuild for the new project, and
+  // restore its saved drawer visibility + active tab (HS-6309).
+  void applyPerProjectDrawerState();
   // Refresh sidebar stats widget for the new project
   void refreshDashboardWidget();
   // Re-init channel for the new project context

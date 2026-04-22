@@ -68,6 +68,10 @@ export const QueryTicketsSchema = z.object({
 
 export const UpdateSettingsSchema = z.record(z.string(), z.string());
 
+/** File-settings PATCH accepts native JSON values (arrays/objects/numbers/booleans/strings).
+ *  Reserved-key types are still enforced by FileSettingsSchema on read. */
+export const UpdateFileSettingsSchema = z.record(z.string(), z.unknown());
+
 // --- Backups ---
 
 export const BackupTierSchema = z.enum(['5min', 'hourly', 'daily']);

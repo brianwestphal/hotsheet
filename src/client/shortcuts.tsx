@@ -69,6 +69,11 @@ export function bindKeyboardShortcuts() {
     }
 
     // Tab switching: Cmd+Shift+[/] (works even in inputs) or Cmd+Shift+Left/Right (not in text fields)
+    // HS-6472: when a terminal is focused, Cmd+Shift+Left/Right switches terminal
+    // tabs instead, and adding Alt/Option bubbles the shortcut back up to project
+    // tabs. The xterm helper textarea is still a TEXTAREA, so this block has to
+    // run before the isInput guard below; terminal focus is detected by walking
+    // up from the active element to a .drawer-terminal-pane or .xterm container.
     if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
       if (e.key === '[') {
         e.preventDefault();
@@ -80,10 +85,28 @@ export function bindKeyboardShortcuts() {
         switchTabByOffset(1);
         return;
       }
-      if (!isInput && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        e.preventDefault();
-        switchTabByOffset(e.key === 'ArrowLeft' ? -1 : 1);
-        return;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const offset = e.key === 'ArrowLeft' ? -1 : 1;
+        const inTerminal = isTerminalFocused();
+        // With Alt/Option held, always route to project tabs (even from within
+        // a terminal, where Cmd+Shift+Arrow is normally used for terminal tabs).
+        if (e.altKey) {
+          if (!isInput || inTerminal) {
+            e.preventDefault();
+            switchTabByOffset(offset);
+          }
+          return;
+        }
+        if (inTerminal) {
+          e.preventDefault();
+          switchTerminalTabByOffset(offset);
+          return;
+        }
+        if (!isInput) {
+          e.preventDefault();
+          switchTabByOffset(offset);
+          return;
+        }
       }
     }
 
@@ -257,4 +280,33 @@ export function bindKeyboardShortcuts() {
       return;
     }
   });
+}
+
+/**
+ * True when keyboard focus is inside an embedded terminal — either the
+ * xterm helper textarea or its surrounding pane. xterm mounts its I/O
+ * surface as a TEXTAREA element, so we can't use the plain "isInput" test
+ * to gate terminal-targeted shortcuts (HS-6472).
+ */
+function isTerminalFocused(): boolean {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return false;
+  return active.closest('.drawer-terminal-pane, .xterm') !== null;
+}
+
+/**
+ * Switch to the previous/next terminal tab relative to the current one.
+ * Wraps at either end. No-op if fewer than two terminal tabs exist
+ * (HS-6472).
+ */
+function switchTerminalTabByOffset(offset: number): void {
+  const tabs = Array.from(document.querySelectorAll<HTMLElement>('.drawer-terminal-tab'));
+  if (tabs.length < 2) return;
+  const currentIdx = tabs.findIndex(t => t.classList.contains('active'));
+  const start = currentIdx === -1 ? 0 : currentIdx;
+  const nextIdx = ((start + offset) % tabs.length + tabs.length) % tabs.length;
+  const target = tabs[nextIdx];
+  const tabId = target.dataset.drawerTab ?? '';
+  if (tabId === '') return;
+  void import('./commandLog.js').then(({ switchDrawerTab }) => { switchDrawerTab(tabId); });
 }

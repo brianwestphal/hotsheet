@@ -146,6 +146,18 @@ When the user gives you work directly via the CLI (not via MCP channel or Hot Sh
 - Client CSS and JS are built separately and served as static files
 - **`CHANNEL_VERSION`** in `src/channel.ts` AND `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` — bump both integers (they must match) when changing the channel server's capabilities (new endpoints, protocol changes, new MCP features). The main server compares the running server's version against the expected version and warns the user to reconnect via `/mcp` in Claude Code if they don't match. Always increment both when modifying `src/channel.ts` in ways that affect the HTTP API or MCP behavior.
 
+### Tauri-unsafe browser APIs (client code)
+
+The app ships in Tauri's WKWebView, which silently no-ops several standard browser dialog/navigation APIs. Calls appear to "do nothing" in the desktop build — and because Playwright runs in Chromium where these APIs work natively, tests can pass while the real app is broken. **Never use these in client code (`src/client/**`, `plugins/*/src/**`).** Use the in-app equivalents instead:
+
+- `window.confirm(...)` → `confirmDialog({message, ...})` from `src/client/confirm.tsx`. Returns `Promise<boolean>`. Supports `title`, `confirmLabel`, `cancelLabel`, `danger`.
+- `window.alert(...)` → render an in-app toast / overlay. There is no generic alert helper yet — build the UI inline, or extend `confirm.tsx` with a one-button variant.
+- `window.prompt(...)` → build an in-app input overlay (pattern: see `openEditor` in `terminalsSettings.tsx`).
+- `window.open(url, ...)` in Tauri → use `invoke('open_external_url', { url })` via `getTauriInvoke()` from `src/client/tauriIntegration.tsx`, and fall back to `window.open` only when `getTauriInvoke()` returns null.
+- File downloads via `<a download>` — unreliable; prefer a Tauri `save_file`-style command when running in Tauri.
+
+**When writing e2e tests for any prompt flow**, click the in-app overlay's buttons. Do **not** rely on Playwright's `page.on('dialog')` handler — that masks the exact Tauri-silent-no-op regression class this rule exists to catch. If an e2e test finds itself registering a native dialog handler for client code, that client code is the bug.
+
 ### Requirements Documentation
 
 The `docs/` folder contains numbered requirements documents that describe the application's features and behavior. These are the source of truth for what the app does and should do.

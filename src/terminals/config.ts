@@ -31,29 +31,43 @@ const CLAUDE_TEMPLATE = '{{claudeCommand}}';
  * the legacy single-terminal `terminal_command` / `terminal_cwd` settings when
  * a modern `terminals` array is not present.
  *
- * Always returns at least one entry (the implicit `default`).
+ * Returns an **empty array** when nothing is configured (HS-6337 — no automatic
+ * default terminal per project). The legacy migration path still materializes a
+ * single entry so users upgrading from the pre-array schema keep their shell.
  */
 export function listTerminalConfigs(dataDir: string): TerminalConfig[] {
   const settings = readFileSettings(dataDir);
-  const rawList = settings.terminals;
+  // settings.terminals is normally a native array, but historically (HS-6370)
+  // the client stringified the value before sending it. Tolerate both shapes
+  // on read so users with pre-fix settings.json files continue to see their
+  // configured terminals.
+  let rawList: unknown = settings.terminals;
+  if (typeof rawList === 'string') {
+    try { rawList = JSON.parse(rawList); }
+    catch { rawList = undefined; }
+  }
   if (Array.isArray(rawList) && rawList.length > 0) {
     return rawList
       .map((raw, idx) => normalizeConfig(raw, idx))
       .filter((c): c is TerminalConfig => c !== null);
   }
 
-  // Legacy fallback: build a single default entry from terminal_command/terminal_cwd.
-  const legacyCommand = typeof settings.terminal_command === 'string' && settings.terminal_command !== ''
-    ? settings.terminal_command
-    : CLAUDE_TEMPLATE;
-  const legacyCwd = typeof settings.terminal_cwd === 'string' ? settings.terminal_cwd : '';
-  const entry: TerminalConfig = {
-    id: DEFAULT_TERMINAL_ID,
-    name: 'Terminal',
-    command: legacyCommand,
-  };
-  if (legacyCwd !== '') entry.cwd = legacyCwd;
-  return [entry];
+  // Legacy migration: if either of the pre-array single-terminal keys is set,
+  // surface them as a one-entry list so settings persist across the schema
+  // change. Missing fields fall back to the claude template / project root.
+  const hasLegacyCommand = typeof settings.terminal_command === 'string' && settings.terminal_command !== '';
+  const hasLegacyCwd = typeof settings.terminal_cwd === 'string' && settings.terminal_cwd !== '';
+  if (hasLegacyCommand || hasLegacyCwd) {
+    const entry: TerminalConfig = {
+      id: DEFAULT_TERMINAL_ID,
+      name: 'Terminal',
+      command: hasLegacyCommand ? (settings.terminal_command as string) : CLAUDE_TEMPLATE,
+    };
+    if (hasLegacyCwd) entry.cwd = settings.terminal_cwd as string;
+    return [entry];
+  }
+
+  return [];
 }
 
 /** Look up a single terminal config by id, or null if not found. */

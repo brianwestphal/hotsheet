@@ -387,12 +387,15 @@ async function restorePreviousProjects(dataDir: string, actualPort: number): Pro
   const absDataDir = resolve(dataDir);
   const validProjects: string[] = [];
 
+  const { eagerSpawnTerminals } = await import('./terminals/eagerSpawn.js');
   for (const prevDir of previousProjects) {
     if (prevDir === absDataDir) { validProjects.push(prevDir); continue; }
     if (!existsSync(prevDir)) continue;
     try {
-      await registerProject(prevDir, actualPort);
+      const ctx = await registerProject(prevDir, actualPort);
       validProjects.push(prevDir);
+      // Eager-spawn non-lazy terminals for each restored project (HS-6310).
+      eagerSpawnTerminals(ctx.secret, prevDir);
     } catch (e: unknown) {
       console.warn(`[startup] Failed to restore project ${prevDir}: ${getErrorMessage(e)}`);
     }
@@ -578,6 +581,9 @@ async function main() {
   const { actualPort, secret } = await startAndConfigure(port, dataDir, strictPort);
   console.error(`[startup ${elapsed()}] server started on port ${actualPort}`);
   registerExistingProject(dataDir, secret, db);
+  // Eager-spawn non-lazy terminals for the primary project (HS-6310).
+  const { eagerSpawnTerminals } = await import('./terminals/eagerSpawn.js');
+  eagerSpawnTerminals(secret, dataDir);
   console.error(`[startup ${elapsed()}] running post-startup tasks...`);
   await postStartup(dataDir, actualPort, demo, noOpen);
   console.error(`[startup ${elapsed()}] post-startup complete`);

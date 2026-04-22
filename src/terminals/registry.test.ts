@@ -8,6 +8,7 @@ import {
   destroyAllTerminals,
   destroyTerminal,
   detach,
+  ensureSpawned,
   getTerminalStatus,
   killTerminal,
   type PtyFactory,
@@ -29,6 +30,7 @@ class FakePty implements PtyLike {
   writes: string[] = [];
   resizes: Array<[number, number]> = [];
   killed = false;
+  killSignals: string[] = [];
 
   private dataListeners = new Set<(s: string) => void>();
   private exitListeners = new Set<(e: { exitCode: number; signal?: number }) => void>();
@@ -57,7 +59,8 @@ class FakePty implements PtyLike {
     this.rows = rows;
     this.resizes.push([cols, rows]);
   }
-  kill(): void {
+  kill(signal?: string): void {
+    this.killSignals.push(signal ?? '');
     if (this.killed) return;
     this.killed = true;
     // Don't auto-emit exit — tests that want exit should call emitExit.
@@ -314,6 +317,54 @@ describe('TerminalRegistry', () => {
     ptyBeta.emit('from-beta');
     expect(Buffer.concat(aReceived).toString()).toBe('from-alpha');
     expect(Buffer.concat(bReceived).toString()).toBe('from-beta');
+  });
+
+  it('ensureSpawned creates and spawns a session without any subscriber (HS-6310)', () => {
+    const d = tmpDataDir();
+    expect(FakePty.lastSpawned).toBeNull();
+    ensureSpawned('secret-eager', d, 'main');
+    expect(FakePty.lastSpawned).not.toBeNull();
+    const status = getTerminalStatus('secret-eager', d, 'main');
+    expect(status.state).toBe('alive');
+  });
+
+  it('ensureSpawned is idempotent — repeat calls do not respawn a live session', () => {
+    const d = tmpDataDir();
+    ensureSpawned('secret-idem', d, 'main');
+    const first = FakePty.lastSpawned;
+    ensureSpawned('secret-idem', d, 'main');
+    expect(FakePty.lastSpawned).toBe(first);
+  });
+
+  it('ensureSpawned does NOT resurrect an exited session', () => {
+    const d = tmpDataDir();
+    ensureSpawned('secret-exit', d, 'main');
+    FakePty.lastSpawned!.emitExit(0);
+    const ptyAtExit = FakePty.lastSpawned;
+    ensureSpawned('secret-exit', d, 'main');
+    expect(FakePty.lastSpawned).toBe(ptyAtExit);
+    expect(getTerminalStatus('secret-exit', d, 'main').state).toBe('exited');
+  });
+
+  // HS-6471: interactive shells ignore SIGTERM but exit on SIGHUP. The registry
+  // must forward whatever signal the caller picked so the client's choice of
+  // SIGHUP actually reaches the PTY.
+  it('killTerminal forwards the requested signal to the PTY (HS-6471)', () => {
+    const d = tmpDataDir();
+    const { sub } = makeSub();
+    attach('secret-sighup', d, sub);
+    const pty = FakePty.lastSpawned!;
+    killTerminal('secret-sighup', 'SIGHUP');
+    expect(pty.killSignals).toEqual(['SIGHUP']);
+  });
+
+  it('killTerminal defaults to SIGTERM when no signal is provided', () => {
+    const d = tmpDataDir();
+    const { sub } = makeSub();
+    attach('secret-default-kill', d, sub);
+    const pty = FakePty.lastSpawned!;
+    killTerminal('secret-default-kill');
+    expect(pty.killSignals).toEqual(['SIGTERM']);
   });
 
   it('killTerminal accepts terminalId and targets the right session', () => {

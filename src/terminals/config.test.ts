@@ -22,11 +22,12 @@ describe('TerminalConfig loader', () => {
     return dataDir;
   }
 
-  it('returns an implicit default when no terminals setting is present', () => {
+  // HS-6337: no automatic default terminal per project — an unconfigured
+  // project returns an empty array, so the drawer shows no tabs until the
+  // user explicitly adds one.
+  it('returns an empty list when no terminals setting is present (HS-6337)', () => {
     const list = listTerminalConfigs(dir());
-    expect(list).toHaveLength(1);
-    expect(list[0].id).toBe(DEFAULT_TERMINAL_ID);
-    expect(list[0].command).toBe('{{claudeCommand}}');
+    expect(list).toEqual([]);
   });
 
   it('migrates legacy terminal_command/terminal_cwd into a single default entry', () => {
@@ -60,8 +61,29 @@ describe('TerminalConfig loader', () => {
     expect(list[0].id).toBe('default-0');
   });
 
+  // HS-6370: pre-fix settings.json files stored the array as a JSON string.
+  // Reading must tolerate both shapes so users don't lose their configuration
+  // until they re-save through the settings UI.
+  it('reads a stringified terminals array (legacy on-disk shape)', () => {
+    const list = listTerminalConfigs(dir({
+      terminals: '[{"id":"main","name":"Claude","command":"{{claudeCommand}}","lazy":true},{"id":"logs","name":"Logs","command":"tail -f /tmp/app.log"}]',
+    }));
+    expect(list).toHaveLength(2);
+    expect(list[0]).toMatchObject({ id: 'main', name: 'Claude' });
+    expect(list[1]).toMatchObject({ id: 'logs', name: 'Logs' });
+  });
+
+  it('falls back to legacy when the terminals string is not parseable JSON', () => {
+    const list = listTerminalConfigs(dir({
+      terminals: 'this is not json',
+      terminal_command: '/bin/zsh',
+    }));
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id: DEFAULT_TERMINAL_ID, command: '/bin/zsh' });
+  });
+
   it('findTerminalConfig returns null for unknown ids', () => {
-    const d = dir();
+    const d = dir({ terminals: [{ id: DEFAULT_TERMINAL_ID, command: '/bin/sh' }] });
     expect(findTerminalConfig(d, DEFAULT_TERMINAL_ID)).not.toBeNull();
     expect(findTerminalConfig(d, 'no-such-id')).toBeNull();
   });
