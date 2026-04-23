@@ -413,7 +413,9 @@ function renderProjectSection(data: ProjectSectionData): HTMLElement {
   // HS-7064: a lucide `plus` button sits in the heading row for each project
   // so the user can create a new terminal for that project without leaving
   // the dashboard. Uses the existing POST /api/terminal/create path (dynamic
-  // terminal, lazy spawn) — the same call the drawer's `+` button makes.
+  // terminal) — same endpoint as the drawer's `+` button, but HS-7228 asks
+  // the server to spawn the PTY immediately so the new tile lands as a live
+  // preview rather than a cold placeholder.
   const section = toElement(
     <section className="terminal-dashboard-section" data-secret={data.project.secret}>
       <div className="terminal-dashboard-heading-row">
@@ -453,14 +455,25 @@ function renderProjectSection(data: ProjectSectionData): HTMLElement {
 }
 
 /**
- * HS-7064: create a dynamic terminal via the project's `/api/terminal/create`
- * endpoint, then rebuild the dashboard so the new tile appears in the
- * section. Matches the drawer's `+` button behaviour: no prompt, uses the
- * default shell, lazy spawn (PTY starts when the tile is enlarged).
+ * HS-7064 / HS-7228: create a dynamic terminal via the project's
+ * `/api/terminal/create` endpoint, then rebuild the dashboard so the new
+ * tile appears in the section. No prompt, uses the default shell.
+ *
+ * HS-7228: passes `spawn: true` so the server launches the PTY synchronously
+ * during the create call. The drawer's `+` button gets its eager-spawn for
+ * free because it `selectDrawerTab`s the new tab (which attaches a WS and
+ * triggers the spawn); the dashboard has no such follow-up attach (tiles
+ * render from the `/terminal/list` response alone), so without explicit
+ * spawn the new tile would render as a `not_spawned` placeholder and the
+ * user would have to click it to get a running shell — that's the gap
+ * HS-7228 closes.
  */
 async function createDashboardTerminal(secret: string): Promise<void> {
   try {
-    await apiWithSecret<{ config: { id: string } }>('/terminal/create', secret, { method: 'POST' });
+    await apiWithSecret<{ config: { id: string } }>('/terminal/create', secret, {
+      method: 'POST',
+      body: { spawn: true },
+    });
   } catch (err) {
     console.error('terminalDashboard: create terminal failed', err);
     return;
@@ -893,6 +906,10 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
   if (rootElement === null) return;
   // HS-6837: entering the dedicated view also clears the bell.
   clearTileBell(tile);
+  // HS-7195: hide the tile-size slider while the dedicated view is up — the
+  // slider only controls grid-tile dims (§25.4) and is irrelevant to a
+  // single full-viewport terminal. `exitDedicatedView` restores it.
+  if (sizerContainer !== null) sizerContainer.style.display = 'none';
 
   const projectLabel = rootElement.querySelector<HTMLElement>(`.terminal-dashboard-section[data-secret="${tile.secret}"] .terminal-dashboard-heading`)
     ?.textContent
@@ -1019,6 +1036,10 @@ function exitDedicatedView(): void {
   }
   try { view.term.dispose(); } catch { /* no-op */ }
   view.overlay.remove();
+  // HS-7195: restore the tile-size slider now that we're back in the grid.
+  // Dashboard must still be active here (the dedicated view is only reachable
+  // from the grid), so `enterDashboard`'s display:'' is the right target.
+  if (sizerContainer !== null) sizerContainer.style.display = '';
 
   // HS-7097: re-claim the PTY at tile-native 4:3 dims. While the dedicated
   // view was up it pushed the PTY to the dedicated pane's geometry (via

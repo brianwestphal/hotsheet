@@ -5,6 +5,7 @@ import { DEFAULT_TERMINAL_ID, listTerminalConfigs, type TerminalConfig } from '.
 import {
   clearBellPending,
   destroyTerminal,
+  ensureSpawned,
   getBellPending,
   getTerminalStatus,
   killTerminal,
@@ -146,14 +147,24 @@ terminalRoutes.post('/kill', async (c) => {
 
 /**
  * POST /api/terminal/create — register a dynamic (ad-hoc) terminal config and
- * return its id. The PTY spawns lazily on first WebSocket attach.
+ * return its id. By default the PTY spawns lazily on first WebSocket attach
+ * (the drawer's `+` button relies on that — it selects the new tab
+ * immediately, which opens a WS and triggers the spawn).
  *
- * Body: `{ name?, command?, cwd? }`. When command is omitted, the user's default
- * shell is launched (Windows: `%COMSPEC%`, otherwise `$SHELL` — resolved at spawn).
+ * Body: `{ name?, command?, cwd?, spawn? }`. When command is omitted, the
+ * user's default shell is launched (Windows: `%COMSPEC%`, otherwise `$SHELL`
+ * — resolved at spawn).
+ *
+ * HS-7228: pass `spawn: true` to start the PTY immediately, without waiting
+ * for a WebSocket attach. Used by the dashboard's per-project `+` button
+ * (§25.4) so the freshly-created tile renders as `alive` in the grid rather
+ * than as a cold `not_spawned` placeholder — the dashboard's mental model is
+ * "the + button adds a running terminal", matching the drawer's flow.
  */
 terminalRoutes.post('/create', async (c) => {
+  const dataDir = c.get('dataDir');
   const secret = c.get('projectSecret');
-  const body = await c.req.json<{ name?: string; command?: string; cwd?: string } | undefined>().catch(() => undefined);
+  const body = await c.req.json<{ name?: string; command?: string; cwd?: string; spawn?: boolean } | undefined>().catch(() => undefined);
   const id = `dyn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const command = typeof body?.command === 'string' && body.command !== ''
     ? body.command
@@ -166,6 +177,15 @@ terminalRoutes.post('/create', async (c) => {
   const config: TerminalConfig = { id, command, name };
   if (typeof body?.cwd === 'string' && body.cwd !== '') config.cwd = body.cwd;
   dynamicConfigs.set(`${secret}::${id}`, config);
+  if (body?.spawn === true) {
+    try {
+      ensureSpawned(secret, dataDir, id, config);
+    } catch (err) {
+      // Mirror eagerSpawnTerminals' policy: log but don't fail the request.
+      // The config is still registered, so a subsequent WS attach can retry.
+      console.warn(`[terminals] Eager-spawn on /create failed for '${id}': ${String(err)}`);
+    }
+  }
   return c.json({ config });
 });
 

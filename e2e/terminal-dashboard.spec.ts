@@ -276,6 +276,39 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
   });
 
+  // HS-7195: the tile-size slider (§25.4) only controls grid-tile dims; it's
+  // irrelevant in the dedicated full-viewport view and was bleeding into the
+  // header while the dedicated view was active. Hidden on enter, restored on
+  // exit back to the grid.
+  test('tile-size slider is hidden while the dedicated view is open (HS-7195)', async ({ page }) => {
+    await page.route('**/api/terminal/list*', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
+          dynamic: [],
+        }),
+      });
+    });
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.locator('#terminal-dashboard-toggle').click();
+
+    // Baseline: slider visible in the grid view.
+    await expect(page.locator('#terminal-dashboard-sizer')).toBeVisible();
+
+    await page.locator('.terminal-dashboard-tile[data-terminal-id="live"]').dblclick();
+    await expect(page.locator('.terminal-dashboard-dedicated')).toBeVisible();
+    // Dedicated view up → slider hidden.
+    await expect(page.locator('#terminal-dashboard-sizer')).toBeHidden();
+
+    await page.locator('.terminal-dashboard-dedicated-back').click();
+    await expect(page.locator('.terminal-dashboard-dedicated')).toHaveCount(0);
+    // Back in grid → slider visible again.
+    await expect(page.locator('#terminal-dashboard-sizer')).toBeVisible();
+  });
+
   test('Esc dismisses the dedicated view first, not the whole dashboard', async ({ page }) => {
     await page.route('**/api/terminal/list*', async route => {
       await route.fulfill({

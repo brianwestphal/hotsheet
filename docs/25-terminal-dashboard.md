@@ -59,7 +59,7 @@ The dashboard content area is a single vertically-scrolling flex column. For eve
 **Project heading.** A row above each project's grid, showing:
 - The project's `appName` (falls back to the project folder name — same resolution as the project tab's label).
 - Optionally, a small count suffix like `(3 terminals)` when the project has ≥ 1 terminal.
-- An outlined lucide `plus` button (HS-7064) immediately after the name. Clicking it creates a dynamic terminal in that project via the existing `POST /api/terminal/create` endpoint (same call the drawer's `+` button makes — default shell, lazy spawn, no prompt) and refreshes the dashboard so the new tile appears in the grid. The tile spawns its PTY on first enlarge, matching the rest of the dashboard's "cold tiles stay cold" rule (§25.9).
+- An outlined lucide `plus` button (HS-7064) immediately after the name. Clicking it creates a dynamic terminal in that project via the existing `POST /api/terminal/create` endpoint (default shell, no prompt) and refreshes the dashboard so the new tile appears in the grid. Unlike the drawer's `+` button, the dashboard's `+` button passes `{ spawn: true }` on the create call so the server starts the PTY immediately (HS-7228) — the drawer's `+` gets eager-spawn for free because it `selectDrawerTab`s the new tab (which attaches a WS and triggers the spawn), but the dashboard has no equivalent follow-up attach. Without `spawn: true` the new tile would render as a cold `not_spawned` placeholder and the user would have to click it to get a running shell; with it the tile lands as a live preview that matches the drawer's "I pressed + and got a shell" mental model. This is the one documented exception to the "cold tiles stay cold" rule (§25.9) — every other tile on the dashboard is cold until the user enlarges it.
 
 The heading is left-aligned and does not participate in the grid sizing calculation — its height is additive to the grid.
 
@@ -183,6 +183,8 @@ Double-clicking any tile opens a **dedicated terminal view** — the entire dash
 - Back from the dedicated view → returns to whichever of grid / centered the user was in before entering dedicated view.
 
 **Bell clearing.** Entering the dedicated view on a tile with `has-bell` clears the outline and fires `/api/terminal/clear-bell`.
+
+**Tile-size slider is hidden in dedicated view (HS-7195).** The header slider from §25.4 only controls grid-tile dims; it's meaningless in a single full-viewport terminal. `enterDedicatedView` hides `#terminal-dashboard-sizer` and `exitDedicatedView` restores it (the dashboard must still be active on exit — the dedicated view is only reachable from the grid). Regression covered by `terminal-dashboard.spec.ts` "tile-size slider is hidden while the dedicated view is open".
 
 **Focus.** Keyboard focus moves to the xterm helper textarea on enter so users can immediately type.
 

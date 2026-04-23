@@ -214,6 +214,89 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     expect(result.gapAsFraction).toBeLessThan(0.1);
   });
 
+  /**
+   * HS-7198 — reverse-direction convergence: dashboard → exit → drawer.
+   *
+   * HS-7097 covers the forward direction (drawer → dashboard → drawer):
+   * the dashboard tile drives the PTY size on attach so a wide-short PTY
+   * redraws at 4:3 inside the tile. The reverse path — exit dashboard and
+   * go back to the drawer — relies on the drawer's own `fit()` to resize
+   * the PTY back to drawer dims so the TUI redraws for the drawer aspect.
+   * Nothing in the stack asserted that that fit actually fires and the
+   * TUI actually redraws; this test closes the gap so a regression in
+   * the drawer-on-dashboard-exit refit path is caught, not surfaced later
+   * as "the terminal looks squashed until I resize the window".
+   */
+  test('drawer refits the PTY after dashboard exit, TUI redraws at drawer dims (HS-7198)', async ({ page }, testInfo) => {
+    // Wide-short viewport so the drawer PTY lands wide-short and the
+    // dashboard tile meaningfully changes the PTY dims on attach.
+    await page.setViewportSize({ width: 1600, height: 600 });
+    await openDrawerAndWaitForDraw(page);
+
+    const drawerPane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:draw"]');
+    // Capture the drawer's row count BEFORE entering the dashboard — this is
+    // the geometry the drawer will refit back to.
+    const drawerInitialRows = await drawerPane.evaluate((el: Element) => {
+      return el.querySelectorAll('.xterm-rows > div').length;
+    });
+    expect(drawerInitialRows).toBeGreaterThan(0);
+
+    // Enter dashboard. HS-7097 resizes the PTY to tile-native 4:3 on tile
+    // attach, so during the dashboard session the TUI is drawing for ~60
+    // rows × ~80 cols, NOT the drawer's wide-short geometry.
+    await page.locator('#terminal-dashboard-toggle').click();
+    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
+    const tile = page.locator('.terminal-dashboard-tile[data-terminal-id="draw"]');
+    await expect(tile).toHaveClass(/terminal-dashboard-tile-alive/, { timeout: 5000 });
+    await expect(tile.locator('.xterm-screen')).toContainText(/BOTTOM-KEYBAR/, { timeout: 8000 });
+
+    // Exit dashboard — drawer comes back into view. This fires
+    // `commandLog.tsx`'s fit-on-drawer-show path, which pushes a resize
+    // message so the PTY shrinks back to drawer geometry and the TUI
+    // receives SIGWINCH + redraws.
+    await page.locator('#terminal-dashboard-toggle').click();
+    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(0);
+    await expect(drawerPane).toBeVisible();
+
+    // Give xterm a frame for the post-fit redraw to land. The fixture's
+    // SIGWINCH handler redraws TOP/BOTTOM whenever it sees a resize, so the
+    // drawer's xterm should show BOTTOM-KEYBAR near the drawer's last row
+    // rather than floating mid-pane or wrapped at dashboard-era dims.
+    await page.waitForTimeout(400);
+    await expect(drawerPane.locator('.xterm-screen')).toContainText(/BOTTOM-KEYBAR/, { timeout: 8000 });
+
+    const screenshot = await drawerPane.screenshot({ path: 'test-results/hs-7198-drawer-after-dashboard-exit.png' });
+    await testInfo.attach('drawer-after-dashboard-exit.png', { body: screenshot, contentType: 'image/png' });
+
+    // The BOTTOM-KEYBAR row's bottom edge should be within ~10 % of the
+    // drawer pane's bottom — same criterion as HS-7097's grid / centered /
+    // dedicated asserts. A failure here means either (a) the drawer didn't
+    // refit the PTY (TUI still drawing for 60 rows, visible as empty rows
+    // below the marker) or (b) it refit but the TUI never redrew.
+    const result = await drawerPane.evaluate((el: Element) => {
+      const body = el.querySelector('.terminal-body') as HTMLElement | null;
+      if (body === null) return { error: 'terminal-body missing' };
+      const bodyRect = body.getBoundingClientRect();
+      const rows = Array.from(el.querySelectorAll('.xterm-rows > div')) as HTMLElement[];
+      let lastNonEmpty: HTMLElement | null = null;
+      for (const row of rows) {
+        if ((row.textContent ?? '').trim().length > 0) lastNonEmpty = row;
+      }
+      if (lastNonEmpty === null) return { error: 'no rendered rows with content' };
+      const lastRect = lastNonEmpty.getBoundingClientRect();
+      return {
+        bodyHeight: bodyRect.height,
+        renderedRows: rows.length,
+        lastRowText: (lastNonEmpty.textContent ?? '').trim().slice(0, 80),
+        gapAsFraction: (bodyRect.bottom - lastRect.bottom) / bodyRect.height,
+      };
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.lastRowText).toMatch(/BOTTOM-KEYBAR/);
+    expect(result.gapAsFraction).toBeLessThan(0.15);
+  });
+
   test('dedicated view shows BOTTOM marker near the bottom of the pane (control case)', async ({ page }, testInfo) => {
     // Sanity check: the dedicated view already passed the user's eyeball test
     // ("works in the full screen mode but not for the grid preview or

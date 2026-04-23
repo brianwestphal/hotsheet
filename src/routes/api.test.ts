@@ -673,6 +673,39 @@ describe('terminal route', () => {
     expect(entry?.state).toBe('not_spawned');
   });
 
+  // HS-7228 — when the dashboard creates a terminal via the per-project `+`
+  // button, the create call passes `{ spawn: true }` so the server calls
+  // `ensureSpawned` synchronously and the new tile lands as `alive` rather
+  // than a cold `not_spawned` placeholder. Without this option the tile would
+  // stay cold until the user explicitly clicked it to spawn.
+  it('POST /api/terminal/create with { spawn: true } starts the PTY synchronously (HS-7228)', async () => {
+    const create = await app.request('/api/terminal/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spawn: true }),
+    });
+    expect(create.status).toBe(200);
+    const created = await create.json() as TerminalCreateResponse;
+
+    const list = await app.request('/api/terminal/list');
+    const data = await list.json() as TerminalListResponse;
+    const entry = data.dynamic.find(t => t.id === created.config.id);
+    expect(entry).toBeDefined();
+    // `alive` proves the PTY spawned during /create, not on first WS attach.
+    expect(entry?.state).toBe('alive');
+  });
+
+  // Control case: omitting `spawn` keeps the previous lazy behaviour so the
+  // drawer's `+` button flow (which relies on lazy-on-WS-attach) is unchanged.
+  it('POST /api/terminal/create without spawn stays lazy — state is not_spawned until attach', async () => {
+    const create = await app.request('/api/terminal/create', { method: 'POST' });
+    const created = await create.json() as TerminalCreateResponse;
+    const list = await app.request('/api/terminal/list');
+    const data = await list.json() as TerminalListResponse;
+    const entry = data.dynamic.find(t => t.id === created.config.id);
+    expect(entry?.state).toBe('not_spawned');
+  });
+
   it('POST /api/terminal/clear-bell returns { ok: true } even when no flag was set', async () => {
     const res = await app.request('/api/terminal/clear-bell', {
       method: 'POST',
