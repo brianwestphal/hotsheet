@@ -229,6 +229,27 @@ input, select, textarea {
   position: relative; // host for the HS-6836 dedicated-view overlay
 }
 
+// HS-7031: size slider shown at the far right of the header toolbar while
+// dashboard mode is active. Replaces the old auto-fit sizing with a manual,
+// user-controlled tile width. Hidden outside dashboard mode (display:none is
+// toggled from terminalDashboard.tsx on enter / exit).
+.terminal-dashboard-sizer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 4px 10px;
+  color: var(--text-muted);
+
+  input[type="range"] {
+    width: 200px;
+    accent-color: var(--accent, #3b82f6);
+    cursor: pointer;
+  }
+
+  svg { display: block; flex-shrink: 0; }
+}
+
 .terminal-dashboard-loading,
 .terminal-dashboard-empty {
   color: var(--text-muted);
@@ -242,12 +263,44 @@ input, select, textarea {
   gap: 8px;
 }
 
+.terminal-dashboard-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .terminal-dashboard-heading {
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
   margin: 0;
   padding: 0;
+}
+
+// HS-7064: outlined `+` button next to the project name. Clicking it creates
+// a dynamic terminal for that project (same path as the drawer's `+` button)
+// without leaving the dashboard.
+.terminal-dashboard-add-terminal-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--text-muted);
+  }
+
+  svg { display: block; }
 }
 
 .terminal-dashboard-empty-row {
@@ -348,7 +401,11 @@ input, select, textarea {
 
 .terminal-dashboard-tile-preview {
   &:focus, &:focus-within { outline: none; }
-  transition: width 0.25s ease, height 0.25s ease;
+  // HS-7096: no CSS transition on width / height — slider drags and window
+  // resizes must snap instantly, not animate. The only size-change animation
+  // the dashboard runs is the FLIP `transform` animation on the tile root
+  // during center / uncenter (centerTile / finishUncenterTile), which runs
+  // independently of the preview's own width / height values.
 }
 
 // HS-6835 + HS-6867: the centered tile is pulled out of the grid flow via
@@ -466,9 +523,63 @@ input, select, textarea {
 
 .terminal-dashboard-dedicated-body {
   flex: 1;
-  padding: 8px 12px 12px;
+  // HS-7098: symmetric padding on all four sides so the xterm pane reads as
+  // a visible terminal window rather than bleeding into the bar / viewport
+  // edges. The old `8px 12px 12px` landed different values on top vs sides
+  // vs bottom and the top was especially tight against the back-bar border,
+  // which is what the user originally flagged as "uneven margins + no bottom
+  // margin". A follow-up pass on the same ticket surfaced the real culprit:
+  // the xterm was opening directly inside this padded body, and FitAddon
+  // reads `getComputedStyle(parent).height / width` which with the app-wide
+  // `box-sizing: border-box` reset returns the border-box dimension (padding
+  // included) — fit then over-counted rows by `padding * 2 / cellHeight` and
+  // the bottom content got clipped off-screen. The xterm now opens inside an
+  // inner `-pane` wrapper (see below) that has no padding so fit reads the
+  // real available space.
+  padding: 16px;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
+  // Flex so the inner `-pane` can take the full content box.
+  display: flex;
+}
+
+.terminal-dashboard-dedicated-pane {
+  // HS-7098: the xterm's direct parent. No padding — FitAddon reads this
+  // element's computed width / height to decide cols × rows, and any padding
+  // here would push fit off the real pane geometry (see `-body` comment).
+  //
+  // The pane fills the body's content box (`flex: 1`) so fit sees the full
+  // available space, but it is ALSO a flex container that centers its xterm
+  // child. Rationale (HS-7098 follow-up): FitAddon picks integer cols × rows
+  // and xterm then inline-sizes `.xterm-screen` to `cols * cellW × rows *
+  // cellH` — which is necessarily ≤ the pane, leaving up to one cell of slop
+  // on the right / bottom. The outer `.xterm` root is a block-level wrapper
+  // that fills the pane horizontally, so that slop shows through as an
+  // "implied right margin" outside `.xterm-screen` but inside `.xterm`. By
+  // flex-centering here AND shrinking `.xterm` to its content width (see the
+  // `> .xterm` rule below), the slop becomes symmetric left/right padding
+  // and the frame around the rendered terminal reads as even.
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.terminal-dashboard-dedicated-pane > .xterm {
+  // HS-7098: shrink `.xterm` to its content (`.xterm-screen`) width so the
+  // flex centering above visibly centers the terminal rendering inside the
+  // pane. Without this, `.xterm` is block-level and fills the pane — the
+  // terminal content sits left-aligned with a gap on the right, which is
+  // what the user screenshotted as "outer element is a bit wider than the
+  // inner element". `.xterm-viewport` / `.xterm-helpers` are absolutely
+  // positioned, so they don't contribute to `.xterm`'s intrinsic width —
+  // only `.xterm-screen` (inline width set by xterm to `cols * cellW`) does.
+  flex: 0 0 auto;
 }
 
 .terminal-dashboard-tile-label {

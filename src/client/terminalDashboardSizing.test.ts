@@ -8,8 +8,10 @@ import {
   DASHBOARD_FALLBACK_ROWS,
   DASHBOARD_TARGET_NATURAL_HEIGHT_PX,
   DASHBOARD_TARGET_NATURAL_WIDTH_PX,
+  SLIDER_MIN_TILE_WIDTH,
   TILE_ASPECT,
-  tileTargetFromHistory,
+  tileNativeGridFromCellMetrics,
+  tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
 
 /**
@@ -268,46 +270,83 @@ describe('computeTileGridDims (HS-6931 follow-up)', () => {
 });
 
 /**
- * HS-6965 — after the server's history frame arrives on a dashboard tile, the
- * xterm MUST adopt the PTY's cols × rows (from the history frame) instead of
- * being force-reset back to a 4:3-optimised target. Otherwise live PTY bytes
- * formatted for the PTY's own geometry wrap at the wrong column inside the
- * xterm and leave a band of empty rows below the last line of real content —
- * the exact "weird wrapping" the bug screenshot showed. This test pins the
- * new policy: `tileTargetFromHistory` returns the history frame's dims
- * verbatim (clamped / floored only), so the caller can assign them straight
- * into `tile.targetCols` / `tile.targetRows`.
+ * HS-7031 — `tileWidthFromSlider` replaces the auto-fit `computeTileWidth`
+ * with a user-controlled linear interpolation between the ~133 px floor and
+ * the full root width. Verifies the ticket's own example: 133..1000 span,
+ * slider = 50 → 567. Unit-tested so we can refactor the slider wiring
+ * without breaking the math.
  */
-describe('tileTargetFromHistory (HS-6965)', () => {
-  it('returns the history frame dims verbatim so the xterm matches the PTY', () => {
-    // Typical drawer-attached PTY: wide, fewer rows (not 4:3).
-    expect(tileTargetFromHistory(235, 41)).toEqual({ cols: 235, rows: 41 });
-    // Typical freshly-spawned default: 80 × 24.
-    expect(tileTargetFromHistory(80, 24)).toEqual({ cols: 80, rows: 24 });
+describe('tileWidthFromSlider (HS-7031)', () => {
+  it('returns the min tile width at slider = 0', () => {
+    expect(tileWidthFromSlider(0, 1000)).toBe(SLIDER_MIN_TILE_WIDTH);
   });
 
-  it('does NOT fall back to a 4:3 natural target', () => {
-    // Regression: the old HS-6931 follow-up resized back to the measured-cell
-    // 4:3 grid (~160 × 60). The new policy trades that stable-aspect property
-    // for rendering correctness — if the PTY is at 235 × 41 we keep it, even
-    // though 235/41 ≈ 5.73 natural aspect leaves vertical letterboxing in the
-    // tile's 4:3 preview frame.
-    const out = tileTargetFromHistory(235, 41);
-    const naturalAspect = out.cols / out.rows;
-    expect(naturalAspect).toBeCloseTo(235 / 41, 6);
-    expect(Math.abs(naturalAspect - TILE_ASPECT)).toBeGreaterThan(1);
+  it('returns the root width at slider = 100', () => {
+    expect(tileWidthFromSlider(100, 1000)).toBe(1000);
   });
 
-  it('floors fractional history dims (xterm cols / rows are integers)', () => {
-    expect(tileTargetFromHistory(235.7, 41.2)).toEqual({ cols: 235, rows: 41 });
+  it('interpolates linearly at slider = 50 — matches the ticket example 133..1000 → 567', () => {
+    // SLIDER_MIN_TILE_WIDTH rounds to 133 (100 px × 4/3 = 133.33...).
+    // Midpoint of 133 and 1000 is 566.5, rounded → 567.
+    expect(tileWidthFromSlider(50, 1000)).toBe(567);
   });
 
-  it('falls back to the 80 × 60 defaults when history dims are non-positive / non-finite', () => {
+  it('clamps out-of-range slider values', () => {
+    expect(tileWidthFromSlider(-10, 1000)).toBe(SLIDER_MIN_TILE_WIDTH);
+    expect(tileWidthFromSlider(150, 1000)).toBe(1000);
+  });
+
+  it('survives a non-finite slider value by defaulting to 50', () => {
+    // NaN and ±Infinity are both "not finite"; both route through the 50
+    // midpoint fallback so a corrupted slider value never blows out the grid.
+    expect(tileWidthFromSlider(Number.NaN, 1000)).toBe(567);
+    expect(tileWidthFromSlider(Number.POSITIVE_INFINITY, 1000)).toBe(567);
+    expect(tileWidthFromSlider(Number.NEGATIVE_INFINITY, 1000)).toBe(567);
+  });
+
+  it('returns the floor when the root width is narrower than the floor', () => {
+    // A 100 px root gives no span to interpolate over — the floor wins at
+    // every slider value so the tile keeps its 100 px preview height.
+    expect(tileWidthFromSlider(0, 100)).toBe(SLIDER_MIN_TILE_WIDTH);
+    expect(tileWidthFromSlider(50, 100)).toBe(SLIDER_MIN_TILE_WIDTH);
+    expect(tileWidthFromSlider(100, 100)).toBe(SLIDER_MIN_TILE_WIDTH);
+  });
+});
+
+/**
+ * HS-7097 follow-up — the grid tile's xterm resizes to tile-native 4:3 dims
+ * after every history replay (and at initial mount) so its natural pixel
+ * aspect matches the tile's 4:3 preview frame. `tileNativeGridFromCellMetrics`
+ * is the pure policy function call-sites hit; it wraps `computeTileGridDims`
+ * so the tile's tile-native intent reads clearly at the call site.
+ *
+ * Previous iterations are superseded:
+ *   - HS-6965 `tileTargetFromHistory` (returned the PTY's dims verbatim) left
+ *     wide PTYs showing large bands of vertical dead space in the tile's 4:3
+ *     frame. Reverted.
+ *   - HS-7099 `tileResyncOnExitDedicated` (mirrored the dedicated view's fit
+ *     dims onto the tile) locked the tile's natural aspect to whatever non-
+ *     4:3 geometry the dedicated pane landed on. Reverted.
+ *   Both removed in HS-7097's follow-up — tile stays on tile-native 4:3
+ *   dims for its whole lifetime and accepts live-byte wrap at the tile's
+ *   narrower cols as the trade-off.
+ */
+describe('tileNativeGridFromCellMetrics (HS-7097 follow-up)', () => {
+  it('returns a 4:3-natural grid so the tile frame fills without letterboxing', () => {
+    // macOS ui-monospace 13 px measured ≈ 8 × 16 px per cell → 160 × 60 =
+    // 1280 × 960 = 4:3 natural.
+    const { cols, rows } = tileNativeGridFromCellMetrics(8, 16);
+    expect(cols).toBe(160);
+    expect(rows).toBe(60);
+    const naturalAspect = (cols * 8) / (rows * 16);
+    expect(Math.abs(naturalAspect - TILE_ASPECT)).toBeLessThan(0.01);
+  });
+
+  it('delegates to computeTileGridDims (including fallback on zero cells)', () => {
+    // A zero measurement (xterm not yet laid out) should still produce a
+    // usable grid — the same 80 × 60 fallback computeTileGridDims returns.
     const fallback = { cols: DASHBOARD_FALLBACK_COLS, rows: DASHBOARD_FALLBACK_ROWS };
-    expect(tileTargetFromHistory(0, 24)).toEqual({ cols: fallback.cols, rows: 24 });
-    expect(tileTargetFromHistory(80, 0)).toEqual({ cols: 80, rows: fallback.rows });
-    expect(tileTargetFromHistory(-1, -1)).toEqual(fallback);
-    expect(tileTargetFromHistory(Number.NaN, Number.NaN)).toEqual(fallback);
-    expect(tileTargetFromHistory(Number.POSITIVE_INFINITY, 24)).toEqual({ cols: fallback.cols, rows: 24 });
+    expect(tileNativeGridFromCellMetrics(0, 16)).toEqual(fallback);
+    expect(tileNativeGridFromCellMetrics(8, 0)).toEqual(fallback);
   });
 });

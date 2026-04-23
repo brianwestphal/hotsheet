@@ -12,10 +12,14 @@ pageRoutes.get('/', (c) => {
       <div className="app">
         <header className="app-header">
           <button className="terminal-dashboard-toggle" id="terminal-dashboard-toggle" title="Terminal dashboard" style="display:none">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
           </button>
           <div className="app-title" id="app-title-area">
             <h1>Hot Sheet</h1>
+          </div>
+          <div className="terminal-dashboard-sizer" id="terminal-dashboard-sizer" style="display:none" title="Tile size">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M14 15H9v-5"/><path d="M16 3h5v5"/><path d="M21 3 9 15"/></svg>
+            <input type="range" id="terminal-dashboard-size-slider" min="0" max="100" step="1" value="33" aria-label="Dashboard tile size" />
           </div>
           <div className="header-controls">
             <div className="search-box">

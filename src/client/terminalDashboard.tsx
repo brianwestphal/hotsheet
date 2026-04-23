@@ -11,14 +11,14 @@ import type { ProjectInfo } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import {
   computeTileScale,
-  computeTileWidth,
   DASHBOARD_FALLBACK_COLS,
   DASHBOARD_FALLBACK_ROWS,
   ROOT_PADDING,
   TILE_ASPECT,
-  tileTargetFromHistory,
+  tileNativeGridFromCellMetrics,
+  tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
-import { replayHistoryToTerm } from './terminalReplay.js';
+import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
 import { readXtermTheme } from './xtermTheme.js';
 
 /**
@@ -66,16 +66,26 @@ export interface TerminalListEntry {
   bellPending?: boolean;
   state?: TerminalSessionState;
   exitCode?: number | null;
+  /** HS-7065: set by `fetchProjectSections` from the list-response bucket the
+   *  entry came from. True for dynamic terminals (created ad-hoc), false for
+   *  configured terminals from settings.json. Closable vs. rename-only in the
+   *  right-click context menu. */
+  dynamic?: boolean;
 }
 
 interface DashboardTile {
   secret: string;
   terminalId: string;
   label: string;
+  /** HS-7065: context-menu gating. Dynamic terminals (created via the
+   *  drawer's `+` or the dashboard's §25.4 plus button) can be closed;
+   *  configured terminals from settings.json can only be renamed. */
+  dynamic: boolean;
   state: TerminalSessionState;
   exitCode: number | null;
   root: HTMLElement;
   preview: HTMLElement;
+  labelEl: HTMLElement;
   term: XTerm | null;
   xtermRoot: HTMLElement | null;
   ws: WebSocket | null;
@@ -84,13 +94,21 @@ interface DashboardTile {
    *  re-running the full global sizing pass. */
   gridPreviewWidth: number;
   gridPreviewHeight: number;
-  /** HS-6965: the xterm's current cols × rows. Seeded to the initial 80 × 60
-   *  placeholder at mount time, then overwritten by `connectTileSocket`'s
-   *  history-frame handler to match the PTY's real dims so the xterm
-   *  renders live bytes at the cols they were formatted for. (The earlier
-   *  HS-6931 follow-up picked a measured-cell 4:3 target here and force-
-   *  reset the xterm back to it after replay — exactly what caused the
-   *  HS-6965 wrapping bug.) */
+  /** The xterm's current cols × rows. Seeded to the initial 80 × 60
+   *  placeholder at mount time, then overwritten to tile-native 4:3 dims
+   *  once xterm has laid out enough to report cell metrics. Held on the
+   *  tile (rather than recomputed from cell metrics each time) so the
+   *  exit-dedicated path can re-send the resize message without needing a
+   *  fresh xterm-screen measurement.
+   *
+   *  HS-7097: the tile's history handler also pushes these dims to the
+   *  server-side PTY via a 'resize' message — that was the missing piece in
+   *  the previous attempts. Without resizing the PTY, a TUI like nano kept
+   *  drawing for the drawer's wide-short geometry and the tile's xterm
+   *  showed nano's footer at row 14-of-60 with rows 15-60 empty (HS-6965 /
+   *  HS-7099 reverts both struggled with this same band of dead space).
+   *  Driving the PTY makes nano SIGWINCH-redraw to fill the new geometry,
+   *  same as the dedicated view already does via fit(). */
   targetCols: number;
   targetRows: number;
   /** HS-6867: while centered, a placeholder sits in the tile's original
@@ -98,6 +116,17 @@ interface DashboardTile {
    *  is reparented to a fixed-position overlay that animates from the
    *  placeholder's position/size to the centered position/size. */
   slotPlaceholder: HTMLElement | null;
+  /** HS-7097: observer on `.xterm-screen` so the tile's scale is re-applied
+   *  every time xterm's renderer updates the screen's natural pixel dims.
+   *  Previously the rescale was fired with two `requestAnimationFrame`s after
+   *  `term.resize(..)`, but that raced xterm's own render scheduler — on a
+   *  first-history-after-mount, both our rAFs could land before xterm's
+   *  renderer had committed the new `.xterm-screen` inline width / height,
+   *  so `applyTileScale` read pre-resize dims and built a scale for the old
+   *  grid. The observer is authoritative: any change to `.xterm-screen`'s
+   *  size (initial render, post-resize render, font-load reflow, whatever)
+   *  triggers the rescale directly. */
+  screenObserver: ResizeObserver | null;
 }
 
 const liveTiles = new Map<string, DashboardTile>();
@@ -138,6 +167,18 @@ let resizeHandler: (() => void) | null = null;
 let resizeRaf: number | null = null;
 /** HS-6837: subscription handle for the cross-project bell long-poll (§24). */
 let bellUnsubscribe: (() => void) | null = null;
+/** HS-7031: DOM refs for the manual size slider. Shown only while the
+ *  dashboard is active (the CSS sizer container toggles `display` on enter
+ *  / exit), defaults to the middle of its range. */
+let sizerContainer: HTMLElement | null = null;
+let sizeSlider: HTMLInputElement | null = null;
+/** Last slider value applied — survives between enter / exit calls so the
+ *  user's preferred tile size sticks in-session (reset on page reload).
+ *  HS-7129: default is 33 — the previous 50 midpoint produced tiles big
+ *  enough that only 1-2 fit per row on a typical laptop, defeating the
+ *  dashboard's "see every terminal at a glance" purpose. 33 lines up with
+ *  three tiles across the typical root width. */
+let sliderValue = 33;
 
 export function initTerminalDashboard(): void {
   // Tauri-only gate — the terminal feature (§22.11) is desktop-only, and the
@@ -152,6 +193,19 @@ export function initTerminalDashboard(): void {
   toggleButton.addEventListener('click', () => {
     if (active) exitDashboard();
     else enterDashboard();
+  });
+
+  // HS-7031: wire up the size slider. It lives in the app-header (rendered
+  // into pages.tsx with display:none) so it stays next to the project-tab
+  // strip — we just toggle visibility + react to `input` events while the
+  // dashboard is active.
+  sizerContainer = document.getElementById('terminal-dashboard-sizer');
+  sizeSlider = document.getElementById('terminal-dashboard-size-slider') as HTMLInputElement | null;
+  sizeSlider?.addEventListener('input', () => {
+    if (sizeSlider === null) return;
+    const parsed = Number.parseInt(sizeSlider.value, 10);
+    sliderValue = Number.isFinite(parsed) ? parsed : 33;
+    if (active && rootElement !== null) applyTileSizing(rootElement);
   });
 
   // Esc routing:
@@ -201,6 +255,8 @@ export function exitDashboard(): void {
     rootElement.replaceChildren();
   }
   if (toggleButton !== null) toggleButton.classList.remove('active');
+  // HS-7031: hide the slider again — it's a dashboard-only control.
+  if (sizerContainer !== null) sizerContainer.style.display = 'none';
   if (resizeHandler !== null) {
     window.removeEventListener('resize', resizeHandler);
     resizeHandler = null;
@@ -242,6 +298,10 @@ function teardownAllTiles(): void {
 }
 
 function disposeTile(tile: DashboardTile): void {
+  if (tile.screenObserver !== null) {
+    tile.screenObserver.disconnect();
+    tile.screenObserver = null;
+  }
   if (tile.ws !== null) {
     try { tile.ws.close(); } catch { /* already closed */ }
     tile.ws = null;
@@ -260,6 +320,9 @@ function enterDashboard(): void {
   active = true;
   document.body.classList.add(BODY_CLASS);
   if (toggleButton !== null) toggleButton.classList.add('active');
+  // HS-7031: reveal the slider + reflect the remembered session-scope value.
+  if (sizerContainer !== null) sizerContainer.style.display = '';
+  if (sizeSlider !== null) sizeSlider.value = String(sliderValue);
   if (rootElement !== null) {
     rootElement.style.display = '';
     void renderDashboardGrid(rootElement);
@@ -329,7 +392,12 @@ async function fetchProjectSections(): Promise<ProjectSectionData[]> {
       const listed = await apiWithSecret<{ configured: TerminalListEntry[]; dynamic: TerminalListEntry[] }>(
         '/terminal/list', project.secret,
       );
-      terminals = [...listed.configured, ...listed.dynamic];
+      // HS-7065: tag each entry with which bucket it came from so the tile's
+      // context menu knows whether Close Tab is allowed (dynamic only).
+      terminals = [
+        ...listed.configured.map(t => ({ ...t, dynamic: false })),
+        ...listed.dynamic.map(t => ({ ...t, dynamic: true })),
+      ];
     } catch { /* project's terminal list unavailable — render empty section */ }
     sections.push({ project, terminals });
   }
@@ -342,12 +410,26 @@ function renderProjectSection(data: ProjectSectionData): HTMLElement {
     ? `${data.project.name} (${count} ${count === 1 ? 'terminal' : 'terminals'})`
     : data.project.name;
 
+  // HS-7064: a lucide `plus` button sits in the heading row for each project
+  // so the user can create a new terminal for that project without leaving
+  // the dashboard. Uses the existing POST /api/terminal/create path (dynamic
+  // terminal, lazy spawn) — the same call the drawer's `+` button makes.
   const section = toElement(
     <section className="terminal-dashboard-section" data-secret={data.project.secret}>
-      <h2 className="terminal-dashboard-heading">{headingText}</h2>
+      <div className="terminal-dashboard-heading-row">
+        <h2 className="terminal-dashboard-heading">{headingText}</h2>
+        <button
+          className="terminal-dashboard-add-terminal-btn"
+          title="Add terminal to this project"
+          aria-label={`Add terminal to ${data.project.name}`}
+          data-secret={data.project.secret}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        </button>
+      </div>
       {count === 0 ? (
         <div className="terminal-dashboard-empty-row">
-          No terminals configured — open Settings → Terminal to add one.
+          No terminals configured.
         </div>
       ) : (
         <div className="terminal-dashboard-grid"></div>
@@ -361,7 +443,56 @@ function renderProjectSection(data: ProjectSectionData): HTMLElement {
       grid.appendChild(renderTile(data.project.secret, terminal));
     }
   }
+
+  const addBtn = section.querySelector<HTMLButtonElement>('.terminal-dashboard-add-terminal-btn');
+  addBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    void createDashboardTerminal(data.project.secret);
+  });
   return section;
+}
+
+/**
+ * HS-7064: create a dynamic terminal via the project's `/api/terminal/create`
+ * endpoint, then rebuild the dashboard so the new tile appears in the
+ * section. Matches the drawer's `+` button behaviour: no prompt, uses the
+ * default shell, lazy spawn (PTY starts when the tile is enlarged).
+ */
+async function createDashboardTerminal(secret: string): Promise<void> {
+  try {
+    await apiWithSecret<{ config: { id: string } }>('/terminal/create', secret, { method: 'POST' });
+  } catch (err) {
+    console.error('terminalDashboard: create terminal failed', err);
+    return;
+  }
+  refreshDashboardGrid();
+}
+
+/**
+ * Dispose every live tile and re-fetch the full project / terminal list.
+ * Used after terminal lifecycle changes that add or remove tiles (HS-7064
+ * add, HS-7065 close). Keeps the disposal path aligned with `exitDashboard`
+ * so WebSockets and xterm instances don't leak.
+ */
+function refreshDashboardGrid(): void {
+  if (!active || rootElement === null) return;
+  // HS-6867 / HS-6835: if a tile is currently centered, drop it back into the
+  // grid first so the placeholder / fixed-position state doesn't survive the
+  // dispose-and-rerender.
+  if (centeredTile !== null) {
+    if (centeredTile.slotPlaceholder !== null) {
+      centeredTile.slotPlaceholder.remove();
+      centeredTile.slotPlaceholder = null;
+    }
+    centeredTile.root.classList.remove('centered');
+    centeredTile.root.style.transition = '';
+    centeredTile.root.style.transform = '';
+    centeredTile = null;
+    removeCenterBackdrop();
+  }
+  for (const tile of liveTiles.values()) disposeTile(tile);
+  liveTiles.clear();
+  void renderDashboardGrid(rootElement);
 }
 
 /**
@@ -387,16 +518,19 @@ function renderTile(secret: string, terminal: TerminalListEntry): HTMLElement {
     </div>
   );
   const preview = tileRoot.querySelector<HTMLElement>('.terminal-dashboard-tile-preview');
-  if (preview === null) return tileRoot;
+  const labelEl = tileRoot.querySelector<HTMLElement>('.terminal-dashboard-tile-label');
+  if (preview === null || labelEl === null) return tileRoot;
 
   const tile: DashboardTile = {
     secret,
     terminalId: terminal.id,
     label,
+    dynamic: terminal.dynamic === true,
     state,
     exitCode,
     root: tileRoot,
     preview,
+    labelEl,
     term: null,
     xtermRoot: null,
     ws: null,
@@ -405,6 +539,7 @@ function renderTile(secret: string, terminal: TerminalListEntry): HTMLElement {
     targetCols: DASHBOARD_INITIAL_COLS,
     targetRows: DASHBOARD_INITIAL_ROWS,
     slotPlaceholder: null,
+    screenObserver: null,
   };
   liveTiles.set(tileKey(secret, terminal.id), tile);
 
@@ -418,6 +553,11 @@ function renderTile(secret: string, terminal: TerminalListEntry): HTMLElement {
   // xterm's child has pointer-events: none in grid view.
   tileRoot.addEventListener('click', (e) => { onTileClick(tile, e); });
   tileRoot.addEventListener('dblclick', (e) => { onTileDblClick(tile, e); });
+  // HS-7065: right-click opens a small context menu with Close Tab (dynamic
+  // terminals only) and Rename... — same operations as the drawer's tab
+  // context menu minus the close-left / close-right options that don't map
+  // to a 2D grid layout.
+  tileRoot.addEventListener('contextmenu', (e) => { onTileContextMenu(tile, e); });
   return tileRoot;
 }
 
@@ -457,6 +597,25 @@ function clearTileBell(tile: DashboardTile): void {
     method: 'POST',
     body: { terminalId: tile.terminalId },
   }).catch(() => { /* server restart / network blip — bell state will resync via long-poll */ });
+}
+
+/**
+ * Read xterm's measured cell metrics off `.xterm-screen` and return tile-
+ * native 4:3 cols × rows for the tile's xterm. Returns null if xterm hasn't
+ * laid out yet (no `.xterm-screen` child, or zero / non-finite measured
+ * dims) — caller should skip the resize and let the next mount / render
+ * tick try again. The `.xterm-screen` inline width is xterm's own
+ * `cols * cellWidth`, so dividing by the current cols/rows recovers the
+ * measured cell pixels directly (HS-7097 follow-up).
+ */
+function tileNativeDimsFromXterm(term: XTerm, xtermRoot: HTMLElement): { cols: number; rows: number } | null {
+  const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+  if (screen === null) return null;
+  if (term.cols <= 0 || term.rows <= 0) return null;
+  const cellW = screen.offsetWidth / term.cols;
+  const cellH = screen.offsetHeight / term.rows;
+  if (!Number.isFinite(cellW) || !Number.isFinite(cellH) || cellW <= 0 || cellH <= 0) return null;
+  return tileNativeGridFromCellMetrics(cellW, cellH);
 }
 
 /**
@@ -501,12 +660,39 @@ function mountTileXterm(tile: DashboardTile): void {
   tile.targetCols = term.cols;
   tile.targetRows = term.rows;
 
-  // Re-run the scale pass once xterm has committed `.xterm-screen`'s
-  // dimensions (its renderer writes those on the next animation frame, so
-  // reading offsetWidth synchronously right after `open()` returns 0).
-  // Needed even before history arrives so the initial 80 × 60 xterm renders
-  // inside the tile with the right letterbox offset instead of at (0, 0).
-  requestAnimationFrame(() => { reapplyTileScaleFromPreview(tile); });
+  // HS-7097: observe `.xterm-screen` so every xterm render (initial mount,
+  // post-`term.resize()`, post-history-replay, post-font-load — whatever
+  // changes the screen element's inline width / height) automatically
+  // re-runs the scale pass. Replaces the earlier rAF-chain in
+  // `connectTileSocket` / `exitDedicatedView` which raced xterm's own render
+  // scheduler and occasionally fired before `.xterm-screen`'s new dims had
+  // been committed, leaving the tile scale pinned to the pre-resize grid.
+  const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+  if (screen !== null) {
+    const observer = new ResizeObserver(() => { reapplyTileScaleFromPreview(tile); });
+    observer.observe(screen);
+    tile.screenObserver = observer;
+  }
+  // Kick off the initial scale once xterm has committed `.xterm-screen`'s
+  // initial dimensions. The observer below will also pick up that first
+  // render, but the explicit rAF keeps the behaviour deterministic for tests
+  // / short-lived tiles that might not survive until the observer callback.
+  requestAnimationFrame(() => {
+    // HS-7097 follow-up: resize the xterm down to tile-native 4:3 dims so the
+    // pre-history placeholder (80 × 60 = 2:3 natural) renders at the tile's
+    // 4:3 aspect instead of showing horizontal letterboxing. `.xterm-screen`'s
+    // ResizeObserver below will pick up the post-resize render and run the
+    // scale pass authoritatively.
+    if (tile.term !== null && tile.xtermRoot !== null) {
+      const native = tileNativeDimsFromXterm(tile.term, tile.xtermRoot);
+      if (native !== null) {
+        try { tile.term.resize(native.cols, native.rows); } catch { /* xterm disposed */ }
+        tile.targetCols = native.cols;
+        tile.targetRows = native.rows;
+      }
+    }
+    reapplyTileScaleFromPreview(tile);
+  });
 
   // HS-6835: wire keystrokes to the WebSocket. Grid-view tiles can't focus
   // (pointer-events: none + hidden helper textarea), so this only fires while
@@ -552,19 +738,38 @@ function connectTileSocket(tile: DashboardTile): void {
         const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
         if (msg.type === 'history' && typeof msg.bytes === 'string' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
           replayHistoryToTerm(tile.term, { bytes: msg.bytes, cols: msg.cols, rows: msg.rows });
-          // HS-6965: adopt the PTY's cols × rows as the tile's authoritative
-          // grid. The PTY formats all future bytes for its own geometry, so the
-          // xterm MUST match those dims — force-resizing it back to a
-          // 4:3-optimised target (the old HS-6931 follow-up did this) caused
-          // the PTY's output to wrap at the wrong column and leave a band of
-          // empty rows below the last line of real content. We trade the
-          // "stable 4:3 natural aspect" property for rendering correctness;
-          // `reapplyTileScaleFromPreview` re-runs the uniform-fit scale so
-          // the new natural size still letterboxes cleanly inside the tile.
-          const next = tileTargetFromHistory(msg.cols, msg.rows);
-          tile.targetCols = next.cols;
-          tile.targetRows = next.rows;
-          reapplyTileScaleFromPreview(tile);
+          // HS-7097 follow-up: after replaying scrollback at the PTY's cols ×
+          // rows (so the bytes render in the geometry they were formatted
+          // for), resize BOTH the local xterm AND the server-side PTY to the
+          // tile-native 4:3 dims. The PTY resize is essential — without it,
+          // a drawer-attached PTY at wide-short dims (e.g. 14 × 197) keeps
+          // sending bytes formatted for that geometry, so the tile's xterm
+          // shows nano's footer at row 14 of a 60-row buffer with rows 15-60
+          // empty (the bug from HS-7097's screenshots). Pushing the PTY to
+          // tile-native 4:3 fires SIGWINCH at the running TUI; nano / vim /
+          // less / etc. then redraw to fill the new geometry, and the tile
+          // shows a usable, aspect-correct preview.
+          //
+          // This intentionally drives the PTY just like the dedicated view
+          // does (enterDedicatedView sends a 'resize' message after fit()).
+          // When the user is on the dashboard, dashboard tiles win the
+          // resize war; when they switch back to the drawer, the drawer's
+          // own fit() resizes the PTY back to drawer dims.
+          //
+          // The `.xterm-screen` ResizeObserver in `mountTileXterm` picks up
+          // both the local resize and the post-SIGWINCH redraw and re-runs
+          // the scale pass, so the visible scale stays in sync.
+          if (tile.xtermRoot !== null) {
+            const native = tileNativeDimsFromXterm(tile.term, tile.xtermRoot);
+            if (native !== null) {
+              try { tile.term.resize(native.cols, native.rows); } catch { /* xterm disposed under us */ }
+              tile.targetCols = native.cols;
+              tile.targetRows = native.rows;
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'resize', cols: native.cols, rows: native.rows }));
+              }
+            }
+          }
         }
       } catch { /* non-JSON control frame — ignore */ }
     }
@@ -706,14 +911,26 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
           <span className="terminal-dashboard-dedicated-terminal">{tile.label}</span>
         </div>
       </div>
-      <div className="terminal-dashboard-dedicated-body"></div>
+      <div className="terminal-dashboard-dedicated-body">
+        {/* HS-7098: the xterm is opened inside this inner `-pane` wrapper, not
+         *  directly in `-body`. FitAddon reads `getComputedStyle(parent).height
+         *  / width` to decide cols × rows; `box-sizing: border-box` (app-wide
+         *  reset) makes those values include the parent's padding, so putting
+         *  padding on the xterm's direct parent made fit overcount the
+         *  available space by `padding * 2` and the bottom rows got clipped
+         *  off-screen. Structure it so padding lives on `-body` (visual frame)
+         *  and the xterm's direct parent `-pane` has none — fit now sees the
+         *  real available space and the full content fits inside the 16 px
+         *  frame on all four sides. */}
+        <div className="terminal-dashboard-dedicated-pane"></div>
+      </div>
     </div>
   );
   rootElement.appendChild(overlay);
 
-  const body = overlay.querySelector<HTMLElement>('.terminal-dashboard-dedicated-body');
+  const pane = overlay.querySelector<HTMLElement>('.terminal-dashboard-dedicated-pane');
   const backBtn = overlay.querySelector<HTMLElement>('.terminal-dashboard-dedicated-back');
-  if (body === null || backBtn === null) return;
+  if (pane === null || backBtn === null) return;
   backBtn.addEventListener('click', () => { exitDedicatedView(); });
 
   const term = new XTerm({
@@ -727,18 +944,18 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
-  term.open(body);
+  term.open(pane);
   // HS-6898: defer the initial fit so the flex-1 body has its final size in
   // layout before fit() reads dimensions. Without this, fit() can measure a
   // pre-layout size and leave xterm at its default 80 cols — exactly the
   // wrong-width regression from the bug report. ResizeObserver keeps the
   // fit in sync on window resizes while the dedicated view is open.
   const runFit = (): void => {
-    try { fit.fit(); } catch { /* body not ready yet */ }
+    try { fit.fit(); } catch { /* pane not ready yet */ }
   };
   requestAnimationFrame(runFit);
   const bodyResizeObserver = new ResizeObserver(runFit);
-  bodyResizeObserver.observe(body);
+  bodyResizeObserver.observe(pane);
 
   const encoder = new TextEncoder();
   term.onData((data) => {
@@ -750,6 +967,15 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
     if (dedicatedView?.ws !== null && dedicatedView?.ws.readyState === WebSocket.OPEN) {
       dedicatedView.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     }
+    // HS-7097 follow-up: the grid tile's xterm stays pinned to its own
+    // tile-native 4:3 dims throughout the dedicated view's lifetime. Mirroring
+    // the dedicated view's fit() geometry onto the tile (as HS-7099 did) meant
+    // the tile's natural aspect tracked whatever wide / short geometry the
+    // dedicated pane landed on, which is exactly what left the grid tile's
+    // 4:3 frame with a band of vertical dead space below the content. Live
+    // bytes broadcast by the server at the dedicated view's new dims now
+    // wrap inside the tile's narrower xterm buffer — accepted trade-off for
+    // an aspect-correct preview (see `DashboardTile.targetCols` JSDoc).
   });
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -770,7 +996,10 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
       try {
         const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
         if (msg.type === 'history' && typeof msg.bytes === 'string' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
-          replayHistoryToTerm(term, { bytes: msg.bytes, cols: msg.cols, rows: msg.rows });
+          // HS-7063: replay + refit, because replayHistoryToTerm resizes xterm
+          // to the history's cols × rows which fires onResize which shrinks
+          // the PTY. The dedicated view wants the PTY at the full pane size.
+          applyDedicatedHistoryFrame(term, fit, { bytes: msg.bytes, cols: msg.cols, rows: msg.rows });
         }
       } catch { /* ignore non-JSON control frames */ }
     }
@@ -790,6 +1019,32 @@ function exitDedicatedView(): void {
   }
   try { view.term.dispose(); } catch { /* no-op */ }
   view.overlay.remove();
+
+  // HS-7097: re-claim the PTY at tile-native 4:3 dims. While the dedicated
+  // view was up it pushed the PTY to the dedicated pane's geometry (via
+  // fit() + 'resize' message), which is typically wider / taller than the
+  // tile and would otherwise leave the tile xterm displaying bytes
+  // formatted for the wrong shape after the dedicated view closes. The
+  // tile's `connectTileSocket` history handler runs the same resize on
+  // first attach; this is the symmetric exit-path version so a TUI like
+  // nano gets a SIGWINCH and redraws to fill the tile again.
+  if (view.tile.ws !== null && view.tile.ws.readyState === WebSocket.OPEN
+      && view.tile.targetCols > 0 && view.tile.targetRows > 0) {
+    try {
+      view.tile.ws.send(JSON.stringify({
+        type: 'resize',
+        cols: view.tile.targetCols,
+        rows: view.tile.targetRows,
+      }));
+    } catch { /* ws closed under us — tile teardown will follow */ }
+  }
+
+  // Recompute global grid sizing. If the window was resized while the
+  // dedicated view was up, the other tiles' cached dims may be stale — this
+  // is a cheap no-op when nothing changed and fixes the "some tiles wrong
+  // size" case when something did.
+  if (rootElement !== null) applyTileSizing(rootElement);
+
   // Restore prior centered state if there was one.
   if (view.priorCenteredTile !== null) centerTile(view.priorCenteredTile);
 }
@@ -848,22 +1103,11 @@ function centerTile(tile: DashboardTile): void {
   tile.root.style.left = `${targetLeft}px`;
   tile.root.style.top = `${targetTop}px`;
   tile.root.style.width = `${previewWidth}px`;
-  // HS-6964: snap the preview to its centered dims with NO CSS width / height
-  // transition. The outer FLIP transform is the grow animation; if the
-  // preview's default `transition: width 0.25s ease, height 0.25s ease` also
-  // fires here the two animations compound — at t=0 the preview CSS width
-  // is still the grid-slot size but the outer scale shrinks the whole tile,
-  // leaving a progressively-shrinking band of dead space between preview
-  // and tile edges until both settle. Disable the transition for this
-  // write, force a reflow so the new size commits, then restore the CSS
-  // default so later (e.g. uncenter) writes can still transition if they
-  // use the same rule.
-  const prevPreviewTransition = tile.preview.style.transition;
-  tile.preview.style.transition = 'none';
+  // HS-7096: the preview's CSS no longer transitions width / height (only the
+  // outer FLIP transform animates), so these writes snap — no more
+  // preview/tile size mismatch band during the center animation.
   tile.preview.style.width = `${previewWidth}px`;
   tile.preview.style.height = `${previewHeight}px`;
-  void tile.preview.offsetWidth;
-  tile.preview.style.transition = prevPreviewTransition;
   if (tile.xtermRoot !== null) applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
 
   mountCenterBackdrop();
@@ -907,29 +1151,24 @@ function recenterTile(tile: DashboardTile): void {
   const targetLeft = (vw - previewWidth) / 2;
   const targetTop = (vh - previewHeight) / 2;
 
-  // Disable the outer transition briefly so the position snap doesn't ghost
-  // across the viewport; the centered tile's FLIP animation only runs on
-  // center / uncenter, not on resize.
+  // HS-7096: the centered tile's FLIP animation only runs on center / uncenter,
+  // not on resize, so the position / size writes must snap. Disable the outer
+  // transform transition briefly (the tile root has `transition: transform ...`
+  // set inline while centered), then restore it so a subsequent uncenter still
+  // animates. The preview's own width / height no longer has a CSS transition
+  // (HS-7096) so those just snap.
   const prevTileTransition = tile.root.style.transition;
   tile.root.style.transition = 'none';
   tile.root.style.left = `${targetLeft}px`;
   tile.root.style.top = `${targetTop}px`;
   tile.root.style.width = `${previewWidth}px`;
-
-  // Same trick on the preview so the inner width / height snap without
-  // firing their CSS transition.
-  const prevPreviewTransition = tile.preview.style.transition;
-  tile.preview.style.transition = 'none';
   tile.preview.style.width = `${previewWidth}px`;
   tile.preview.style.height = `${previewHeight}px`;
 
   if (tile.xtermRoot !== null) applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
 
-  // Force reflow then restore transitions so later user-driven transitions
-  // (uncenter FLIP, normal CSS transitions elsewhere) still work.
   void tile.root.offsetWidth;
   tile.root.style.transition = prevTileTransition;
-  tile.preview.style.transition = prevPreviewTransition;
 }
 
 function uncenterTile(): void {
@@ -986,20 +1225,13 @@ function finishUncenterTile(tile: DashboardTile, placeholder: HTMLElement | null
   tile.root.style.top = '';
   // HS-6964: centerTile wrote `tile.root.style.width = previewWidth`; restore
   // the grid-slot width so `applyTileSizing`'s next pass doesn't see a stale
-  // inline width larger than the computed grid width. Disable the preview's
-  // CSS width / height transition for this snap-back — without it the
-  // preview would animate from previewWidth down to gridPreviewWidth over
-  // 0.25s AFTER the outer FLIP has already finished, briefly overflowing
-  // the tile box that just shrank back into its grid slot.
+  // inline width. HS-7096 removed the preview's CSS width / height transition
+  // so these writes snap.
   if (tile.gridPreviewWidth > 0) {
     tile.root.style.width = `${tile.gridPreviewWidth}px`;
   }
-  const prevPreviewTransition = tile.preview.style.transition;
-  tile.preview.style.transition = 'none';
   tile.preview.style.width = `${tile.gridPreviewWidth}px`;
   tile.preview.style.height = `${tile.gridPreviewHeight}px`;
-  void tile.preview.offsetWidth;
-  tile.preview.style.transition = prevPreviewTransition;
   if (tile.xtermRoot !== null && tile.gridPreviewWidth > 0 && tile.gridPreviewHeight > 0) {
     applyTileScale(tile.xtermRoot, tile.gridPreviewWidth, tile.gridPreviewHeight);
   }
@@ -1033,6 +1265,168 @@ function removeCenterBackdrop(): void {
   centerBackdrop = null;
 }
 
+/**
+ * HS-7065: right-click on any dashboard tile opens a small context menu.
+ * Close Tab is only enabled for dynamic terminals (configured ones live in
+ * settings.json and must be removed from there). Rename... is always
+ * available and is transient — it updates the tile's label in-place but does
+ * not persist to settings.json, matching the drawer tab's Rename behaviour
+ * (HS-6668).
+ *
+ * Close-left / Close-right variants from the drawer's context menu are
+ * intentionally omitted — in a 2D project grid the linear "left / right"
+ * concept isn't useful (per HS-7065 ticket note).
+ */
+function onTileContextMenu(tile: DashboardTile, e: MouseEvent): void {
+  e.preventDefault();
+  e.stopPropagation();
+  dismissDashboardTileContextMenu();
+
+  const closeDisabled = !tile.dynamic;
+  const menu = toElement(
+    <div
+      className="terminal-dashboard-tile-context-menu command-log-context-menu"
+      style={`left:${e.clientX}px;top:${e.clientY}px`}
+    >
+      <div
+        className={`context-menu-item${closeDisabled ? ' disabled' : ''}`}
+        data-action="close"
+        title={closeDisabled ? 'Configured terminals must be removed from Settings → Terminal' : undefined}
+      >
+        Close Tab
+      </div>
+      <div className="context-menu-separator"></div>
+      <div className="context-menu-item" data-action="rename">Rename...</div>
+    </div>
+  );
+
+  const bind = (action: string, handler: () => void): void => {
+    const el = menu.querySelector<HTMLElement>(`[data-action="${action}"]`);
+    if (el === null || el.classList.contains('disabled')) return;
+    el.addEventListener('click', () => {
+      dismissDashboardTileContextMenu();
+      handler();
+    });
+  };
+
+  bind('close', () => { void closeDashboardTile(tile); });
+  bind('rename', () => { openDashboardTileRename(tile); });
+
+  document.body.appendChild(menu);
+
+  // Clamp to viewport (same pattern as the drawer's `showTabContextMenu`).
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 4}px`;
+  if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+
+  setTimeout(() => {
+    const close = (ev: MouseEvent): void => {
+      if (!menu.contains(ev.target as Node)) {
+        dismissDashboardTileContextMenu();
+        document.removeEventListener('click', close, true);
+        document.removeEventListener('contextmenu', close, true);
+      }
+    };
+    document.addEventListener('click', close, true);
+    document.addEventListener('contextmenu', close, true);
+  }, 0);
+}
+
+function dismissDashboardTileContextMenu(): void {
+  document.querySelector('.terminal-dashboard-tile-context-menu')?.remove();
+}
+
+/**
+ * HS-7065: close a dynamic terminal from the dashboard. Mirrors the drawer's
+ * close flow — if the session is alive, show an in-app confirm before
+ * destroying so the user doesn't kill a running process by accident; exited
+ * or never-spawned sessions close silently.
+ */
+async function closeDashboardTile(tile: DashboardTile): Promise<void> {
+  if (!tile.dynamic) return; // configured terminals can't be closed from here
+  if (tile.state === 'alive') {
+    const { confirmDialog } = await import('./confirm.js');
+    const confirmed = await confirmDialog({
+      title: 'Close terminal?',
+      message: `Close terminal "${tile.label}"? Its running process will be stopped.`,
+      confirmLabel: 'Close',
+      danger: true,
+    });
+    if (!confirmed) return;
+  }
+  try {
+    await apiWithSecret('/terminal/destroy', tile.secret, {
+      method: 'POST',
+      body: { terminalId: tile.terminalId },
+    });
+  } catch (err) {
+    console.error('terminalDashboard: close terminal failed', err);
+    return;
+  }
+  refreshDashboardGrid();
+}
+
+/**
+ * HS-7065: rename a dashboard tile in place. Reuses the same transient
+ * (non-persisted) semantics as the drawer's Rename... (HS-6668) — updates
+ * the tile's label on the client only; a full dashboard refresh or page
+ * reload restores the original configured / derived name. For dynamic
+ * terminals the name also drops back to its original on refresh because
+ * `/api/terminal/list` is the source of truth.
+ */
+function openDashboardTileRename(tile: DashboardTile): void {
+  document.querySelectorAll('.terminal-rename-overlay').forEach(el => el.remove());
+
+  const overlay = toElement(
+    <div className="cmd-editor-overlay terminal-rename-overlay">
+      <div className="cmd-editor-dialog">
+        <div className="cmd-editor-dialog-header">
+          <span>Rename Terminal</span>
+          <button className="cmd-editor-close-btn" title="Close">{'×'}</button>
+        </div>
+        <div className="cmd-editor-dialog-body">
+          <div className="settings-field">
+            <label>Tab name</label>
+            <input type="text" className="term-rename-input" value={tile.label} />
+            <span className="settings-hint">This rename is temporary — it doesn't change saved settings and resets on reload or project switch.</span>
+          </div>
+        </div>
+        <div className="cmd-editor-dialog-footer">
+          <button className="btn btn-sm cmd-editor-cancel-btn">Cancel</button>
+          <button className="btn btn-sm btn-primary cmd-editor-done-btn">Rename</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const input = overlay.querySelector<HTMLInputElement>('.term-rename-input');
+  if (input === null) { overlay.remove(); return; }
+
+  const apply = (): void => {
+    const next = input.value.trim();
+    const resolved = next === '' ? tile.label : next;
+    tile.label = resolved;
+    tile.labelEl.textContent = resolved;
+    tile.labelEl.setAttribute('title', resolved);
+    overlay.remove();
+  };
+
+  const cancel = (): void => { overlay.remove(); };
+
+  overlay.querySelector('.cmd-editor-close-btn')?.addEventListener('click', cancel);
+  overlay.querySelector('.cmd-editor-cancel-btn')?.addEventListener('click', cancel);
+  overlay.querySelector('.cmd-editor-done-btn')?.addEventListener('click', apply);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) cancel(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); apply(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+
+  document.body.appendChild(overlay);
+  input.focus();
+  input.select();
+}
+
 function tileLabel(terminal: TerminalListEntry): string {
   if (typeof terminal.name === 'string' && terminal.name !== '') return terminal.name;
   const word = terminal.command.trim().split(/\s+/)[0] ?? '';
@@ -1043,30 +1437,22 @@ function tileLabel(terminal: TerminalListEntry): string {
 }
 
 /**
- * HS-6833: global tile sizing. Iterate candidate widths from largest to
- * smallest; pick the largest where every tile at every project fits the
- * viewport height without scrolling. Fall back to the 100 px floor and
- * allow the root to vertical-scroll when even the floor doesn't fit.
+ * HS-7031: tile sizing is driven by the user-controlled size slider (the
+ * auto-fit logic from HS-6833 was removed — the explicit slider is easier
+ * to reason about than the opaque "pick the largest that fits" algorithm).
+ * The slider value in 0..100 maps linearly to a tile width between the
+ * ~133 px floor (100 px preview height × 4:3) and the full root width. The
+ * root allows vertical scroll if the chosen tile height overflows, matching
+ * the earlier behaviour at the floor.
  *
- * Exported for unit testing via `computeTileWidth()`.
+ * `tileWidthFromSlider` is kept in `terminalDashboardSizing.ts` so the math
+ * stays unit-testable without pulling in JSX / DOM.
  */
 export function applyTileSizing(root: HTMLElement): void {
   const rootWidth = Math.max(0, root.clientWidth - ROOT_PADDING * 2);
-  const rootHeight = root.clientHeight;
-  const sections = Array.from(root.querySelectorAll<HTMLElement>('.terminal-dashboard-section'));
-  if (sections.length === 0 || rootWidth <= 0) return;
+  if (rootWidth <= 0) return;
 
-  const projectTileCounts = sections.map(s =>
-    s.querySelectorAll<HTMLElement>('.terminal-dashboard-tile').length,
-  );
-  const hasEmptySection = sections.some((_, i) => projectTileCounts[i] === 0);
-
-  const tileWidth = computeTileWidth({
-    rootWidth,
-    rootHeight,
-    projectTileCounts,
-    hasEmptySection,
-  });
+  const tileWidth = tileWidthFromSlider(sliderValue, rootWidth);
   const tileHeight = Math.round(tileWidth / TILE_ASPECT);
 
   for (const tile of root.querySelectorAll<HTMLElement>('.terminal-dashboard-tile')) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { type ReplayableTerm,replayHistoryToTerm } from './terminalReplay.js';
+import { applyDedicatedHistoryFrame, type Fittable,type ReplayableTerm,replayHistoryToTerm } from './terminalReplay.js';
 
 /**
  * `replayHistoryToTerm` is the extracted history-replay helper at the heart
@@ -65,5 +65,84 @@ describe('replayHistoryToTerm (HS-6799)', () => {
     expect(writeOp).toBeDefined();
     const bytes = writeOp!.payload as Uint8Array;
     expect(Array.from(bytes)).toEqual([0x68, 0x65, 0x6c, 0x6c, 0x6f]);
+  });
+});
+
+/**
+ * HS-7063: the dashboard's dedicated view (terminalDashboard.tsx
+ * `enterDedicatedView`) must re-fit after a history-frame replay. Replay
+ * resizes xterm to the history's cols × rows (correct — the bytes were
+ * formatted at those dims), which fires xterm's `onResize`; the dedicated
+ * view relays that to the server, which shrinks the server-side PTY. For a
+ * peek view (grid / centered tile) that is intentional, but in the dedicated
+ * view the user wants TUIs like nano to fill the full pane. Without the
+ * follow-up fit, nano stays at the prior attacher's dims and leaves the
+ * bottom of the pane empty (observed in HS-7063 screenshots — nano's status
+ * bar appeared in the middle of a half-empty dedicated view).
+ */
+describe('applyDedicatedHistoryFrame (HS-7063)', () => {
+  function makeFakeTerm() {
+    const operations: { op: 'resize' | 'write' | 'fit'; payload: unknown }[] = [];
+    const term: ReplayableTerm = {
+      resize(cols, rows) { operations.push({ op: 'resize', payload: [cols, rows] }); },
+      write(data) { operations.push({ op: 'write', payload: data }); },
+    };
+    return { term, operations };
+  }
+
+  function makeFakeFit(operations: { op: string; payload: unknown }[], onFit?: () => void): Fittable {
+    return {
+      fit() {
+        operations.push({ op: 'fit', payload: null });
+        onFit?.();
+      },
+    };
+  }
+
+  it('calls fit() AFTER the history replay so the PTY grows back to the pane size', () => {
+    const { term, operations } = makeFakeTerm();
+    const fit = makeFakeFit(operations);
+
+    applyDedicatedHistoryFrame(term, fit, { bytes: 'aGk=', cols: 195, rows: 13 });
+
+    // Sequence: resize (history dims) → write (bytes) → fit (restore pane dims).
+    // If fit fires BEFORE replay, xterm is at fit dims and then resized down to
+    // history dims, leaving the PTY shrunken — the HS-7063 bug. If fit doesn't
+    // fire at all (the pre-fix behavior), the PTY stays at the history dims.
+    const seq = operations.map(o => o.op);
+    expect(seq).toEqual(['resize', 'write', 'fit']);
+    expect(operations[0].payload).toEqual([195, 13]);
+  });
+
+  it('swallows fit() errors so a mid-mount call does not break replay', () => {
+    const { term, operations } = makeFakeTerm();
+    const fit: Fittable = {
+      fit() { throw new Error('body not laid out'); },
+    };
+    // Should not throw — the caller's replay has already succeeded.
+    expect(() => applyDedicatedHistoryFrame(term, fit, { bytes: 'aGk=', cols: 100, rows: 30 })).not.toThrow();
+    // History replay still fully completed.
+    expect(operations.map(o => o.op)).toEqual(['resize', 'write']);
+  });
+
+  it('when fit() resizes xterm, the resize call happens AFTER the history bytes are written', () => {
+    // Simulates the real fit addon — it would call term.resize(paneCols, paneRows)
+    // synchronously inside fit(). Verifies the final resize call wins.
+    const { term, operations } = makeFakeTerm();
+    const fit: Fittable = {
+      fit() {
+        operations.push({ op: 'fit', payload: null });
+        term.resize(187, 50);
+      },
+    };
+
+    applyDedicatedHistoryFrame(term, fit, { bytes: 'aGk=', cols: 195, rows: 13 });
+
+    const seq = operations.map(o => o.op);
+    expect(seq).toEqual(['resize', 'write', 'fit', 'resize']);
+    // The LAST resize is the fit-driven one — that's what gets relayed to the
+    // server and survives as the terminal's final geometry.
+    const resizes = operations.filter(o => o.op === 'resize');
+    expect(resizes[resizes.length - 1].payload).toEqual([187, 50]);
   });
 });

@@ -16,6 +16,10 @@ export const LABEL_ROW_HEIGHT = 26;
 export const HEADING_ROW_HEIGHT = 32;
 export const ROOT_PADDING = 20;
 
+/** HS-7031: the minimum tile width used by the size slider — same floor as
+ *  `computeTileWidth` (100 px preview height at the 4:3 aspect). */
+export const SLIDER_MIN_TILE_WIDTH = Math.round(MIN_TILE_HEIGHT * TILE_ASPECT);
+
 /**
  * HS-6931 follow-up: the tile preview area is 4:3, so the xterm's natural
  * pixel size has to be 4:3 too or uniform scaling leaves dead space. 80×60
@@ -68,6 +72,28 @@ export function computeTileWidth(input: SizingInput): number {
     if (total <= input.rootHeight) return w;
   }
   return minWidth;
+}
+
+/**
+ * HS-7031: map a slider value (0..100) to a tile width in pixels.
+ *
+ * - `value = 0` → `SLIDER_MIN_TILE_WIDTH` (~133 px — the 100 px preview-height floor).
+ * - `value = 100` → `rootWidth` (the full available width the dashboard can
+ *   give to a single tile, i.e. `root.clientWidth - 2 * ROOT_PADDING` — the
+ *   caller passes the already-padding-adjusted width).
+ * - Intermediate values interpolate linearly between those two bounds, so
+ *   50 → midpoint. That matches the ticket's example (`133..1000` slider
+ *   mid = 567).
+ *
+ * If `rootWidth` is smaller than the min tile width (very narrow window),
+ * the min wins — the caller then lets the dashboard horizontally scroll or
+ * the tile wraps as it would at the floor.
+ */
+export function tileWidthFromSlider(value: number, rootWidth: number): number {
+  const clampedValue = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 50));
+  const max = Math.max(SLIDER_MIN_TILE_WIDTH, Math.floor(rootWidth));
+  const span = max - SLIDER_MIN_TILE_WIDTH;
+  return Math.round(SLIDER_MIN_TILE_WIDTH + span * (clampedValue / 100));
 }
 
 export interface TileScale {
@@ -137,32 +163,28 @@ export interface TileGridDims {
 }
 
 /**
- * HS-6965: after the server's history frame arrives, the dashboard tile's
- * xterm MUST adopt the PTY's cols × rows — otherwise subsequent live bytes
- * (formatted for the PTY's own geometry) wrap at the wrong column and leave
- * a band of empty rows below the last line of real content. The earlier
- * HS-6931 follow-up force-reset the xterm back to a measured-cell 4:3 target
- * right after the replay, which is what produced the HS-6965 "weird
- * wrapping" screenshot.
+ * HS-7097 follow-up: pick tile-native 4:3 cols × rows from measured cell
+ * metrics. Used by the dashboard's grid tiles after `replayHistoryToTerm`
+ * has replayed the PTY's scrollback at the PTY's own dims — the tile then
+ * resizes its xterm down to these tile-native dims so the natural pixel
+ * aspect matches the 4:3 preview frame.
  *
- * This helper encodes the new policy as a pure function so it can be unit-
- * tested: the returned dims come straight from the history frame, with a
- * defensive fallback to `DASHBOARD_FALLBACK_COLS` / `DASHBOARD_FALLBACK_ROWS`
- * for non-positive / non-finite inputs (which `replayHistoryToTerm` already
- * rejects but we guard anyway so the tile's `targetCols / targetRows` never
- * get NaN).
+ * The earlier HS-6965 policy (`tileTargetFromHistory`) returned the PTY's
+ * cols × rows verbatim. That guaranteed byte-perfect wrapping of live bytes
+ * but also meant wide drawer-attached PTYs (typical 235 × 41 ≈ 5.7:1) left
+ * most of the 4:3 tile's vertical space empty — the "full-screen view and
+ * grid tile use the same dims" symptom the user flagged. The trade-off
+ * accepted here: live bytes broadcast at the PTY's cols now wrap inside the
+ * tile's narrower xterm buffer, but the tile visually fills its 4:3 frame
+ * and reads as an aspect-correct preview.
+ *
+ * Thin wrapper around `computeTileGridDims` so call-sites read clearly.
  */
-export function tileTargetFromHistory(
-  historyCols: number,
-  historyRows: number,
+export function tileNativeGridFromCellMetrics(
+  cellWidth: number,
+  cellHeight: number,
 ): TileGridDims {
-  const cols = Number.isFinite(historyCols) && historyCols > 0
-    ? Math.floor(historyCols)
-    : DASHBOARD_FALLBACK_COLS;
-  const rows = Number.isFinite(historyRows) && historyRows > 0
-    ? Math.floor(historyRows)
-    : DASHBOARD_FALLBACK_ROWS;
-  return { cols, rows };
+  return computeTileGridDims(cellWidth, cellHeight);
 }
 
 /**

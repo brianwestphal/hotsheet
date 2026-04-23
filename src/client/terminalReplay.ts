@@ -42,6 +42,33 @@ export function replayHistoryToTerm(
   }
 }
 
+/** Minimal fit-addon surface consumed by `applyDedicatedHistoryFrame`. */
+export interface Fittable {
+  fit(): void;
+}
+
+/**
+ * Apply a history frame in the dashboard's dedicated view (HS-6836). Runs the
+ * same resize-then-write replay as `replayHistoryToTerm`, then re-fits the
+ * terminal to its pane.
+ *
+ * Why the extra fit (HS-7063): `replayHistoryToTerm` resizes xterm to the
+ * history frame's cols × rows so the scrollback bytes render correctly. That
+ * `term.resize(..)` fires `onResize`, and the dedicated-view handler relays
+ * it to the server, which shrinks the PTY to the history dims. The dedicated
+ * view is a full-viewport workspace, not a peek — without a follow-up fit,
+ * nano / vim / less etc. stay at whatever size the drawer last sized them to
+ * and leave the bottom of the pane empty.
+ */
+export function applyDedicatedHistoryFrame(
+  term: ReplayableTerm,
+  fit: Fittable,
+  h: { bytes: string; cols: number; rows: number },
+): void {
+  replayHistoryToTerm(term, h);
+  try { fit.fit(); } catch { /* body not laid out yet — next ResizeObserver tick retries */ }
+}
+
 export function base64ToUint8Array(b64: string): Uint8Array {
   const binary = atob(b64);
   const out = new Uint8Array(binary.length);
