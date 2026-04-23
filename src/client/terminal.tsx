@@ -10,6 +10,7 @@ import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
+import { readXtermTheme } from './xtermTheme.js';
 
 type Status = 'not-connected' | 'connecting' | 'alive' | 'exited';
 
@@ -408,7 +409,7 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
     cursorBlink: true,
     scrollback: 10_000,
     allowProposedApi: true,
-    theme: readTheme(),
+    theme: readXtermTheme(),
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -641,16 +642,6 @@ export function onProjectSwitch(): void {
 function doFit(inst: TerminalInstance): void {
   if (!inst.fit) return;
   try { inst.fit.fit(); } catch { /* body not visible yet */ }
-}
-
-function readTheme(): Record<string, string> {
-  const css = getComputedStyle(document.documentElement);
-  const getColor = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
-  return {
-    background: getColor('--bg', '#ffffff'),
-    foreground: getColor('--text', '#000000'),
-    cursor: getColor('--accent', '#3b82f6'),
-  };
 }
 
 // --- Dynamic terminal lifecycle (HS-6306) ---

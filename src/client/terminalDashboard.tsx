@@ -9,8 +9,17 @@ import { closeDetail } from './detail.js';
 import { toElement } from './dom.js';
 import type { ProjectInfo } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
-import { computeTileWidth, ROOT_PADDING, TILE_ASPECT } from './terminalDashboardSizing.js';
+import {
+  computeTileScale,
+  computeTileWidth,
+  DASHBOARD_FALLBACK_COLS,
+  DASHBOARD_FALLBACK_ROWS,
+  ROOT_PADDING,
+  TILE_ASPECT,
+  tileTargetFromHistory,
+} from './terminalDashboardSizing.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
+import { readXtermTheme } from './xtermTheme.js';
 
 /**
  * Terminal Dashboard — a second top-level client view (alongside the normal
@@ -28,13 +37,23 @@ import { replayHistoryToTerm } from './terminalReplay.js';
 
 const BODY_CLASS = 'terminal-dashboard-active';
 
-/** HS-6834: every dashboard tile mounts an xterm pinned at 80 × 60. The PTY
- *  is left at whatever dims the drawer / eager-spawn established — we never
- *  send `?cols=&rows=` on the dashboard WebSocket so the first-attach
- *  cleanup (HS-6799) does not fire. The tile scales visually via
- *  `transform: scale(s)` from its natural pixel size. */
-const DASHBOARD_TILE_COLS = 80;
-const DASHBOARD_TILE_ROWS = 60;
+/** HS-6834: every dashboard tile mounts an xterm and scales visually via
+ *  `transform: scale(s)` from its natural pixel size. We never send
+ *  `?cols=&rows=` on the dashboard WebSocket so the first-attach cleanup
+ *  (HS-6799) does not fire — the PTY is left at whatever dims the drawer /
+ *  eager-spawn established.
+ *
+ *  HS-6965: initial dims are a brief placeholder — the xterm keeps them only
+ *  until the server's history frame arrives and tells us the PTY's real
+ *  cols × rows. At that point `connectTileSocket`'s message handler resizes
+ *  the xterm to match the PTY so live bytes render at the dims they were
+ *  formatted for. The earlier HS-6931 follow-up resized to a measured-cell
+ *  4:3 target (1280 × 960) and then force-reset back to that target after
+ *  the history replay, which left the xterm displaying PTY bytes at the
+ *  wrong cols and caused awkward wrapping + a band of empty rows below the
+ *  content. */
+const DASHBOARD_INITIAL_COLS = DASHBOARD_FALLBACK_COLS;
+const DASHBOARD_INITIAL_ROWS = DASHBOARD_FALLBACK_ROWS;
 
 export type TerminalSessionState = 'alive' | 'exited' | 'not_spawned';
 
@@ -65,6 +84,20 @@ interface DashboardTile {
    *  re-running the full global sizing pass. */
   gridPreviewWidth: number;
   gridPreviewHeight: number;
+  /** HS-6965: the xterm's current cols × rows. Seeded to the initial 80 × 60
+   *  placeholder at mount time, then overwritten by `connectTileSocket`'s
+   *  history-frame handler to match the PTY's real dims so the xterm
+   *  renders live bytes at the cols they were formatted for. (The earlier
+   *  HS-6931 follow-up picked a measured-cell 4:3 target here and force-
+   *  reset the xterm back to it after replay — exactly what caused the
+   *  HS-6965 wrapping bug.) */
+  targetCols: number;
+  targetRows: number;
+  /** HS-6867: while centered, a placeholder sits in the tile's original
+   *  grid position so the rest of the grid doesn't reflow. The real tile
+   *  is reparented to a fixed-position overlay that animates from the
+   *  placeholder's position/size to the centered position/size. */
+  slotPlaceholder: HTMLElement | null;
 }
 
 const liveTiles = new Map<string, DashboardTile>();
@@ -83,6 +116,9 @@ interface DedicatedView {
   term: XTerm;
   fit: FitAddon;
   ws: WebSocket | null;
+  /** ResizeObserver re-fitting xterm to the dedicated body on window
+   *  resize (HS-6898). Disconnected in `exitDedicatedView`. */
+  bodyResizeObserver: ResizeObserver | null;
   /** The state to return to when the dedicated view is dismissed (grid or
    *  centered). `Back` / `Esc` restore this; the dashboard toggle / project
    *  tab click route through `exitDashboard()` which disposes everything. */
@@ -179,13 +215,23 @@ function teardownAllTiles(): void {
   // HS-6836: dedicated view teardown — dispose its own xterm + WebSocket.
   // priorCenteredTile is ignored because exitDashboard() is wiping state.
   if (dedicatedView !== null) {
+    dedicatedView.bodyResizeObserver?.disconnect();
     try { dedicatedView.ws?.close(); } catch { /* already closed */ }
     try { dedicatedView.term.dispose(); } catch { /* no-op */ }
     dedicatedView.overlay.remove();
     dedicatedView = null;
   }
   if (centeredTile !== null) {
+    // HS-6867: clean up the grid-slot placeholder before wiping centered
+    // state; the DOM around it is going away anyway, but leaving a dangling
+    // placeholder here would hold a reference past teardown.
+    if (centeredTile.slotPlaceholder !== null) {
+      centeredTile.slotPlaceholder.remove();
+      centeredTile.slotPlaceholder = null;
+    }
     centeredTile.root.classList.remove('centered');
+    centeredTile.root.style.transition = '';
+    centeredTile.root.style.transform = '';
     centeredTile = null;
   }
   removeCenterBackdrop();
@@ -223,6 +269,10 @@ function enterDashboard(): void {
     resizeRaf = requestAnimationFrame(() => {
       resizeRaf = null;
       if (rootElement !== null) applyTileSizing(rootElement);
+      // HS-6964: re-center the currently-zoomed tile (if any) so it stays
+      // centered in the new viewport instead of anchored to the left / top
+      // it was placed at when `centerTile` first ran.
+      if (centeredTile !== null) recenterTile(centeredTile);
     });
   };
   window.addEventListener('resize', resizeHandler);
@@ -352,6 +402,9 @@ function renderTile(secret: string, terminal: TerminalListEntry): HTMLElement {
     ws: null,
     gridPreviewWidth: 0,
     gridPreviewHeight: 0,
+    targetCols: DASHBOARD_INITIAL_COLS,
+    targetRows: DASHBOARD_INITIAL_ROWS,
+    slotPlaceholder: null,
   };
   liveTiles.set(tileKey(secret, terminal.id), tile);
 
@@ -406,6 +459,23 @@ function clearTileBell(tile: DashboardTile): void {
   }).catch(() => { /* server restart / network blip — bell state will resync via long-poll */ });
 }
 
+/**
+ * Re-run the scale pass using the preview's current dimensions. Called after
+ * the xterm's cols × rows changes (e.g., history-frame replay in
+ * `connectTileSocket` resizes to PTY dims) so the xterm root's inline
+ * width / height / transform reflect the new natural dims. Using
+ * `tile.preview.offsetWidth / offsetHeight` handles both the grid-view case
+ * (`applyTileSizing` wrote dims on the preview) and the centered-tile case
+ * (`centerTile` writes dims on the preview).
+ */
+function reapplyTileScaleFromPreview(tile: DashboardTile): void {
+  if (tile.xtermRoot === null) return;
+  const previewWidth = tile.preview.offsetWidth;
+  const previewHeight = tile.preview.offsetHeight;
+  if (previewWidth <= 0 || previewHeight <= 0) return;
+  applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
+}
+
 function mountTileXterm(tile: DashboardTile): void {
   const xtermRoot = document.createElement('div');
   xtermRoot.className = 'terminal-dashboard-tile-xterm';
@@ -418,10 +488,25 @@ function mountTileXterm(tile: DashboardTile): void {
     cursorBlink: false,
     scrollback: 0,
     allowProposedApi: true,
-    cols: DASHBOARD_TILE_COLS,
-    rows: DASHBOARD_TILE_ROWS,
+    cols: DASHBOARD_INITIAL_COLS,
+    rows: DASHBOARD_INITIAL_ROWS,
+    // HS-6866: match the drawer terminal's theme so the tile's xterm canvas
+    // picks up --bg / --text / --accent instead of xterm's default black
+    // palette.
+    theme: readXtermTheme(),
   });
   term.open(xtermRoot);
+  // Seed target dims at the initial grid; the WebSocket's history frame will
+  // overwrite them in `connectTileSocket` so they match the PTY (HS-6965).
+  tile.targetCols = term.cols;
+  tile.targetRows = term.rows;
+
+  // Re-run the scale pass once xterm has committed `.xterm-screen`'s
+  // dimensions (its renderer writes those on the next animation frame, so
+  // reading offsetWidth synchronously right after `open()` returns 0).
+  // Needed even before history arrives so the initial 80 × 60 xterm renders
+  // inside the tile with the right letterbox offset instead of at (0, 0).
+  requestAnimationFrame(() => { reapplyTileScaleFromPreview(tile); });
 
   // HS-6835: wire keystrokes to the WebSocket. Grid-view tiles can't focus
   // (pointer-events: none + hidden helper textarea), so this only fires while
@@ -467,12 +552,19 @@ function connectTileSocket(tile: DashboardTile): void {
         const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
         if (msg.type === 'history' && typeof msg.bytes === 'string' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
           replayHistoryToTerm(tile.term, { bytes: msg.bytes, cols: msg.cols, rows: msg.rows });
-          // The replay helper resized the xterm to the history's origin dims.
-          // Force it back to 80 × 60 so the dashboard tile's scale-transform
-          // geometry stays stable across subsequent live bytes.
-          if (tile.term.cols !== DASHBOARD_TILE_COLS || tile.term.rows !== DASHBOARD_TILE_ROWS) {
-            tile.term.resize(DASHBOARD_TILE_COLS, DASHBOARD_TILE_ROWS);
-          }
+          // HS-6965: adopt the PTY's cols × rows as the tile's authoritative
+          // grid. The PTY formats all future bytes for its own geometry, so the
+          // xterm MUST match those dims — force-resizing it back to a
+          // 4:3-optimised target (the old HS-6931 follow-up did this) caused
+          // the PTY's output to wrap at the wrong column and leave a band of
+          // empty rows below the last line of real content. We trade the
+          // "stable 4:3 natural aspect" property for rendering correctness;
+          // `reapplyTileScaleFromPreview` re-runs the uniform-fit scale so
+          // the new natural size still letterboxes cleanly inside the tile.
+          const next = tileTargetFromHistory(msg.cols, msg.rows);
+          tile.targetCols = next.cols;
+          tile.targetRows = next.rows;
+          reapplyTileScaleFromPreview(tile);
         }
       } catch { /* non-JSON control frame — ignore */ }
     }
@@ -630,11 +722,23 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
     cursorBlink: true,
     scrollback: 10_000,
     allowProposedApi: true,
+    // HS-6866: same theme as the drawer / tile xterms.
+    theme: readXtermTheme(),
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.open(body);
-  fit.fit();
+  // HS-6898: defer the initial fit so the flex-1 body has its final size in
+  // layout before fit() reads dimensions. Without this, fit() can measure a
+  // pre-layout size and leave xterm at its default 80 cols — exactly the
+  // wrong-width regression from the bug report. ResizeObserver keeps the
+  // fit in sync on window resizes while the dedicated view is open.
+  const runFit = (): void => {
+    try { fit.fit(); } catch { /* body not ready yet */ }
+  };
+  requestAnimationFrame(runFit);
+  const bodyResizeObserver = new ResizeObserver(runFit);
+  bodyResizeObserver.observe(body);
 
   const encoder = new TextEncoder();
   term.onData((data) => {
@@ -672,7 +776,7 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
     }
   });
 
-  dedicatedView = { tile, overlay, term, fit, ws, priorCenteredTile };
+  dedicatedView = { tile, overlay, term, fit, ws, bodyResizeObserver, priorCenteredTile };
   queueMicrotask(() => { term.focus(); });
 }
 
@@ -680,6 +784,7 @@ function exitDedicatedView(): void {
   if (dedicatedView === null) return;
   const view = dedicatedView;
   dedicatedView = null;
+  view.bodyResizeObserver?.disconnect();
   if (view.ws !== null) {
     try { view.ws.close(); } catch { /* already closed */ }
   }
@@ -689,41 +794,228 @@ function exitDedicatedView(): void {
   if (view.priorCenteredTile !== null) centerTile(view.priorCenteredTile);
 }
 
+const CENTER_ANIMATION_MS = 280;
+
+/**
+ * HS-6867: center-tile animation.
+ *
+ * The naive implementation (just `position: fixed; top: 50%; left: 50%`)
+ * yanks the tile out of the grid the instant the user clicks, which
+ * collapses the surrounding tiles and makes the zoomed tile appear to jump
+ * rather than grow out of its slot. The fix: insert a grey placeholder of
+ * the tile's original size into the grid so the other tiles stay put, then
+ * reparent the real tile to a fixed-position overlay and run a FLIP
+ * animation (translate + scale) from the placeholder's bounding box to the
+ * centered target box. The xterm's internal scale is pinned to the final
+ * centered size so it "grows" naturally with the outer transform.
+ */
 function centerTile(tile: DashboardTile): void {
   centeredTile = tile;
-  tile.root.classList.add('centered');
-  // HS-6837: viewing the tile more closely clears the bell outline and the
-  // server-side bellPending flag.
   clearTileBell(tile);
 
-  // Compute a 70% viewport box preserving the 4:3 aspect ratio.
+  // Capture the tile's current position/size in the grid before mutating.
+  const origRect = tile.root.getBoundingClientRect();
+
+  // Replace the tile in the grid with a same-sized placeholder so the
+  // surrounding layout doesn't reflow while the tile is centered.
+  const placeholder = createSlotPlaceholder(origRect.width, origRect.height);
+  tile.slotPlaceholder = placeholder;
+  tile.root.parentElement?.insertBefore(placeholder, tile.root);
+
+  // Compute the target centered box (70% viewport, 4:3).
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const previewWidth = Math.min(vw * 0.7, vh * 0.7 * TILE_ASPECT);
   const previewHeight = previewWidth / TILE_ASPECT;
+  const targetLeft = (vw - previewWidth) / 2;
+  const targetTop = (vh - previewHeight) / 2;
+
+  // Promote the tile to the fixed-position overlay at the TARGET geometry.
+  // The xterm scale is set to the final size here so it animates with the
+  // outer transform instead of snapping at the end.
+  //
+  // HS-6964: set the tile's own inline width to `previewWidth` too. The
+  // tile is a `display: flex; flex-direction: column; align-items: center`
+  // container, so if the tile's width stays at its grid-slot value (set by
+  // `applyTileSizing`) the larger centered preview would overflow and
+  // flex-center itself around the smaller tile box — visible as the preview
+  // sliding off to the left of the viewport center. Matching the tile's
+  // width to the preview's width makes the flex-centering a no-op and puts
+  // the preview exactly where `targetLeft = (vw - previewWidth) / 2`
+  // intends. It also makes the FLIP `sx` below shrink correctly to the
+  // origRect's width ratio so the tile visibly grows out of its slot.
+  tile.root.classList.add('centered');
+  tile.root.style.left = `${targetLeft}px`;
+  tile.root.style.top = `${targetTop}px`;
+  tile.root.style.width = `${previewWidth}px`;
+  // HS-6964: snap the preview to its centered dims with NO CSS width / height
+  // transition. The outer FLIP transform is the grow animation; if the
+  // preview's default `transition: width 0.25s ease, height 0.25s ease` also
+  // fires here the two animations compound — at t=0 the preview CSS width
+  // is still the grid-slot size but the outer scale shrinks the whole tile,
+  // leaving a progressively-shrinking band of dead space between preview
+  // and tile edges until both settle. Disable the transition for this
+  // write, force a reflow so the new size commits, then restore the CSS
+  // default so later (e.g. uncenter) writes can still transition if they
+  // use the same rule.
+  const prevPreviewTransition = tile.preview.style.transition;
+  tile.preview.style.transition = 'none';
   tile.preview.style.width = `${previewWidth}px`;
   tile.preview.style.height = `${previewHeight}px`;
+  void tile.preview.offsetWidth;
+  tile.preview.style.transition = prevPreviewTransition;
   if (tile.xtermRoot !== null) applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
 
   mountCenterBackdrop();
 
-  // Let the CSS transition settle, then hand keyboard focus to xterm. A
-  // microtask is enough on modern browsers to ensure the helper textarea
-  // has its final `display` and is focusable.
+  // FLIP: compute the inverse transform that visually puts the tile back
+  // where the placeholder is, apply it without a transition, then in the
+  // next frame remove it with a transition enabled. The browser interpolates
+  // the transform so the tile appears to grow out of its grid slot toward
+  // the center.
+  const finalRect = tile.root.getBoundingClientRect();
+  if (finalRect.width > 0 && finalRect.height > 0) {
+    const dx = origRect.left - finalRect.left;
+    const dy = origRect.top - finalRect.top;
+    const sx = origRect.width / finalRect.width;
+    const sy = origRect.height / finalRect.height;
+    tile.root.style.transition = 'none';
+    tile.root.style.transformOrigin = 'top left';
+    tile.root.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+    void tile.root.offsetWidth; // force reflow so the inverse transform commits
+    tile.root.style.transition = `transform ${CENTER_ANIMATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
+    tile.root.style.transform = '';
+  }
+
+  // Hand keyboard focus to xterm once the helper textarea is visible.
   queueMicrotask(() => { tile.term?.focus(); });
+}
+
+/**
+ * HS-6964: re-apply the centered geometry to a tile after a window resize.
+ * Snaps (no transition) so the centered tile tracks the viewport instead of
+ * staying anchored to the left / top it was placed at when `centerTile`
+ * first ran. Called from the dashboard's resize handler; a no-op if the
+ * tile has since been uncentered.
+ */
+function recenterTile(tile: DashboardTile): void {
+  if (!tile.root.classList.contains('centered')) return;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const previewWidth = Math.min(vw * 0.7, vh * 0.7 * TILE_ASPECT);
+  const previewHeight = previewWidth / TILE_ASPECT;
+  const targetLeft = (vw - previewWidth) / 2;
+  const targetTop = (vh - previewHeight) / 2;
+
+  // Disable the outer transition briefly so the position snap doesn't ghost
+  // across the viewport; the centered tile's FLIP animation only runs on
+  // center / uncenter, not on resize.
+  const prevTileTransition = tile.root.style.transition;
+  tile.root.style.transition = 'none';
+  tile.root.style.left = `${targetLeft}px`;
+  tile.root.style.top = `${targetTop}px`;
+  tile.root.style.width = `${previewWidth}px`;
+
+  // Same trick on the preview so the inner width / height snap without
+  // firing their CSS transition.
+  const prevPreviewTransition = tile.preview.style.transition;
+  tile.preview.style.transition = 'none';
+  tile.preview.style.width = `${previewWidth}px`;
+  tile.preview.style.height = `${previewHeight}px`;
+
+  if (tile.xtermRoot !== null) applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
+
+  // Force reflow then restore transitions so later user-driven transitions
+  // (uncenter FLIP, normal CSS transitions elsewhere) still work.
+  void tile.root.offsetWidth;
+  tile.root.style.transition = prevTileTransition;
+  tile.preview.style.transition = prevPreviewTransition;
 }
 
 function uncenterTile(): void {
   if (centeredTile === null) return;
   const tile = centeredTile;
+  const placeholder = tile.slotPlaceholder;
+  centeredTile = null;
+  removeCenterBackdrop();
+
+  if (placeholder === null) {
+    // Defensive: no placeholder means nothing to animate back to. Fall
+    // through to the instant collapse path so state stays consistent.
+    finishUncenterTile(tile, null);
+    return;
+  }
+
+  // Animate the tile back to the placeholder's current position/size with
+  // the same FLIP trick in reverse. The xterm's scale stays at its centered
+  // size during the transition; the outer transform handles the shrink.
+  const targetRect = placeholder.getBoundingClientRect();
+  const currentRect = tile.root.getBoundingClientRect();
+  if (currentRect.width <= 0 || currentRect.height <= 0) {
+    finishUncenterTile(tile, placeholder);
+    return;
+  }
+
+  const dx = targetRect.left - currentRect.left;
+  const dy = targetRect.top - currentRect.top;
+  const sx = targetRect.width / currentRect.width;
+  const sy = targetRect.height / currentRect.height;
+  tile.root.style.transition = `transform ${CENTER_ANIMATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
+  tile.root.style.transformOrigin = 'top left';
+  tile.root.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+
+  const onEnd = (): void => {
+    tile.root.removeEventListener('transitionend', onEnd);
+    finishUncenterTile(tile, placeholder);
+  };
+  tile.root.addEventListener('transitionend', onEnd);
+  // Safety: if `transitionend` never fires (e.g., the tile was ripped out
+  // mid-animation by tear-down), still clean up after the scheduled time.
+  window.setTimeout(() => {
+    tile.root.removeEventListener('transitionend', onEnd);
+    if (tile.slotPlaceholder === placeholder) finishUncenterTile(tile, placeholder);
+  }, CENTER_ANIMATION_MS + 80);
+}
+
+function finishUncenterTile(tile: DashboardTile, placeholder: HTMLElement | null): void {
   tile.root.classList.remove('centered');
+  tile.root.style.transition = '';
+  tile.root.style.transform = '';
+  tile.root.style.transformOrigin = '';
+  tile.root.style.left = '';
+  tile.root.style.top = '';
+  // HS-6964: centerTile wrote `tile.root.style.width = previewWidth`; restore
+  // the grid-slot width so `applyTileSizing`'s next pass doesn't see a stale
+  // inline width larger than the computed grid width. Disable the preview's
+  // CSS width / height transition for this snap-back — without it the
+  // preview would animate from previewWidth down to gridPreviewWidth over
+  // 0.25s AFTER the outer FLIP has already finished, briefly overflowing
+  // the tile box that just shrank back into its grid slot.
+  if (tile.gridPreviewWidth > 0) {
+    tile.root.style.width = `${tile.gridPreviewWidth}px`;
+  }
+  const prevPreviewTransition = tile.preview.style.transition;
+  tile.preview.style.transition = 'none';
   tile.preview.style.width = `${tile.gridPreviewWidth}px`;
   tile.preview.style.height = `${tile.gridPreviewHeight}px`;
+  void tile.preview.offsetWidth;
+  tile.preview.style.transition = prevPreviewTransition;
   if (tile.xtermRoot !== null && tile.gridPreviewWidth > 0 && tile.gridPreviewHeight > 0) {
     applyTileScale(tile.xtermRoot, tile.gridPreviewWidth, tile.gridPreviewHeight);
   }
-  centeredTile = null;
-  removeCenterBackdrop();
+  if (placeholder !== null && placeholder.parentElement !== null) {
+    placeholder.parentElement.insertBefore(tile.root, placeholder);
+    placeholder.remove();
+  }
+  tile.slotPlaceholder = null;
+}
+
+function createSlotPlaceholder(width: number, height: number): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'terminal-dashboard-tile-slot';
+  el.style.width = `${width}px`;
+  el.style.height = `${height}px`;
+  return el;
 }
 
 function mountCenterBackdrop(): void {
@@ -778,7 +1070,14 @@ export function applyTileSizing(root: HTMLElement): void {
   const tileHeight = Math.round(tileWidth / TILE_ASPECT);
 
   for (const tile of root.querySelectorAll<HTMLElement>('.terminal-dashboard-tile')) {
-    tile.style.width = `${tileWidth}px`;
+    // HS-6964: skip the centered tile — it owns its own width while zoomed
+    // (set to `previewWidth` by `centerTile` so the preview flex-centers
+    // cleanly at the viewport centre). Overwriting it here on a window
+    // resize would snap the centered tile back to the grid-slot width
+    // mid-zoom and throw the preview off-center again.
+    if (!tile.classList.contains('centered')) {
+      tile.style.width = `${tileWidth}px`;
+    }
     const preview = tile.querySelector<HTMLElement>('.terminal-dashboard-tile-preview');
     // Skip the currently-centered tile — it owns its own preview geometry
     // while zoomed (§25.7). `uncenterTile()` restores these dims on collapse.
@@ -805,16 +1104,63 @@ export function applyTileSizing(root: HTMLElement): void {
 /**
  * HS-6834: scale the xterm DOM root so the 80 × 60 grid visually fits the
  * tile's preview area. xterm lays out at its natural pixel size (cell-size ×
- * cols, cell-size × rows); we apply `transform: scale(s)` so we never touch
+ * cols, cell-size × rows); we apply a CSS transform so we never touch
  * xterm's cols/rows and therefore never reflow the PTY or its attachers.
+ *
+ * HS-6931: use a single uniform `scale(s)` rather than a two-axis
+ * `scale(sx, sy)`. The 4:3 tile and xterm's ~2:3 natural aspect don't
+ * match, so one axis leaves dead space — but the anisotropic fix from
+ * HS-6898 stretched text enough to look distorted. The reported case was
+ * `scale(3.478, 0.375)`, where `xtermRoot.offsetWidth` returned the
+ * block-level parent width rather than the actual xterm grid width.
+ *
+ * HS-6865: the xtermRoot also needs explicit `width` and `height` so its
+ * internal absolutely-positioned `.xterm-viewport` / `.xterm-screen` layers
+ * don't collapse to zero (causing the partial-canvas layout from the bug
+ * report). We set them to xterm's natural pixel size.
+ *
+ * HS-6997: the scaled xterm is top-aligned inside the preview (left remains
+ * horizontally centered to handle the rare portrait-PTY case). HS-6965's
+ * policy of adopting the PTY's cols × rows verbatim means wide / short PTYs
+ * (e.g. 151 × 13 → natural 1181 × 208) scale to fill the tile's width but
+ * only a fraction of its height; the old letterbox-center math sandwiched
+ * the content between equal bands top and bottom, which read as "why is
+ * there empty space above my prompt?" Top-aligning puts all the dead space
+ * below the last line of output so the tile reads like a real terminal pane
+ * whose content hasn't yet grown to the bottom. The preview background
+ * (HS-6866) matches xterm's theme background so the dead space is visually
+ * seamless with the xterm canvas.
+ *
+ * Natural dims are read from the `.xterm-screen` child — it's the element
+ * xterm.js explicitly sizes to `cols × cellW` / `rows × cellH`, whereas
+ * xtermRoot is a block-level wrapper that fills its parent horizontally and
+ * therefore mis-reports width as the tile width (root cause of HS-6931).
  */
 function applyTileScale(xtermRoot: HTMLElement, tileWidth: number, tileHeight: number): void {
+  // Reset first so we can measure xterm's natural (cell-based) size without
+  // being contaminated by our own previous position / width / height writes.
   xtermRoot.style.transform = '';
   xtermRoot.style.transformOrigin = 'top left';
-  const naturalWidth = xtermRoot.offsetWidth;
-  const naturalHeight = xtermRoot.offsetHeight;
-  if (naturalWidth <= 0 || naturalHeight <= 0) return;
-  const scale = Math.min(tileWidth / naturalWidth, tileHeight / naturalHeight);
-  xtermRoot.style.transform = `scale(${scale})`;
+  xtermRoot.style.width = '';
+  xtermRoot.style.height = '';
+  xtermRoot.style.position = '';
+  xtermRoot.style.left = '';
+  xtermRoot.style.top = '';
+
+  const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+  const naturalWidth = screen?.offsetWidth ?? 0;
+  const naturalHeight = screen?.offsetHeight ?? 0;
+  const scale = computeTileScale(tileWidth, tileHeight, naturalWidth, naturalHeight);
+  if (scale === null) return;
+
+  // The preview has `position: relative`, so absolute positioning here
+  // resolves against the tile's preview box. `scale.left` / `scale.top`
+  // encode the horizontal-center + top-align letterbox policy (HS-6997).
+  xtermRoot.style.position = 'absolute';
+  xtermRoot.style.left = `${scale.left}px`;
+  xtermRoot.style.top = `${scale.top}px`;
+  xtermRoot.style.width = `${scale.width}px`;
+  xtermRoot.style.height = `${scale.height}px`;
+  xtermRoot.style.transform = `scale(${scale.scale})`;
 }
 

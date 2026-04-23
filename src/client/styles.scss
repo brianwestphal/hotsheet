@@ -274,7 +274,13 @@ input, select, textarea {
 }
 
 .terminal-dashboard-tile-preview {
-  background: var(--bg-secondary);
+  // HS-6866: match the drawer terminal's backdrop (.terminal-body uses --bg)
+  // so a live-tile's aspect-ratio gap (the dashboard tile is 4:3 but xterm's
+  // 80×60 cells render taller-than-wide) fills with the same color xterm's
+  // theme background paints, and light/dark parity with the drawer is kept.
+  // Cold / starting placeholders still override this with --bg-secondary so
+  // they read as "card" states against the grid.
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
@@ -345,16 +351,16 @@ input, select, textarea {
   transition: width 0.25s ease, height 0.25s ease;
 }
 
-// HS-6835: centered tile is pulled out of grid flow via position:fixed,
-// sits above the dim backdrop, and gets a larger tile preview so the xterm
-// grid is actually usable. Esc / click outside / click same tile collapses.
+// HS-6835 + HS-6867: the centered tile is pulled out of the grid flow via
+// position:fixed (top/left are computed at runtime so the tile can
+// FLIP-animate from its grid slot). A same-sized grey placeholder takes its
+// slot while centered so the grid doesn't reflow. Esc / click outside /
+// click same tile collapses it back into its original slot.
 .terminal-dashboard-tile.centered {
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
   z-index: 500;
   cursor: default;
+  margin: 0;
 
   .terminal-dashboard-tile-preview {
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
@@ -363,6 +369,17 @@ input, select, textarea {
   // Restore native pointer-events + textarea visibility so the xterm can
   // actually receive keyboard focus.
   .terminal-dashboard-tile-xterm { pointer-events: auto; user-select: text; }
+}
+
+// HS-6867: the grey placeholder that holds the tile's grid slot while it
+// is animated to / from the centered position. Matches the tile's preview
+// frame so the slot reads as "the tile was here".
+.terminal-dashboard-tile-slot {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  opacity: 0.55;
+  flex-shrink: 0;
 }
 
 .terminal-dashboard-center-backdrop {
@@ -482,6 +499,16 @@ body.terminal-dashboard-active {
   }
   .terminal-dashboard {
     display: flex !important;
+  }
+  // HS-6868: the dashboard is a global view, not a project view — no project
+  // tab should read as "selected" while it's open. Reset the active tab back
+  // to the default unselected look (status dots and bell indicators are
+  // untouched since they carry their own classes).
+  .project-tab.active {
+    background: transparent;
+    color: var(--text-secondary);
+    border-color: transparent;
+    font-weight: 500;
   }
 }
 

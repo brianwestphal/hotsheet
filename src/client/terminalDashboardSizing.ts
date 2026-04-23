@@ -16,6 +16,22 @@ export const LABEL_ROW_HEIGHT = 26;
 export const HEADING_ROW_HEIGHT = 32;
 export const ROOT_PADDING = 20;
 
+/**
+ * HS-6931 follow-up: the tile preview area is 4:3, so the xterm's natural
+ * pixel size has to be 4:3 too or uniform scaling leaves dead space. 80×60
+ * cells at a typical ~8×16 px monospace cell is ≈2:3 — portrait, not 4:3 —
+ * so we target a 1280 × 960 natural pixel box and derive cols/rows from
+ * measured cell metrics. See `computeTileGridDims` below.
+ */
+export const DASHBOARD_TARGET_NATURAL_WIDTH_PX = 1280;
+export const DASHBOARD_TARGET_NATURAL_HEIGHT_PX = 960;
+export const DASHBOARD_MIN_COLS = 20;
+export const DASHBOARD_MIN_ROWS = 10;
+/** Fallback when cell dims can't be measured. Matches the original 80×60
+ *  grid. */
+export const DASHBOARD_FALLBACK_COLS = 80;
+export const DASHBOARD_FALLBACK_ROWS = 60;
+
 export interface SizingInput {
   rootWidth: number;
   rootHeight: number;
@@ -53,3 +69,125 @@ export function computeTileWidth(input: SizingInput): number {
   }
   return minWidth;
 }
+
+export interface TileScale {
+  /** Uniform scale factor applied via `transform: scale(scale)`. X and Y share
+   *  the same factor so text keeps its natural metrics — a two-axis scale
+   *  stretches cells anisotropically and makes the tile look distorted
+   *  (HS-6931). */
+  scale: number;
+  /** Explicit width to set on the xterm root — the xterm's natural pixel
+   *  width at its pinned 80 × 60 grid. Without an explicit width xterm's
+   *  absolutely-positioned viewport / canvas layers collapse (HS-6865). */
+  width: number;
+  /** Explicit height to set on the xterm root — same reasoning as width. */
+  height: number;
+  /** HS-6997: CSS `left` offset that centers the scaled xterm horizontally
+   *  within the tile preview area. Zero when the scaled width equals the
+   *  tile width (common landscape-PTY case — horizontal is the tight axis). */
+  left: number;
+  /** HS-6997: CSS `top` offset. Always zero — the scaled xterm is top-
+   *  aligned inside the tile so content reads from the top like a real
+   *  macOS Terminal pane, with any vertical dead space falling below the
+   *  content rather than sandwiching it top-and-bottom. Since the tile
+   *  preview background matches xterm's theme background (both `--bg`, per
+   *  HS-6866), the dead space is visually indistinguishable from empty
+   *  terminal rows — the tile reads as a live terminal whose content
+   *  hasn't filled the widget yet. */
+  top: number;
+}
+
+/**
+ * HS-6865 + HS-6931: pick a uniform scale factor + explicit pixel dims for a
+ * dashboard tile's xterm root. The caller places the element at the tile's
+ * top-left and centers the scaled box within `tileWidth × tileHeight`.
+ *
+ * Since HS-6931 follow-up the tile's xterm is sized (via `computeTileGridDims`)
+ * so natural aspect ≈ 4:3, which matches the tile. Uniform fit-inside then
+ * fills the tile with negligible dead space. Uniform scale — rather than
+ * two-axis — was still the right call: font hinting + cell metrics are
+ * never exactly uniform across platforms, so the xterm's measured natural
+ * may be a few pixels off 4:3. Uniform scaling handles that by leaving a
+ * tiny letterbox rather than stretching cells.
+ */
+export function computeTileScale(
+  tileWidth: number,
+  tileHeight: number,
+  naturalWidth: number,
+  naturalHeight: number,
+): TileScale | null {
+  if (naturalWidth <= 0 || naturalHeight <= 0) return null;
+  if (tileWidth <= 0 || tileHeight <= 0) return null;
+  const scale = Math.min(tileWidth / naturalWidth, tileHeight / naturalHeight);
+  const scaledWidth = naturalWidth * scale;
+  return {
+    scale,
+    width: naturalWidth,
+    height: naturalHeight,
+    // HS-6997: horizontally centered letterbox, top-aligned vertically. See
+    // the TileScale `top` JSDoc for why the vertical axis is pinned to 0.
+    left: Math.max(0, (tileWidth - scaledWidth) / 2),
+    top: 0,
+  };
+}
+
+export interface TileGridDims {
+  cols: number;
+  rows: number;
+}
+
+/**
+ * HS-6965: after the server's history frame arrives, the dashboard tile's
+ * xterm MUST adopt the PTY's cols × rows — otherwise subsequent live bytes
+ * (formatted for the PTY's own geometry) wrap at the wrong column and leave
+ * a band of empty rows below the last line of real content. The earlier
+ * HS-6931 follow-up force-reset the xterm back to a measured-cell 4:3 target
+ * right after the replay, which is what produced the HS-6965 "weird
+ * wrapping" screenshot.
+ *
+ * This helper encodes the new policy as a pure function so it can be unit-
+ * tested: the returned dims come straight from the history frame, with a
+ * defensive fallback to `DASHBOARD_FALLBACK_COLS` / `DASHBOARD_FALLBACK_ROWS`
+ * for non-positive / non-finite inputs (which `replayHistoryToTerm` already
+ * rejects but we guard anyway so the tile's `targetCols / targetRows` never
+ * get NaN).
+ */
+export function tileTargetFromHistory(
+  historyCols: number,
+  historyRows: number,
+): TileGridDims {
+  const cols = Number.isFinite(historyCols) && historyCols > 0
+    ? Math.floor(historyCols)
+    : DASHBOARD_FALLBACK_COLS;
+  const rows = Number.isFinite(historyRows) && historyRows > 0
+    ? Math.floor(historyRows)
+    : DASHBOARD_FALLBACK_ROWS;
+  return { cols, rows };
+}
+
+/**
+ * HS-6931 follow-up: given measured cell metrics, pick cols × rows so the
+ * xterm's natural pixel size approximates the 4:3 target (1280 × 960). The
+ * tile's 4:3 preview frame then matches the terminal's natural aspect and
+ * uniform scaling fills the tile without letterboxing or stretching.
+ *
+ * Math: cellWidth ≈ 8, cellHeight ≈ 16 on macOS at 13px `ui-monospace`, so
+ * this picks ~160 × 60. Exotic fonts or DPI configurations just produce a
+ * different cols×rows that still lands on 1280×960 ±1 cell.
+ *
+ * Falls back to the original 80 × 60 when cell metrics can't be read.
+ */
+export function computeTileGridDims(
+  cellWidth: number,
+  cellHeight: number,
+  targetWidth: number = DASHBOARD_TARGET_NATURAL_WIDTH_PX,
+  targetHeight: number = DASHBOARD_TARGET_NATURAL_HEIGHT_PX,
+): TileGridDims {
+  if (cellWidth <= 0 || cellHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
+    return { cols: DASHBOARD_FALLBACK_COLS, rows: DASHBOARD_FALLBACK_ROWS };
+  }
+  const cols = Math.max(DASHBOARD_MIN_COLS, Math.round(targetWidth / cellWidth));
+  const rows = Math.max(DASHBOARD_MIN_ROWS, Math.round(targetHeight / cellHeight));
+  return { cols, rows };
+}
+
