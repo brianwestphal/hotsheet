@@ -324,4 +324,91 @@ test.describe('Terminal search widget (HS-7363)', () => {
     await expect(page.locator('#terminal-dashboard-sizer')).toBeVisible();
     await expect(page.locator('#terminal-dashboard-search-slot')).toBeHidden();
   });
+
+  // 7. HS-7525 — after the HS-7426 match-mode toggles landed in the same flex
+  // row as the input + count chip + prev/next + close, the previous 240 px
+  // widget left ~50 px of actual typing space. This test asserts the open
+  // widget has enough width AND the input itself still has room to type
+  // after all the other controls lay out — any future addition that eats
+  // back into that budget fails this test before a user has to file a bug.
+  test('drawer: open widget is wide enough for a realistic query (HS-7525)', async ({ page }) => {
+    await openDrawerAndWaitForFruits(page);
+
+    const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:fruits"]');
+    const searchBox = pane.locator('.terminal-search-box');
+    const input = searchBox.locator('.terminal-search-input');
+
+    await searchBox.locator('.terminal-search-toggle').click();
+    await expect(searchBox).toHaveClass(/is-open/);
+    await expect(input).toBeFocused();
+
+    // The `.is-open` class drives a 200ms CSS width transition from 28px
+    // (collapsed) to 380px (open). Poll `getBoundingClientRect().width`
+    // until it settles — toHaveClass resolves instantly on the class flip,
+    // well before the animation actually runs.
+    // 340px floor leaves ~40px of wiggle room under the current 380px spec,
+    // but is well clear of the old 240px that triggered the bug report.
+    await expect.poll(
+      async () => searchBox.evaluate((el) => el.getBoundingClientRect().width),
+      { timeout: 2000 },
+    ).toBeGreaterThanOrEqual(340);
+    // Input must have at least ~160px of clear typing space after the
+    // toggles + count chip + chevrons + close button consume their share.
+    // The pre-fix regression produced ~50px here; 160 catches it without
+    // being brittle against small icon-size tweaks.
+    await expect.poll(
+      async () => input.evaluate((el) => el.getBoundingClientRect().width),
+      { timeout: 2000 },
+    ).toBeGreaterThanOrEqual(160);
+  });
+
+  // 8. HS-7526 — Esc while focused in the dedicated-view search field should
+  // blur the input and return focus to the terminal, NOT exit the dedicated
+  // view. The capture-phase Esc handler in terminalDashboard.tsx used to
+  // `exitDedicatedView()` on any Esc regardless of focus target, which meant
+  // users typing in the search lost their whole dedicated-view context when
+  // they just wanted to leave the input.
+  test('dedicated view: Esc in search blurs input + focuses terminal (HS-7526)', async ({ page }) => {
+    await openDrawerAndWaitForFruits(page);
+
+    // Enter the dashboard and double-click the fruits tile to get into the
+    // dedicated view.
+    await page.locator('#terminal-dashboard-toggle').click();
+    const tile = page.locator('.terminal-dashboard-tile[data-terminal-id="fruits"]');
+    await expect(tile).toHaveClass(/terminal-dashboard-tile-alive/, { timeout: 5000 });
+    await tile.dblclick();
+
+    const overlay = page.locator('.terminal-dashboard-dedicated');
+    await expect(overlay).toBeVisible({ timeout: 5000 });
+
+    // Open the search widget in the header slot and type a query.
+    const slot = page.locator('#terminal-dashboard-search-slot');
+    const searchBox = slot.locator('.terminal-search-box');
+    await searchBox.locator('.terminal-search-toggle').click();
+    const input = searchBox.locator('.terminal-search-input');
+    await expect(input).toBeFocused();
+    await input.fill('apple');
+
+    // Press Escape from the focused search input.
+    await input.press('Escape');
+
+    // Dedicated view must still be up — the user was typing a search query,
+    // not trying to exit.
+    await expect(overlay).toBeVisible();
+    // Input has blurred but its value is preserved (HS-7393 semantics).
+    await expect(input).not.toBeFocused();
+    await expect(input).toHaveValue('apple');
+    // Widget stays open (HS-7393): × button is the only close path.
+    await expect(searchBox).toHaveClass(/is-open/);
+    // xterm helper textarea in the dedicated view now has focus so the
+    // terminal is the next-keypress target.
+    const helperTextarea = overlay.locator('.xterm-helper-textarea');
+    await expect(helperTextarea).toBeFocused();
+
+    // A second Esc (now that the input is blurred) should exit the dedicated
+    // view — this is the pre-existing behaviour and must not regress.
+    await page.keyboard.press('Escape');
+    await expect(overlay).toHaveCount(0, { timeout: 3000 });
+    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
+  });
 });

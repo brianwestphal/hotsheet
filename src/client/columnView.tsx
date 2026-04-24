@@ -240,10 +240,15 @@ export function renderColumnView() {
       body.appendChild(createColumnCard(ticket));
     }
 
-    // Drop target for status changes
+    // Drop target for status changes. HS-7492: skip when the drag carries
+    // Files — the document-level handler in app.tsx takes care of file
+    // drops onto individual cards, and we don't want the whole column lit
+    // up as a reorder target for a file-attachment drop.
     body.addEventListener('dragover', (e) => {
+      const de = e as DragEvent;
+      if (de.dataTransfer?.types.includes('Files') === true) return;
       e.preventDefault();
-      (e as DragEvent).dataTransfer!.dropEffect = 'move';
+      de.dataTransfer!.dropEffect = 'move';
       column.classList.add('column-drop-target');
     });
     body.addEventListener('dragleave', (e) => {
@@ -253,6 +258,8 @@ export function renderColumnView() {
       }
     });
     body.addEventListener('drop', (e) => {
+      const de = e as DragEvent;
+      if (de.dataTransfer?.types.includes('Files') === true) return;
       e.preventDefault();
       column.classList.remove('column-drop-target');
       const ids = draggedTicketIds;

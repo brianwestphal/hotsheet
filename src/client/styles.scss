@@ -2317,6 +2317,18 @@ body.terminal-dashboard-active {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
+// HS-7492 — dragging a file over a ticket row (list view) or column card
+// (column view) highlights that row as the drop target. The accent-tinted
+// outline matches the detail-panel drop style above so all three drop
+// surfaces (detail panel, row, card) read as the same affordance.
+.ticket-row.file-drop-target,
+.column-card.file-drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
 .detail-tags {
   display: flex;
   flex-wrap: wrap;
@@ -5375,8 +5387,14 @@ body.terminal-dashboard-active {
   width: 28px;
   overflow: hidden;
 
+  // HS-7525 — widened from 240px to 380px (+140px) so the input still has
+  // room to type a realistic query after the HS-7426 match-mode toggle
+  // cluster (case / whole-word / regex) moved into the same flex row as
+  // the input, count chip, prev/next chevrons, and close button. The
+  // previous 240px budget left ~50px of input width after the toggles, not
+  // enough to see more than a few characters at a time.
   &.is-open {
-    width: 240px;
+    width: 380px;
     background: var(--bg);
     border-color: var(--border);
 

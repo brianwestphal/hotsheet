@@ -368,7 +368,7 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     console.error(`[post-startup ${elapsed()}] setting up skills and channels...`);
     await setupSkillsAndChannels(actualPort);
     console.error(`[post-startup ${elapsed()}] setting up instance lifecycle...`);
-    setupInstanceLifecycle(actualPort);
+    await setupInstanceLifecycle(actualPort);
     console.error(`[post-startup ${elapsed()}] done`);
   }
 
@@ -471,16 +471,20 @@ async function ensureHooksForRunningInstance(port: number): Promise<void> {
 }
 
 /** Write instance file and register exit cleanup handlers. */
-function setupInstanceLifecycle(actualPort: number): void {
+async function setupInstanceLifecycle(actualPort: number): Promise<void> {
   writeInstanceFile(actualPort);
-  const cleanupInstance = async () => {
-    const { destroyAllTerminals } = await import('./terminals/registry.js');
-    destroyAllTerminals();
+  // HS-7528: pre-import the registry so the synchronous `process.on('exit')`
+  // handler can kill PTYs without waiting on an async import. Covers the
+  // `process.exit()` path (e.g. `/api/shutdown`, stale-instance cleanup,
+  // crashes) — the SIGINT / SIGTERM handlers below also route through this.
+  const { destroyAllTerminals } = await import('./terminals/registry.js');
+  const cleanupInstance = (): void => {
+    try { destroyAllTerminals(); } catch { /* already torn down */ }
     removeInstanceFile();
   };
-  process.on('exit', () => { removeInstanceFile(); });
-  process.on('SIGINT', () => { void cleanupInstance().finally(() => process.exit(0)); });
-  process.on('SIGTERM', () => { void cleanupInstance().finally(() => process.exit(0)); });
+  process.on('exit', () => { cleanupInstance(); });
+  process.on('SIGINT', () => { cleanupInstance(); process.exit(0); });
+  process.on('SIGTERM', () => { cleanupInstance(); process.exit(0); });
 }
 
 async function main() {

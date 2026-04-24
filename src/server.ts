@@ -141,9 +141,16 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   app.route('/api/backups', backupRoutes);
   app.route('/api/projects', projectRoutes);
 
-  // Graceful shutdown endpoint (used by stale instance cleanup)
+  // Graceful shutdown endpoint (used by stale instance cleanup and `--close`).
+  // HS-7528: kill every live PTY before the process exits so interactive
+  // shells don't outlive the Hot Sheet instance that launched them.
+  // SIGINT/SIGTERM signal handlers in `cli.ts` already do this, but those
+  // aren't on the `/api/shutdown` path — without this call the PTYs orphan
+  // whenever the client uses the HTTP shutdown route (e.g. `hotsheet --close`
+  // or the stale-instance auto-cleanup).
   app.post('/api/shutdown', (c) => {
     console.log('[server] Shutdown requested');
+    void import('./terminals/registry.js').then(m => m.destroyAllTerminals()).catch(() => { /* registry may already be torn down */ });
     setTimeout(() => process.exit(0), 500);
     return c.json({ ok: true });
   });

@@ -239,7 +239,13 @@ export function initTerminalDashboard(): void {
   });
 
   // Esc routing:
-  //  - If a tile is centered (HS-6835) → collapse back to the grid, do NOT exit.
+  //  - If a dedicated view is mounted (HS-6836) and the search input has
+  //    focus (HS-7526) → blur the input and return focus to the xterm; do
+  //    NOT collapse the dedicated view. Prevents the user from accidentally
+  //    exiting the dedicated view when they just wanted to leave the search
+  //    field.
+  //  - Else if a tile is centered (HS-6835) → collapse back to the grid, do
+  //    NOT exit.
   //  - Else if a dedicated view is mounted (HS-6836) → collapse that first.
   //  - Else exit the dashboard entirely.
   //
@@ -250,6 +256,17 @@ export function initTerminalDashboard(): void {
     if (!active) return;
     if (e.key !== 'Escape') return;
     if (dedicatedView !== null) {
+      const activeEl = document.activeElement as HTMLElement | null;
+      const searchSlot = document.getElementById('terminal-dashboard-search-slot');
+      const inSearch = activeEl !== null && searchSlot !== null && searchSlot.contains(activeEl)
+        && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+      if (inSearch) {
+        e.preventDefault();
+        e.stopPropagation();
+        activeEl.blur();
+        try { dedicatedView.term.focus(); } catch { /* term disposed */ }
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       exitDedicatedView();

@@ -18,6 +18,15 @@
 - Only activates when `Files` are present in the drag data (ignores text drags, etc.).
 - After upload, the detail panel refreshes to show the new attachments.
 
+### 5.2.1 Drag-and-Drop onto a ticket row (HS-7492)
+
+- Files dragged over a ticket in the list view (`.ticket-row[data-id]`) or a card in the column view (`.column-card[data-id]`) highlight that row / card as the drop target via the `.file-drop-target` class — same accent-tinted dashed outline as the detail-body drop style, so the two drop surfaces read as one affordance.
+- Dropping one or more files on a ticket row / card attaches them to THAT ticket, regardless of which ticket (if any) is currently selected. Row / card drop target takes precedence over the selection because the user's intent is explicit: they dropped on a specific ticket.
+- If the drop lands outside any row / card, the pre-existing behaviour applies — attach to the single selected ticket, else create a new "Attachment" ticket (or use the draft-input value as the title if set) and attach to it.
+- Trashed rows (`.trash-row`) are deliberately excluded as drop targets — attachments on trashed tickets would be silently removed by the next auto-cleanup sweep.
+- Only activates when `Files` are present in the drag data. The column-view ticket-reorder drag carries `text/plain` instead of `Files`, so its own `.column-drop-target` highlight (reorder-by-status) and the HS-7492 file-drop highlight are mutually exclusive — a reorder drag never lights up a file-drop target, and a file drag never lights up the whole column.
+- Playwright e2e coverage in `e2e/ticket-row-drop.spec.ts`: (1) select ticket B, dispatch a synthetic file drop on ticket A's row, assert the attachment lands on A and NOT on B; (2) drop outside any row with no selection creates a new "Attachment" ticket with the file (fallback regression).
+
 ### 5.3 File Serving
 
 - Attached files are served via the API with correct MIME types.

@@ -195,19 +195,62 @@ async function init() {
   // Claude Channel
   void initChannel();
   // Prevent browser navigation when files are dropped outside valid drop targets.
-  // If a single ticket is selected, attach to it. Otherwise create a new ticket.
-  document.addEventListener('dragover', (e) => { e.preventDefault(); });
+  // If the drop lands on a ticket row / column card (HS-7492) → attach to THAT
+  // ticket regardless of selection. Else if a single ticket is selected →
+  // attach to it. Else create a new ticket.
+  //
+  // HS-7492 — visual feedback: while a file is being dragged, the ticket row
+  // or column card under the cursor gets `.file-drop-target`. Cleared on
+  // dragleave / drop / dragend. We only mark rows on Files drags (not the
+  // column-view ticket-reorder drag which carries text/plain) so the
+  // existing `.column-drop-target` behaviour for reorder is unaffected.
+  let lastFileDropRow: HTMLElement | null = null;
+  const setFileDropRow = (row: HTMLElement | null): void => {
+    if (lastFileDropRow === row) return;
+    lastFileDropRow?.classList.remove('file-drop-target');
+    row?.classList.add('file-drop-target');
+    lastFileDropRow = row;
+  };
+  const findRowUnder = (el: HTMLElement): HTMLElement | null => {
+    // `.trash-row` rows are excluded — attachments on trashed tickets would
+    // be silently dropped by the next auto-cleanup sweep.
+    const row = el.closest<HTMLElement>('.ticket-row[data-id]:not(.trash-row), .column-card[data-id]');
+    return row;
+  };
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    const types = e.dataTransfer?.types;
+    if (types?.includes('Files') !== true) return;
+    const target = e.target as HTMLElement | null;
+    if (target === null) return;
+    setFileDropRow(findRowUnder(target));
+  });
+  document.addEventListener('dragleave', (e) => {
+    // Only clear when the drag leaves the viewport — intra-doc moves between
+    // rows flip the highlight via the next dragover. `relatedTarget` is null
+    // when the cursor leaves the window.
+    if (e.relatedTarget === null) setFileDropRow(null);
+  });
+  document.addEventListener('dragend', () => { setFileDropRow(null); });
   document.addEventListener('drop', async (e) => {
     // Don't intercept drops on valid targets (detail panel, dialogs) — they handle their own drops
     const target = e.target as HTMLElement;
     if (target.closest('.detail-body') || target.closest('.custom-view-editor-overlay') || target.closest('.feedback-dialog-overlay')) return;
 
     e.preventDefault();
+    setFileDropRow(null);
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
 
     let ticketId: number;
-    if (state.selectedIds.size === 1) {
+    // HS-7492 — row/card drop target takes precedence over the selection.
+    // A user dropping a file onto a specific ticket obviously intends to
+    // attach to that ticket, even if a different one is currently selected.
+    const rowEl = findRowUnder(target);
+    const rowId = rowEl?.dataset.id;
+    if (rowId !== undefined && rowId !== '') {
+      ticketId = parseInt(rowId, 10);
+    } else if (state.selectedIds.size === 1) {
       // Attach to the selected ticket
       ticketId = Array.from(state.selectedIds)[0];
     } else {

@@ -168,7 +168,7 @@ Double-clicking any tile opens a **dedicated terminal view** — the entire dash
 
 **Dismissal (returns to the dashboard grid, _not_ to the normal ticket view):**
 - Click **Back**.
-- Press **Esc**.
+- Press **Esc**. HS-7526 exception: when focus is inside the dedicated-view search input (`#terminal-dashboard-search-slot .terminal-search-input`), the capture-phase Esc handler in `terminalDashboard.tsx` blurs the input and returns focus to the dedicated xterm instead of exiting. A second Esc (now that focus is on the xterm, not the input) exits as normal. This matches the user intuition that Esc from a text field "exits the field" before it "exits the view"; it also mirrors the HS-7393 blur-without-clear behaviour that the app-header search and the drawer-terminal search already follow.
 - Click the dashboard toggle button — this path exits dashboard mode entirely (per §25.3 rule 1). The dedicated view closes along with the dashboard.
 - Click any project tab — exits dashboard mode and switches to that project's ticket view (per §25.3 rule 3). The dedicated view closes along with the dashboard.
 

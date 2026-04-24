@@ -76,11 +76,19 @@ There is no separate "Restart" button — the stop/start toggle covers explicit 
 
 **Kill on:**
 - Project unregister (`DELETE /api/projects/:secret`).
-- Server shutdown (SIGTERM handler).
+- Server shutdown (SIGTERM / SIGINT handler in `cli.ts`, plus `/api/shutdown` endpoint — HS-7528).
 - Explicit Stop / Start cycle.
 
 **Do not kill on:**
 - Drawer close, tab switch, browser reload, WebSocket disconnect, multi-project focus change.
+
+**Shutdown signal (HS-7528).** Every internal teardown path (`destroyAllTerminals`, `restartTerminal`, `destroyTerminal`) sends `SIGHUP` to the PTY, matching the `POST /api/terminal/kill` default. Interactive shells (zsh / bash / fish) ignore `SIGTERM` but exit cleanly on hang-up per HS-6471 — the earlier hardcoded `SIGTERM` in `teardownPty` left shells running after Hot Sheet shutdown, so the PTYs became orphans when the server process exited. Three server-side entry points all route through the same SIGHUP path:
+
+1. **SIGINT / SIGTERM handler in `cli.ts`:** `setupInstanceLifecycle` synchronously calls `destroyAllTerminals()` before `process.exit(0)`. Runs for Ctrl+C in a dev terminal, `kill <pid>`, and the Tauri sidecar shutdown path (the Tauri `RunEvent::Exit` handler sends `SIGTERM` to the Node sidecar with a 300ms wait for cleanup).
+2. **`process.on('exit')` fallback:** same `destroyAllTerminals()` call, synchronous, so any path that lands at `process.exit(N)` without a signal (e.g. crashes, `--close` via the HTTP endpoint below) still kills PTYs before the process dies. Registry module is pre-imported at lifecycle setup time so the synchronous exit hook has an immediate reference.
+3. **`POST /api/shutdown`:** the HTTP shutdown endpoint used by `hotsheet --close` and stale-instance auto-cleanup dynamic-imports the registry and fires `destroyAllTerminals()` before its 500ms `setTimeout(process.exit)`.
+
+Three unit tests in `src/terminals/registry.test.ts` guard the signal: `destroyAllTerminals sends SIGHUP to every live PTY`, `restartTerminal sends SIGHUP to the outgoing PTY`, `destroyTerminal sends SIGHUP to the PTY`.
 
 ## 22.5 Default command + channel-aware substitution
 
@@ -200,9 +208,28 @@ Existing:
 
 - All terminal endpoints require `X-Hotsheet-Secret` header (same middleware as the rest of the API). The project secret disambiguates which session to use.
 - WebSocket upgrade checks the secret before accepting the upgrade. Unauthorized requests return 403 on the upgrade.
-- The PTY inherits the environment of the Node server process, minus any keys the user marks private in settings (future). For now: full environment inherits.
+- The PTY inherits the environment of the Node server process, minus tool-marker variables that leak from the launching runtime (HS-7527). See §22.14.1 below.
 - The shell runs as the same user as the Node server. No privilege escalation.
 - The terminal is a straightforward extension of existing capabilities — `/api/shell/exec` already runs arbitrary commands as the logged-in user. Terminal is strictly less surface area, not more.
+
+### 22.13.1 Environment-variable scrubbing (HS-7527)
+
+Before a PTY is spawned, `buildEnv()` in `src/terminals/registry.ts` routes `process.env` through the `scrubParentEnv` helper, which drops tool-marker variables that the launching runtime injected. Without this scrub, those variables leak into every interactive shell Hot Sheet spawns and break unrelated tools that branch on their presence.
+
+**Canonical repro (HS-7527).** Hot Sheet is often run via `tsx` (dev: `npm run dev`; production sidecar: packaged with tsx). tsx exports `TSX_TSCONFIG_PATH=tsconfig.json` so a re-exec'd child Node process reuses the same config. That var inherits into the PTY. When the user then runs e.g. `npm run some-script` inside a Hot Sheet terminal in an unrelated project, the script's own `tsx` invocation reads `TSX_TSCONFIG_PATH` and tries to open a path that only exists in Hot Sheet's working tree — crashing with `Cannot resolve tsconfig at path: …`.
+
+**The scrub list** (every entry is a concrete tool-marker pattern the launching runtime adds to its children's environment, not the user's shell or desktop env):
+
+- **tsx loader:** `TSX_*` (HS-7527 root cause — the TSX_TSCONFIG_PATH variable)
+- **npm scripts:** `npm_*` (case-sensitive — `npm_lifecycle_script`, `npm_package_*`, `npm_config_*`, `npm_node_execpath`, `npm_command`, etc.)
+- **Node runtime hijacks:** `NODE`, `NODE_OPTIONS`, `NODE_PATH`
+- **pnpm / yarn / berry:** `PNPM_*`, `INIT_CWD`, `YARN_*`, `BERRY_*`
+- **macOS CoreFoundation:** `__CF*` (the `__CFBundleIdentifier` family that Launch Services injects)
+- **Tauri sidecar markers:** `TAURI_*`
+
+Matches are **case-sensitive prefix matches** — `npm_MyCustomVar` (the user's own env var) is not an npm-script marker and passes through. `PATH`, `HOME`, `USER`, `SHELL`, `TERM_PROGRAM`, `LANG`, `LC_ALL`, `PWD`, `TMPDIR`, and every other user/desktop variable are untouched. `HOTSHEET_IN_TERMINAL=1` is still added by `buildEnv` so scripts can detect "running inside the Hot Sheet terminal" intentionally.
+
+`scrubParentEnv` and `shouldStripEnvKey` are exported from `registry.ts` and have 11 unit tests in `registry.test.ts` covering every matcher family, case-sensitivity, undefined-value handling, and non-mutation of the input env.
 
 ## 22.14 Out of scope
 

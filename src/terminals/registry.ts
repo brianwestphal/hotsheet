@@ -699,7 +699,12 @@ function teardownPty(session: SessionState): void {
   }
   session.ptyDisposables = [];
   if (session.pty) {
-    try { session.pty.kill('SIGTERM'); } catch { /* already dead */ }
+    // HS-7528: use SIGHUP rather than SIGTERM — interactive shells
+    // (zsh / bash / fish) ignore SIGTERM but exit cleanly on hang-up. Same
+    // rationale as the `/api/terminal/kill` route (HS-6471). SIGTERM here
+    // left shells running after Hot Sheet shutdown, so the PTYs became
+    // orphans when the server process exited.
+    try { session.pty.kill('SIGHUP'); } catch { /* already dead */ }
   }
   session.pty = null;
   session.startedAt = null;
@@ -717,11 +722,73 @@ function resolveScrollbackBytes(dataDir: string): number {
 
 function buildEnv(): NodeJS.ProcessEnv {
   return {
-    ...process.env,
+    ...scrubParentEnv(process.env),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     HOTSHEET_IN_TERMINAL: '1',
   };
+}
+
+/**
+ * HS-7527: strip env vars that leak from Hot Sheet's own runtime into
+ * spawned terminals. The canonical repro: Hot Sheet runs under `tsx`, which
+ * exports `TSX_TSCONFIG_PATH=tsconfig.json`. That env var leaks into every
+ * PTY, so `npm run some-script` inside the Hot Sheet terminal re-invokes
+ * `tsx` with `TSX_TSCONFIG_PATH` pointing at a path that's valid only in
+ * the Hot Sheet working tree — it fails in the user's actual project with
+ * `Cannot resolve tsconfig at path: …`.
+ *
+ * General solution: strip the well-known "this process is being run by
+ * tool X" markers that toolchains add to their children's environment.
+ * These are an implementation detail of how Hot Sheet itself was launched
+ * and have no business leaking into the user's interactive shells.
+ *
+ * Exported so this module's tests can verify the scrub list without having
+ * to spawn a real PTY. The list is deliberately a fixed allowlist of
+ * matchers, not an opt-out — every entry is a concrete instance of the
+ * "tool-marker vars shouldn't leak" rule.
+ */
+export function scrubParentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) continue;
+    if (shouldStripEnvKey(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+/** True iff an env-var name matches one of the "don't leak into children" patterns. Exported for tests. */
+export function shouldStripEnvKey(key: string): boolean {
+  // tsx loader (HS-7527 root cause). `TSX_*` covers TSX_TSCONFIG_PATH plus
+  // any future tsx-specific vars.
+  if (key.startsWith('TSX_')) return true;
+  // npm's script environment. When Hot Sheet is launched via `npm start` /
+  // `npm run dev`, npm exports ~20 npm_* vars (npm_config_*, npm_lifecycle_*,
+  // npm_package_*, npm_node_execpath, npm_command, etc.) that leak into the
+  // PTY and can confuse tools that branch on "am I being run by npm?".
+  if (key.startsWith('npm_')) return true;
+  if (key === 'NODE') return true;
+  // NODE_OPTIONS can carry `--import tsx/esm` or `--require …` that hijacks
+  // child Node processes inside the PTY. NODE_PATH is similar.
+  if (key === 'NODE_OPTIONS') return true;
+  if (key === 'NODE_PATH') return true;
+  // pnpm equivalents of npm_*.
+  if (key.startsWith('PNPM_')) return true;
+  if (key === 'INIT_CWD') return true;
+  // Yarn
+  if (key.startsWith('YARN_')) return true;
+  if (key.startsWith('BERRY_')) return true;
+  // macOS: `__CFBundleIdentifier` is set by Launch Services to identify the
+  // launching app (e.g. Terminal.app, hotsheet.app). A PTY child picking
+  // this up can mis-attribute itself to Hot Sheet in telemetry / crash
+  // reporters. Strip the whole `__CF*` family since Apple adds new ones
+  // per-release.
+  if (key.startsWith('__CF')) return true;
+  // Tauri sidecar markers — the Tauri runtime sets these so the sidecar can
+  // detect its launch mode. User shells shouldn't inherit them.
+  if (key.startsWith('TAURI_')) return true;
+  return false;
 }
 
 // --- Default PTY factory (uses node-pty; wraps the command string via $SHELL -c) ---

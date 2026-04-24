@@ -18,7 +18,9 @@ import {
   type PtyLike,
   resizeTerminal,
   restartTerminal,
+  scrubParentEnv,
   setPtyFactory,
+  shouldStripEnvKey,
   type SpawnArgs,
   writeInput,
 } from './registry.js';
@@ -358,6 +360,54 @@ describe('TerminalRegistry', () => {
     attach('secret-sighup', d, sub);
     const pty = FakePty.lastSpawned!;
     killTerminal('secret-sighup', 'SIGHUP');
+    expect(pty.killSignals).toEqual(['SIGHUP']);
+  });
+
+  // HS-7528: `destroyAllTerminals` is called on SIGINT / SIGTERM / exit paths
+  // and on `/api/shutdown`. Before the fix it hard-coded SIGTERM inside
+  // `teardownPty`, which interactive shells ignore per HS-6471 — so Hot
+  // Sheet shutdown left every PTY orphaned. The registry now sends SIGHUP
+  // for every internal teardown so shells actually exit.
+  it('destroyAllTerminals sends SIGHUP to every live PTY (HS-7528)', () => {
+    const d = tmpDataDir();
+    const { sub: subA } = makeSub();
+    const { sub: subB } = makeSub();
+
+    attach('secret-shutdown', d, subA, {
+      configOverride: { id: 'a', command: '/bin/sh' },
+    }, 'a');
+    const ptyA = FakePty.lastSpawned!;
+    attach('secret-shutdown', d, subB, {
+      configOverride: { id: 'b', command: '/bin/sh' },
+    }, 'b');
+    const ptyB = FakePty.lastSpawned!;
+
+    destroyAllTerminals();
+    expect(ptyA.killSignals).toEqual(['SIGHUP']);
+    expect(ptyB.killSignals).toEqual(['SIGHUP']);
+  });
+
+  // HS-7528: `restartTerminal` also goes through `teardownPty` internally —
+  // the signal-change fix should apply there too (without changing the
+  // externally-observable "old PTY killed, new PTY spawned" behaviour that
+  // other restart tests verify).
+  it('restartTerminal sends SIGHUP to the outgoing PTY (HS-7528)', () => {
+    const d = tmpDataDir();
+    const { sub } = makeSub();
+    attach('secret-restart-sig', d, sub);
+    const oldPty = FakePty.lastSpawned!;
+    restartTerminal('secret-restart-sig', d);
+    expect(oldPty.killSignals).toEqual(['SIGHUP']);
+  });
+
+  // HS-7528: `destroyTerminal` is the per-session cleanup called from project
+  // unregister and dynamic-terminal close. Same rationale — must send SIGHUP.
+  it('destroyTerminal sends SIGHUP to the PTY (HS-7528)', () => {
+    const d = tmpDataDir();
+    const { sub } = makeSub();
+    attach('secret-destroy-sig', d, sub);
+    const pty = FakePty.lastSpawned!;
+    destroyTerminal('secret-destroy-sig');
     expect(pty.killSignals).toEqual(['SIGHUP']);
   });
 
@@ -868,5 +918,118 @@ describe('TerminalRegistry', () => {
       expect(pty.writes).not.toContain('\x0c');
       expect(pty.resizes).toEqual([]);
     });
+  });
+});
+
+// HS-7527 — env-var scrubbing before handing environment to the PTY.
+describe('scrubParentEnv / shouldStripEnvKey (HS-7527)', () => {
+  // shouldStripEnvKey returns true for every var name that should NOT leak
+  // into a PTY. Each matcher below corresponds to a specific tool-marker
+  // pattern documented in registry.ts.
+  it('strips the tsx loader markers that caused the HS-7527 repro', () => {
+    expect(shouldStripEnvKey('TSX_TSCONFIG_PATH')).toBe(true);
+    expect(shouldStripEnvKey('TSX_TSCONFIG')).toBe(true);
+    expect(shouldStripEnvKey('TSX_VERSION')).toBe(true);
+  });
+
+  it('strips every npm-script marker', () => {
+    expect(shouldStripEnvKey('npm_config_cache')).toBe(true);
+    expect(shouldStripEnvKey('npm_lifecycle_script')).toBe(true);
+    expect(shouldStripEnvKey('npm_package_name')).toBe(true);
+    expect(shouldStripEnvKey('npm_node_execpath')).toBe(true);
+    expect(shouldStripEnvKey('npm_command')).toBe(true);
+  });
+
+  it('strips Node runtime markers that could hijack child node processes', () => {
+    expect(shouldStripEnvKey('NODE')).toBe(true);
+    expect(shouldStripEnvKey('NODE_OPTIONS')).toBe(true);
+    expect(shouldStripEnvKey('NODE_PATH')).toBe(true);
+  });
+
+  it('strips pnpm, yarn, and berry markers', () => {
+    expect(shouldStripEnvKey('PNPM_HOME')).toBe(true);
+    expect(shouldStripEnvKey('INIT_CWD')).toBe(true);
+    expect(shouldStripEnvKey('YARN_REGISTRY')).toBe(true);
+    expect(shouldStripEnvKey('BERRY_BIN_FOLDER')).toBe(true);
+  });
+
+  it('strips macOS CoreFoundation markers', () => {
+    expect(shouldStripEnvKey('__CFBundleIdentifier')).toBe(true);
+    expect(shouldStripEnvKey('__CF_USER_TEXT_ENCODING')).toBe(true);
+  });
+
+  it('strips Tauri sidecar markers', () => {
+    expect(shouldStripEnvKey('TAURI_PLATFORM')).toBe(true);
+    expect(shouldStripEnvKey('TAURI_ENV_DEBUG')).toBe(true);
+  });
+
+  it('keeps user-shell / desktop vars untouched', () => {
+    expect(shouldStripEnvKey('PATH')).toBe(false);
+    expect(shouldStripEnvKey('HOME')).toBe(false);
+    expect(shouldStripEnvKey('USER')).toBe(false);
+    expect(shouldStripEnvKey('SHELL')).toBe(false);
+    expect(shouldStripEnvKey('TERM_PROGRAM')).toBe(false);
+    expect(shouldStripEnvKey('LANG')).toBe(false);
+    expect(shouldStripEnvKey('LC_ALL')).toBe(false);
+    expect(shouldStripEnvKey('PWD')).toBe(false);
+    expect(shouldStripEnvKey('TMPDIR')).toBe(false);
+  });
+
+  // Case-sensitivity check: the patterns are prefix-based and env var names
+  // are conventionally upper-case except npm_* which is lower-case. Verify
+  // the match is case-sensitive so a user variable like `Path` (PowerShell
+  // convention on Windows) is NOT confused with `PATH`.
+  it('is case-sensitive so npm_* mixed-case user vars are NOT stripped', () => {
+    // The user's own env var named `Npm_MyCustom` (capital N) is not an npm-
+    // script marker — the npm_* prefix matcher is explicitly lower-case.
+    expect(shouldStripEnvKey('Npm_MyCustom')).toBe(false);
+    expect(shouldStripEnvKey('NPM_TOKEN')).toBe(false); // also user-set, not npm-script-set
+  });
+
+  it('scrubParentEnv removes every matching key and preserves the rest verbatim', () => {
+    const input: NodeJS.ProcessEnv = {
+      PATH: '/usr/local/bin:/usr/bin',
+      HOME: '/Users/tester',
+      TSX_TSCONFIG_PATH: 'tsconfig.json',
+      npm_lifecycle_script: 'tsx',
+      npm_package_name: 'hotsheet',
+      NODE_OPTIONS: '--require tsx',
+      __CFBundleIdentifier: 'com.hotsheet.app',
+      TAURI_PLATFORM: 'macos',
+      SHELL: '/bin/zsh',
+    };
+    const out = scrubParentEnv(input);
+    expect(out.PATH).toBe('/usr/local/bin:/usr/bin');
+    expect(out.HOME).toBe('/Users/tester');
+    expect(out.SHELL).toBe('/bin/zsh');
+    expect(out.TSX_TSCONFIG_PATH).toBeUndefined();
+    expect(out.npm_lifecycle_script).toBeUndefined();
+    expect(out.npm_package_name).toBeUndefined();
+    expect(out.NODE_OPTIONS).toBeUndefined();
+    expect(out.__CFBundleIdentifier).toBeUndefined();
+    expect(out.TAURI_PLATFORM).toBeUndefined();
+  });
+
+  // scrubParentEnv drops undefined values — a common shape when tests
+  // construct a partial ProcessEnv. Guards the Object.entries iteration.
+  it('scrubParentEnv drops undefined values cleanly', () => {
+    const input: NodeJS.ProcessEnv = {
+      PATH: '/usr/bin',
+      FOO: undefined,
+    };
+    const out = scrubParentEnv(input);
+    expect(out.PATH).toBe('/usr/bin');
+    expect('FOO' in out).toBe(false);
+  });
+
+  // scrubParentEnv must return a fresh object so a caller mutating the
+  // result (e.g. adding TERM / COLORTERM) doesn't corrupt process.env.
+  it('scrubParentEnv returns a new object (does not mutate the input)', () => {
+    const input: NodeJS.ProcessEnv = { PATH: '/usr/bin', TSX_TSCONFIG_PATH: 'tsconfig.json' };
+    const out = scrubParentEnv(input);
+    expect(out).not.toBe(input);
+    expect(input.TSX_TSCONFIG_PATH).toBe('tsconfig.json'); // original unchanged
+    out.NEW_KEY = 'value';
+    expect('NEW_KEY' in input).toBe(false);
   });
 });
