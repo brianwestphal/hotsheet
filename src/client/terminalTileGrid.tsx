@@ -1,0 +1,962 @@
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { Terminal as XTerm } from '@xterm/xterm';
+
+import { apiWithSecret } from './api.js';
+import { toElement } from './dom.js';
+import { openExternalUrl } from './tauriIntegration.js';
+import {
+  applyAppearanceToTerm,
+  getProjectDefault,
+  getSessionOverride,
+  resolveAppearance,
+} from './terminalAppearance.js';
+import {
+  computeTileScale,
+  DASHBOARD_FALLBACK_COLS,
+  DASHBOARD_FALLBACK_ROWS,
+  ROOT_PADDING,
+  TILE_ASPECT,
+  tileNativeGridFromCellMetrics,
+  tileWidthFromSlider,
+} from './terminalDashboardSizing.js';
+import { isTerminalViewToggleShortcut } from './terminalKeybindings.js';
+import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
+import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
+
+/**
+ * Shared tile-grid module (HS-7595) used by:
+ *   - The global Terminal Dashboard (§25 / docs/25-terminal-dashboard.md)
+ *   - The per-project Drawer Terminal Grid (§36 / docs/36-drawer-terminal-grid.md)
+ *
+ * Both surfaces render scaled-down terminal tiles in a flex-wrap grid with the
+ * same interaction model: single-click → centered overlay (FLIP animation),
+ * double-click → dedicated full-pane view, lazy/exited tiles render as
+ * placeholders that spawn-on-enlarge, bell indicators bounce + outline, etc.
+ * Before HS-7595 each callsite held a near-identical copy of this code; this
+ * module collapses the per-tile lifecycle behind one API. The callsite still
+ * owns the surrounding chrome (project sections / drawer toolbar / slider /
+ * on-list-update wiring) and just delegates per-tile rendering + center +
+ * dedicated state to `mountTileGrid()`.
+ *
+ * Key parameterisations the two surfaces need:
+ *
+ * - `cssPrefix` — class names differ (`drawer-terminal-grid` vs
+ *   `terminal-dashboard`) so styles can evolve independently per surface.
+ * - `centerSizeFrac` — 0.7 for the dashboard's full-viewport overlay, 0.9 for
+ *   the drawer's already-cramped pane.
+ * - `centerScope` — backdrop attachment target. `'viewport'` makes the
+ *   backdrop dim the whole document (dashboard); `'container'` constrains it
+ *   to the grid's parent panel (drawer).
+ * - `getSliderValue` — caller owns the size slider state; the grid asks for
+ *   the current value during sizing passes.
+ * - `onContextMenu` — optional right-click handler. The dashboard wires a
+ *   per-tile context menu (§25.8.5); the drawer-grid currently doesn't.
+ *
+ * The returned `TileGridHandle` exposes the operations the callsite needs to
+ * react to outside events (rebuild on a list refresh, applySizing on slider
+ * change / window resize, exitCentered / exitDedicated on Esc).
+ */
+
+export type TileSessionState = 'alive' | 'exited' | 'not_spawned';
+
+/** A normalised tile entry. Both callsites fetch terminal lists from
+ *  `/terminal/list` then map each entry into this shape. The shared module
+ *  doesn't care about the original list response — it just needs id, secret,
+ *  display label, current state + exit code, server-side bell flag, and the
+ *  three appearance-override fields. */
+export interface TileEntry {
+  id: string;
+  secret: string;
+  label: string;
+  state: TileSessionState;
+  exitCode: number | null;
+  bellPending?: boolean;
+  /** HS-6307 — appearance overrides resolved by the server from settings.json
+   *  per terminal. Layered over project default + session override at mount
+   *  time via `resolveAppearance`. */
+  theme?: string;
+  fontFamily?: string;
+  fontSize?: number;
+  /** HS-7278 — pre-formatted CWD label rendered as a small chip below the
+   *  tile name. Empty string / undefined hides the row. The callsite is
+   *  responsible for tildification + truncation (via `formatCwdLabel`); the
+   *  shared module just renders whatever string is passed. The drawer grid
+   *  intentionally omits this (no CWD row per §36 v1); the dashboard passes
+   *  it (HS-7278). */
+  cwdLabel?: string;
+  /** Raw CWD path used as the `title` attribute on the chip — gives the user
+   *  the full path on hover when the rendered label was truncated. */
+  cwdRaw?: string;
+  /** Optional opaque payload the callsite wants to associate with the tile.
+   *  Returned to `onContextMenu` etc. so the callsite can dispatch over its
+   *  original list-response shape (e.g., the dashboard needs `dynamic` to
+   *  decide whether the Close Tab option is enabled). */
+  metadata?: unknown;
+}
+
+export interface TileGridOptions {
+  /** Where the grid renders. Tiles are appended as direct children. */
+  container: HTMLElement;
+  /** Shared CSS-class prefix. Determines the rendered class names — e.g.
+   *  prefix `terminal-dashboard` produces `terminal-dashboard-tile`,
+   *  `terminal-dashboard-tile-preview`, `terminal-dashboard-tile-xterm`,
+   *  `terminal-dashboard-tile-slot` (placeholder), etc. */
+  cssPrefix: string;
+  /** Fraction of the centering reference rect occupied by the centered tile
+   *  (both axes, then clamped by 4:3). `0.7` for §25 (full viewport), `0.9`
+   *  for §36 (cramped drawer body). */
+  centerSizeFrac: number;
+  /** Where the centered tile + backdrop position themselves against, and
+   *  where the dim backdrop attaches:
+   *  - `'viewport'`: centered tile uses `position: fixed` + viewport dims;
+   *    backdrop attaches to `document.body` so it dims the whole window.
+   *    Used by §25 (dashboard is full-viewport).
+   *  - `'container'`: centered tile positions against `centerReferenceEl`
+   *    (or container) bounding rect; backdrop attaches inside that element.
+   *    Used by §36 (drawer-scoped). */
+  centerScope: 'viewport' | 'container';
+  /** When `centerScope === 'container'`, the element to read for the
+   *  centered tile's reference rect + backdrop attachment. Defaults to
+   *  `container` if not provided. */
+  centerReferenceEl?: HTMLElement;
+  /** Returns the current slider value (0..100). Callsite owns the slider
+   *  state; the grid calls this during sizing passes. */
+  getSliderValue: () => number;
+  /** Optional right-click context-menu handler. */
+  onContextMenu?: (entry: TileEntry, e: MouseEvent) => void;
+  /** Optional hook fired when a tile is enlarged (centered or dedicated).
+   *  Used by callsites that need to react to "user is now interacting with
+   *  this terminal" — e.g. clearing cross-project bell indicators. */
+  onTileEnlarge?: (entry: TileEntry, target: 'center' | 'dedicated') => void;
+  /** Optional hook to add chrome to the dedicated view's top bar (e.g. the
+   *  dashboard's project breadcrumb + search widget). The hook is called
+   *  with the bar element after Back + label are appended; the callsite can
+   *  insert additional children. Return value can be a disposer that runs
+   *  on `exitDedicated`. */
+  onDedicatedBarMount?: (bar: HTMLElement, entry: TileEntry, term: XTerm) => undefined | (() => void);
+  /** Optional hook called whenever a centered tile is uncentered or the
+   *  dedicated view exits. Gives callsites a way to react (e.g. clearing
+   *  per-tile state in their own maps). */
+  onTileShrink?: (entry: TileEntry) => void;
+}
+
+export interface TileGridHandle {
+  /** Re-render every tile from the new entry list. Disposes outgoing tiles +
+   *  mounts incoming ones. Centered / dedicated state is reset. Callers
+   *  should call this on every `/terminal/list` refresh that affects this
+   *  grid's terminals. */
+  rebuild(entries: TileEntry[]): void;
+  /** Re-run the per-tile sizing pass — reads `getSliderValue()` against the
+   *  container width and applies the resulting tile dims to every grid
+   *  tile (centered tile is skipped). Called on slider input + window
+   *  resize + dedicated-view exit. */
+  applySizing(): void;
+  /** Re-center the currently-centered tile (if any) against the current
+   *  reference rect. Called by callsites on window resize so the centered
+   *  overlay tracks viewport / drawer-body changes. */
+  recenterTile(): void;
+  /** Programmatically exit the centered overlay (Esc on the bare grid →
+   *  callsite calls this before exiting its own grid mode). */
+  uncenterTile(): void;
+  /** Programmatically exit the dedicated view. */
+  exitDedicatedView(): void;
+  /** Sync per-tile bell indicators against a set of bellPending terminal IDs
+   *  (drawn from the cross-project bell-state long-poll subscription, or a
+   *  per-project subset). Tiles whose id is in `pendingIds` get `.has-bell`;
+   *  others have it removed. */
+  syncBellState(pendingIds: Set<string>): void;
+  /** Move keyboard focus to the dedicated view's xterm (no-op when no
+   *  dedicated view is open). Used by callsites' Esc handlers — when the
+   *  user blurs an input within the dedicated view's chrome (e.g. the
+   *  HS-7526 search widget), the next-keypress target should be the
+   *  terminal so a subsequent Esc exits the view. */
+  focusDedicatedTerm(): void;
+  /** True when a tile is currently centered. */
+  isCentered(): boolean;
+  /** True when the dedicated view is mounted. */
+  isDedicatedOpen(): boolean;
+  /** Tear down everything (every xterm, every WS, the centered tile state,
+   *  the dedicated view if any). Idempotent. */
+  dispose(): void;
+}
+
+interface InternalTile {
+  entry: TileEntry;
+  state: TileSessionState;
+  exitCode: number | null;
+  root: HTMLElement;
+  preview: HTMLElement;
+  labelEl: HTMLElement;
+  term: XTerm | null;
+  xtermRoot: HTMLElement | null;
+  ws: WebSocket | null;
+  gridPreviewWidth: number;
+  gridPreviewHeight: number;
+  /** Tile-native cols × rows the WebSocket history handler resized the PTY
+   *  to (HS-7097). Used on dedicated-view exit to re-claim the PTY at the
+   *  tile's geometry rather than the dedicated pane's. */
+  targetCols: number;
+  targetRows: number;
+  slotPlaceholder: HTMLElement | null;
+  screenObserver: ResizeObserver | null;
+}
+
+interface DedicatedView {
+  tile: InternalTile;
+  overlay: HTMLElement;
+  term: XTerm;
+  fit: FitAddon;
+  ws: WebSocket | null;
+  bodyResizeObserver: ResizeObserver | null;
+  /** When the user double-clicks a tile WHILE another tile is already
+   *  centered, the prior centered tile is recorded here so the dedicated
+   *  view's exit returns to centered-prior rather than back-to-grid. */
+  priorCenteredTile: InternalTile | null;
+  /** Disposer returned by `onDedicatedBarMount` callsite hook (if any).
+   *  Called from `exitDedicatedView` so the callsite's bar chrome cleans
+   *  up alongside the rest. */
+  barDispose: (() => void) | null;
+}
+
+const TILE_INITIAL_COLS = DASHBOARD_FALLBACK_COLS;
+const TILE_INITIAL_ROWS = DASHBOARD_FALLBACK_ROWS;
+const CENTER_ANIMATION_MS = 280;
+/** 220 ms gives the browser enough time to dispatch dblclick first when the
+ *  user double-clicks; tested across macOS / Linux / Windows. Below ~200 ms
+ *  the single-click action sometimes fires before dblclick on slower
+ *  hardware. */
+const SINGLE_CLICK_DELAY_MS = 220;
+
+export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
+  const tiles = new Map<string, InternalTile>();
+  let centered: InternalTile | null = null;
+  let centerBackdrop: HTMLElement | null = null;
+  let dedicated: DedicatedView | null = null;
+  let pendingSingleClickTimer: number | null = null;
+
+  const cssPrefix = opts.cssPrefix;
+  const tileClass = `${cssPrefix}-tile`;
+  const previewClass = `${cssPrefix}-tile-preview`;
+  const labelClass = `${cssPrefix}-tile-label`;
+  const xtermClass = `${cssPrefix}-tile-xterm`;
+  const placeholderClass = `${cssPrefix}-tile-placeholder`;
+  const placeholderColdClass = `${cssPrefix}-tile-placeholder-cold`;
+  const placeholderStartingClass = `${cssPrefix}-tile-placeholder-starting`;
+  const placeholderStatusClass = `${cssPrefix}-tile-placeholder-status`;
+  const slotClass = `${cssPrefix}-tile-slot`;
+  const backdropClass = `${cssPrefix}-center-backdrop`;
+  const dedicatedClass = `${cssPrefix}-dedicated`;
+  const dedicatedBarClass = `${cssPrefix}-dedicated-bar`;
+  const dedicatedBackClass = `${cssPrefix}-dedicated-back`;
+  const dedicatedLabelClass = `${cssPrefix}-dedicated-label`;
+  const dedicatedBodyClass = `${cssPrefix}-dedicated-body`;
+  const dedicatedPaneClass = `${cssPrefix}-dedicated-pane`;
+
+  // --- DOM construction ---
+
+  function renderPreviewContent(state: TileSessionState, exitCode: number | null) {
+    if (state === 'alive') {
+      return <div className={placeholderClass}></div>;
+    }
+    const status = state === 'exited'
+      ? (exitCode === null ? 'Exited' : `Exited (code ${exitCode})`)
+      : 'Not yet started';
+    return (
+      <div className={`${placeholderClass} ${placeholderColdClass}`}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+        <span className={placeholderStatusClass}>{status}</span>
+      </div>
+    );
+  }
+
+  function renderTile(entry: TileEntry): HTMLElement {
+    const initialBell = entry.bellPending === true;
+    const cwdLabel = entry.cwdLabel ?? '';
+    const cwdRaw = entry.cwdRaw ?? '';
+    const cwdClass = `${cssPrefix}-tile-cwd`;
+    const root = toElement(
+      <div
+        className={`${tileClass} ${tileClass}-${entry.state}${initialBell ? ' has-bell' : ''}`}
+        data-secret={entry.secret}
+        data-terminal-id={entry.id}
+      >
+        <div className={previewClass}>
+          {renderPreviewContent(entry.state, entry.exitCode)}
+        </div>
+        <div className={labelClass} title={entry.label}>{entry.label}</div>
+        {cwdLabel === ''
+          ? null
+          : <div className={cwdClass} title={cwdRaw}>{cwdLabel}</div>}
+      </div>
+    );
+    const preview = root.querySelector<HTMLElement>(`.${previewClass}`);
+    const labelEl = root.querySelector<HTMLElement>(`.${labelClass}`);
+    if (preview === null || labelEl === null) return root;
+
+    const tile: InternalTile = {
+      entry,
+      state: entry.state,
+      exitCode: entry.exitCode,
+      root,
+      preview,
+      labelEl,
+      term: null,
+      xtermRoot: null,
+      ws: null,
+      gridPreviewWidth: 0,
+      gridPreviewHeight: 0,
+      targetCols: TILE_INITIAL_COLS,
+      targetRows: TILE_INITIAL_ROWS,
+      slotPlaceholder: null,
+      screenObserver: null,
+    };
+    tiles.set(entry.id, tile);
+
+    if (entry.state === 'alive') {
+      mountTileXterm(tile);
+      connectTileSocket(tile);
+    }
+
+    root.addEventListener('click', (e) => { onTileClick(tile, e); });
+    root.addEventListener('dblclick', (e) => { onTileDblClick(tile, e); });
+    if (opts.onContextMenu !== undefined) {
+      const handler = opts.onContextMenu;
+      root.addEventListener('contextmenu', (e) => { handler(tile.entry, e); });
+    }
+
+    return root;
+  }
+
+  // --- xterm mount + WebSocket attach ---
+
+  function resolveTileAppearance(tile: InternalTile) {
+    const configOverride: { theme?: string; fontFamily?: string; fontSize?: number } = {};
+    if (tile.entry.theme !== undefined) configOverride.theme = tile.entry.theme;
+    if (tile.entry.fontFamily !== undefined) configOverride.fontFamily = tile.entry.fontFamily;
+    if (tile.entry.fontSize !== undefined) configOverride.fontSize = tile.entry.fontSize;
+    return resolveAppearance({
+      projectDefault: getProjectDefault(),
+      configOverride,
+      sessionOverride: getSessionOverride(tile.entry.id),
+    });
+  }
+
+  function mountTileXterm(tile: InternalTile): void {
+    const xtermRoot = document.createElement('div');
+    xtermRoot.className = xtermClass;
+    tile.preview.replaceChildren(xtermRoot);
+
+    const appearance = resolveTileAppearance(tile);
+    const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
+
+    const term = new XTerm({
+      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+      fontSize: 13,
+      cursorBlink: false,
+      scrollback: 0,
+      allowProposedApi: true,
+      cols: TILE_INITIAL_COLS,
+      rows: TILE_INITIAL_ROWS,
+      theme: themeToXtermOptions(themeData),
+      linkHandler: {
+        activate: (_event, text) => { openExternalUrl(text); },
+      },
+    });
+    term.open(xtermRoot);
+    void applyAppearanceToTerm(term, appearance);
+
+    tile.targetCols = term.cols;
+    tile.targetRows = term.rows;
+
+    // HS-7097: observe `.xterm-screen` so every xterm render commits scaling.
+    const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+    if (screen !== null) {
+      const observer = new ResizeObserver(() => { reapplyTileScaleFromPreview(tile); });
+      observer.observe(screen);
+      tile.screenObserver = observer;
+    }
+    requestAnimationFrame(() => {
+      if (tile.term !== null && tile.xtermRoot !== null) {
+        const native = tileNativeDimsFromXterm(tile.term, tile.xtermRoot);
+        if (native !== null) {
+          try { tile.term.resize(native.cols, native.rows); } catch { /* xterm disposed */ }
+          tile.targetCols = native.cols;
+          tile.targetRows = native.rows;
+        }
+      }
+      reapplyTileScaleFromPreview(tile);
+    });
+
+    const encoder = new TextEncoder();
+    term.onData((data) => {
+      if (tile.ws !== null && tile.ws.readyState === WebSocket.OPEN) {
+        tile.ws.send(encoder.encode(data));
+      }
+    });
+    term.onBell(() => { tile.root.classList.add('has-bell'); });
+
+    tile.term = term;
+    tile.xtermRoot = xtermRoot;
+  }
+
+  function connectTileSocket(tile: InternalTile): void {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Omit cols/rows so the server skips the first-attach cleanup (HS-6799).
+    const url = `${protocol}//${window.location.host}/api/terminal/ws`
+      + `?project=${encodeURIComponent(tile.entry.secret)}`
+      + `&terminal=${encodeURIComponent(tile.entry.id)}`;
+    const ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+    tile.ws = ws;
+
+    ws.addEventListener('message', (ev) => {
+      if (tile.term === null) return;
+      const data: unknown = ev.data;
+      if (data instanceof ArrayBuffer) {
+        tile.term.write(new Uint8Array(data));
+        return;
+      }
+      if (typeof data === 'string') {
+        try {
+          const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
+          if (msg.type === 'history' && typeof msg.bytes === 'string'
+              && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
+            replayHistoryToTerm(tile.term, { bytes: msg.bytes, cols: msg.cols, rows: msg.rows });
+            // HS-7097 follow-up: resize local xterm + the server-side PTY to
+            // tile-native 4:3 so a running TUI redraws to fill the tile.
+            if (tile.xtermRoot !== null) {
+              const native = tileNativeDimsFromXterm(tile.term, tile.xtermRoot);
+              if (native !== null) {
+                try { tile.term.resize(native.cols, native.rows); } catch { /* disposed */ }
+                tile.targetCols = native.cols;
+                tile.targetRows = native.rows;
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: 'resize', cols: native.cols, rows: native.rows }));
+                }
+              }
+            }
+          }
+        } catch { /* non-JSON frame */ }
+      }
+    });
+    ws.addEventListener('close', () => { tile.ws = null; });
+    ws.addEventListener('error', () => { tile.ws = null; });
+  }
+
+  function tileNativeDimsFromXterm(term: XTerm, xtermRoot: HTMLElement): { cols: number; rows: number } | null {
+    const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+    if (screen === null) return null;
+    if (term.cols <= 0 || term.rows <= 0) return null;
+    const cellW = screen.offsetWidth / term.cols;
+    const cellH = screen.offsetHeight / term.rows;
+    if (!Number.isFinite(cellW) || !Number.isFinite(cellH) || cellW <= 0 || cellH <= 0) return null;
+    return tileNativeGridFromCellMetrics(cellW, cellH);
+  }
+
+  // --- Tile sizing ---
+
+  function applySizing(): void {
+    const rootWidth = Math.max(0, opts.container.clientWidth - ROOT_PADDING * 2);
+    if (rootWidth <= 0) return;
+    const sliderValue = opts.getSliderValue();
+    const tileWidth = tileWidthFromSlider(sliderValue, rootWidth);
+    const tileHeight = Math.round(tileWidth / TILE_ASPECT);
+
+    for (const tile of opts.container.querySelectorAll<HTMLElement>(`.${tileClass}`)) {
+      if (!tile.classList.contains('centered')) {
+        tile.style.width = `${tileWidth}px`;
+      }
+      const preview = tile.querySelector<HTMLElement>(`.${previewClass}`);
+      if (preview !== null && !tile.classList.contains('centered')) {
+        preview.style.width = `${tileWidth}px`;
+        preview.style.height = `${tileHeight}px`;
+      }
+      const xtermRoot = tile.querySelector<HTMLElement>(`.${xtermClass}`);
+      if (xtermRoot !== null && !tile.classList.contains('centered')) {
+        applyTileScale(xtermRoot, tileWidth, tileHeight);
+      }
+      const tid = tile.dataset.terminalId ?? '';
+      const live = tiles.get(tid);
+      if (live !== undefined) {
+        live.gridPreviewWidth = tileWidth;
+        live.gridPreviewHeight = tileHeight;
+      }
+    }
+  }
+
+  function reapplyTileScaleFromPreview(tile: InternalTile): void {
+    if (tile.xtermRoot === null) return;
+    const pw = tile.preview.offsetWidth;
+    const ph = tile.preview.offsetHeight;
+    if (pw <= 0 || ph <= 0) return;
+    applyTileScale(tile.xtermRoot, pw, ph);
+  }
+
+  function applyTileScale(xtermRoot: HTMLElement, tileWidth: number, tileHeight: number): void {
+    xtermRoot.style.transform = '';
+    xtermRoot.style.transformOrigin = 'top left';
+    xtermRoot.style.width = '';
+    xtermRoot.style.height = '';
+    xtermRoot.style.position = '';
+    xtermRoot.style.left = '';
+    xtermRoot.style.top = '';
+
+    const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+    const naturalWidth = screen?.offsetWidth ?? 0;
+    const naturalHeight = screen?.offsetHeight ?? 0;
+    const scale = computeTileScale(tileWidth, tileHeight, naturalWidth, naturalHeight);
+    if (scale === null) return;
+
+    xtermRoot.style.position = 'absolute';
+    xtermRoot.style.left = `${scale.left}px`;
+    xtermRoot.style.top = `${scale.top}px`;
+    xtermRoot.style.width = `${scale.width}px`;
+    xtermRoot.style.height = `${scale.height}px`;
+    xtermRoot.style.transform = `scale(${scale.scale})`;
+  }
+
+  // --- Click → center / dblclick → dedicated ---
+
+  function onTileClick(tile: InternalTile, e: MouseEvent): void {
+    e.stopPropagation();
+    if (pendingSingleClickTimer !== null) window.clearTimeout(pendingSingleClickTimer);
+    pendingSingleClickTimer = window.setTimeout(() => {
+      pendingSingleClickTimer = null;
+      if (tile.state !== 'alive') {
+        void spawnAndEnlarge(tile, 'center');
+        return;
+      }
+      if (centered === tile) {
+        uncenterTile();
+        return;
+      }
+      if (centered !== null) uncenterTile();
+      centerTile(tile);
+    }, SINGLE_CLICK_DELAY_MS);
+  }
+
+  function onTileDblClick(tile: InternalTile, e: MouseEvent): void {
+    e.stopPropagation();
+    e.preventDefault();
+    if (pendingSingleClickTimer !== null) {
+      window.clearTimeout(pendingSingleClickTimer);
+      pendingSingleClickTimer = null;
+    }
+    if (tile.state !== 'alive') {
+      void spawnAndEnlarge(tile, 'dedicated');
+      return;
+    }
+    const prior = centered === tile ? null : centered;
+    if (centered === tile) uncenterTile();
+    try { enterDedicatedView(tile, prior); }
+    catch (err) { console.error('terminalTileGrid: enterDedicatedView failed', err); }
+  }
+
+  async function spawnAndEnlarge(tile: InternalTile, target: 'center' | 'dedicated'): Promise<void> {
+    const wasExited = tile.state === 'exited';
+    tile.preview.replaceChildren(toElement(
+      <div className={`${placeholderClass} ${placeholderStartingClass}`}>
+        <span>Starting…</span>
+      </div>
+    ));
+    try {
+      if (wasExited) {
+        await apiWithSecret('/terminal/restart', tile.entry.secret, {
+          method: 'POST',
+          body: { terminalId: tile.entry.id },
+        });
+      }
+      tile.state = 'alive';
+      tile.exitCode = null;
+      tile.root.classList.remove(`${tileClass}-not_spawned`, `${tileClass}-exited`);
+      tile.root.classList.add(`${tileClass}-alive`);
+      mountTileXterm(tile);
+      connectTileSocket(tile);
+    } catch (err) {
+      console.error('terminalTileGrid: spawn failed', err);
+      tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
+      return;
+    }
+    if (target === 'center') centerTile(tile);
+    else enterDedicatedView(tile, null);
+  }
+
+  // --- Centered overlay (FLIP animation, §25.7 / HS-6867) ---
+
+  function getCenterReferenceRect(): DOMRect {
+    if (opts.centerScope === 'viewport') {
+      // Use the visual viewport so the centered tile tracks the window.
+      return new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+    }
+    const el = opts.centerReferenceEl ?? opts.container;
+    return el.getBoundingClientRect();
+  }
+
+  function centerTile(tile: InternalTile): void {
+    centered = tile;
+    clearTileBell(tile);
+    if (opts.onTileEnlarge !== undefined) opts.onTileEnlarge(tile.entry, 'center');
+
+    const origRect = tile.root.getBoundingClientRect();
+    const placeholder = createSlotPlaceholder(origRect.width, origRect.height);
+    tile.slotPlaceholder = placeholder;
+    tile.root.parentElement?.insertBefore(placeholder, tile.root);
+
+    const refRect = getCenterReferenceRect();
+    const availWidth = refRect.width * opts.centerSizeFrac;
+    const availHeight = refRect.height * opts.centerSizeFrac;
+    const previewWidth = Math.min(availWidth, availHeight * TILE_ASPECT);
+    const previewHeight = previewWidth / TILE_ASPECT;
+    const targetLeft = refRect.left + (refRect.width - previewWidth) / 2;
+    const targetTop = refRect.top + (refRect.height - previewHeight) / 2;
+
+    tile.root.classList.add('centered');
+    tile.root.style.left = `${targetLeft}px`;
+    tile.root.style.top = `${targetTop}px`;
+    tile.root.style.width = `${previewWidth}px`;
+    tile.preview.style.width = `${previewWidth}px`;
+    tile.preview.style.height = `${previewHeight}px`;
+    if (tile.xtermRoot !== null) applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
+
+    mountCenterBackdrop();
+
+    const finalRect = tile.root.getBoundingClientRect();
+    if (finalRect.width > 0 && finalRect.height > 0) {
+      const dx = origRect.left - finalRect.left;
+      const dy = origRect.top - finalRect.top;
+      const sx = origRect.width / finalRect.width;
+      const sy = origRect.height / finalRect.height;
+      tile.root.style.transition = 'none';
+      tile.root.style.transformOrigin = 'top left';
+      tile.root.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+      void tile.root.offsetWidth;
+      tile.root.style.transition = `transform ${CENTER_ANIMATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
+      tile.root.style.transform = '';
+    }
+
+    queueMicrotask(() => { tile.term?.focus(); });
+  }
+
+  function recenterTile(): void {
+    if (centered === null || !centered.root.classList.contains('centered')) return;
+    const refRect = getCenterReferenceRect();
+    const availWidth = refRect.width * opts.centerSizeFrac;
+    const availHeight = refRect.height * opts.centerSizeFrac;
+    const previewWidth = Math.min(availWidth, availHeight * TILE_ASPECT);
+    const previewHeight = previewWidth / TILE_ASPECT;
+    const targetLeft = refRect.left + (refRect.width - previewWidth) / 2;
+    const targetTop = refRect.top + (refRect.height - previewHeight) / 2;
+
+    const tile = centered;
+    const prev = tile.root.style.transition;
+    tile.root.style.transition = 'none';
+    tile.root.style.left = `${targetLeft}px`;
+    tile.root.style.top = `${targetTop}px`;
+    tile.root.style.width = `${previewWidth}px`;
+    tile.preview.style.width = `${previewWidth}px`;
+    tile.preview.style.height = `${previewHeight}px`;
+    if (tile.xtermRoot !== null) applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
+    void tile.root.offsetWidth;
+    tile.root.style.transition = prev;
+  }
+
+  function uncenterTile(): void {
+    if (centered === null) return;
+    const tile = centered;
+    const placeholder = tile.slotPlaceholder;
+    centered = null;
+    removeCenterBackdrop();
+    if (opts.onTileShrink !== undefined) opts.onTileShrink(tile.entry);
+
+    if (placeholder === null) { finishUncenterTile(tile, null); return; }
+    const targetRect = placeholder.getBoundingClientRect();
+    const currentRect = tile.root.getBoundingClientRect();
+    if (currentRect.width <= 0 || currentRect.height <= 0) {
+      finishUncenterTile(tile, placeholder);
+      return;
+    }
+
+    const dx = targetRect.left - currentRect.left;
+    const dy = targetRect.top - currentRect.top;
+    const sx = targetRect.width / currentRect.width;
+    const sy = targetRect.height / currentRect.height;
+    tile.root.style.transition = `transform ${CENTER_ANIMATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
+    tile.root.style.transformOrigin = 'top left';
+    tile.root.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+
+    const onEnd = (): void => {
+      tile.root.removeEventListener('transitionend', onEnd);
+      finishUncenterTile(tile, placeholder);
+    };
+    tile.root.addEventListener('transitionend', onEnd);
+    window.setTimeout(() => {
+      tile.root.removeEventListener('transitionend', onEnd);
+      if (tile.slotPlaceholder === placeholder) finishUncenterTile(tile, placeholder);
+    }, CENTER_ANIMATION_MS + 80);
+  }
+
+  function finishUncenterTile(tile: InternalTile, placeholder: HTMLElement | null): void {
+    tile.root.classList.remove('centered');
+    tile.root.style.transition = '';
+    tile.root.style.transform = '';
+    tile.root.style.transformOrigin = '';
+    tile.root.style.left = '';
+    tile.root.style.top = '';
+    if (tile.gridPreviewWidth > 0) tile.root.style.width = `${tile.gridPreviewWidth}px`;
+    tile.preview.style.width = `${tile.gridPreviewWidth}px`;
+    tile.preview.style.height = `${tile.gridPreviewHeight}px`;
+    if (tile.xtermRoot !== null && tile.gridPreviewWidth > 0 && tile.gridPreviewHeight > 0) {
+      applyTileScale(tile.xtermRoot, tile.gridPreviewWidth, tile.gridPreviewHeight);
+    }
+    if (placeholder !== null && placeholder.parentElement !== null) {
+      placeholder.parentElement.insertBefore(tile.root, placeholder);
+      placeholder.remove();
+    }
+    tile.slotPlaceholder = null;
+  }
+
+  function createSlotPlaceholder(width: number, height: number): HTMLElement {
+    const el = document.createElement('div');
+    el.className = slotClass;
+    el.style.width = `${width}px`;
+    el.style.height = `${height}px`;
+    return el;
+  }
+
+  function mountCenterBackdrop(): void {
+    if (centerBackdrop !== null) return;
+    const backdrop = document.createElement('div');
+    backdrop.className = backdropClass;
+    backdrop.addEventListener('click', () => { uncenterTile(); });
+    if (opts.centerScope === 'viewport') {
+      document.body.appendChild(backdrop);
+    } else {
+      const target = opts.centerReferenceEl ?? opts.container;
+      target.appendChild(backdrop);
+    }
+    centerBackdrop = backdrop;
+  }
+
+  function removeCenterBackdrop(): void {
+    if (centerBackdrop === null) return;
+    centerBackdrop.remove();
+    centerBackdrop = null;
+  }
+
+  function clearTileBell(tile: InternalTile): void {
+    if (!tile.root.classList.contains('has-bell')) return;
+    tile.root.classList.remove('has-bell');
+    void apiWithSecret('/terminal/clear-bell', tile.entry.secret, {
+      method: 'POST',
+      body: { terminalId: tile.entry.id },
+    }).catch(() => { /* server restart / network blip — long-poll resyncs */ });
+  }
+
+  // --- Dedicated full-pane view (§25.8 / §36.5 / HS-7063 / HS-7098) ---
+
+  function enterDedicatedView(tile: InternalTile, priorCenteredTile: InternalTile | null): void {
+    if (dedicated !== null) exitDedicatedView();
+    clearTileBell(tile);
+    if (opts.onTileEnlarge !== undefined) opts.onTileEnlarge(tile.entry, 'dedicated');
+
+    const overlay = toElement(
+      <div className={dedicatedClass} data-secret={tile.entry.secret} data-terminal-id={tile.entry.id}>
+        <div className={dedicatedBarClass}>
+          <button className={dedicatedBackClass} title="Back to grid">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+            <span>Back</span>
+          </button>
+          <div className={dedicatedLabelClass}>{tile.entry.label}</div>
+        </div>
+        <div className={dedicatedBodyClass}>
+          <div className={dedicatedPaneClass}></div>
+        </div>
+      </div>
+    );
+    // Append the overlay relative to the appropriate scope so the dedicated
+    // view occupies the same area the grid does. Dashboard uses
+    // 'viewport' -> append to the dashboard root (which has fixed position
+    // anyway); drawer uses 'container' -> append into the grid container.
+    const dedicatedHost = opts.centerScope === 'viewport'
+      ? (opts.centerReferenceEl ?? opts.container)
+      : opts.container;
+    dedicatedHost.appendChild(overlay);
+
+    const pane = overlay.querySelector<HTMLElement>(`.${dedicatedPaneClass}`);
+    const backBtn = overlay.querySelector<HTMLElement>(`.${dedicatedBackClass}`);
+    const bar = overlay.querySelector<HTMLElement>(`.${dedicatedBarClass}`);
+    if (pane === null || backBtn === null || bar === null) return;
+    backBtn.addEventListener('click', () => { exitDedicatedView(); });
+
+    const appearance = resolveTileAppearance(tile);
+    const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
+    const term = new XTerm({
+      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+      fontSize: 13,
+      cursorBlink: true,
+      scrollback: 10_000,
+      allowProposedApi: true,
+      theme: themeToXtermOptions(themeData),
+      linkHandler: {
+        activate: (_event, text) => { openExternalUrl(text); },
+      },
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
+    term.open(pane);
+    void applyAppearanceToTerm(term, appearance);
+    // HS-7594 — swallow Cmd/Ctrl+` so the document-level toggle dispatcher
+    // sees it instead of the shell receiving a backtick.
+    term.attachCustomKeyEventHandler((e) => {
+      if (isTerminalViewToggleShortcut(e) !== null) return false;
+      return true;
+    });
+
+    const runFit = (): void => { try { fit.fit(); } catch { /* not ready */ } };
+    requestAnimationFrame(runFit);
+    const bodyResizeObserver = new ResizeObserver(runFit);
+    bodyResizeObserver.observe(pane);
+
+    const encoder = new TextEncoder();
+    term.onData((data) => {
+      if (dedicated?.ws !== null && dedicated?.ws.readyState === WebSocket.OPEN) {
+        dedicated.ws.send(encoder.encode(data));
+      }
+    });
+    term.onResize(({ cols, rows }) => {
+      if (dedicated?.ws !== null && dedicated?.ws.readyState === WebSocket.OPEN) {
+        dedicated.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      }
+    });
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${protocol}//${window.location.host}/api/terminal/ws`
+      + `?project=${encodeURIComponent(tile.entry.secret)}`
+      + `&terminal=${encodeURIComponent(tile.entry.id)}`
+      + `&cols=${term.cols}&rows=${term.rows}`;
+    const ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    });
+    ws.addEventListener('message', (ev) => {
+      const data: unknown = ev.data;
+      if (data instanceof ArrayBuffer) { term.write(new Uint8Array(data)); return; }
+      if (typeof data === 'string') {
+        try {
+          const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
+          if (msg.type === 'history' && typeof msg.bytes === 'string'
+              && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
+            applyDedicatedHistoryFrame(term, fit, { bytes: msg.bytes, cols: msg.cols, rows: msg.rows });
+          }
+        } catch { /* non-JSON frame */ }
+      }
+    });
+
+    let barDispose: (() => void) | null = null;
+    if (opts.onDedicatedBarMount !== undefined) {
+      const result = opts.onDedicatedBarMount(bar, tile.entry, term);
+      if (typeof result === 'function') barDispose = result;
+    }
+
+    dedicated = { tile, overlay, term, fit, ws, bodyResizeObserver, priorCenteredTile, barDispose };
+    queueMicrotask(() => { term.focus(); });
+  }
+
+  function exitDedicatedView(): void {
+    if (dedicated === null) return;
+    const view = dedicated;
+    dedicated = null;
+    view.bodyResizeObserver?.disconnect();
+    if (view.barDispose !== null) {
+      try { view.barDispose(); } catch { /* swallow */ }
+    }
+    if (view.ws !== null) { try { view.ws.close(); } catch { /* closed */ } }
+    try { view.term.dispose(); } catch { /* no-op */ }
+    view.overlay.remove();
+    if (opts.onTileShrink !== undefined) opts.onTileShrink(view.tile.entry);
+
+    // HS-7097: re-claim the tile PTY at tile-native dims.
+    if (view.tile.ws !== null && view.tile.ws.readyState === WebSocket.OPEN
+        && view.tile.targetCols > 0 && view.tile.targetRows > 0) {
+      try {
+        view.tile.ws.send(JSON.stringify({
+          type: 'resize',
+          cols: view.tile.targetCols,
+          rows: view.tile.targetRows,
+        }));
+      } catch { /* ws closed */ }
+    }
+
+    applySizing();
+    if (view.priorCenteredTile !== null) centerTile(view.priorCenteredTile);
+  }
+
+  // --- Tile teardown ---
+
+  function disposeTile(tile: InternalTile): void {
+    tile.screenObserver?.disconnect();
+    tile.screenObserver = null;
+    if (tile.ws !== null) {
+      try { tile.ws.close(); } catch { /* already closed */ }
+      tile.ws = null;
+    }
+    if (tile.term !== null) {
+      try { tile.term.dispose(); } catch { /* double-dispose is fine */ }
+      tile.term = null;
+    }
+    tile.xtermRoot = null;
+  }
+
+  function teardownAll(): void {
+    if (dedicated !== null) exitDedicatedView();
+    if (centered !== null) {
+      if (centered.slotPlaceholder !== null) centered.slotPlaceholder.remove();
+      centered.root.classList.remove('centered');
+      centered.root.style.transition = '';
+      centered.root.style.transform = '';
+      centered = null;
+    }
+    removeCenterBackdrop();
+    for (const tile of tiles.values()) disposeTile(tile);
+    tiles.clear();
+    if (pendingSingleClickTimer !== null) {
+      window.clearTimeout(pendingSingleClickTimer);
+      pendingSingleClickTimer = null;
+    }
+  }
+
+  // --- Public handle ---
+
+  return {
+    rebuild(entries) {
+      teardownAll();
+      opts.container.replaceChildren();
+      for (const entry of entries) {
+        opts.container.appendChild(renderTile(entry));
+      }
+      applySizing();
+    },
+    applySizing,
+    recenterTile,
+    uncenterTile,
+    exitDedicatedView,
+    syncBellState(pendingIds) {
+      for (const tile of tiles.values()) {
+        const want = pendingIds.has(tile.entry.id);
+        const has = tile.root.classList.contains('has-bell');
+        if (want && !has) tile.root.classList.add('has-bell');
+        else if (!want && has) tile.root.classList.remove('has-bell');
+      }
+    },
+    focusDedicatedTerm() {
+      if (dedicated === null) return;
+      try { dedicated.term.focus(); } catch { /* term disposed */ }
+    },
+    isCentered() { return centered !== null; },
+    isDedicatedOpen() { return dedicated !== null; },
+    dispose() { teardownAll(); },
+  };
+}
