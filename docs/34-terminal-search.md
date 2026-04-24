@@ -1,6 +1,6 @@
 # 34. Terminal find / search (HS-7331)
 
-Every xterm surface in Hot Sheet gets a collapsible find widget wrapping xterm's `SearchAddon`. It matches the familiar Terminal.app / iTerm2 / VS Code "find in buffer" experience: a magnifier icon expands to an input with prev/next controls and a result count, `Enter` jumps to the next match, `Shift+Enter` to the previous, `Esc` closes.
+Every xterm surface in Hot Sheet gets a collapsible find widget wrapping xterm's `SearchAddon`. It matches the familiar Terminal.app / iTerm2 / VS Code "find in buffer" experience: a magnifier icon expands to an input with prev/next controls and a result count, `Enter` jumps to the next match, `Shift+Enter` to the previous, `Esc` blurs the input (HS-7393) without clearing the query — the close (×) button is the explicit close/clear path.
 
 Depends on [22-terminal.md](22-terminal.md) (embedded drawer terminal) and [25-terminal-dashboard.md](25-terminal-dashboard.md) (dashboard dedicated view). See also [32-osc133-jump-and-popover.md](32-osc133-jump-and-popover.md) for the structured jump-to-prompt shortcuts, which are orthogonal — search is free-text, jumps are shell-integration-marker-driven.
 
@@ -34,7 +34,7 @@ Search is **not** available in the grid tiles themselves. Grid tiles are preview
 | --- | --- |
 | `Enter` | `findNext` |
 | `Shift+Enter` | `findPrevious` |
-| `Esc` | Close (same as ×) |
+| `Esc` | Blur the input (HS-7393). Does NOT close the widget or clear the query — the widget stays expanded with its query intact and focus returns to the document. The global `Escape` handler in `shortcuts.tsx` handles the blur; this widget no longer binds `Escape` itself. Use the close (×) button for the explicit close/clear. |
 
 **Width transition.** The `.terminal-search-box` animates `width` / `background` / `border-color` over 200 ms when `.is-open` toggles. Matches the `.search-box` pattern on the app header (§4) so the terminal find widget feels like the same family of input.
 

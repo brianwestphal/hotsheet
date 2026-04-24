@@ -78,7 +78,7 @@ export function mountTerminalSearch(
       <button type="button" className="terminal-search-btn terminal-search-next" title="Next match (Enter)" aria-label="Next match">
         {raw(CHEVRON_DOWN)}
       </button>
-      <button type="button" className="terminal-search-btn terminal-search-close" title="Close search (Esc)" aria-label="Close search">
+      <button type="button" className="terminal-search-btn terminal-search-close" title="Close search" aria-label="Close search">
         {raw(CLOSE_ICON)}
       </button>
     </div>,
@@ -143,10 +143,12 @@ export function mountTerminalSearch(
     if (e.key === 'Enter') {
       e.preventDefault();
       doFind(e.shiftKey ? 'prev' : 'next', false);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      closeBox();
     }
+    // HS-7393 — Esc used to `closeBox()` which also cleared the input. The
+    // ticket requires Esc to only lose focus without clearing; the global
+    // keydown handler in `shortcuts.tsx` blurs any focused input on Esc.
+    // Users collapse / clear the widget explicitly via the close (×) button
+    // or the magnifier toggle.
   });
   prev.addEventListener('click', () => { doFind('prev', false); input.focus(); });
   next.addEventListener('click', () => { doFind('next', false); input.focus(); });

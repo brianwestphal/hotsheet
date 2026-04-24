@@ -133,9 +133,15 @@ export function bindKeyboardShortcuts() {
     }
 
     if (e.key === 'Escape') {
-      // If editing a field in the detail panel, just blur it
+      // HS-7393 — any focused INPUT / TEXTAREA should blur on Esc without
+      // also clearing ticket selection or the input's value. Previously this
+      // branch only covered detail-panel inputs, so Esc in the app search or
+      // a terminal search widget blurred-and-deselected at the same time.
+      // The app-level search and terminal-search Esc-clear-and-close
+      // behaviours have also been removed (sidebar.tsx, terminalSearch.tsx)
+      // so Esc is now consistently just "lose focus" across every input.
       const active = document.activeElement as HTMLElement | null;
-      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active.closest('.detail-panel, .detail-body')) {
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
         active.blur();
         return;
       }

@@ -66,6 +66,33 @@ test.describe('Keyboard shortcuts', () => {
     await expect(row).not.toHaveClass(/selected/, { timeout: 3000 });
   });
 
+  test('Escape in search field blurs without clearing field or deselecting tickets (HS-7393)', async ({ page }) => {
+    await createTicket(page, 'Search-esc ticket');
+    await selectTicket(page, 'Search-esc ticket');
+
+    const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator('.ticket-title-input[value="Search-esc ticket"]') });
+    await expect(row).toHaveClass(/selected/);
+
+    const searchInput = page.locator('#search-input');
+    await searchInput.click();
+    await searchInput.fill('query');
+    await expect(searchInput).toBeFocused();
+    await expect(searchInput).toHaveValue('query');
+
+    await page.keyboard.press('Escape');
+
+    // Field should lose focus
+    await expect(searchInput).not.toBeFocused({ timeout: 3000 });
+    // Field value should be preserved (NOT cleared)
+    await expect(searchInput).toHaveValue('query');
+    // Ticket selection should be preserved (NOT deselected)
+    await expect(row).toHaveClass(/selected/);
+
+    // Clean up: clear the search so subsequent tests don't filter out results.
+    // Use the explicit clear button since Esc no longer clears.
+    await page.locator('.search-clear-btn').click();
+  });
+
   test('Delete/Backspace deletes selected ticket', async ({ page }) => {
     await createTicket(page, 'Delete shortcut ticket');
     await selectTicket(page, 'Delete shortcut ticket');

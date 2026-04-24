@@ -171,9 +171,12 @@ This document lists features that require manual verification before each releas
 - [ ] Toast notifications slide up from bottom, auto-dismiss after 3 seconds
 - [ ] Combo box dropdown in plugin settings shows filtered options, selects on click
 - [ ] **HS-7360 search state per project.** With two projects (A and B), type `foo` into the app-header search on A. Switch to B — the input clears and the pill shrinks back. Switch back to A — the input re-shows `foo` and the pill stays expanded. Repeat with a different query in B to confirm independence.
-- [ ] **HS-7360 clear button.** Type into the search input — a Lucide circle-x button appears on the right. Click it — the input clears, tickets reload, focus returns to the input, and the pill shrinks back. Escape still works as before.
+- [ ] **HS-7360 clear button.** Type into the search input — a Lucide circle-x button appears on the right. Click it — the input clears, tickets reload, focus returns to the input, and the pill shrinks back.
 - [ ] **HS-7360 session-only state.** Type a query, close and relaunch the app — the query is gone on restart (per-project search map is in-memory only).
 - [ ] **HS-7360 project removal.** Type into search on project A, close project A's tab. Re-add the same folder as a project. Its search field is empty (stale state cleared on removal).
+- [ ] **HS-7393 Esc in the app-level search.** Select a ticket so it shows `.selected`. Focus the search input and type a query. Press Esc — the input should lose focus but its value should remain, and the selected ticket should stay selected. Previously Esc cleared the field AND deselected tickets.
+- [ ] **HS-7393 Esc in a terminal search widget.** Open a terminal's search widget, type a query that matches, press Esc. Focus should leave the input but the widget stays expanded with its query + highlights intact. The close (×) button and the magnifier toggle remain the only paths that close + clear the widget.
+- [ ] **HS-7364 search matches notes.** Add a note to a ticket with a distinctive word that does NOT appear in its title or details (e.g. `pineapple`). Type that word into the app-header search. The ticket should appear in the filtered list.
 
 ---
 
@@ -336,8 +339,8 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Type a substring that appears multiple times in the scrollback (e.g. `printf 'apple\nbanana\napple\napple\n'` then search `apple`) — amber-highlighted matches appear and the count shows `1/3` (or whatever the real total is)
 - [ ] Press Enter — the active match (brighter orange) advances; count shows the next index
 - [ ] Press Shift+Enter — active match steps backwards
-- [ ] Press Esc — the box collapses, the input clears, and the highlights disappear; keyboard focus returns to the shell
-- [ ] Click the × button while the box is open — same result as Esc
+- [ ] Press Esc — the input loses focus but the box stays expanded with its query + highlights intact (HS-7393). Keyboard focus returns to document.body, not to the shell.
+- [ ] Click the × button while the box is open — the input clears, highlights disappear, the box collapses, and keyboard focus returns to the shell
 - [ ] With keyboard focus in the terminal (not in any other input), press **Cmd+F** (or Ctrl+F) — the terminal search opens and the input is focused (not the app-header ticket search)
 - [ ] With keyboard focus OUTSIDE a terminal, press Cmd/Ctrl+F — the app-header ticket search focuses, not the terminal search (fallback path)
 - [ ] Restart the terminal (Stop → Start) with the search box open — after the new PTY attaches the search box is back in its collapsed state with no stale highlights

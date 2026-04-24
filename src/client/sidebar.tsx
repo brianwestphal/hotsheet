@@ -126,11 +126,11 @@ export function bindSearchInput() {
     }, 200);
   });
 
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      clearAndReload();
-    }
-  });
+  // HS-7393 — Esc in the search input used to call `clearAndReload()`, which
+  // wiped the query AND (via the global handler also firing on the bubbled
+  // Escape) deselected tickets. Now the global handler in `shortcuts.tsx`
+  // blurs any focused input on Esc, so Esc just loses focus without clearing
+  // the field. The clear button below remains the single explicit clear path.
 
   // HS-7360 — explicit clear button (lucide circle-x, hidden when empty
   // via `.has-value` CSS gate). Matches the typical browser Find-bar UI

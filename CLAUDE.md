@@ -134,6 +134,13 @@ When the user gives you work directly via the CLI (not via MCP channel or Hot Sh
 - **When in doubt, create the tickets.** The overhead is minimal and the tracking value is high.
 - Use the Hot Sheet API to create tickets, mark them as Up Next, then work through them normally (set status to "started", implement, set to "completed" with notes).
 - **Always create follow-up tickets** for work that isn't completed in the current session: unfinished implementation steps, open design questions needing answers, known gaps discovered during work, features designed but not yet built (e.g., a requirements doc without implementation). Never leave follow-up work undocumented — if it's not in a ticket, it will be forgotten.
+- **Incomplete work checklist** — before marking a ticket as completed, verify:
+  1. **No placeholder text in the UI** (e.g., "coming soon", "coming in a future update") without a corresponding follow-up ticket
+  2. **No TODO/FIXME comments** in the code without a corresponding follow-up ticket
+  3. **No requirements doc items** that were documented but not implemented without follow-up tickets
+  4. **No empty/stub functions** that return mock data or do nothing without follow-up tickets
+  If any of the above exist, create the follow-up tickets BEFORE marking the current ticket as completed.
+- **Use FEEDBACK NEEDED before deferring or asking about follow-up tickets.** When you're about to (a) defer a ticket because it needs more work, (b) ask the user whether to file follow-up tickets, or (c) close a ticket with a question buried in the notes ("let me know if you want X" / "happy to do Y if you want"), DO NOT close it that way. Instead, leave the ticket in `started` status and add a `FEEDBACK NEEDED:` note (per `.hotsheet/worklist.md`), then signal channel done and wait for the user. Closing with an unanswered question buries the question and the user can't easily see it. The FEEDBACK NEEDED mechanism is the only way to reliably get attention on a question.
 
 ## Conventions
 

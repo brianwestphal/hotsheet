@@ -135,7 +135,7 @@ describe('mountTerminalSearch (HS-7331)', () => {
     expect(addon.clearDecorations).toHaveBeenCalled();
   });
 
-  it('Esc in the input closes the widget', () => {
+  it('Esc in the input does NOT close the widget or clear the query (HS-7393)', () => {
     const term = makeTermStub();
     const addon = makeAddonStub();
     const handle = mountTerminalSearch(term as never, addon as never);
@@ -143,8 +143,27 @@ describe('mountTerminalSearch (HS-7331)', () => {
     handle.focus();
     expect(handle.isOpen()).toBe(true);
     const input = handle.root.querySelector<HTMLInputElement>('.terminal-search-input')!;
+    input.value = 'banana';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    // Widget stays open, input value is preserved, addon decorations are not cleared.
+    expect(handle.isOpen()).toBe(true);
+    expect(input.value).toBe('banana');
+    expect(addon.clearDecorations).not.toHaveBeenCalled();
+  });
+
+  it('close button still clears + collapses the widget (HS-7393 regression)', () => {
+    const term = makeTermStub();
+    const addon = makeAddonStub();
+    const handle = mountTerminalSearch(term as never, addon as never);
+    document.getElementById('slot')!.appendChild(handle.root);
+    handle.focus();
+    const input = handle.root.querySelector<HTMLInputElement>('.terminal-search-input')!;
+    input.value = 'banana';
+    const closeBtn = handle.root.querySelector<HTMLButtonElement>('.terminal-search-close')!;
+    closeBtn.click();
     expect(handle.isOpen()).toBe(false);
+    expect(input.value).toBe('');
+    expect(addon.clearDecorations).toHaveBeenCalled();
   });
 
   it('onDidChangeResults updates the count chip as N/M', () => {

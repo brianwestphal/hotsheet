@@ -200,7 +200,12 @@ function buildTicketWhereClause(filters: TicketFilters): { where: string; values
   }
 
   if (filters.search !== undefined && filters.search !== '') {
-    conditions.push(`(title ILIKE $${paramIdx} OR details ILIKE $${paramIdx} OR ticket_number ILIKE $${paramIdx} OR tags ILIKE $${paramIdx})`);
+    // HS-7364 — also search the notes (comments) column. Notes are stored as
+    // a JSON-serialized array of `{id, text, created_at}`, so ILIKE on the
+    // column matches text content inline. Substrings that collide with JSON
+    // structural keys (`text`, `id`, `created_at`) or ISO timestamps will
+    // over-match, but typical searches are content words that map cleanly.
+    conditions.push(`(title ILIKE $${paramIdx} OR details ILIKE $${paramIdx} OR ticket_number ILIKE $${paramIdx} OR tags ILIKE $${paramIdx} OR notes ILIKE $${paramIdx})`);
     values.push(`%${escapeIlike(filters.search)}%`);
     paramIdx++;
   }

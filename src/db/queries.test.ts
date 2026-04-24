@@ -398,6 +398,27 @@ describe('filtering', () => {
     expect(tickets.map(t => t.id)).toContain(t.id);
   });
 
+  it('search matches notes text (HS-7364)', async () => {
+    const t = await createTicket('Ticket without match in title or details');
+    await updateTicket(t.id, { notes: 'a memorable phrase about whaleshark migration' });
+    const tickets = await getTickets({ search: 'whaleshark migration' });
+    expect(tickets.map(t => t.id)).toContain(t.id);
+  });
+
+  it('search notes is case-insensitive (HS-7364)', async () => {
+    const t = await createTicket('Another ticket with notes only');
+    await updateTicket(t.id, { notes: 'RAISED An ISSUE about the NETWORK layer' });
+    const tickets = await getTickets({ search: 'network layer' });
+    expect(tickets.map(t => t.id)).toContain(t.id);
+  });
+
+  it('search does not match tickets whose notes do not contain the term (HS-7364)', async () => {
+    const t = await createTicket('Negative case — ticket without matching notes');
+    await updateTicket(t.id, { notes: 'this note is about apples and oranges' });
+    const tickets = await getTickets({ search: 'xyzzyverynonexistentword' });
+    expect(tickets.map(t => t.id)).not.toContain(t.id);
+  });
+
   it('search escapes ILIKE wildcards (% and _)', async () => {
     const t = await createTicket('100% complete_task');
     // Search for literal % — should match, not be treated as wildcard
@@ -409,7 +430,7 @@ describe('filtering', () => {
     // A wildcard-only search should not match everything
     const byWildcard = await getTickets({ search: '%' });
     // Should only match tickets that literally contain %
-    expect(byWildcard.every(t => t.title.includes('%') || t.details.includes('%') || t.tags.includes('%'))).toBe(true);
+    expect(byWildcard.every(t => t.title.includes('%') || t.details.includes('%') || t.tags.includes('%') || t.notes.includes('%'))).toBe(true);
   });
 
   it('filters combine with AND logic', async () => {
