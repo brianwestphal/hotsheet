@@ -4821,59 +4821,115 @@ body.terminal-dashboard-active {
   li { margin: 0.25em 0; }
 }
 
-// HS-6998 — multi-part feedback dialog. The per-part textarea sits directly
-// beneath each rendered question so the user doesn't have to scroll up to
-// reread the prompt while typing.
-.feedback-dialog-multipart {
-  .feedback-parts-list {
-    list-style: none;
-    padding: 0;
-    margin: 8px 0;
-    counter-reset: feedback-part;
+// HS-6998 — feedback dialog with click-to-insert inline responses. The prompt
+// is split into top-level markdown blocks; between each block an "Add response"
+// affordance lets the user insert an inline textarea at that point. A catch-all
+// textarea always sits at the bottom.
+.feedback-dialog {
+  .feedback-prompt-stack {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 8px;
   }
 
-  .feedback-part {
-    position: relative;
-    padding: 10px 12px 10px 36px;
-    margin-bottom: 8px;
+  .feedback-prompt-block {
+    padding: 8px 12px;
     background: var(--bg-secondary);
     border-radius: 6px;
     border-left: 3px solid #3b82f6;
-    counter-increment: feedback-part;
 
-    &::before {
-      content: counter(feedback-part) '.';
-      position: absolute;
-      left: 10px;
-      top: 10px;
-      width: 20px;
-      text-align: right;
-      color: var(--text-muted);
-      font-variant-numeric: tabular-nums;
-      font-weight: 600;
-      font-size: 13px;
+    // Tighten marked's default paragraph margins so consecutive blocks sit
+    // cleanly on top of each other rather than compounding their vertical gaps.
+    > p:first-child { margin-top: 0; }
+    > p:last-child { margin-bottom: 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.5em 0; }
+    li { margin: 0.25em 0; }
+  }
+
+  .feedback-prompt-empty {
+    color: var(--text-muted);
+    font-style: italic;
+    border-left-color: var(--border);
+  }
+
+  .feedback-insert-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 4px 0;
+  }
+
+  // Full-width click target so the user can drop a response anywhere between
+  // two blocks. Shows just "+" by default; reveals " Add response here" on
+  // hover so the stack stays visually quiet when there are many blocks.
+  .feedback-insert-btn {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 12px;
+    opacity: 0.5;
+    transition: opacity 120ms ease, color 120ms ease;
+
+    .feedback-insert-label { display: none; }
+
+    &:hover {
+      opacity: 1;
+      color: #3b82f6;
+      text-decoration: underline;
+
+      .feedback-insert-label { display: inline; }
     }
   }
 
-  .feedback-part-question {
-    margin-bottom: 6px;
+  .feedback-inline-response {
+    position: relative;
+    padding: 6px 30px 6px 10px;
+    background: #f0f9ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 6px;
 
-    // Strip the default margins marked puts around paragraphs inside the
-    // question so the prompt reads tightly against the textarea below.
-    p { margin: 0 0 4px; }
-    p:last-child { margin-bottom: 0; }
+    textarea {
+      width: 100%;
+      resize: vertical;
+      min-height: 54px;
+      background: transparent;
+      border: none;
+      padding: 2px;
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+
+      &:focus { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); border-radius: 3px; }
+    }
   }
 
-  .feedback-part-response {
-    width: 100%;
-    resize: vertical;
-    min-height: 60px;
+  .feedback-inline-remove {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    border-radius: 3px;
+
+    &:hover {
+      color: var(--text-primary);
+      background: rgba(0, 0, 0, 0.06);
+    }
   }
 
-  .feedback-intro, .feedback-outro {
-    // Both flavours of surrounding text reuse .feedback-prompt's pill styling
-    // via the shared class; nothing extra needed here, but keep this hook
-    // around for tighter spacing if the design evolves.
+  .feedback-catchall {
+    margin-top: 12px;
   }
 }
 

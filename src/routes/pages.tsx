@@ -48,6 +48,7 @@ pageRoutes.get('/', (c) => {
               <select id="sort-select">
                 <option value="created:desc">Newest First</option>
                 <option value="created:asc">Oldest First</option>
+                <option value="modified:desc">Recently Modified</option>
                 <option value="priority:asc">Priority</option>
                 <option value="category:asc">Category</option>
                 <option value="status:asc">Status</option>

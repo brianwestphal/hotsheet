@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 export const TicketPrioritySchema = z.enum(['highest', 'high', 'default', 'low', 'lowest']);
 export const TicketStatusSchema = z.enum(['not_started', 'started', 'completed', 'verified', 'backlog', 'archive', 'deleted']);
-export const SortBySchema = z.enum(['created', 'priority', 'category', 'status']);
+export const SortBySchema = z.enum(['created', 'modified', 'priority', 'category', 'status']);
 export const SortDirSchema = z.enum(['asc', 'desc']);
 
 // --- Ticket routes ---

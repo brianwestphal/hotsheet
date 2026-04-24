@@ -1,9 +1,12 @@
-import { marked } from 'marked';
-
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
 import { toElement } from './dom.js';
-import { combineResponses, type ParsedFeedback, parseFeedbackPrompt } from './feedbackParser.js';
+import {
+  type BlockResponse,
+  combineQuotedResponse,
+  type FeedbackBlock,
+  parseFeedbackBlocks,
+} from './feedbackParser.js';
 import type { NoteEntry } from './noteRenderer.js';
 import { loadTickets } from './ticketList.js';
 
@@ -47,40 +50,21 @@ export function shouldAutoShowFeedback(ticketId: number, noteId: string): boolea
 }
 
 /**
- * Internal shape the two overlay builders return: the DOM tree plus a
- * `collectResponse` accessor the submit handler calls to assemble the note
- * body. Either builder produces both a single-textarea flow or a
- * multi-part flow — everything else (attachments, buttons, lifecycle) is
- * identical, so the shared bottom half of showFeedbackDialog drives them
- * uniformly.
- */
-interface OverlayHandle {
-  overlay: HTMLElement;
-  /** Returns the note body to send on submit, or null if the user hasn't
-   *  filled anything in (so the submit handler can focus the first empty
-   *  field and abort). */
-  collectResponse: () => string | null;
-  /** Called on open to focus the first response input. */
-  focusFirstInput: () => void;
-}
-
-/** Show the feedback dialog for a ticket.
+ * Show the feedback dialog for a ticket (HS-6998).
  *
- *  HS-6998 — parse the prompt for a multi-part list pattern (two or more
- *  numbered or bulleted items). If found, render a per-part textarea so the user
- *  answers each question immediately below its text — no scrolling between
- *  a prompt up top and a single textarea at the bottom. Single-question and
- *  non-list prompts fall back to the original single-textarea layout.
+ * The prompt is split into top-level markdown blocks (paragraphs, lists,
+ * headings, ...) via `parseFeedbackBlocks`. Each block is rendered with an
+ * "+ Add response" affordance beneath it so the user can insert their own
+ * inline textarea at any block boundary. A catch-all textarea always sits at
+ * the bottom — when the prompt is a plain single question, that's the only
+ * input the user needs.
  */
 export function showFeedbackDialog(ticketId: number, ticketNumber: string, prompt: string) {
   // Remove any existing feedback dialog
   document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
 
-  const parsed = parseFeedbackPrompt(prompt);
-  const handle: OverlayHandle = parsed !== null
-    ? buildMultiPartOverlay(ticketNumber, prompt, parsed)
-    : buildSinglePartOverlay(ticketNumber, prompt);
-  const { overlay, collectResponse, focusFirstInput } = handle;
+  const blocks = parseFeedbackBlocks(prompt);
+  const overlay = buildOverlay(ticketNumber, blocks);
 
   const pendingFiles: File[] = [];
   const fileListEl = overlay.querySelector('#feedback-files')!;
@@ -123,6 +107,17 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
     }
   });
 
+  // Insert-response buttons — adds an inline textarea after the targeted block.
+  overlay.querySelectorAll<HTMLButtonElement>('.feedback-insert-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const slot = btn.closest('.feedback-insert-slot');
+      if (slot == null) return;
+      const responseEl = buildInlineResponse();
+      slot.insertBefore(responseEl, btn);
+      (responseEl.querySelector('textarea') as HTMLTextAreaElement).focus();
+    });
+  });
+
   const close = () => overlay.remove();
   overlay.querySelector('#feedback-close')!.addEventListener('click', close);
   overlay.querySelector('#feedback-later')!.addEventListener('click', close);
@@ -146,9 +141,9 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
 
   // Submit
   overlay.querySelector('#feedback-submit')!.addEventListener('click', async () => {
-    const text = collectResponse();
+    const text = collectResponse(overlay, blocks);
     if ((text === null || text === '') && pendingFiles.length === 0) {
-      focusFirstInput();
+      focusFirstInput(overlay);
       return;
     }
 
@@ -157,14 +152,12 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
     submitBtn.textContent = 'Submitting...';
 
     try {
-      // Add response note
       if (text !== null && text !== '') {
         await api(`/tickets/${ticketId}`, {
           method: 'PATCH', body: { notes: text },
         });
       }
 
-      // Upload attachments
       for (const file of pendingFiles) {
         await apiUpload(`/tickets/${ticketId}/attachments`, file);
       }
@@ -172,7 +165,6 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
       close();
       void loadTickets();
 
-      // Notify Claude if channel is alive
       void notifyChannel(ticketNumber);
     } catch {
       submitBtn.textContent = 'Submit';
@@ -181,25 +173,38 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
   });
 
   document.body.appendChild(overlay);
-  focusFirstInput();
+  focusFirstInput(overlay);
 }
 
-/** Single-textarea layout — used for prompts that don't parse into a
- *  multi-item list. Identical to the pre-HS-6998 behaviour. */
-function buildSinglePartOverlay(ticketNumber: string, prompt: string): OverlayHandle {
-  const renderedPrompt = marked.parse(prompt, { async: false });
-  const overlay = toElement(
+function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTMLElement {
+  return toElement(
     <div className="feedback-dialog-overlay custom-view-editor-overlay" style="z-index:2500">
-      <div className="custom-view-editor" style="width:520px">
+      <div className="custom-view-editor feedback-dialog" style="width:560px">
         <div className="custom-view-editor-header">
           <span>Feedback Needed — {ticketNumber}</span>
           <button className="detail-close" id="feedback-close">{'×'}</button>
         </div>
         <div className="custom-view-editor-body">
-          <div className="feedback-prompt note-markdown">{raw(renderedPrompt)}</div>
-          <div className="settings-field" style="margin-top:12px">
-            <label>Your response</label>
-            <textarea id="feedback-text" className="settings-textarea" rows={4} placeholder="Enter your feedback..." style="width:100%;resize:vertical"></textarea>
+          <div className="feedback-prompt-stack">
+            {blocks.length === 0
+              ? <div className="feedback-prompt-block note-markdown feedback-prompt-empty"><em>(no prompt text)</em></div>
+              : blocks.map((block, idx) => (
+                  <>
+                    <div className="feedback-prompt-block note-markdown" data-block-index={String(idx)}>
+                      {raw(block.html)}
+                    </div>
+                    <div className="feedback-insert-slot" data-after-block={String(idx)}>
+                      <button className="feedback-insert-btn" type="button" aria-label="Add response here">
+                        <span className="feedback-insert-plus">+</span>
+                        <span className="feedback-insert-label">{' Add response here'}</span>
+                      </button>
+                    </div>
+                  </>
+                ))}
+          </div>
+          <div className="settings-field feedback-catchall">
+            <label>{blocks.length === 0 ? 'Your response' : 'Or respond below (catch-all)'}</label>
+            <textarea id="feedback-catchall-text" className="settings-textarea" rows={4} placeholder="Type your response..." style="width:100%;resize:vertical"></textarea>
           </div>
           <div className="settings-field" style="margin-top:12px">
             <label>Attachments</label>
@@ -217,96 +222,45 @@ function buildSinglePartOverlay(ticketNumber: string, prompt: string): OverlayHa
       </div>
     </div>
   );
-  return {
-    overlay,
-    collectResponse: () => {
-      const v = (overlay.querySelector('#feedback-text') as HTMLTextAreaElement).value.trim();
-      return v === '' ? null : v;
-    },
-    focusFirstInput: () => {
-      (overlay.querySelector('#feedback-text') as HTMLTextAreaElement).focus();
-    },
-  };
 }
 
-/** Multi-part layout (HS-6998) — renders a dedicated textarea next to every
- *  question in the prompt so the user doesn't lose context while scrolling.
- *  On submit, the per-part responses are combined back into a numbered/
- *  bulleted markdown blob (same scheme the prompt used) so the AI reading
- *  the note can re-align answers to questions. */
-function buildMultiPartOverlay(ticketNumber: string, originalPrompt: string, parsed: ParsedFeedback): OverlayHandle {
-  const introHtml = parsed.intro === '' ? '' : marked.parse(parsed.intro, { async: false });
-  const outroHtml = parsed.outro === '' ? '' : marked.parse(parsed.outro, { async: false });
-  // Detect the marker style from the original markdown — a leading "1." or
-  // "1)" means the AI intended an ordered list; anything else (`-`, `*`, `+`)
-  // is unordered. `combineResponses` uses the same scheme so the submitted
-  // note looks symmetric with the request.
-  const ordered = /(^|\n)\s*\d+[.)]\s/.test(originalPrompt);
-
-  const overlay = toElement(
-    <div className="feedback-dialog-overlay custom-view-editor-overlay" style="z-index:2500">
-      <div className="custom-view-editor feedback-dialog-multipart" style="width:560px">
-        <div className="custom-view-editor-header">
-          <span>Feedback Needed — {ticketNumber}</span>
-          <button className="detail-close" id="feedback-close">{'×'}</button>
-        </div>
-        <div className="custom-view-editor-body">
-          {introHtml === ''
-            ? null
-            : <div className="feedback-prompt note-markdown feedback-intro">{raw(introHtml)}</div>}
-          <ol className="feedback-parts-list">
-            {parsed.parts.map((part, idx) => (
-              <li className="feedback-part" data-part-index={String(idx)}>
-                <div className="feedback-part-question note-markdown">
-                  {raw(marked.parse(part.markdown, { async: false }))}
-                </div>
-                <textarea
-                  className="settings-textarea feedback-part-response"
-                  rows={3}
-                  placeholder="Your response..."
-                  aria-label={`Response to: ${part.shortLabel}`}
-                ></textarea>
-              </li>
-            ))}
-          </ol>
-          {outroHtml === ''
-            ? null
-            : <div className="feedback-prompt note-markdown feedback-outro">{raw(outroHtml)}</div>}
-          <div className="settings-field" style="margin-top:12px">
-            <label>Attachments</label>
-            <div id="feedback-files" className="not-working-file-list"></div>
-            <button className="btn btn-sm" id="feedback-add-file" style="margin-top:6px">Add File...</button>
-            <input type="file" id="feedback-file-input" multiple={true} style="display:none" />
-          </div>
-          <div style="display:flex;gap:8px;margin-top:16px;align-items:center">
-            <button className="feedback-later-link" id="feedback-later">Later</button>
-            <div style="flex:1"></div>
-            <button className="btn btn-sm" id="feedback-no-response">No Response Needed</button>
-            <button className="btn btn-sm btn-primary" id="feedback-submit">Submit</button>
-          </div>
-        </div>
-      </div>
+function buildInlineResponse(): HTMLElement {
+  const el = toElement(
+    <div className="feedback-inline-response">
+      <textarea className="settings-textarea feedback-inline-textarea" rows={3} placeholder="Your response..."></textarea>
+      <button className="feedback-inline-remove" type="button" title="Remove this response">{'×'}</button>
     </div>
   );
+  el.querySelector('.feedback-inline-remove')!.addEventListener('click', () => el.remove());
+  return el;
+}
 
-  return {
-    overlay,
-    collectResponse: () => {
-      const textareas = Array.from(overlay.querySelectorAll<HTMLTextAreaElement>('.feedback-part-response'));
-      const values = textareas.map(ta => ta.value);
-      // If everything's blank, signal "no response" so the caller can focus
-      // the first empty field instead of posting a noisy "(no response)"
-      // placeholder-only note.
-      if (values.every(v => v.trim() === '')) return null;
-      return combineResponses(values, ordered);
-    },
-    focusFirstInput: () => {
-      const textareas = Array.from(overlay.querySelectorAll<HTMLTextAreaElement>('.feedback-part-response'));
-      if (textareas.length === 0) return;
-      const firstEmpty = textareas.find(ta => ta.value.trim() === '') ?? textareas[0];
-      firstEmpty.focus();
-    },
-  };
+function collectResponse(overlay: HTMLElement, blocks: FeedbackBlock[]): string | null {
+  const catchAll = (overlay.querySelector('#feedback-catchall-text') as HTMLTextAreaElement).value;
+  const inline: BlockResponse[] = [];
+  overlay.querySelectorAll<HTMLElement>('.feedback-insert-slot').forEach(slot => {
+    const blockIndex = Number(slot.getAttribute('data-after-block') ?? '-1');
+    slot.querySelectorAll<HTMLTextAreaElement>('.feedback-inline-textarea').forEach(ta => {
+      inline.push({ blockIndex, text: ta.value });
+    });
+  });
+
+  const hasInline = inline.some(r => r.text.trim() !== '');
+  const hasCatchAll = catchAll.trim() !== '';
+  if (!hasInline && !hasCatchAll) return null;
+
+  return combineQuotedResponse(blocks, inline, catchAll);
+}
+
+function focusFirstInput(overlay: HTMLElement) {
+  // Prefer the first inline textarea if one exists (user already started
+  // inserting responses), otherwise the catch-all.
+  const firstInline = overlay.querySelector<HTMLTextAreaElement>('.feedback-inline-textarea');
+  if (firstInline != null) {
+    firstInline.focus();
+    return;
+  }
+  (overlay.querySelector('#feedback-catchall-text') as HTMLTextAreaElement).focus();
 }
 
 /** Check all loaded tickets for pending feedback. Updates tab dot and

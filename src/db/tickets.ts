@@ -229,6 +229,9 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
     case 'status':
       orderBy = STATUS_ORD;
       break;
+    case 'modified':
+      orderBy = 'updated_at';
+      break;
     case 'created':
     case undefined:
       orderBy = 'created_at';
@@ -440,6 +443,7 @@ export async function queryTickets(
     case 'status':
       orderBy = STATUS_ORD;
       break;
+    case 'modified': orderBy = 'updated_at'; break;
     case undefined: orderBy = 'created_at'; break;
     default: orderBy = 'created_at'; break;
   }

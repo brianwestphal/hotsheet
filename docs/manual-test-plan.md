@@ -244,9 +244,10 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Paste (Cmd/Ctrl+V) works correctly
 - [ ] Click-and-drag across output in a drawer terminal paints a **clearly visible** accent-coloured selection highlight (HS-7330 regression check — previously invisible on the white theme). Repeat in a centered dashboard tile and in the dedicated dashboard view.
 - [ ] Move keyboard focus out of the terminal (click a ticket) — the selection stays visible but its fill drops to the lower-alpha inactive variant
-- [ ] With the drawer terminal focused, press **Cmd+K** (or Ctrl+K on Linux/Windows) — the viewport clears and scrollback drops; the current prompt stays at the top of the pane (HS-7329). Repeat in a centered dashboard tile and in the dedicated dashboard view.
-- [ ] Repeat the Cmd+K test while a TUI like `vim` or `nano` is running — the clear fires even though the TUI would normally consume Cmd/Ctrl+K (matches Terminal.app / iTerm2)
-- [ ] Press **Ctrl+Shift+K** — readline's kill-line passes through (the shortcut's Shift modifier is deliberately excluded from the clear match)
+- [ ] With the drawer terminal focused, press **Cmd+K** (macOS) or **Ctrl+K** (Linux/Windows) — the viewport clears and scrollback drops; the current prompt stays at the top of the pane (HS-7329). Repeat in a centered dashboard tile and in the dedicated dashboard view.
+- [ ] Repeat the clear test while a TUI like `vim` or `nano` is running — the clear fires even though the TUI would normally consume the shortcut (matches Terminal.app / iTerm2)
+- [ ] **HS-7459 regression check on macOS**: with the drawer terminal focused, type a long line and then press **Ctrl+K** (not Cmd+K) — readline's `kill-line` fires (cursor-to-end deletion) and the viewport is NOT cleared. This verifies we no longer hijack Ctrl+K on macOS. Also verify **Ctrl+F** / **Ctrl+B** readline cursor-movement keys still reach the shell (see HS-7460 for the Cmd/Ctrl+F app-find hijack that is still pending a fix).
+- [ ] Press **Ctrl+Shift+K** — readline's kill-line passes through (the Shift modifier is deliberately excluded from the clear match on Linux/Windows)
 
 ### Tauri desktop (§22.11)
 - [ ] Terminal works inside the Tauri window on macOS arm64 + x86_64
@@ -334,25 +335,48 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 
 ## 13. Terminal find / search (HS-7331, §34)
 
+Most of the happy-path flows are now covered by `e2e/terminal-search.spec.ts` (HS-7363). The items below are what's left for manual verification — visual-color checks, fallback paths, and state-reset flows that automated tests don't yet exercise.
+
 ### Drawer terminal
-- [ ] Click the magnifier icon between the header spacer and the power button — the search box expands to ~240 px with an input, prev/next chevrons, a count chip, and a close (×)
-- [ ] Type a substring that appears multiple times in the scrollback (e.g. `printf 'apple\nbanana\napple\napple\n'` then search `apple`) — amber-highlighted matches appear and the count shows `1/3` (or whatever the real total is)
-- [ ] Press Enter — the active match (brighter orange) advances; count shows the next index
-- [ ] Press Shift+Enter — active match steps backwards
-- [ ] Press Esc — the input loses focus but the box stays expanded with its query + highlights intact (HS-7393). Keyboard focus returns to document.body, not to the shell.
-- [ ] Click the × button while the box is open — the input clears, highlights disappear, the box collapses, and keyboard focus returns to the shell
-- [ ] With keyboard focus in the terminal (not in any other input), press **Cmd+F** (or Ctrl+F) — the terminal search opens and the input is focused (not the app-header ticket search)
-- [ ] With keyboard focus OUTSIDE a terminal, press Cmd/Ctrl+F — the app-header ticket search focuses, not the terminal search (fallback path)
+- [ ] Type `apple` into the search box (with `apple` appearing 3 times in the scrollback) — **visually confirm** the match highlights are amber/orange (not accent blue), the active match is a brighter orange than the rest, and Enter advances the active highlight to the next row
+- [ ] With keyboard focus OUTSIDE a terminal (e.g. in the ticket list), press Cmd/Ctrl+F — the app-header ticket search focuses, **NOT** the terminal search widget (fallback path)
 - [ ] Restart the terminal (Stop → Start) with the search box open — after the new PTY attaches the search box is back in its collapsed state with no stale highlights
 
 ### Dashboard dedicated view
-- [ ] Open the dashboard, double-click a tile to enter the dedicated view — the tile-size slider in the app header is hidden and the terminal search widget appears in the same slot
-- [ ] Typing / Enter / Shift+Enter / Esc behave identically to the drawer version
-- [ ] Press Back (or Esc) to exit the dedicated view — the search widget disappears and the tile-size slider returns
 - [ ] Re-enter the dedicated view for a DIFFERENT tile — the search widget re-mounts fresh (no leaked query or highlights from the previous view)
+- [ ] Pressing Esc (rather than clicking Back) exits the dedicated view — both paths should return you to the grid view with the sizer restored
 
 ### Grid tile (regression check)
-- [ ] Try clicking in a non-centered grid tile — no search widget appears anywhere (grid tiles are preview-scale and deliberately excluded per §34.1)
+- [ ] Visually confirm no grid tile itself shows a magnifier / search UI (grid tiles are preview-scale and deliberately excluded per §34.1 — test 4 in the e2e spec asserts the app-header slot is hidden in grid view, but a visual scan of the tile DOM is the clearest "nothing leaked" check)
+
+---
+
+## 14. Feedback dialog click-to-insert (HS-6998, §21.2.1)
+
+The dialog is heavily visual — rendered markdown pills, in-between hover-to-reveal `+` insert affordances, inline response blocks with remove buttons, and a catch-all textarea. Playwright can't easily assert "visually reads as a question set with inline replies," so these flows are manual.
+
+### Basic rendering
+- [ ] Trigger a feedback note whose prompt is a single-paragraph question. Open the feedback dialog: the prompt renders as a single accent-bordered pill, ONE insert slot sits below it showing a muted `+` glyph (no "Add response here" text visible by default), and a catch-all textarea with label "Or respond below (catch-all)" sits under that. Focus lands in the catch-all on open.
+- [ ] Trigger a feedback note with intro paragraph + bulleted list + closing question + options list (use the prompt from the HS-6998 screenshot). Each of the four blocks renders as its own pill. Between each pair of blocks — and after the last — a `+` glyph insert slot is visible. Hover the mouse anywhere in the gap between two blocks: the glyph brightens and " Add response here" reveals next to it. The click target spans the full width of the dialog (minus block horizontal padding) — clicking anywhere across that full-width gap opens the inline textarea.
+- [ ] Trigger a feedback note whose prompt is ONLY the string `FEEDBACK NEEDED:` (no content). The dialog renders an italic `(no prompt text)` placeholder and the catch-all textarea. No `+` insert affordance appears.
+
+### Click-to-insert flow
+- [ ] Click anywhere in an insert slot between two blocks (does not require hovering the `+` glyph itself — the full-width button accepts the click). A new inline response block appears with a blue-tinted background, a textarea, and a `×` button top-right. Focus jumps to the new textarea immediately.
+- [ ] Add TWO inline responses in the same slot (click the insert button twice). Both appear in insertion order; the `+` insert slot stays visible below them so the user can add more.
+- [ ] Add an inline response, then click its `×` button. The response is removed cleanly and focus is not stolen from wherever the user clicked next.
+- [ ] Add inline responses in different slots, type distinct text in each, then submit. A new note appears on the ticket with the prompt blocks quoted (`> ` prefix) and the responses interleaved un-quoted in the correct slots. **Visually read the note** to confirm every question is right next to its answer.
+
+### Catch-all only (regression check)
+- [ ] Open dialog, type into the catch-all only, submit. The new note body is EXACTLY the catch-all text — no quoting, no prompt restatement. This is the common case and must not accidentally regress into quoted output when no inline responses were used.
+
+### Submit gating
+- [ ] Open dialog, leave every field blank, no attachments, click Submit. Submission is blocked and focus returns to the catch-all (or the first inline textarea if one exists).
+- [ ] Open dialog, add an inline response with whitespace-only text, leave catch-all blank, Submit. Submission is still blocked — whitespace-only inline responses do NOT count as "any response used."
+- [ ] Add an attachment only (no text anywhere), Submit. The attachment uploads; no note body is created.
+
+### Mixed response + attachments
+- [ ] Fill catch-all, add an attachment, submit. Note is created with the catch-all text; attachment appears on the ticket. Channel notification fires if the Claude Channel is alive.
+- [ ] Fill one inline response AND the catch-all AND add an attachment, submit. Note body has quoted prompt blocks with the inline response interleaved, then the catch-all text appended un-quoted at the end. Attachment uploads.
 
 ---
 
@@ -379,3 +403,4 @@ For reference, here's what IS covered by automated tests (no manual check needed
 - Terminal PTY lifecycle: spawn, kill, scrollback ring buffer, multi-subscriber broadcast, exit state (unit tests when HS-6264 lands)
 - Terminal WebSocket auth guard (reject missing/wrong secret with 403) and roundtrip (unit tests when HS-6265 lands)
 - Terminal drawer tab toggle (E2E when HS-6268 wires up the setting toggle)
+- Terminal find widget happy path (drawer open+type+Enter/Shift+Enter+× close; Cmd+F routing; dashboard dedicated-view mount/unmount; grid-view regression) — `e2e/terminal-search.spec.ts` (HS-7363)

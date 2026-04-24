@@ -1,126 +1,110 @@
 /**
- * Heuristic parser that splits a feedback-request prompt into intro text,
- * a sequence of individual "parts" (questions), and closing text so the
- * feedback dialog can render a dedicated response textarea next to each part
- * (HS-6998). When no clear multi-part pattern is detected, returns `null`
- * and the dialog falls back to its single-textarea UI.
+ * Feedback-prompt splitter (HS-6998).
  *
- * AI-generated feedback requests are almost always one of two shapes:
+ * AI-generated feedback prompts are unpredictable: sometimes a neat numbered
+ * list of independent questions, sometimes a paragraph ending in "which of
+ * A/B/C/D/E should I do?" with the letters being options rather than parts.
+ * An earlier version of this module tried to auto-detect "parts" from the
+ * first list it found — that failed on mixed prompts where the list was an
+ * options menu, not a question set. This version does NOT try to guess.
  *
- *   Pattern A — numbered list:
- *     Some intro context.
- *     1. First question / item / decision
- *     2. Second one
- *     3. Third
- *     Closing remarks.
+ * Instead, we split the prompt into top-level markdown blocks (paragraphs,
+ * lists, headings, code blocks, ...) via `marked.lexer`. The dialog renders
+ * each block verbatim with an "+ Add response" affordance between blocks, so
+ * the user can insert their own response textareas wherever they want. A
+ * catch-all textarea always sits at the bottom for a single free-form reply.
  *
- *   Pattern B — bullet list:
- *     Some intro context.
- *     - First question
- *     - Second question
- *     Closing remarks.
- *
- * The parser uses marked's lexer so nested markdown inside each item (bold,
- * code, links) is preserved. We look for the first top-level list token with
- * **≥ 2 items**; single-item lists or zero-item prompts fall through.
- *
- * Multiple sibling lists are consolidated only when the first qualifying
- * list is found — trailing lists fold into the outro (they're rarely the
- * primary question set, and conservatively falling back avoids misclassifying
- * a closing "to-do" or "references" list as questions).
+ * On submit, if only the catch-all was used, the note body is just that text.
+ * If any inline responses were added, `combineQuotedResponse` re-emits the
+ * prompt blocks as markdown quotes (`> ...`) with the user's responses
+ * interleaved in the correct order — the reader sees the original question
+ * text right next to each answer.
  */
 import { marked, type Tokens } from 'marked';
 
-export interface FeedbackPart {
-  /** The raw markdown source of this part (what the AI wrote). Used as the
-   *  question label rendered next to the response textarea. */
+export interface FeedbackBlock {
+  /** Raw markdown source of the block (paragraph, list, heading, etc.). */
   markdown: string;
-  /** Optional short label for the aria-label / heading — derived from the
-   *  first 60 characters of the plain-text form, for screen-reader context. */
-  shortLabel: string;
+  /** Pre-rendered HTML ready to inject via `raw()`. */
+  html: string;
 }
 
-export interface ParsedFeedback {
-  /** Markdown before the first qualifying list. May be empty. */
-  intro: string;
-  parts: FeedbackPart[];
-  /** Markdown after the list. May be empty. */
-  outro: string;
+export interface BlockResponse {
+  /** Index of the prompt block this response follows. */
+  blockIndex: number;
+  /** The response text the user entered. */
+  text: string;
 }
 
-export function parseFeedbackPrompt(prompt: string): ParsedFeedback | null {
-  if (typeof prompt !== 'string' || prompt.trim() === '') return null;
+/** Split a prompt into top-level markdown blocks. Always returns an array
+ *  (possibly empty for whitespace-only input). `space` tokens and empty
+ *  blocks are dropped so the caller doesn't need to filter. */
+export function parseFeedbackBlocks(prompt: string): FeedbackBlock[] {
+  if (typeof prompt !== 'string' || prompt.trim() === '') return [];
 
   let tokens: Tokens.Generic[];
   try {
-    tokens = marked.lexer(prompt) as Tokens.Generic[];
+    tokens = marked.lexer(prompt);
   } catch {
-    return null;
+    return [{ markdown: prompt.trim(), html: marked.parse(prompt, { async: false }) }];
   }
 
-  // Find the first list token with at least 2 items. Ordered or unordered.
-  let listIndex = -1;
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
-    if (t.type === 'list') {
-      const items = (t as Tokens.List).items;
-      if (items.length >= 2) {
-        listIndex = i;
-        break;
-      }
-    }
+  const blocks: FeedbackBlock[] = [];
+  for (const t of tokens) {
+    if (t.type === 'space') continue;
+    const md = t.raw.trim();
+    if (md === '') continue;
+    blocks.push({ markdown: md, html: marked.parse(md, { async: false }) });
   }
-  if (listIndex < 0) return null;
-
-  const listToken = tokens[listIndex] as Tokens.List;
-  const parts: FeedbackPart[] = listToken.items.map((item) => {
-    const md = extractItemMarkdown(item);
-    return {
-      markdown: md,
-      shortLabel: md.replace(/\s+/g, ' ').trim().slice(0, 60),
-    };
-  });
-
-  const intro = stitchTokens(tokens.slice(0, listIndex)).trim();
-  const outro = stitchTokens(tokens.slice(listIndex + 1)).trim();
-
-  return { intro, parts, outro };
+  return blocks;
 }
 
 /**
- * Combine the user's per-part response strings back into a single markdown
- * blob that preserves the original numbering, so downstream consumers (the
- * AI reading the note) can re-align responses to questions. Uses the SAME
- * number / bullet scheme marked detected in the prompt (ordered → `1.`,
- * unordered → `-`).
+ * Combine the prompt blocks and the user's responses into a single markdown
+ * note body. The prompt blocks are emitted as markdown blockquotes (`> `) so
+ * they visually group together, and the user's responses appear un-quoted
+ * between them.
  *
- * Empty responses are preserved as blank answers so the numbering stays
- * aligned; they DO contribute a "(no response)" placeholder so the reader
- * sees what the user intentionally skipped vs. what they missed.
+ * Responses are attached to blocks by `blockIndex`: a response with
+ * `blockIndex === N` appears after block N. Multiple responses may share a
+ * blockIndex and are emitted in their original order. A catch-all response
+ * (the always-present bottom textarea) is appended last, un-quoted.
+ *
+ * If `inlineResponses` is empty, the catch-all is returned verbatim with no
+ * quoting — no point restating the whole prompt back at the reader when the
+ * user just typed a single free-form reply.
  */
-export function combineResponses(responses: string[], ordered: boolean): string {
+export function combineQuotedResponse(
+  blocks: FeedbackBlock[],
+  inlineResponses: BlockResponse[],
+  catchAll: string,
+): string {
+  const catchText = catchAll.trim();
+  const liveResponses = inlineResponses.filter(r => r.text.trim() !== '');
+
+  if (liveResponses.length === 0) return catchText;
+
   const pieces: string[] = [];
-  for (let i = 0; i < responses.length; i++) {
-    const marker = ordered ? `${i + 1}.` : '-';
-    const text = responses[i].trim();
-    const body = text === '' ? '*(no response)*' : text;
-    pieces.push(`${marker} ${body}`);
+  for (let i = 0; i < blocks.length; i++) {
+    pieces.push(quoteMarkdown(blocks[i].markdown));
+    for (const r of liveResponses) {
+      if (r.blockIndex === i) pieces.push(r.text.trim());
+    }
   }
+  // Any responses whose blockIndex is out of range (shouldn't happen in normal
+  // flow, but guard against it) append at the end in their original order.
+  const maxIdx = blocks.length - 1;
+  for (const r of liveResponses) {
+    if (r.blockIndex > maxIdx) pieces.push(r.text.trim());
+  }
+
+  if (catchText !== '') pieces.push(catchText);
   return pieces.join('\n\n');
 }
 
-// --- Internals ---
-
-function extractItemMarkdown(item: Tokens.ListItem): string {
-  // `item.raw` is "1. Foo\n   continuation\n" or "- Foo\n". Strip the leading
-  // list marker so the rendered bubble shows the raw question text without a
-  // redundant number/bullet.
-  return item.raw
-    .replace(/^\s*(?:\d+[.)]|[-*+])\s+/, '')
-    .replace(/\n[ \t]+/g, '\n')
-    .trimEnd();
-}
-
-function stitchTokens(tokens: Tokens.Generic[]): string {
-  return tokens.map((t) => t.raw).join('');
+function quoteMarkdown(md: string): string {
+  return md
+    .split('\n')
+    .map(line => (line === '' ? '>' : `> ${line}`))
+    .join('\n');
 }

@@ -490,6 +490,26 @@ describe('sorting', () => {
       expect(asc[0].id).toBeLessThan(asc[asc.length - 1].id);
     }
   });
+
+  it('sorts by modified (updated_at) desc, reflecting ticket edits (HS-7428)', async () => {
+    // Find an older ticket and bump its updated_at via a content edit. It
+    // should surface at the top of a 'modified:desc' sort even though it was
+    // created earlier than the others.
+    const byCreated = await getTickets({ sort_by: 'created', sort_dir: 'desc' });
+    expect(byCreated.length).toBeGreaterThanOrEqual(2);
+    const oldest = byCreated[byCreated.length - 1];
+
+    // Touch the oldest ticket to bump updated_at
+    const { updateTicket } = await import('./tickets.js');
+    await updateTicket(oldest.id, { title: `${oldest.title} (edited)` });
+
+    const byModified = await getTickets({ sort_by: 'modified', sort_dir: 'desc' });
+    expect(byModified[0].id).toBe(oldest.id);
+
+    // Ascending direction puts least-recently-modified at the top.
+    const byModifiedAsc = await getTickets({ sort_by: 'modified', sort_dir: 'asc' });
+    expect(byModifiedAsc[byModifiedAsc.length - 1].id).toBe(oldest.id);
+  });
 });
 
 describe('update', () => {

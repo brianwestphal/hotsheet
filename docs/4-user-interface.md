@@ -120,8 +120,9 @@ Each built-in view has an icon to the left of the label:
 
 ### 4.9 Sort Controls
 
-- Dropdown to sort by: Created (default), Priority, Category, Status.
-- Sort direction: ascending or descending.
+- Dropdown to sort by: Newest First (default), Oldest First, Recently Modified, Priority, Category, Status.
+- Sort direction: ascending or descending. The dropdown options pre-combine sort key + direction, but the underlying `sort_by` / `sort_dir` query parameters accept any key+direction combination.
+- **Recently Modified (HS-7428).** Sorts by the `updated_at` column (descending by default — most recently touched ticket first). Any ticket update — title/details/notes/category/priority/status/tags/up_next — bumps `updated_at` via the existing `updateTicket` trigger (see `src/db/tickets.ts`). Marking a ticket "read" (last_read_at-only write) does NOT bump `updated_at` — that keeps the sort reflecting actual content changes rather than every poll-driven read. Ties break on `id DESC` so newer tickets sort above older ones with the same timestamp.
 - Sort preference is persisted to settings.
 
 ### 4.10 Batch Toolbar

@@ -50,7 +50,7 @@ export interface TicketFilters {
   status?: TicketStatus | 'open' | 'non_verified' | 'active';
   up_next?: boolean;
   search?: string;
-  sort_by?: 'created' | 'priority' | 'category' | 'status';
+  sort_by?: 'created' | 'modified' | 'priority' | 'category' | 'status';
   sort_dir?: 'asc' | 'desc';
 }
 

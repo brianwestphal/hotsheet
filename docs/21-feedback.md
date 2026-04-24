@@ -18,7 +18,7 @@ AI tools and automated workflows can request user feedback by adding notes with 
 
 - Appears automatically when a ticket with pending feedback is opened in the detail panel.
 - Shows the prompt text rendered as markdown.
-- Provides a text area for the user's response — **single textarea** for simple prompts, or **per-part textareas** when the prompt is a multi-part question set (see §21.2.1 for the multi-part layout).
+- Provides a **catch-all textarea** at the bottom for a free-form reply, plus **inline response textareas** the user can insert between any two prompt blocks (see §21.2.1 for the click-to-insert layout).
 - Supports file attachments (same pattern as the Not Working dialog).
 - Action buttons (left to right):
   - **Later** (left side, styled as a muted link): Dismisses the dialog without action. The feedback state persists — the dialog will reappear next time the ticket is opened.
@@ -27,24 +27,29 @@ AI tools and automated workflows can request user feedback by adding notes with 
 - Click-outside-overlay dismisses the dialog (same as "Later").
 - The dialog only auto-shows once per detail-panel open (tracked by note ID) to avoid re-opening on every poll refresh.
 
-### 21.2.1 Multi-part feedback layout (HS-6998)
+### 21.2.1 Click-to-insert inline responses (HS-6998)
 
-AI-generated feedback requests are often multi-part — a numbered or bulleted list of questions, each needing its own answer. In the single-textarea layout, the user has to scroll between the prompt up top and their response at the bottom while typing each answer, losing track of which question they're on. The multi-part layout eliminates the scrolling by rendering a dedicated textarea **directly below each question**.
+AI-generated feedback prompts are unpredictable — sometimes a neat numbered list of independent questions, sometimes a paragraph ending in "which of A/B/C/D/E should I do?" where the letters are **options**, not parts. An earlier version of this dialog tried to auto-detect the question list and render a textarea next to each item, but it got the shape wrong on mixed prompts where the list was an options menu. This version **doesn't try to guess**: the user chooses where to put their answers.
 
-**Detection** — the prompt is parsed with `marked.lexer` (`src/client/feedbackParser.ts`). The first top-level list token with **≥ 2 items** triggers multi-part mode. Either ordered (`1.`, `2.`) or unordered (`-`, `*`, `+`) lists qualify. If no qualifying list is found, the dialog falls back to the single-textarea layout — no behavioural change for prompts that don't fit the pattern.
+**Layout** — the prompt is split into top-level markdown blocks (paragraphs, lists, headings, code blocks, ...) via `parseFeedbackBlocks` in `src/client/feedbackParser.ts`. Each block is rendered as an accent-bordered pill. Between every pair of blocks, and after the last block, a full-width insert-response affordance sits in a `.feedback-insert-slot`: by default it shows only a muted `+` glyph on the left so the stack stays visually quiet, and on hover the glyph brightens and " Add response here" reveals next to it. The click target is the full width of the dialog (minus the block's horizontal padding), so the user can click anywhere in the gap between two blocks to open an inline textarea at that exact position. A catch-all textarea always sits at the bottom — when the prompt is a single-question paragraph, that's the only input the user needs.
 
-**Layout** — an `<ol class="feedback-parts-list">` with one `<li class="feedback-part">` per item. Each item shows the question text rendered as markdown (bold, code spans, links all preserved) and a short-height textarea for the response. Intro markdown (anything before the list) and outro markdown (anything after) wrap the list so the user still sees any framing context the AI provided.
+**Inserting responses** — clicking an insert slot creates a new inline response block (`<div class="feedback-inline-response">`) containing a textarea and a small `×` remove button. Focus jumps to the new textarea immediately. Multiple inline responses may be added to the same slot; they're emitted in insertion order. The insert button stays visible after insertion so users can add more.
 
-**Multiple sibling lists** — only the first qualifying list is split into parts. Trailing lists fold into the outro. Rationale: a primary question set rarely ships alongside a second question set; more commonly a trailing list is a "references" or "to-do" recap that should stay as prose.
+**Submit — catch-all only** — when the user fills in only the bottom catch-all textarea (no inline responses), the note body is that catch-all text verbatim. No quoting, no restating of the prompt — just the user's reply. This is the common case for short, simple prompts.
 
-**Submit** — responses are re-combined into a single markdown note body via `combineResponses(values, ordered)`. The numbering scheme matches the prompt (`1.`, `2.`, ... for ordered; `- ` for unordered). Empty responses are preserved as `*(no response)*` placeholders so the submitted note keeps its numbering aligned with the prompt — a reader (human or AI) can always map answer N to question N. If **every** response textarea is empty, submission is blocked (same semantics as the single-textarea flow) and focus jumps to the first empty field.
+**Submit — with inline responses** — when any inline response has non-empty text, `combineQuotedResponse(blocks, inlineResponses, catchAll)` re-emits the **whole prompt** as markdown blockquotes (`> ...` on every line of every block) with the user's inline responses interleaved un-quoted in the correct slots, and the catch-all (if any) appended un-quoted at the end. The reader — human or AI — sees the original question text right next to each answer, without needing to open the original feedback note.
 
-**Focus** — on dialog open, focus the first empty part's textarea. On re-open after partial fill, focus the first empty one (or the first, if all are filled). Keeps keyboard users moving forward through the question list.
+**Empty inline responses** — inline textareas whose text is empty or whitespace-only are dropped from the output rather than included as placeholders. Empty text-areas are noise — the user clicked `+ Add response` then changed their mind. They don't need to be called out.
+
+**Submission gates** — if neither any inline textarea nor the catch-all contains text, submission is blocked and focus returns to the catch-all (or the first inline textarea if one exists). Attachments may still be submitted alone with no note body.
+
+**Focus** — on dialog open, focus the catch-all. Once the user clicks `+ Add response`, focus jumps to the newly inserted inline textarea.
 
 **Edge cases:**
-- List with only one item — falls through to single-textarea. One question doesn't need the per-part affordance.
-- Nested lists inside an item — rendered as nested markdown inside the question bubble; still one textarea per top-level item.
-- Code blocks inside an item — rendered inline; the textarea is still plain text.
+- Empty prompt — no blocks are rendered; only the catch-all textarea is shown. The `+ Add response` affordance is absent (there's nothing to insert between).
+- Prompts with only one block — a single `+ Add response` slot appears after the block, plus the catch-all. Equivalent to the single-textarea flow most of the time.
+- Lists — always rendered as a single block. If the user wants to answer item-by-item they can add multiple inline responses after the list and label them themselves in the response text. (The dialog deliberately doesn't split list items into their own slots — false positives on options menus were the bug we were fixing.)
+- Code blocks, headings, blockquotes — each is a distinct block and can have its own inline response.
 
 ### 21.3 Provide Feedback Link
 
@@ -83,8 +88,8 @@ AI-generated feedback requests are often multi-part — a numbered or bulleted l
 
 ### 21.9 Implementation
 
-- Core module: `src/client/feedbackDialog.tsx` — prefix parsing, dialog rendering, channel notification
-- Multi-part prompt parser (HS-6998): `src/client/feedbackParser.ts` — `parseFeedbackPrompt` + `combineResponses`, covered by 15 unit tests in `feedbackParser.test.ts`
+- Core module: `src/client/feedbackDialog.tsx` — prefix parsing, dialog rendering, click-to-insert wiring, channel notification
+- Prompt splitter (HS-6998): `src/client/feedbackParser.ts` — `parseFeedbackBlocks` + `combineQuotedResponse`, covered by unit tests in `feedbackParser.test.ts`
 - Note rendering: `src/client/noteRenderer.tsx` — "Provide Feedback" link
 - Detail panel: `src/client/detail.tsx` — auto-show on ticket open
 - Poll: `src/client/poll.tsx` — IMMEDIATE auto-select, feedback state scanning
