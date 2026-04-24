@@ -65,6 +65,10 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     });
     // Terminals outline list (HS-6271) — loads asynchronously.
     void import('./terminalsSettings.js').then(({ loadAndRenderTerminalsSettings }) => loadAndRenderTerminalsSettings());
+    // HS-6307 — populate + wire the "Default appearance" panel on open.
+    void import('./terminalDefaultAppearanceUI.js').then(({ loadAndWireTerminalDefaultAppearance }) => {
+      void loadAndWireTerminalDefaultAppearance();
+    });
   });
 
   closeBtn.addEventListener('click', () => {

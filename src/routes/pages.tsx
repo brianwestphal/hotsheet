@@ -477,6 +477,25 @@ pageRoutes.get('/', (c) => {
                   <h3>Embedded Terminal</h3>
                 </div>
                 <span className="settings-hint">Terminal tabs appear alongside the Commands Log in the bottom drawer. Each terminal's PTY is spawned lazily on first open unless you mark it eager (see docs/22-terminal.md). This feature is desktop-only.</span>
+                {/* HS-6307 — project-default appearance applied to every
+                    terminal in this project. Per-terminal overrides (set via
+                    the gear popover on the toolbar) win on a field-by-field
+                    basis. See docs/35-terminal-themes.md §35.6. */}
+                <div className="settings-terminal-default-appearance" style="margin-top:12px">
+                  <div className="settings-terminal-default-title">Default appearance</div>
+                  <div className="settings-terminal-default-row">
+                    <label htmlFor="settings-terminal-default-theme">Theme</label>
+                    <select id="settings-terminal-default-theme"></select>
+                  </div>
+                  <div className="settings-terminal-default-row">
+                    <label htmlFor="settings-terminal-default-font">Font</label>
+                    <select id="settings-terminal-default-font"></select>
+                  </div>
+                  <div className="settings-terminal-default-row">
+                    <label htmlFor="settings-terminal-default-size">Font size</label>
+                    <input type="number" id="settings-terminal-default-size" min="8" max="32" step="1" />
+                  </div>
+                </div>
                 <div className="settings-field" style="margin-top:12px">
                   <label>Default terminals</label>
                   <span className="settings-hint" style="margin-bottom:6px;display:block">Each row is a tab in the drawer. Edit to change the name, command, working directory, or launch mode. Drag rows to reorder. Projects start with no terminals — add one to get a tab.</span>

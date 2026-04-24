@@ -12,13 +12,23 @@ import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getActiveProject, state } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
+import {
+  applyAppearanceToTerm,
+  getProjectDefault,
+  getSessionOverride,
+  loadProjectDefaultAppearance,
+  resolveAppearance,
+  subscribeToDefaultAppearanceChanges,
+} from './terminalAppearance.js';
+import { mountAppearancePopover } from './terminalAppearancePopover.js';
+import { DEFAULT_FONT_SIZE } from './terminalFonts.js';
 import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut } from './terminalKeybindings.js';
 import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { pickNearestTerminalTabId } from './terminalTabSelection.js';
-import { readXtermTheme } from './xtermTheme.js';
+import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
 
 type Status = 'not-connected' | 'connecting' | 'alive' | 'exited';
 
@@ -39,6 +49,9 @@ const FOLDER_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="
 const CLIPBOARD_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M16 14h-6"/><path d="M10 18h.01"/></svg>';
 // Shown briefly after a successful copy-last-output click (Lucide `check`).
 const CHECK_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+// Lucide `settings` glyph — gear button on the terminal toolbar that opens the
+// HS-6307 appearance popover (theme / font / font-size per terminal).
+const SETTINGS_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>';
 
 export interface TerminalTabConfig {
   id: string;
@@ -48,6 +61,11 @@ export interface TerminalTabConfig {
   lazy?: boolean;
   /** True for dynamically-created terminals (closable from the tab strip). */
   dynamic?: boolean;
+  /** HS-6307 — per-terminal appearance override (theme id / font id / size).
+   *  Unset fields fall back to the project default + hard-coded fallback. */
+  theme?: string;
+  fontFamily?: string;
+  fontSize?: number;
 }
 
 interface TerminalInstance {
@@ -143,6 +161,15 @@ export function initTerminal(): void {
     }
   });
 
+  // HS-6307 — when the project-default appearance changes (Settings → Terminal),
+  // re-resolve + re-apply on every mounted xterm. Per-terminal overrides stay
+  // in place; only fields inherited from the default pick up the new value.
+  subscribeToDefaultAppearanceChanges(() => {
+    for (const inst of instances.values()) {
+      if (inst.term !== null) void reapplyAppearance(inst);
+    }
+  });
+
   // HS-6502: refit the active terminal whenever the drawer panel changes size.
   // The drawer can resize without a window-level resize event — users drag the
   // top edge of the drawer (initResize in commandLog.tsx) and toggle the
@@ -195,6 +222,11 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   // subsequent OSC 7 pushes. No-op after the first tick; the value doesn't
   // change mid-session.
   cacheHomeDir(data.home);
+  // HS-6307 — refresh the project default appearance whenever the terminal
+  // list reloads. Covers project switch + settings-save (which already trigger
+  // this path). Fires the default-changed event if the value actually moved,
+  // so previously-mounted terminals re-resolve.
+  void loadProjectDefaultAppearance();
 
   const tabStrip = document.getElementById('drawer-terminal-tabs');
   const paneContainer = document.getElementById('drawer-terminal-panes');
@@ -227,6 +259,7 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
     const config: TerminalTabConfig = {
       id: entry.id, command: entry.command, name: entry.name,
       cwd: entry.cwd, lazy: entry.lazy, dynamic: entry.dynamic,
+      theme: entry.theme, fontFamily: entry.fontFamily, fontSize: entry.fontSize,
     };
     let inst = instances.get(config.id);
     if (!inst) {
@@ -410,6 +443,11 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
         <button className="terminal-header-btn terminal-clear-btn" title="Clear screen (keeps process running)">
           {raw(TRASH_ICON)}
         </button>
+        {/* HS-6307 — per-terminal appearance (theme / font / size). Click
+            opens a small floating popover anchored below the button. */}
+        <button className="terminal-header-btn terminal-appearance-btn" title="Appearance (theme, font)">
+          {raw(SETTINGS_ICON)}
+        </button>
       </div>
       <div className="terminal-body"></div>
     </div>
@@ -450,6 +488,20 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
 
   powerBtn.addEventListener('click', () => { void onPowerClick(inst); });
   clearBtn.addEventListener('click', () => { inst.term?.clear(); });
+
+  // HS-6307 — appearance gear. Opens the popover anchored below the button
+  // and routes apply() calls back through reapplyAppearance so the theme /
+  // font / size land on the live xterm instance.
+  const appearanceBtn = pane.querySelector<HTMLButtonElement>('.terminal-appearance-btn');
+  appearanceBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    mountAppearancePopover({
+      anchor: appearanceBtn,
+      terminalId: inst.id,
+      isDynamic: inst.config.dynamic === true,
+      onApply: () => { void reapplyAppearance(inst); },
+    });
+  });
 
   // HS-7268 — copy-last-output click. The button is hidden until
   // `shellIntegration.enabled` flips true (first OSC 133 escape seen), so by
@@ -541,14 +593,49 @@ function updateTabLabel(inst: TerminalInstance): void {
   }
 }
 
+/** HS-6307 — resolve the appearance layers for a terminal. Factored out so
+ *  mountXterm / reapplyAppearance / the popover all read the same stack. */
+function resolveInstanceAppearance(inst: TerminalInstance) {
+  const configOverride: { theme?: string; fontFamily?: string; fontSize?: number } = {};
+  if (inst.config.theme !== undefined) configOverride.theme = inst.config.theme;
+  if (inst.config.fontFamily !== undefined) configOverride.fontFamily = inst.config.fontFamily;
+  if (inst.config.fontSize !== undefined) configOverride.fontSize = inst.config.fontSize;
+  return resolveAppearance({
+    projectDefault: getProjectDefault(),
+    configOverride,
+    sessionOverride: getSessionOverride(inst.id),
+  });
+}
+
+/** Build just the xterm ITheme for the initial `new XTerm({ theme: … })`
+ *  call — the full appearance (font family + size) is applied async after
+ *  the terminal opens. */
+function resolveAppearanceThemeForInit(inst: TerminalInstance) {
+  const appearance = resolveInstanceAppearance(inst);
+  const theme = getThemeById(appearance.theme) ?? getThemeById('default')!;
+  return themeToXtermOptions(theme);
+}
+
+/** Re-resolve + apply appearance to a live xterm. Called on mount, on the
+ *  appearance popover's onApply callback, and on project-default changes. */
+async function reapplyAppearance(inst: TerminalInstance): Promise<void> {
+  if (inst.term === null) return;
+  const appearance = resolveInstanceAppearance(inst);
+  await applyAppearanceToTerm(inst.term, appearance);
+}
+
 function mountXterm(inst: TerminalInstance, secret: string): void {
   const term = new XTerm({
+    // HS-6307 — fontFamily / fontSize / theme are overwritten by
+    // `applyAppearanceToTerm` immediately after construction. The initial
+    // values below are the hard-coded fallback so the first canvas paint is
+    // correct if appearance resolution races.
     fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-    fontSize: 13,
+    fontSize: DEFAULT_FONT_SIZE,
     cursorBlink: true,
     scrollback: 10_000,
     allowProposedApi: true,
-    theme: readXtermTheme(),
+    theme: resolveAppearanceThemeForInit(inst),
     // HS-7263 — OSC 8 hyperlink activation. Modern CLI tools (`gh`, `delta`,
     // `eza`, `rg --hyperlink-format`, `ls --hyperlink=auto`, git log piped
     // through delta) emit `\x1b]8;;URL\x07TEXT\x1b]8;;\x07` so the visible
@@ -581,6 +668,12 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
     searchSlot.replaceChildren(searchHandle.root);
   }
   term.open(inst.body);
+
+  // HS-6307 — apply full appearance (font family + size; theme is already set
+  // synchronously on XTerm construction via resolveAppearanceThemeForInit).
+  // Fire-and-forget — the font stylesheet loads async, and xterm falls back to
+  // the System stack via CSS cascade while the webfont resolves.
+  void reapplyAppearance(inst);
 
   inst.body.addEventListener('click', () => { term.focus(); });
 

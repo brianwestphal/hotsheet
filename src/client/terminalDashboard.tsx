@@ -12,6 +12,13 @@ import { toElement } from './dom.js';
 import type { ProjectInfo } from './state.js';
 import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 import {
+  applyAppearanceToTerm,
+  getProjectDefault,
+  getSessionOverride,
+  resolveAppearance,
+  subscribeToDefaultAppearanceChanges,
+} from './terminalAppearance.js';
+import {
   computeSliderSnapPoints,
   computeTileScale,
   DASHBOARD_FALLBACK_COLS,
@@ -27,7 +34,7 @@ import { isClearTerminalShortcut, isFindShortcut } from './terminalKeybindings.j
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
-import { readXtermTheme } from './xtermTheme.js';
+import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
 
 /**
  * Terminal Dashboard — a second top-level client view (alongside the normal
@@ -74,6 +81,12 @@ export interface TerminalListEntry {
   bellPending?: boolean;
   state?: TerminalSessionState;
   exitCode?: number | null;
+  /** HS-6307 — appearance overrides for this specific terminal, resolved on
+   *  the server from settings.json. Applied to the tile + dedicated-view xterm
+   *  alongside the project default so dashboard surfaces match the drawer. */
+  theme?: string;
+  fontFamily?: string;
+  fontSize?: number;
   /** HS-7278 — server-tracked OSC 7 CWD, rendered as a tile badge so a cold
    *  tile (never-mounted / exited) still shows where the shell was working.
    *  Null until the shell pushes its first OSC 7; resets on PTY restart. */
@@ -139,6 +152,11 @@ interface DashboardTile {
    *  size (initial render, post-resize render, font-load reflow, whatever)
    *  triggers the rescale directly. */
   screenObserver: ResizeObserver | null;
+  /** HS-6307 — original list entry carrying the configured appearance
+   *  override. Held on the tile so the dedicated view can resolve appearance
+   *  from the same three-layer stack the drawer uses (project default +
+   *  configOverride + sessionOverride). */
+  listEntry?: TerminalListEntry;
 }
 
 const liveTiles = new Map<string, DashboardTile>();
@@ -216,6 +234,19 @@ export function initTerminalDashboard(): void {
   toggleButton.addEventListener('click', () => {
     if (active) exitDashboard();
     else enterDashboard();
+  });
+
+  // HS-6307 — re-apply appearance on every live tile + dedicated view when
+  // the project default appearance changes.
+  subscribeToDefaultAppearanceChanges(() => {
+    for (const tile of liveTiles.values()) {
+      if (tile.term !== null) {
+        void applyAppearanceToTerm(tile.term, resolveTileAppearance(tile));
+      }
+    }
+    if (dedicatedView !== null) {
+      void applyAppearanceToTerm(dedicatedView.term, resolveTileAppearance(dedicatedView.tile));
+    }
   });
 
   // HS-7031: wire up the size slider. It lives in the app-header (rendered
@@ -691,6 +722,7 @@ function renderTile(secret: string, terminal: TerminalListEntry): HTMLElement {
     targetRows: DASHBOARD_INITIAL_ROWS,
     slotPlaceholder: null,
     screenObserver: null,
+    listEntry: terminal,
   };
   liveTiles.set(tileKey(secret, terminal.id), tile);
 
@@ -786,11 +818,32 @@ function reapplyTileScaleFromPreview(tile: DashboardTile): void {
   applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
 }
 
+/** HS-6307 — resolve the appearance layers for a dashboard tile / dedicated
+ *  view. Same three-layer stack as the drawer (session > config > default) so
+ *  the three surfaces stay visually consistent for a given terminal. */
+function resolveTileAppearance(tile: DashboardTile) {
+  const configOverride: { theme?: string; fontFamily?: string; fontSize?: number } = {};
+  const entry = tile.listEntry;
+  if (entry !== undefined) {
+    if (entry.theme !== undefined) configOverride.theme = entry.theme;
+    if (entry.fontFamily !== undefined) configOverride.fontFamily = entry.fontFamily;
+    if (entry.fontSize !== undefined) configOverride.fontSize = entry.fontSize;
+  }
+  return resolveAppearance({
+    projectDefault: getProjectDefault(),
+    configOverride,
+    sessionOverride: getSessionOverride(tile.terminalId),
+  });
+}
+
 function mountTileXterm(tile: DashboardTile): void {
   const xtermRoot = document.createElement('div');
   xtermRoot.className = 'terminal-dashboard-tile-xterm';
   // Replace the placeholder stub.
   tile.preview.replaceChildren(xtermRoot);
+
+  const appearance = resolveTileAppearance(tile);
+  const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
 
   const term = new XTerm({
     fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
@@ -800,10 +853,10 @@ function mountTileXterm(tile: DashboardTile): void {
     allowProposedApi: true,
     cols: DASHBOARD_INITIAL_COLS,
     rows: DASHBOARD_INITIAL_ROWS,
-    // HS-6866: match the drawer terminal's theme so the tile's xterm canvas
-    // picks up --bg / --text / --accent instead of xterm's default black
-    // palette.
-    theme: readXtermTheme(),
+    // HS-6307: resolve per-tile appearance (theme + font + size). Font +
+    // size are applied asynchronously post-open via applyAppearanceToTerm so
+    // the font stylesheet has time to load.
+    theme: themeToXtermOptions(themeData),
     // HS-7263: OSC 8 hyperlinks in tile previews. Mostly a no-op because the
     // tile is scaled + non-interactive by default, but a tile a user has
     // centered / zoomed into is clickable and should honour hyperlinks.
@@ -812,6 +865,9 @@ function mountTileXterm(tile: DashboardTile): void {
     },
   });
   term.open(xtermRoot);
+  // HS-6307 — apply full appearance (font family + size) post-open. Fire-and-
+  // forget; the theme was already set synchronously at XTerm construction.
+  void applyAppearanceToTerm(term, appearance);
   // HS-7329 — Cmd/Ctrl+K clears the tile's xterm (only meaningful on centered
   // tiles since non-centered tiles don't receive keystrokes, but attaching
   // here keeps the binding uniform across every xterm the app mounts).
@@ -1101,14 +1157,18 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
   if (pane === null || backBtn === null) return;
   backBtn.addEventListener('click', () => { exitDedicatedView(); });
 
+  // HS-6307 — dedicated view uses the same appearance stack as the drawer,
+  // resolved from the tile's config + project default + any live session
+  // override. Font + size are applied asynchronously after term.open.
+  const dedicatedAppearance = resolveTileAppearance(tile);
+  const dedicatedThemeData = getThemeById(dedicatedAppearance.theme) ?? getThemeById('default')!;
   const term = new XTerm({
     fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
     fontSize: 13,
     cursorBlink: true,
     scrollback: 10_000,
     allowProposedApi: true,
-    // HS-6866: same theme as the drawer / tile xterms.
-    theme: readXtermTheme(),
+    theme: themeToXtermOptions(dedicatedThemeData),
     // HS-7263: OSC 8 hyperlinks. The dedicated view is fully interactive —
     // same link-activation behaviour as the drawer xterm so `gh pr list` /
     // `delta` / etc. hyperlinks open in an external browser.
@@ -1135,6 +1195,8 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
     searchSlot.style.display = '';
   }
   term.open(pane);
+  // HS-6307 — apply full appearance (font + size) post-open.
+  void applyAppearanceToTerm(term, dedicatedAppearance);
   // HS-7329 — Cmd/Ctrl+K clears the dedicated-view terminal.
   // HS-7331 — Cmd/Ctrl+F must not be forwarded to the shell; the document
   // level `shortcuts.tsx` listener still catches the bubbling event.

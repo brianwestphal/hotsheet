@@ -21,6 +21,12 @@ export interface TerminalConfig {
   /** When true, PTY is spawned on first WebSocket attach (today's behavior).
    *  When false, the server spawns eagerly on first project load. Default: true. */
   lazy?: boolean;
+  /** HS-6307 — per-terminal appearance override. Each field falls back to the
+   *  project default (`terminal_default` in settings.json) when unset, then to
+   *  a hard-coded default. See docs/35-terminal-themes.md §35.4. */
+  theme?: string;
+  fontFamily?: string;
+  fontSize?: number;
 }
 
 export const DEFAULT_TERMINAL_ID = 'default';
@@ -87,5 +93,10 @@ function normalizeConfig(input: unknown, index: number): TerminalConfig | null {
   if (typeof raw.name === 'string' && raw.name !== '') out.name = raw.name;
   if (typeof raw.cwd === 'string' && raw.cwd !== '') out.cwd = raw.cwd;
   if (typeof raw.lazy === 'boolean') out.lazy = raw.lazy;
+  // HS-6307 — appearance overrides. Type-check each field so a malformed
+  // settings.json entry can't break the xterm mount on the client.
+  if (typeof raw.theme === 'string' && raw.theme !== '') out.theme = raw.theme;
+  if (typeof raw.fontFamily === 'string' && raw.fontFamily !== '') out.fontFamily = raw.fontFamily;
+  if (typeof raw.fontSize === 'number' && Number.isFinite(raw.fontSize)) out.fontSize = raw.fontSize;
   return out;
 }

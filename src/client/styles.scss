@@ -5581,6 +5581,13 @@ body.terminal-dashboard-active {
     background: var(--bg-hover);
   }
 
+  // HS-6307 — the appearance gear button stays in the same row as the other
+  // terminal-header-btn children; no extra styling needed beyond the
+  // inherited hover state.
+  &.terminal-appearance-btn {
+    // no-op — kept here so the selector exists if future theming lands.
+  }
+
   // When a stop has been issued but the process is still alive, the next click
   // force-quits. Flash the button red so the escalation is obvious.
   &.is-stop-pending {
@@ -6063,5 +6070,158 @@ body.terminal-dashboard-active {
 
   &:hover:not(:disabled) {
     background: #7c3aed;
+  }
+}
+
+// HS-6307 — per-terminal appearance popover. Anchored below the gear button
+// by JS via `position: fixed` + `getBoundingClientRect()` — the styles here
+// handle visual presentation only. Width picked so the two selects + the size
+// row + reset action sit comfortably without wrapping.
+.terminal-appearance-popover {
+  position: fixed;
+  z-index: 9000;
+  min-width: 240px;
+  max-width: 320px;
+  background: var(--bg-surface, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  padding: 10px 12px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  .terminal-appearance-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .terminal-appearance-label {
+    flex: 0 0 60px;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  select.terminal-appearance-theme,
+  select.terminal-appearance-font {
+    flex: 1 1 auto;
+    padding: 3px 6px;
+    font-size: 12px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  .terminal-appearance-size-controls {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  input.terminal-appearance-size {
+    width: 56px;
+    padding: 3px 6px;
+    font-size: 12px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    text-align: center;
+    // Hide browser's default number-input spinners so the custom −/+ buttons
+    // are the only size-change affordance.
+    -moz-appearance: textfield;
+    appearance: textfield;
+    &::-webkit-outer-spin-button,
+    &::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+  }
+
+  .terminal-appearance-size-dec,
+  .terminal-appearance-size-inc {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+
+    &:hover {
+      background: var(--bg-hover);
+    }
+  }
+
+  .terminal-appearance-actions {
+    margin-top: 2px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+
+  .terminal-appearance-reset {
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    font-size: 11px;
+    padding: 2px 0;
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+// HS-6307 — "Default appearance" settings panel at the top of Settings →
+// Terminal. Same three controls as the popover, plus a short lead-in label.
+.settings-terminal-default-appearance {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+
+  .settings-terminal-default-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 2px;
+  }
+
+  .settings-terminal-default-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    label {
+      flex: 0 0 90px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    select, input[type="number"] {
+      flex: 1 1 auto;
+      padding: 3px 6px;
+      font-size: 12px;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    input[type="number"] {
+      max-width: 80px;
+    }
   }
 }
