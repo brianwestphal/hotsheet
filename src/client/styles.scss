@@ -762,7 +762,9 @@ body.terminal-dashboard-active {
 
   input {
     width: 100%;
-    padding: 6px 12px 6px 30px;
+    // HS-7360 — right padding leaves room for `.search-clear-btn` when it
+    // is rendered; the clear-button absolute-positions inside the padding.
+    padding: 6px 34px 6px 30px;
     border: 1px solid var(--border);
     border-radius: 20px;
     background: var(--bg-secondary);
@@ -772,6 +774,34 @@ body.terminal-dashboard-active {
       border-color: var(--accent);
       background: var(--bg);
     }
+  }
+
+  // HS-7360 — clear button (lucide circle-x). Hidden by default; the
+  // parent `.search-box.has-value` rule below reveals it as soon as the
+  // input holds a query. Absolute-positioned so it sits inside the
+  // input's right padding and doesn't change layout.
+  .search-clear-btn {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 20px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+
+    &:hover { color: var(--text); background: var(--bg-hover); }
+  }
+
+  &.has-value .search-clear-btn {
+    display: inline-flex;
   }
 }
 
@@ -5261,6 +5291,122 @@ body.terminal-dashboard-active {
 }
 
 .terminal-header-spacer { flex: 1; }
+
+// HS-7331 — collapsible terminal search widget shared by the drawer terminal
+// toolbar and the dashboard dedicated-view header slot. Collapsed state:
+// only the magnifier-icon toggle is visible; input / count / nav buttons
+// are hidden by `display: none`. Expanded state (`.is-open`): row reveals
+// input + nav + count + close in a single flex row. Width transitions
+// so the expansion feels contiguous with the existing app-header
+// `.search-box` pattern (HS-7331 spec: "expand similarly to the search
+// field we have in the app header").
+.terminal-search-slot {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.terminal-search-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 0 2px;
+  background: transparent;
+  transition: width 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  width: 28px;
+  overflow: hidden;
+
+  &.is-open {
+    width: 240px;
+    background: var(--bg);
+    border-color: var(--border);
+
+    &:focus-within {
+      border-color: var(--accent);
+    }
+  }
+
+  .terminal-search-toggle {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+
+    &:hover { color: var(--text); background: var(--bg-hover); }
+  }
+
+  .terminal-search-input,
+  .terminal-search-count,
+  .terminal-search-btn {
+    display: none;
+  }
+
+  &.is-open .terminal-search-input,
+  &.is-open .terminal-search-count,
+  &.is-open .terminal-search-btn {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .terminal-search-input {
+    flex: 1;
+    min-width: 0;
+    height: 22px;
+    border: none;
+    background: transparent;
+    outline: none;
+    padding: 0 2px;
+    font-size: 12px;
+    color: var(--text);
+
+    &::placeholder { color: var(--text-muted); }
+  }
+
+  .terminal-search-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 0 4px;
+    font-variant-numeric: tabular-nums;
+    min-width: 28px;
+    justify-content: flex-end;
+    flex-shrink: 0;
+  }
+
+  .terminal-search-btn {
+    width: 20px;
+    height: 20px;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+
+    &:hover { color: var(--text); background: var(--bg-hover); }
+  }
+}
+
+// HS-7331 — dashboard dedicated-view search slot lives in the app header
+// where the tile-size slider sits in grid view. Same expandable widget,
+// just a different mount point — shown by `enterDedicatedView` (the slot's
+// `display:none` inline is replaced by `display:''` when the dedicated
+// view mounts its xterm) and hidden again by `exitDedicatedView`.
+.terminal-dashboard-search-slot {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
 
 // HS-7267 — OSC 133 shell-integration gutter glyphs. Rendered as a small
 // icon in the left-gutter column of the xterm viewport at each command's

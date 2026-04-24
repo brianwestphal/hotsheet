@@ -111,6 +111,7 @@ Additional per-project settings:
 - Resize behavior: on drawer resize or tab show, call `fit.fit()` and send `{ type: "resize" }` to the server.
 - Copy/paste: standard terminal conventions (Cmd/Ctrl+C copies when a selection exists; falls back to SIGINT otherwise — xterm.js default).
 - **Focus outline (HS-6535).** When keyboard focus is inside the terminal pane (xterm's helper textarea is the active element), `.terminal-body` paints a 2 px inset accent-colored ring via `box-shadow`. The ring is inset (not a border) so it does not change layout or shift the xterm grid. It clears as soon as focus moves elsewhere. This makes it obvious which terminal will receive keystrokes when there are multiple tabs open.
+- **Text selection highlight (HS-7330).** The shared `readXtermTheme()` helper emits `selectionBackground` and `selectionInactiveBackground` derived from `--accent` (40% and 20% alpha respectively). Without these, xterm falls back to a near-white translucent default that is invisible on the app's white `--bg` — selection still happens but the user cannot see it. The helper accepts any `#rgb` or `#rrggbb` accent colour and falls back to the default Hot Sheet blue for unsupported colour syntaxes (named colours, `rgb()`, `hsl()`) so a custom `--accent` override never produces an unreadable selection.
 
 **Header row above the xterm instance:**
 
@@ -363,6 +364,9 @@ When a terminal pane owns keyboard focus (xterm's helper textarea, or any descen
 | `Cmd+Shift+Left/Right` | `Ctrl+Shift+Left/Right` | Previous / next terminal tab in the drawer tab strip. Wraps at either end. No-op if fewer than two terminal tabs exist. |
 | `Cmd+Shift+Opt+Left/Right` | `Ctrl+Shift+Alt+Left/Right` | Previous / next project tab (escapes the terminal scope). Always routes to project tabs regardless of focus. |
 | `Cmd+Shift+[` / `Cmd+Shift+]` | `Ctrl+Shift+[` / `Ctrl+Shift+]` | Unchanged — always project tabs. These bracket shortcuts work even from within a terminal because their chord is distinct. |
+| `Cmd+K` | `Ctrl+K` | Clear the terminal (HS-7329). Delegates to xterm's `term.clear()` which keeps the current prompt row and drops everything above it — both the visible viewport and the scrollback. Matches Terminal.app / iTerm2 / VS Code convention. Intercepted unconditionally, including when a TUI like `vim` is running; users who want readline's `Ctrl+K` (kill-line) can hold Shift or Alt and the event passes through to xterm's default handling. |
+
+**HS-7329 — Cmd/Ctrl+K clear.** The match logic is a small pure helper (`isClearTerminalShortcut` in `src/client/terminalKeybindings.ts`) shared by every xterm the app mounts — drawer terminal, dashboard tile xterm, dashboard dedicated-view xterm. Each instance's `term.attachCustomKeyEventHandler` calls the helper first and, on match, invokes `term.clear()` and returns `false` to suppress xterm's own handling. The same helper file is where future cross-xterm shortcuts (search, new-tab, etc.) should live so we don't duplicate key-match logic across three call sites. 8 unit tests (`terminalKeybindings.test.ts`) cover Cmd/Ctrl alternation, case-insensitivity on the letter, Alt/Shift passthrough, other-key rejection, and non-keydown rejection.
 
 When focus is **outside** a terminal, `Cmd+Shift+Left/Right` continues to switch project tabs as defined in [4-user-interface.md §4.2](4-user-interface.md), and `Cmd+Shift+Opt+Left/Right` is equivalent to `Cmd+Shift+Left/Right` (still project-tab navigation — the Alt modifier is a no-op outside terminals).
 
@@ -377,4 +381,4 @@ When focus is **outside** a terminal, `Cmd+Shift+Left/Right` continues to switch
 - [12-claude-channel.md](12-claude-channel.md) — `channelEnabled` gates the `{{claudeCommand}}` substitution.
 - [14-commands-log.md](14-commands-log.md) — the other tab in the same drawer.
 - [15-shell-commands.md](15-shell-commands.md) — one-shot shell remains separate; interactive use = terminal.
-- **Tickets:** HS-6261 (this doc), HS-6262 (drawer push-up layout prerequisite), HS-6472 (terminal-focused keyboard shortcuts).
+- **Tickets:** HS-6261 (this doc), HS-6262 (drawer push-up layout prerequisite), HS-6472 (terminal-focused keyboard shortcuts), HS-7329 (Cmd/Ctrl+K clear), HS-7330 (selection highlight colour).

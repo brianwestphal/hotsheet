@@ -170,6 +170,10 @@ This document lists features that require manual verification before each releas
 - [ ] Plugin toolbar buttons: icon-only in toolbar, icon+label elsewhere
 - [ ] Toast notifications slide up from bottom, auto-dismiss after 3 seconds
 - [ ] Combo box dropdown in plugin settings shows filtered options, selects on click
+- [ ] **HS-7360 search state per project.** With two projects (A and B), type `foo` into the app-header search on A. Switch to B — the input clears and the pill shrinks back. Switch back to A — the input re-shows `foo` and the pill stays expanded. Repeat with a different query in B to confirm independence.
+- [ ] **HS-7360 clear button.** Type into the search input — a Lucide circle-x button appears on the right. Click it — the input clears, tickets reload, focus returns to the input, and the pill shrinks back. Escape still works as before.
+- [ ] **HS-7360 session-only state.** Type a query, close and relaunch the app — the query is gone on restart (per-project search map is in-memory only).
+- [ ] **HS-7360 project removal.** Type into search on project A, close project A's tab. Re-add the same folder as a project. Its search field is empty (stale state cleared on removal).
 
 ---
 
@@ -235,6 +239,11 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Copy (Cmd/Ctrl+C with selection) puts text on clipboard
 - [ ] SIGINT (Cmd/Ctrl+C with no selection) interrupts running process
 - [ ] Paste (Cmd/Ctrl+V) works correctly
+- [ ] Click-and-drag across output in a drawer terminal paints a **clearly visible** accent-coloured selection highlight (HS-7330 regression check — previously invisible on the white theme). Repeat in a centered dashboard tile and in the dedicated dashboard view.
+- [ ] Move keyboard focus out of the terminal (click a ticket) — the selection stays visible but its fill drops to the lower-alpha inactive variant
+- [ ] With the drawer terminal focused, press **Cmd+K** (or Ctrl+K on Linux/Windows) — the viewport clears and scrollback drops; the current prompt stays at the top of the pane (HS-7329). Repeat in a centered dashboard tile and in the dedicated dashboard view.
+- [ ] Repeat the Cmd+K test while a TUI like `vim` or `nano` is running — the clear fires even though the TUI would normally consume Cmd/Ctrl+K (matches Terminal.app / iTerm2)
+- [ ] Press **Ctrl+Shift+K** — readline's kill-line passes through (the shortcut's Shift modifier is deliberately excluded from the clear match)
 
 ### Tauri desktop (§22.11)
 - [ ] Terminal works inside the Tauri window on macOS arm64 + x86_64
@@ -317,6 +326,30 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Fire the same message twice while backgrounded — only one banner (dedupe shared with the toast via the `recentlyToasted` cache).
 - [ ] Fire two distinct messages while backgrounded — two banners, latest on top.
 - [ ] In a browser build (open `http://localhost:4174` in Chrome instead of the Tauri app): an OSC 9 fires the toast only — no OS banner, no errors in the JS console.
+
+---
+
+## 13. Terminal find / search (HS-7331, §34)
+
+### Drawer terminal
+- [ ] Click the magnifier icon between the header spacer and the power button — the search box expands to ~240 px with an input, prev/next chevrons, a count chip, and a close (×)
+- [ ] Type a substring that appears multiple times in the scrollback (e.g. `printf 'apple\nbanana\napple\napple\n'` then search `apple`) — amber-highlighted matches appear and the count shows `1/3` (or whatever the real total is)
+- [ ] Press Enter — the active match (brighter orange) advances; count shows the next index
+- [ ] Press Shift+Enter — active match steps backwards
+- [ ] Press Esc — the box collapses, the input clears, and the highlights disappear; keyboard focus returns to the shell
+- [ ] Click the × button while the box is open — same result as Esc
+- [ ] With keyboard focus in the terminal (not in any other input), press **Cmd+F** (or Ctrl+F) — the terminal search opens and the input is focused (not the app-header ticket search)
+- [ ] With keyboard focus OUTSIDE a terminal, press Cmd/Ctrl+F — the app-header ticket search focuses, not the terminal search (fallback path)
+- [ ] Restart the terminal (Stop → Start) with the search box open — after the new PTY attaches the search box is back in its collapsed state with no stale highlights
+
+### Dashboard dedicated view
+- [ ] Open the dashboard, double-click a tile to enter the dedicated view — the tile-size slider in the app header is hidden and the terminal search widget appears in the same slot
+- [ ] Typing / Enter / Shift+Enter / Esc behave identically to the drawer version
+- [ ] Press Back (or Esc) to exit the dedicated view — the search widget disappears and the tile-size slider returns
+- [ ] Re-enter the dedicated view for a DIFFERENT tile — the search widget re-mounts fresh (no leaked query or highlights from the previous view)
+
+### Grid tile (regression check)
+- [ ] Try clicking in a non-centered grid tile — no search widget appears anywhere (grid tiles are preview-scale and deliberately excluded per §34.1)
 
 ---
 

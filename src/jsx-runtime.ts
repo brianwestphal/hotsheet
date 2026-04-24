@@ -211,6 +211,10 @@ export function jsx(tag: string | ((props: Props) => SafeHtml), props: Props): S
 }
 
 export { jsx as jsxs };
+// HS-7331 — vitest's dev-mode JSX transform emits `jsxDEV(tag, props, ...)`;
+// the runtime alias lets tests import this module without the production
+// build pipeline caring.
+export { jsx as jsxDEV };
 
 export function Fragment({ children }: { children?: Children }): SafeHtml {
   return new SafeHtml(children != null ? renderChildren(children) : "");

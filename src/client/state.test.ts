@@ -1,11 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  clearPerProjectSessionState,
   getCategoryColor,
   getCategoryLabel,
   getPriorityColor,
   getPriorityIcon,
   getStatusIcon,
+  setActiveProject,
+  state,
 } from './state.js';
 
 describe('getCategoryColor', () => {
@@ -49,7 +52,7 @@ describe('getPriorityIcon', () => {
   });
 
   it('returns default for unknown priority', () => {
-    expect(getPriorityIcon('unknown')).toBe('\u2014');
+    expect(getPriorityIcon('unknown')).toBe('—');
   });
 });
 
@@ -69,15 +72,70 @@ describe('getPriorityColor', () => {
 
 describe('getStatusIcon', () => {
   it('returns correct icons for all statuses', () => {
-    expect(getStatusIcon('not_started')).toBe('\u25CB');
-    expect(getStatusIcon('started')).toBe('\u25D4');
-    expect(getStatusIcon('completed')).toBe('\u2713');
+    expect(getStatusIcon('not_started')).toBe('○');
+    expect(getStatusIcon('started')).toBe('◔');
+    expect(getStatusIcon('completed')).toBe('✓');
     expect(getStatusIcon('verified')).toContain('<svg');
-    expect(getStatusIcon('backlog')).toBe('\u25A1');
-    expect(getStatusIcon('archive')).toBe('\u25A0');
+    expect(getStatusIcon('backlog')).toBe('□');
+    expect(getStatusIcon('archive')).toBe('■');
   });
 
   it('returns default for unknown status', () => {
-    expect(getStatusIcon('unknown')).toBe('\u25CB');
+    expect(getStatusIcon('unknown')).toBe('○');
+  });
+});
+
+describe('setActiveProject per-project search state (HS-7360)', () => {
+  const projA = { name: 'A', dataDir: '/a', secret: 'secret-a' };
+  const projB = { name: 'B', dataDir: '/b', secret: 'secret-b' };
+
+  beforeEach(() => {
+    clearPerProjectSessionState('secret-a');
+    clearPerProjectSessionState('secret-b');
+    state.search = '';
+    state.view = 'all';
+    setActiveProject(projA);
+  });
+
+  it("saves project A's search on switch and restores it on switch-back", () => {
+    state.search = 'foo';
+    setActiveProject(projB);
+    expect(state.search).toBe('');
+    setActiveProject(projA);
+    expect(state.search).toBe('foo');
+  });
+
+  it('starts a never-seen project with an empty search query', () => {
+    state.search = 'hello';
+    setActiveProject(projB);
+    expect(state.search).toBe('');
+  });
+
+  it('remembers per-project search independently', () => {
+    state.search = 'aaa';
+    setActiveProject(projB);
+    state.search = 'bbb';
+    setActiveProject(projA);
+    expect(state.search).toBe('aaa');
+    setActiveProject(projB);
+    expect(state.search).toBe('bbb');
+  });
+
+  it('clearPerProjectSessionState wipes both view and search for a secret', () => {
+    state.search = 'zzz';
+    state.view = 'up-next';
+    setActiveProject(projB);
+    clearPerProjectSessionState('secret-a');
+    setActiveProject(projA);
+    expect(state.search).toBe('');
+    expect(state.view).toBe('all');
+  });
+
+  it('switch-to-same-secret preserves the current query under that secret', () => {
+    state.search = 'keep';
+    setActiveProject(projA);
+    setActiveProject(projB);
+    setActiveProject(projA);
+    expect(state.search).toBe('keep');
   });
 });

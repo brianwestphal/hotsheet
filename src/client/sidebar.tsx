@@ -101,9 +101,19 @@ let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 export function bindSearchInput() {
   const input = document.getElementById('search-input') as HTMLInputElement;
   const searchBox = input.closest('.search-box') as HTMLElement;
+  const clearBtn = searchBox.querySelector<HTMLButtonElement>('.search-clear-btn');
 
   function updateSearchBoxClass() {
     searchBox.classList.toggle('has-value', input.value !== '');
+  }
+
+  function clearAndReload(): void {
+    input.value = '';
+    state.search = '';
+    updateSearchBoxClass();
+    suppressAnimation();
+    void loadTickets();
+    input.focus();
   }
 
   input.addEventListener('input', () => {
@@ -118,11 +128,30 @@ export function bindSearchInput() {
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      input.value = '';
-      state.search = '';
-      updateSearchBoxClass();
-      suppressAnimation();
-      void loadTickets();
+      clearAndReload();
     }
   });
+
+  // HS-7360 — explicit clear button (lucide circle-x, hidden when empty
+  // via `.has-value` CSS gate). Matches the typical browser Find-bar UI
+  // convention so users don't have to clear the input character-by-character.
+  clearBtn?.addEventListener('click', () => {
+    clearAndReload();
+  });
+}
+
+/** HS-7360 — pull `state.search` back into the DOM input after project
+ *  switch (or any other flow that sets `state.search` without going
+ *  through the input's own `input` event). The per-project search map
+ *  in `state.tsx` restores the saved query on `setActiveProject`, but
+ *  the input element itself also needs to reflect it so the user sees
+ *  what the filter is actually using. Also flips `.has-value` so the
+ *  pill stays expanded while there's a live query. */
+export function syncSearchInputFromState(): void {
+  const input = document.getElementById('search-input') as HTMLInputElement | null;
+  if (input === null) return;
+  const searchBox = input.closest<HTMLElement>('.search-box');
+  if (searchBox === null) return;
+  input.value = state.search;
+  searchBox.classList.toggle('has-value', state.search !== '');
 }

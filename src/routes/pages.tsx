@@ -21,10 +21,24 @@ pageRoutes.get('/', (c) => {
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M14 15H9v-5"/><path d="M16 3h5v5"/><path d="M21 3 9 15"/></svg>
             <input type="range" id="terminal-dashboard-size-slider" min="0" max="100" step="1" value="33" aria-label="Dashboard tile size" />
           </div>
+          {/* HS-7331 — terminal dashboard search slot. Lives in the same header
+              region as the sizer above, mutually exclusive: the sizer is visible
+              in the grid view and the search slot is visible in the full-screen
+              dedicated view. `terminalDashboard.tsx`'s `enterDedicatedView` /
+              `exitDedicatedView` toggles the `display` property in lockstep with
+              the sizer. */}
+          <div className="terminal-dashboard-search-slot" id="terminal-dashboard-search-slot" style="display:none"></div>
           <div className="header-controls">
             <div className="search-box">
               <svg className="search-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
               <input type="text" id="search-input" placeholder="Search tickets..." />
+              {/* HS-7360 — lucide circle-x clear button. Hidden by default via
+                  the parent `.search-box` not having `.has-value`; revealed as
+                  soon as the input has a query so the user can one-click-clear
+                  instead of backspacing the whole string. */}
+              <button type="button" className="search-clear-btn" title="Clear search" aria-label="Clear search">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+              </button>
             </div>
             <div className="layout-toggle" id="layout-toggle">
               <button className="layout-btn active" data-layout="list" title="List view"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></button>

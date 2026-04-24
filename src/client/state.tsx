@@ -11,16 +11,30 @@ export function getActiveProject(): ProjectInfo | null { return activeProject; }
 
 /** Per-project saved view state (keyed by project secret). */
 const projectViews = new Map<string, string>();
+/** HS-7360 — per-project search query (session-only, not persisted across
+ *  app launches; cleared by project remove). Keyed by project secret. */
+const projectSearches = new Map<string, string>();
 
 /** Switch active project, saving and restoring the sidebar view. */
 export function setActiveProject(project: ProjectInfo) {
-  // Save current project's view
+  // Save current project's view + search query
   if (activeProject != null) {
     projectViews.set(activeProject.secret, state.view);
+    projectSearches.set(activeProject.secret, state.search);
   }
   activeProject = project;
-  // Restore the new project's saved view (default to 'all')
+  // Restore the new project's saved view (default to 'all') + search query
+  // (default to '' — a fresh project tab starts with an empty search).
   state.view = projectViews.get(project.secret) ?? 'all';
+  state.search = projectSearches.get(project.secret) ?? '';
+}
+
+/** HS-7360 — drop per-project state for a removed project so a future
+ *  project registered at the same secret (reuse is unlikely but possible
+ *  if the user deletes + re-adds the same folder) starts clean. */
+export function clearPerProjectSessionState(secret: string): void {
+  projectViews.delete(secret);
+  projectSearches.delete(secret);
 }
 
 export interface Ticket {

@@ -5,6 +5,7 @@ import { showPrintDialog } from './print.js';
 import { closeActiveTab, switchTabByOffset } from './projectTabs.js';
 import { state } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
+import { focusActiveTerminalSearch } from './terminalSearch.js';
 import { cancelPendingSave, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { performRedo, performUndo, toggleUpNext, trackedBatch } from './undo/actions.js';
 
@@ -254,9 +255,12 @@ export function bindKeyboardShortcuts() {
       return;
     }
 
-    // Cmd/Ctrl+F: focus search
+    // Cmd/Ctrl+F: focus search. HS-7331 — when a terminal has focus, route
+    // to the in-terminal SearchAddon widget; otherwise fall through to the
+    // ticket-list search in the app header.
     if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
       e.preventDefault();
+      if (isTerminalFocused() && focusActiveTerminalSearch()) return;
       (document.getElementById('search-input') as HTMLInputElement).focus();
       return;
     }

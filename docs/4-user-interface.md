@@ -114,7 +114,9 @@ Each built-in view has an icon to the left of the label:
 - Text search across ticket title, details, ticket number, and tags (case-insensitive).
 - Input debounced at 200ms.
 - Escape key clears the search field.
-- Cmd/Ctrl+F focuses the search input.
+- Cmd/Ctrl+F focuses the search input. **HS-7331:** when a terminal is focused, Cmd/Ctrl+F routes to the terminal's in-pane search widget instead — see [34-terminal-search.md](34-terminal-search.md) §34.4. Falls through to this input when no terminal is focused or no terminal search widget is mounted.
+- **Clear button (HS-7360).** A Lucide `circle-x` button sits inside the pill's right padding; it is hidden until the query has content (`.search-box.has-value .search-clear-btn` reveals it). Click clears the input, clears `state.search`, reloads tickets, and returns focus to the input — same code path as pressing Escape.
+- **Per-project state (HS-7360).** The input's text is remembered per project in an in-memory Map keyed by project secret (`projectSearches` in `state.tsx`; mirrors the existing `projectViews` Map). Switching projects saves the current project's query and restores the destination project's saved query (fresh projects start empty). `syncSearchInputFromState()` (exported from `sidebar.tsx`) is called from `reloadAppState()` to write the restored query back into the DOM input and toggle `.has-value` so the pill stays expanded while a query is live. Session-only — not persisted across app launches. `clearPerProjectSessionState(secret)` in `state.tsx` wipes both view and search when a project is removed.
 
 ### 4.9 Sort Controls
 

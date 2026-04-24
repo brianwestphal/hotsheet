@@ -21,7 +21,7 @@ import { bindSettingsDialog } from './settingsDialog.js';
 import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
 import { initShare } from './share.js';
 import { bindKeyboardShortcuts, getDetailSaveTimeout, setDetailSaveTimeout } from './shortcuts.js';
-import { bindSearchInput, bindSidebar, bindSortControls, syncSidebarActiveState } from './sidebar.js';
+import { bindSearchInput, bindSidebar, bindSortControls, syncSearchInputFromState, syncSidebarActiveState } from './sidebar.js';
 import type { AppSettings, Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from './state.js';
 import { bindDetailTagInput } from './tagAutocomplete.js'; // .tsx file, JSX enabled
@@ -108,6 +108,11 @@ async function reloadAppState() {
   }
   // Sync sidebar highlight to the restored per-project view
   syncSidebarActiveState();
+  // HS-7360 — restore the per-project search into the header input so the
+  // visible text matches the saved state.search for the new active project.
+  // setActiveProject() already repopulated state.search from the projectSearches
+  // map; this writes that back into the DOM input and toggles `.has-value`.
+  syncSearchInputFromState();
   void loadAppName();
   suppressAnimation();
   await loadTickets();

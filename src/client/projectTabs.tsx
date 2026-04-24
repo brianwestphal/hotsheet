@@ -5,7 +5,7 @@ import { toElement } from './dom.js';
 import { ICON_FOLDER } from './icons.js';
 import { getMinimizedPermissionSecrets, reopenMinimizedForSecret } from './permissionOverlay.js';
 import type { ProjectInfo } from './state.js';
-import { getActiveProject, setActiveProject } from './state.js';
+import { clearPerProjectSessionState, getActiveProject, setActiveProject } from './state.js';
 
 /** Callback to reload all app data after switching projects. Set by app.tsx during init. */
 let reloadCallback: (() => Promise<void>) | null = null;
@@ -105,6 +105,7 @@ async function removeProject(project: ProjectInfo): Promise<void> {
   try {
     const res = await fetch(`/api/projects/${encodeURIComponent(project.secret)}`, { method: 'DELETE' });
     if (!res.ok) return;
+    clearPerProjectSessionState(project.secret);
     if (getActiveProject()?.secret === project.secret) {
       const remaining = projectList.filter(p => p.secret !== project.secret);
       if (remaining.length > 0) await switchProject(remaining[0]);
@@ -119,6 +120,7 @@ async function removeOtherProjects(keepProject: ProjectInfo): Promise<void> {
   const toRemove = projectList.filter(p => p.secret !== keepProject.secret);
   for (const p of toRemove) {
     await fetch(`/api/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
+    clearPerProjectSessionState(p.secret);
   }
   if (getActiveProject()?.secret !== keepProject.secret) {
     await switchProject(keepProject);
@@ -132,6 +134,7 @@ async function removeProjectsInDirection(project: ProjectInfo, direction: 'left'
   const toRemove = direction === 'left' ? projectList.slice(0, idx) : projectList.slice(idx + 1);
   for (const p of toRemove) {
     await fetch(`/api/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
+    clearPerProjectSessionState(p.secret);
   }
   if (toRemove.some(p => p.secret === getActiveProject()?.secret)) {
     await switchProject(project);

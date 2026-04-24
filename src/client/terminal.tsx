@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { type IDecoration, type IMarker, Terminal as XTerm } from '@xterm/xterm';
@@ -11,9 +12,11 @@ import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getActiveProject, state } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
+import { isClearTerminalShortcut } from './terminalKeybindings.js';
 import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
+import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { pickNearestTerminalTabId } from './terminalTabSelection.js';
 import { readXtermTheme } from './xtermTheme.js';
 
@@ -52,6 +55,8 @@ interface TerminalInstance {
   config: TerminalTabConfig;
   term: XTerm | null;
   fit: FitAddon | null;
+  search: SearchAddon | null;
+  searchHandle: TerminalSearchHandle | null;
   body: HTMLElement;
   header: HTMLElement;
   label: HTMLElement;
@@ -388,6 +393,11 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
           <span className="terminal-cwd-label"></span>
         </button>
         <span className="terminal-header-spacer"></span>
+        {/* HS-7331 — terminal search slot. The collapsed magnifier + expanding
+            input is mounted from `terminalSearch.tsx` on xterm attach (so we
+            know the SearchAddon instance). Hidden slot until mount keeps the
+            header's fixed-width layout stable before the first connect. */}
+        <span className="terminal-search-slot"></span>
         {/* HS-7268 — copy-last-output button, hidden until OSC 133 escapes are
             seen on this terminal. Reveals in `handleOsc133` when `shellIntegration.enabled`
             flips; re-hides on PTY restart via `resetShellIntegration`. */}
@@ -416,6 +426,8 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     config,
     term: null,
     fit: null,
+    search: null,
+    searchHandle: null,
     body,
     header,
     label: labelText,
@@ -556,18 +568,42 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
   // `window.open`, which silently no-ops in WKWebView.
   term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
   term.loadAddon(new SerializeAddon());
+  // HS-7331 — xterm's SearchAddon powers the toolbar Find widget. Mount the
+  // UI into the `.terminal-search-slot` placeholder carved out of the
+  // header markup; the handle is disposed on PTY restart + re-created on
+  // the next mount so search state doesn't leak across spawn cycles.
+  const search = new SearchAddon();
+  term.loadAddon(search);
+  const searchSlot = inst.header.querySelector<HTMLElement>('.terminal-search-slot');
+  let searchHandle: TerminalSearchHandle | null = null;
+  if (searchSlot !== null) {
+    searchHandle = mountTerminalSearch(term, search);
+    searchSlot.replaceChildren(searchHandle.root);
+  }
   term.open(inst.body);
 
   inst.body.addEventListener('click', () => { term.focus(); });
 
+  // HS-7329 — Cmd/Ctrl+K clears the terminal (see `isClearTerminalShortcut`).
   // HS-7269 — Cmd/Ctrl+Up / Cmd/Ctrl+Down jump the viewport to the prev / next
   // OSC 133 promptStart marker. Returning `false` from the handler suppresses
   // xterm's default handling for the event (xterm would otherwise send
   // `\e[1;5A` escape sequences which most shells don't bind — safe to swallow).
-  // When shell integration isn't enabled (no markers yet) or the target
-  // direction has no marker, we also swallow the key so the terminal doesn't
-  // emit the alt-arrow escape mid-scroll for an idle user.
+  // HS-7331 — Cmd/Ctrl+F must not be forwarded to the shell either; the
+  // document-level `shortcuts.tsx` listener still catches the bubbling event
+  // and routes focus to the terminal search widget (returning `false` here
+  // only stops xterm's internal processing, not DOM propagation).
   term.attachCustomKeyEventHandler((e) => {
+    if (isClearTerminalShortcut(e)) {
+      inst.term?.clear();
+      return false;
+    }
+
+    if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
+        && (e.key === 'f' || e.key === 'F')) {
+      return false;
+    }
+
     if (e.type !== 'keydown') return true;
     if (!shellIntegrationUiEnabled()) return true;
     if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return true;
@@ -642,6 +678,8 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
 
   inst.term = term;
   inst.fit = fit;
+  inst.search = search;
+  inst.searchHandle = searchHandle;
   inst.wsSecret = secret;
 }
 
@@ -1259,6 +1297,9 @@ function teardown(inst: TerminalInstance): void {
   inst.reconnectTimer = null;
   if (inst.ws) { try { inst.ws.close(); } catch { /* ignore */ } }
   inst.ws = null;
+  inst.searchHandle?.dispose();
+  inst.searchHandle = null;
+  inst.search = null;
   inst.term?.dispose();
   inst.term = null;
   inst.fit = null;

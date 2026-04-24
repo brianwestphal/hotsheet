@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal as XTerm } from '@xterm/xterm';
 
@@ -22,8 +23,10 @@ import {
   tileNativeGridFromCellMetrics,
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
+import { isClearTerminalShortcut } from './terminalKeybindings.js';
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
+import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { readXtermTheme } from './xtermTheme.js';
 
 /**
@@ -161,6 +164,12 @@ interface DedicatedView {
    *  centered). `Back` / `Esc` restore this; the dashboard toggle / project
    *  tab click route through `exitDashboard()` which disposes everything. */
   priorCenteredTile: DashboardTile | null;
+  /** HS-7331 — search UI + addon for this view's xterm. Disposed in
+   *  `exitDedicatedView`. Search widget lives in the app-header's
+   *  `#terminal-dashboard-search-slot`, mutually exclusive with the
+   *  grid-only tile-size slider above it. */
+  search: SearchAddon | null;
+  searchHandle: TerminalSearchHandle | null;
 }
 let dedicatedView: DedicatedView | null = null;
 
@@ -293,6 +302,15 @@ function teardownAllTiles(): void {
   // priorCenteredTile is ignored because exitDashboard() is wiping state.
   if (dedicatedView !== null) {
     dedicatedView.bodyResizeObserver?.disconnect();
+    // HS-7331: tear down the search widget along with the xterm. Also
+    // clear + hide the app-header search slot so the next dashboard open
+    // starts from a clean state.
+    try { dedicatedView.searchHandle?.dispose(); } catch { /* ignore */ }
+    const searchSlot = document.getElementById('terminal-dashboard-search-slot');
+    if (searchSlot !== null) {
+      searchSlot.replaceChildren();
+      searchSlot.style.display = 'none';
+    }
     try { dedicatedView.ws?.close(); } catch { /* already closed */ }
     try { dedicatedView.term.dispose(); } catch { /* no-op */ }
     dedicatedView.overlay.remove();
@@ -777,6 +795,13 @@ function mountTileXterm(tile: DashboardTile): void {
     },
   });
   term.open(xtermRoot);
+  // HS-7329 — Cmd/Ctrl+K clears the tile's xterm (only meaningful on centered
+  // tiles since non-centered tiles don't receive keystrokes, but attaching
+  // here keeps the binding uniform across every xterm the app mounts).
+  term.attachCustomKeyEventHandler((e) => {
+    if (isClearTerminalShortcut(e)) { term.clear(); return false; }
+    return true;
+  });
   // Seed target dims at the initial grid; the WebSocket's history frame will
   // overwrite them in `connectTileSocket` so they match the PTY (HS-6965).
   tile.targetCols = term.cols;
@@ -1079,7 +1104,31 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
   // HS-7263 — dashboard dedicated view also routes plain URLs through the
   // Tauri-safe openExternalUrl helper. Matches the drawer behaviour.
   term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
+  // HS-7331 — mount the search addon + widget into the app header's search
+  // slot (the same slot that hosts the sizer in grid view). Mutually
+  // exclusive with the sizer: we hide the sizer above and reveal the
+  // search slot here; `exitDedicatedView` flips them back.
+  const search = new SearchAddon();
+  term.loadAddon(search);
+  const searchSlot = document.getElementById('terminal-dashboard-search-slot');
+  let searchHandle: TerminalSearchHandle | null = null;
+  if (searchSlot !== null) {
+    searchHandle = mountTerminalSearch(term, search, { placeholder: `Search ${tile.label}` });
+    searchSlot.replaceChildren(searchHandle.root);
+    searchSlot.style.display = '';
+  }
   term.open(pane);
+  // HS-7329 — Cmd/Ctrl+K clears the dedicated-view terminal.
+  // HS-7331 — Cmd/Ctrl+F must not be forwarded to the shell; the document
+  // level `shortcuts.tsx` listener still catches the bubbling event.
+  term.attachCustomKeyEventHandler((e) => {
+    if (isClearTerminalShortcut(e)) { term.clear(); return false; }
+    if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
+        && (e.key === 'f' || e.key === 'F')) {
+      return false;
+    }
+    return true;
+  });
   // HS-6898: defer the initial fit so the flex-1 body has its final size in
   // layout before fit() reads dimensions. Without this, fit() can measure a
   // pre-layout size and leave xterm at its default 80 cols — exactly the
@@ -1140,7 +1189,7 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
     }
   });
 
-  dedicatedView = { tile, overlay, term, fit, ws, bodyResizeObserver, priorCenteredTile };
+  dedicatedView = { tile, overlay, term, fit, ws, bodyResizeObserver, priorCenteredTile, search, searchHandle };
   queueMicrotask(() => { term.focus(); });
 }
 
@@ -1149,6 +1198,15 @@ function exitDedicatedView(): void {
   const view = dedicatedView;
   dedicatedView = null;
   view.bodyResizeObserver?.disconnect();
+  // HS-7331: tear down the search widget + clear the slot BEFORE disposing
+  // the xterm so the dispose doesn't race with an outstanding
+  // onDidChangeResults subscription.
+  try { view.searchHandle?.dispose(); } catch { /* ignore */ }
+  const searchSlot = document.getElementById('terminal-dashboard-search-slot');
+  if (searchSlot !== null) {
+    searchSlot.replaceChildren();
+    searchSlot.style.display = 'none';
+  }
   if (view.ws !== null) {
     try { view.ws.close(); } catch { /* already closed */ }
   }
