@@ -105,6 +105,11 @@ export interface AppSettings {
   notify_completed: NotifyLevel;
   auto_order: boolean;
   hide_verified_column: boolean;
+  /** HS-7269 — when false, OSC 133 shell-integration UI (gutter glyphs,
+   *  copy-last-output button, Cmd/Ctrl+Arrow jump shortcuts, hover popover)
+   *  does not render. The server-side parser still runs and markers are
+   *  tracked, so toggling back on reveals the UI without losing history. */
+  shell_integration_ui: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -118,6 +123,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notify_completed: 'once',
   auto_order: true,
   hide_verified_column: false,
+  shell_integration_ui: true,
 };
 
 export interface AppState {

@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
-import { formatCwdLabel, parseOsc7Payload } from './terminalOsc7.js';
+import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 
 describe('parseOsc7Payload (HS-7262)', () => {
   it('parses the standard file://HOST/PATH form', () => {
@@ -74,5 +74,36 @@ describe('formatCwdLabel (HS-7262)', () => {
 
   it('does not truncate short paths even with many segments', () => {
     expect(formatCwdLabel('/a/b/c/d', null)).toBe('/a/b/c/d');
+  });
+});
+
+describe('cacheHomeDir / getCachedHomeDir (HS-7276)', () => {
+  beforeEach(() => {
+    // Reset the cache between tests; no exposed reset, so push an empty
+    // string (rejected by the guard) after each real test to simulate fresh
+    // — actually we need a true reset. The cache is module-level; use a
+    // non-null placeholder that each test overrides.
+    cacheHomeDir('/tmp/reset-probe');
+  });
+
+  it('stores and returns a valid home path', () => {
+    cacheHomeDir('/Users/me');
+    expect(getCachedHomeDir()).toBe('/Users/me');
+  });
+
+  it('is a no-op on null / undefined / empty string (preserves prior value)', () => {
+    cacheHomeDir('/Users/me');
+    cacheHomeDir(null);
+    expect(getCachedHomeDir()).toBe('/Users/me');
+    cacheHomeDir(undefined);
+    expect(getCachedHomeDir()).toBe('/Users/me');
+    cacheHomeDir('');
+    expect(getCachedHomeDir()).toBe('/Users/me');
+  });
+
+  it('overwrites the cached value when called again with a new non-empty path', () => {
+    cacheHomeDir('/Users/first');
+    cacheHomeDir('/Users/second');
+    expect(getCachedHomeDir()).toBe('/Users/second');
   });
 });

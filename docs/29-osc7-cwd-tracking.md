@@ -60,7 +60,7 @@ The full path is always in the `title` attribute so hover reveals the un-truncat
 
 ### Home-directory resolution
 
-v1 does **not** know `$HOME` on the client, so tildification is disabled in the default path (`formatCwdLabel(cwd, null)`). The test coverage for the tildify branch is exhaustive anyway because a follow-up ticket (HS-7276) will push the resolved home via `/terminal/list` — at that point the chip becomes `~/…`-friendly without re-touching any of the display logic.
+**Shipped in HS-7276.** `/api/terminal/list` includes a top-level `home: string` field sourced from `os.homedir()`. The client caches it via `cacheHomeDir()` (in `terminalOsc7.ts`) on the first /list tick and `updateCwdChip` reads via `getCachedHomeDir()` so paths under `$HOME` render as `~/…`. Before the first /list response lands, the cache is null and the label gracefully degrades to the un-tildified absolute path.
 
 ## 29.4 Opening the folder
 
@@ -112,21 +112,21 @@ Scrollback replay will include any OSC 7 the previous process pushed, so on reat
 - Server-route tests for the open-cwd endpoint (5 tests in `api.test.ts`).
 
 **Out of scope (explicit deferrals):**
-- **Server-side CWD tracking** — registry.ts could parse OSC 7 from the PTY byte stream and expose via `/terminal/list`, letting the dashboard tiles show each terminal's CWD without mounting xterm. Deferred — not strictly needed for the toolbar chip, and the dashboard tile is already content-dense. Follow-up if asked.
-- **Dashboard tile CWD badge** — blocked on the above.
-- **Dashboard `+` button CWD inheritance** (HS-7262 description bullet 3) — the dashboard's per-project `+` creates a terminal with the project's default `cwd`. Passing the most-recently-OSC-7-reported CWD of another tile in the same project is a natural extension but requires cross-terminal state that doesn't exist today. Follow-up HS-7277.
-- **Home-directory tildification** — parser already supports it, but the client doesn't know `$HOME`. Follow-up HS-7276 plumbs it via `/terminal/list`.
+- ~~**Server-side CWD tracking** — registry.ts could parse OSC 7 from the PTY byte stream and expose via `/terminal/list`, letting the dashboard tiles show each terminal's CWD without mounting xterm. Deferred — not strictly needed for the toolbar chip, and the dashboard tile is already content-dense. Follow-up if asked.~~ **Shipped in HS-7278** — the existing scanner (`scanPtyChunk`) now parses `7;file://host/path` alongside `9;<message>`, `SessionState` gains `currentCwd`, `getCurrentCwd(secret, terminalId)` is exposed, and `/api/terminal/list` annotated entries carry `currentCwd: string | null`.
+- ~~**Dashboard tile CWD badge** — blocked on the above.~~ **Shipped in HS-7278** — renders as `.terminal-dashboard-tile-cwd` below the label when the server has seen at least one OSC 7. Uses the same `formatCwdLabel` helper as the drawer chip so tildification matches.
+- ~~**Dashboard `+` button CWD inheritance** (HS-7262 description bullet 3) — the dashboard's per-project `+` creates a terminal with the project's default `cwd`. Passing the most-recently-OSC-7-reported CWD of another tile in the same project is a natural extension but requires cross-terminal state that doesn't exist today. Follow-up HS-7277.~~ **Shipped in HS-7277** — now that HS-7278 exposes `currentCwd` per tile, `createDashboardTerminal` calls `pickInheritedCwd(terminals)` (prefers dynamic-bucket tiles over configured, falls back to the first non-null CWD) and passes it as `cwd` on the `/api/terminal/create` call. Matches iTerm2 "New Tab with Profile: Same directory".
+- ~~**Home-directory tildification** — parser already supports it, but the client doesn't know `$HOME`. Follow-up HS-7276 plumbs it via `/terminal/list`.~~ **Shipped in HS-7276** — /list now returns `home: string`, `cacheHomeDir()` + `getCachedHomeDir()` in terminalOsc7.ts wire it through.
 - **Non-local paths** (remote SSH sessions, SSHFS mounts). Parser accepts them; server validation rejects unresolvable paths with a 404. If there's demand for surfacing remote paths specifically (e.g. to open via a Remote-SSH workflow), that's a separate design.
 
 ## 29.7 Follow-up tickets
 
-- **HS-7276** — expose `$HOME` on `/terminal/list` so the CWD chip can tildify.
-- **HS-7277** — dashboard `+` button inherits the active tile's last-OSC-7 CWD.
-- **HS-7278** — server-side OSC 7 tracking + dashboard tile CWD badge.
+- ~~**HS-7276** — expose `$HOME` on `/terminal/list` so the CWD chip can tildify.~~ **Shipped.**
+- ~~**HS-7277** — dashboard `+` button inherits the active tile's last-OSC-7 CWD.~~ **Shipped.**
+- ~~**HS-7278** — server-side OSC 7 tracking + dashboard tile CWD badge.~~ **Shipped.**
 
 ## 29.8 Manual test plan (add to `docs/manual-test-plan.md` §12)
 
-- In a drawer terminal with zsh + starship, `cd ~/Documents`. The CWD chip populates with `~/Documents` (or `/Users/me/Documents` in v1 pre-HS-7276). Hover shows the full absolute path.
+- In a drawer terminal with zsh + starship, `cd ~/Documents`. The CWD chip populates with `~/Documents` (tildified by HS-7276). Hover shows the full absolute path.
 - Click the chip. The OS file manager opens at that folder (Finder on macOS, Explorer on Windows, xdg-open on Linux).
 - `cd /tmp && rmdir /tmp/nonexistent 2>/dev/null; cd /`. Chip follows.
 - Manually emit `printf '\e]7;file:///a/bogus/path\a'`. Chip updates. Click — receives 404, no file manager window opens.

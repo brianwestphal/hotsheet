@@ -1,17 +1,20 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { Terminal as XTerm } from '@xterm/xterm';
+import { type IDecoration, type IMarker, Terminal as XTerm } from '@xterm/xterm';
 
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { fireToastsForActiveProject, subscribeToBellState } from './bellPoll.js';
+import { isChannelAlive, triggerChannelAndMarkBusy } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
-import { getActiveProject } from './state.js';
+import { getActiveProject, state } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
-import { formatCwdLabel, parseOsc7Payload } from './terminalOsc7.js';
+import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
+import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
+import { pickNearestTerminalTabId } from './terminalTabSelection.js';
 import { readXtermTheme } from './xtermTheme.js';
 
 type Status = 'not-connected' | 'connecting' | 'alive' | 'exited';
@@ -27,6 +30,12 @@ const BELL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12
 // Lucide `folder` glyph. Shown on the terminal toolbar CWD chip (HS-7262);
 // clicking opens the folder in the OS file manager.
 const FOLDER_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+// Lucide `clipboard-copy` glyph. Shown on the terminal toolbar copy-last-output
+// button (HS-7268); visible only when OSC 133 shell integration has been seen
+// on this terminal.
+const CLIPBOARD_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M16 14h-6"/><path d="M10 18h.01"/></svg>';
+// Shown briefly after a successful copy-last-output click (Lucide `check`).
+const CHECK_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 
 export interface TerminalTabConfig {
   id: string;
@@ -71,7 +80,34 @@ interface TerminalInstance {
   /** True when the process has rung the bell (`\x07`) since this terminal tab
    *  was last activated. Cleared by `activateTerminal` (HS-6473). */
   hasBell: boolean;
+  /** OSC 133 shell-integration state (HS-7267 / docs/26-shell-integration-osc133.md).
+   *  `enabled` flips true once the first 133 escape is seen; the gutter only
+   *  renders while enabled so users who haven't opted into shell integration
+   *  see no layout change. `commands` is a bounded ring (500) of per-prompt
+   *  records; `current` is the in-flight record between A and D. */
+  shellIntegration: ShellIntegrationState;
 }
+
+interface CommandRecord {
+  id: number;
+  promptStart: IMarker | null;
+  commandStart: IMarker | null;
+  outputStart: IMarker | null;
+  commandEnd: IMarker | null;
+  exitCode: number | null;
+  /** Decoration attached at promptStart to render the gutter glyph. Disposed
+   *  on record eviction. */
+  decoration: IDecoration | null;
+}
+
+interface ShellIntegrationState {
+  enabled: boolean;
+  commands: CommandRecord[];
+  current: CommandRecord | null;
+  nextId: number;
+}
+
+const SHELL_INTEGRATION_RING_SIZE = 500;
 
 const instances = new Map<string, TerminalInstance>();
 let activeTerminalId: string | null = null;
@@ -89,6 +125,17 @@ export function initTerminal(): void {
   window.addEventListener('resize', () => {
     const active = activeTerminalId === null ? null : instances.get(activeTerminalId);
     if (active !== null && active !== undefined && isTerminalTabActive(active)) doFit(active);
+  });
+
+  // HS-7269 — re-apply shell-integration UI visibility on every open terminal
+  // when the user toggles the setting. No full rebuild — the OSC handler
+  // state (markers, commands ring) is preserved, so re-enabling shows the UI
+  // against whatever has already been tracked.
+  document.addEventListener('hotsheet:shell-integration-ui-changed', () => {
+    for (const inst of instances.values()) {
+      applyShellIntegrationToolbarVisibility(inst);
+      reapplyShellIntegrationDecorations(inst);
+    }
   });
 
   // HS-6502: refit the active terminal whenever the drawer panel changes size.
@@ -131,7 +178,7 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   // bells that fired before the xterm was mounted or while the project was
   // inactive.
   type ListEntry = TerminalTabConfig & { bellPending?: boolean; notificationMessage?: string | null };
-  type ListResponse = { configured: ListEntry[]; dynamic: ListEntry[] };
+  type ListResponse = { configured: ListEntry[]; dynamic: ListEntry[]; home?: string };
   let data: ListResponse;
   try {
     data = await api<ListResponse>('/terminal/list');
@@ -139,6 +186,10 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
     return;
   }
   lastKnownConfigs = data;
+  // HS-7276 — seed the module-level $HOME cache so the CWD chip can tildify
+  // subsequent OSC 7 pushes. No-op after the first tick; the value doesn't
+  // change mid-session.
+  cacheHomeDir(data.home);
 
   const tabStrip = document.getElementById('drawer-terminal-tabs');
   const paneContainer = document.getElementById('drawer-terminal-panes');
@@ -337,6 +388,12 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
           <span className="terminal-cwd-label"></span>
         </button>
         <span className="terminal-header-spacer"></span>
+        {/* HS-7268 — copy-last-output button, hidden until OSC 133 escapes are
+            seen on this terminal. Reveals in `handleOsc133` when `shellIntegration.enabled`
+            flips; re-hides on PTY restart via `resetShellIntegration`. */}
+        <button className="terminal-header-btn terminal-copy-output-btn" title="Copy last command output" style="display:none">
+          {raw(CLIPBOARD_ICON)}
+        </button>
         <button className="terminal-header-btn terminal-power-btn" title="Stop terminal">
           <span className="terminal-power-icon">{raw(POWER_ICON_STOP)}</span>
         </button>
@@ -376,10 +433,20 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     runtimeTitle: '',
     runtimeCwd: null,
     hasBell: false,
+    shellIntegration: { enabled: false, commands: [], current: null, nextId: 1 },
   };
 
   powerBtn.addEventListener('click', () => { void onPowerClick(inst); });
   clearBtn.addEventListener('click', () => { inst.term?.clear(); });
+
+  // HS-7268 — copy-last-output click. The button is hidden until
+  // `shellIntegration.enabled` flips true (first OSC 133 escape seen), so by
+  // the time the click fires we always have at least one record or an
+  // in-flight one. `copyLastOutput` no-ops with a subtle shake if there's
+  // nothing to copy (e.g. user clicked between A and C, or after C marker
+  // scrolled out of the buffer).
+  const copyOutputBtn = pane.querySelector<HTMLButtonElement>('.terminal-copy-output-btn');
+  copyOutputBtn?.addEventListener('click', () => { void copyLastOutput(inst); });
 
   // HS-7262 — CWD chip click reveals the folder in the OS file manager. Uses
   // the terminal's own record of the most recent OSC 7 push; the server
@@ -394,9 +461,10 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
 }
 
 /** Re-render the CWD chip on the terminal toolbar. HS-7262.
- *  `$HOME` is unknown to the client for v1, so tildification is disabled — a
- *  follow-up ticket can extend `/api/terminal/list` to include the resolved
- *  home directory (see §29.7). */
+ *  HS-7276 — reads $HOME from the module-level cache that
+ *  `loadAndRenderTerminalTabs` seeds from `/api/terminal/list`, so paths
+ *  under $HOME render as `~/…`. Before the first /list response lands the
+ *  cache is null and the label degrades to an un-tildified absolute path. */
 function updateCwdChip(inst: TerminalInstance): void {
   const chip = inst.header.querySelector<HTMLButtonElement>('.terminal-cwd-chip');
   const label = chip?.querySelector<HTMLElement>('.terminal-cwd-label');
@@ -407,7 +475,7 @@ function updateCwdChip(inst: TerminalInstance): void {
     return;
   }
   chip.style.display = '';
-  label.textContent = formatCwdLabel(cwd, null);
+  label.textContent = formatCwdLabel(cwd, getCachedHomeDir());
   chip.setAttribute('title', `Open folder: ${cwd}`);
 }
 
@@ -492,6 +560,24 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
 
   inst.body.addEventListener('click', () => { term.focus(); });
 
+  // HS-7269 — Cmd/Ctrl+Up / Cmd/Ctrl+Down jump the viewport to the prev / next
+  // OSC 133 promptStart marker. Returning `false` from the handler suppresses
+  // xterm's default handling for the event (xterm would otherwise send
+  // `\e[1;5A` escape sequences which most shells don't bind — safe to swallow).
+  // When shell integration isn't enabled (no markers yet) or the target
+  // direction has no marker, we also swallow the key so the terminal doesn't
+  // emit the alt-arrow escape mid-scroll for an idle user.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    if (!shellIntegrationUiEnabled()) return true;
+    if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return true;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return true;
+    if (!inst.shellIntegration.enabled) return true;
+    const direction = e.key === 'ArrowUp' ? 'prev' : 'next';
+    jumpToPromptMarker(inst, direction);
+    return false;
+  });
+
   const encoder = new TextEncoder();
   term.onData((data) => {
     if (inst.ws !== null && inst.ws.readyState === WebSocket.OPEN) {
@@ -524,6 +610,22 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
       inst.runtimeCwd = parsed;
       updateCwdChip(inst);
     }
+    return true;
+  });
+
+  // OSC 133 — FinalTerm / iTerm2 / VS Code shell integration (HS-7267,
+  // docs/26-shell-integration-osc133.md). Four marks form a prompt cycle:
+  //   A = prompt start           B = command start (user input begins)
+  //   C = output start           D;<exit> = command end
+  // Tracked here so the gutter renders an exit-code glyph per command and
+  // future Phase 1b / 2 / 3 can wire "copy last output" / jump-shortcuts /
+  // Ask-Claude-about-this on top of the same records.
+  //
+  // Registered BEFORE the first replayHistoryToTerm call (mountXterm runs
+  // before connect()), so replayed A/B/C/D escapes rebuild the record list
+  // on re-attach for free.
+  term.parser.registerOscHandler(133, (payload) => {
+    handleOsc133(inst, term, payload);
     return true;
   });
 
@@ -605,8 +707,466 @@ function handleControlMessage(inst: TerminalInstance, msg: { type: string; [k: s
     inst.exitCode = e.code;
     setStatus(inst, 'exited');
     inst.term?.write(`\r\n[process exited with code ${e.code}]\r\n`);
+    // HS-7267 — if a command was in-flight (A seen, no D yet), close it out
+    // with exitCode=-1 so its gutter glyph stays visible (otherwise the
+    // record sits dangling with no visible end). §26.9 edge case "runaway
+    // C without D".
+    const si = inst.shellIntegration;
+    if (si.current !== null && inst.term !== null) {
+      si.current.exitCode = -1;
+      attachGutterDecoration(inst, inst.term, si.current);
+      pushAndEvict(si, si.current);
+      si.current = null;
+    }
     return;
   }
+}
+
+/**
+ * OSC 133 handler entry point (HS-7267). The payload is everything after
+ * `\x1b]133;` up to the terminator, with the four known subcommands:
+ *   "A"        → prompt start
+ *   "B"        → command start (user input region begins)
+ *   "C"        → output start (command entered, output follows)
+ *   "D" or "D;<exit>" → command end (exit code may be omitted)
+ * Unknown subcommands are silently ignored so future protocol extensions
+ * don't break us.
+ */
+function handleOsc133(inst: TerminalInstance, term: XTerm, payload: string): void {
+  if (typeof payload !== 'string' || payload === '') return;
+  const subcommand = payload[0];
+  if (subcommand === 'A') {
+    onShellIntegrationPromptStart(inst, term);
+  } else if (subcommand === 'B') {
+    onShellIntegrationCommandStart(inst, term);
+  } else if (subcommand === 'C') {
+    onShellIntegrationOutputStart(inst, term);
+  } else if (subcommand === 'D') {
+    // "D" alone or "D;<exitCode>".
+    const code = parseOsc133ExitCode(payload);
+    onShellIntegrationCommandEnd(inst, term, code);
+  }
+}
+
+function onShellIntegrationPromptStart(inst: TerminalInstance, term: XTerm): void {
+  const si = inst.shellIntegration;
+  if (!si.enabled) {
+    si.enabled = true;
+    // HS-7268 — reveal the copy-last-output toolbar button the first time we
+    // see an OSC 133 escape. The button was rendered with `display:none` so
+    // users who never opt into shell integration see no extra toolbar icon.
+    applyShellIntegrationToolbarVisibility(inst);
+  }
+  // If there's a current record (previous A never got a D — shell crashed
+  // mid-command), flush it into the ring with exitCode=-1 so its glyph
+  // survives in the gutter rather than vanishing on next A.
+  if (si.current !== null) {
+    si.current.exitCode = -1;
+    attachGutterDecoration(inst, term, si.current);
+    pushAndEvict(si, si.current);
+    si.current = null;
+  }
+  const marker = term.registerMarker(0);
+  si.current = {
+    id: si.nextId++,
+    promptStart: marker,
+    commandStart: null,
+    outputStart: null,
+    commandEnd: null,
+    exitCode: null,
+    decoration: null,
+  };
+}
+
+function onShellIntegrationCommandStart(inst: TerminalInstance, term: XTerm): void {
+  const si = inst.shellIntegration;
+  if (si.current === null) return;
+  si.current.commandStart = term.registerMarker(0);
+}
+
+function onShellIntegrationOutputStart(inst: TerminalInstance, term: XTerm): void {
+  const si = inst.shellIntegration;
+  if (si.current === null) return;
+  si.current.outputStart = term.registerMarker(0);
+}
+
+function onShellIntegrationCommandEnd(inst: TerminalInstance, term: XTerm, code: number | null): void {
+  const si = inst.shellIntegration;
+  if (si.current === null) return;
+  si.current.commandEnd = term.registerMarker(0);
+  si.current.exitCode = code;
+  attachGutterDecoration(inst, term, si.current);
+  pushAndEvict(si, si.current);
+  si.current = null;
+}
+
+function pushAndEvict(si: ShellIntegrationState, record: CommandRecord): void {
+  si.commands.push(record);
+  while (si.commands.length > SHELL_INTEGRATION_RING_SIZE) {
+    const evicted = si.commands.shift();
+    if (evicted !== undefined) disposeCommandRecord(evicted);
+  }
+}
+
+function disposeCommandRecord(r: CommandRecord): void {
+  try { r.decoration?.dispose(); } catch { /* ignore */ }
+  try { r.promptStart?.dispose(); } catch { /* ignore */ }
+  try { r.commandStart?.dispose(); } catch { /* ignore */ }
+  try { r.outputStart?.dispose(); } catch { /* ignore */ }
+  try { r.commandEnd?.dispose(); } catch { /* ignore */ }
+}
+
+/** Render the exit-code gutter glyph for a completed command (green check /
+ *  red x / neutral dot depending on exitCode). Idempotent — a second call
+ *  on the same record re-attaches after disposing the previous decoration
+ *  (used when a dangling A record is retroactively finalised as exitCode=-1
+ *  by the NEXT prompt's A handler).
+ *
+ *  HS-7269 — gated on `shell_integration_ui`: when the setting is off we
+ *  don't create the decoration at all so the gutter glyph + Phase 2 hover
+ *  popover (attached below) never render. Toggling the setting back on
+ *  re-runs this path for every record via `reapplyShellIntegrationDecorations`. */
+function attachGutterDecoration(inst: TerminalInstance, term: XTerm, record: CommandRecord): void {
+  if (record.promptStart === null) return;
+  if (!shellIntegrationUiEnabled()) return;
+  try { record.decoration?.dispose(); } catch { /* ignore */ }
+  const deco = term.registerDecoration({
+    marker: record.promptStart,
+    x: 0,
+    width: 1,
+    height: 1,
+  });
+  if (deco === undefined) return;
+  record.decoration = deco;
+  deco.onRender((el) => {
+    el.className = `terminal-osc133-gutter terminal-osc133-gutter-${exitCodeGutterClass(record.exitCode)}`;
+    el.innerHTML = gutterGlyphSvg(record.exitCode);
+    el.title = record.exitCode === null
+      ? 'Command (no exit code reported)'
+      : `Command (exit ${record.exitCode})`;
+    // HS-7269 — hover popover on the gutter glyph with Copy command / Copy
+    // output / Rerun / Ask Claude (HS-7270) actions. Attached per-decoration
+    // so each command's popover targets its own record (closed-over); the
+    // popover is mounted lazily on first hover so we don't allocate 500 DOM
+    // trees up front.
+    attachGutterHoverPopover(inst, el, term, record);
+  });
+}
+
+/** HS-7269 — re-attach (or dispose) gutter decorations on every tracked
+ *  record in response to a `shell_integration_ui` setting flip. We can't
+ *  just toggle CSS visibility because `registerDecoration` has already
+ *  committed the marker → DOM binding; we dispose and re-register instead. */
+function reapplyShellIntegrationDecorations(inst: TerminalInstance): void {
+  const term = inst.term;
+  if (term === null) return;
+  if (shellIntegrationUiEnabled()) {
+    for (const r of inst.shellIntegration.commands) attachGutterDecoration(inst, term, r);
+  } else {
+    for (const r of inst.shellIntegration.commands) {
+      try { r.decoration?.dispose(); } catch { /* ignore */ }
+      r.decoration = null;
+    }
+  }
+}
+
+/** HS-7269 — mount a hover popover on a gutter-glyph decoration's DOM element.
+ *  The popover offers three actions scoped to THIS command:
+ *    - Copy command — reads B→C range (falls back to message if B is null).
+ *    - Copy output — reads C→D range (or C→cursor if still running).
+ *    - Rerun — sends `commandText + '\r'` through the terminal's WS.
+ *  A single shared popover element is reused across hovers (only one visible
+ *  at a time); `showGutterPopover` retargets it to the currently-hovered
+ *  decoration. The popover closes on mouseleave from BOTH the glyph and the
+ *  popover itself (user can move cursor to the popover to click a button). */
+function attachGutterHoverPopover(inst: TerminalInstance, el: HTMLElement, term: XTerm, record: CommandRecord): void {
+  el.style.cursor = 'pointer';
+  el.addEventListener('mouseenter', () => { showGutterPopover(inst, el, term, record); });
+  el.addEventListener('mouseleave', () => { scheduleGutterPopoverClose(); });
+}
+
+let gutterPopoverEl: HTMLElement | null = null;
+let gutterPopoverCloseTimer: number | null = null;
+
+function showGutterPopover(inst: TerminalInstance, anchor: HTMLElement, term: XTerm, record: CommandRecord): void {
+  if (gutterPopoverCloseTimer !== null) {
+    window.clearTimeout(gutterPopoverCloseTimer);
+    gutterPopoverCloseTimer = null;
+  }
+  if (gutterPopoverEl !== null) gutterPopoverEl.remove();
+
+  // HS-7270 — the "Ask Claude" entry only renders when the Claude Channel is
+  // alive. Checking at popover open time (not on click) keeps the popover
+  // small for users without the channel and matches the gate pattern other
+  // channel-dependent affordances use (see channelUI.tsx checkAndTrigger).
+  const askClaudeHtml = isChannelAlive()
+    ? '<button class="terminal-osc133-popover-btn terminal-osc133-popover-ask" data-action="ask-claude">Ask Claude</button>'
+    : '';
+  const popover = toElement(
+    <div className="terminal-osc133-popover">
+      <button className="terminal-osc133-popover-btn" data-action="copy-command">Copy command</button>
+      <button className="terminal-osc133-popover-btn" data-action="copy-output">Copy output</button>
+      <button className="terminal-osc133-popover-btn" data-action="rerun">Rerun</button>
+      {raw(askClaudeHtml)}
+    </div>
+  );
+  document.body.appendChild(popover);
+
+  popover.addEventListener('mouseenter', () => {
+    if (gutterPopoverCloseTimer !== null) {
+      window.clearTimeout(gutterPopoverCloseTimer);
+      gutterPopoverCloseTimer = null;
+    }
+  });
+  popover.addEventListener('mouseleave', () => { scheduleGutterPopoverClose(); });
+  popover.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.terminal-osc133-popover-btn');
+    if (btn === null) return;
+    const action = btn.dataset.action;
+    if (action === 'copy-command') void copyCommandOfRecord(term, record);
+    else if (action === 'copy-output') void copyOutputOfRecord(term, record);
+    else if (action === 'rerun') rerunCommandOfRecord(term, record);
+    else if (action === 'ask-claude') askClaudeAboutRecord(inst, term, record);
+    closeGutterPopover();
+  });
+
+  // Position flush-left of the gutter glyph, vertically centered on it.
+  const rect = anchor.getBoundingClientRect();
+  popover.style.position = 'fixed';
+  popover.style.left = `${rect.right + 6}px`;
+  popover.style.top = `${rect.top + rect.height / 2}px`;
+  popover.style.transform = 'translateY(-50%)';
+  popover.style.zIndex = '600';
+
+  gutterPopoverEl = popover;
+}
+
+function scheduleGutterPopoverClose(): void {
+  if (gutterPopoverCloseTimer !== null) return;
+  gutterPopoverCloseTimer = window.setTimeout(closeGutterPopover, 200);
+}
+
+function closeGutterPopover(): void {
+  if (gutterPopoverEl !== null) {
+    gutterPopoverEl.remove();
+    gutterPopoverEl = null;
+  }
+  if (gutterPopoverCloseTimer !== null) {
+    window.clearTimeout(gutterPopoverCloseTimer);
+    gutterPopoverCloseTimer = null;
+  }
+}
+
+/** HS-7269 — read the B→C range of a specific record (not necessarily the
+ *  latest). Returns null when either marker is missing or disposed. */
+function readRecordCommand(term: XTerm, record: CommandRecord): string | null {
+  const b = record.commandStart;
+  const c = record.outputStart;
+  if (b === null || c === null || b.isDisposed || c.isDisposed) return null;
+  if (c.line <= b.line) return null;
+  const buf = term.buffer.active;
+  const lines: string[] = [];
+  for (let y = b.line; y < c.line; y++) {
+    const line = buf.getLine(y);
+    if (line === undefined) continue;
+    lines.push(line.translateToString(true));
+  }
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  return lines.length === 0 ? null : lines.join('\n');
+}
+
+/** HS-7269 — read the C→D range of a specific record (or C→cursor if D is
+ *  missing, i.e. the command is still running). */
+function readRecordOutput(term: XTerm, record: CommandRecord): string | null {
+  const c = record.outputStart;
+  if (c === null || c.isDisposed) return null;
+  const buf = term.buffer.active;
+  const endLine = record.commandEnd !== null && !record.commandEnd.isDisposed
+    ? record.commandEnd.line
+    : buf.baseY + buf.cursorY + 1;
+  if (endLine <= c.line) return null;
+  const lines: string[] = [];
+  for (let y = c.line; y < endLine; y++) {
+    const line = buf.getLine(y);
+    if (line === undefined) continue;
+    lines.push(line.translateToString(true));
+  }
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  return lines.length === 0 ? null : lines.join('\n');
+}
+
+async function copyCommandOfRecord(term: XTerm, record: CommandRecord): Promise<void> {
+  const text = readRecordCommand(term, record);
+  if (text === null) return;
+  try { await navigator.clipboard.writeText(text); } catch { /* ignore */ }
+}
+
+async function copyOutputOfRecord(term: XTerm, record: CommandRecord): Promise<void> {
+  const text = readRecordOutput(term, record);
+  if (text === null) return;
+  try { await navigator.clipboard.writeText(text); } catch { /* ignore */ }
+}
+
+/** HS-7269 — re-send the record's captured B→C command text through the
+ *  terminal's input path, followed by `\r` so the shell runs it. Uses the
+ *  public `term.paste` API which routes through the same onData path that
+ *  normal typing uses. Silently no-ops when the command text isn't readable. */
+function rerunCommandOfRecord(term: XTerm, record: CommandRecord): void {
+  const text = readRecordCommand(term, record);
+  if (text === null) return;
+  // Strip any trailing newline (B→C region typically contains just the
+  // command line); the `\r` below fires the shell's Enter handler.
+  term.paste(text.replace(/\n+$/, '') + '\r');
+}
+
+/** HS-7270 — ask the Claude Channel to diagnose a failing (or successful)
+ *  command. Reads the command text + output + cwd off the record, runs it
+ *  through `buildAskClaudePrompt` for the canonical template (see docs/33),
+ *  and fires `triggerChannelAndMarkBusy(message)` which POSTs to
+ *  `/api/channel/trigger` with the rendered prompt. The popover already
+ *  gated the button on `isChannelAlive()` at open time, but we re-check
+ *  here to cover the rare case of the channel going down between popover
+ *  open and click. Command text unavailable (shell skipped B, scrollback
+ *  trimmed) → silent no-op; the popover closed already so there's nothing
+ *  to shake, and a toast explaining "no command text" would be noisier than
+ *  the problem. */
+function askClaudeAboutRecord(inst: TerminalInstance, term: XTerm, record: CommandRecord): void {
+  if (!isChannelAlive()) return;
+  const command = readRecordCommand(term, record);
+  if (command === null) return;
+  const output = readRecordOutput(term, record) ?? '';
+  const prompt = buildAskClaudePrompt({
+    command,
+    exitCode: record.exitCode,
+    cwd: inst.runtimeCwd,
+    output,
+  });
+  triggerChannelAndMarkBusy(prompt);
+}
+
+/** Compact inline SVG so the glyph renders at 10×10 in the gutter column.
+ *  Lucide check / x / circle minimalized to reduce DOM weight per record. */
+function gutterGlyphSvg(code: number | null): string {
+  if (code === 0) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  }
+  if (code === null) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>';
+  }
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+}
+
+/** Dispose every shell-integration record + reset state. Called on PTY restart
+ *  and project switch (implicitly via removeTerminalInstance). HS-7267. */
+function resetShellIntegration(inst: TerminalInstance): void {
+  for (const r of inst.shellIntegration.commands) disposeCommandRecord(r);
+  if (inst.shellIntegration.current !== null) disposeCommandRecord(inst.shellIntegration.current);
+  inst.shellIntegration = { enabled: false, commands: [], current: null, nextId: 1 };
+  // HS-7268 — re-hide the copy-last-output button; it'll reappear on the next
+  // OSC 133 A seen (if the user's shell integration survives the restart).
+  applyShellIntegrationToolbarVisibility(inst);
+}
+
+/** Show or hide shell-integration-specific toolbar affordances based on
+ *  whether we've ever seen an OSC 133 escape on this terminal (HS-7268)
+ *  AND the user's `shell_integration_ui` setting (HS-7269). When the setting
+ *  is off the button stays hidden even after the OSC handler fires — the
+ *  handler still runs so markers are tracked, but no UI surfaces. */
+function applyShellIntegrationToolbarVisibility(inst: TerminalInstance): void {
+  const btn = inst.header.querySelector<HTMLButtonElement>('.terminal-copy-output-btn');
+  if (btn === null) return;
+  const visible = inst.shellIntegration.enabled && shellIntegrationUiEnabled();
+  btn.style.display = visible ? '' : 'none';
+}
+
+/** HS-7269 — read the per-project "Enable shell integration UI" setting.
+ *  Default true (setting absent → on). Reads from the shared `state.settings`
+ *  object which is reloaded on project switch, so the check is always scoped
+ *  to the active project. */
+function shellIntegrationUiEnabled(): boolean {
+  return state.settings.shell_integration_ui;
+}
+
+/** HS-7269 — scroll the xterm viewport to the previous or next command's
+ *  prompt row. Uses `term.scrollToLine(line)` which takes the absolute buffer
+ *  line (our markers already store this). Pulls the active buffer's cursor
+ *  position as the anchor so "next" from the middle of a scrolled-back view
+ *  jumps to the first prompt below the viewport, not the first prompt below
+ *  some stale cursor. No-op when there's no marker in the chosen direction
+ *  (caller already swallowed the keystroke to prevent `\e[1;5A` leaks). */
+function jumpToPromptMarker(inst: TerminalInstance, direction: 'prev' | 'next'): void {
+  const term = inst.term;
+  if (term === null) return;
+  const buf = term.buffer.active;
+  const fromLine = buf.viewportY;
+  const promptLines: number[] = [];
+  for (const r of inst.shellIntegration.commands) {
+    if (r.promptStart !== null && !r.promptStart.isDisposed) {
+      promptLines.push(r.promptStart.line);
+    }
+  }
+  const target = findPromptLine({ promptLines, fromLine, direction });
+  if (target === null) return;
+  term.scrollToLine(target);
+}
+
+/** HS-7268 — copy the most recent command's output to the clipboard. Reads the
+ *  [start, end) range from `computeLastOutputRange` via xterm's live buffer,
+ *  joins rows with `\n`, trims trailing blank lines, and writes via
+ *  `navigator.clipboard.writeText` (Tauri WKWebView supports this natively).
+ *  Flashes the button glyph to a check on success so the user gets visual
+ *  feedback without a toast — the click was a direct action on the button,
+ *  so a toast would feel redundant. On empty / no-range / clipboard error,
+ *  the button briefly shakes to signal the no-op. */
+async function copyLastOutput(inst: TerminalInstance): Promise<void> {
+  const term = inst.term;
+  if (term === null) { shakeCopyOutputBtn(inst); return; }
+  const buf = term.buffer.active;
+  const cursorLine = buf.baseY + buf.cursorY;
+  const range = computeLastOutputRange({
+    current: inst.shellIntegration.current,
+    commands: inst.shellIntegration.commands,
+    cursorLine,
+  });
+  if (range === null) { shakeCopyOutputBtn(inst); return; }
+
+  const lines: string[] = [];
+  for (let y = range.start; y < range.end; y++) {
+    const line = buf.getLine(y);
+    if (line === undefined) continue;
+    lines.push(line.translateToString(true));
+  }
+  // Trim trailing blank rows so a command whose output doesn't fill the
+  // full buffer range (common — the D marker lands on a blank precmd line)
+  // doesn't paste dangling newlines.
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  if (lines.length === 0) { shakeCopyOutputBtn(inst); return; }
+
+  const text = lines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    flashCopyOutputBtnSuccess(inst);
+  } catch {
+    shakeCopyOutputBtn(inst);
+  }
+}
+
+function flashCopyOutputBtnSuccess(inst: TerminalInstance): void {
+  const btn = inst.header.querySelector<HTMLButtonElement>('.terminal-copy-output-btn');
+  if (btn === null) return;
+  btn.innerHTML = CHECK_ICON;
+  btn.classList.add('copied');
+  window.setTimeout(() => {
+    btn.innerHTML = CLIPBOARD_ICON;
+    btn.classList.remove('copied');
+  }, 900);
+}
+
+function shakeCopyOutputBtn(inst: TerminalInstance): void {
+  const btn = inst.header.querySelector<HTMLButtonElement>('.terminal-copy-output-btn');
+  if (btn === null) return;
+  btn.classList.add('shake');
+  window.setTimeout(() => btn.classList.remove('shake'), 400);
 }
 
 function shortCommandName(command: string): string {
@@ -688,6 +1248,9 @@ async function onPowerClick(inst: TerminalInstance): Promise<void> {
     inst.runtimeCwd = null;
     updateTabLabel(inst);
     updateCwdChip(inst);
+    // HS-7267 — drop all prior shell-integration records + decorations; the
+    // new shell rebuilds its own A/B/C/D cycle.
+    resetShellIntegration(inst);
   } catch { /* ignore */ }
 }
 
@@ -755,7 +1318,11 @@ async function createDynamicTerminal(): Promise<void> {
  * is no running process to interrupt. Pass `skipConfirm: true` to bypass the
  * dialog (used by bulk flows that have already confirmed at a higher level).
  */
-async function closeDynamicTerminal(id: string, skipConfirm = false): Promise<void> {
+async function closeDynamicTerminal(
+  id: string,
+  skipConfirm = false,
+  skipActiveFallback = false,
+): Promise<void> {
   const inst = instances.get(id);
 
   if (inst !== undefined && inst.status === 'alive' && !skipConfirm) {
@@ -776,12 +1343,43 @@ async function closeDynamicTerminal(id: string, skipConfirm = false): Promise<vo
     // disappear anyway and the next selectDrawerTab() below handles fallback.
   }
 
+  // Snapshot the tab-strip order BEFORE removal so the fallback can walk the
+  // original positions and pick the nearest surviving tab (HS-7275).
+  const orderBeforeClose = orderedTabIds();
+
   try {
     await api('/terminal/destroy', { method: 'POST', body: { terminalId: id } });
   } catch { /* ignore */ }
   removeTerminalInstance(id);
-  // Fall back to Commands Log if we closed the active tab.
-  if (activeTerminalId === null) await selectDrawerTab('commands-log');
+  if (skipActiveFallback) return;
+  await selectFallbackAfterClose(orderBeforeClose, [id]);
+}
+
+/**
+ * Select the next drawer tab after one or more terminals have been closed.
+ *
+ * Only fires when the drawer was actually showing a closed tab — otherwise the
+ * user stays on whatever they were viewing (e.g., commands-log). When the drawer
+ * WAS showing a closed tab, prefer the nearest surviving terminal to the right
+ * of the first closed position, then to the left, and fall back to commands-log
+ * when no terminal tab survives. HS-7275.
+ */
+async function selectFallbackAfterClose(
+  orderBeforeClose: readonly string[],
+  closedIds: readonly string[],
+): Promise<void> {
+  if (closedIds.length === 0) return;
+  const mod = await import('./commandLog.js');
+  const activeDrawerTab = mod.getActiveDrawerTab();
+  const closedDrawerTabs = new Set(closedIds.map(id => `terminal:${id}`));
+  if (!closedDrawerTabs.has(activeDrawerTab)) return;
+
+  const nextTabId = pickNearestTerminalTabId(orderBeforeClose, closedIds);
+  if (nextTabId !== null) {
+    await selectDrawerTab(`terminal:${nextTabId}`);
+  } else {
+    await selectDrawerTab('commands-log');
+  }
 }
 
 // Bridge to the drawer tab switcher implemented in commandLog.tsx.
@@ -908,8 +1506,13 @@ async function closeTabs(ids: string[]): Promise<void> {
   const aliveIds = ids.filter(id => instances.get(id)?.status === 'alive');
   const deadIds = ids.filter(id => !aliveIds.includes(id));
 
+  // Snapshot order BEFORE any close so the fallback anchors on the original
+  // positions after every close has completed (HS-7275).
+  const orderBeforeClose = orderedTabIds();
+
   if (aliveIds.length === 0) {
-    for (const id of ids) await closeDynamicTerminal(id, true);
+    for (const id of ids) await closeDynamicTerminal(id, true, true);
+    await selectFallbackAfterClose(orderBeforeClose, ids);
     return;
   }
 
@@ -920,10 +1523,11 @@ async function closeTabs(ids: string[]): Promise<void> {
     // inert tabs.
     const aliveId = aliveIds[0];
     const before = instances.has(aliveId);
-    await closeDynamicTerminal(aliveId);
+    await closeDynamicTerminal(aliveId, false, true);
     const confirmed = before && !instances.has(aliveId);
     if (!confirmed) return;
-    for (const id of deadIds) await closeDynamicTerminal(id, true);
+    for (const id of deadIds) await closeDynamicTerminal(id, true, true);
+    await selectFallbackAfterClose(orderBeforeClose, ids);
     return;
   }
 
@@ -941,7 +1545,8 @@ async function closeTabs(ids: string[]): Promise<void> {
     danger: true,
   });
   if (!confirmed) return;
-  for (const id of ids) await closeDynamicTerminal(id, true);
+  for (const id of ids) await closeDynamicTerminal(id, true, true);
+  await selectFallbackAfterClose(orderBeforeClose, ids);
 }
 
 /**

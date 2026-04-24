@@ -207,6 +207,62 @@ describe('status transitions', () => {
     const updated = await updateTicket(t.id, { status: 'started' });
     expect(new Date(updated!.updated_at).getTime()).toBeGreaterThan(new Date(before).getTime());
   });
+
+  // HS-7279 — clicking the star on a completed ticket used to reopen it to
+  // not_started correctly, but the up_next flag stayed false because the
+  // transition block only set the _at fields and the general-loop copy of
+  // up_next was suppressed by a STATUS_MANAGED guard that didn't account
+  // for the transition not actually overriding up_next. Fix: only treat
+  // up_next as status-managed when the target status is one that explicitly
+  // clears it (completed / verified / backlog / archive).
+  it('HS-7279: {status:not_started, up_next:true} on a completed ticket sets BOTH', async () => {
+    const t = await createTicket('Star click regression');
+    await updateTicket(t.id, { status: 'completed' });
+    // Sanity: the completion path correctly cleared up_next.
+    const done = await updateTicket(t.id, {});
+    expect(done!.status).toBe('completed');
+    expect(done!.up_next).toBe(false);
+    // The star-click path sends both fields; both must land.
+    const reopened = await updateTicket(t.id, { status: 'not_started', up_next: true });
+    expect(reopened!.status).toBe('not_started');
+    expect(reopened!.up_next).toBe(true);
+    expect(reopened!.completed_at).toBeNull();
+    expect(reopened!.verified_at).toBeNull();
+  });
+
+  it('HS-7279: {status:not_started, up_next:false} on a completed ticket honours the explicit false', async () => {
+    const t = await createTicket('Explicit false', { up_next: true });
+    await updateTicket(t.id, { status: 'completed' });
+    const reopened = await updateTicket(t.id, { status: 'not_started', up_next: false });
+    expect(reopened!.status).toBe('not_started');
+    expect(reopened!.up_next).toBe(false);
+  });
+
+  it('HS-7279: {status:started, up_next:true} on any ticket sets both', async () => {
+    const t = await createTicket('Start with up_next');
+    const updated = await updateTicket(t.id, { status: 'started', up_next: true });
+    expect(updated!.status).toBe('started');
+    expect(updated!.up_next).toBe(true);
+  });
+
+  it('HS-7279: {status:deleted, up_next:true} keeps up_next — deleted transition no longer clears it', async () => {
+    // Rationale: deleted is a soft-delete; if a workflow wants to preserve
+    // the up_next flag for restore semantics, the caller's intent wins.
+    // (Pre-HS-7279 the flag was silently dropped by the STATUS_MANAGED skip.)
+    const t = await createTicket('Delete keeps up_next');
+    const updated = await updateTicket(t.id, { status: 'deleted', up_next: true });
+    expect(updated!.status).toBe('deleted');
+    expect(updated!.up_next).toBe(true);
+  });
+
+  it('HS-7279: {status:completed, up_next:true} is still clobbered to false — completion is the one transition that always wins', async () => {
+    // Completion / verification / backlog / archive each define a semantic
+    // that forbids up_next; the client should not be able to override that.
+    const t = await createTicket('Completion wins');
+    const updated = await updateTicket(t.id, { status: 'completed', up_next: true });
+    expect(updated!.status).toBe('completed');
+    expect(updated!.up_next).toBe(false);
+  });
 });
 
 describe('notes', () => {

@@ -462,6 +462,63 @@ test.describe('Embedded terminal drawer', () => {
     await expect(dyns).toHaveCount(3);
   });
 
+  // HS-7275: closing the active terminal tab selects the nearest remaining
+  // terminal tab (prefer right, fall back to left) instead of jumping straight
+  // to Commands Log. Only falls back to Commands Log when no terminal survives.
+  test('closing the active terminal tab picks the nearest neighbour, not Commands Log (HS-7275)', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+    await page.locator('#command-log-btn').click();
+    await expect(page.locator('#drawer-add-terminal-btn')).toBeVisible({ timeout: 5000 });
+    for (let i = 0; i < 3; i++) {
+      await page.locator('#drawer-add-terminal-btn').click();
+      await expect(page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]').nth(i)).toBeVisible({ timeout: 5000 });
+    }
+
+    const dyns = page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]');
+    await expect(dyns).toHaveCount(3);
+
+    // Activate the middle dynamic tab. Order in the strip is: default, second,
+    // dyn-0, dyn-1, dyn-2. The drawer is now showing dyn-1.
+    await dyns.nth(1).click();
+    await expect(dyns.nth(1)).toHaveClass(/active/);
+
+    // Right-click dyn-1 → Close Tab → confirm. With dyn-1 gone, the fallback
+    // should walk right and select dyn-2 — NOT Commands Log.
+    const dyn1Id = await dyns.nth(1).getAttribute('data-terminal-id');
+    await dyns.nth(1).click({ button: 'right' });
+    await expect(page.locator('.terminal-tab-context-menu')).toBeVisible({ timeout: 3000 });
+    await page.locator('.terminal-tab-context-menu [data-action="close"]').click();
+    const overlay = page.locator('.confirm-dialog-overlay');
+    await expect(overlay).toBeVisible({ timeout: 3000 });
+    await overlay.locator('.confirm-dialog-confirm').click();
+    await expect(overlay).toBeHidden();
+
+    // dyn-1 is gone; dyn-2 is now the drawer's active tab.
+    await expect(page.locator(`.drawer-terminal-tab[data-terminal-id="${dyn1Id}"]`)).toHaveCount(0, { timeout: 5000 });
+    await expect(page.locator('#drawer-tab-commands-log')).not.toHaveClass(/active/);
+    const remainingDyns = page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]');
+    await expect(remainingDyns).toHaveCount(2);
+    // The rightmost dynamic tab (former dyn-2) is active after the close.
+    await expect(remainingDyns.last()).toHaveClass(/active/);
+
+    // Close that active tab too. Nothing survives to the right, so the fallback
+    // should walk leftward and land on the now-rightmost surviving dyn tab.
+    const rightmostId = await remainingDyns.last().getAttribute('data-terminal-id');
+    await remainingDyns.last().click({ button: 'right' });
+    await expect(page.locator('.terminal-tab-context-menu')).toBeVisible({ timeout: 3000 });
+    await page.locator('.terminal-tab-context-menu [data-action="close"]').click();
+    await expect(overlay).toBeVisible({ timeout: 3000 });
+    await overlay.locator('.confirm-dialog-confirm').click();
+    await expect(overlay).toBeHidden();
+
+    await expect(page.locator(`.drawer-terminal-tab[data-terminal-id="${rightmostId}"]`)).toHaveCount(0, { timeout: 5000 });
+    // Still on a terminal tab (leftward fallback picked a surviving dyn-0),
+    // not on Commands Log.
+    await expect(page.locator('#drawer-tab-commands-log')).not.toHaveClass(/active/);
+  });
+
   // HS-6337: terminal options live on their own Settings tab, the enabled
   // checkbox is gone, and an unconfigured project shows no terminal tabs in
   // the drawer (no implicit default).

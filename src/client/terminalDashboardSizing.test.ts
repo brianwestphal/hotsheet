@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  computeSliderSnapPoints,
   computeTileGridDims,
   computeTileScale,
   computeTileWidth,
@@ -8,8 +9,11 @@ import {
   DASHBOARD_FALLBACK_ROWS,
   DASHBOARD_TARGET_NATURAL_HEIGHT_PX,
   DASHBOARD_TARGET_NATURAL_WIDTH_PX,
+  maybeSnapSliderValue,
   SLIDER_MIN_TILE_WIDTH,
+  SLIDER_SNAP_THRESHOLD,
   TILE_ASPECT,
+  TILE_GAP,
   tileNativeGridFromCellMetrics,
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
@@ -348,5 +352,105 @@ describe('tileNativeGridFromCellMetrics (HS-7097 follow-up)', () => {
     const fallback = { cols: DASHBOARD_FALLBACK_COLS, rows: DASHBOARD_FALLBACK_ROWS };
     expect(tileNativeGridFromCellMetrics(0, 16)).toEqual(fallback);
     expect(tileNativeGridFromCellMetrics(8, 0)).toEqual(fallback);
+  });
+});
+
+describe('computeSliderSnapPoints (HS-7271)', () => {
+  it('produces a snap point for every N where tiles fit exactly with gaps', () => {
+    const rootWidth = 1000;
+    const points = computeSliderSnapPoints(rootWidth);
+    expect(points.length).toBeGreaterThan(1);
+    // Each snap point's tileWidth must satisfy N*w + (N-1)*TILE_GAP === rootWidth
+    // (within 1 px rounding tolerance).
+    for (const p of points) {
+      const reconstructed = p.perRow * p.tileWidth + (p.perRow - 1) * TILE_GAP;
+      expect(Math.abs(reconstructed - rootWidth)).toBeLessThan(1.5);
+    }
+  });
+
+  it('has distinct perRow values (no duplicates after rounding)', () => {
+    const points = computeSliderSnapPoints(1600);
+    const counts = new Set(points.map(p => p.perRow));
+    expect(counts.size).toBe(points.length);
+  });
+
+  it('is sorted ascending by slider value (fewer per row = wider tile = higher slider)', () => {
+    const points = computeSliderSnapPoints(1600);
+    for (let i = 1; i < points.length; i++) {
+      expect(points[i].sliderValue).toBeGreaterThan(points[i - 1].sliderValue);
+    }
+    // Fewer-per-row snaps sit at higher slider values. Reversed order of
+    // perRow because the list is sorted by sliderValue ascending.
+    for (let i = 1; i < points.length; i++) {
+      expect(points[i].perRow).toBeLessThan(points[i - 1].perRow);
+    }
+  });
+
+  it('drops candidates whose tile width falls below the slider floor', () => {
+    const points = computeSliderSnapPoints(800);
+    for (const p of points) {
+      expect(p.tileWidth).toBeGreaterThanOrEqual(SLIDER_MIN_TILE_WIDTH);
+    }
+  });
+
+  it('returns an empty list when rootWidth cannot fit even a single tile at the floor', () => {
+    expect(computeSliderSnapPoints(SLIDER_MIN_TILE_WIDTH - 1)).toEqual([]);
+    expect(computeSliderSnapPoints(0)).toEqual([]);
+  });
+
+  it('includes a perRow=1 snap at 100% slider (one big tile filling the row)', () => {
+    const points = computeSliderSnapPoints(1600);
+    const full = points.find(p => p.perRow === 1);
+    expect(full).toBeDefined();
+    // perRow=1 => tileWidth = rootWidth => slider value 100.
+    expect(full!.sliderValue).toBe(100);
+  });
+});
+
+describe('maybeSnapSliderValue (HS-7271)', () => {
+  const points = computeSliderSnapPoints(1600);
+
+  it('snaps to the nearest snap point when raw value is within threshold', () => {
+    // Pick a snap point that's isolated — its nearest neighbour is farther
+    // than 2 * SLIDER_SNAP_THRESHOLD away — so the threshold probes can't be
+    // misrouted to the neighbour. The perRow=1 snap sits at slider value 100
+    // and is always the highest snap (followed by the perRow=2 snap some
+    // tens of points below), so probes below it are safe.
+    const target = points.find(p => p.perRow === 1)!;
+    expect(target.sliderValue).toBe(100);
+    expect(maybeSnapSliderValue(100 - (SLIDER_SNAP_THRESHOLD - 0.5), points))
+      .toBe(target.sliderValue);
+    // On-the-point probe is trivially a snap.
+    expect(maybeSnapSliderValue(target.sliderValue, points)).toBe(target.sliderValue);
+  });
+
+  it('returns the raw value verbatim when no snap is within threshold', () => {
+    // Find a gap between two adjacent snaps and pick a midpoint.
+    for (let i = 1; i < points.length; i++) {
+      const gap = points[i].sliderValue - points[i - 1].sliderValue;
+      if (gap > SLIDER_SNAP_THRESHOLD * 4) {
+        const mid = (points[i].sliderValue + points[i - 1].sliderValue) / 2;
+        expect(maybeSnapSliderValue(mid, points)).toBe(mid);
+        return;
+      }
+    }
+    // At rootWidth=1600 there are plenty of adjacent snap gaps >> threshold,
+    // so this loop always returns. Guard the test from a silent pass.
+    throw new Error('expected at least one snap gap larger than 4 * SLIDER_SNAP_THRESHOLD');
+  });
+
+  it('picks the NEAREST snap when two are in range (shouldnt happen in practice at threshold 2.5 but guard anyway)', () => {
+    const synthetic = [
+      { perRow: 3, tileWidth: 400, sliderValue: 40 },
+      { perRow: 2, tileWidth: 600, sliderValue: 42 },
+    ];
+    // Value 41.1 is closer to 42 than to 40.
+    expect(maybeSnapSliderValue(41.1, synthetic)).toBe(42);
+    // Value 40.5 is closer to 40.
+    expect(maybeSnapSliderValue(40.5, synthetic)).toBe(40);
+  });
+
+  it('returns raw value with an empty snap list', () => {
+    expect(maybeSnapSliderValue(37, [])).toBe(37);
   });
 });

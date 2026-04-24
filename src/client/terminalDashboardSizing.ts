@@ -96,6 +96,76 @@ export function tileWidthFromSlider(value: number, rootWidth: number): number {
   return Math.round(SLIDER_MIN_TILE_WIDTH + span * (clampedValue / 100));
 }
 
+export interface SnapPoint {
+  /** Tile count that fits perfectly across one row at this width (accounting for TILE_GAP). */
+  perRow: number;
+  /** The exact tile width (px) that makes `perRow` tiles fill the row. */
+  tileWidth: number;
+  /** Slider value (0..100) that maps to `tileWidth` via `tileWidthFromSlider`. */
+  sliderValue: number;
+}
+
+/**
+ * HS-7271 — compute the slider positions at which an integer number of tiles
+ * fits exactly across one row, accounting for TILE_GAP between tiles. The
+ * dashboard adds ticks at each position (visual hint) and the slider snaps
+ * to one when the user drags within `SLIDER_SNAP_THRESHOLD` of it.
+ *
+ * For N tiles per row: `N * w + (N - 1) * TILE_GAP = rootWidth` →
+ *   `w = (rootWidth - (N - 1) * TILE_GAP) / N`
+ *
+ * Only widths that fit the slider's valid range `[SLIDER_MIN_TILE_WIDTH, rootWidth]`
+ * qualify. Since smaller widths pack more tiles per row, the returned list is
+ * naturally sorted by slider value ascending (N descending → smaller widths →
+ * lower slider values). The caller de-dupes on `perRow` so we don't emit two
+ * snap points for the same integer count after rounding.
+ */
+export function computeSliderSnapPoints(rootWidth: number): SnapPoint[] {
+  const max = Math.max(SLIDER_MIN_TILE_WIDTH, Math.floor(rootWidth));
+  if (max <= SLIDER_MIN_TILE_WIDTH) return [];
+  const span = max - SLIDER_MIN_TILE_WIDTH;
+  const points: SnapPoint[] = [];
+  const seenPerRow = new Set<number>();
+  // Start at N=1 (one big tile filling the row) and walk up until the
+  // resulting width drops below the slider floor.
+  for (let perRow = 1; perRow <= 40; perRow++) {
+    if (seenPerRow.has(perRow)) continue;
+    const tileWidth = (rootWidth - (perRow - 1) * TILE_GAP) / perRow;
+    if (tileWidth < SLIDER_MIN_TILE_WIDTH) break;
+    if (tileWidth > rootWidth) continue;
+    const sliderValue = ((tileWidth - SLIDER_MIN_TILE_WIDTH) / span) * 100;
+    if (sliderValue < 0 || sliderValue > 100) continue;
+    points.push({ perRow, tileWidth, sliderValue });
+    seenPerRow.add(perRow);
+  }
+  // Return sorted ascending by slider value so the UI renders ticks
+  // left-to-right (more tiles per row = narrower tile = lower slider value).
+  return points.sort((a, b) => a.sliderValue - b.sliderValue);
+}
+
+/** HS-7271 — threshold (in slider units, 0..100) within which the slider
+ *  magnetically snaps to a snap point. 2.5 = ~2.5 % of the slider range;
+ *  tuned so brushing past a snap is easy but landing near one locks in. */
+export const SLIDER_SNAP_THRESHOLD = 2.5;
+
+/**
+ * If `rawValue` is within `SLIDER_SNAP_THRESHOLD` of any snap point, return
+ * that snap point's exact slider value. Otherwise return `rawValue` verbatim
+ * (no snap). Picks the nearest snap if multiple are in range.
+ */
+export function maybeSnapSliderValue(rawValue: number, snapPoints: SnapPoint[]): number {
+  let best: SnapPoint | null = null;
+  let bestDist = SLIDER_SNAP_THRESHOLD;
+  for (const p of snapPoints) {
+    const d = Math.abs(p.sliderValue - rawValue);
+    if (d <= bestDist) {
+      best = p;
+      bestDist = d;
+    }
+  }
+  return best === null ? rawValue : best.sliderValue;
+}
+
 export interface TileScale {
   /** Uniform scale factor applied via `transform: scale(scale)`. X and Y share
    *  the same factor so text keeps its natural metrics — a two-axis scale

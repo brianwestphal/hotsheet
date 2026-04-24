@@ -33,6 +33,11 @@ export async function loadSettings() {
     if (settings.hide_verified_column !== '') {
       state.settings.hide_verified_column = settings.hide_verified_column === 'true';
     }
+    // HS-7269 — defaults to true when the key is absent, so users on upgraded
+    // installs get the Phase 2 UI without touching settings.
+    if (settings.shell_integration_ui !== '') {
+      state.settings.shell_integration_ui = settings.shell_integration_ui !== 'false';
+    }
     if (settings.sort_by) state.sortBy = settings.sort_by;
     if (settings.sort_dir) state.sortDir = settings.sort_dir;
   } catch { /* use defaults */ }

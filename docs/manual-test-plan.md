@@ -271,6 +271,53 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Reload the browser → the active project's drawer state is restored from settings
 - [ ] If the saved active tab is a `terminal:<id>` that was since removed in Settings, drawer falls back to Commands Log without error
 
+### OSC 9 desktop notifications (§27, HS-7264)
+- [ ] In a drawer terminal, run `printf '\e]9;Build done\a'` — a toast with text "Build done" appears in the bottom-right, and the tab (if not active) gains the bell glyph
+- [ ] Click the tab — the bell glyph clears immediately; the toast stays up for its remaining ~6 s and auto-fades
+- [ ] Switch to a second project; in a terminal there, run `printf '\e]9;Tests passed\a'` — the toast does NOT appear in the first project (active-project scope); the second project's tab gets a bell dot
+- [ ] Switch back to the second project — the "Tests passed" toast surfaces on arrival via the `/terminal/list` seed
+- [ ] Run `printf '\e]9;4;3;50\a'` — NO toast fires (iTerm2 progress subcommand is parked in the scanner)
+- [ ] Run `printf '\e]9;Same message\a'` twice in rapid succession — only one toast is visible (dedupe via the `recentlyToasted` cache)
+- [ ] Run `printf '\e]9;Stage 1\a'` then `printf '\e]9;Stage 2\a'` — two distinct toasts appear in sequence (different-message bust of the dedupe cache)
+
+### OSC 133 copy-last-output (§31, HS-7268)
+- [ ] Run `eval "$(starship init zsh)"` (or source VS Code's published shell-integration rc) in a drawer terminal. Run `echo hello; echo world`.
+- [ ] The copy-output button appears in the toolbar (between the CWD chip and the stop/clear pair) after the first OSC 133 prompt.
+- [ ] Click the button — glyph flashes green for ~1 s. Paste into another app — you get exactly `hello\nworld` with no trailing prompt or blank line.
+- [ ] Run `for i in 1 2 3; do echo stage $i; sleep 1; done` and click copy mid-loop — you get the partial output so far. Click again after completion — you get all three lines.
+- [ ] Run `true` (no output) then click copy — the button briefly shakes (no range to copy).
+- [ ] Click the power button to restart the PTY. The copy-output button disappears; it reappears on the next OSC 133 A.
+- [ ] Scroll past ~1000 rows to trim the C marker. Click copy — button shakes (disposed marker).
+- [ ] Use a shell WITHOUT OSC 133 integration (e.g. `/bin/sh` without an rc). The button never appears.
+
+### OSC 133 Phase 2 jump shortcuts + hover popover (§32, HS-7269)
+- [ ] In a shell-integrated terminal (Starship or VS Code's rc), run three distinct commands (e.g. `echo first`, `pwd`, `echo third`).
+- [ ] Press `Cmd/Ctrl+Up` — xterm viewport scrolls so `pwd`'s prompt line sits at the top. Press again — scrolls to `echo first`. Press once more — nothing happens and no `\e[1;5A` escape leaks into the shell input.
+- [ ] `Cmd/Ctrl+Down` walks forward (most recent direction).
+- [ ] Hover the top gutter glyph — a three-button popover mounts to the right of the glyph. Move cursor into the popover — it stays open. Click **Copy command** → paste elsewhere and get `echo first`.
+- [ ] Hover same glyph, click **Rerun** — `echo first` appears at the prompt and runs.
+- [ ] Hover same glyph, click **Copy output** → paste and get `first`.
+- [ ] Open Settings → Terminal. Uncheck "Enable shell integration UI" — all gutter glyphs disappear and the copy-output toolbar button hides. Cmd/Ctrl+Up does nothing (no scroll). Hovering where glyphs used to be → no popover.
+- [ ] Re-check the box — glyphs reappear at their original positions (the ring buffer was preserved); shortcuts and popover work again.
+
+### OSC 133 Phase 3 Ask Claude (§33, HS-7270)
+- [ ] Connect Claude Code to Hot Sheet (green channel dot visible). In a shell-integrated drawer terminal, run `false` (exits 1).
+- [ ] Hover the red-X gutter glyph — popover shows Copy command / Copy output / Rerun / **Ask Claude** (accent-coloured + bold at the end).
+- [ ] Click **Ask Claude** — the channel dot pulses, and within a few seconds Claude responds in the Commands Log panel with a diagnosis of the `false` exit.
+- [ ] Run a command with very long output then `false` at the end (`for i in $(seq 1 1000); do echo line $i; done; false`). Ask Claude — the prompt (visible in Commands Log) truncates to the last 8 000 chars with a `[output truncated to last 8000 chars]` header.
+- [ ] Disconnect Claude Code (Ctrl+C the MCP client). Re-open the popover on any glyph — the Ask Claude button is now absent. Copy command / Copy output / Rerun still work.
+- [ ] Reconnect Claude Code — Ask Claude reappears on the next popover open.
+- [ ] Open a terminal in a project without OSC 7 (no Starship prompt). Ask Claude — the prompt omits the "in `...`" cwd clause cleanly.
+
+### OSC 9 native OS notifications (§30, HS-7272) — Tauri only
+- [ ] First run after install: Hot Sheet asks for notification permission via the OS dialog; grant it. Subsequent runs don't re-prompt.
+- [ ] With Hot Sheet focused, run `printf '\e]9;Build done\a'` — toast fires. **No** OS banner appears (we gate on `document.hidden || !document.hasFocus()` so the user looking at Hot Sheet doesn't get a double-notification).
+- [ ] Minimise Hot Sheet (or focus another app), then fire the OSC 9 from a second path (ssh into the same host, run a delayed `sleep 3 && printf '\e]9;Build done\a'` before minimising, etc.) — an OS banner appears with the active project's name as title and the message as body. The in-app toast also fires so it's visible on return.
+- [ ] Return focus to Hot Sheet — the project-tab bell glyph is set; click the tab to clear.
+- [ ] Fire the same message twice while backgrounded — only one banner (dedupe shared with the toast via the `recentlyToasted` cache).
+- [ ] Fire two distinct messages while backgrounded — two banners, latest on top.
+- [ ] In a browser build (open `http://localhost:4174` in Chrome instead of the Tauri app): an OSC 9 fires the toast only — no OS banner, no errors in the JS console.
+
 ---
 
 ## Automated Coverage Summary

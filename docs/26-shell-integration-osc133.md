@@ -2,7 +2,15 @@
 
 ## 26.1 Status
 
-**Design only.** This doc is the feasibility spike produced for HS-7265. The protocol, data model, UI, and phased scope are proposed here; implementation tickets (HS-7265-a through HS-7265-d below) are separately tracked and land in later changes.
+**Phase 1a shipped (HS-7267):** the OSC 133 parser hook, `CommandRecord` ring (bounded at 500), A/B/C/D state machine, gutter-glyph decoration, reset-on-restart, and dangling-record cleanup on PTY exit are all in `src/client/terminal.tsx`. Pure helpers extracted to `src/client/terminalOsc133.ts` (`parseOsc133ExitCode`, `exitCodeGutterClass`) with 11 unit tests covering bare-D / D;N / VS Code 633 D;N;key=value / non-numeric rejection / exit-code → CSS class mapping. CSS under `.terminal-osc133-gutter-{success,failure,neutral}` renders green check / red X / grey dot per command.
+
+**Phase 1b shipped (HS-7268):** a copy-last-output toolbar button that reads the most recent command's output via `computeLastOutputRange` (pure helper in `terminalOsc133.ts`, 12 new unit tests) and writes to `navigator.clipboard`. The button is hidden until the first OSC 133 escape arrives (`applyShellIntegrationToolbarVisibility`) and re-hides on PTY restart. See [31-osc133-copy-last-output.md](31-osc133-copy-last-output.md).
+
+**Phase 2 shipped (HS-7269):** Cmd/Ctrl+Up/Down jump shortcuts via `term.attachCustomKeyEventHandler` → `findPromptLine` pure helper → `term.scrollToLine`; hover popover on every gutter glyph with Copy command / Copy output / Rerun actions (`readRecordCommand` / `readRecordOutput` helpers that read per-record B→C and C→D ranges); `shell_integration_ui` per-project setting (default true) under Settings → Terminal that gates the whole Phase 2 UI (gutter glyphs + popover + shortcuts + Phase 1b button) without disabling the parser. 9 new unit tests for `findPromptLine`. See [32-osc133-jump-and-popover.md](32-osc133-jump-and-popover.md).
+
+**Phase 3 shipped (HS-7270):** fourth **Ask Claude** button in the Phase 2 popover, gated on `isChannelAlive()` at popover open time. Builds a diagnose-and-fix prompt via `buildAskClaudePrompt({command, exitCode, cwd, output})` pure helper (9 new unit tests covering null cwd / null exit code / empty output / output truncation / default cap at 8 000 chars) and dispatches via the existing `triggerChannelAndMarkBusy(message)` channel entry point. See [33-osc133-ask-claude.md](33-osc133-ask-claude.md).
+
+**All four phases shipped.** The OSC 133 rollout is complete. `shell_analysis` command-log entry type and cross-command context prompts are explicit non-goals; see §33.5.
 
 ## 26.2 What OSC 133 does
 
@@ -134,10 +142,13 @@ Rationale: bundling a Hot-Sheet-owned rc script turns into a support matrix (zsh
 
 ## 26.10 Implementation tickets (created alongside this doc)
 
-- **HS-7267** — Phase 1a foundation: OSC 133 handler + `CommandRecord` model + gutter column.
-- **HS-7268** — Phase 1b copy-last-output toolbar button.
-- **HS-7269** — Phase 2 jump shortcuts + hover popover (Copy / Rerun).
-- **HS-7270** — Phase 3 "Ask Claude about this" channel integration.
+- ~~**HS-7267** — Phase 1a foundation: OSC 133 handler + `CommandRecord` model + gutter column.~~ **Shipped.**
+- ~~**HS-7268** — Phase 1b copy-last-output toolbar button.~~ **Shipped** — see [31-osc133-copy-last-output.md](31-osc133-copy-last-output.md).
+- ~~**HS-7269** — Phase 2 jump shortcuts + hover popover (Copy / Rerun).~~ **Shipped** — see [32-osc133-jump-and-popover.md](32-osc133-jump-and-popover.md).
+- ~~**HS-7270** — Phase 3 "Ask Claude about this" channel integration.~~ **Shipped** — see [33-osc133-ask-claude.md](33-osc133-ask-claude.md).
+- **HS-7327** — Phase 1b Playwright e2e follow-up (output-only fixture + clipboard assertion).
+- **HS-7328** — Phase 2 Playwright e2e follow-up (jumps + popover + settings toggle assertion).
+- **HS-7332** — Phase 3 Playwright e2e follow-up (channel trigger assertion + channel-dead gate) + optional shell_analysis command-log event type.
 
 HS-7265 (this doc) is the feasibility spike only; it closes when this doc lands. Shipping HS-7267 through HS-7270 is tracked against those separate tickets.
 

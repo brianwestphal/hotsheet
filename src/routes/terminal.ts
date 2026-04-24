@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import { homedir } from 'os';
 
 import { DEFAULT_TERMINAL_ID, listTerminalConfigs, type TerminalConfig } from '../terminals/config.js';
 import {
@@ -7,6 +8,7 @@ import {
   destroyTerminal,
   ensureSpawned,
   getBellPending,
+  getCurrentCwd,
   getNotificationMessage,
   getTerminalStatus,
   killTerminal,
@@ -83,19 +85,29 @@ terminalRoutes.get('/list', (c) => {
   // tile can display `Exited (code N)` without needing a second round-trip.
   // HS-7264 — notificationMessage is set when the PTY pushed an OSC 9 desktop
   // notification (`\x1b]9;<message>\x07`); the client surfaces this as a toast.
-  const annotate = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean; notificationMessage: string | null; state: TerminalState; exitCode: number | null })[] =>
+  // HS-7278 — currentCwd is set when the PTY pushed an OSC 7 CWD
+  // (`\x1b]7;file://host/path\x07`); the dashboard renders it as a tile badge
+  // so the user can tell where each shell is without enlarging the tile.
+  const annotate = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean; notificationMessage: string | null; currentCwd: string | null; state: TerminalState; exitCode: number | null })[] =>
     items.map(item => {
       const status = getTerminalStatus(secret, dataDir, item.id);
       return {
         ...item,
         bellPending: getBellPending(secret, item.id),
         notificationMessage: getNotificationMessage(secret, item.id),
+        currentCwd: getCurrentCwd(secret, item.id),
         state: status.state,
         exitCode: status.exitCode,
       };
     });
 
-  return c.json({ configured: annotate(configured), dynamic: annotate(dynamic) });
+  // HS-7276 — the terminal CWD chip (§29.3) tildifies paths under $HOME. The
+  // client can't read its own env; push the resolved home dir alongside the
+  // terminal list so the chip can render `~/x` instead of `/Users/me/x` on
+  // the first /list tick. `os.homedir()` returns the correct value in both
+  // browser-mode (node running directly) and Tauri sidecar mode (Tauri spawns
+  // node with the user's env inherited).
+  return c.json({ configured: annotate(configured), dynamic: annotate(dynamic), home: homedir() });
 });
 
 /**

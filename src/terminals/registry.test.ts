@@ -673,6 +673,102 @@ describe('TerminalRegistry', () => {
     });
   });
 
+  // HS-7278 — server-side OSC 7 tracking so the dashboard can show a CWD
+  // badge on every tile (including cold / exited terminals) without
+  // mounting xterm.
+  describe('OSC 7 CWD tracking (HS-7278)', () => {
+    it('captures the CWD path from a file://host/path OSC 7 push', async () => {
+      const { getCurrentCwd } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc7-1', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]7;file://myhost/Users/me/Documents\x07');
+      expect(getCurrentCwd('osc7-1')).toBe('/Users/me/Documents');
+    });
+
+    it('captures the CWD from the empty-host file:///path form', async () => {
+      const { getCurrentCwd } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc7-2', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]7;file:///Users/me\x07');
+      expect(getCurrentCwd('osc7-2')).toBe('/Users/me');
+    });
+
+    it('decodes percent-encoded path bytes', async () => {
+      const { getCurrentCwd } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc7-3', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]7;file://host/Users/me/My%20Projects\x07');
+      expect(getCurrentCwd('osc7-3')).toBe('/Users/me/My Projects');
+    });
+
+    it('a later OSC 7 overwrites an earlier one (latest-wins, reflects cd commands)', async () => {
+      const { getCurrentCwd } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc7-4', d, sub);
+      const pty = FakePty.lastSpawned!;
+      pty.emit('\x1b]7;file://host/Users/me/project-a\x07');
+      pty.emit('\x1b]7;file://host/Users/me/project-b\x07');
+      expect(getCurrentCwd('osc7-4')).toBe('/Users/me/project-b');
+    });
+
+    it('does NOT set bellPending when OSC 7 arrives (shells emit it every prompt — would spam)', () => {
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc7-5', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]7;file://host/Users/me\x07');
+      expect(getBellPending('osc7-5')).toBe(false);
+    });
+
+    it('ignores non-file:// schemes (http://, ssh://, bogus)', async () => {
+      const { getCurrentCwd } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc7-6', d, sub);
+      const pty = FakePty.lastSpawned!;
+      pty.emit('\x1b]7;http://host/path\x07');
+      pty.emit('\x1b]7;ssh://host/path\x07');
+      pty.emit('\x1b]7;not-a-url\x07');
+      expect(getCurrentCwd('osc7-6')).toBeNull();
+    });
+
+    it('handles an OSC 7 payload split across PTY chunks', async () => {
+      const { getCurrentCwd } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc7-7', d, sub);
+      const pty = FakePty.lastSpawned!;
+      pty.emit('\x1b]7;file://host/Users/');
+      expect(getCurrentCwd('osc7-7')).toBeNull();
+      pty.emit('me/deep\x07');
+      expect(getCurrentCwd('osc7-7')).toBe('/Users/me/deep');
+    });
+
+    it('restartTerminal resets the server-side CWD so stale paths don\'t leak into a fresh shell', async () => {
+      const { getCurrentCwd } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc7-8', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]7;file://host/Users/me/old\x07');
+      expect(getCurrentCwd('osc7-8')).toBe('/Users/me/old');
+      restartTerminal('osc7-8', d);
+      expect(getCurrentCwd('osc7-8')).toBeNull();
+    });
+
+    it('OSC 7 and OSC 9 in the same chunk both land correctly', async () => {
+      const { getCurrentCwd, getNotificationMessage } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc7-9', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]7;file://host/Users/me\x07\x1b]9;Build done\x07');
+      expect(getCurrentCwd('osc7-9')).toBe('/Users/me');
+      expect(getNotificationMessage('osc7-9')).toBe('Build done');
+    });
+  });
+
   // HS-6799 — the first real client attach to an eager-spawned PTY must clear
   // the startup scrollback (shell welcome, PROMPT_SP EOL mark, OSC preamble)
   // that was emitted at DEFAULT 80×24 before the client had dims, resize the

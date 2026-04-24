@@ -97,7 +97,7 @@ Add to `docs/manual-test-plan.md` §12:
 
 ### Automated
 
-An e2e spec is tracked separately under HS-7274 — needs a fixture that emits an OSC 8 hyperlink and Playwright asserting the `openExternalUrl` round-trip. Cannot be fully covered in pure browser-mode e2e because Tauri's `open_url` is a native command; the spec will stub `window.__TAURI__.core.invoke` and assert `open_url` is called with the right URL.
+Shipped under HS-7274: `e2e/terminal-drawer-osc8.spec.ts` + `e2e/fixtures/terminal-osc8.sh`. The fixture emits an OSC 8 hyperlink wrapping the visible text `CLICK-OSC8-LINK` with a known URL and then prints a bare plain URL on the next line. The spec installs a Tauri `invoke` stub before the bundle loads (stubbing `window.__TAURI__.core.invoke` to push calls onto `window.__invokeCalls` and return `undefined`), opens the drawer, activates the fixture terminal, clicks the hyperlinked text, and asserts a matching `{ cmd: 'open_url', args: { url: <OSC8_URL> } }` call landed in the capture array. It then clicks the plain URL on the next line and asserts a second `open_url` call with the plain URL — covering the regression case where xterm's default `WebLinksAddon` handler (`window.open`) silently no-ops in WKWebView; HS-7263's custom handler must route plain URLs through the same `openExternalUrl` helper.
 
 ## 28.6 Cross-references
 
@@ -107,4 +107,4 @@ An e2e spec is tracked separately under HS-7274 — needs a fixture that emits a
 - xterm.js API: `ITerminalOptions.linkHandler`, `@xterm/addon-web-links` v0.12 custom handler signature.
 - Spec: [Gnome VTE OSC 8 proposal](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda).
 - `src-tauri/src/lib.rs:633` — `open_url` Tauri command implementation.
-- **Tickets:** HS-7263 (this doc), HS-7274 (e2e follow-up).
+- **Tickets:** HS-7263 (this doc), HS-7274 (Playwright e2e + fixture, shipped — see §28.5).

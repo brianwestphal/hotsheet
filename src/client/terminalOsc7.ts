@@ -37,6 +37,29 @@ export function parseOsc7Payload(payload: string): string | null {
 }
 
 /**
+ * Process-wide cache of the user's $HOME. Populated by `cacheHomeDir()` on
+ * the first `/api/terminal/list` response (HS-7276). `updateCwdChip` in
+ * `terminal.tsx` reads via `getCachedHomeDir()` so every chip render after
+ * the first /list tick tildifies `/Users/me/x` to `~/x`. Null until the
+ * server pushes a value, at which point the formatter gracefully falls back
+ * to the un-tildified form.
+ */
+let cachedHomeDir: string | null = null;
+
+/** Populate the module-level $HOME cache from the server's /terminal/list
+ *  response. Called once per project session (the value doesn't change
+ *  mid-session — Hot Sheet doesn't support switching users). Idempotent. */
+export function cacheHomeDir(home: string | null | undefined): void {
+  if (typeof home === 'string' && home !== '') cachedHomeDir = home;
+}
+
+/** Read the cached $HOME. Returns null until the first /terminal/list push
+ *  (and forever if the server omits the field — graceful degradation). */
+export function getCachedHomeDir(): string | null {
+  return cachedHomeDir;
+}
+
+/**
  * Compute a human-friendly display form of a CWD for the terminal toolbar
  * chip. Tildifies paths under the provided $HOME so `/Users/me/x` renders
  * as `~/x`, and truncates long paths to the last two segments when the full

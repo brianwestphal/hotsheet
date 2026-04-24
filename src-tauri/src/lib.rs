@@ -637,6 +637,28 @@ async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// HS-7272: fire a native OS notification. Called from JS when an OSC 9
+/// desktop-notification arrives while the Hot Sheet window is backgrounded
+/// or unfocused (the in-app toast always fires alongside; native is the
+/// extra channel for the not-currently-looking case). `title` is typically
+/// the project name, `body` is the shell-pushed message. macOS routes this
+/// through the user's Notification Center preferences; first fire may show
+/// an OS-level permission prompt.
+#[tauri::command]
+async fn show_native_notification(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn quicklook(path: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -804,6 +826,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(SidecarPid(Mutex::new(None)))
         .manage(PendingUpdate(Mutex::new(None)))
         .menu(|app| {
@@ -902,6 +925,7 @@ pub fn run() {
             request_attention_once,
             pick_folder,
             open_url,
+            show_native_notification,
             quicklook,
             #[cfg(not(debug_assertions))]
             open_project

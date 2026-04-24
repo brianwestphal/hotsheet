@@ -273,7 +273,7 @@ Click the tab's **×** → `POST /api/terminal/destroy` with the terminal id. Th
 1. Calls `destroyTerminal(secret, terminalId)` — tears down the PTY if alive, removes the session from the registry.
 2. Removes the entry from `dynamicConfigs`.
 
-The client removes the tab button and pane from the DOM. If the closed terminal was the active tab, the drawer falls back to Commands Log.
+The client removes the tab button and pane from the DOM. If the drawer was showing the closed terminal, the drawer falls back to the **nearest remaining terminal tab** (HS-7275): starting from the position of the first closed tab in the pre-close left-to-right order, walk rightward looking for a surviving terminal tab; if none is found, walk leftward; if no terminal tab survives the close, fall back to **Commands Log**. The "first closed tab" anchor matters only for bulk flows (below) — for a single close there is only one. The fallback is skipped entirely when the drawer was already showing a different tab (e.g., Commands Log or a surviving terminal) so the user is not yanked away from what they were viewing. Selection is computed by the pure helper `pickNearestTerminalTabId(orderBeforeClose, closedIds)` in `src/client/terminalTabSelection.ts`, with unit coverage in the sibling `.test.ts`.
 
 **Confirm-before-kill (HS-6701).** To match the Settings → Embedded Terminal delete flow (§22.17.4 above):
 

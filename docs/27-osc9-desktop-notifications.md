@@ -106,7 +106,7 @@ Plain `9;<message>` remains the supported form. Subcommand numbers `2`–`9` tha
 
 ## 27.7 Out of scope (explicit deferrals)
 
-- **Native OS notifications via `tauri-plugin-notification`.** HS-7272 follow-up ticket. Requires: Cargo dep + `.add_plugin` registration in `src-tauri/src/main.rs`, a JS-side permission-request at app start (`requestPermission`), a `fireNative(message, title)` wrapper that falls back to the toast when `getTauriInvoke()` is null. V1 ships toast-only; v2 adds the native channel for backgrounded-Tauri case.
+- **Native OS notifications via `tauri-plugin-notification`.** ~~HS-7272 follow-up ticket.~~ Shipped under HS-7272 — see [30-osc9-native-notifications.md](30-osc9-native-notifications.md). The native channel fires **alongside** the toast only when `document.hidden || !document.hasFocus()` so a user actively looking at Hot Sheet doesn't get a double-notification.
 - **Cross-project OSC 9 toasts.** See §27.5 — the bell glyph does the cross-project signalling; toasts stay active-project-only. Revisit if users report missing notifications from backgrounded projects.
 - **Click-to-focus / click-to-open the firing terminal.** The toast is transient and non-interactive for v1. A click handler that switches projects + activates the terminal is a natural extension; defer until needed.
 - **Audio.** The bell feature (§23) explicitly has no audio chime; OSC 9 inherits that policy.
@@ -129,9 +129,16 @@ In `src/terminals/registry.test.ts`, a new `describe('OSC 9 desktop notification
 
 `src/routes/projects.test.ts` updated to exercise the new `notifications` map in the `/projects/bell-state` response.
 
-### Follow-up tests
+### E2E (shipped under HS-7273)
 
-E2E coverage (Playwright) and a manual-test-plan entry are tracked under HS-7273 (follow-up) — they need a fixture that emits OSC 9 via a real PTY (same pattern as the title/bell tests in `e2e/terminal-drawer-title-and-bell.spec.ts`).
+`e2e/terminal-drawer-osc9.spec.ts` + `e2e/fixtures/terminal-osc9.sh` run a real PTY that emits OSC 9 escapes in one of four modes (`simple`, `dedupe`, `sequence`, `progress`) selected by a `MODE` env var. Toast counts are captured via a `MutationObserver` set up in `addInitScript` that pushes every `.hs-toast` node addition onto `window.__toastEvents` with its text content — necessary because the DOM only ever holds one toast at a time (a new toast replaces the old). The four tests cover:
+
+- **Simple:** OSC 9 BEL-terminated message renders a toast with the expected text AND the inactive drawer tab gains the bell glyph. Clicking the tab clears the bell glyph (server-side `/terminal/clear-bell`) and the toast auto-fades.
+- **Dedupe:** identical message emitted twice in rapid succession → exactly one toast in `__toastEvents` after a 4 s stabilization wait, proving the `recentlyToasted` cache in `bellPoll.tsx` is keyed on message (not just terminalId).
+- **Sequence:** two distinct messages → at least one toast observed, final toast text matches the second message (latest-wins on the server, so the first may coalesce depending on poll cadence, but the second must surface).
+- **Progress parked:** `\e]9;4;3;50\a` → empty `__toastEvents` array and zero bell-glyph nodes on the tab.
+
+Test isolation: `beforeEach` destroys every fixture terminal id used in the file (`osc9-simple`, `osc9-dedupe`, `osc9-sequence`, `osc9-progress`) via `/api/terminal/destroy` before reconfiguring the one the current test needs — without this, server-side `notificationMessage` state on previously-configured terminals leaks into later tests' toast events (rewriting the `terminals` array in `file-settings` doesn't kill their PTY sessions).
 
 ## 27.9 Manual test plan (add to `docs/manual-test-plan.md` §12)
 
@@ -150,4 +157,4 @@ E2E coverage (Playwright) and a manual-test-plan entry are tracked under HS-7273
 - [24-cross-project-bell.md](24-cross-project-bell.md) — long-poll transport that carries `notifications` now.
 - [25-terminal-dashboard.md](25-terminal-dashboard.md) — tile bell indicators pick up OSC 9's `bellPending` flip for free.
 - `src/client/toast.tsx` — shared toast helper.
-- **Tickets:** HS-7264 (this doc), HS-7272 (native Tauri notification follow-up), HS-7273 (e2e coverage follow-up).
+- **Tickets:** HS-7264 (this doc), HS-7272 (native Tauri notification follow-up — shipped, see [30-osc9-native-notifications.md](30-osc9-native-notifications.md)), HS-7273 (Playwright e2e + manual-test-plan entry, shipped — see §27.8 and §27.9).

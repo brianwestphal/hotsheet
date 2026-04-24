@@ -240,6 +240,10 @@ input, select, textarea {
   margin-left: auto;
   padding: 4px 10px;
   color: var(--text-muted);
+  // HS-7271 — position:relative so the absolutely-positioned tick container
+  // (see below) resolves its `left` / `width` against this box, which the
+  // client-side helper computes from the slider's bounding rect.
+  position: relative;
 
   input[type="range"] {
     width: 200px;
@@ -248,6 +252,28 @@ input, select, textarea {
   }
 
   svg { display: block; flex-shrink: 0; }
+}
+
+// HS-7271 — subtle tick marks under the slider at snap-point positions
+// (widths where N tiles fit across exactly, accounting for TILE_GAP).
+// Positioned absolutely over the slider track; `left` / `width` are set
+// by `refreshSnapPointIndicators()` from the slider's getBoundingClientRect
+// so window-resize layout changes stay aligned.
+.terminal-dashboard-sizer-ticks {
+  position: absolute;
+  bottom: 0;
+  height: 4px;
+  pointer-events: none; // purely cosmetic, don't block slider drag
+}
+
+.terminal-dashboard-sizer-tick {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 4px;
+  background: var(--text-muted);
+  opacity: 0.45;
+  transform: translateX(-0.5px); // center the 1px tick on its % position
 }
 
 .terminal-dashboard-loading,
@@ -590,6 +616,22 @@ input, select, textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: center;
+}
+
+// HS-7278 — tile CWD badge rendered below the terminal label when the server
+// has seen at least one OSC 7 push. Monospace + slightly dimmer than the
+// label so it reads as secondary metadata (the terminal title is primary).
+.terminal-dashboard-tile-cwd {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.75;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  margin-top: 1px;
 }
 
 body.terminal-dashboard-active {
@@ -2637,14 +2679,28 @@ body.terminal-dashboard-active {
   overflow-y: auto;
 }
 
-// HS-6637: bottom-left text link that dismisses the popup without
-// minimizing (for cases where the user will respond via Claude directly).
+// HS-6637 / HS-7266: bottom-left text links. "Minimize" drops the popup into
+// the owning tab's pulsating dot for later; "No response needed" dismisses
+// outright (user will respond via Claude directly).
+.permission-popup-links {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.permission-popup-links-sep {
+  color: var(--text-muted);
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.permission-popup-minimize-link,
 .permission-popup-dismiss-link {
   align-self: flex-start;
   font-size: 11px;
   color: var(--text-muted);
   text-decoration: none;
-  margin-top: 2px;
 
   &:hover {
     text-decoration: underline;
@@ -5206,6 +5262,25 @@ body.terminal-dashboard-active {
 
 .terminal-header-spacer { flex: 1; }
 
+// HS-7267 — OSC 133 shell-integration gutter glyphs. Rendered as a small
+// icon in the left-gutter column of the xterm viewport at each command's
+// prompt-start row. Colour encodes exit code: green check (exit 0), red X
+// (non-zero), neutral dot (exit code not reported).
+.terminal-osc133-gutter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+
+  svg { display: block; }
+
+  &.terminal-osc133-gutter-success { color: #22c55e; }
+  &.terminal-osc133-gutter-failure { color: #ef4444; }
+  &.terminal-osc133-gutter-neutral { color: var(--text-muted); opacity: 0.5; }
+}
+
 // HS-7262 — CWD chip showing the shell's current working directory (pushed
 // via OSC 7). Click opens the folder in the OS file manager.
 .terminal-cwd-chip {
@@ -5260,6 +5335,64 @@ body.terminal-dashboard-active {
   &.is-stop-pending {
     color: var(--danger);
     &:hover { background: rgba(239, 68, 68, 0.12); }
+  }
+
+  // HS-7268 — copy-last-output feedback. `copied` flashes green (matches the
+  // gutter success glyph) for ~900ms after a successful clipboard write.
+  // `shake` fires a brief horizontal wiggle for no-op clicks so the user sees
+  // that the click was registered even though nothing was copied.
+  &.terminal-copy-output-btn.copied {
+    color: #22c55e;
+  }
+  &.terminal-copy-output-btn.shake {
+    animation: terminal-copy-output-shake 0.35s ease-out 1;
+  }
+}
+
+@keyframes terminal-copy-output-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+// HS-7269 — hover popover anchored to each OSC 133 gutter glyph. Three
+// inline-flex buttons (Copy command / Copy output / Rerun). Positioned in
+// fixed coordinates relative to the glyph's getBoundingClientRect; the
+// transform: translateY(-50%) vertically centers on the glyph.
+.terminal-osc133-popover {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  font-size: 11px;
+
+  .terminal-osc133-popover-btn {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    padding: 3px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+    font-size: inherit;
+    font-family: inherit;
+
+    &:hover {
+      background: var(--bg-hover);
+    }
+
+    // HS-7270 — Ask Claude sits last in the popover and visually reads as
+    // the "headline" action for failing commands. Accent-coloured text so
+    // it's obvious even on a scan past the three utility actions.
+    &.terminal-osc133-popover-ask {
+      color: var(--accent, #60a5fa);
+      font-weight: 600;
+    }
   }
 }
 

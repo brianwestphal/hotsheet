@@ -101,6 +101,74 @@ export function showSkillsBanner() {
   dismissBtn?.addEventListener('click', () => { banner.style.display = 'none'; });
 }
 
+/** HS-7272 — native OS notification helpers.
+ *
+ *  `tauri-plugin-notification` exposes `isPermissionGranted` / `requestPermission`
+ *  on `window.__TAURI__.notification` when `withGlobalTauri` is set (see
+ *  `tauri.conf.json`). We access it through the global object so the browser
+ *  build doesn't have to import a Tauri-only module. Permission is requested
+ *  once per app lifetime — macOS routes the first call through the OS
+ *  permission prompt; subsequent calls short-circuit on `isPermissionGranted`.
+ *
+ *  `fireNativeNotification` invokes the Rust-side `show_native_notification`
+ *  command (see `src-tauri/src/lib.rs`), which calls
+ *  `app.notification().builder().show()`. When running in a browser,
+ *  `getTauriInvoke()` returns null and the function resolves to `false` — the
+ *  caller (e.g. `bellPoll.maybeFireNotificationToast`) still fires the in-app
+ *  toast, so browser users don't miss the message.
+ *
+ *  `isAppBackgrounded` is the gate the caller uses to avoid a double
+ *  notification when the Hot Sheet window is already focused — toast alone is
+ *  enough in that case.
+ */
+interface TauriNotificationGlobal {
+  isPermissionGranted?: () => Promise<boolean>;
+  requestPermission?: () => Promise<string>;
+}
+
+function getTauriNotificationGlobal(): TauriNotificationGlobal | null {
+  const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
+    | { notification?: TauriNotificationGlobal }
+    | undefined;
+  return tauri?.notification ?? null;
+}
+
+let notificationPermissionPrimed = false;
+
+export async function requestNativeNotificationPermission(): Promise<void> {
+  if (notificationPermissionPrimed) return;
+  notificationPermissionPrimed = true;
+  const api = getTauriNotificationGlobal();
+  if (api?.isPermissionGranted == null || api.requestPermission == null) return;
+  try {
+    const granted = await api.isPermissionGranted();
+    if (!granted) await api.requestPermission();
+  } catch {
+    // Permission prompt failure is non-fatal — the toast channel still works.
+  }
+}
+
+export async function fireNativeNotification(title: string, body: string): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+  try {
+    await invoke('show_native_notification', { title, body });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isAppBackgrounded(): boolean {
+  return document.hidden || !document.hasFocus();
+}
+
+/** Test-only reset of the permission-primed guard. Not exported to production
+ *  callers — tests import via the .js path and need a clean slate between cases. */
+export function _resetNotificationPermissionForTests(): void {
+  notificationPermissionPrimed = false;
+}
+
 /** Open an external URL from anywhere in the client.
  *
  *  Tauri WKWebView silently no-ops `window.open`, so we route through the

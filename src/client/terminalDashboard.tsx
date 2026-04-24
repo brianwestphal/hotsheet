@@ -11,14 +11,18 @@ import { toElement } from './dom.js';
 import type { ProjectInfo } from './state.js';
 import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 import {
+  computeSliderSnapPoints,
   computeTileScale,
   DASHBOARD_FALLBACK_COLS,
   DASHBOARD_FALLBACK_ROWS,
+  maybeSnapSliderValue,
   ROOT_PADDING,
+  type SnapPoint,
   TILE_ASPECT,
   tileNativeGridFromCellMetrics,
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
+import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
 import { readXtermTheme } from './xtermTheme.js';
 
@@ -67,6 +71,10 @@ export interface TerminalListEntry {
   bellPending?: boolean;
   state?: TerminalSessionState;
   exitCode?: number | null;
+  /** HS-7278 — server-tracked OSC 7 CWD, rendered as a tile badge so a cold
+   *  tile (never-mounted / exited) still shows where the shell was working.
+   *  Null until the shell pushes its first OSC 7; resets on PTY restart. */
+  currentCwd?: string | null;
   /** HS-7065: set by `fetchProjectSections` from the list-response bucket the
    *  entry came from. True for dynamic terminals (created ad-hoc), false for
    *  configured terminals from settings.json. Closable vs. rename-only in the
@@ -173,6 +181,11 @@ let bellUnsubscribe: (() => void) | null = null;
  *  / exit), defaults to the middle of its range. */
 let sizerContainer: HTMLElement | null = null;
 let sizeSlider: HTMLInputElement | null = null;
+/** HS-7271 — snap points currently rendered as tick marks under the slider.
+ *  Recomputed whenever root width changes (window resize, dashboard enter).
+ *  Input-time snapping reads from this array via `maybeSnapSliderValue`. */
+let currentSnapPoints: SnapPoint[] = [];
+
 /** Last slider value applied — survives between enter / exit calls so the
  *  user's preferred tile size sticks in-session (reset on page reload).
  *  HS-7129: default is 33 — the previous 50 midpoint produced tiles big
@@ -204,8 +217,15 @@ export function initTerminalDashboard(): void {
   sizeSlider = document.getElementById('terminal-dashboard-size-slider') as HTMLInputElement | null;
   sizeSlider?.addEventListener('input', () => {
     if (sizeSlider === null) return;
-    const parsed = Number.parseInt(sizeSlider.value, 10);
-    sliderValue = Number.isFinite(parsed) ? parsed : 33;
+    const parsed = Number.parseFloat(sizeSlider.value);
+    const rawValue = Number.isFinite(parsed) ? parsed : 33;
+    // HS-7271 — auto-snap to "N tiles fit per row" values when the user
+    // drags within SLIDER_SNAP_THRESHOLD of one. maybeSnapSliderValue is a
+    // no-op (returns rawValue verbatim) when no snap is in range, so
+    // intermediate positions remain freely reachable.
+    const snapped = maybeSnapSliderValue(rawValue, currentSnapPoints);
+    sliderValue = snapped;
+    if (snapped !== rawValue) sizeSlider.value = String(snapped);
     if (active && rootElement !== null) applyTileSizing(rootElement);
   });
 
@@ -333,6 +353,9 @@ function enterDashboard(): void {
     resizeRaf = requestAnimationFrame(() => {
       resizeRaf = null;
       if (rootElement !== null) applyTileSizing(rootElement);
+      // HS-7271 — snap points depend on the available root width (N fits
+      // differently at 1200 vs. 1800 px), so recompute ticks on resize.
+      refreshSnapPointIndicators();
       // HS-6964: re-center the currently-zoomed tile (if any) so it stays
       // centered in the new viewport instead of anchored to the left / top
       // it was placed at when `centerTile` first ran.
@@ -340,6 +363,9 @@ function enterDashboard(): void {
     });
   };
   window.addEventListener('resize', resizeHandler);
+  // HS-7271 — seed snap-point ticks on first enter so they're visible as soon
+  // as the slider appears. Subsequent resizes run via resizeHandler above.
+  refreshSnapPointIndicators();
 
   // HS-6837: react to cross-project bell state so the dashboard tile shows
   // a bounce + persistent outline the moment a bell fires in ANY terminal,
@@ -354,6 +380,45 @@ function enterDashboard(): void {
       void key; // silence noUnusedParameters in destructure
     }
   });
+}
+
+/**
+ * HS-7271 — recompute snap points from the current root width and render a
+ * small tick mark under the slider at each "N tiles fit per row" position.
+ * The tick container is created on first call and reused thereafter. No-op
+ * when the slider container isn't mounted (dashboard never opened).
+ */
+function refreshSnapPointIndicators(): void {
+  if (sizerContainer === null || rootElement === null || sizeSlider === null) return;
+  const rootWidth = rootElement.clientWidth - 2 * ROOT_PADDING;
+  currentSnapPoints = computeSliderSnapPoints(rootWidth);
+
+  // The tick container overlays the slider by matching its width and
+  // offsetLeft relative to the sizerContainer. Positions update on every
+  // recompute so window-resize layout shifts (slider shrinks into less
+  // available header space) keep the ticks aligned.
+  let ticksEl = sizerContainer.querySelector<HTMLElement>('.terminal-dashboard-sizer-ticks');
+  if (ticksEl === null) {
+    ticksEl = document.createElement('div');
+    ticksEl.className = 'terminal-dashboard-sizer-ticks';
+    ticksEl.setAttribute('aria-hidden', 'true');
+    sizerContainer.appendChild(ticksEl);
+  }
+  const sliderRect = sizeSlider.getBoundingClientRect();
+  const containerRect = sizerContainer.getBoundingClientRect();
+  ticksEl.style.left = `${sliderRect.left - containerRect.left}px`;
+  ticksEl.style.width = `${sliderRect.width}px`;
+  // Rebuild rather than diff — there are only a handful of ticks and they
+  // can reorder on resize. `title` carries the "N per row" count so a user
+  // hovering a tick learns what it represents.
+  ticksEl.innerHTML = '';
+  for (const pt of currentSnapPoints) {
+    const tick = document.createElement('span');
+    tick.className = 'terminal-dashboard-sizer-tick';
+    tick.style.left = `${pt.sliderValue}%`;
+    tick.title = `${pt.perRow} per row`;
+    ticksEl.appendChild(tick);
+  }
 }
 
 /**
@@ -450,13 +515,35 @@ function renderProjectSection(data: ProjectSectionData): HTMLElement {
   const addBtn = section.querySelector<HTMLButtonElement>('.terminal-dashboard-add-terminal-btn');
   addBtn?.addEventListener('click', (e) => {
     e.stopPropagation();
-    void createDashboardTerminal(data.project.secret);
+    void createDashboardTerminal(data.project.secret, data.terminals);
   });
   return section;
 }
 
 /**
- * HS-7064 / HS-7228: create a dynamic terminal via the project's
+ * Pick a CWD to pass as the new terminal's `cwd` so it opens where the user
+ * is currently working in this project. HS-7277 — mirrors iTerm2's "New Tab
+ * with Profile: Same directory". Prefers dynamic-bucket tiles over configured
+ * ones because dynamic terminals are the user's ad-hoc spawns and a recent
+ * `cd` there is the strongest signal of intent; configured tiles tend to sit
+ * in their rarely-moving default cwd.
+ *
+ * Returns null (no override, server uses project default) when no tile has a
+ * server-tracked CWD yet — HS-7278 tracks CWDs only after the first OSC 7
+ * push, so a fresh project with no alive tiles falls through gracefully.
+ */
+function pickInheritedCwd(terminals: TerminalListEntry[]): string | null {
+  const dynamics = terminals.filter(t => t.dynamic === true);
+  const statics = terminals.filter(t => t.dynamic !== true);
+  for (const t of [...dynamics, ...statics]) {
+    const cwd = t.currentCwd;
+    if (typeof cwd === 'string' && cwd !== '') return cwd;
+  }
+  return null;
+}
+
+/**
+ * HS-7064 / HS-7228 / HS-7277: create a dynamic terminal via the project's
  * `/api/terminal/create` endpoint, then rebuild the dashboard so the new
  * tile appears in the section. No prompt, uses the default shell.
  *
@@ -466,14 +553,20 @@ function renderProjectSection(data: ProjectSectionData): HTMLElement {
  * triggers the spawn); the dashboard has no such follow-up attach (tiles
  * render from the `/terminal/list` response alone), so without explicit
  * spawn the new tile would render as a `not_spawned` placeholder and the
- * user would have to click it to get a running shell — that's the gap
- * HS-7228 closes.
+ * user would have to click it to get a running shell.
+ *
+ * HS-7277: also passes the `cwd` of the project's most-recent OSC 7 push so
+ * the new shell opens where the user is currently working — matches iTerm2's
+ * "same directory" split-pane behaviour.
  */
-async function createDashboardTerminal(secret: string): Promise<void> {
+async function createDashboardTerminal(secret: string, terminals: TerminalListEntry[]): Promise<void> {
+  const inheritedCwd = pickInheritedCwd(terminals);
+  const body: { spawn: boolean; cwd?: string } = { spawn: true };
+  if (inheritedCwd !== null) body.cwd = inheritedCwd;
   try {
     await apiWithSecret<{ config: { id: string } }>('/terminal/create', secret, {
       method: 'POST',
-      body: { spawn: true },
+      body,
     });
   } catch (err) {
     console.error('terminalDashboard: create terminal failed', err);
@@ -519,6 +612,12 @@ function renderTile(secret: string, terminal: TerminalListEntry): HTMLElement {
   const label = tileLabel(terminal);
   const state: TerminalSessionState = terminal.state ?? 'not_spawned';
   const exitCode = terminal.exitCode ?? null;
+  // HS-7278 — show the shell's current working directory below the tile
+  // label. Uses the same formatter as the drawer's CWD chip (tildification
+  // when $HOME is known; last-two-segments truncation when long). Hidden when
+  // the server hasn't seen an OSC 7 yet — avoids a blank placeholder line.
+  const cwd = terminal.currentCwd ?? null;
+  const cwdLabel = cwd !== null && cwd !== '' ? formatCwdLabel(cwd, getCachedHomeDir()) : '';
   const tileRoot = toElement(
     <div
       className={`terminal-dashboard-tile terminal-dashboard-tile-${state}`}
@@ -529,6 +628,9 @@ function renderTile(secret: string, terminal: TerminalListEntry): HTMLElement {
         {renderTilePreviewContent(state, exitCode)}
       </div>
       <div className="terminal-dashboard-tile-label" title={label}>{label}</div>
+      {cwdLabel === ''
+        ? null
+        : <div className="terminal-dashboard-tile-cwd" title={cwd ?? ''}>{cwdLabel}</div>}
     </div>
   );
   const preview = tileRoot.querySelector<HTMLElement>('.terminal-dashboard-tile-preview');

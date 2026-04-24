@@ -12,12 +12,15 @@ import { requestAttention } from './tauriIntegration.js';
  * non-active projects. HS-6536 unified them — every pending permission
  * (active or not) uses the same popup anchored to its project tab.
  *
- * HS-6637: clicking outside the popup MINIMIZES it into a pulsating blue dot
- * on the owning project's tab instead of dismissing it. Clicking the tab
- * re-shows the same popup. The "No response needed" link at the popup's
- * bottom-left dismisses outright (for cases where the user wants to respond
- * via Claude directly). A minimized popup auto-dismisses after 2 minutes so
- * it can't linger forever.
+ * HS-6637: Minimizing the popup drops it into a pulsating blue dot on the
+ * owning project's tab; clicking the tab re-shows the same popup. The "No
+ * response needed" link at the popup's bottom-left dismisses outright (for
+ * cases where the user wants to respond via Claude directly). A minimized
+ * popup auto-dismisses after 2 minutes so it can't linger forever.
+ *
+ * HS-7266: the popup is non-modal — it does NOT dismiss or minimize on
+ * outside clicks. Users can interact with the rest of the UI while it is
+ * visible. Minimize is an explicit action via the popup's own Minimize link.
  */
 
 export type PermissionData = { request_id: string; tool_name: string; description: string; input_preview?: string };
@@ -201,7 +204,11 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
           <span className="permission-popup-desc">{perm.description}</span>
         </div>
         {hasPreview ? <pre className="permission-popup-preview">{previewText}</pre> : ''}
-        <a className="permission-popup-dismiss-link" href="#">No response needed</a>
+        <div className="permission-popup-links">
+          <a className="permission-popup-minimize-link" href="#">Minimize</a>
+          <span className="permission-popup-links-sep">·</span>
+          <a className="permission-popup-dismiss-link" href="#">No response needed</a>
+        </div>
       </div>
       <div className="permission-popup-actions">
         <button className="permission-popup-allow" title="Allow">{raw(checkIcon)}</button>
@@ -214,7 +221,6 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     popup.remove();
     activePopupRequestId = null;
     if (tab) tab.classList.remove('permission-highlight');
-    document.removeEventListener('click', outsideClick, true);
   }
 
   function cleanupAndDismiss() {
@@ -233,19 +239,6 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     }, MINIMIZED_TIMEOUT_MS);
     minimizedRequests.set(perm.request_id, { secret, perm, timeoutId });
     syncMinimizedDots();
-  }
-
-  function outsideClick(e: MouseEvent) {
-    if (popup.contains(e.target as Node)) return;
-    // Click elsewhere → minimize the popup into a pulsating tab dot.
-    cleanupAndMinimize();
-    // If the click was on the owning tab, also swallow so the tab's own
-    // click handler doesn't immediately reopen what we just minimized
-    // (toggle semantics: tab click on open popup = minimize).
-    if (tab && tab.contains(e.target as Node)) {
-      e.stopPropagation();
-      e.preventDefault();
-    }
   }
 
   function respondToPermission(behavior: 'allow' | 'deny') {
@@ -283,6 +276,12 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     respondToPermission('deny');
   });
 
+  popup.querySelector('.permission-popup-minimize-link')!.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    cleanupAndMinimize();
+  });
+
   popup.querySelector('.permission-popup-dismiss-link')!.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -306,7 +305,6 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     requestAttention(state.settings.notify_permission);
   }
 
-  // Close on outside click (deferred + capture phase so we can swallow the
-  // click on the owning tab and prevent toggle-bounce).
-  setTimeout(() => document.addEventListener('click', outsideClick, true), 0);
+  // HS-7266: no outside-click handler. The popup is non-modal and only
+  // closes via Allow / Deny / Minimize / No-response-needed.
 }

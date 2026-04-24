@@ -26,7 +26,7 @@ import type { AppSettings, Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from './state.js';
 import { bindDetailTagInput } from './tagAutocomplete.js'; // .tsx file, JSX enabled
 import { showTagsDialog } from './tagsDialog.js';
-import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, restoreAppIcon } from './tauriIntegration.js';
+import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
 import { initTerminal } from './terminal.js';
 import { initTerminalDashboard } from './terminalDashboard.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
@@ -229,6 +229,10 @@ async function init() {
   // bell state on project tabs and feeds the in-drawer indicator for
   // bells fired while the user is inside another project.
   startBellPolling();
+  // HS-7272 — prime Tauri notification permission once. First call on macOS
+  // shows the OS permission dialog; subsequent calls short-circuit. A denial
+  // here is fine — the in-app toast still fires for every OSC 9.
+  void requestNativeNotificationPermission();
   // Dashboard sidebar widget
   void initDashboardWidget();
   // Share prompt and toolbar button

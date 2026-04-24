@@ -62,6 +62,40 @@ test.describe('Permission popup', () => {
     await expect(popup.locator('.permission-popup-deny')).toBeVisible();
   });
 
+  test('renders Minimize and No-response-needed text links in a shared row (HS-6637, HS-7266)', async ({ page }) => {
+    // HS-7266: the popup is non-modal and offers an explicit Minimize link
+    // alongside the existing "No response needed" link. Both appear inside a
+    // `.permission-popup-links` flex row separated by a `·` bullet.
+    await page.evaluate(() => {
+      const popup = document.createElement('div');
+      popup.className = 'permission-popup';
+      popup.innerHTML = `
+        <div class="permission-popup-body">
+          <div class="permission-popup-header">
+            <span class="permission-popup-tool">Bash</span>
+            <span class="permission-popup-desc">Run a command</span>
+          </div>
+          <div class="permission-popup-links">
+            <a class="permission-popup-minimize-link" href="#">Minimize</a>
+            <span class="permission-popup-links-sep">·</span>
+            <a class="permission-popup-dismiss-link" href="#">No response needed</a>
+          </div>
+        </div>
+        <div class="permission-popup-actions">
+          <button class="permission-popup-allow" title="Allow"></button>
+          <button class="permission-popup-deny" title="Deny"></button>
+        </div>
+      `;
+      document.body.appendChild(popup);
+    });
+
+    const popup = page.locator('.permission-popup');
+    await expect(popup.locator('.permission-popup-links')).toBeVisible();
+    await expect(popup.locator('.permission-popup-minimize-link')).toHaveText('Minimize');
+    await expect(popup.locator('.permission-popup-dismiss-link')).toHaveText('No response needed');
+    await expect(popup.locator('.permission-popup-links-sep')).toHaveText('·');
+  });
+
   test('omits the preview block when input_preview is empty', async ({ page }) => {
     // showPermissionPopup conditionally renders the <pre> only when the preview is non-empty.
     await page.evaluate(() => {

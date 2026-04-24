@@ -19,6 +19,7 @@
 import { api } from './api.js';
 import { updateProjectBellIndicators } from './projectTabs.js';
 import { getActiveProject } from './state.js';
+import { fireNativeNotification, isAppBackgrounded } from './tauriIntegration.js';
 import { showToast } from './toast.js';
 
 export interface BellStateEntry {
@@ -141,6 +142,18 @@ function maybeFireNotificationToast(secret: string, terminalId: string, message:
   // 6 s default — OSC 9 messages are user-readable ("Build done", "Tests passed",
   // "Deploy failed — see logs"), longer than the 3 s plugin-action toast.
   showToast(message, { durationMs: 6000 });
+  // HS-7272 — also surface a native OS notification when the Hot Sheet window
+  // is backgrounded (hidden tab or another app focused). The toast is enough
+  // when the user is already looking at Hot Sheet; when they aren't, the toast
+  // will auto-fade before they return and they'd never see it. In a browser
+  // context `fireNativeNotification` silently resolves false — the toast
+  // alone carries the message. Dedupe is shared with the toast via the
+  // `recentlyToasted` check above so a build server emitting the same message
+  // on every long-poll tick doesn't spam the Notification Center either.
+  if (isAppBackgrounded()) {
+    const projectName = getActiveProject()?.name ?? 'Hot Sheet';
+    void fireNativeNotification(projectName, message);
+  }
 }
 
 /** Drop dedupe entries for terminals whose OSC 9 was cleared (bell ack) so a

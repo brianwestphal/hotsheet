@@ -44,6 +44,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     (document.getElementById('settings-verified-days') as HTMLInputElement).value = String(state.settings.verified_cleanup_days);
     (document.getElementById('settings-auto-order') as HTMLInputElement).checked = state.settings.auto_order;
     (document.getElementById('settings-hide-verified-column') as HTMLInputElement).checked = state.settings.hide_verified_column;
+    (document.getElementById('settings-shell-integration-ui') as HTMLInputElement).checked = state.settings.shell_integration_ui;
     (document.getElementById('settings-notify-permission') as HTMLSelectElement).value = state.settings.notify_permission;
     (document.getElementById('settings-notify-completed') as HTMLSelectElement).value = state.settings.notify_completed;
     overlay.style.display = 'flex';
@@ -178,6 +179,17 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     // Re-render to apply column change immediately
     const { renderTicketList } = await import('./ticketList.js');
     renderTicketList();
+  });
+
+  // HS-7269 — Shell integration UI toggle. Covers gutter glyphs + copy-output
+  // button + Cmd/Ctrl+Arrow jump shortcuts + hover popover. Toggling fires a
+  // custom event that the terminal module listens for so it can re-apply
+  // visibility on the currently-active instance without a full rebuild.
+  const shellIntegrationCheckbox = document.getElementById('settings-shell-integration-ui') as HTMLInputElement;
+  shellIntegrationCheckbox.addEventListener('change', () => {
+    state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
+    void api('/settings', { method: 'PATCH', body: { shell_integration_ui: String(shellIntegrationCheckbox.checked) } });
+    document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
   });
 
   // Notification dropdowns

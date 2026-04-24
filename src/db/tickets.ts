@@ -79,11 +79,24 @@ export async function updateTicket(id: number, updates: Partial<{
   const values: unknown[] = [];
   let paramIdx = 1;
 
-  // Columns that the status-transition block below may set unconditionally.
-  // If status is being updated, skip these in the general loop to avoid
-  // "multiple assignments to same column" SQL errors.
-  const STATUS_MANAGED = new Set(['completed_at', 'verified_at', 'deleted_at', 'up_next']);
+  // Columns the status-transition block below sets unconditionally. If status
+  // is being updated, skip these in the general loop to avoid "multiple
+  // assignments to same column" SQL errors. HS-7279 — `up_next` is ONLY
+  // managed by transitions that explicitly override it (completed / verified
+  // / backlog / archive all clear up_next); for not_started / started /
+  // deleted the caller-supplied `up_next` must pass through the general loop
+  // so that reopening a completed ticket via {status:'not_started',
+  // up_next:true} (the "click star on a done ticket" client path in
+  // toggleUpNext) actually flips the flag. Previously the star click left
+  // the status changed but up_next stuck at false.
   const statusChanging = updates.status !== undefined;
+  const statusOverridesUpNext = updates.status === 'completed'
+    || updates.status === 'verified'
+    || updates.status === 'backlog'
+    || updates.status === 'archive';
+  const STATUS_MANAGED = statusOverridesUpNext
+    ? new Set(['completed_at', 'verified_at', 'deleted_at', 'up_next'])
+    : new Set(['completed_at', 'verified_at', 'deleted_at']);
 
   const ALLOWED_COLUMNS = new Set(['title', 'details', 'tags', 'category', 'priority', 'status', 'up_next', 'notes', 'completed_at', 'verified_at', 'deleted_at', 'last_read_at']);
   for (const [key, value] of Object.entries(updates) as [string, unknown][]) {

@@ -26,6 +26,11 @@ let currentSearch = '';
  */
 let activeTab: string = 'commands-log';
 
+/** Read the id of the currently-visible drawer tab (`commands-log` or `terminal:<id>`). */
+export function getActiveDrawerTab(): string {
+  return activeTab;
+}
+
 // --- Selection state (HS-2544) ---
 
 const selectedLogIds = new Set<number>();

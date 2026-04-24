@@ -100,6 +100,12 @@ interface SessionState {
    *  client reads this from `/api/terminal/list` to surface a toast; the
    *  cross-project bellPoll surfaces it too (§27). */
   notificationMessage: string | null;
+  /** Most recent OSC 7 CWD pushed by the shell (`\x1b]7;file://host/path\x07`,
+   *  HS-7278). Parallel to the client-side `runtimeCwd` on TerminalInstance
+   *  (HS-7262) but server-tracked so the dashboard tile can render a CWD
+   *  badge without mounting xterm. Null until the first OSC 7 arrives; resets
+   *  on PTY restart. */
+  currentCwd: string | null;
   /** Cross-chunk state for `scanPtyChunk` — tracks whether the byte stream
    *  is currently inside an OSC/DCS/APC/PM/SOS escape string (where a trailing
    *  BEL is a terminator, not a user-visible bell). HS-6766. */
@@ -412,6 +418,16 @@ export function getNotificationMessage(
   return sessions.get(sessionKey(secret, terminalId))?.notificationMessage ?? null;
 }
 
+/** Read the most recent OSC 7 CWD for a terminal, or null if the shell
+ *  hasn't pushed one yet. HS-7278 — consumed by `/api/terminal/list` so the
+ *  dashboard can render a CWD badge on cold tiles. */
+export function getCurrentCwd(
+  secret: string,
+  terminalId: string = DEFAULT_TERMINAL_ID,
+): string | null {
+  return sessions.get(sessionKey(secret, terminalId))?.currentCwd ?? null;
+}
+
 /** List terminal ids with pending bells for a single project, plus the
  *  optional OSC 9 notification message for each. Return shape is designed
  *  for `/api/projects/bell-state` (§24) and `/api/terminal/list` (§22) to
@@ -460,6 +476,7 @@ function createSession(
     configOverride,
     bellPending: false,
     notificationMessage: null,
+    currentCwd: null,
     bellScanInString: false,
     bellScanAfterEsc: false,
     oscAccumulator: null,
@@ -474,8 +491,11 @@ const MAX_OSC_PAYLOAD_LEN = 4096;
 
 /**
  * Scan a chunk of PTY output for (1) a *real* bell — a `\x07` byte that isn't
- * the terminator of an OSC/DCS/APC/PM/SOS string — and (2) OSC 9 desktop
- * notification payloads (`\x1b]9;<message>\x07`, HS-7264).
+ * the terminator of an OSC/DCS/APC/PM/SOS string — (2) OSC 9 desktop
+ * notification payloads (`\x1b]9;<message>\x07`, HS-7264), and (3) OSC 7
+ * current-working-directory pushes (`\x1b]7;file://host/path\x07`, HS-7278 —
+ * so the dashboard can render a CWD badge on cold tiles without mounting
+ * xterm).
  *
  * Many shells emit OSC sequences like `\x1b]0;TITLE\x07` or
  * `\x1b]7;file://host/cwd\x07` on every prompt (and on startup via Apple
@@ -489,20 +509,22 @@ const MAX_OSC_PAYLOAD_LEN = 4096;
  * The `oscAccumulator` field also carries across chunks for OSC-content
  * inspection on close.
  *
- * Returns `{ bell, osc9Message }`. `osc9Message` is the most recent OSC 9
- * payload seen in the chunk (later payloads overwrite earlier ones — terminal
- * notification semantics are "most recent wins").
+ * Returns `{ bell, osc9Message, osc7Cwd }`. Both message/cwd are the most
+ * recent values seen in the chunk (later payloads overwrite earlier ones —
+ * latest-wins for both notification and CWD semantics).
  */
-function scanPtyChunk(session: SessionState, chunk: Buffer): { bell: boolean; osc9Message: string | null } {
+function scanPtyChunk(session: SessionState, chunk: Buffer): { bell: boolean; osc9Message: string | null; osc7Cwd: string | null } {
   let foundBell = false;
   let osc9Message: string | null = null;
+  let osc7Cwd: string | null = null;
   for (let i = 0; i < chunk.length; i++) {
     const b = chunk[i];
     if (session.bellScanInString) {
       if (b === 0x07) {
         // BEL = OSC-style terminator; close the string and inspect payload.
         const parsed = finishOscString(session);
-        if (parsed !== null) osc9Message = parsed;
+        if (parsed.osc9 !== null) osc9Message = parsed.osc9;
+        if (parsed.osc7 !== null) osc7Cwd = parsed.osc7;
         session.bellScanInString = false;
         session.bellScanAfterEsc = false;
         session.oscAccumulator = null;
@@ -513,7 +535,8 @@ function scanPtyChunk(session: SessionState, chunk: Buffer): { bell: boolean; os
         if (b === 0x5C /* backslash */) {
           // ESC\\ (ST) = terminator.
           const parsed = finishOscString(session);
-          if (parsed !== null) osc9Message = parsed;
+          if (parsed.osc9 !== null) osc9Message = parsed.osc9;
+          if (parsed.osc7 !== null) osc7Cwd = parsed.osc7;
           session.bellScanInString = false;
           session.oscAccumulator = null;
           continue;
@@ -560,26 +583,46 @@ function scanPtyChunk(session: SessionState, chunk: Buffer): { bell: boolean; os
       foundBell = true;
     }
   }
-  return { bell: foundBell, osc9Message };
+  return { bell: foundBell, osc9Message, osc7Cwd };
 }
 
 /**
- * Called on OSC-string close. If the accumulated payload starts with `9;`
- * (iTerm2 desktop-notification escape), returns the message text; otherwise
- * returns null. Titles (`0;`, `1;`, `2;`), CWD (`7;`), hyperlinks (`8;`), and
- * any other OSC numbers pass through without firing a notification. HS-7264.
+ * Called on OSC-string close. Inspects the accumulated payload for the two
+ * OSC numbers Hot Sheet cares about — `9;<message>` for desktop notifications
+ * (HS-7264) and `7;file://host/path` for the shell's current working
+ * directory (HS-7278). Titles (`0;`, `1;`, `2;`), hyperlinks (`8;`), and
+ * everything else pass through without affecting session state. Returns the
+ * parsed value for whichever OSC number matched (at most one can match).
  */
-function finishOscString(session: SessionState): string | null {
-  if (session.oscAccumulator === null) return null;
+function finishOscString(session: SessionState): { osc9: string | null; osc7: string | null } {
+  if (session.oscAccumulator === null) return { osc9: null, osc7: null };
   const payload = session.oscAccumulator;
-  if (!payload.startsWith('9;')) return null;
-  const rest = payload.slice(2);
-  // iTerm2 has proprietary numeric sub-commands in the 9 namespace (9;1 for
-  // progress, 9;4 for newer progress, etc.). They start with "<digit>;" which
-  // is NOT a human-readable message. Skip them — the plain "9;<message>" form
-  // is the only one we surface as a notification.
-  if (/^\d+;/.test(rest)) return null;
-  return rest;
+  if (payload.startsWith('9;')) {
+    const rest = payload.slice(2);
+    // iTerm2 has proprietary numeric sub-commands in the 9 namespace (9;1 for
+    // progress, 9;4 for newer progress, etc.). They start with "<digit>;" which
+    // is NOT a human-readable message. Skip them — the plain "9;<message>"
+    // form is the only one we surface as a notification.
+    if (/^\d+;/.test(rest)) return { osc9: null, osc7: null };
+    return { osc9: rest, osc7: null };
+  }
+  if (payload.startsWith('7;')) {
+    // HS-7278 — `file://host/path` parsing. Empty host is accepted
+    // (`file:///path`); percent-encoded bytes are decoded. Anything that
+    // doesn't parse to a file URL is rejected — we don't want to surface
+    // garbled text as a CWD.
+    const rest = payload.slice(2);
+    if (!rest.startsWith('file://')) return { osc9: null, osc7: null };
+    const afterScheme = rest.slice('file://'.length);
+    const pathStart = afterScheme.indexOf('/');
+    if (pathStart < 0) return { osc9: null, osc7: null };
+    try {
+      return { osc9: null, osc7: decodeURIComponent(afterScheme.slice(pathStart)) };
+    } catch {
+      return { osc9: null, osc7: null };
+    }
+  }
+  return { osc9: null, osc7: null };
 }
 
 function spawnIntoSession(session: SessionState, dataDir: string): void {
@@ -604,6 +647,9 @@ function spawnIntoSession(session: SessionState, dataDir: string): void {
   session.bellScanInString = false;
   session.bellScanAfterEsc = false;
   session.oscAccumulator = null;
+  // HS-7278 — drop the server-side CWD too; the new shell will push its own
+  // OSC 7 on the first prompt.
+  session.currentCwd = null;
 
   const dData = pty.onData((str) => {
     const chunk = Buffer.from(str, 'utf8');
@@ -616,13 +662,17 @@ function spawnIntoSession(session: SessionState, dataDir: string): void {
     // pass to capture OSC 9 (`\x1b]9;<message>\x07`) desktop-notification
     // payloads — when present, we stash the message AND flip bellPending so
     // the tab gets the bell glyph + a toast carries the message text.
-    const { bell: realBell, osc9Message } = scanPtyChunk(session, chunk);
+    const { bell: realBell, osc9Message, osc7Cwd } = scanPtyChunk(session, chunk);
     const wasPending = session.bellPending;
     if (realBell) session.bellPending = true;
     if (osc9Message !== null) {
       session.bellPending = true;
       session.notificationMessage = osc9Message;
     }
+    // HS-7278 — stash server-side CWD so the dashboard tile can show a CWD
+    // badge for cold tiles. Does NOT set bellPending — OSC 7 arrives on every
+    // prompt and would be indistinguishable from a real attention request.
+    if (osc7Cwd !== null) session.currentCwd = osc7Cwd;
     if (!wasPending && session.bellPending) {
       // Lazy dynamic import to avoid a circular dep between registry ↔ routes.
       void import('../routes/notify.js').then(m => m.notifyBellWaiters()).catch(() => { /* ignore */ });

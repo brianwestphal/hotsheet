@@ -473,6 +473,10 @@ pageRoutes.get('/', (c) => {
                   <input type="number" id="settings-terminal-scrollback" min="65536" max="16777216" placeholder="1048576" />
                   <span className="settings-hint">Server-side ring buffer for reattach replay. 65 536–16 777 216 bytes. Takes effect on next terminal restart.</span>
                 </div>
+                <div className="settings-field">
+                  <label><input type="checkbox" id="settings-shell-integration-ui" defaultChecked /> Enable shell integration UI</label>
+                  <span className="settings-hint">Shows OSC 133 gutter glyphs, the copy-last-output toolbar button, and Cmd/Ctrl+Arrow prompt navigation when your shell emits shell-integration escapes (Starship, VS Code's shell-integration rc, iTerm2 integration, etc.). The parser still runs when this is off — re-enabling reveals the UI without losing history.</span>
+                </div>
               </div>
             </div>
             <div className="settings-tab-panel" data-panel="updates" id="settings-updates-section" style="display:none">
