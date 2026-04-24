@@ -97,15 +97,16 @@ Silent no-op paths:
 - Default `maxOutputChars = 8000` applied when caller omits it.
 - Successful (exit 0) commands still render "exited with code 0" (user asking "why did this succeed as expected" is valid).
 
-### E2E (deferred)
+### E2E (HS-7332)
 
-The Phase 2 e2e follow-up (HS-7328) will be extended in a follow-up ticket HS-7332 to cover Phase 3:
+Playwright coverage shipped in `e2e/terminal-osc133-ask-claude.spec.ts` against the shared `terminal-osc133.sh` fixture in `MODE=fail` (one OSC 133 prompt cycle whose D mark carries a non-zero exit code so the gutter renders a red-X glyph and the popover is the typical Ask Claude scenario). Two tests:
 
-- Stub the channel API response (`/api/channel/trigger` returns 200 ok).
-- Fire an OSC 133 sequence for a failing command.
-- Hover the gutter glyph, assert Ask Claude button visible, click it.
-- Assert the `/api/channel/trigger` POST body has `{ message: <expected template> }`.
-- Also cover the gate: kill the channel, open popover, assert Ask Claude button is absent.
+1. **Channel alive** — `page.route(/\/api\/channel\/status/)` returns `{enabled:true, alive:true}`; `page.route(/\/api\/channel\/trigger/)` short-circuits the POST and pushes the body onto `window.__channelTriggers`; `page.route(/\/api\/ensure-skills/)` no-ops the secondary endpoint the trigger flow hits. The fixture emits `false` with `EXIT_CODE=7` and `OUTPUT=phase3-ask-claude-marker`. Test waits for the marker + READY in `.xterm-screen`, asserts the gutter glyph is `.terminal-osc133-gutter-failure`, hovers it, asserts the popover surfaces the `[data-action="ask-claude"]` button, clicks it, and asserts `/api/channel/trigger` was called exactly once with a `message` body containing the failing command (`false`), the exit code (`exited with code 7`), and the output snippet (`phase3-ask-claude-marker`). Asserting the rendered template by piece (rather than exact-string match) keeps the test resilient to prompt template tweaks.
+2. **Channel dead** — same fixture + setup but `page.route(/\/api\/channel\/status/)` returns `{enabled:true, alive:false}`. Hover the glyph, assert the popover surfaces with the three other buttons (Copy command / Copy output / Rerun) but `[data-action="ask-claude"]` count is `0` — the popover's open-time gate keeps the button out of the DOM entirely when `isChannelAlive()` returns false.
+
+Route stubs use regex literals (e.g. `/\/api\/channel\/status/`) rather than glob patterns because the API URLs include a `?project=<secret>` query string and the glob `**` doesn't reliably match across `?` in Playwright route patterns; the regex is unambiguous.
+
+The "channel alive" test waits 500 ms after page load before hovering — initChannel fires the `/api/channel/status` fetch asynchronously and `channelAliveLocal` only flips after the promise resolves, so the popover's `isChannelAlive()` gate would read `false` if hovered too soon.
 
 ## 33.7 Manual test plan (add to `docs/manual-test-plan.md` §26)
 
@@ -127,4 +128,4 @@ The Phase 2 e2e follow-up (HS-7328) will be extended in a follow-up ticket HS-73
 - `src/client/terminal.tsx` — `askClaudeAboutRecord`, popover Ask-Claude button wiring.
 - `src/client/channelUI.tsx` — `isChannelAlive`, `triggerChannelAndMarkBusy`.
 - `src/client/styles.scss` — `.terminal-osc133-popover-ask` accent styling.
-- **Tickets:** HS-7270 (this doc), HS-7267 / HS-7268 / HS-7269 (prior phases), HS-7332 follow-up for e2e + optional shell_analysis command-log entry.
+- **Tickets:** HS-7270 (this doc), HS-7267 / HS-7268 / HS-7269 (prior phases), HS-7332 (Playwright e2e — shipped, see §33.6 E2E; the optional `shell_analysis` command-log entry remains deferred per §33.5 — no user-facing value over the channel log already capturing the trigger).

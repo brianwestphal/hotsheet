@@ -224,7 +224,95 @@ test.describe('Terminal search widget (HS-7363)', () => {
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
   });
 
-  // 4. Regression: while in grid view (no dedicated view up) the header
+  // 4. HS-7427 — recent-query history: ArrowUp walks back through three
+  // distinct submitted queries in MRU order; ArrowDown returns to the draft.
+  // Validates the per-xterm WeakMap, MRU-at-tail ordering, and draft
+  // preservation against a real PTY + xterm + SearchAddon stack.
+  test('drawer: ArrowUp walks back through three submitted queries (HS-7427)', async ({ page }) => {
+    await openDrawerAndWaitForFruits(page);
+
+    const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:fruits"]');
+    const searchBox = pane.locator('.terminal-search-box');
+    const input = searchBox.locator('.terminal-search-input');
+
+    await searchBox.locator('.terminal-search-toggle').click();
+    await expect(input).toBeFocused();
+
+    // Submit three distinct queries via Enter. Each push lands in the per-
+    // xterm history ring. The fruits fixture only contains "apple" + "banana"
+    // — for the history-walk test the matches don't matter, only that the
+    // queries are recorded.
+    await input.fill('apple');
+    await input.press('Enter');
+    await input.fill('banana');
+    await input.press('Enter');
+    await input.fill('cherry');
+    await input.press('Enter');
+
+    // Clear the input back to draft mode (typing also resets the cursor).
+    // Use fill('') to drive an `input` event so the widget exits history
+    // navigation cleanly.
+    await input.fill('');
+
+    // ArrowUp walks back through "cherry" → "banana" → "apple" (MRU-at-tail).
+    await input.press('ArrowUp');
+    await expect(input).toHaveValue('cherry');
+    await input.press('ArrowUp');
+    await expect(input).toHaveValue('banana');
+    await input.press('ArrowUp');
+    await expect(input).toHaveValue('apple');
+    // At the oldest entry — further ArrowUp stays put.
+    await input.press('ArrowUp');
+    await expect(input).toHaveValue('apple');
+
+    // ArrowDown walks back to the most recent entry, then restores draft.
+    await input.press('ArrowDown');
+    await expect(input).toHaveValue('banana');
+    await input.press('ArrowDown');
+    await expect(input).toHaveValue('cherry');
+    await input.press('ArrowDown');
+    await expect(input).toHaveValue('');
+  });
+
+  // 5. HS-7426 — match-mode toggles: enable regex, type the pattern `app.e`
+  // (the `.` is a regex wildcard that matches any character), and assert the
+  // count chip reads "1/3" because all three "apple" lines match.
+  test('drawer: regex toggle on `app.e` matches three lines (HS-7426)', async ({ page }) => {
+    await openDrawerAndWaitForFruits(page);
+
+    const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:fruits"]');
+    const searchBox = pane.locator('.terminal-search-box');
+    const input = searchBox.locator('.terminal-search-input');
+    const count = searchBox.locator('.terminal-search-count');
+    const regexBtn = searchBox.locator('.terminal-search-toggle-btn[data-toggle="regex"]');
+
+    await searchBox.locator('.terminal-search-toggle').click();
+    await expect(input).toBeFocused();
+
+    // Enable regex first, then type the pattern. This avoids any
+    // toggle-after-result corner cases in xterm's SearchAddon.
+    await regexBtn.click();
+    await expect(regexBtn).toHaveAttribute('aria-pressed', 'true');
+
+    // Regex `appl.` — `.` matches any char so "apple" (with `e`) matches.
+    // The fruits fixture has three "apple" lines so the count is "1/3".
+    await input.fill('appl.');
+    await expect(count).toHaveText('1/3', { timeout: 3000 });
+
+    // Type an invalid regex `[abc` and assert the input flips to .is-invalid
+    // and the count chip shows "err".
+    await input.fill('[abc');
+    await expect(input).toHaveClass(/is-invalid/);
+    await expect(count).toHaveText('err');
+
+    // Disable regex — the literal-string mode ignores the brackets and
+    // searches for `[abc` as plain text (no matches in the fruits output).
+    await regexBtn.click();
+    await expect(input).not.toHaveClass(/is-invalid/);
+    await expect(count).toHaveText('0/0');
+  });
+
+  // 6. Regression: while in grid view (no dedicated view up) the header
   // search slot must stay hidden; the sizer is the grid-view control.
   test('grid view keeps the header search slot hidden (sizer visible instead)', async ({ page }) => {
     await page.goto('/');

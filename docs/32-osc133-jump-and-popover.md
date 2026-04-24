@@ -14,12 +14,10 @@ Phase 3 (HS-7270, Ask-Claude-about-this) uses Phase 2's popover and `readRecordC
 
 Implementation: `term.attachCustomKeyEventHandler` in `mountXterm`. The handler intercepts key events and:
 
-1. No-ops on `keyup`.
-2. Ignores the key when `shell_integration_ui` is off (setting-gated).
-3. Requires Cmd (macOS) or Ctrl (other OSes), disallows Alt / Shift so we don't steal `Cmd+Shift+Up` from other bindings.
-4. Handles only `ArrowUp` / `ArrowDown`.
-5. Ignores the key when `shellIntegration.enabled` is false (no markers → nothing to jump to).
-6. Calls `jumpToPromptMarker(inst, direction)` and returns `false` to swallow the event.
+1. Ignores the key when `shell_integration_ui` is off (setting-gated).
+2. Ignores the key when `shellIntegration.enabled` is false (no markers → nothing to jump to).
+3. Calls `isJumpShortcut(e)` from `src/client/terminalKeybindings.ts` (HS-7460), which returns `'prev' | 'next' | null`. The helper rejects `keyup` / `keypress`, both-modifiers-held, Alt/Shift held, the wrong-platform modifier (so macOS `Ctrl+Up/Down` falls through to xterm — preserved for tmux pane resize, vim/nvim, fish-shell history-token-search, etc.), and any non-arrow key.
+4. On `'prev' | 'next'`, calls `jumpToPromptMarker(inst, direction)` and returns `false` to swallow the event.
 
 `jumpToPromptMarker` walks `shellIntegration.commands`, collects `.line` values from alive `promptStart` markers, passes them to `findPromptLine(input)` (pure helper in `terminalOsc133.ts`) with the current `buffer.active.viewportY` as the anchor, and calls `term.scrollToLine(target)` when a target exists. When no target exists the keystroke is still swallowed (to avoid emitting `\e[1;5A` escape sequences that would confuse the user) — the no-op is silent.
 
@@ -76,14 +74,14 @@ The keyboard shortcut handler and `attachGutterDecoration` both check `shellInte
 
 9 new cases in `describe('findPromptLine (HS-7269)')` block cover empty list, prev newest-below, skip-at-equal-line for prev, null-when-all-above, next oldest-above, skip-at-equal-line for next, null-when-all-below, out-of-order input, single marker with both directions.
 
-### E2E (deferred to follow-up)
+### E2E (HS-7328)
 
-HS-7328 (follow-up ticket) will add a Playwright spec that:
+Playwright coverage shipped — `e2e/terminal-osc133-jump-popover.spec.ts` against the shared `e2e/fixtures/terminal-osc133.sh` fixture in `MODE=multi` (three sequential A → B → C → output → D;0 cycles). Two tests:
 
-1. Runs a shell-integrated fixture PTY emitting A/B/C/D around three distinct commands.
-2. Presses `Control+Up` and asserts the xterm viewport scrolls to the middle command's prompt row.
-3. Hovers the topmost gutter glyph (via `page.mouse.move` over a known decoration bounding box), asserts the `.terminal-osc133-popover` mounts, clicks "Copy command", and reads `navigator.clipboard.readText()` to assert the command text matches.
-4. Toggles the Settings → Terminal checkbox and asserts the `.terminal-osc133-gutter` decorations disappear (no glyphs) without affecting the command ring.
+1. `three OSC 133 cycles render three gutter glyphs; Cmd/Ctrl+Up jumps and the popover surfaces (HS-7328)` — opens the drawer, activates the tab, waits for `OUTPUT-1` / `OUTPUT-3` / `READY` in `.xterm-screen`, asserts `.terminal-osc133-gutter` count is 3, hovers the second glyph, asserts the popover surfaces with Copy command / Copy output / Rerun buttons, clicks "Copy command" and asserts `navigator.clipboard.writeText` was called with the cycle's command text (`echo "line 2"`). Then scrolls to the bottom, focuses the xterm helper textarea, and presses the platform-correct chord (`Meta+ArrowUp` on macOS, `Control+ArrowUp` elsewhere — detected via `navigator.userAgent.includes('Mac')`); asserts the `.xterm-viewport` `scrollTop` is `<=` the pre-press value (i.e. the chord was intercepted by `isJumpShortcut` rather than forwarded to the shell as `\e[1;5A`).
+2. `disabling shell_integration_ui hides the gutter glyphs (HS-7328)` — drives the actual Settings UI: clicks `#settings-btn`, switches to the Terminal tab, unchecks `#settings-shell-integration-ui`, presses Escape to close the dialog, asserts `.terminal-osc133-gutter` count drops to 0. PATCHing `/api/settings` directly is NOT enough — the `hotsheet:shell-integration-ui-changed` custom event that `terminal.tsx` listens for is dispatched from the checkbox change handler in `settingsDialog.tsx`, not from a settings-poll, so the test has to drive the checkbox to exercise the real reload path.
+
+The clipboard is stubbed in `addInitScript` before bundle load (push-onto-`window.__clipboardWrites`) so the assertion is deterministic across browsers without Playwright clipboard permissions.
 
 ## 32.7 Out of scope
 
@@ -112,4 +110,4 @@ HS-7328 (follow-up ticket) will add a Playwright spec that:
 - `src/client/terminal.tsx` — `jumpToPromptMarker`, `attachGutterHoverPopover`, `showGutterPopover`, `readRecordCommand` / `readRecordOutput`, `copyCommandOfRecord` / `copyOutputOfRecord` / `rerunCommandOfRecord`, `applyShellIntegrationToolbarVisibility`, `reapplyShellIntegrationDecorations`, `shellIntegrationUiEnabled`.
 - `src/client/settingsDialog.tsx`, `src/client/settingsLoader.tsx`, `src/client/state.tsx` — `shell_integration_ui` setting plumbing.
 - `src/client/styles.scss` — `.terminal-osc133-popover` + button styles.
-- **Tickets:** HS-7269 (this doc), HS-7267 / HS-7268 (prior phases), HS-7270 (Phase 3 — Ask Claude), HS-7328 follow-up for Playwright e2e.
+- **Tickets:** HS-7269 (this doc), HS-7267 / HS-7268 (prior phases), HS-7270 (Phase 3 — Ask Claude), HS-7328 (Playwright e2e — shipped, see §32.6 E2E), HS-7460 (platform-specific `Cmd/Ctrl+Up/Down` match via `isJumpShortcut` so the wrong-platform modifier falls through to xterm).

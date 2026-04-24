@@ -5403,13 +5403,15 @@ body.terminal-dashboard-active {
 
   .terminal-search-input,
   .terminal-search-count,
-  .terminal-search-btn {
+  .terminal-search-btn,
+  .terminal-search-toggles {
     display: none;
   }
 
   &.is-open .terminal-search-input,
   &.is-open .terminal-search-count,
-  &.is-open .terminal-search-btn {
+  &.is-open .terminal-search-btn,
+  &.is-open .terminal-search-toggles {
     display: inline-flex;
     align-items: center;
   }
@@ -5426,6 +5428,13 @@ body.terminal-dashboard-active {
     color: var(--text);
 
     &::placeholder { color: var(--text-muted); }
+
+    // HS-7426 — invalid-regex visual cue. Red bottom border instead of a
+    // full outline so the existing `:focus-within` accent border on the
+    // outer pill still reads correctly.
+    &.is-invalid {
+      box-shadow: inset 0 -2px 0 0 #ef4444;
+    }
   }
 
   .terminal-search-count {
@@ -5436,6 +5445,28 @@ body.terminal-dashboard-active {
     min-width: 28px;
     justify-content: flex-end;
     flex-shrink: 0;
+  }
+
+  // HS-7426 — three match-mode toggles (Match case / Whole word / Regex)
+  // grouped in a tight cluster left of the prev/next chevrons. Active
+  // state uses the app accent so the user can see at a glance which
+  // matchers are on.
+  .terminal-search-toggles {
+    gap: 0;
+    flex-shrink: 0;
+  }
+
+  .terminal-search-toggle-btn {
+    &.is-active {
+      background: var(--accent);
+      color: white;
+    }
+
+    &.is-active:hover {
+      background: var(--accent);
+      color: white;
+      filter: brightness(1.05);
+    }
   }
 
   .terminal-search-btn {

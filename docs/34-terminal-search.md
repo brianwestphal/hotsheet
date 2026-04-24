@@ -64,6 +64,13 @@ The existing global `Cmd/Ctrl+F` handler in `src/client/shortcuts.tsx` focuses t
 
 The xterm `attachCustomKeyEventHandler` for drawer + dedicated instances also returns `false` on `Cmd/Ctrl+F` so xterm does not forward the `f` to the shell. Returning `false` from xterm's custom handler stops xterm's internal processing but does NOT stop the event from bubbling to `document`, so the shortcuts-level handler still runs.
 
+**HS-7460 — platform-specific routing.** Both the xterm-level swallow and the global handler now go through `isFindShortcut(e)` from `src/client/terminalKeybindings.ts` (see [22-terminal.md §22.18](22-terminal.md)). On macOS only `Cmd+F` matches; on Linux/Windows only `Ctrl+F` matches. When a terminal is focused and the user presses the wrong-platform variant (e.g. `Ctrl+F` on macOS, where readline expects `forward-char`):
+
+- The xterm `attachCustomKeyEventHandler` returns `true`, so xterm forwards `\x06` to the shell as usual.
+- The global `shortcuts.tsx` handler enters the `(metaKey || ctrlKey) && key === 'f'` branch but, after `isTerminalFocused()` returns `true`, also calls `isFindShortcut(e)` — that returns `false` for the wrong-platform variant, so the handler returns *without* `preventDefault()` and without focusing any search input. The keystroke effectively passes straight through to the shell.
+
+Outside a terminal, both modifiers continue to focus the ticket search — the ticket-list has no conflicting use of `Ctrl+F`.
+
 ## 34.5 Shared widget module
 
 All of the above is driven by `src/client/terminalSearch.tsx`:
@@ -90,11 +97,11 @@ All of the above is driven by `src/client/terminalSearch.tsx`:
 
 **Manual.** See `docs/manual-test-plan.md` §13 for what's left: visual amber/orange highlight colour, Cmd+F fall-through when focus is outside a terminal, Stop → Start clears search state, re-entering dedicated view for a DIFFERENT tile, and Esc-exits-dedicated-view parity with the Back button.
 
-## 34.8 Regex / case / whole-word toggles (design only)
+## 34.8 Regex / case / whole-word toggles (HS-7426)
 
-**Status:** Design complete (HS-7361), implementation pending under HS-7426.
+**Status:** Shipped.
 
-Three checkbox-style icon toggles live inside the expanded `.terminal-search-box`, left of the prev/next chevrons, in `.terminal-search-toggles` grouping:
+Three checkbox-style icon toggles live inside the expanded `.terminal-search-box` in a `.terminal-search-toggles` `role="group"` cluster between the input and the count chip:
 
 | Toggle | Lucide icon | `ISearchOptions` field | Default |
 | --- | --- | --- | --- |
@@ -102,39 +109,54 @@ Three checkbox-style icon toggles live inside the expanded `.terminal-search-box
 | Whole word | `whole-word` | `wholeWord: true` | off |
 | Regex | `regex` | `regex: true` | off |
 
-**Visual.** Same 28 px square size as the chevron buttons so the expanded width grows by ~84 px. Active state uses `background: var(--accent)` + `color: white`, inactive state uses the default toolbar-button palette. `aria-pressed="true"` / `false` reflects active state.
+**Visual.** Same 20 px square size as the chevron buttons (the existing `.terminal-search-btn` rule). Active state uses `background: var(--accent)` + `color: white` via `.is-active`, inactive state inherits the default toolbar-button palette. `aria-pressed="true"` / `false` reflects active state.
 
-**Click behaviour.** Each toggle flips its boolean in a module-local `activeSearchOptions` object and immediately re-runs the current query through `addon.findNext(query, activeSearchOptions)` so the highlights + count update without requiring the user to re-press Enter. Empty input → no-op.
+**Click behaviour.** Each toggle flips its boolean in a per-mount `activeSearchOptions` object, calls `syncToggleButtons()` to mirror the new state into `aria-pressed` + `.is-active`, and immediately re-runs the current query through `addon.findNext(query, sOpts)` with `incremental: false` (a fresh non-incremental search) so highlights + count refresh from scratch — incremental finds can skip re-evaluation when the query string itself hasn't changed, which leaves stale highlights after a toggle flip. Empty input still no-ops the find.
 
-**Regex-specific.** When `regex` flips on and the current input does not parse as a valid `RegExp`, the input gets a `.is-invalid` class (red border via CSS) and the count chip shows `err` rather than `0/0`. `addon.findNext` silently no-ops on bad regex, so the widget swallows the thrown error in a `try/catch` and renders the `.is-invalid` state from the catch branch.
+**Regex-specific.** When `regex` is on, `doFind` validates the pattern up-front via `new RegExp(q)`. On `SyntaxError` it adds `.is-invalid` to the input + sets the count chip to `err` and skips the addon call. The `onDidChangeResults` callback also early-returns when `.is-invalid` is set so the addon can't overwrite `err` with `0/0`. The validation happens before the addon call rather than relying on xterm's behaviour because both versions (silent no-op vs. thrown `SyntaxError`) have shipped across xterm releases. The addon-side `try/catch` remains as a fallback for flag combinations xterm parses differently from V8.
 
-**Scope.** Per-terminal. Each `mountTerminalSearch` call owns its own `activeSearchOptions` instance so one drawer tab's regex mode doesn't leak into another. Sharing across widgets was considered and rejected: a user running `grep` output in one terminal and tailing a structured log in another has different expectations for case/regex defaults, and per-terminal matches the per-`TerminalInstance` model used elsewhere (runtime title / runtime cwd / shell-integration markers).
+**Scope.** Per-terminal. Each `mountTerminalSearch` call owns its own `activeSearchOptions` closure-local object so one drawer tab's regex mode doesn't leak into another. Sharing across widgets was considered and rejected: a user running `grep` output in one terminal and tailing a structured log in another has different expectations for case/regex defaults, and per-terminal matches the per-`TerminalInstance` model used elsewhere (runtime title / runtime cwd / shell-integration markers).
 
-**Persistence.** Toggle state resets when the widget `closeBox`es (× click or magnifier toggle). Across PTY restart + drawer-tab activation cycles, state is reset by the existing teardown → re-mount path. No persistence across app launches — matches v1's session-only posture for the whole search feature.
+**Persistence.** Toggle state resets when the widget `closeBox`es (× click or magnifier toggle) via a shared `resetToggles()` helper that also clears `.is-invalid`. Across PTY restart + drawer-tab activation cycles the state is reset by the existing teardown → re-mount path (a fresh `mountTerminalSearch` runs and creates a new `activeSearchOptions` object). No persistence across app launches — matches v1's session-only posture for the whole search feature.
 
-**Keyboard.** No dedicated shortcut keys; the toggles are click-only. This keeps the widget's input-focused keyboard surface simple (Enter / Shift+Enter only) and avoids competing with xterm's own key bindings.
+**Keyboard.** No dedicated shortcut keys; the toggles are click-only. This keeps the widget's input-focused keyboard surface simple (Enter / Shift+Enter / ArrowUp / ArrowDown only — see §34.9) and avoids competing with xterm's own key bindings.
 
-**Testing.** New unit tests covering (a) each toggle's aria-pressed / activeSearchOptions flip, (b) invalid-regex `.is-invalid` + `err` count path, (c) incremental re-run after each toggle. E2E spec extends `terminal-search.spec.ts` with one test that enables regex + types `app.e` + asserts 3 matches (dot matches any char in `apple`).
+**Testing.** 9 DOM-level integration tests in `terminalSearch.test.ts` cover: rendering (group + 3 buttons + initial aria-pressed=false), case toggle aria-pressed flip + re-run with `caseSensitive: true`, word toggle re-run with `wholeWord: true`, regex toggle on a valid pattern re-runs with `regex: true` and clears `.is-invalid`, regex toggle on invalid pattern (`[abc`) sets `.is-invalid` + `err` + skips the addon call, typing a valid pattern after an invalid-regex state clears `.is-invalid` + restores the count chip, two toggles combined (case + word) both reach the addon, × close resets all three toggles + clears `.is-invalid` for the next session, Enter submission honours active toggles with `incremental: false`. E2E in `e2e/terminal-search.spec.ts` "drawer: regex toggle on `app.e` matches three lines (HS-7426)" enables regex via the toggle button, fills `appl.` (`.` matches any char), asserts the count chip reads `1/3`, switches to `[abc` and asserts `.is-invalid` + `err`, then disables regex and asserts the literal-search path returns `0/0`.
 
-**Non-goals.** Multi-line regex flag, regex groups / capture / replace (search-only), fuzzy-match, persistence.
+**Non-goals.** Multi-line regex flag, regex groups / capture / replace (search-only), fuzzy-match, cross-app-launch persistence.
 
-## 34.9 Recent-query history (design only)
+## 34.9 Recent-query history (HS-7427)
 
-**Status:** Design complete (HS-7362), implementation pending under HS-7427.
+**Status:** Shipped.
 
-**UI.** When the input has focus and the cursor is at the start (for `ArrowUp`) or end (for `ArrowDown`) of the query — or any position if the input is empty — `ArrowUp` replaces the input with the previous history entry and `ArrowDown` with the next, matching readline / browser Find-bar / shell `HISTORY` convention. The current draft (what the user has typed but not yet submitted) is preserved at history position `-1`, so pressing Down past the newest entry restores it.
+**UI.** When the input has focus and the cursor is at the start (for `ArrowUp`) or end (for `ArrowDown`) of the query — or any position if the input is empty — `ArrowUp` replaces the input with the previous history entry and `ArrowDown` with the next, matching readline / browser Find-bar / shell `HISTORY` convention. The current draft (what the user has typed but not yet submitted) is preserved at history position `history.length`, so pressing Down past the newest entry restores it.
 
-**Data model.** Module-local `historyByTerm: WeakMap<XTerm, string[]>` with an MRU-at-tail order (newest entry is `history[history.length - 1]`). Cap at **N = 10** entries per terminal. Duplicates within the cap are de-duped (if the user runs the same query again, the older entry is removed before the new one is pushed) so the 10-slot window is always 10 distinct queries.
+After the first `ArrowUp` away from draft mode the cursor convention is "in-history": every subsequent `ArrowUp` / `ArrowDown` walks the history regardless of caret position (the readline-style edge check only gates the *first* navigation away from a mid-edit draft). The newly displayed value's caret lands at the end so re-pressing the same arrow keeps walking.
 
-**What gets recorded.** Only queries that are `findNext`/`findPrevious`-submitted via Enter / Shift+Enter (the explicit-advance path in §34.2) — not every incremental `input` keystroke. Empty queries are never recorded. Tested by running an incremental search that types `apples` then backspacing to `app` without Enter → no history entry.
+**Data model.** Module-local `historyByTerm: WeakMap<XTerm, string[]>` in `terminalSearch.tsx` with MRU-at-tail order (newest entry is `history[history.length - 1]`). Cap at **N = 10** entries per terminal. Duplicates within the cap are de-duped (if the user runs the same query again, the older entry is removed before the new one is pushed) so the 10-slot window is always 10 distinct queries.
 
-**Scope.** Per-terminal (per xterm instance, matching the `WeakMap` above). Considered: shared across every mounted widget (single global ring). Rejected for the same reasons as §34.9 toggles — per-terminal matches the existing per-instance state model, and cross-terminal history would require answering "whose history takes precedence when Cmd+F opens the dedicated-view search right after closing the drawer search?" in a way that would surprise users. If cross-instance sharing is ever wanted, it's a plus-one on top of this design, not a replacement.
+The push / cursor logic is two pure helpers in `src/client/terminalSearchHistory.ts`:
+
+- `pushHistory(history, query, cap=10) → string[]` — returns a new ring with `query` appended (MRU-at-tail), de-duped, capped. Empty / whitespace queries are no-ops. Does not mutate the input array.
+- `navigateHistory(history, cursor, direction, currentDraft) → {value, cursor}` — `cursor === history.length` means draft mode (returns `currentDraft`); `0` is the oldest entry; `history.length - 1` is MRU. `'up'` decrements (clamped at 0), `'down'` increments (clamped at `history.length`).
+
+**What gets recorded.** Only queries that are `findNext`/`findPrevious`-submitted via Enter / Shift+Enter (the explicit-advance path in §34.2) — not every incremental `input` keystroke. Empty queries are never recorded. Verified by a unit test that simulates typing `apples → app` via `input` events and asserts a subsequent `ArrowUp` is a no-op (history empty).
+
+**Scope.** Per-terminal (per xterm instance, matching the `WeakMap` above). Considered: shared across every mounted widget (single global ring). Rejected for the same reasons as the §34.8 toggles — per-terminal matches the existing per-instance state model, and cross-terminal history would require answering "whose history takes precedence when Cmd+F opens the dedicated-view search right after closing the drawer search?" in a way that would surprise users. If cross-instance sharing is ever wanted, it's a plus-one on top of this design, not a replacement.
 
 **Persistence.** Session-only. History lives in the module-level `WeakMap` and is wiped when the terminal's xterm is garbage-collected (PTY restart or drawer-tab destroy). Not persisted to `.hotsheet/settings.json` or any other file. Matches the "input state cleared on close" posture of §34.6.
 
-**Interaction with the active session's draft.** If the user opens the widget, types `fo`, presses ArrowUp (which pulls the most recent history entry, say `foo`), then presses ArrowDown, the input should restore to `fo` — NOT empty. The history-navigation helper keeps a `currentDraft` ref that's seeded from `input.value` on the first ArrowUp and cleared on Enter / × close.
+**Interaction with the active session's draft.** If the user opens the widget, types `fo`, presses `ArrowUp` (which pulls the most recent history entry, say `foo`), then presses `ArrowDown`, the input restores to `fo` — NOT empty. The mount-time integration in `terminalSearch.tsx` keeps a `currentDraft` closure variable that's snapshotted from `input.value` the first time the user navigates away from draft mode (`cursor === history.length`) and cleared on Enter / × close / typing.
 
-**Testing.** Unit tests for: push/MRU behaviour, N=10 cap with oldest-eviction, dup-handling, incremental-keystroke-not-recorded, ArrowUp-then-ArrowDown draft restoration. E2E spec extends `terminal-search.spec.ts` with one test that runs three distinct Enter-submitted queries then asserts ArrowUp walks back through them in MRU order.
+**Reset triggers.** The history-navigation cursor + `currentDraft` are reset whenever:
+
+- The user presses Enter / Shift+Enter (submission also pushes to history).
+- The user types into the input (the `input` event listener resets back to draft mode so a subsequent `ArrowUp` snapshots the new draft).
+- The × close button fires (`closeBox` → `resetHistoryNav`).
+
+The history ring itself is NOT cleared by any of these — it persists for the lifetime of the xterm instance.
+
+**Testing.** Pure-helper unit tests in `terminalSearchHistory.test.ts` (14 tests covering push MRU / cap / custom cap / cap-of-zero / dedup-bumps-tail / dedup-before-cap / empty-query-noop / no-mutation, plus navigateHistory empty / first-up / walk-up / oldest-stays / walk-down / draft-restore / out-of-range-clamp / no-mutation / round-trip-draft). DOM-level integration tests in `terminalSearch.test.ts` (7 tests covering ArrowUp 3-query MRU walk / ArrowDown draft restoration with caret-at-start edge guard / incremental typing not recorded / Shift+Enter submissions also recorded / dedup-bump-after-three-submissions / mid-edit caret-not-at-edge suppression / × close resets cursor for next session). E2E in `e2e/terminal-search.spec.ts` "drawer: ArrowUp walks back through three submitted queries (HS-7427)" runs three Enter-submitted queries against the real fruits PTY then asserts both `ArrowUp` (MRU walk) and `ArrowDown` (draft restoration) work end-to-end.
 
 **Non-goals.** Cross-app-launch persistence, per-project history merge, fuzzy-match on history, ArrowUp from a non-empty mid-position input (follows readline's "only-from-edges" rule to stay compatible with mid-word editing).
 
@@ -144,4 +166,4 @@ Three checkbox-style icon toggles live inside the expanded `.terminal-search-box
 - [25-terminal-dashboard.md](25-terminal-dashboard.md) §25.4 — tile-size slider which the dedicated-view search slot is mutually exclusive with.
 - [32-osc133-jump-and-popover.md](32-osc133-jump-and-popover.md) — structured jump-to-prompt shortcut, orthogonal to free-text search.
 - [4-user-interface.md](4-user-interface.md) — the `.search-box` pattern on the app header that the terminal search widget echoes.
-- **Tickets:** HS-7331 (this doc, widget shipped), HS-7361 (toggles design — shipped as §34.8), HS-7362 (history design — shipped as §34.9), HS-7363 (Playwright e2e — shipped, 4 tests in `e2e/terminal-search.spec.ts`), HS-7393 (Esc-blurs-only — shipped), HS-7426 (toggles implementation — pending), HS-7427 (history implementation — pending).
+- **Tickets:** HS-7331 (this doc, widget shipped), HS-7361 (toggles design — shipped as §34.8), HS-7362 (history design — shipped as §34.9), HS-7363 (Playwright e2e — shipped, 4 tests in `e2e/terminal-search.spec.ts`), HS-7393 (Esc-blurs-only — shipped), HS-7426 (toggles implementation — shipped, see §34.8), HS-7427 (history implementation — shipped, see §34.9), HS-7460 (platform-specific Cmd/Ctrl+F routing — shipped, see §34.4).

@@ -23,7 +23,7 @@ import {
   tileNativeGridFromCellMetrics,
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
-import { isClearTerminalShortcut } from './terminalKeybindings.js';
+import { isClearTerminalShortcut, isFindShortcut } from './terminalKeybindings.js';
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
@@ -1121,12 +1121,13 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
   // HS-7329 — Cmd/Ctrl+K clears the dedicated-view terminal.
   // HS-7331 — Cmd/Ctrl+F must not be forwarded to the shell; the document
   // level `shortcuts.tsx` listener still catches the bubbling event.
+  // HS-7460 — both shortcuts are platform-specific (Cmd on macOS / Ctrl on
+  // Linux+Windows). The wrong-platform modifier passes through to xterm so
+  // readline's `forward-char` (Ctrl+F on macOS) and `kill-line` (Ctrl+K on
+  // macOS) still work in the dedicated-view shell.
   term.attachCustomKeyEventHandler((e) => {
     if (isClearTerminalShortcut(e)) { term.clear(); return false; }
-    if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
-        && (e.key === 'f' || e.key === 'F')) {
-      return false;
-    }
+    if (isFindShortcut(e)) { return false; }
     return true;
   });
   // HS-6898: defer the initial fit so the flex-1 body has its final size in

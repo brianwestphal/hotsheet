@@ -246,7 +246,10 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Move keyboard focus out of the terminal (click a ticket) — the selection stays visible but its fill drops to the lower-alpha inactive variant
 - [ ] With the drawer terminal focused, press **Cmd+K** (macOS) or **Ctrl+K** (Linux/Windows) — the viewport clears and scrollback drops; the current prompt stays at the top of the pane (HS-7329). Repeat in a centered dashboard tile and in the dedicated dashboard view.
 - [ ] Repeat the clear test while a TUI like `vim` or `nano` is running — the clear fires even though the TUI would normally consume the shortcut (matches Terminal.app / iTerm2)
-- [ ] **HS-7459 regression check on macOS**: with the drawer terminal focused, type a long line and then press **Ctrl+K** (not Cmd+K) — readline's `kill-line` fires (cursor-to-end deletion) and the viewport is NOT cleared. This verifies we no longer hijack Ctrl+K on macOS. Also verify **Ctrl+F** / **Ctrl+B** readline cursor-movement keys still reach the shell (see HS-7460 for the Cmd/Ctrl+F app-find hijack that is still pending a fix).
+- [ ] **HS-7459 regression check on macOS**: with the drawer terminal focused, type a long line and then press **Ctrl+K** (not Cmd+K) — readline's `kill-line` fires (cursor-to-end deletion) and the viewport is NOT cleared. This verifies we no longer hijack Ctrl+K on macOS.
+- [ ] **HS-7460 regression check on macOS — Ctrl+F**: with the drawer terminal focused, press **Ctrl+F** (not Cmd+F). Readline's `forward-char` fires (cursor advances by one character) and the terminal-search widget does NOT open. The app-header ticket-search input is also NOT focused. Then press **Cmd+F** — the terminal-search widget DOES open. Repeat in the dashboard dedicated view.
+- [ ] **HS-7460 regression check on macOS — Ctrl+Up/Down**: with the drawer terminal focused (and shell integration enabled — Settings → Terminal → "Enable shell integration UI" checked, plus an OSC 133 prompt in the buffer), press **Ctrl+Up** and **Ctrl+Down**. The viewport does NOT jump between OSC 133 markers; instead xterm forwards the escape sequence to the shell (e.g. tmux pane resize, vim/nvim, fish-shell history-token-search). Then press **Cmd+Up** / **Cmd+Down** — those DO jump between OSC 133 prompt markers.
+- [ ] **HS-7460 outside-terminal sanity check**: with focus in the ticket list (NOT in a terminal), press both **Cmd+F** and **Ctrl+F** on macOS — both still focus the app-header ticket search (no platform restriction outside a terminal — the ticket list has no conflicting use of Ctrl+F).
 - [ ] Press **Ctrl+Shift+K** — readline's kill-line passes through (the Shift modifier is deliberately excluded from the clear match on Linux/Windows)
 
 ### Tauri desktop (§22.11)
@@ -341,6 +344,8 @@ Most of the happy-path flows are now covered by `e2e/terminal-search.spec.ts` (H
 - [ ] Type `apple` into the search box (with `apple` appearing 3 times in the scrollback) — **visually confirm** the match highlights are amber/orange (not accent blue), the active match is a brighter orange than the rest, and Enter advances the active highlight to the next row
 - [ ] With keyboard focus OUTSIDE a terminal (e.g. in the ticket list), press Cmd/Ctrl+F — the app-header ticket search focuses, **NOT** the terminal search widget (fallback path)
 - [ ] Restart the terminal (Stop → Start) with the search box open — after the new PTY attaches the search box is back in its collapsed state with no stale highlights
+- [ ] **HS-7427 history persistence across widget close/reopen**: submit two distinct queries via Enter, click the × close button, click the magnifier to reopen, press ArrowUp — the most recent query appears in the input. (The history ring survives × close even though the cursor is reset.)
+- [ ] **HS-7427 history reset on PTY restart**: submit two queries, then Stop → Start the terminal. After the new PTY attaches and the widget is back open, ArrowUp does nothing (history is wiped when the xterm is GC'd)
 
 ### Dashboard dedicated view
 - [ ] Re-enter the dedicated view for a DIFFERENT tile — the search widget re-mounts fresh (no leaked query or highlights from the previous view)
@@ -404,3 +409,8 @@ For reference, here's what IS covered by automated tests (no manual check needed
 - Terminal WebSocket auth guard (reject missing/wrong secret with 403) and roundtrip (unit tests when HS-6265 lands)
 - Terminal drawer tab toggle (E2E when HS-6268 wires up the setting toggle)
 - Terminal find widget happy path (drawer open+type+Enter/Shift+Enter+× close; Cmd+F routing; dashboard dedicated-view mount/unmount; grid-view regression) — `e2e/terminal-search.spec.ts` (HS-7363)
+- Terminal find recent-query history (3-query ArrowUp MRU walk + ArrowDown draft restore against a real PTY) — `e2e/terminal-search.spec.ts` (HS-7427)
+- Terminal find regex toggle (regex toggle flips aria-pressed; `appl.` matches 3 lines; `[abc` invalid regex flips `.is-invalid` + `err` chip) — `e2e/terminal-search.spec.ts` (HS-7426)
+- OSC 133 Phase 1b copy-last-output (button hidden when no OSC 133 fires; complete A→B→C→output→D cycle reveals the button, click writes C→D range to navigator.clipboard with success-flash class) — `e2e/terminal-osc133-copy-output.spec.ts` (HS-7327)
+- OSC 133 Phase 2 jumps + popover (three OSC 133 cycles → 3 gutter glyphs, popover surfaces on hover, Copy command writes to navigator.clipboard, Cmd/Ctrl+Up jump intercepted; Settings → Terminal "Enable shell integration UI" off hides glyphs) — `e2e/terminal-osc133-jump-popover.spec.ts` (HS-7328)
+- OSC 133 Phase 3 Ask Claude (channel alive: failing command's gutter glyph popover surfaces Ask Claude button, click POSTs canonical prompt with command + exit code + output to /api/channel/trigger; channel dead: button absent from popover) — `e2e/terminal-osc133-ask-claude.spec.ts` (HS-7332)

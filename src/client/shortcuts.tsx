@@ -5,6 +5,7 @@ import { showPrintDialog } from './print.js';
 import { closeActiveTab, switchTabByOffset } from './projectTabs.js';
 import { state } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
+import { isFindShortcut } from './terminalKeybindings.js';
 import { focusActiveTerminalSearch } from './terminalSearch.js';
 import { cancelPendingSave, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { performRedo, performUndo, toggleUpNext, trackedBatch } from './undo/actions.js';
@@ -264,9 +265,21 @@ export function bindKeyboardShortcuts() {
     // Cmd/Ctrl+F: focus search. HS-7331 — when a terminal has focus, route
     // to the in-terminal SearchAddon widget; otherwise fall through to the
     // ticket-list search in the app header.
+    // HS-7460 — when a terminal is focused, only the platform-correct
+    // modifier (Cmd on macOS / Ctrl elsewhere) hijacks the shortcut. The
+    // wrong-platform variant (e.g. Ctrl+F on macOS) passes through entirely
+    // so xterm forwards it to the shell as readline's `forward-char`.
+    // Outside a terminal both modifiers continue to focus the ticket search
+    // — the ticket-list has no conflicting use of Ctrl+F.
     if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+      if (isTerminalFocused()) {
+        if (!isFindShortcut(e)) return;
+        e.preventDefault();
+        if (focusActiveTerminalSearch()) return;
+        (document.getElementById('search-input') as HTMLInputElement).focus();
+        return;
+      }
       e.preventDefault();
-      if (isTerminalFocused() && focusActiveTerminalSearch()) return;
       (document.getElementById('search-input') as HTMLInputElement).focus();
       return;
     }

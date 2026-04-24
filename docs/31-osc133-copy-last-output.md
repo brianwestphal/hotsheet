@@ -104,9 +104,14 @@ while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 - Inverted range (D before C) → null.
 - Running command on first output line → `[C, cursor + 1)`.
 
-### E2E (deferred — HS-7327 follow-up)
+### E2E (HS-7327)
 
-Playwright coverage needs a real PTY emitting OSC 133 escapes into a drawer terminal, then a click-button-read-clipboard assertion. The existing `e2e/fixtures/terminal-osc133.sh` fixture from HS-7267 is close to what's needed; HS-7327 will extend it with an output-only mode and assert `navigator.clipboard` content. Manual test-plan §26 gets a copy-last-output checklist immediately.
+Playwright coverage shipped — `e2e/terminal-osc133-copy-output.spec.ts` runs against a real PTY emitting OSC 133 escapes via `e2e/fixtures/terminal-osc133.sh` in `MODE=output` and `MODE=none`. Two tests:
+
+1. `MODE=none` — no OSC 133 ever fires. The toolbar copy-output button stays `display:none` for the lifetime of the terminal (verifies `applyShellIntegrationToolbarVisibility` keeps it offscreen for non-shell-integrated terminals).
+2. `MODE=output` — fixture emits a complete prompt cycle (A → B → C → distinctive output → D;0). After `READY` lands in the xterm screen the button becomes visible; clicking it triggers `copyLastOutput`, which writes the C → D range via `navigator.clipboard.writeText`. The clipboard is stubbed in an `addInitScript` so the assertion is deterministic across browsers and doesn't need Playwright clipboard permissions; the stub pushes onto `window.__clipboardWrites` and the test asserts the array contains the expected output. The success path's `.copied` class is also asserted before its 900 ms auto-clear.
+
+The fixture uses `lazy: true` and the configure helper deliberately skips `POST /api/terminal/restart` — restart would spawn the PTY before the websocket attaches, then the first attach with `cols/rows` would trigger the HS-6799 eager-spawn Ctrl-L redraw, which the one-shot fixture has no way to handle (the script doesn't repaint after Ctrl-L). Letting the websocket attach trigger the spawn means the PTY's output is generated *for* the client's pane and lands in the xterm cleanly.
 
 ## 31.7 Out of scope
 
@@ -133,4 +138,4 @@ Playwright coverage needs a real PTY emitting OSC 133 escapes into a drawer term
 - `src/client/terminalOsc133.ts` — `computeLastOutputRange` pure helper.
 - `src/client/terminal.tsx` — `copyLastOutput`, `applyShellIntegrationToolbarVisibility`, `flashCopyOutputBtnSuccess` / `shakeCopyOutputBtn`.
 - `src/client/styles.scss` — `.terminal-copy-output-btn.copied` green flash + `.shake` keyframe.
-- **Tickets:** HS-7268 (this doc), HS-7267 (Phase 1a foundation), HS-7269 (Phase 2), HS-7270 (Phase 3), HS-7327 follow-up for Playwright e2e.
+- **Tickets:** HS-7268 (this doc), HS-7267 (Phase 1a foundation), HS-7269 (Phase 2), HS-7270 (Phase 3), HS-7327 (Playwright e2e — shipped, see §31.6 E2E).

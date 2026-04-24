@@ -12,7 +12,7 @@ import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getActiveProject, state } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
-import { isClearTerminalShortcut } from './terminalKeybindings.js';
+import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut } from './terminalKeybindings.js';
 import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
@@ -593,25 +593,28 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
   // document-level `shortcuts.tsx` listener still catches the bubbling event
   // and routes focus to the terminal search widget (returning `false` here
   // only stops xterm's internal processing, not DOM propagation).
+  // HS-7460 — find / jump shortcuts are platform-specific via the helpers in
+  // `terminalKeybindings.ts`: only Cmd+F / Cmd+Up/Down match on macOS, only
+  // Ctrl+F / Ctrl+Up/Down match on Linux/Windows. The wrong-platform modifier
+  // passes through so e.g. macOS Ctrl+F still reaches readline's `forward-char`.
   term.attachCustomKeyEventHandler((e) => {
     if (isClearTerminalShortcut(e)) {
       inst.term?.clear();
       return false;
     }
 
-    if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
-        && (e.key === 'f' || e.key === 'F')) {
+    if (isFindShortcut(e)) {
       return false;
     }
 
-    if (e.type !== 'keydown') return true;
     if (!shellIntegrationUiEnabled()) return true;
-    if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return true;
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return true;
     if (!inst.shellIntegration.enabled) return true;
-    const direction = e.key === 'ArrowUp' ? 'prev' : 'next';
-    jumpToPromptMarker(inst, direction);
-    return false;
+    const direction = isJumpShortcut(e);
+    if (direction !== null) {
+      jumpToPromptMarker(inst, direction);
+      return false;
+    }
+    return true;
   });
 
   const encoder = new TextEncoder();

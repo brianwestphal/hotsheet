@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { isClearTerminalShortcut } from './terminalKeybindings.js';
+import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut } from './terminalKeybindings.js';
 
-function evt(overrides: Partial<Parameters<typeof isClearTerminalShortcut>[0]> = {}): Parameters<typeof isClearTerminalShortcut>[0] {
+type AnyHelper = typeof isClearTerminalShortcut | typeof isFindShortcut | typeof isJumpShortcut;
+
+function evt(overrides: Partial<Parameters<AnyHelper>[0]> = {}): Parameters<AnyHelper>[0] {
   return {
     type: 'keydown',
     metaKey: false,
@@ -100,6 +102,139 @@ describe('isClearTerminalShortcut (HS-7329 / HS-7459)', () => {
       const defaultIsMac = ua.includes('Mac');
       expect(isClearTerminalShortcut(evt({ metaKey: true }))).toBe(defaultIsMac);
       expect(isClearTerminalShortcut(evt({ ctrlKey: true }))).toBe(!defaultIsMac);
+    });
+  });
+});
+
+describe('isFindShortcut (HS-7460)', () => {
+  describe('on macOS (isMac=true)', () => {
+    const mac = true;
+
+    it('matches Cmd+F', () => {
+      expect(isFindShortcut(evt({ key: 'f', metaKey: true }), mac)).toBe(true);
+    });
+
+    it('does NOT match Ctrl+F — forwarded to shell for readline forward-char', () => {
+      expect(isFindShortcut(evt({ key: 'f', ctrlKey: true }), mac)).toBe(false);
+    });
+
+    it('does not match Cmd+Ctrl+F (both modifiers held)', () => {
+      expect(isFindShortcut(evt({ key: 'f', metaKey: true, ctrlKey: true }), mac)).toBe(false);
+    });
+
+    it('is case-insensitive on the key letter', () => {
+      expect(isFindShortcut(evt({ key: 'F', metaKey: true }), mac)).toBe(true);
+      expect(isFindShortcut(evt({ key: 'f', metaKey: true }), mac)).toBe(true);
+    });
+
+    it('does not match Cmd+Shift+F / Cmd+Alt+F', () => {
+      expect(isFindShortcut(evt({ key: 'f', metaKey: true, shiftKey: true }), mac)).toBe(false);
+      expect(isFindShortcut(evt({ key: 'f', metaKey: true, altKey: true }), mac)).toBe(false);
+    });
+  });
+
+  describe('on Linux/Windows (isMac=false)', () => {
+    const nonMac = false;
+
+    it('matches Ctrl+F', () => {
+      expect(isFindShortcut(evt({ key: 'f', ctrlKey: true }), nonMac)).toBe(true);
+    });
+
+    it('does NOT match Cmd+F on non-Mac', () => {
+      expect(isFindShortcut(evt({ key: 'f', metaKey: true }), nonMac)).toBe(false);
+    });
+
+    it('does not match Cmd+Ctrl+F (both modifiers held)', () => {
+      expect(isFindShortcut(evt({ key: 'f', metaKey: true, ctrlKey: true }), nonMac)).toBe(false);
+    });
+  });
+
+  describe('shared invariants', () => {
+    it('does not match without any modifier (plain f)', () => {
+      expect(isFindShortcut(evt({ key: 'f' }), true)).toBe(false);
+      expect(isFindShortcut(evt({ key: 'f' }), false)).toBe(false);
+    });
+
+    it('does not match other keys with the correct modifier', () => {
+      expect(isFindShortcut(evt({ key: 'k', metaKey: true }), true)).toBe(false);
+      expect(isFindShortcut(evt({ key: 'd', ctrlKey: true }), false)).toBe(false);
+    });
+
+    it('ignores keyup and keypress events', () => {
+      expect(isFindShortcut(evt({ key: 'f', type: 'keyup', metaKey: true }), true)).toBe(false);
+      expect(isFindShortcut(evt({ key: 'f', type: 'keypress', ctrlKey: true }), false)).toBe(false);
+    });
+  });
+});
+
+describe('isJumpShortcut (HS-7460)', () => {
+  describe('on macOS (isMac=true)', () => {
+    const mac = true;
+
+    it('returns prev for Cmd+ArrowUp', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowUp', metaKey: true }), mac)).toBe('prev');
+    });
+
+    it('returns next for Cmd+ArrowDown', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowDown', metaKey: true }), mac)).toBe('next');
+    });
+
+    it('returns null for Ctrl+ArrowUp — forwarded to shell (tmux pane resize, vim, etc.)', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowUp', ctrlKey: true }), mac)).toBeNull();
+    });
+
+    it('returns null for Ctrl+ArrowDown', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowDown', ctrlKey: true }), mac)).toBeNull();
+    });
+
+    it('returns null for Cmd+Ctrl+ArrowUp (both modifiers held)', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowUp', metaKey: true, ctrlKey: true }), mac)).toBeNull();
+    });
+
+    it('returns null for Cmd+Shift+ArrowUp (selection-extend chord preserved)', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowUp', metaKey: true, shiftKey: true }), mac)).toBeNull();
+    });
+  });
+
+  describe('on Linux/Windows (isMac=false)', () => {
+    const nonMac = false;
+
+    it('returns prev for Ctrl+ArrowUp', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowUp', ctrlKey: true }), nonMac)).toBe('prev');
+    });
+
+    it('returns next for Ctrl+ArrowDown', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowDown', ctrlKey: true }), nonMac)).toBe('next');
+    });
+
+    it('returns null for Cmd+ArrowUp on non-Mac', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowUp', metaKey: true }), nonMac)).toBeNull();
+    });
+
+    it('returns null for Ctrl+Alt+ArrowUp (alt-arrow chord preserved)', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowUp', ctrlKey: true, altKey: true }), nonMac)).toBeNull();
+    });
+  });
+
+  describe('shared invariants', () => {
+    it('returns null without any modifier (plain ArrowUp)', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowUp' }), true)).toBeNull();
+      expect(isJumpShortcut(evt({ key: 'ArrowDown' }), false)).toBeNull();
+    });
+
+    it('returns null for ArrowLeft / ArrowRight even with the correct modifier', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowLeft', metaKey: true }), true)).toBeNull();
+      expect(isJumpShortcut(evt({ key: 'ArrowRight', ctrlKey: true }), false)).toBeNull();
+    });
+
+    it('returns null for non-arrow keys with the correct modifier', () => {
+      expect(isJumpShortcut(evt({ key: 'k', metaKey: true }), true)).toBeNull();
+      expect(isJumpShortcut(evt({ key: 'PageUp', ctrlKey: true }), false)).toBeNull();
+    });
+
+    it('ignores keyup and keypress events', () => {
+      expect(isJumpShortcut(evt({ key: 'ArrowUp', type: 'keyup', metaKey: true }), true)).toBeNull();
+      expect(isJumpShortcut(evt({ key: 'ArrowDown', type: 'keypress', ctrlKey: true }), false)).toBeNull();
     });
   });
 });
