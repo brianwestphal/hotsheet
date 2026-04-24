@@ -24,7 +24,8 @@ describe('parseFeedbackBlocks (HS-6998)', () => {
     expect(blocks[2].markdown).toBe('Third.');
   });
 
-  it('treats a list as a single block (does NOT split list items)', () => {
+  it('keeps a flat-tag list as a single block (HS-7558 heuristic does NOT match)', () => {
+    // Items have no sentence-ending punctuation AND list isn't first → no split.
     const blocks = parseFeedbackBlocks('Intro.\n\n- one\n- two\n- three\n\nOutro.');
     expect(blocks).toHaveLength(3);
     expect(blocks[0].markdown).toBe('Intro.');
@@ -34,11 +35,58 @@ describe('parseFeedbackBlocks (HS-6998)', () => {
     expect(blocks[2].markdown).toBe('Outro.');
   });
 
-  it('treats a numbered list the same way (single block)', () => {
+  it('splits a leading numbered list into one block per item (HS-7558 — first-block rule)', () => {
+    // List is the FIRST meaningful block — heuristic always splits regardless
+    // of whether items end with punctuation. This is the screenshot scenario.
     const blocks = parseFeedbackBlocks('1. first\n2. second\n3. third');
-    expect(blocks).toHaveLength(1);
-    expect(blocks[0].markdown).toMatch(/1\. first/);
-    expect(blocks[0].markdown).toMatch(/3\. third/);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0].markdown).toMatch(/^1\. first/);
+    expect(blocks[1].markdown).toMatch(/^2\. second/);
+    expect(blocks[2].markdown).toMatch(/^3\. third/);
+  });
+
+  it('splits a mid-prompt list when every item ends with sentence punctuation (HS-7558 — punctuation rule)', () => {
+    const prompt = 'Some intro paragraph.\n\n1. First question?\n2. Second question.\n3. Third!';
+    const blocks = parseFeedbackBlocks(prompt);
+    // intro paragraph + 3 question items = 4 blocks
+    expect(blocks).toHaveLength(4);
+    expect(blocks[0].markdown).toBe('Some intro paragraph.');
+    expect(blocks[1].markdown).toMatch(/^1\. First question\?/);
+    expect(blocks[2].markdown).toMatch(/^2\. Second question\./);
+    expect(blocks[3].markdown).toMatch(/^3\. Third!/);
+  });
+
+  it('keeps a mid-prompt option list as one block when items lack sentence punctuation (HS-7558 — heuristic miss)', () => {
+    const prompt = 'Pick one:\n\n- option A\n- option B\n- option C';
+    const blocks = parseFeedbackBlocks(prompt);
+    // Items don't end in punctuation AND list isn't first → no split.
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].markdown).toBe('Pick one:');
+    expect(blocks[1].markdown).toMatch(/option A/);
+    expect(blocks[1].markdown).toMatch(/option C/);
+  });
+
+  it('keeps a mid-prompt list as one block when only SOME items end in punctuation (HS-7558 — must-be-every-item)', () => {
+    const prompt = 'Outline:\n\n- First section name?\n- Second section name\n- Third question?';
+    const blocks = parseFeedbackBlocks(prompt);
+    // "Second section name" has no sentence terminator → all-or-nothing.
+    expect(blocks).toHaveLength(2);
+    expect(blocks[1].markdown).toMatch(/First section/);
+    expect(blocks[1].markdown).toMatch(/Third question/);
+  });
+
+  it('preserves sub-bullets nested under the parent list item when splitting (HS-7558 — sub-bullets stay with parent)', () => {
+    // Leading numbered list — first-block rule splits each item. Sub-bullets
+    // under each item are NOT split out; they stay inside the parent block's
+    // markdown so the parent question + its clarifications render together.
+    const prompt = '1. Top question with sub-bullets?\n   - sub a\n   - sub b\n2. Plain question?';
+    const blocks = parseFeedbackBlocks(prompt);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].markdown).toMatch(/Top question with sub-bullets\?/);
+    expect(blocks[0].markdown).toMatch(/sub a/);
+    expect(blocks[0].markdown).toMatch(/sub b/);
+    expect(blocks[1].markdown).toMatch(/Plain question\?/);
+    expect(blocks[1].markdown).not.toMatch(/sub a/);
   });
 
   it('preserves headings, code blocks, and blockquotes as their own blocks', () => {

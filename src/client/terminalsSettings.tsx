@@ -3,6 +3,9 @@ import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import type { TerminalTabConfig } from './terminal.js';
+import { getProjectDefault } from './terminalAppearance.js';
+import { clampFontSize, DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, TERMINAL_FONTS } from './terminalFonts.js';
+import { DEFAULT_THEME_ID, TERMINAL_THEMES } from './terminalThemes.js';
 
 /**
  * Settings UI for the per-project list of default terminals
@@ -183,6 +186,25 @@ function openEditor(index: number): void {
   document.querySelectorAll('.cmd-editor-overlay').forEach(el => el.remove());
   const entry = terminals[index];
 
+  // HS-7562 — pre-resolve the appearance defaults the dialog will display.
+  // Per the user's clarifying answer (4/25/2026): no separate sentinel
+  // option; just show the theme / font lists with the project default
+  // pre-selected. Whatever the user picks gets saved verbatim.
+  const projectDefault = getProjectDefault();
+  const initialTheme = entry.theme ?? projectDefault.theme ?? DEFAULT_THEME_ID;
+  const initialFontFamily = entry.fontFamily ?? projectDefault.fontFamily ?? 'system';
+  const initialFontSize = clampFontSize(entry.fontSize ?? projectDefault.fontSize ?? DEFAULT_FONT_SIZE);
+  const appearanceOpenByDefault = entry.theme !== undefined
+    || entry.fontFamily !== undefined
+    || entry.fontSize !== undefined;
+
+  const themeOptions = TERMINAL_THEMES
+    .map(t => `<option value="${t.id}"${t.id === initialTheme ? ' selected' : ''}>${escapeHtml(t.name)}</option>`)
+    .join('');
+  const fontOptions = TERMINAL_FONTS
+    .map(f => `<option value="${f.id}"${f.id === initialFontFamily ? ' selected' : ''}>${escapeHtml(f.name)}</option>`)
+    .join('');
+
   const overlay = toElement(
     <div className="cmd-editor-overlay">
       <div className="cmd-editor-dialog">
@@ -212,6 +234,33 @@ function openEditor(index: number): void {
             </label>
             <span className="settings-hint">Uncheck to spawn the PTY as soon as the project has loaded.</span>
           </div>
+          {/* HS-7562 — Appearance overrides per terminal. Collapsed by default
+              unless the entry already has any of theme/fontFamily/fontSize set,
+              in which case it auto-opens so the user sees the live values. */}
+          <details className="term-edit-appearance" open={appearanceOpenByDefault}>
+            <summary>Appearance</summary>
+            <div className="settings-field">
+              <label htmlFor={`term-edit-theme-${index}`}>Theme</label>
+              {raw(`<select id="term-edit-theme-${index}" class="term-edit-theme">${themeOptions}</select>`)}
+              <span className="settings-hint">Default selected = current project default. Pick a different theme to override for this terminal only.</span>
+            </div>
+            <div className="settings-field">
+              <label htmlFor={`term-edit-font-${index}`}>Font</label>
+              {raw(`<select id="term-edit-font-${index}" class="term-edit-font">${fontOptions}</select>`)}
+            </div>
+            <div className="settings-field">
+              <label htmlFor={`term-edit-font-size-${index}`}>Font size</label>
+              <input
+                type="number"
+                id={`term-edit-font-size-${index}`}
+                className="term-edit-font-size"
+                min={String(MIN_FONT_SIZE)}
+                max={String(MAX_FONT_SIZE)}
+                step="1"
+                value={String(initialFontSize)}
+              />
+            </div>
+          </details>
         </div>
         <div className="cmd-editor-dialog-footer">
           <button className="btn btn-sm cmd-editor-done-btn">Done</button>
@@ -225,19 +274,51 @@ function openEditor(index: number): void {
     const command = (overlay.querySelector('.term-edit-command') as HTMLInputElement).value;
     const cwd = (overlay.querySelector('.term-edit-cwd') as HTMLInputElement).value.trim();
     const lazy = (overlay.querySelector('.term-edit-lazy') as HTMLInputElement).checked;
+    const themeSel = overlay.querySelector<HTMLSelectElement>('.term-edit-theme');
+    const fontSel = overlay.querySelector<HTMLSelectElement>('.term-edit-font');
+    const sizeInput = overlay.querySelector<HTMLInputElement>('.term-edit-font-size');
     const updated: EditableTerminalConfig = { ...entry, command: command !== '' ? command : '{{claudeCommand}}', lazy };
     if (name !== '') updated.name = name; else delete updated.name;
     if (cwd !== '') updated.cwd = cwd; else delete updated.cwd;
+    // HS-7562 — save the explicit theme / font / size verbatim. The pre-
+    // selected value reflected the project default at dialog-open time, so a
+    // user who didn't touch the controls still ends up with their per-terminal
+    // value matching the project default's CURRENT value (decoupling future
+    // project-default changes from this terminal). If the user wants the
+    // terminal to track the project default, they can clear the override
+    // by deleting the entry's theme/fontFamily/fontSize keys directly in
+    // settings.json — adding an explicit "Reset" affordance is a deliberate
+    // future enhancement.
+    if (themeSel !== null) updated.theme = themeSel.value;
+    if (fontSel !== null) updated.fontFamily = fontSel.value;
+    if (sizeInput !== null) {
+      const parsed = Number.parseFloat(sizeInput.value);
+      if (Number.isFinite(parsed)) updated.fontSize = clampFontSize(parsed);
+    }
     terminals[index] = updated;
     overlay.remove();
     renderList();
     await scheduleSave();
+    // HS-7562 — notify any mounted xterm for this terminal that its config
+    // changed so it re-resolves appearance without a page reload. The
+    // event payload carries the terminalId so listeners can filter cheaply.
+    document.dispatchEvent(new CustomEvent('hotsheet:terminal-config-changed', {
+      detail: { terminalId: updated.id },
+    }));
   };
   overlay.querySelector('.cmd-editor-close-btn')?.addEventListener('click', () => { void close(); });
   overlay.querySelector('.cmd-editor-done-btn')?.addEventListener('click', () => { void close(); });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) void close(); });
   document.body.appendChild(overlay);
   (overlay.querySelector('.term-edit-name') as HTMLInputElement).focus();
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 /** Debounced save of the full terminals array. */

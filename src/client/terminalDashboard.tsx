@@ -30,7 +30,7 @@ import {
   tileNativeGridFromCellMetrics,
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
-import { isClearTerminalShortcut, isFindShortcut } from './terminalKeybindings.js';
+import { isClearTerminalShortcut, isFindShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
@@ -883,8 +883,11 @@ function mountTileXterm(tile: DashboardTile): void {
   // HS-7329 — Cmd/Ctrl+K clears the tile's xterm (only meaningful on centered
   // tiles since non-centered tiles don't receive keystrokes, but attaching
   // here keeps the binding uniform across every xterm the app mounts).
+  // HS-7594 — also swallow Cmd/Ctrl+` so the chord reaches the document-level
+  // toggle dispatcher instead of being forwarded to the shell as backtick.
   term.attachCustomKeyEventHandler((e) => {
     if (isClearTerminalShortcut(e)) { term.clear(); return false; }
+    if (isTerminalViewToggleShortcut(e) !== null) return false;
     return true;
   });
   // Seed target dims at the initial grid; the WebSocket's history frame will
@@ -1219,6 +1222,9 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
   term.attachCustomKeyEventHandler((e) => {
     if (isClearTerminalShortcut(e)) { term.clear(); return false; }
     if (isFindShortcut(e)) { return false; }
+    // HS-7594 — swallow Cmd/Ctrl+` so the document-level toggle dispatcher
+    // sees it instead of the shell receiving a backtick.
+    if (isTerminalViewToggleShortcut(e) !== null) return false;
     return true;
   });
   // HS-6898: defer the initial fit so the flex-1 body has its final size in

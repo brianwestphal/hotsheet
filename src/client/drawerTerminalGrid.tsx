@@ -31,6 +31,7 @@ import {
   tileNativeGridFromCellMetrics,
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
+import { isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
 import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
 
@@ -1020,6 +1021,13 @@ function enterDedicatedView(tile: DrawerGridTile, priorCenteredTile: DrawerGridT
   term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
   term.open(pane);
   void applyAppearanceToTerm(term, appearance);
+  // HS-7594 — swallow the terminal-view toggle chord so xterm doesn't
+  // forward backtick to the shell. The document-level shortcut handler
+  // catches the bubbling event and dispatches the toggle.
+  term.attachCustomKeyEventHandler((e) => {
+    if (isTerminalViewToggleShortcut(e) !== null) return false;
+    return true;
+  });
 
   const runFit = (): void => { try { fit.fit(); } catch { /* not ready */ } };
   requestAnimationFrame(runFit);

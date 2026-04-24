@@ -136,8 +136,8 @@ Server-side, no new endpoints or config keys are needed. Every attach / clear-be
 
 Deliberately not in the first iteration — revisit if the feature lands and users request them:
 
-- **CWD badge under the tile label.** The dashboard has one (HS-7278); the drawer's vertical real estate is too tight to justify it. Follow-up ticket if missed.
-- **Keyboard shortcut to toggle grid mode.** Follow-up ticket.
+- **CWD badge under the tile label.** The dashboard has one (HS-7278); the drawer's vertical real estate is too tight to justify it. Follow-up ticket if missed. (HS-7593 closed as won't-do.)
+- **~~Keyboard shortcut to toggle grid mode.~~** Shipped via HS-7594 — `Cmd+`` `` (macOS) / `Ctrl+`` `` (Linux/Windows) toggles drawer grid view when focus is in a drawer terminal, or the global Terminal Dashboard otherwise. `Opt+Cmd+`` `` / `Alt+Ctrl+`` `` always toggles the global dashboard. Implementation lives in `src/client/terminalKeybindings.ts` (`isTerminalViewToggleShortcut`), dispatched from `shortcuts.tsx` and swallowed by every xterm `attachCustomKeyEventHandler` so the shell doesn't see a backtick. See [22-terminal.md §22.18](22-terminal.md#2218-terminal-focused-keyboard-shortcuts-hs-6472).
 - **Drag-to-reorder tiles / pin favorites.** Order is strictly `configured terminals first, in config order; dynamic terminals after, in creation order`, mirroring the drawer tab strip.
 - **Persist grid-mode state across reloads.** Fresh reload returns to tabs mode.
 - **Multi-select tiles / bulk actions.** Not needed for the peek use case.

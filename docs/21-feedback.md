@@ -48,8 +48,29 @@ AI-generated feedback prompts are unpredictable — sometimes a neat numbered li
 **Edge cases:**
 - Empty prompt — no blocks are rendered; only the catch-all textarea is shown. The `+ Add response` affordance is absent (there's nothing to insert between).
 - Prompts with only one block — a single `+ Add response` slot appears after the block, plus the catch-all. Equivalent to the single-textarea flow most of the time.
-- Lists — always rendered as a single block. If the user wants to answer item-by-item they can add multiple inline responses after the list and label them themselves in the response text. (The dialog deliberately doesn't split list items into their own slots — false positives on options menus were the bug we were fixing.)
+- Lists — see §21.2.2 for the HS-7558 split-into-items heuristic. Lists that match the heuristic become one block per item (with one `+ Add response` slot per item); lists that don't match stay grouped as a single block (matching the original HS-6998 v1 behavior).
 - Code blocks, headings, blockquotes — each is a distinct block and can have its own inline response.
+
+### 21.2.2 Per-list-item insertion points (HS-7558)
+
+The HS-6998 v1 always rendered a list as a single block, which meant a numbered list of question — the most natural shape for a multi-part feedback prompt — only got ONE `+ Add response here` slot at the end of the whole list. Users wanted to answer question-by-question. HS-7558 extends `parseFeedbackBlocks` with a heuristic that splits a list into per-item blocks when it "looks like a question set."
+
+**The heuristic.** A top-level list is split into one block per item when EITHER:
+1. The list is the **first meaningful block** of the prompt (paragraphs / headings / etc. before it would push it later in the order). Rationale: a leading numbered list of questions is almost always a question set, regardless of whether each item ends with sentence punctuation. This is the screenshot scenario from the original ticket.
+2. **Every item's first line ends with `.`, `?`, or `!`.** Picks up question lists in the middle of a prompt while still leaving option menus / flat tag lists alone. The first-line-only check matters: items with sub-bullets ("1. Top question? — sub a — sub b") have the parent question on line 1 and bullets after; the heuristic ignores the sub-bullets when deciding whether the list is question-shaped.
+
+If neither holds, the list stays grouped as a single block. Examples:
+
+- `- foo / - bar / - baz` mid-prompt — items lack sentence punctuation, list isn't first → **not split**, stays one block.
+- `1. Question A? / 2. Question B! / 3. Question C.` mid-prompt — every item ends in punctuation → **split**, three blocks.
+- `1. heading / 2. another` at top of prompt — first-block rule wins → **split**, two blocks. (Edge case: a leading list that's a tag list rather than a question list will get split too. Acceptable trade-off — tag lists at the top are rare in feedback prompts, and the user can just ignore the extra slots.)
+- `Outline: / - First section name? / - Second section name / - Third question?` — only some items end in punctuation → **all-or-nothing**, list stays grouped.
+
+**Sub-bullets stay with their parent.** When a list item has sub-bullets nested under it, splitting puts the parent + its sub-bullets into ONE block. Sub-bullets are typically clarifications of the question, not separate questions. Example: `1. Top question? — sub a — sub b — 2. Plain question?` produces 2 blocks (block 0 contains the parent + both sub-bullets, block 1 contains the second top-level question).
+
+**Backward compat.** Existing prompts with no top-level lists are unaffected. Prompts with non-question lists (option menus, flat tags) are unaffected. Only question-shaped lists pick up the new per-item slots.
+
+**Implementation.** `shouldSplitListIntoItems(list, isFirstBlock)` is a pure helper in `feedbackParser.ts` that gates the split per-list. `combineQuotedResponse` is unchanged — `blockIndex` indexes into whatever block list `parseFeedbackBlocks` returns, so per-item blocks slot in transparently. 4 new unit tests in `feedbackParser.test.ts` cover the four cases (leading list always splits, mid-prompt sentence-punctuated list splits, mid-prompt option list stays grouped, partial-punctuation list stays grouped) plus a sub-bullet preservation test. The existing "treats a list as a single block" test was renamed and updated; the existing "treats a numbered list the same way" test was renamed to reflect the new leading-list-always-splits behavior.
 
 ### 21.3 Provide Feedback Link
 

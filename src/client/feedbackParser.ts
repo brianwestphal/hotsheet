@@ -38,7 +38,17 @@ export interface BlockResponse {
 
 /** Split a prompt into top-level markdown blocks. Always returns an array
  *  (possibly empty for whitespace-only input). `space` tokens and empty
- *  blocks are dropped so the caller doesn't need to filter. */
+ *  blocks are dropped so the caller doesn't need to filter.
+ *
+ *  HS-7558 — when a top-level list "looks like a question set" (either it's
+ *  the first meaningful block of the prompt, OR every item ends with `.`,
+ *  `?`, or `!`), each list item becomes its own block. This gives the
+ *  feedback dialog one `+ Add response here` slot per question instead of
+ *  a single slot after the whole list. Lists that don't match the heuristic
+ *  (option menus, flat tag lists, "categories" without sentence
+ *  punctuation that aren't at the top) stay grouped as one block, matching
+ *  the pre-HS-7558 behavior. Sub-bullets nested under a list item stay with
+ *  their parent — they're typically clarifications, not separate questions. */
 export function parseFeedbackBlocks(prompt: string): FeedbackBlock[] {
   if (typeof prompt !== 'string' || prompt.trim() === '') return [];
 
@@ -49,14 +59,74 @@ export function parseFeedbackBlocks(prompt: string): FeedbackBlock[] {
     return [{ markdown: prompt.trim(), html: marked.parse(prompt, { async: false }) }];
   }
 
-  const blocks: FeedbackBlock[] = [];
+  // Filter out space + empty tokens upfront so the "is this list the first
+  // meaningful block?" heuristic is correct (the source's leading whitespace
+  // would otherwise count as a previous block).
+  const meaningful: Tokens.Generic[] = [];
   for (const t of tokens) {
     if (t.type === 'space') continue;
+    if (t.raw.trim() === '') continue;
+    meaningful.push(t);
+  }
+
+  const blocks: FeedbackBlock[] = [];
+  for (let i = 0; i < meaningful.length; i++) {
+    const t = meaningful[i];
     const md = t.raw.trim();
     if (md === '') continue;
+
+    if (t.type === 'list' && shouldSplitListIntoItems(t as Tokens.List, i === 0)) {
+      const list = t as Tokens.List;
+      for (const item of list.items) {
+        const itemMd = item.raw.trim();
+        if (itemMd === '') continue;
+        blocks.push({ markdown: itemMd, html: marked.parse(itemMd, { async: false }) });
+      }
+      continue;
+    }
+
     blocks.push({ markdown: md, html: marked.parse(md, { async: false }) });
   }
   return blocks;
+}
+
+/** HS-7558 heuristic — should this top-level list get one block per item, or
+ *  stay grouped as a single block?
+ *
+ *  Returns true when:
+ *  - The list is the FIRST meaningful block of the prompt (the screenshot
+ *    case — a leading numbered list of questions is almost always a question
+ *    set, regardless of whether each item ends with sentence punctuation),
+ *    OR
+ *  - Every item's first line ends with `.`, `?`, or `!` (a sentence
+ *    terminator). Picks up question lists in the middle of a prompt while
+ *    still leaving option menus / flat tag lists alone.
+ *
+ *  Returns false for empty lists.
+ */
+function shouldSplitListIntoItems(list: Tokens.List, isFirstBlock: boolean): boolean {
+  if (list.items.length === 0) return false;
+  if (isFirstBlock) return true;
+  return list.items.every(item => endsWithSentencePunctuation(firstLineOfItemText(item)));
+}
+
+/** First non-empty line of a list item's text content (NOT raw — `text` strips
+ *  the bullet marker and any sub-bullet indentation, so we inspect just the
+ *  parent question text). Returns empty string if the item has no text. */
+function firstLineOfItemText(item: Tokens.ListItem): string {
+  const text = (typeof item.text === 'string' ? item.text : '').trim();
+  if (text === '') return '';
+  const firstLine = text.split('\n')[0]?.trim() ?? '';
+  return firstLine;
+}
+
+/** True if the trimmed string ends with `.`, `?`, or `!`. Used by the HS-7558
+ *  list-split heuristic to distinguish question items from option / category
+ *  list items. */
+function endsWithSentencePunctuation(text: string): boolean {
+  if (text === '') return false;
+  const last = text.charAt(text.length - 1);
+  return last === '.' || last === '?' || last === '!';
 }
 
 /**

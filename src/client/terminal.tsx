@@ -28,7 +28,7 @@ import {
 } from './terminalAppearance.js';
 import { mountAppearancePopover } from './terminalAppearancePopover.js';
 import { DEFAULT_FONT_SIZE } from './terminalFonts.js';
-import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut } from './terminalKeybindings.js';
+import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
@@ -171,6 +171,35 @@ export function initTerminal(): void {
   // re-resolve + re-apply on every mounted xterm. Per-terminal overrides stay
   // in place; only fields inherited from the default pick up the new value.
   subscribeToDefaultAppearanceChanges(() => {
+    for (const inst of instances.values()) {
+      if (inst.term !== null) void reapplyAppearance(inst);
+    }
+  });
+
+  // HS-7562 — when a per-terminal config changes (Settings → Terminal outline
+  // editor's Appearance section saved), update the matching instance's
+  // config snapshot from the latest list response so resolveInstanceAppearance
+  // picks up the new theme / fontFamily / fontSize, then re-apply. We don't
+  // know the new values inline here, so refresh `lastKnownConfigs` first via
+  // a lightweight /terminal/list fetch the next loadAndRenderTerminalTabs
+  // would normally do anyway — but the editor has already PATCHed file-settings
+  // by the time this event fires, so a quick re-resolve from the existing
+  // `inst.config` is enough as long as the editor also wrote the new fields
+  // into `terminals[index]` BEFORE PATCH, and the next list refresh updates
+  // `inst.config` via loadAndRenderTerminalTabs's existing config-merge path.
+  // The editor already calls scheduleSave() which awaits the PATCH and then
+  // calls refreshTerminalsAfterSettingsChange (which re-renders tabs and
+  // therefore re-merges configs into instances), so by the time this event
+  // fires the instance's config is already up-to-date — re-applying is enough.
+  document.addEventListener('hotsheet:terminal-config-changed', (e) => {
+    const detail = (e as CustomEvent<{ terminalId?: string } | undefined>).detail;
+    const id = detail === undefined ? undefined : detail.terminalId;
+    if (typeof id === 'string' && id !== '') {
+      const inst = instances.get(id);
+      if (inst !== undefined && inst.term !== null) void reapplyAppearance(inst);
+      return;
+    }
+    // No specific id — re-apply everything as a fallback.
     for (const inst of instances.values()) {
       if (inst.term !== null) void reapplyAppearance(inst);
     }
@@ -763,6 +792,11 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
     if (isFindShortcut(e)) {
       return false;
     }
+
+    // HS-7594 — swallow Cmd/Ctrl+` (and Opt+Cmd+`) so xterm doesn't forward
+    // a backtick to the shell. The document-level handler in shortcuts.tsx
+    // still receives the bubbling event and dispatches the toggle.
+    if (isTerminalViewToggleShortcut(e) !== null) return false;
 
     if (!shellIntegrationUiEnabled()) return true;
     if (!inst.shellIntegration.enabled) return true;

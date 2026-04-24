@@ -5,7 +5,7 @@ import { showPrintDialog } from './print.js';
 import { closeActiveTab, switchTabByOffset } from './projectTabs.js';
 import { state } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
-import { isFindShortcut } from './terminalKeybindings.js';
+import { isFindShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { focusActiveTerminalSearch } from './terminalSearch.js';
 import { cancelPendingSave, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { performRedo, performUndo, toggleUpNext, trackedBatch } from './undo/actions.js';
@@ -282,6 +282,39 @@ export function bindKeyboardShortcuts() {
       e.preventDefault();
       (document.getElementById('search-input') as HTMLInputElement).focus();
       return;
+    }
+
+    // HS-7594 — Cmd+` (macOS) / Ctrl+` (Linux/Windows) toggles a terminal-view
+    // surface based on where focus is:
+    //   - In a drawer terminal → toggle §36 drawer terminal grid view
+    //   - Anywhere else → toggle §25 global Terminal Dashboard
+    // Opt+Cmd+` always toggles the global Terminal Dashboard (lets the user
+    // jump to the dashboard from inside a drawer terminal without leaving).
+    // Implementation: dispatch a click on the relevant toggle button so we
+    // reuse its existing enable/disable + state-machine logic instead of
+    // re-implementing the lifecycle here.
+    {
+      const toggleMatch = isTerminalViewToggleShortcut(e);
+      if (toggleMatch !== null) {
+        e.preventDefault();
+        const inTerminal = isTerminalFocused();
+        const target = toggleMatch.alt
+          ? 'dashboard'
+          : (inTerminal ? 'drawer-grid' : 'dashboard');
+        if (target === 'drawer-grid') {
+          const btn = document.getElementById('drawer-grid-toggle') as HTMLButtonElement | null;
+          if (btn !== null && !btn.disabled) btn.click();
+          // If the drawer-grid toggle is disabled (≤1 terminal), silently
+          // ignore — matches the click behaviour of the disabled button.
+        } else {
+          // Dashboard toggle is unconditionally enabled (when Tauri-stubbed
+          // visible at all). Click it whether dashboard is currently open or
+          // not — the toggle's own click handler flips the state.
+          const btn = document.getElementById('terminal-dashboard-toggle') as HTMLButtonElement | null;
+          if (btn !== null && btn.style.display !== 'none') btn.click();
+        }
+        return;
+      }
     }
 
     // N: focus draft input (when not in an input)

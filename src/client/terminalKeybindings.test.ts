@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut } from './terminalKeybindings.js';
+import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 
 type AnyHelper = typeof isClearTerminalShortcut | typeof isFindShortcut | typeof isJumpShortcut;
 
@@ -235,6 +235,72 @@ describe('isJumpShortcut (HS-7460)', () => {
     it('ignores keyup and keypress events', () => {
       expect(isJumpShortcut(evt({ key: 'ArrowUp', type: 'keyup', metaKey: true }), true)).toBeNull();
       expect(isJumpShortcut(evt({ key: 'ArrowDown', type: 'keypress', ctrlKey: true }), false)).toBeNull();
+    });
+  });
+});
+
+describe('isTerminalViewToggleShortcut (HS-7594)', () => {
+  describe('on macOS (isMac=true)', () => {
+    const mac = true;
+
+    it('matches Cmd+` (plain) and reports alt:false', () => {
+      expect(isTerminalViewToggleShortcut(evt({ metaKey: true, key: '`' }), mac)).toEqual({ alt: false });
+    });
+
+    it('matches Cmd+Alt+` and reports alt:true', () => {
+      expect(isTerminalViewToggleShortcut(evt({ metaKey: true, altKey: true, key: '`' }), mac)).toEqual({ alt: true });
+    });
+
+    it('matches via e.code === Backquote when e.key is something else (AZERTY layouts)', () => {
+      // Some AZERTY engines surface backtick as "Dead" on .key; .code stays
+      // 'Backquote'. Cast through unknown to inject the optional `code` field.
+      const e = { ...evt({ metaKey: true, key: 'Dead' }), code: 'Backquote' } as Parameters<typeof isTerminalViewToggleShortcut>[0];
+      expect(isTerminalViewToggleShortcut(e, mac)).toEqual({ alt: false });
+    });
+
+    it('does NOT match Ctrl+` — forwarded to shell on macOS (no readline binding by default but the chord is reserved for tools like fish-shell)', () => {
+      expect(isTerminalViewToggleShortcut(evt({ ctrlKey: true, key: '`' }), mac)).toBeNull();
+    });
+
+    it('rejects when both Cmd and Ctrl are held', () => {
+      expect(isTerminalViewToggleShortcut(evt({ metaKey: true, ctrlKey: true, key: '`' }), mac)).toBeNull();
+    });
+
+    it('rejects when Shift is held — leaves room for future bindings', () => {
+      expect(isTerminalViewToggleShortcut(evt({ metaKey: true, shiftKey: true, key: '`' }), mac)).toBeNull();
+    });
+
+    it('rejects non-backtick keys', () => {
+      expect(isTerminalViewToggleShortcut(evt({ metaKey: true, key: 'k' }), mac)).toBeNull();
+      expect(isTerminalViewToggleShortcut(evt({ metaKey: true, key: '~' }), mac)).toBeNull();
+    });
+  });
+
+  describe('on Linux/Windows (isMac=false)', () => {
+    const nonMac = false;
+
+    it('matches Ctrl+` (plain) and reports alt:false', () => {
+      expect(isTerminalViewToggleShortcut(evt({ ctrlKey: true, key: '`' }), nonMac)).toEqual({ alt: false });
+    });
+
+    it('matches Ctrl+Alt+` and reports alt:true', () => {
+      expect(isTerminalViewToggleShortcut(evt({ ctrlKey: true, altKey: true, key: '`' }), nonMac)).toEqual({ alt: true });
+    });
+
+    it('does NOT match Cmd+` — Cmd has no convention on non-Mac platforms', () => {
+      expect(isTerminalViewToggleShortcut(evt({ metaKey: true, key: '`' }), nonMac)).toBeNull();
+    });
+  });
+
+  describe('shared invariants', () => {
+    it('ignores non-keydown events on both platforms', () => {
+      expect(isTerminalViewToggleShortcut(evt({ metaKey: true, key: '`', type: 'keyup' }), true)).toBeNull();
+      expect(isTerminalViewToggleShortcut(evt({ ctrlKey: true, key: '`', type: 'keypress' }), false)).toBeNull();
+    });
+
+    it('rejects no-modifier backtick (would otherwise prevent typing it into the shell)', () => {
+      expect(isTerminalViewToggleShortcut(evt({ key: '`' }), true)).toBeNull();
+      expect(isTerminalViewToggleShortcut(evt({ key: '`' }), false)).toBeNull();
     });
   });
 });
