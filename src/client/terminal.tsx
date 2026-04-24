@@ -10,6 +10,12 @@ import { fireToastsForActiveProject, subscribeToBellState } from './bellPoll.js'
 import { isChannelAlive, triggerChannelAndMarkBusy } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
+import {
+  type DrawerGridTileEntry,
+  exitDrawerGridMode,
+  isDrawerGridActive,
+  onTerminalListUpdated,
+} from './drawerTerminalGrid.js';
 import { getActiveProject, state } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
 import {
@@ -209,7 +215,15 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   // mounted xterm — the server-authoritative field is what lets us surface
   // bells that fired before the xterm was mounted or while the project was
   // inactive.
-  type ListEntry = TerminalTabConfig & { bellPending?: boolean; notificationMessage?: string | null };
+  type ListEntry = TerminalTabConfig & {
+    bellPending?: boolean;
+    notificationMessage?: string | null;
+    // HS-6311 — drawer grid needs live state + exit code to render lazy /
+    // exited placeholder tiles. Already returned by /terminal/list's
+    // `annotate` helper (see src/routes/terminal.ts).
+    state?: 'alive' | 'exited' | 'not_spawned';
+    exitCode?: number | null;
+  };
   type ListResponse = { configured: ListEntry[]; dynamic: ListEntry[]; home?: string };
   let data: ListResponse;
   try {
@@ -285,6 +299,24 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   if (activeTerminalId !== null && !wanted.has(activeTerminalId)) {
     activeTerminalId = null;
   }
+
+  // HS-6311 — hand the full list to the drawer-grid module so it can enable /
+  // disable the toggle button (requires ≥2 terminals to enable) and, if the
+  // current project is in grid mode, rebuild its tiles. Shape-compatible with
+  // `DrawerGridTileEntry`; we strip notificationMessage which is unused here.
+  const gridEntries: DrawerGridTileEntry[] = [...wanted.values()].map(e => ({
+    id: e.id,
+    name: e.name,
+    command: e.command,
+    bellPending: e.bellPending,
+    state: e.state,
+    exitCode: e.exitCode,
+    theme: e.theme,
+    fontFamily: e.fontFamily,
+    fontSize: e.fontSize,
+    dynamic: e.dynamic,
+  }));
+  onTerminalListUpdated(gridEntries);
 }
 
 /** HS-6603 §24.4.3: re-sync each active-project terminal's bell indicator
@@ -321,6 +353,11 @@ function ensureBellSubscription(): void {
 export function activateTerminal(id: string): void {
   const inst = instances.get(id);
   if (!inst) return;
+  // HS-6311 — clicking a terminal tab while the drawer is in grid mode exits
+  // grid mode first (mirrors §25.3 rule 3: tab click auto-exits the dashboard
+  // and activates that tab's normal view). Delegate to the grid module so
+  // its internal state + chrome visibility stay consistent.
+  if (isDrawerGridActive()) exitDrawerGridMode();
   activeTerminalId = id;
 
   // Hide other terminal panes; show this one. Clear the bell indicator on

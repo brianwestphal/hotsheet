@@ -6,8 +6,12 @@ import {
   getCategoryLabel,
   getPriorityColor,
   getPriorityIcon,
+  getProjectGridActive,
+  getProjectGridSliderValue,
   getStatusIcon,
   setActiveProject,
+  setProjectGridActive,
+  setProjectGridSliderValue,
   state,
 } from './state.js';
 
@@ -137,5 +141,70 @@ describe('setActiveProject per-project search state (HS-7360)', () => {
     setActiveProject(projB);
     setActiveProject(projA);
     expect(state.search).toBe('keep');
+  });
+});
+
+describe('per-project drawer grid state (HS-6311)', () => {
+  const projA = { name: 'A', dataDir: '/a', secret: 'grid-a' };
+  const projB = { name: 'B', dataDir: '/b', secret: 'grid-b' };
+
+  beforeEach(() => {
+    clearPerProjectSessionState('grid-a');
+    clearPerProjectSessionState('grid-b');
+    setActiveProject(projA);
+  });
+
+  it('defaults grid-active to false for a never-seen project', () => {
+    expect(getProjectGridActive('grid-a')).toBe(false);
+    expect(getProjectGridActive('grid-b')).toBe(false);
+  });
+
+  it('setProjectGridActive(true) persists for that secret', () => {
+    setProjectGridActive('grid-a', true);
+    expect(getProjectGridActive('grid-a')).toBe(true);
+    expect(getProjectGridActive('grid-b')).toBe(false);
+  });
+
+  it('setProjectGridActive(false) clears the flag (distinct from never-seen)', () => {
+    setProjectGridActive('grid-a', true);
+    setProjectGridActive('grid-a', false);
+    expect(getProjectGridActive('grid-a')).toBe(false);
+  });
+
+  it('defaults slider value to 33 for a never-seen project', () => {
+    expect(getProjectGridSliderValue('grid-a')).toBe(33);
+    expect(getProjectGridSliderValue('grid-b')).toBe(33);
+  });
+
+  it('setProjectGridSliderValue persists per secret', () => {
+    setProjectGridSliderValue('grid-a', 60);
+    setProjectGridSliderValue('grid-b', 15);
+    expect(getProjectGridSliderValue('grid-a')).toBe(60);
+    expect(getProjectGridSliderValue('grid-b')).toBe(15);
+  });
+
+  it('grid state survives a setActiveProject round-trip — not cleared by project switch', () => {
+    setProjectGridActive('grid-a', true);
+    setProjectGridSliderValue('grid-a', 72);
+    setActiveProject(projB);
+    setActiveProject(projA);
+    expect(getProjectGridActive('grid-a')).toBe(true);
+    expect(getProjectGridSliderValue('grid-a')).toBe(72);
+  });
+
+  it('clearPerProjectSessionState drops grid-active + slider value for that secret', () => {
+    setProjectGridActive('grid-a', true);
+    setProjectGridSliderValue('grid-a', 50);
+    clearPerProjectSessionState('grid-a');
+    expect(getProjectGridActive('grid-a')).toBe(false);
+    expect(getProjectGridSliderValue('grid-a')).toBe(33);
+  });
+
+  it('grid state for one project does not leak into another on switch', () => {
+    setProjectGridActive('grid-a', true);
+    setProjectGridSliderValue('grid-a', 80);
+    setActiveProject(projB);
+    expect(getProjectGridActive('grid-b')).toBe(false);
+    expect(getProjectGridSliderValue('grid-b')).toBe(33);
   });
 });

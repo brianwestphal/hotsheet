@@ -380,6 +380,12 @@ function updateToggleIcon(isOpen: boolean) {
 export function switchDrawerTab(tab: string) {
   const changed = tab !== activeTab;
   activeTab = tab;
+  // HS-6311 — clicking a drawer tab while in grid mode exits grid mode first
+  // (mirrors §25.3 rule 3). Import is synchronous-ish here; safe because the
+  // grid module doesn't import commandLog back (no cycle).
+  void import('./drawerTerminalGrid.js').then(({ isDrawerGridActive, exitDrawerGridMode }) => {
+    if (isDrawerGridActive()) exitDrawerGridMode();
+  });
   for (const btn of document.querySelectorAll<HTMLElement>('.drawer-tab')) {
     btn.classList.toggle('active', btn.dataset.drawerTab === tab);
   }

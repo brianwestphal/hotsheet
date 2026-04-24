@@ -256,6 +256,20 @@ pageRoutes.get('/', (c) => {
               </div>
             </div>
             <div className="drawer-tabs-end">
+              {/* HS-6311 — tile-size slider for the drawer terminal grid view
+                  (§36). Hidden unless grid mode is active; visibility toggled
+                  by drawerTerminalGrid.tsx in lockstep with the grid. */}
+              <div className="drawer-grid-sizer" id="drawer-grid-sizer" style="display:none" title="Tile size">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M14 15H9v-5"/><path d="M16 3h5v5"/><path d="M21 3 9 15"/></svg>
+                <input type="range" id="drawer-grid-size-slider" min="0" max="100" step="1" value="33" aria-label="Grid tile size" />
+              </div>
+              {/* HS-6311 — toggle between drawer tabs and a grid view of every
+                  terminal in the current project. Hidden in plain browsers
+                  (Tauri-only per §36.8), disabled when ≤1 terminal exists.
+                  Uses Lucide `layout-grid`. */}
+              <button className="drawer-grid-toggle" id="drawer-grid-toggle" title="Terminal grid view (disabled: add a second terminal to enable)" style="display:none" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+              </button>
               <button className="drawer-expand-btn" id="drawer-expand-btn" title="Expand drawer to full height">
                 <svg className="drawer-expand-icon-up" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 3h16"/><path d="M12 21V7"/><path d="m6 13 6-6 6 6"/></svg>
                 <svg className="drawer-expand-icon-down" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style="display:none"><path d="M4 21h16"/><path d="M12 3v14"/><path d="m6 11 6 6 6-6"/></svg>
@@ -277,6 +291,11 @@ pageRoutes.get('/', (c) => {
             <div id="command-log-entries" className="command-log-entries"></div>
           </div>
           <div id="drawer-terminal-panes" className="drawer-terminal-panes"></div>
+          {/* HS-6311 — terminal grid view container. Hidden until the user
+              toggles grid mode on via the drawer toolbar's #drawer-grid-toggle.
+              Tiles are mounted by drawerTerminalGrid.tsx on each enter. See
+              docs/36-drawer-terminal-grid.md. */}
+          <div id="drawer-terminal-grid" className="drawer-terminal-grid" style="display:none"></div>
         </div>
 
         <footer className="app-footer">

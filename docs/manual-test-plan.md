@@ -336,6 +336,51 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 
 ---
 
+## 12.1. Drawer terminal grid view (HS-6311, §36)
+
+Automated coverage in `e2e/drawer-terminal-grid.spec.ts` (3 tests) covers toggle enable/disable + grid on/off + slider persistence + tab-click auto-exit. The items below are what automated tests don't exercise — drag / resize / visual / bell animation / Tauri-only paths.
+
+### Basic toggle + grid behavior
+- [ ] With one terminal configured, open the drawer and confirm `#drawer-grid-toggle` is **visible but disabled** (cursor: not-allowed, reduced opacity, tooltip explains the 2-terminal minimum).
+- [ ] Add a second terminal (via Settings → Terminal or the drawer `+` button) — the toggle **enables** immediately without a page reload.
+- [ ] Click the toggle — the drawer body swaps from the tab pane to the tile grid. The slider becomes visible next to the toggle.
+- [ ] Click the toggle again — back to tabs; the previously-active tab (Commands Log by default) is re-revealed.
+
+### Tile rendering + slider
+- [ ] With 3–4 terminals in the project, enter grid mode — every terminal gets a tile, tiles are 4:3, labels match the drawer-tab display names.
+- [ ] Drag the slider left → tiles shrink, more per row. Drag right → tiles grow, fewer per row. Snap-point tick marks appear under the slider at "N per row" positions and the slider magnetically snaps within ~2.5 units of each.
+- [ ] For a live `alive` terminal whose shell has been running for a bit (some scrollback), the tile shows a scaled-down live preview of the content.
+- [ ] For a lazy terminal that has never been attached, the tile shows a muted placeholder with a play glyph + "Not yet started".
+- [ ] For an exited terminal, the tile shows "Exited (code N)" with the play glyph.
+
+### Click / dblclick / Esc routing
+- [ ] Single-click a live tile — it grows out of its grid slot (FLIP animation) to a centered overlay filling ~90 % of the drawer. A dim backdrop covers the rest of the drawer (NOT the full viewport).
+- [ ] Type into the centered overlay — the shell receives the keystrokes.
+- [ ] Click the backdrop, click the same tile, or press Esc — the tile animates back into its grid slot (reverse FLIP).
+- [ ] Double-click any tile — enters the dedicated full-drawer view. `FitAddon.fit()` scales the text to real cols × rows. A back button + terminal label show in a slim top bar.
+- [ ] Click Back, or press Esc — returns to the grid (or centered overlay if that was the prior state).
+- [ ] While in dedicated view, click another drawer terminal tab — exits grid mode entirely and activates that tab.
+- [ ] Press Esc on the bare grid (no centered / dedicated) — exits grid mode (reverts to the prior tab).
+
+### Placeholders
+- [ ] Click a lazy / exited placeholder tile — shows "Starting…", spawns the PTY, then transitions to the centered overlay once the first history frame arrives.
+- [ ] Double-click a placeholder — same spawn + goes straight to dedicated.
+
+### Bell indicators
+- [ ] In one of the project's terminals, run `printf '\007'` while grid mode is active in the same project — the tile does a one-shot bounce and keeps a persistent 2 px accent-color outline.
+- [ ] Click the tile (centered overlay) — the outline clears immediately and the server-side `bellPending` flag drops (verify: the `.drawer-tab.has-bell` indicator on that terminal's tab also clears after exiting grid mode).
+- [ ] Fire a bell in another project's terminal while the current project is in grid mode — the tile outline does NOT appear for that (cross-project) bell; the project-tab bell indicator on the other project's tab does appear as normal.
+
+### Per-project state + project switch
+- [ ] Project A in grid mode with slider at 60 → switch to project B → project B opens in its last state (tabs mode by default, slider at 33 default if never opened).
+- [ ] Switch back to project A — still in grid mode, slider still at 60.
+- [ ] Page reload (Cmd+R) — grid state resets to tabs mode for every project (session-only).
+
+### Tauri-only gate
+- [ ] In a plain browser (`http://localhost:4174` in Chrome, not the Tauri window) — confirm `#drawer-grid-toggle` is absent from the drawer toolbar.
+
+---
+
 ## 13. Terminal find / search (HS-7331, §34)
 
 Most of the happy-path flows are now covered by `e2e/terminal-search.spec.ts` (HS-7363). The items below are what's left for manual verification — visual-color checks, fallback paths, and state-reset flows that automated tests don't yet exercise.

@@ -6225,3 +6225,293 @@ body.terminal-dashboard-active {
     }
   }
 }
+
+// HS-6311 — drawer terminal grid view (docs/36-drawer-terminal-grid.md).
+// Structurally mirrors the dashboard tile grid (§25) but scoped to the drawer
+// panel rather than a full-viewport overlay. Keeping the selectors distinct
+// lets the two surfaces evolve independently (drawer is short + wide; the
+// dashboard is full-viewport with per-project sections).
+
+.drawer-grid-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+
+  &.active {
+    // Pressed-state matches the terminal-dashboard toggle: accent-tinted
+    // background + accent border so the user sees the drawer is in an
+    // alternate mode at a glance.
+    color: var(--accent, #3b82f6);
+    background: color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent, #3b82f6) 45%, transparent);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+// Slider container sits next to the toggle button, only visible while grid
+// mode is active. `display` is toggled inline by drawerTerminalGrid.tsx.
+.drawer-grid-sizer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 6px;
+  color: var(--text-muted);
+  position: relative;
+
+  input[type="range"] {
+    width: 100px;
+    accent-color: var(--accent, #3b82f6);
+  }
+}
+
+.drawer-grid-sizer-ticks {
+  position: absolute;
+  top: 100%;
+  height: 4px;
+  pointer-events: none;
+  margin-top: 1px;
+}
+
+.drawer-grid-sizer-tick {
+  position: absolute;
+  width: 1px;
+  height: 4px;
+  background: var(--text-muted);
+  opacity: 0.45;
+  transform: translateX(-0.5px);
+}
+
+// Grid container — lives inside #command-log-panel alongside .drawer-tab-content
+// panels. Visible only while grid mode is on. Scrolls vertically when content
+// overflows the drawer height.
+.drawer-terminal-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+  position: relative; // for the center backdrop + dedicated overlay anchoring
+}
+
+.drawer-terminal-grid-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: box-shadow 120ms ease;
+
+  &:hover:not(.centered) .drawer-terminal-grid-tile-preview {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3b82f6) 60%, transparent);
+  }
+}
+
+.drawer-terminal-grid-tile-preview {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  position: relative;
+  // No width/height transition — the FLIP center animation runs on the tile
+  // root, not the preview. Mirrors HS-7096.
+}
+
+.drawer-terminal-grid-tile-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.drawer-terminal-grid-tile-placeholder-cold {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+
+  svg { opacity: 0.5; }
+}
+
+.drawer-terminal-grid-tile-placeholder-starting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  background: var(--bg-secondary);
+  width: 100%;
+  height: 100%;
+}
+
+.drawer-terminal-grid-tile-placeholder-status {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+// Non-centered grid tiles are non-interactive — pointer events fall through
+// to the tile root's click / dblclick handlers.
+.drawer-terminal-grid-tile:not(.centered) {
+  .drawer-terminal-grid-tile-xterm {
+    pointer-events: none;
+    user-select: none;
+    .xterm-helper-textarea { display: none !important; }
+    .xterm-cursor-layer { opacity: 0; }
+  }
+}
+
+.drawer-terminal-grid-tile-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+// Centered overlay — position:fixed like the dashboard's so the FLIP animation
+// works against viewport coordinates regardless of the drawer's own scroll.
+.drawer-terminal-grid-tile.centered {
+  position: fixed;
+  z-index: 500;
+  cursor: default;
+  margin: 0;
+
+  .drawer-terminal-grid-tile-preview {
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  }
+
+  .drawer-terminal-grid-tile-xterm { pointer-events: auto; user-select: text; }
+}
+
+.drawer-terminal-grid-tile-slot {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+// Backdrop only dims the drawer panel area, not the full viewport — the
+// grid view is contained in the drawer so a full-screen backdrop would
+// needlessly obscure the ticket list / project tabs.
+.drawer-terminal-grid-center-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 499;
+  background: rgba(0, 0, 0, 0.45);
+  animation: drawer-terminal-grid-backdrop-fade 180ms ease-out;
+}
+
+@keyframes drawer-terminal-grid-backdrop-fade {
+  from { background: rgba(0, 0, 0, 0); }
+  to   { background: rgba(0, 0, 0, 0.45); }
+}
+
+// Bell indicator — bounce + persistent 2 px accent outline until the user
+// views the terminal more closely. Mirrors §25.6.
+.drawer-terminal-grid-tile.has-bell {
+  .drawer-terminal-grid-tile-preview {
+    box-shadow: 0 0 0 2px var(--accent, #3b82f6);
+  }
+  animation: drawer-terminal-grid-tile-bell-bounce 0.35s ease-out 1;
+}
+
+@keyframes drawer-terminal-grid-tile-bell-bounce {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.08); }
+}
+
+// Dedicated full-drawer view — replaces the grid tiles while up. Absolute
+// positioning inside the drawer panel (not fixed to viewport) so it doesn't
+// overflow the drawer when the user has the drawer at a small height.
+.drawer-terminal-grid-dedicated {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+}
+
+.drawer-terminal-grid-dedicated-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.drawer-terminal-grid-dedicated-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+
+  &:hover { background: var(--bg-hover); }
+}
+
+.drawer-terminal-grid-dedicated-label {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.drawer-terminal-grid-dedicated-body {
+  flex: 1;
+  padding: 8px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+.drawer-terminal-grid-dedicated-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drawer-terminal-grid-dedicated-pane > .xterm {
+  // Same HS-7098 flex-shrink rule as the dashboard's dedicated pane so the
+  // sub-cell slop after FitAddon's integer rounding splits symmetrically
+  // left/right inside `.xterm-screen` rather than leaking as a right-only gap.
+  flex: 0 0 auto;
+}

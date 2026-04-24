@@ -12,6 +12,7 @@ import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, openDetailAndFocusNote, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
+import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { bindOpenFolder } from './openFolder.js';
 import { startLongPoll } from './poll.js';
@@ -273,6 +274,18 @@ async function init() {
   initCommandLog();
   initTerminal();
   initTerminalDashboard();
+  // HS-6311 — drawer terminal grid view (§36). Sits alongside the drawer
+  // tabs; toggled on via a new button in the drawer toolbar. onExitGrid
+  // restores whatever drawer tab was active before grid mode: showGridChrome
+  // set every .drawer-tab-content to display:none so we need to re-reveal the
+  // currently-active one here.
+  initDrawerTerminalGrid({
+    onExitGrid: () => {
+      const activeBtn = document.querySelector<HTMLElement>('.drawer-tab.active');
+      const tab = activeBtn?.dataset.drawerTab ?? 'commands-log';
+      void import('./commandLog.js').then(({ switchDrawerTab }) => { switchDrawerTab(tab); });
+    },
+  });
   // Cross-project bell long-poll (HS-6603 §24.4.1) — surfaces server-side
   // bell state on project tabs and feeds the in-drawer indicator for
   // bells fired while the user is inside another project.

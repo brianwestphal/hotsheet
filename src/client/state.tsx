@@ -14,13 +14,23 @@ const projectViews = new Map<string, string>();
 /** HS-7360 — per-project search query (session-only, not persisted across
  *  app launches; cleared by project remove). Keyed by project secret. */
 const projectSearches = new Map<string, string>();
+/** HS-6311 — per-project drawer-grid mode flag. When true, the drawer is
+ *  rendering its terminals as a tile grid instead of the normal per-terminal
+ *  tab stack (see docs/36-drawer-terminal-grid.md). Session-only. */
+const projectGridActive = new Map<string, boolean>();
+/** HS-6311 — per-project slider value for the drawer-grid view (0..100,
+ *  default 33 — same default as the terminal-dashboard slider). Session-only. */
+const projectGridSliderValue = new Map<string, number>();
 
 /** Switch active project, saving and restoring the sidebar view. */
 export function setActiveProject(project: ProjectInfo) {
-  // Save current project's view + search query
+  // Save current project's view + search query + drawer-grid state
   if (activeProject != null) {
     projectViews.set(activeProject.secret, state.view);
     projectSearches.set(activeProject.secret, state.search);
+    // HS-6311 — grid state maps are the canonical store; we never mirror
+    // them into `state` so there's nothing else to save here. Grid-mode
+    // module reads them directly via getProjectGridActive / Slider helpers.
   }
   activeProject = project;
   // Restore the new project's saved view (default to 'all') + search query
@@ -35,6 +45,28 @@ export function setActiveProject(project: ProjectInfo) {
 export function clearPerProjectSessionState(secret: string): void {
   projectViews.delete(secret);
   projectSearches.delete(secret);
+  // HS-6311 — also wipe drawer-grid state so a re-added project at the same
+  // secret doesn't resurrect the prior project's grid-mode flag / slider.
+  projectGridActive.delete(secret);
+  projectGridSliderValue.delete(secret);
+}
+
+/** HS-6311 — drawer terminal grid per-project state. The drawer grid module
+ *  (src/client/drawerTerminalGrid.tsx) calls these on enter / exit / slider
+ *  change. Default slider value is 33 to match the terminal-dashboard default
+ *  (see docs/25-terminal-dashboard.md §25.4 / HS-7129). */
+export function getProjectGridActive(secret: string): boolean {
+  return projectGridActive.get(secret) === true;
+}
+export function setProjectGridActive(secret: string, value: boolean): void {
+  if (value) projectGridActive.set(secret, true);
+  else projectGridActive.delete(secret);
+}
+export function getProjectGridSliderValue(secret: string): number {
+  return projectGridSliderValue.get(secret) ?? 33;
+}
+export function setProjectGridSliderValue(secret: string, value: number): void {
+  projectGridSliderValue.set(secret, value);
 }
 
 export interface Ticket {
