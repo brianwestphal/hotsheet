@@ -440,7 +440,7 @@ describe('TerminalRegistry', () => {
       ptyAlpha.emit('\x07');
       ptyGamma.emit('hello\x07');
 
-      const pending = listBellPendingForProject('bell-sec-4').sort();
+      const pending = listBellPendingForProject('bell-sec-4').map(e => e.terminalId).sort();
       expect(pending).toEqual(['alpha', 'gamma']);
     });
 
@@ -452,7 +452,7 @@ describe('TerminalRegistry', () => {
       const ptyA = FakePty.lastSpawned!;
       attach('proj-b', d, b);
       ptyA.emit('\x07');
-      expect(listBellPendingForProject('proj-a')).toEqual(['default']);
+      expect(listBellPendingForProject('proj-a').map(e => e.terminalId)).toEqual(['default']);
       expect(listBellPendingForProject('proj-b')).toEqual([]);
     });
 
@@ -567,6 +567,109 @@ describe('TerminalRegistry', () => {
       // not bubble up as a user-visible bell.
       FakePty.lastSpawned!.emit('\x1bP0;dcs-body\x07with-real\x1b\\');
       expect(getBellPending('bell-osc-8')).toBe(false);
+    });
+  });
+
+  // HS-7264 — OSC 9 desktop notifications. The PTY emits `\x1b]9;<message>\x07`
+  // (iTerm2 convention) when a shell wants to surface a human-readable message
+  // like "Build done". The server stashes the message alongside bellPending so
+  // the client can render a toast in addition to the bell glyph.
+  describe('OSC 9 desktop notifications (HS-7264)', () => {
+    it('captures the OSC 9 message and sets bellPending when a BEL-terminated notification arrives', async () => {
+      const { getNotificationMessage } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc9-1', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]9;Build done\x07');
+      expect(getBellPending('osc9-1')).toBe(true);
+      expect(getNotificationMessage('osc9-1')).toBe('Build done');
+    });
+
+    it('captures the OSC 9 message when the string is ST-terminated (ESC\\)', async () => {
+      const { getNotificationMessage } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc9-2', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]9;Tests passed\x1b\\');
+      expect(getBellPending('osc9-2')).toBe(true);
+      expect(getNotificationMessage('osc9-2')).toBe('Tests passed');
+    });
+
+    it('handles an OSC 9 payload that arrives split across PTY chunks', async () => {
+      const { getNotificationMessage } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc9-3', d, sub);
+      const pty = FakePty.lastSpawned!;
+      pty.emit('\x1b]9;Deploy ');
+      expect(getNotificationMessage('osc9-3')).toBe(null);
+      pty.emit('finished\x07');
+      expect(getBellPending('osc9-3')).toBe(true);
+      expect(getNotificationMessage('osc9-3')).toBe('Deploy finished');
+    });
+
+    it('ignores iTerm2 proprietary numeric subcommand forms (9;1;... progress, 9;4;... newer progress)', async () => {
+      const { getNotificationMessage } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc9-4', d, sub);
+      // 9;4;3; is iTerm2's "set progress state=3" — a subcommand, not a human-
+      // readable message. Must not fire a notification toast.
+      FakePty.lastSpawned!.emit('\x1b]9;4;3;50\x07');
+      expect(getNotificationMessage('osc9-4')).toBe(null);
+    });
+
+    it('does NOT flag OSC 0/1/2 titles or OSC 7 CWD pushes as notifications', async () => {
+      const { getNotificationMessage } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc9-5', d, sub);
+      const pty = FakePty.lastSpawned!;
+      pty.emit('\x1b]0;my-title\x07');
+      pty.emit('\x1b]2;another-title\x07');
+      pty.emit('\x1b]7;file://host/home/u\x07');
+      expect(getNotificationMessage('osc9-5')).toBe(null);
+      expect(getBellPending('osc9-5')).toBe(false);
+    });
+
+    it('a later OSC 9 message overwrites an earlier one (latest-wins semantics)', async () => {
+      const { getNotificationMessage } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc9-6', d, sub);
+      const pty = FakePty.lastSpawned!;
+      pty.emit('\x1b]9;First\x07');
+      pty.emit('\x1b]9;Second\x07');
+      expect(getNotificationMessage('osc9-6')).toBe('Second');
+    });
+
+    it('clearBellPending also clears the OSC 9 message so the tab re-activation resets both', async () => {
+      const { getNotificationMessage } = await import('./registry.js');
+      const d = tmpDataDir();
+      const { sub } = makeSub();
+      attach('osc9-7', d, sub);
+      FakePty.lastSpawned!.emit('\x1b]9;Build done\x07');
+      expect(getNotificationMessage('osc9-7')).toBe('Build done');
+      clearBellPending('osc9-7');
+      expect(getBellPending('osc9-7')).toBe(false);
+      expect(getNotificationMessage('osc9-7')).toBe(null);
+    });
+
+    it('listBellPendingForProject surfaces the OSC 9 message alongside the terminal id', () => {
+      const d = tmpDataDir();
+      const { sub: a } = makeSub();
+      const { sub: b } = makeSub();
+      attach('osc9-8', d, a, { configOverride: { id: 'one', command: '/bin/sh' } }, 'one');
+      const ptyOne = FakePty.lastSpawned!;
+      attach('osc9-8', d, b, { configOverride: { id: 'two', command: '/bin/sh' } }, 'two');
+      const ptyTwo = FakePty.lastSpawned!;
+      ptyOne.emit('\x07');                         // plain bell, no message
+      ptyTwo.emit('\x1b]9;Tests passed\x07');      // OSC 9 with message
+      const entries = listBellPendingForProject('osc9-8').sort((x, y) => x.terminalId.localeCompare(y.terminalId));
+      expect(entries).toEqual([
+        { terminalId: 'one', message: null },
+        { terminalId: 'two', message: 'Tests passed' },
+      ]);
     });
   });
 

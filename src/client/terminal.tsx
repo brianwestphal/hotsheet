@@ -5,10 +5,12 @@ import { Terminal as XTerm } from '@xterm/xterm';
 
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { subscribeToBellState } from './bellPoll.js';
+import { fireToastsForActiveProject, subscribeToBellState } from './bellPoll.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
+import { openExternalUrl } from './tauriIntegration.js';
+import { formatCwdLabel, parseOsc7Payload } from './terminalOsc7.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
 import { readXtermTheme } from './xtermTheme.js';
 
@@ -22,6 +24,9 @@ const CLOSE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="1
 // Lucide `bell` glyph. Shown on drawer tabs when the process rings the bell
 // (\x07) while the tab isn't active (HS-6473).
 const BELL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
+// Lucide `folder` glyph. Shown on the terminal toolbar CWD chip (HS-7262);
+// clicking opens the folder in the OS file manager.
+const FOLDER_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
 
 export interface TerminalTabConfig {
   id: string;
@@ -57,6 +62,12 @@ interface TerminalInstance {
    *  When non-empty, takes precedence over the configured `name` for the tab label
    *  (HS-6473, see docs/23-terminal-titles-and-bell.md). Reset on PTY restart. */
   runtimeTitle: string;
+  /** CWD pushed by the running shell via OSC 7 (`\x1b]7;file://host/path\x07`).
+   *  Null until the shell pushes its first OSC 7 (typical zsh/fish/starship
+   *  prompts emit this on every command). Shown as a clickable chip in the
+   *  terminal toolbar that opens the folder in the OS file manager. Reset on
+   *  PTY restart. HS-7262, see docs/29-osc7-cwd-tracking.md. */
+  runtimeCwd: string | null;
   /** True when the process has rung the bell (`\x07`) since this terminal tab
    *  was last activated. Cleared by `activateTerminal` (HS-6473). */
   hasBell: boolean;
@@ -119,7 +130,7 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   // mounted xterm — the server-authoritative field is what lets us surface
   // bells that fired before the xterm was mounted or while the project was
   // inactive.
-  type ListEntry = TerminalTabConfig & { bellPending?: boolean };
+  type ListEntry = TerminalTabConfig & { bellPending?: boolean; notificationMessage?: string | null };
   type ListResponse = { configured: ListEntry[]; dynamic: ListEntry[] };
   let data: ListResponse;
   try {
@@ -146,8 +157,21 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   tabStrip.innerHTML = '';
   paneContainer.querySelectorAll('.drawer-terminal-pane').forEach(el => el.remove());
 
+  // HS-7264 — fire OSC 9 toasts for any pending desktop notifications the
+  // server tracked while we were disconnected / on another project. Dedupes
+  // against the bellPoll recentlyToasted map so a subsequent long-poll tick
+  // doesn't re-fire the same message.
+  fireToastsForActiveProject([...wanted.values()]);
+
   for (const entry of wanted.values()) {
-    const { bellPending, ...config } = entry;
+    // `notificationMessage` is already surfaced as a toast via
+    // fireToastsForActiveProject above — drop it here along with `bellPending`
+    // so only the TerminalTabConfig shape flows into `inst.config`.
+    const bellPending = entry.bellPending;
+    const config: TerminalTabConfig = {
+      id: entry.id, command: entry.command, name: entry.name,
+      cwd: entry.cwd, lazy: entry.lazy, dynamic: entry.dynamic,
+    };
     let inst = instances.get(config.id);
     if (!inst) {
       inst = createInstance(config);
@@ -305,6 +329,13 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
       <div className="terminal-header">
         <span className="terminal-status-dot" title="Not connected"></span>
         <span className="terminal-label">{tabName}</span>
+        {/* HS-7262 — CWD chip populated by OSC 7 handler; hidden by default,
+            shown once the shell pushes its first file://host/path. Click opens
+            the folder in the OS file manager via /api/terminal/open-cwd. */}
+        <button className="terminal-cwd-chip" title="Open folder" style="display:none">
+          {raw(FOLDER_ICON)}
+          <span className="terminal-cwd-label"></span>
+        </button>
         <span className="terminal-header-spacer"></span>
         <button className="terminal-header-btn terminal-power-btn" title="Stop terminal">
           <span className="terminal-power-icon">{raw(POWER_ICON_STOP)}</span>
@@ -343,13 +374,41 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     stopRequested: false,
     mounted: false,
     runtimeTitle: '',
+    runtimeCwd: null,
     hasBell: false,
   };
 
   powerBtn.addEventListener('click', () => { void onPowerClick(inst); });
   clearBtn.addEventListener('click', () => { inst.term?.clear(); });
 
+  // HS-7262 — CWD chip click reveals the folder in the OS file manager. Uses
+  // the terminal's own record of the most recent OSC 7 push; the server
+  // endpoint validates the path exists before spawning the file manager.
+  const cwdChip = pane.querySelector<HTMLButtonElement>('.terminal-cwd-chip');
+  cwdChip?.addEventListener('click', () => {
+    if (inst.runtimeCwd === null || inst.runtimeCwd === '') return;
+    void api('/terminal/open-cwd', { method: 'POST', body: { path: inst.runtimeCwd } }).catch(() => { /* ignore */ });
+  });
+
   return inst;
+}
+
+/** Re-render the CWD chip on the terminal toolbar. HS-7262.
+ *  `$HOME` is unknown to the client for v1, so tildification is disabled — a
+ *  follow-up ticket can extend `/api/terminal/list` to include the resolved
+ *  home directory (see §29.7). */
+function updateCwdChip(inst: TerminalInstance): void {
+  const chip = inst.header.querySelector<HTMLButtonElement>('.terminal-cwd-chip');
+  const label = chip?.querySelector<HTMLElement>('.terminal-cwd-label');
+  if (chip === null || label === null || label === undefined) return;
+  const cwd = inst.runtimeCwd;
+  if (cwd === null || cwd === '') {
+    chip.style.display = 'none';
+    return;
+  }
+  chip.style.display = '';
+  label.textContent = formatCwdLabel(cwd, null);
+  chip.setAttribute('title', `Open folder: ${cwd}`);
 }
 
 function tabDisplayName(config: TerminalTabConfig): string {
@@ -410,10 +469,24 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
     scrollback: 10_000,
     allowProposedApi: true,
     theme: readXtermTheme(),
+    // HS-7263 — OSC 8 hyperlink activation. Modern CLI tools (`gh`, `delta`,
+    // `eza`, `rg --hyperlink-format`, `ls --hyperlink=auto`, git log piped
+    // through delta) emit `\x1b]8;;URL\x07TEXT\x1b]8;;\x07` so the visible
+    // text differs from the underlying URL — the plain-regex WebLinksAddon
+    // misses these entirely since it scans rendered glyphs. xterm.js v5+
+    // parses OSC 8 natively and calls our `linkHandler.activate` on click;
+    // we route through the Tauri-safe openExternalUrl helper so the click
+    // actually opens something (window.open is a silent no-op in WKWebView).
+    linkHandler: {
+      activate: (_event, text) => { openExternalUrl(text); },
+    },
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
-  term.loadAddon(new WebLinksAddon());
+  // HS-7263 — pass an explicit click handler so plain-URL activation also
+  // routes through Tauri's `open_url` instead of WebLinksAddon's default
+  // `window.open`, which silently no-ops in WKWebView.
+  term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
   term.loadAddon(new SerializeAddon());
   term.open(inst.body);
 
@@ -438,6 +511,20 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
   term.onTitleChange((newTitle) => {
     inst.runtimeTitle = typeof newTitle === 'string' ? newTitle : '';
     updateTabLabel(inst);
+  });
+
+  // OSC 7 — shell-pushed CWD (HS-7262). Payload is `file://host/path` with
+  // URL-encoded path bytes. xterm.js does NOT handle OSC 7 natively — we
+  // register a parser hook on the number directly and return `true` to mark
+  // the sequence consumed. Starship / zsh chpwd / fish-shell / bash with
+  // Apple's or VS Code's integration all emit this on every prompt.
+  term.parser.registerOscHandler(7, (payload) => {
+    const parsed = parseOsc7Payload(payload);
+    if (parsed !== null) {
+      inst.runtimeCwd = parsed;
+      updateCwdChip(inst);
+    }
+    return true;
   });
 
   // Bell character `\x07` (HS-6473). Show a bell indicator on the tab when
@@ -595,8 +682,12 @@ async function onPowerClick(inst: TerminalInstance): Promise<void> {
     setStatus(inst, 'alive');
     // Restart wipes any title the previous process pushed via OSC; fall back
     // to the configured/derived name until the new process pushes its own.
+    // HS-7262 — same for the CWD; the new shell will push its own OSC 7 on
+    // the first prompt.
     inst.runtimeTitle = '';
+    inst.runtimeCwd = null;
     updateTabLabel(inst);
+    updateCwdChip(inst);
   } catch { /* ignore */ }
 }
 

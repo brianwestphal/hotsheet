@@ -184,12 +184,22 @@ projectRoutes.get('/bell-state', async (c) => {
 
   const clientVersion = parseInt(c.req.query('v') ?? '0', 10) || 0;
 
-  function snapshot(): Record<string, { anyTerminalPending: boolean; terminalIds: string[] }> {
+  function snapshot(): Record<string, { anyTerminalPending: boolean; terminalIds: string[]; notifications: Record<string, string> }> {
     const projects = getAllProjects();
-    const result: Record<string, { anyTerminalPending: boolean; terminalIds: string[] }> = {};
+    const result: Record<string, { anyTerminalPending: boolean; terminalIds: string[]; notifications: Record<string, string> }> = {};
     for (const p of projects) {
-      const ids = listBellPendingForProject(p.secret);
-      result[p.secret] = { anyTerminalPending: ids.length > 0, terminalIds: ids };
+      const entries = listBellPendingForProject(p.secret);
+      const terminalIds = entries.map(e => e.terminalId);
+      // HS-7264 — piggyback the OSC 9 message onto the existing long-poll so
+      // clients get the toast payload without a second round-trip. Only entries
+      // whose message is non-null are emitted; the existing `terminalIds` list
+      // still drives the bell glyph (every pending terminal shows up there,
+      // with or without a notification message).
+      const notifications: Record<string, string> = {};
+      for (const e of entries) {
+        if (e.message !== null) notifications[e.terminalId] = e.message;
+      }
+      result[p.secret] = { anyTerminalPending: terminalIds.length > 0, terminalIds, notifications };
     }
     return result;
   }

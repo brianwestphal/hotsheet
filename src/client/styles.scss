@@ -4735,6 +4735,62 @@ body.terminal-dashboard-active {
   li { margin: 0.25em 0; }
 }
 
+// HS-6998 — multi-part feedback dialog. The per-part textarea sits directly
+// beneath each rendered question so the user doesn't have to scroll up to
+// reread the prompt while typing.
+.feedback-dialog-multipart {
+  .feedback-parts-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0;
+    counter-reset: feedback-part;
+  }
+
+  .feedback-part {
+    position: relative;
+    padding: 10px 12px 10px 36px;
+    margin-bottom: 8px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    border-left: 3px solid #3b82f6;
+    counter-increment: feedback-part;
+
+    &::before {
+      content: counter(feedback-part) '.';
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      width: 20px;
+      text-align: right;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      font-size: 13px;
+    }
+  }
+
+  .feedback-part-question {
+    margin-bottom: 6px;
+
+    // Strip the default margins marked puts around paragraphs inside the
+    // question so the prompt reads tightly against the textarea below.
+    p { margin: 0 0 4px; }
+    p:last-child { margin-bottom: 0; }
+  }
+
+  .feedback-part-response {
+    width: 100%;
+    resize: vertical;
+    min-height: 60px;
+  }
+
+  .feedback-intro, .feedback-outro {
+    // Both flavours of surrounding text reuse .feedback-prompt's pill styling
+    // via the shared class; nothing extra needed here, but keep this hook
+    // around for tighter spacing if the design evolves.
+  }
+}
+
 .note-placeholder {
   color: var(--text-muted);
   font-style: italic;
@@ -5149,6 +5205,40 @@ body.terminal-dashboard-active {
 }
 
 .terminal-header-spacer { flex: 1; }
+
+// HS-7262 — CWD chip showing the shell's current working directory (pushed
+// via OSC 7). Click opens the folder in the OS file manager.
+.terminal-cwd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  max-width: 280px;
+
+  svg {
+    flex-shrink: 0;
+    opacity: 0.85;
+  }
+
+  .terminal-cwd-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+    border-color: var(--text-muted);
+  }
+}
 
 .terminal-header-btn {
   background: transparent;

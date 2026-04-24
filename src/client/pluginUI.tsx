@@ -3,6 +3,7 @@ import { getErrorMessage } from '../utils/errorMessage.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
 import { loadTickets } from './ticketList.js';
+import { showToast } from './toast.js';
 
 interface PluginUIElement {
   id: string;
@@ -209,16 +210,5 @@ async function triggerAction(el: PluginUIElement, ticketIds?: number[]): Promise
   }
 }
 
-/** Show a brief toast notification that auto-dismisses. */
-function showToast(message: string, durationMs = 3000) {
-  // Remove any existing toast
-  document.querySelector('.plugin-toast')?.remove();
-  const toast = toElement(<div className="plugin-toast">{message}</div>);
-  document.body.appendChild(toast);
-  // Trigger enter animation on next frame
-  requestAnimationFrame(() => toast.classList.add('visible'));
-  setTimeout(() => {
-    toast.classList.remove('visible');
-    setTimeout(() => toast.remove(), 300);
-  }, durationMs);
-}
+// Toast moved to `./toast.tsx` (HS-7264) so the OSC 9 desktop-notification
+// path can reuse the same transient UI.

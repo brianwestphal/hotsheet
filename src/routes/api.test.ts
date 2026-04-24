@@ -716,6 +716,61 @@ describe('terminal route', () => {
     const body = await res.json() as { ok: boolean };
     expect(body.ok).toBe(true);
   });
+
+  // HS-7262 — OSC 7 CWD chip click → POST /open-cwd with the path the shell
+  // most recently pushed. Server validates existence + directory-ness before
+  // dispatching to openInFileManager.
+  describe('POST /api/terminal/open-cwd (HS-7262)', () => {
+    it('returns 400 when body is missing path', async () => {
+      const res = await app.request('/api/terminal/open-cwd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 400 when path is empty string', async () => {
+      const res = await app.request('/api/terminal/open-cwd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: '' }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 404 when path does not exist on disk', async () => {
+      const res = await app.request('/api/terminal/open-cwd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: '/definitely/does/not/exist/anywhere-7262' }),
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it('returns 200 + invokes openInFileManager when path exists and is a directory', async () => {
+      const { openInFileManager } = await import('../open-in-file-manager.js');
+      (openInFileManager as ReturnType<typeof vi.fn>).mockClear();
+      const res = await app.request('/api/terminal/open-cwd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: tempDir }),
+      });
+      expect(res.status).toBe(200);
+      expect(openInFileManager).toHaveBeenCalledWith(tempDir);
+    });
+
+    it('returns 400 when path is a file, not a directory', async () => {
+      // Use package.json as a known-existing file.
+      const filePath = `${process.cwd()}/package.json`;
+      const res = await app.request('/api/terminal/open-cwd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath }),
+      });
+      expect(res.status).toBe(400);
+    });
+  });
 });
 
 describe('long-poll', () => {

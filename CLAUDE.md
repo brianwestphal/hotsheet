@@ -189,6 +189,10 @@ The `docs/` folder contains numbered requirements documents that describe the ap
   23. `23-terminal-titles-and-bell.md` — Title-change escape sequences + bell-character indicator on terminal tabs
   24. `24-cross-project-bell.md` — Cross-project bell surfacing (Phase 2 of HS-6473): server-side `\x07` detection + project-tab indicator
   25. `25-terminal-dashboard.md` — Terminal dashboard view (HS-6272): full-window grid of every terminal across every project, zoom / dedicated view, tile-level bell indicators
+  26. `26-shell-integration-osc133.md` — OSC 133 shell-integration protocol design spike (HS-7265): prompt/command/output marks, gutter glyphs, copy-last-output, Ask-Claude-about-this
+  27. `27-osc9-desktop-notifications.md` — OSC 9 desktop notifications (HS-7264): shell-initiated toast messages reusing the bell-state long-poll + shared toast helper
+  28. `28-osc8-hyperlinks.md` — OSC 8 clickable hyperlinks (HS-7263): xterm `linkHandler` + Tauri-safe `openExternalUrl` routing, also fixes plain-URL click no-op in WKWebView
+  29. `29-osc7-cwd-tracking.md` — OSC 7 shell CWD tracking (HS-7262): terminal-toolbar chip showing the shell's current working directory with click-to-open-in-file-manager
 - `docs/tauri-architecture.md` — Tauri v2 sidecar model, launch flows, CLI launchers, build pipeline, CI/CD signing
 - `docs/tauri-setup.md` — Tauri build prerequisites, updater signing keys, macOS code signing, release workflow
 - `docs/plugin-development-guide.md` — AI-focused guide for building plugins (ticketing backends and non-ticketing plugins). **Keep this guide up to date** whenever the plugin system changes — new interfaces, new manifest fields, new PluginContext methods, new UI extension points, or changes to the sync engine behavior. An AI reading this guide should be able to build a working plugin without looking at the source code.

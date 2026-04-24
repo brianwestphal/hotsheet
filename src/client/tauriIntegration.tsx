@@ -101,6 +101,27 @@ export function showSkillsBanner() {
   dismissBtn?.addEventListener('click', () => { banner.style.display = 'none'; });
 }
 
+/** Open an external URL from anywhere in the client.
+ *
+ *  Tauri WKWebView silently no-ops `window.open`, so we route through the
+ *  `open_url` Tauri command first and only fall back to `window.open` when
+ *  we're not in Tauri (browser context) or the command is unavailable.
+ *  Callers include the global link interceptor below (HTML `<a>` clicks),
+ *  xterm's `WebLinksAddon` custom handler (plain URL detection, HS-7263),
+ *  and xterm's OSC 8 `linkHandler` (hyperlink escapes, HS-7263).
+ */
+export function openExternalUrl(url: string): void {
+  const invoke = getTauriInvoke();
+  if (invoke) {
+    invoke('open_url', { url }).catch(() => {
+      // Fallback if the command isn't available in the running Tauri build.
+      window.open(url, '_blank');
+    });
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
 /** Intercept external link clicks and open them via Tauri shell or window.open. */
 export function bindExternalLinkHandler() {
   document.addEventListener('click', (e) => {
@@ -112,15 +133,6 @@ export function bindExternalLinkHandler() {
     if (href.startsWith(window.location.origin)) return;
 
     e.preventDefault();
-    const invoke = getTauriInvoke();
-    if (invoke) {
-      // Use Tauri's shell.open via a custom command
-      invoke('open_url', { url: href }).catch(() => {
-        // Fallback if the command isn't available
-        window.open(href, '_blank');
-      });
-    } else {
-      window.open(href, '_blank');
-    }
+    openExternalUrl(href);
   });
 }

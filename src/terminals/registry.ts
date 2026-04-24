@@ -94,11 +94,22 @@ interface SessionState {
    *  cleared via clearBellPending(). Set by the PTY data handler and consumed
    *  by the in-drawer and cross-project bell indicators (HS-6603 / §24). */
   bellPending: boolean;
-  /** Cross-chunk state for `scanForRealBell` — tracks whether the byte stream
+  /** Most recent OSC 9 payload (iTerm2-style desktop notification — HS-7264).
+   *  Set alongside `bellPending` when the PTY data handler parses
+   *  `\x1b]9;<message>\x07`; cleared together with bellPending. The in-drawer
+   *  client reads this from `/api/terminal/list` to surface a toast; the
+   *  cross-project bellPoll surfaces it too (§27). */
+  notificationMessage: string | null;
+  /** Cross-chunk state for `scanPtyChunk` — tracks whether the byte stream
    *  is currently inside an OSC/DCS/APC/PM/SOS escape string (where a trailing
    *  BEL is a terminator, not a user-visible bell). HS-6766. */
   bellScanInString: boolean;
   bellScanAfterEsc: boolean;
+  /** When non-null, the scanner is inside an OSC string specifically (not
+   *  DCS/APC/PM/SOS) and bytes are being appended here so we can inspect the
+   *  payload on terminator. Reset to null on string close. Capped at
+   *  MAX_OSC_PAYLOAD_LEN bytes to guard against pathological input. HS-7264. */
+  oscAccumulator: string | null;
   /** True once a real client has attached. Used by the eager-spawn cleanup in
    *  attach() — the first real attach clears scrollback, resizes the PTY to
    *  the client's actual pane dims, and sends Ctrl-L so the shell redraws its
@@ -377,7 +388,9 @@ export function getBellPending(
 /**
  * Clear the bell for one terminal. Returns true if the flag was flipped (so
  * the caller knows whether to bump `bellVersion`). No-op when the session
- * doesn't exist or the flag is already false.
+ * doesn't exist or the flag is already false. HS-7264: also clears any
+ * pending OSC 9 notification message — the two are always cleared together
+ * since they share a single "attention on this tab" concept.
  */
 export function clearBellPending(
   secret: string,
@@ -386,16 +399,29 @@ export function clearBellPending(
   const s = sessions.get(sessionKey(secret, terminalId));
   if (!s || !s.bellPending) return false;
   s.bellPending = false;
+  s.notificationMessage = null;
   return true;
 }
 
-/** List terminal ids with pending bells for a single project. */
-export function listBellPendingForProject(secret: string): string[] {
+/** Read the most recent OSC 9 notification message for a terminal, or null
+ *  if none is pending. HS-7264. */
+export function getNotificationMessage(
+  secret: string,
+  terminalId: string = DEFAULT_TERMINAL_ID,
+): string | null {
+  return sessions.get(sessionKey(secret, terminalId))?.notificationMessage ?? null;
+}
+
+/** List terminal ids with pending bells for a single project, plus the
+ *  optional OSC 9 notification message for each. Return shape is designed
+ *  for `/api/projects/bell-state` (§24) and `/api/terminal/list` (§22) to
+ *  consume in one scan. HS-7264. */
+export function listBellPendingForProject(secret: string): Array<{ terminalId: string; message: string | null }> {
   const prefix = `${secret}::`;
-  const out: string[] = [];
+  const out: Array<{ terminalId: string; message: string | null }> = [];
   for (const [key, session] of sessions.entries()) {
     if (!key.startsWith(prefix)) continue;
-    if (session.bellPending) out.push(key.slice(prefix.length));
+    if (session.bellPending) out.push({ terminalId: key.slice(prefix.length), message: session.notificationMessage });
   }
   return out;
 }
@@ -433,41 +459,63 @@ function createSession(
     terminalId,
     configOverride,
     bellPending: false,
+    notificationMessage: null,
     bellScanInString: false,
     bellScanAfterEsc: false,
+    oscAccumulator: null,
     hasBeenAttached: false,
   };
 }
 
+/** Cap on the OSC accumulator so a malformed or adversarial stream can't pin
+ *  a session's heap usage. OSC payloads in real use are short (titles, URLs,
+ *  notification strings) — 4 KiB is generous. HS-7264. */
+const MAX_OSC_PAYLOAD_LEN = 4096;
+
 /**
- * Scan a chunk of PTY output for a *real* bell, i.e. a `\x07` byte that isn't
- * the terminator of an OSC/DCS/APC/PM/SOS escape string. Many shells emit OSC
- * sequences like `\x1b]0;TITLE\x07` or `\x1b]7;file://host/cwd\x07` on every
- * prompt (and on startup, via Apple Terminal's zshrc integration) — the
- * trailing BEL is a terminator, not a user-visible bell. A naive
- * `chunk.includes(0x07)` check treats those as bells, which is why a fresh
- * dynamic terminal would show a bell indicator immediately on open (HS-6766).
+ * Scan a chunk of PTY output for (1) a *real* bell — a `\x07` byte that isn't
+ * the terminator of an OSC/DCS/APC/PM/SOS string — and (2) OSC 9 desktop
+ * notification payloads (`\x1b]9;<message>\x07`, HS-7264).
+ *
+ * Many shells emit OSC sequences like `\x1b]0;TITLE\x07` or
+ * `\x1b]7;file://host/cwd\x07` on every prompt (and on startup via Apple
+ * Terminal's zshrc integration) — the trailing BEL is a terminator, not a
+ * user-visible bell. A naive `chunk.includes(0x07)` check treats those as
+ * bells, which is why a fresh dynamic terminal would show a bell indicator
+ * immediately on open (HS-6766).
  *
  * State is stored on the session so it carries across chunks — a shell could
  * flush an OSC introducer in one write and the BEL terminator in the next.
- * Returns true if any non-terminator BEL was seen in this chunk.
+ * The `oscAccumulator` field also carries across chunks for OSC-content
+ * inspection on close.
+ *
+ * Returns `{ bell, osc9Message }`. `osc9Message` is the most recent OSC 9
+ * payload seen in the chunk (later payloads overwrite earlier ones — terminal
+ * notification semantics are "most recent wins").
  */
-function scanForRealBell(session: SessionState, chunk: Buffer): boolean {
+function scanPtyChunk(session: SessionState, chunk: Buffer): { bell: boolean; osc9Message: string | null } {
   let foundBell = false;
+  let osc9Message: string | null = null;
   for (let i = 0; i < chunk.length; i++) {
     const b = chunk[i];
     if (session.bellScanInString) {
       if (b === 0x07) {
-        // BEL = OSC-style terminator; ignore.
+        // BEL = OSC-style terminator; close the string and inspect payload.
+        const parsed = finishOscString(session);
+        if (parsed !== null) osc9Message = parsed;
         session.bellScanInString = false;
         session.bellScanAfterEsc = false;
+        session.oscAccumulator = null;
         continue;
       }
       if (session.bellScanAfterEsc) {
         session.bellScanAfterEsc = false;
         if (b === 0x5C /* backslash */) {
-          // ESC\\ (ST) = terminator; ignore.
+          // ESC\\ (ST) = terminator.
+          const parsed = finishOscString(session);
+          if (parsed !== null) osc9Message = parsed;
           session.bellScanInString = false;
+          session.oscAccumulator = null;
           continue;
         }
         // ESC followed by other: the string is effectively broken, but to
@@ -475,15 +523,29 @@ function scanForRealBell(session: SessionState, chunk: Buffer): boolean {
       }
       if (b === 0x1B) {
         session.bellScanAfterEsc = true;
+        continue;
+      }
+      // Plain content byte inside a string escape. Append to the OSC payload
+      // buffer if we're tracking one (i.e. this is an OSC, not DCS/APC/PM/SOS).
+      if (session.oscAccumulator !== null && session.oscAccumulator.length < MAX_OSC_PAYLOAD_LEN) {
+        session.oscAccumulator += String.fromCharCode(b);
       }
       continue;
     }
     if (session.bellScanAfterEsc) {
       session.bellScanAfterEsc = false;
-      // OSC=], DCS=P, APC=_, PM=^, SOS=X: introducers for string-type escapes
-      // whose contents (including 0x07) must not be interpreted as bells.
-      if (b === 0x5D || b === 0x50 || b === 0x5F || b === 0x5E || b === 0x58) {
+      if (b === 0x5D /* ] */) {
+        // OSC introducer — begin string AND begin accumulating payload bytes.
         session.bellScanInString = true;
+        session.oscAccumulator = '';
+        continue;
+      }
+      if (b === 0x50 || b === 0x5F || b === 0x5E || b === 0x58) {
+        // DCS=P, APC=_, PM=^, SOS=X: string-type escapes whose contents must
+        // not be interpreted as bells, but we don't need to inspect their
+        // payloads (not OSC 9). Leave accumulator null so no memory is spent.
+        session.bellScanInString = true;
+        session.oscAccumulator = null;
         continue;
       }
       // Any other ESC-prefixed byte is a non-string escape (CSI, SS3, charset
@@ -498,7 +560,26 @@ function scanForRealBell(session: SessionState, chunk: Buffer): boolean {
       foundBell = true;
     }
   }
-  return foundBell;
+  return { bell: foundBell, osc9Message };
+}
+
+/**
+ * Called on OSC-string close. If the accumulated payload starts with `9;`
+ * (iTerm2 desktop-notification escape), returns the message text; otherwise
+ * returns null. Titles (`0;`, `1;`, `2;`), CWD (`7;`), hyperlinks (`8;`), and
+ * any other OSC numbers pass through without firing a notification. HS-7264.
+ */
+function finishOscString(session: SessionState): string | null {
+  if (session.oscAccumulator === null) return null;
+  const payload = session.oscAccumulator;
+  if (!payload.startsWith('9;')) return null;
+  const rest = payload.slice(2);
+  // iTerm2 has proprietary numeric sub-commands in the 9 namespace (9;1 for
+  // progress, 9;4 for newer progress, etc.). They start with "<digit>;" which
+  // is NOT a human-readable message. Skip them — the plain "9;<message>" form
+  // is the only one we surface as a notification.
+  if (/^\d+;/.test(rest)) return null;
+  return rest;
 }
 
 function spawnIntoSession(session: SessionState, dataDir: string): void {
@@ -522,18 +603,27 @@ function spawnIntoSession(session: SessionState, dataDir: string): void {
   // Fresh PTY — drop any OSC-scan state left from a previous process.
   session.bellScanInString = false;
   session.bellScanAfterEsc = false;
+  session.oscAccumulator = null;
 
   const dData = pty.onData((str) => {
     const chunk = Buffer.from(str, 'utf8');
     session.scrollback.push(chunk);
     // HS-6603 §24.2 — server-side bell detection. Always run the scanner so
     // cross-chunk OSC/DCS/APC/PM/SOS state is tracked even when `bellPending`
-    // is already set (HS-6766). The scanner returns true only for BELs that
+    // is already set (HS-6766). The scanner returns `bell` only for BELs that
     // aren't OSC-style terminators, so a shell emitting `\x1b]0;TITLE\x07`
-    // on every prompt no longer trips the indicator.
-    const realBell = scanForRealBell(session, chunk);
-    if (realBell && !session.bellPending) {
+    // on every prompt no longer trips the indicator. HS-7264 extends the same
+    // pass to capture OSC 9 (`\x1b]9;<message>\x07`) desktop-notification
+    // payloads — when present, we stash the message AND flip bellPending so
+    // the tab gets the bell glyph + a toast carries the message text.
+    const { bell: realBell, osc9Message } = scanPtyChunk(session, chunk);
+    const wasPending = session.bellPending;
+    if (realBell) session.bellPending = true;
+    if (osc9Message !== null) {
       session.bellPending = true;
+      session.notificationMessage = osc9Message;
+    }
+    if (!wasPending && session.bellPending) {
       // Lazy dynamic import to avoid a circular dep between registry ↔ routes.
       void import('../routes/notify.js').then(m => m.notifyBellWaiters()).catch(() => { /* ignore */ });
     }

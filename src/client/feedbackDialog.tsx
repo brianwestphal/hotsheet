@@ -3,6 +3,7 @@ import { marked } from 'marked';
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
 import { toElement } from './dom.js';
+import { combineResponses, type ParsedFeedback, parseFeedbackPrompt } from './feedbackParser.js';
 import type { NoteEntry } from './noteRenderer.js';
 import { loadTickets } from './ticketList.js';
 
@@ -45,42 +46,41 @@ export function shouldAutoShowFeedback(ticketId: number, noteId: string): boolea
   return true;
 }
 
-/** Show the feedback dialog for a ticket. */
+/**
+ * Internal shape the two overlay builders return: the DOM tree plus a
+ * `collectResponse` accessor the submit handler calls to assemble the note
+ * body. Either builder produces both a single-textarea flow or a
+ * multi-part flow — everything else (attachments, buttons, lifecycle) is
+ * identical, so the shared bottom half of showFeedbackDialog drives them
+ * uniformly.
+ */
+interface OverlayHandle {
+  overlay: HTMLElement;
+  /** Returns the note body to send on submit, or null if the user hasn't
+   *  filled anything in (so the submit handler can focus the first empty
+   *  field and abort). */
+  collectResponse: () => string | null;
+  /** Called on open to focus the first response input. */
+  focusFirstInput: () => void;
+}
+
+/** Show the feedback dialog for a ticket.
+ *
+ *  HS-6998 — parse the prompt for a multi-part list pattern (two or more
+ *  numbered or bulleted items). If found, render a per-part textarea so the user
+ *  answers each question immediately below its text — no scrolling between
+ *  a prompt up top and a single textarea at the bottom. Single-question and
+ *  non-list prompts fall back to the original single-textarea layout.
+ */
 export function showFeedbackDialog(ticketId: number, ticketNumber: string, prompt: string) {
   // Remove any existing feedback dialog
   document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
 
-  const renderedPrompt = marked.parse(prompt, { async: false });
-
-  const overlay = toElement(
-    <div className="feedback-dialog-overlay custom-view-editor-overlay" style="z-index:2500">
-      <div className="custom-view-editor" style="width:520px">
-        <div className="custom-view-editor-header">
-          <span>Feedback Needed — {ticketNumber}</span>
-          <button className="detail-close" id="feedback-close">{'\u00d7'}</button>
-        </div>
-        <div className="custom-view-editor-body">
-          <div className="feedback-prompt note-markdown">{raw(renderedPrompt)}</div>
-          <div className="settings-field" style="margin-top:12px">
-            <label>Your response</label>
-            <textarea id="feedback-text" className="settings-textarea" rows={4} placeholder="Enter your feedback..." style="width:100%;resize:vertical"></textarea>
-          </div>
-          <div className="settings-field" style="margin-top:12px">
-            <label>Attachments</label>
-            <div id="feedback-files" className="not-working-file-list"></div>
-            <button className="btn btn-sm" id="feedback-add-file" style="margin-top:6px">Add File...</button>
-            <input type="file" id="feedback-file-input" multiple={true} style="display:none" />
-          </div>
-          <div style="display:flex;gap:8px;margin-top:16px;align-items:center">
-            <button className="feedback-later-link" id="feedback-later">Later</button>
-            <div style="flex:1"></div>
-            <button className="btn btn-sm" id="feedback-no-response">No Response Needed</button>
-            <button className="btn btn-sm btn-primary" id="feedback-submit">Submit</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  const parsed = parseFeedbackPrompt(prompt);
+  const handle: OverlayHandle = parsed !== null
+    ? buildMultiPartOverlay(ticketNumber, prompt, parsed)
+    : buildSinglePartOverlay(ticketNumber, prompt);
+  const { overlay, collectResponse, focusFirstInput } = handle;
 
   const pendingFiles: File[] = [];
   const fileListEl = overlay.querySelector('#feedback-files')!;
@@ -93,7 +93,7 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
       const row = toElement(
         <div className="not-working-file-row">
           <span>{file.name}</span>
-          <button className="category-delete-btn" data-idx={String(i)}>{'\u00d7'}</button>
+          <button className="category-delete-btn" data-idx={String(i)}>{'×'}</button>
         </div>
       );
       row.querySelector('button')!.addEventListener('click', () => {
@@ -146,9 +146,9 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
 
   // Submit
   overlay.querySelector('#feedback-submit')!.addEventListener('click', async () => {
-    const text = (overlay.querySelector('#feedback-text') as HTMLTextAreaElement).value.trim();
-    if (!text && pendingFiles.length === 0) {
-      (overlay.querySelector('#feedback-text') as HTMLTextAreaElement).focus();
+    const text = collectResponse();
+    if ((text === null || text === '') && pendingFiles.length === 0) {
+      focusFirstInput();
       return;
     }
 
@@ -158,7 +158,7 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
 
     try {
       // Add response note
-      if (text) {
+      if (text !== null && text !== '') {
         await api(`/tickets/${ticketId}`, {
           method: 'PATCH', body: { notes: text },
         });
@@ -181,7 +181,132 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
   });
 
   document.body.appendChild(overlay);
-  (overlay.querySelector('#feedback-text') as HTMLTextAreaElement).focus();
+  focusFirstInput();
+}
+
+/** Single-textarea layout — used for prompts that don't parse into a
+ *  multi-item list. Identical to the pre-HS-6998 behaviour. */
+function buildSinglePartOverlay(ticketNumber: string, prompt: string): OverlayHandle {
+  const renderedPrompt = marked.parse(prompt, { async: false });
+  const overlay = toElement(
+    <div className="feedback-dialog-overlay custom-view-editor-overlay" style="z-index:2500">
+      <div className="custom-view-editor" style="width:520px">
+        <div className="custom-view-editor-header">
+          <span>Feedback Needed — {ticketNumber}</span>
+          <button className="detail-close" id="feedback-close">{'×'}</button>
+        </div>
+        <div className="custom-view-editor-body">
+          <div className="feedback-prompt note-markdown">{raw(renderedPrompt)}</div>
+          <div className="settings-field" style="margin-top:12px">
+            <label>Your response</label>
+            <textarea id="feedback-text" className="settings-textarea" rows={4} placeholder="Enter your feedback..." style="width:100%;resize:vertical"></textarea>
+          </div>
+          <div className="settings-field" style="margin-top:12px">
+            <label>Attachments</label>
+            <div id="feedback-files" className="not-working-file-list"></div>
+            <button className="btn btn-sm" id="feedback-add-file" style="margin-top:6px">Add File...</button>
+            <input type="file" id="feedback-file-input" multiple={true} style="display:none" />
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px;align-items:center">
+            <button className="feedback-later-link" id="feedback-later">Later</button>
+            <div style="flex:1"></div>
+            <button className="btn btn-sm" id="feedback-no-response">No Response Needed</button>
+            <button className="btn btn-sm btn-primary" id="feedback-submit">Submit</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+  return {
+    overlay,
+    collectResponse: () => {
+      const v = (overlay.querySelector('#feedback-text') as HTMLTextAreaElement).value.trim();
+      return v === '' ? null : v;
+    },
+    focusFirstInput: () => {
+      (overlay.querySelector('#feedback-text') as HTMLTextAreaElement).focus();
+    },
+  };
+}
+
+/** Multi-part layout (HS-6998) — renders a dedicated textarea next to every
+ *  question in the prompt so the user doesn't lose context while scrolling.
+ *  On submit, the per-part responses are combined back into a numbered/
+ *  bulleted markdown blob (same scheme the prompt used) so the AI reading
+ *  the note can re-align answers to questions. */
+function buildMultiPartOverlay(ticketNumber: string, originalPrompt: string, parsed: ParsedFeedback): OverlayHandle {
+  const introHtml = parsed.intro === '' ? '' : marked.parse(parsed.intro, { async: false });
+  const outroHtml = parsed.outro === '' ? '' : marked.parse(parsed.outro, { async: false });
+  // Detect the marker style from the original markdown — a leading "1." or
+  // "1)" means the AI intended an ordered list; anything else (`-`, `*`, `+`)
+  // is unordered. `combineResponses` uses the same scheme so the submitted
+  // note looks symmetric with the request.
+  const ordered = /(^|\n)\s*\d+[.)]\s/.test(originalPrompt);
+
+  const overlay = toElement(
+    <div className="feedback-dialog-overlay custom-view-editor-overlay" style="z-index:2500">
+      <div className="custom-view-editor feedback-dialog-multipart" style="width:560px">
+        <div className="custom-view-editor-header">
+          <span>Feedback Needed — {ticketNumber}</span>
+          <button className="detail-close" id="feedback-close">{'×'}</button>
+        </div>
+        <div className="custom-view-editor-body">
+          {introHtml === ''
+            ? null
+            : <div className="feedback-prompt note-markdown feedback-intro">{raw(introHtml)}</div>}
+          <ol className="feedback-parts-list">
+            {parsed.parts.map((part, idx) => (
+              <li className="feedback-part" data-part-index={String(idx)}>
+                <div className="feedback-part-question note-markdown">
+                  {raw(marked.parse(part.markdown, { async: false }))}
+                </div>
+                <textarea
+                  className="settings-textarea feedback-part-response"
+                  rows={3}
+                  placeholder="Your response..."
+                  aria-label={`Response to: ${part.shortLabel}`}
+                ></textarea>
+              </li>
+            ))}
+          </ol>
+          {outroHtml === ''
+            ? null
+            : <div className="feedback-prompt note-markdown feedback-outro">{raw(outroHtml)}</div>}
+          <div className="settings-field" style="margin-top:12px">
+            <label>Attachments</label>
+            <div id="feedback-files" className="not-working-file-list"></div>
+            <button className="btn btn-sm" id="feedback-add-file" style="margin-top:6px">Add File...</button>
+            <input type="file" id="feedback-file-input" multiple={true} style="display:none" />
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px;align-items:center">
+            <button className="feedback-later-link" id="feedback-later">Later</button>
+            <div style="flex:1"></div>
+            <button className="btn btn-sm" id="feedback-no-response">No Response Needed</button>
+            <button className="btn btn-sm btn-primary" id="feedback-submit">Submit</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return {
+    overlay,
+    collectResponse: () => {
+      const textareas = Array.from(overlay.querySelectorAll<HTMLTextAreaElement>('.feedback-part-response'));
+      const values = textareas.map(ta => ta.value);
+      // If everything's blank, signal "no response" so the caller can focus
+      // the first empty field instead of posting a noisy "(no response)"
+      // placeholder-only note.
+      if (values.every(v => v.trim() === '')) return null;
+      return combineResponses(values, ordered);
+    },
+    focusFirstInput: () => {
+      const textareas = Array.from(overlay.querySelectorAll<HTMLTextAreaElement>('.feedback-part-response'));
+      if (textareas.length === 0) return;
+      const firstEmpty = textareas.find(ta => ta.value.trim() === '') ?? textareas[0];
+      firstEmpty.focus();
+    },
+  };
 }
 
 /** Check all loaded tickets for pending feedback. Updates tab dot and

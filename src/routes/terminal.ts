@@ -7,6 +7,7 @@ import {
   destroyTerminal,
   ensureSpawned,
   getBellPending,
+  getNotificationMessage,
   getTerminalStatus,
   killTerminal,
   listProjectTerminalIds,
@@ -80,12 +81,15 @@ terminalRoutes.get('/list', (c) => {
   // avoids accidentally spawning lazy-mode terminals when the dashboard opens.
   // HS-6838 — exitCode accompanies `state === 'exited'` so the placeholder
   // tile can display `Exited (code N)` without needing a second round-trip.
-  const annotate = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean; state: TerminalState; exitCode: number | null })[] =>
+  // HS-7264 — notificationMessage is set when the PTY pushed an OSC 9 desktop
+  // notification (`\x1b]9;<message>\x07`); the client surfaces this as a toast.
+  const annotate = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean; notificationMessage: string | null; state: TerminalState; exitCode: number | null })[] =>
     items.map(item => {
       const status = getTerminalStatus(secret, dataDir, item.id);
       return {
         ...item,
         bellPending: getBellPending(secret, item.id),
+        notificationMessage: getNotificationMessage(secret, item.id),
         state: status.state,
         exitCode: status.exitCode,
       };
@@ -106,6 +110,36 @@ terminalRoutes.post('/clear-bell', async (c) => {
   const terminalId = await readTerminalId(c);
   const flipped = clearBellPending(secret, terminalId);
   if (flipped) notifyBellWaiters();
+  return c.json({ ok: true });
+});
+
+/**
+ * POST /api/terminal/open-cwd — open a path in the OS file manager. Body
+ * `{ path: string }`. Used by the OSC 7 CWD chip on the terminal toolbar
+ * (HS-7262, §29). The server validates the path exists and is a directory
+ * before dispatching to `openInFileManager`, so a stale OSC 7 payload
+ * (e.g. shell reported a CWD that was then `rmdir`'d) returns a 404 instead
+ * of launching a confused Finder window.
+ *
+ * The path comes from the client's local record of the most recent OSC 7
+ * push, which the shell wrote to stdout — no new privilege is granted here
+ * vs. the user running `open <path>` directly in that shell.
+ */
+terminalRoutes.post('/open-cwd', async (c) => {
+  const body = await c.req.json<{ path?: string } | undefined>().catch(() => undefined);
+  const path = body?.path;
+  if (typeof path !== 'string' || path === '') {
+    return c.json({ error: 'missing path' }, 400);
+  }
+  const { existsSync, statSync } = await import('fs');
+  if (!existsSync(path)) return c.json({ error: 'path not found on disk' }, 404);
+  try {
+    if (!statSync(path).isDirectory()) return c.json({ error: 'path is not a directory' }, 400);
+  } catch {
+    return c.json({ error: 'path unreadable' }, 404);
+  }
+  const { openInFileManager } = await import('../open-in-file-manager.js');
+  await openInFileManager(path);
   return c.json({ ok: true });
 });
 

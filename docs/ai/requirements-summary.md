@@ -240,6 +240,44 @@ A second top-level client view (alongside the normal per-project ticket view) fo
 
 ---
 
+## 29. OSC 7 shell CWD tracking (`29-osc7-cwd-tracking.md`)
+
+HS-7262. Shells emit `\x1b]7;file://host/path\x07` on every prompt (starship, zsh `chpwd`, fish, VS Code integration, iTerm2, Apple Terminal). Before this change the bell scanner specifically silenced the terminator (HS-6766) but discarded the payload. Now the drawer terminal registers a `term.parser.registerOscHandler(7, ...)` hook that parses the `file://host/path` URL, URL-decodes the path, and stores it on `TerminalInstance.runtimeCwd`. A **CWD chip** in the in-pane toolbar (hidden until the shell pushes its first OSC 7) shows a truncated path with a folder glyph; clicking POSTs to the new `/api/terminal/open-cwd` endpoint which validates existence + directory-ness before dispatching to the existing cross-platform `openInFileManager` helper (reused from project-reveal).
+
+Pure helpers `parseOsc7Payload` + `formatCwdLabel` extracted into `src/client/terminalOsc7.ts` with 16 unit tests. Server endpoint has 5 unit tests in `api.test.ts` covering the 400/404/directory-check paths. `runtimeCwd` resets to null on PTY restart and on project switch (mirrors `runtimeTitle` §23.2). `$HOME` is unknown on the client for v1 so tildification is disabled (parser accepts home arg and has full tildify test coverage — just the plumbing is missing); follow-up **HS-7276** adds `$HOME` to `/terminal/list` response. Other follow-ups: **HS-7277** dashboard `+` inherits active tile CWD, **HS-7278** server-side OSC 7 tracking + dashboard tile CWD badge.
+
+**Status:** Shipped v1.
+
+---
+
+## 28. OSC 8 clickable hyperlinks (`28-osc8-hyperlinks.md`)
+
+HS-7263. xterm.js's `linkHandler` constructor option routes activation of OSC 8 hyperlinks (`\x1b]8;;URL\x07TEXT\x1b]8;;\x07`) through a new shared `openExternalUrl` helper in `tauriIntegration.tsx` that invokes the `open_url` Tauri command and falls back to `window.open` in browser builds. Applied to the drawer terminal (`terminal.tsx mountXterm`) and both dashboard xterms (`terminalDashboard.tsx mountTileXterm` + `openDedicatedView`). The same change updates `WebLinksAddon` instances to pass the custom click handler instead of relying on the default `window.open` — plain-URL click was a silent no-op in WKWebView, a latent pre-existing Tauri bug that HS-7263 incidentally fixes. `bindExternalLinkHandler` (global `<a>` interceptor) refactored to call the new helper. Non-http protocols, hover tooltips, click-through safety prompts: explicitly out of scope. Follow-up: **HS-7274** Playwright e2e with a Tauri invoke stub.
+
+**Status:** Shipped — applied to every xterm in the client, plus the global link interceptor consolidated around the same helper.
+
+---
+
+## 27. OSC 9 desktop notifications (`27-osc9-desktop-notifications.md`)
+
+HS-7264. Shells emit `\x1b]9;<message>\x07` (iTerm2 convention) to surface a human-readable "Build done" / "Tests passed" style message. Hot Sheet treats it as an extension of the bell indicator (§23.3): the message is stashed in `SessionState.notificationMessage`, `bellPending` flips alongside it, and the shared toast helper (`src/client/toast.tsx`, extracted from pluginUI) renders it for **6 s** (vs. 3 s for plugin-action toasts). Scanner implementation: the existing OSC-aware bell scanner (HS-6766) now also accumulates OSC payloads into `oscAccumulator` (capped at 4 KiB) while inside an OSC specifically (not DCS/APC/PM/SOS), and on terminator inspects for `9;<message>`. Numeric-subcommand forms (`9;1;…`, `9;4;…`, iTerm2 proprietary progress) are parked — not worth spamming toasts for.
+
+Transport: `/api/projects/bell-state` long-poll payload gains `notifications: Record<terminalId, string>` alongside `terminalIds`; `/api/terminal/list` entries gain `notificationMessage: string | null`. `clearBellPending` drops both fields atomically.
+
+Scope: toasts fire for the **active project only** — cross-project OSC 9 surfaces as a project-tab bell dot, and the message toast appears when the user switches to that project (via `loadAndRenderTerminalTabs` → `fireToastsForActiveProject`). Dedupe cache (`recentlyToasted`) keys on `{secret}::{terminalId}` → `message` so unchanged messages don't re-toast each long-poll tick, but changing messages (build stages) do. Follow-up tickets: **HS-7272** native Tauri notification via `tauri-plugin-notification` (backgrounded-app case), **HS-7273** Playwright e2e + manual-test-plan entry.
+
+**Status:** Shipped — server scanner + `/api/projects/bell-state` + `/api/terminal/list` + client toast dispatch, plus 8 unit tests in `registry.test.ts` and updated `projects.test.ts` for the new map shape.
+
+---
+
+## 26. Shell integration via OSC 133 (`26-shell-integration-osc133.md`)
+
+Design spike (HS-7265) — **no code yet**. Proposes handling the four-mark FinalTerm/iTerm2/VS Code shell-integration protocol: `\e]133;A\a` (prompt start), `;B\a` (command start), `;C\a` (output start), `;D;<exit>\a` (command end). Unlocks gutter exit-code glyphs, "copy last output", jump-to-prev/next-command, and an Ask-Claude-about-this channel trigger (the Hot-Sheet-specific wedge vs. VS Code). Data model: per-terminal `shellIntegration.commands` bounded-ring (500 records) of `CommandRecord { promptStart, commandStart, outputStart, commandEnd, exitCode, commandText, decorations }` keyed to `term.registerMarker` IMarkers (survive scrollback trim via xterm's own line-follow semantics). Rehydrates automatically on reattach because replay bytes go through xterm's parser. Phased: **Phase 1a** (HS-7267) foundation + gutter glyphs; **Phase 1b** (HS-7268) copy-last-output toolbar button; **Phase 2** (HS-7269) jump shortcuts + hover popover with Copy / Rerun; **Phase 3** (HS-7270) Ask-Claude-about-this channel integration. Shell rc fragments intentionally NOT shipped — users opt in via Starship / VS Code's published rc / a 15-line snippet we document. OSC 633 (VS Code's superset) and iTerm2 OSC 1337 explicitly out of scope for v1.
+
+**Status:** Design only. Cross-refs: §22 (base terminal), §12 (channel — vehicle for Phase 3), §14 (command log — possible Phase 3 sink), §23 (companion QOL escapes).
+
+---
+
 ## 21. Feedback notes (`21-feedback.md`)
 
 AI tools request user feedback by adding a note to a ticket whose text begins with a recognized prefix (checked only on the most recent note):
@@ -247,7 +285,9 @@ AI tools request user feedback by adding a note to a ticket whose text begins wi
 - `FEEDBACK NEEDED:` — shows dialog when ticket is opened.
 - `IMMEDIATE FEEDBACK NEEDED:` — auto-selects the ticket in the project's tab and opens the dialog.
 
-Dialog shows prompt as markdown, a textarea, file attachments, and three buttons: **Later** (muted link, dismiss), **No Response Needed** (adds `NO RESPONSE NEEDED` note, clears state), **Submit** (creates note with response, uploads attachments, notifies channel). Click-outside dismisses like Later. Dialog auto-shows **once per detail-panel open** (tracked by note ID). "Provide Feedback" link button appears below a feedback-prefix note if it's the most recent.
+Dialog shows prompt as markdown, one or more textareas, file attachments, and three buttons: **Later** (muted link, dismiss), **No Response Needed** (adds `NO RESPONSE NEEDED` note, clears state), **Submit** (creates note with response, uploads attachments, notifies channel). Click-outside dismisses like Later. Dialog auto-shows **once per detail-panel open** (tracked by note ID). "Provide Feedback" link button appears below a feedback-prefix note if it's the most recent.
+
+**HS-6998 multi-part layout** (§21.2.1): when the prompt parses into a top-level list with >= 2 items (via marked.lexer — ordered or unordered), the dialog renders a dedicated textarea directly below each question so the user doesn't scroll between prompt and response. Intro and outro markdown wrap the list; trailing sibling lists fold into the outro. On submit, per-part responses are recombined with the same numbering scheme (`combineResponses(values, ordered)` in `src/client/feedbackParser.ts`) and empty answers become `*(no response)*` placeholders so numbering stays aligned. Single-item lists and non-list prompts fall back to the original single-textarea layout. Covered by 15 unit tests in `feedbackParser.test.ts`.
 
 **Indicators:**
 - Ticket dot: **purple** (#8b5cf6) for pending feedback, takes priority over blue unread dot.
@@ -344,10 +384,14 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 18 — plugins | Partial | `batch_menu` rendering; `toggle`/`switch`/`segmented_control` element types |
 | 19 — demo plugin | Shipped | — |
 | 20 — secure storage | Partial | Windows Credential Manager not implemented |
-| 21 — feedback | Shipped | — |
+| 21 — feedback | Shipped | HS-6998 multi-part layout: per-part textarea when prompt has >= 2 list items, parser + combiner in feedbackParser.ts + 15 unit tests |
 | 22 — terminal | Shipped | full v1 (HS-6261 through HS-6270); future: E2E smoke test, live Tauri per-platform verification |
 | 23 — terminal titles & bell | Shipped (Phase 1) | Phase 2 spec lives in §24 |
 | 24 — cross-project bell | Shipped | server `0x07` detection + `bellPending` flag, `/api/projects/bell-state` long-poll, `/api/terminal/clear-bell`, project-tab `.has-bell` indicator, client bellPoll (HS-6603) |
+| 26 — shell integration (OSC 133) | Design only | HS-7265 spike. Phase tickets HS-7267 (foundation + gutter), HS-7268 (copy-last-output), HS-7269 (jump + hover popover), HS-7270 (Ask-Claude channel integration) all open |
+| 27 — OSC 9 desktop notifications | Shipped | HS-7264 v1: server scanner, /projects/bell-state + /terminal/list carry the message, shared toast helper, active-project scope, dedupe. Follow-ups: HS-7272 native Tauri notification (backgrounded app), HS-7273 e2e + manual-test entries |
+| 28 — OSC 8 hyperlinks | Shipped | HS-7263: xterm `linkHandler` + Tauri-safe `openExternalUrl` in drawer + dashboard tile + dedicated view; WebLinksAddon also routed through the helper (incidental fix for plain-URL no-op in WKWebView). Follow-up HS-7274 for Playwright e2e |
+| 29 — OSC 7 shell CWD tracking | Shipped | HS-7262: client parser + toolbar CWD chip + /api/terminal/open-cwd endpoint. Helpers extracted to terminalOsc7.ts with 16 unit tests; server route has 5 unit tests. Follow-ups: HS-7276 $HOME plumbing for tildification, HS-7277 dashboard + inherits CWD, HS-7278 server-side tracking + dashboard tile badge |
 | 25 — terminal dashboard | Shipped | full v1 — toggle button, per-project grid, live tiles at tile-native 4:3 cols × rows (from measured cell metrics — HS-7097 final follow-up: tile resizes both its xterm AND the server-side PTY to those dims via a `'resize'` message, so TUIs like nano redraw to fill the tile's geometry instead of leaving rows past the original PTY row count empty) with uniform transform:scale, click-to-center (FLIP grow-from-slot animation w/ grey placeholder) that tracks the viewport centre on resize, dedicated full-viewport view, tile bell indicators, lazy/exited placeholders with spawn-on-enlarge (HS-6272, HS-6832–6838; bug fixes HS-6865/HS-6866/HS-6867/HS-6868/HS-6898 superseded by HS-6931; HS-6964 fixed centered-tile off-viewport-centre; HS-6965 "PTY dims verbatim" and HS-7099 "tile mirrors dedicated fit" both superseded by HS-7097 final follow-up; HS-7098 follow-up flex-centers `.xterm` inside the dedicated pane for an even frame on all sides) |
 | tauri-architecture | Shipped | — |
 | tauri-setup | Shipped | — |

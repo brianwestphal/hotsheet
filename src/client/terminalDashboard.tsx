@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal as XTerm } from '@xterm/xterm';
 
 import type { SafeHtml } from '../jsx-runtime.js';
@@ -8,7 +9,7 @@ import { restoreTicketList } from './dashboardMode.js';
 import { closeDetail } from './detail.js';
 import { toElement } from './dom.js';
 import type { ProjectInfo } from './state.js';
-import { getTauriInvoke } from './tauriIntegration.js';
+import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 import {
   computeTileScale,
   DASHBOARD_FALLBACK_COLS,
@@ -666,6 +667,12 @@ function mountTileXterm(tile: DashboardTile): void {
     // picks up --bg / --text / --accent instead of xterm's default black
     // palette.
     theme: readXtermTheme(),
+    // HS-7263: OSC 8 hyperlinks in tile previews. Mostly a no-op because the
+    // tile is scaled + non-interactive by default, but a tile a user has
+    // centered / zoomed into is clickable and should honour hyperlinks.
+    linkHandler: {
+      activate: (_event, text) => { openExternalUrl(text); },
+    },
   });
   term.open(xtermRoot);
   // Seed target dims at the initial grid; the WebSocket's history frame will
@@ -958,9 +965,18 @@ function enterDedicatedView(tile: DashboardTile, priorCenteredTile: DashboardTil
     allowProposedApi: true,
     // HS-6866: same theme as the drawer / tile xterms.
     theme: readXtermTheme(),
+    // HS-7263: OSC 8 hyperlinks. The dedicated view is fully interactive —
+    // same link-activation behaviour as the drawer xterm so `gh pr list` /
+    // `delta` / etc. hyperlinks open in an external browser.
+    linkHandler: {
+      activate: (_event, text) => { openExternalUrl(text); },
+    },
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
+  // HS-7263 — dashboard dedicated view also routes plain URLs through the
+  // Tauri-safe openExternalUrl helper. Matches the drawer behaviour.
+  term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
   term.open(pane);
   // HS-6898: defer the initial fit so the flex-1 body has its final size in
   // layout before fit() reads dimensions. Without this, fit() can measure a

@@ -71,7 +71,7 @@ vi.mock('./notify.js', () => ({
   getBellVersion: vi.fn(() => 0),
 }));
 
-const mockBellPending = new Map<string, string[]>();
+const mockBellPending = new Map<string, Array<{ terminalId: string; message: string | null }>>();
 vi.mock('../terminals/registry.js', () => ({
   listBellPendingForProject: vi.fn((secret: string) => mockBellPending.get(secret) ?? []),
 }));
@@ -267,8 +267,11 @@ describe('GET /projects/bell-state', () => {
     mockBellPending.clear();
   });
 
-  it('returns an aggregate map keyed by project secret, each with anyTerminalPending + terminalIds', async () => {
-    mockBellPending.set('test-secret-123', ['default', 'second']);
+  it('returns an aggregate map keyed by project secret, each with anyTerminalPending + terminalIds + notifications (HS-7264)', async () => {
+    mockBellPending.set('test-secret-123', [
+      { terminalId: 'default', message: null },
+      { terminalId: 'second', message: 'Build done' },
+    ]);
     mockBellPending.set('test-secret-456', []);
 
     // Use a high client version to avoid the long-poll path (fast version-ahead return).
@@ -278,13 +281,18 @@ describe('GET /projects/bell-state', () => {
     const res = await app.request('/api/projects/bell-state?v=0');
     expect(res.status).toBe(200);
     const body = await res.json() as {
-      bells: Record<string, { anyTerminalPending: boolean; terminalIds: string[] }>;
+      bells: Record<string, { anyTerminalPending: boolean; terminalIds: string[]; notifications: Record<string, string> }>;
       v: number;
     };
     expect(body.bells['test-secret-123'].anyTerminalPending).toBe(true);
     expect(body.bells['test-secret-123'].terminalIds).toEqual(['default', 'second']);
+    // HS-7264 — OSC 9 notification message is surfaced via the parallel
+    // `notifications` map (terminalId -> message). Bell-only terminals (no
+    // OSC 9) are absent from this map even though their id is in terminalIds.
+    expect(body.bells['test-secret-123'].notifications).toEqual({ second: 'Build done' });
     expect(body.bells['test-secret-456'].anyTerminalPending).toBe(false);
     expect(body.bells['test-secret-456'].terminalIds).toEqual([]);
+    expect(body.bells['test-secret-456'].notifications).toEqual({});
     expect(typeof body.v).toBe('number');
   });
 
