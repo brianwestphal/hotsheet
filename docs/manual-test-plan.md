@@ -197,6 +197,13 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Without `claude` on PATH: Terminal launches `$SHELL` (Unix) / `%COMSPEC%` (Windows)
 - [ ] Custom `terminal_command` with no `{{claudeCommand}}` token is passed verbatim
 
+### PTY size resync after Terminal Dashboard exit (HS-7592, §22 / §25)
+- [ ] Open the drawer with a configured terminal active (e.g. `claude` or a shell) — confirm the prompt fits the drawer width.
+- [ ] Run something that writes to the full screen width (e.g. `printf '%s\n' "$(printf '%-200s' '=')"` to print a 200-char banner, or `htop`).
+- [ ] Open the Terminal Dashboard (`#terminal-dashboard-toggle`). Double-click that terminal's tile to enter the dedicated full-viewport view. The PTY resizes to dashboard-pane dims (much wider/taller than the drawer).
+- [ ] Click Back, then click the toggle again to exit the dashboard and return to the drawer. The drawer terminal should immediately show output formatted for the **drawer's** dims again — long lines wrap at the drawer's width, not the dashboard's. Hit Enter at the prompt; new shell output should not run off the right edge of the drawer.
+- [ ] Regression check: before HS-7592 the PTY stayed at dashboard-pane cols/rows after exit until the user happened to drag the drawer enough to trigger a fit() resize. The fix exports `resyncActiveTerminalPtySize()` from terminal.tsx and calls it from `exitDashboard()` so the PTY snaps back unconditionally.
+
 ### Persistence and reattach (§22.4, §22.7)
 - [ ] Open Terminal tab, type a long-running command (`watch date` or similar), close drawer → reopen → still running, scrollback replayed
 - [ ] Switch to Commands Log tab and back → Terminal state preserved (process still alive, cursor position intact)

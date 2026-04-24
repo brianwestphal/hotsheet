@@ -343,6 +343,18 @@ export function exitDashboard(): void {
     bellUnsubscribe();
     bellUnsubscribe = null;
   }
+  // HS-7592 — the dashboard's dedicated view resizes the PTY to its pane
+  // dims on enter; without a matching resize on exit, the drawer's terminal
+  // (a separate subscriber against the same PTY) sees output formatted for
+  // the dashboard's geometry until something else resizes the drawer. The
+  // drawer's own ResizeObserver-driven fit() doesn't emit a resize when
+  // xterm's cols/rows haven't changed client-side. Force a fresh resize
+  // with the drawer xterm's current dims so the PTY snaps back cleanly.
+  // Dynamic-import to avoid a cycle (terminal.tsx already imports helpers
+  // from drawerTerminalGrid.tsx which does NOT touch the dashboard path).
+  void import('./terminal.js').then(({ resyncActiveTerminalPtySize }) => {
+    resyncActiveTerminalPtySize();
+  });
 }
 
 function teardownAllTiles(): void {

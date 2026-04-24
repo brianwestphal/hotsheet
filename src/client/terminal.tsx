@@ -412,6 +412,33 @@ export function deactivateAllTerminals(): void {
   }
 }
 
+/**
+ * HS-7592 — force a fresh PTY resize with the active drawer terminal's current
+ * cols / rows, even if xterm's `fit()` doesn't think anything changed. Used
+ * after exiting the Terminal Dashboard's dedicated view: the dashboard's
+ * `fit() + 'resize'` flow leaves the PTY at dashboard-pane dims, and the
+ * drawer's own ResizeObserver-driven `doFit` doesn't emit a resize when
+ * cols/rows haven't changed client-side (xterm fires `onResize` only on
+ * dim change). Without this, live output from the PTY wraps at the
+ * dashboard's wider / taller geometry until the user happens to resize
+ * the drawer enough to move the xterm's cols/rows — which can be never.
+ *
+ * Safe to call any time: no-op when no terminal is active, when the active
+ * terminal has no WebSocket open, or when the xterm hasn't mounted yet.
+ */
+export function resyncActiveTerminalPtySize(): void {
+  if (activeTerminalId === null) return;
+  const inst = instances.get(activeTerminalId);
+  if (inst === undefined) return;
+  if (inst.term === null || inst.ws === null || inst.ws.readyState !== WebSocket.OPEN) return;
+  // First refit so the xterm reflects the drawer's CURRENT pane size, then
+  // unconditionally push those dims to the PTY. Using the raw xterm cols /
+  // rows (rather than recomputing) keeps the message in sync with what the
+  // xterm is actually rendering at.
+  doFit(inst);
+  inst.ws.send(JSON.stringify({ type: 'resize', cols: inst.term.cols, rows: inst.term.rows }));
+}
+
 /** Is the given instance the currently-active drawer tab? */
 function isTerminalTabActive(inst: TerminalInstance): boolean {
   return activeTerminalId === inst.id && inst.pane.style.display !== 'none';
