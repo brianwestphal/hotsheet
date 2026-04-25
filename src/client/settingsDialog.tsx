@@ -69,6 +69,10 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     void import('./terminalDefaultAppearanceUI.js').then(({ loadAndWireTerminalDefaultAppearance }) => {
       void loadAndWireTerminalDefaultAppearance();
     });
+    // HS-7596 / §37 — populate + wire the Quit confirmation panel.
+    void import('./quitConfirmSettingsUI.js').then(({ loadAndWireQuitConfirmSettings }) => {
+      void loadAndWireQuitConfirmSettings();
+    });
   });
 
   closeBtn.addEventListener('click', () => {

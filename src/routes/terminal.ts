@@ -2,7 +2,12 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { homedir } from 'os';
 
+import { readFileSettings } from '../file-settings.js';
 import { DEFAULT_TERMINAL_ID, listTerminalConfigs, type TerminalConfig } from '../terminals/config.js';
+import {
+  DEFAULT_EXEMPT_PROCESSES,
+  inspectForegroundProcess,
+} from '../terminals/processInspect.js';
 import {
   clearBellPending,
   destroyTerminal,
@@ -10,6 +15,7 @@ import {
   getBellPending,
   getCurrentCwd,
   getNotificationMessage,
+  getTerminalPid,
   getTerminalStatus,
   killTerminal,
   listProjectTerminalIds,
@@ -162,6 +168,33 @@ terminalRoutes.get('/status', (c) => {
   const terminalId = c.req.query('terminalId') ?? DEFAULT_TERMINAL_ID;
   const status = getTerminalStatus(secret, dataDir, terminalId);
   return c.json(status);
+});
+
+/**
+ * GET /api/terminal/foreground-process?terminalId=<id> — HS-7596 / §37.6.
+ * Walks the OS process tree from the PTY's pid and returns the foreground
+ * child basename + isShell + isExempt flags. Used by the §37 quit-confirm
+ * flow to decide whether the prompt should fire for this terminal. Falls
+ * back to the safe-default-prompt info `{ command: '?', isShell: false,
+ * isExempt: false }` on any lookup error so the prompt fires conservatively.
+ */
+terminalRoutes.get('/foreground-process', async (c) => {
+  const dataDir = c.get('dataDir');
+  const secret = c.get('projectSecret');
+  const terminalId = c.req.query('terminalId') ?? DEFAULT_TERMINAL_ID;
+  const pid = getTerminalPid(secret, terminalId);
+  if (pid === null) {
+    return c.json({
+      command: '?', isShell: false, isExempt: false, error: 'no live PTY',
+    });
+  }
+  const settings = readFileSettings(dataDir);
+  const exemptRaw = settings.quit_confirm_exempt_processes;
+  const exempt = Array.isArray(exemptRaw)
+    ? exemptRaw.filter((s): s is string => typeof s === 'string' && s !== '')
+    : DEFAULT_EXEMPT_PROCESSES;
+  const info = await inspectForegroundProcess(pid, exempt);
+  return c.json(info);
 });
 
 /** POST /api/terminal/restart — kill the current PTY and spawn a fresh one. */

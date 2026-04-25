@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(not(debug_assertions))]
 use serde::Deserialize;
 use serde::Serialize;
 use tauri::Manager;
+use tauri::Emitter;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 
 #[cfg(not(debug_assertions))]
@@ -19,6 +21,16 @@ struct SidecarPid(Mutex<Option<u32>>);
 
 /// Holds the version string of a pending update, if any.
 struct PendingUpdate(Mutex<Option<String>>);
+
+/// HS-7596 / §37 — quit-confirm gate. The CloseRequested handler intercepts
+/// every quit attempt (⌘Q, traffic-light close, Alt+F4) and emits a
+/// `quit-confirm-requested` event to the JS frontend. The JS frontend runs
+/// the §37 confirm flow and either calls the `confirm_quit` Tauri command
+/// (which sets this flag to true and re-issues window.close) or calls
+/// `cancel_quit` (which is a no-op since the original close was already
+/// prevented). The flag is checked at the top of the CloseRequested handler
+/// — if true, the close proceeds normally.
+struct QuitConfirmed(AtomicBool);
 
 /// Returns the expected symlink/install path for the CLI on this platform.
 fn cli_install_path() -> PathBuf {
@@ -637,6 +649,21 @@ async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// HS-7596 / §37 — flip the QuitConfirmed flag and re-issue the window
+/// close. Called from JS after the user clicks "Quit Anyway" in the §37
+/// confirm dialog. The CloseRequested handler will see the flag set and
+/// allow the close to proceed; the resulting RunEvent::Exit handler kills
+/// the sidecar as before.
+#[tauri::command]
+fn confirm_quit(app: tauri::AppHandle) -> Result<(), String> {
+    let confirmed = app.state::<QuitConfirmed>();
+    confirmed.0.store(true, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window("main") {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// HS-7272: fire a native OS notification. Called from JS when an OSC 9
 /// desktop-notification arrives while the Hot Sheet window is backgrounded
 /// or unfocused (the in-app toast always fires alongside; native is the
@@ -829,6 +856,23 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(SidecarPid(Mutex::new(None)))
         .manage(PendingUpdate(Mutex::new(None)))
+        .manage(QuitConfirmed(AtomicBool::new(false)))
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // HS-7596 / §37 — quit-confirm gate. The first time the user
+                // attempts to close the window, we prevent the close, emit a
+                // `quit-confirm-requested` event to the JS frontend, and let
+                // the JS-side confirm flow decide. When the user clicks "Quit
+                // Anyway", JS calls the `confirm_quit` Tauri command which
+                // sets the QuitConfirmed flag + re-issues window.close().
+                // The second close attempt sees the flag and proceeds.
+                let confirmed = window.app_handle().state::<QuitConfirmed>();
+                if !confirmed.0.load(Ordering::SeqCst) {
+                    api.prevent_close();
+                    let _ = window.emit("quit-confirm-requested", ());
+                }
+            }
+        })
         .menu(|app| {
             // Custom Undo/Redo items that route to JavaScript instead of native WebView undo.
             // Predefined Undo/Redo would intercept Cmd+Z before the WebView sees it.
@@ -927,6 +971,7 @@ pub fn run() {
             open_url,
             show_native_notification,
             quicklook,
+            confirm_quit,
             #[cfg(not(debug_assertions))]
             open_project
         ])

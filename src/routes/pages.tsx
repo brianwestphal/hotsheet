@@ -530,6 +530,19 @@ pageRoutes.get('/', (c) => {
                   <label><input type="checkbox" id="settings-shell-integration-ui" defaultChecked /> Enable shell integration UI</label>
                   <span className="settings-hint">Shows OSC 133 gutter glyphs, the copy-last-output toolbar button, and Cmd/Ctrl+Arrow prompt navigation when your shell emits shell-integration escapes (Starship, VS Code's shell-integration rc, iTerm2 integration, etc.). The parser still runs when this is off — re-enabling reveals the UI without losing history.</span>
                 </div>
+                {/* HS-7596 / §37 — Quit confirmation. Three modes + editable
+                    exempt list of process basenames. See docs/37-quit-confirm.md. */}
+                <div className="settings-field" style="margin-top:12px">
+                  <label>Quit confirmation</label>
+                  <span className="settings-hint" style="margin-bottom:6px;display:block">Prompts when you quit Hot Sheet (⌘Q / Alt+F4 / red traffic-light close / `hotsheet --close`) and any terminal in this project is running a process the user would care about.</span>
+                  <div className="settings-quit-confirm-modes" id="settings-quit-confirm-modes">
+                    <label><input type="radio" name="settings-quit-confirm-mode" value="always" /> Always</label>
+                    <label><input type="radio" name="settings-quit-confirm-mode" value="never" /> Never</label>
+                    <label><input type="radio" name="settings-quit-confirm-mode" value="with-non-exempt-processes" defaultChecked /> Only if there are processes other than the login shell and not in the exempt list:</label>
+                  </div>
+                  <textarea id="settings-quit-confirm-exempt" className="settings-textarea settings-quit-confirm-exempt" rows={6} placeholder={'screen\ntmux\nless\nmore\nview\nmandoc\ntail\nlog\ntop\nhtop'}></textarea>
+                  <button type="button" id="settings-quit-confirm-reset" className="btn btn-sm" style="margin-top:6px">Reset exempt list to defaults</button>
+                </div>
               </div>
             </div>
             <div className="settings-tab-panel" data-panel="updates" id="settings-updates-section" style="display:none">

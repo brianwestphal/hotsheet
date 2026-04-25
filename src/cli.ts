@@ -36,6 +36,7 @@ Options:
   --strict-port            Fail if the requested port is in use (don't auto-select)
   --replace                Shut down any running Hot Sheet instance before starting
   --close                  Unregister the current project from the running instance
+  --force                  Skip interactive confirmations (use with --close in CI / scripts)
   --list                   List all projects registered with the running instance
   --check-for-updates      Check for new versions now
   --help                   Show this help message
@@ -59,6 +60,9 @@ interface ParsedArgs {
   strictPort: boolean;
   replace: boolean;
   close: boolean;
+  /** HS-7596 — skip interactive prompts (`--close` quit-confirm, etc.) for
+   *  use in CI / scripts. */
+  force: boolean;
   list: boolean;
 }
 
@@ -72,6 +76,7 @@ function parseArgs(argv: string[]): ParsedArgs | null {
   let strictPort = false;
   let replace = false;
   let close = false;
+  let force = false;
   let list = false;
 
   for (let i = 0; i < args.length; i++) {
@@ -115,6 +120,9 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       case '--close':
         close = true;
         break;
+      case '--force':
+        force = true;
+        break;
       case '--list':
         list = true;
         break;
@@ -125,7 +133,7 @@ function parseArgs(argv: string[]): ParsedArgs | null {
     }
   }
 
-  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort, replace, close, list };
+  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort, replace, close, force, list };
 }
 
 /**
@@ -155,8 +163,12 @@ async function shutdownRunningInstance(instancePort: number): Promise<void> {
 
 /**
  * Handle --close: unregister the current project from a running instance.
+ *
+ * HS-7596 / §37 — when this project has alive terminals running non-exempt
+ * processes, prompt the user to confirm before destroying them. Pass
+ * `--force` to skip the prompt for non-interactive use (CI / scripts).
  */
-async function handleClose(dataDir: string): Promise<void> {
+async function handleClose(dataDir: string, force: boolean): Promise<void> {
   const instance = readInstanceFile();
   if (instance === null) {
     console.error('No running Hot Sheet instance found.');
@@ -177,6 +189,16 @@ async function handleClose(dataDir: string): Promise<void> {
     process.exit(1);
   }
 
+  // HS-7596 / §37 — prompt before destroying terminals running non-exempt
+  // processes. Skipped on --force (CI / scripts).
+  if (!force) {
+    const proceed = await confirmCloseAgainstQuitSummary(instance.port, settings.secret);
+    if (!proceed) {
+      console.log('  Cancelled.');
+      process.exit(0);
+    }
+  }
+
   const res = await fetch(`http://localhost:${instance.port}/api/projects/${settings.secret}`, {
     method: 'DELETE',
   });
@@ -188,6 +210,71 @@ async function handleClose(dataDir: string): Promise<void> {
     console.error(`  Failed to unregister: ${body.error ?? 'Unknown error'}`);
     process.exit(1);
   }
+}
+
+/**
+ * HS-7596 / §37 — fetch /api/projects/quit-summary, filter to the project
+ * being closed, apply the §37.5 logic, and prompt the user via stdin if
+ * the prompt should fire. Returns true to proceed, false to abort.
+ *
+ * Errors fetching the summary fall through to "no prompt needed" — the
+ * server may not yet have the route (older instance), and we don't want
+ * --close to start failing for users on older servers.
+ */
+async function confirmCloseAgainstQuitSummary(port: number, secret: string): Promise<boolean> {
+  let summary: { projects: Array<{
+    secret: string; name: string;
+    confirmMode: 'always' | 'never' | 'with-non-exempt-processes';
+    entries: Array<{ terminalId: string; label: string; foregroundCommand: string; isShell: boolean; isExempt: boolean }>;
+  }> };
+  try {
+    const res = await fetch(`http://localhost:${port}/api/projects/quit-summary`);
+    if (!res.ok) return true;
+    summary = await res.json() as typeof summary;
+  } catch {
+    return true;
+  }
+  const project = summary.projects.find(p => p.secret === secret);
+  if (project === undefined) return true;
+
+  if (project.confirmMode === 'never') return true;
+  let entriesToShow: typeof project.entries;
+  if (project.confirmMode === 'always') {
+    entriesToShow = project.entries;
+    if (entriesToShow.length === 0) {
+      // 'always' fires unconditionally. Prompt with no list.
+      return promptYesNo(`  Close project "${project.name}"? Quit-confirm is set to 'always'.`);
+    }
+  } else {
+    // 'with-non-exempt-processes': only fire when at least one is non-exempt.
+    entriesToShow = project.entries.filter(e => !e.isExempt);
+    if (entriesToShow.length === 0) return true;
+  }
+
+  console.log(`  Project "${project.name}" has the following terminals running:`);
+  for (const e of entriesToShow) {
+    console.log(`    • ${e.label} (${e.foregroundCommand})`);
+  }
+  return promptYesNo('  Close anyway?');
+}
+
+/** Minimal y/n stdin prompt for the CLI. Defaults to 'no' on EOF / blank. */
+function promptYesNo(message: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    process.stdout.write(`${message} [y/N] `);
+    let buffered = '';
+    const onData = (chunk: Buffer): void => {
+      buffered += chunk.toString('utf8');
+      const newlineIdx = buffered.indexOf('\n');
+      if (newlineIdx === -1) return;
+      process.stdin.removeListener('data', onData);
+      process.stdin.pause();
+      const line = buffered.slice(0, newlineIdx).trim().toLowerCase();
+      resolve(line === 'y' || line === 'yes');
+    };
+    process.stdin.resume();
+    process.stdin.on('data', onData);
+  });
 }
 
 /**
@@ -250,7 +337,7 @@ async function joinRunningInstance(port: number, dataDir: string): Promise<void>
  */
 async function handleEarlyFlags(args: ParsedArgs): Promise<boolean> {
   if (args.close) {
-    await handleClose(args.dataDir);
+    await handleClose(args.dataDir, args.force);
     process.exit(0);
   }
 

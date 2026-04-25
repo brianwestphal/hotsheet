@@ -243,3 +243,91 @@ projectRoutes.post('/reorder', async (c) => {
   reorderProjectList(dataDirs);
   return c.json({ ok: true });
 });
+
+/**
+ * GET /api/projects/quit-summary — HS-7596 / §37 quit-confirm aggregator.
+ * Walks every registered project's alive PTYs in parallel, inspects each
+ * one's foreground process via `ps`, and returns a list of entries grouped
+ * by project. Each entry carries `{terminalId, label, foregroundCommand,
+ * isShell, isExempt}` plus the project's `confirmMode` (`'always'` /
+ * `'never'` / `'with-non-exempt-processes'`) so the client can apply
+ * §37.5's per-project + cross-project decision logic and build the
+ * confirmation dialog. The route does NOT decide whether to prompt; the
+ * client owns that policy because it knows the user's interaction state
+ * (e.g. whether the prompt is fired from ⌘Q vs `hotsheet --close`).
+ *
+ * Stale-instance cleanup intentionally bypasses this endpoint — that path
+ * is programmatic and the user is already quitting through a new window.
+ */
+projectRoutes.get('/quit-summary', async (c) => {
+  const { listAliveTerminalsAcrossProjects } = await import('../terminals/registry.js');
+  const { listTerminalConfigs, DEFAULT_TERMINAL_ID } = await import('../terminals/config.js');
+  const { readFileSettings } = await import('../file-settings.js');
+  const {
+    DEFAULT_EXEMPT_PROCESSES,
+    inspectForegroundProcess,
+  } = await import('../terminals/processInspect.js');
+
+  type SummaryEntry = {
+    terminalId: string;
+    label: string;
+    foregroundCommand: string;
+    isShell: boolean;
+    isExempt: boolean;
+  };
+  type ProjectSummary = {
+    secret: string;
+    name: string;
+    confirmMode: 'always' | 'never' | 'with-non-exempt-processes';
+    entries: SummaryEntry[];
+  };
+
+  const aliveByProject = new Map<string, Array<{ terminalId: string; rootPid: number }>>();
+  for (const t of listAliveTerminalsAcrossProjects()) {
+    const list = aliveByProject.get(t.secret);
+    if (list === undefined) aliveByProject.set(t.secret, [{ terminalId: t.terminalId, rootPid: t.rootPid }]);
+    else list.push({ terminalId: t.terminalId, rootPid: t.rootPid });
+  }
+
+  const projects = getAllProjects();
+  const result: ProjectSummary[] = [];
+  for (const project of projects) {
+    const settings = readFileSettings(project.dataDir);
+    const rawMode = settings.confirm_quit_with_running_terminals;
+    const confirmMode: 'always' | 'never' | 'with-non-exempt-processes' =
+      rawMode === 'always' || rawMode === 'never' ? rawMode : 'with-non-exempt-processes';
+    const exemptRaw = settings.quit_confirm_exempt_processes;
+    const exempt = Array.isArray(exemptRaw)
+      ? exemptRaw.filter((s): s is string => typeof s === 'string' && s !== '')
+      : DEFAULT_EXEMPT_PROCESSES;
+
+    // Resolve labels via the configured-terminal list so each entry shows
+    // the user's chosen tab name (or the derived basename) — matches how the
+    // drawer / dashboard label tabs.
+    const configured = listTerminalConfigs(project.dataDir);
+    const labelByTid = new Map<string, string>();
+    for (const cfg of configured) {
+      const fallback = cfg.command.trim().split(/\s+/)[0]?.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '') ?? cfg.id;
+      const label = (cfg.name !== undefined && cfg.name !== '')
+        ? cfg.name
+        : (fallback !== '' ? fallback : cfg.id);
+      labelByTid.set(cfg.id, label);
+    }
+
+    const alive = aliveByProject.get(project.secret) ?? [];
+    const entries: SummaryEntry[] = [];
+    for (const t of alive) {
+      const info = await inspectForegroundProcess(t.rootPid, exempt);
+      entries.push({
+        terminalId: t.terminalId,
+        label: labelByTid.get(t.terminalId) ?? (t.terminalId === DEFAULT_TERMINAL_ID ? 'Default' : t.terminalId),
+        foregroundCommand: info.command,
+        isShell: info.isShell,
+        isExempt: info.isExempt,
+      });
+    }
+    result.push({ secret: project.secret, name: project.name, confirmMode, entries });
+  }
+
+  return c.json({ projects: result });
+});

@@ -197,6 +197,22 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Without `claude` on PATH: Terminal launches `$SHELL` (Unix) / `%COMSPEC%` (Windows)
 - [ ] Custom `terminal_command` with no `{{claudeCommand}}` token is passed verbatim
 
+### Quit confirmation when terminals are running (HS-7591 / HS-7596, §37)
+- [ ] **Idle shell only** — open the drawer with a configured `zsh` terminal that's been at a prompt for a while. ⌘Q. App quits silently with no prompt (the shell IS the login shell, so there's nothing the user might be losing).
+- [ ] **Shell running `claude`** — start `claude` inside a drawer terminal. ⌘Q. Prompt fires listing `claude (claude)` under the project name. Cancel: app stays open, claude continues. Quit Anyway: claude is killed and app exits.
+- [ ] **Shell running `htop`** — start `htop` (or `tmux`, `less`, etc. — anything in the default exempt list) inside a drawer terminal. ⌘Q. Prompt does NOT fire — quit silently. (`htop` is in the exempt list because it's trivially exited via `q`.)
+- [ ] **Multiple projects with mixed running terminals** — open two projects, one with `claude` running, one idle. ⌘Q. Prompt fires listing only the project with `claude` running. After Quit Anyway, both projects' terminals are killed.
+- [ ] **Setting set to `'never'`** — Settings → Terminal → "Quit confirmation" → select "Never". Run anything in a terminal. ⌘Q. No prompt, silent quit.
+- [ ] **Setting set to `'always'`** — select "Always" in the same Settings panel. Even with no terminals running, ⌘Q fires the prompt with an empty terminal list. Cancel keeps the app open, Quit Anyway proceeds.
+- [ ] **Custom exempt list** — add `node` to the exempt textarea. Run `node` directly in a drawer terminal. ⌘Q. No prompt fires (node is now exempt).
+- [ ] **Reset exempt list to defaults** — click "Reset exempt list to defaults" in the Settings panel. Confirm the textarea repopulates with the macOS Terminal.app default `{screen, tmux, less, more, view, mandoc, tail, log, top, htop}`.
+- [ ] **All quit paths gate.** ⌘Q on macOS, Alt+F4 on Windows/Linux, the red traffic-light close button, and `hotsheet --close` (run with a non-exempt terminal alive in the project) all show the prompt.
+- [ ] **`hotsheet --close --force`** — run from a project with a non-exempt running terminal. The prompt is skipped + the project is unregistered immediately.
+- [ ] **Don't ask again checkbox** — fire the prompt, check "Don't ask again for any project", click Quit Anyway. Restart Hot Sheet. Confirm every project's `confirm_quit_with_running_terminals` is now `'never'` (open Settings → Terminal → "Quit confirmation" for each project).
+- [ ] **One-level-deeper rule (shell-rooted)** — terminal command is `zsh`, run `vim`, then ⌘Q. Prompt fires listing `vim (vim)` (vim isn't in the default exempt list). Edit Settings → Terminal → exempt list to add `vim`, ⌘Q again — prompt does NOT fire.
+- [ ] **Non-shell base command** — terminal command is `claude` directly (not `zsh -c claude`). PTY root is claude. ⌘Q. Prompt fires listing `claude (claude)`.
+- [ ] **Stale-instance cleanup bypasses** — start Hot Sheet, then start a SECOND Hot Sheet with `--replace`. The first one is killed by the stale-instance flow. NO prompt is shown (the user is already quitting through the new window).
+
 ### PTY size resync after Terminal Dashboard exit (HS-7592, §22 / §25)
 - [ ] Open the drawer with a configured terminal active (e.g. `claude` or a shell) — confirm the prompt fits the drawer width.
 - [ ] Run something that writes to the full screen width (e.g. `printf '%s\n' "$(printf '%-200s' '=')"` to print a 200-char banner, or `htop`).

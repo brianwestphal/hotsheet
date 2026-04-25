@@ -18,7 +18,11 @@ const RESERVED_KEYS = new Set(['appName', 'appIcon', 'backupDir', 'ticketPrefix'
 
 /** Setting keys whose values are JSON (arrays/objects) rather than plain strings.
  *  These are stored as native JSON in settings.json and stringified for the API. */
-const JSON_VALUE_KEYS = new Set(['categories', 'custom_views', 'custom_commands', 'auto_context', 'terminals']);
+const JSON_VALUE_KEYS = new Set([
+  'categories', 'custom_views', 'custom_commands', 'auto_context', 'terminals',
+  // HS-7596 — quit-confirm exempt list (array of process basenames).
+  'quit_confirm_exempt_processes',
+]);
 
 export interface FileSettings {
   appName?: string;

@@ -428,6 +428,36 @@ export function getCurrentCwd(
   return sessions.get(sessionKey(secret, terminalId))?.currentCwd ?? null;
 }
 
+/** HS-7596 — read the PTY's root pid for foreground-process inspection in
+ *  the §37 quit-confirm flow. Returns null when the session doesn't exist,
+ *  is no longer alive (`pty === null`), or never spawned. The caller (the
+ *  /api/terminal/foreground-process route) walks the OS process tree from
+ *  this pid. */
+export function getTerminalPid(
+  secret: string,
+  terminalId: string = DEFAULT_TERMINAL_ID,
+): number | null {
+  const s = sessions.get(sessionKey(secret, terminalId));
+  if (s === undefined || s.pty === null) return null;
+  return s.pty.pid;
+}
+
+/** HS-7596 — list every project's alive terminals as `{secret, terminalId,
+ *  rootPid}` triples. Used by the /api/terminals/quit-summary route to
+ *  enumerate what's running across all known projects in a single pass. */
+export function listAliveTerminalsAcrossProjects(): Array<{ secret: string; terminalId: string; rootPid: number }> {
+  const result: Array<{ secret: string; terminalId: string; rootPid: number }> = [];
+  for (const [key, session] of sessions.entries()) {
+    if (session.pty === null) continue;
+    const sepIdx = key.indexOf('::');
+    if (sepIdx <= 0) continue;
+    const secret = key.slice(0, sepIdx);
+    const terminalId = key.slice(sepIdx + 2);
+    result.push({ secret, terminalId, rootPid: session.pty.pid });
+  }
+  return result;
+}
+
 /** List terminal ids with pending bells for a single project, plus the
  *  optional OSC 9 notification message for each. Return shape is designed
  *  for `/api/projects/bell-state` (§24) and `/api/terminal/list` (§22) to

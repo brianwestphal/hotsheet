@@ -18,6 +18,7 @@ import { bindOpenFolder } from './openFolder.js';
 import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
 import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
+import { initQuitConfirm } from './quitConfirm.js';
 import { bindSettingsDialog } from './settingsDialog.js';
 import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
 import { initShare } from './share.js';
@@ -286,6 +287,10 @@ async function init() {
       void import('./commandLog.js').then(({ switchDrawerTab }) => { switchDrawerTab(tab); });
     },
   });
+  // HS-7596 / §37 — quit-confirm. Subscribes to the Rust-side
+  // `quit-confirm-requested` event and runs the §37.5 confirm flow.
+  // Tauri-only — no-op in browser context.
+  initQuitConfirm();
   // Cross-project bell long-poll (HS-6603 §24.4.1) — surfaces server-side
   // bell state on project tabs and feeds the in-drawer indicator for
   // bells fired while the user is inside another project.

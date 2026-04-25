@@ -47,7 +47,8 @@
     "dev:server": "npm run build:client && npm run build:plugins && tsx --tsconfig tsconfig.json src/cli.ts --no-open --strict-port",
     "tauri": "tauri",
     "tauri:clean": "rm -rf src-tauri/target",
-    "tauri:dev": "bash scripts/ensure-sidecar-stub.sh && tauri dev",
+    "tauri:dev": "bash scripts/ensure-sidecar-stub.sh && tauri dev --no-watch",
+    "tauri:dev:watch": "bash scripts/ensure-sidecar-stub.sh && tauri dev",
     "tauri:build": "bash scripts/build-sidecar.sh && tauri build",
     "tauri:build:local": "read -rsp \"Password: \" MYPASS && echo && TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$MYPASS TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/hotsheet.key) npm run tauri:build"
   },

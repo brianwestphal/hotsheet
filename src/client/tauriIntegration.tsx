@@ -5,6 +5,22 @@ export function getTauriInvoke(): ((cmd: string, args?: Record<string, unknown>)
   return tauri?.core?.invoke ?? null;
 }
 
+/** Type of the Tauri event-listener (`window.__TAURI__.event.listen`). Used
+ *  for HS-7596 / §37 to receive the `quit-confirm-requested` event the Rust
+ *  side fires when the user attempts to close the window. Returns null when
+ *  Tauri isn't loaded (browser context) so callers can no-op cleanly. */
+type TauriListen = (
+  event: string,
+  handler: (payload: { payload: unknown }) => void,
+) => Promise<() => void>;
+
+export function getTauriEventListener(): TauriListen | null {
+  const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
+    | { event?: { listen?: TauriListen } }
+    | undefined;
+  return tauri?.event?.listen ?? null;
+}
+
 /** Restore the saved app icon variant on page load. The Dock resets to the bundle
  *  icon during app launch, so we re-apply it from the client once the page is ready.
  *  NOTE: Custom icon support is feature-flagged out — always uses default icon. */
