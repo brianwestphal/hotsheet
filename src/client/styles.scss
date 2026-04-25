@@ -218,6 +218,38 @@ input, select, textarea {
   }
 }
 
+// HS-7662 — Flow / Sectioned layout toggle. Mirrors `.terminal-dashboard-toggle`
+// styling but a smaller 26 × 26 muted-pill (matches the §22 hide-terminal eye
+// icon's footprint) since it sits inside the toolbar row alongside the size
+// slider. Active state = accent-tinted, indicating flow mode is on.
+.terminal-dashboard-layout-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-right: 6px;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  }
+
+  &.active {
+    background: color-mix(in srgb, var(--accent, #3b82f6) 15%, transparent);
+    border-color: var(--accent, #3b82f6);
+    color: var(--accent, #3b82f6);
+  }
+}
+
 .terminal-dashboard {
   flex: 1;
   display: flex;
@@ -227,6 +259,44 @@ input, select, textarea {
   padding: 20px;
   gap: 24px;
   position: relative; // host for the HS-6836 dedicated-view overlay
+}
+
+// HS-7662 — flow-mode flat grid container. Inherits the existing
+// `.terminal-dashboard-grid` flex-wrap rules; the only differences are
+// (a) it's the dashboard's only grid (no per-project sections), and
+// (b) tiles render with a project-color badge / label prefix. No special
+// layout overrides are needed at this level.
+.terminal-dashboard-grid-flow {
+  // Marker class only — currently no extra rules. Reserved for future
+  // flow-only tweaks without disturbing sectioned-mode grid styling.
+}
+
+// HS-7662 — flow-mode tile label additions. The badge is a small colored
+// dot rendered before the terminal name; the project span is the
+// `{ProjectName} ›` prefix that appears only on the first tile of each
+// project's run. Both share the existing `.terminal-dashboard-tile-label`
+// container so font-size / weight / overflow ellipsis come from there.
+.terminal-dashboard-tile-badge,
+.drawer-terminal-grid-tile-badge {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.terminal-dashboard-tile-project,
+.drawer-terminal-grid-tile-project {
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.terminal-dashboard-tile-name,
+.drawer-terminal-grid-tile-name {
+  // Inherit color + font from the .label container — explicit rules would
+  // override the parent's `.terminal-dashboard-tile-label` styling.
 }
 
 // HS-7031: size slider shown at the far right of the header toolbar while

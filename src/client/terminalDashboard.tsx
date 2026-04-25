@@ -1,6 +1,6 @@
 import { SearchAddon } from '@xterm/addon-search';
 
-import { apiWithSecret } from './api.js';
+import { api, apiWithSecret } from './api.js';
 import { subscribeToBellState } from './bellPoll.js';
 import {
   filterVisible as filterVisibleEntries,
@@ -122,6 +122,20 @@ let hiddenChangeUnsubscribe: (() => void) | null = null;
  *  a typical laptop. */
 let sliderValue = 33;
 
+/** HS-7662 — layout mode for the dashboard grid. `'sectioned'` renders one
+ *  `<section>` per project (the default §25.4 behaviour); `'flow'` renders
+ *  every project's terminals as a single flat grid in registered-project
+ *  order, with project-color badges to mark project boundaries. Persisted
+ *  to `/file-settings` under `dashboard_layout_mode`. Default `'sectioned'`. */
+type LayoutMode = 'sectioned' | 'flow';
+let layoutMode: LayoutMode = 'sectioned';
+let layoutToggleButton: HTMLButtonElement | null = null;
+/** HS-7662 — cached layoutMode load promise, awaited inside
+ *  `renderDashboardGrid` so the first paint always reflects the persisted
+ *  mode (sectioned default never paints first then re-paints on fetch
+ *  resolution). Subsequent calls return the cached promise. */
+let layoutModeLoadPromise: Promise<void> | null = null;
+
 export function initTerminalDashboard(): void {
   if (getTauriInvoke() === null) return;
 
@@ -138,6 +152,15 @@ export function initTerminalDashboard(): void {
   sizerContainer = document.getElementById('terminal-dashboard-sizer');
   sizeSlider = document.getElementById('terminal-dashboard-size-slider') as HTMLInputElement | null;
   hideButton = document.getElementById('terminal-dashboard-hide-btn') as HTMLButtonElement | null;
+  layoutToggleButton = document.getElementById('terminal-dashboard-layout-toggle') as HTMLButtonElement | null;
+  // HS-7662 — fire-and-forget eagerly load the persisted layout mode so the
+  // first dashboard open paints the right layout without flicker. The fetch
+  // is shared with /file-settings calls elsewhere on page load (api wraps
+  // a single in-flight request when the cache is warm).
+  void loadLayoutMode();
+  layoutToggleButton?.addEventListener('click', () => {
+    setLayoutMode(layoutMode === 'sectioned' ? 'flow' : 'sectioned');
+  });
   // HS-7661 — open the "Show / Hide Terminals" dialog in global mode (every
   // project grouped). State changes fire the hidden-changes subscription
   // (registered on `enterDashboard`) which re-runs `applyHiddenFiltering`
@@ -223,6 +246,7 @@ export function exitDashboard(): void {
   if (toggleButton !== null) toggleButton.classList.remove('active');
   if (sizerContainer !== null) sizerContainer.style.display = 'none';
   if (hideButton !== null) hideButton.style.display = 'none';
+  if (layoutToggleButton !== null) layoutToggleButton.style.display = 'none';
   if (hiddenChangeUnsubscribe !== null) {
     hiddenChangeUnsubscribe();
     hiddenChangeUnsubscribe = null;
@@ -244,6 +268,60 @@ export function exitDashboard(): void {
   void import('./terminal.js').then(({ resyncActiveTerminalPtySize }) => {
     resyncActiveTerminalPtySize();
   });
+}
+
+// -----------------------------------------------------------------------------
+// Layout mode (HS-7662)
+// -----------------------------------------------------------------------------
+
+/** Coerces an arbitrary settings value to a valid LayoutMode, defaulting to
+ *  `'sectioned'` when missing or unrecognized. */
+function parseLayoutMode(raw: unknown): LayoutMode {
+  return raw === 'flow' ? 'flow' : 'sectioned';
+}
+
+/** HS-7662 — load the persisted layout mode from `/file-settings` once and
+ *  cache the resulting promise. Resolves silently on error so the dashboard
+ *  still works when the settings endpoint is briefly unavailable. */
+function loadLayoutMode(): Promise<void> {
+  if (layoutModeLoadPromise !== null) return layoutModeLoadPromise;
+  layoutModeLoadPromise = (async () => {
+    try {
+      const fs = await api<{ dashboard_layout_mode?: string }>('/file-settings');
+      layoutMode = parseLayoutMode(fs.dashboard_layout_mode);
+    } catch {
+      layoutMode = 'sectioned';
+    }
+    applyLayoutToggleVisualState();
+  })();
+  return layoutModeLoadPromise;
+}
+
+/** HS-7662 — flip the layout mode and persist to `/file-settings`.
+ *  Triggers a full re-render of the dashboard root if currently active so
+ *  the user sees the new layout immediately. */
+function setLayoutMode(next: LayoutMode): void {
+  if (next === layoutMode) return;
+  layoutMode = next;
+  applyLayoutToggleVisualState();
+  // Persist in the background — don't block the re-render on the network.
+  void api('/file-settings', {
+    method: 'PATCH',
+    body: { dashboard_layout_mode: next },
+  }).catch(() => { /* swallow — UI flip already happened */ });
+  // Re-render with the cached section data when active so we don't
+  // re-fetch /projects + /terminal/list on every toggle.
+  if (active && rootElement !== null && lastSectionData.length > 0) {
+    paintDashboardSections(rootElement, lastSectionData);
+  }
+}
+
+function applyLayoutToggleVisualState(): void {
+  if (layoutToggleButton === null) return;
+  layoutToggleButton.classList.toggle('active', layoutMode === 'flow');
+  layoutToggleButton.title = layoutMode === 'flow'
+    ? 'Switch to sectioned layout'
+    : 'Switch to flow layout';
 }
 
 function teardownAllHandles(): void {
@@ -271,6 +349,8 @@ function enterDashboard(): void {
   if (toggleButton !== null) toggleButton.classList.add('active');
   if (sizerContainer !== null) sizerContainer.style.display = '';
   if (hideButton !== null) hideButton.style.display = '';
+  if (layoutToggleButton !== null) layoutToggleButton.style.display = '';
+  applyLayoutToggleVisualState();
   if (sizeSlider !== null) sizeSlider.value = String(sliderValue);
   if (rootElement !== null) {
     rootElement.style.display = '';
@@ -291,9 +371,20 @@ function enterDashboard(): void {
 
   // Cross-project bell long-poll subscription — forward filtered pending sets
   // to each per-project grid handle. Tiles whose terminalId is in the set
-  // gain `.has-bell` (bounce + outline); others have it cleared.
+  // gain `.has-bell` (bounce + outline); others have it cleared. The
+  // FLOW_HANDLE_KEY sentinel (HS-7662) gets the union of every project's
+  // pending bells since flow mode renders one handle for every project's
+  // tiles in a single grid.
   bellUnsubscribe = subscribeToBellState((state) => {
     for (const [secret, handle] of gridHandles.entries()) {
+      if (secret === FLOW_HANDLE_KEY) {
+        const allPending = new Set<string>();
+        for (const entry of state.values()) {
+          for (const id of entry.terminalIds) allPending.add(id);
+        }
+        handle.syncBellState(allPending);
+        continue;
+      }
       const entry = state.get(secret);
       const pendingIds = new Set(entry?.terminalIds ?? []);
       handle.syncBellState(pendingIds);
@@ -322,7 +413,10 @@ function enterDashboard(): void {
 
 async function renderDashboardGrid(root: HTMLElement): Promise<void> {
   root.replaceChildren(toElement(<div className="terminal-dashboard-loading">Loading terminals…</div>));
-  const sections = await fetchProjectSections();
+  // HS-7662 — await both fetches in parallel. The layout-mode load is
+  // typically resolved by initTerminalDashboard's eager call, so this is
+  // usually instant.
+  const [sections] = await Promise.all([fetchProjectSections(), loadLayoutMode()]);
   if (!active) return; // user exited during fetch
   lastSectionData = sections;
   paintDashboardSections(root, sections);
@@ -335,7 +429,12 @@ async function renderDashboardGrid(root: HTMLElement): Promise<void> {
  *  terminals still render their empty-state row per §25.10. When NO
  *  visible tiles exist anywhere AND no projects have a 0-terminal
  *  empty-state to show, the dashboard renders a centered "All Terminals
- *  Hidden" placeholder. */
+ *  Hidden" placeholder.
+ *
+ *  HS-7662 — branches on the persisted `dashboard_layout_mode`. Sectioned
+ *  mode keeps the per-project section rendering. Flow mode renders a
+ *  single grid container with one TileGrid handle and a flat TileEntry
+ *  array spanning every project's terminals. */
 function paintDashboardSections(root: HTMLElement, sections: ProjectSectionData[]): void {
   // Dispose existing handles + clear the root before re-painting.
   for (const handle of gridHandles.values()) handle.dispose();
@@ -347,9 +446,21 @@ function paintDashboardSections(root: HTMLElement, sections: ProjectSectionData[
     return;
   }
 
-  // Compute total visible tiles across every project. If zero AND every
-  // project has at least one configured terminal (i.e. nothing is left to
-  // render an empty-state row for), surface the all-hidden placeholder.
+  if (layoutMode === 'flow') {
+    paintFlowLayout(root, sections);
+  } else {
+    paintSectionedLayout(root, sections);
+  }
+
+  // Re-run sizing after the grid is populated — the per-handle `rebuild()`
+  // call inside the section / flow paths runs `applySizing()` once but that
+  // can land against a DETACHED grid container (clientWidth === 0) and
+  // early-return, leaving tiles with no preview dims. Now that the grid is
+  // attached to the document, walk all handles and size again.
+  applyAllSizing();
+}
+
+function paintSectionedLayout(root: HTMLElement, sections: ProjectSectionData[]): void {
   let renderedAny = false;
   let totalVisible = 0;
   for (const section of sections) {
@@ -366,19 +477,147 @@ function paintDashboardSections(root: HTMLElement, sections: ProjectSectionData[
     renderedAny = true;
     root.appendChild(renderProjectSection(section, visible));
   }
-
   if (!renderedAny || totalVisible === 0) {
     root.appendChild(toElement(
       <div className="terminal-dashboard-all-hidden">All Terminals Hidden</div>
     ));
   }
+}
 
-  // Re-run sizing after every section is appended — `renderProjectSection`'s
-  // internal `handle.rebuild()` already called `applySizing()` once, but that
-  // happened against a DETACHED grid container (clientWidth === 0) and
-  // early-returned, leaving tiles with no preview dims. Now that every
-  // section is in the document, walk all handles and size again.
-  applyAllSizing();
+/** HS-7662 — flow layout: one grid container, one tile-grid handle, flat
+ *  list of tiles in registered-project order. Empty projects (zero
+ *  terminals OR every terminal hidden) are dropped entirely (per user
+ *  feedback #5). The first tile of each project's run gets the project
+ *  name as a label prefix; subsequent tiles in the same run get only a
+ *  small project-color badge. No `+` button, no terminal-count headings,
+ *  no per-section chrome (per user feedback #7 + §25.10.5 spec). */
+function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): void {
+  // Build flat tile list, marking first-of-run for each project.
+  const flat: { secret: string; entry: TileEntry; project: ProjectInfo }[] = [];
+  for (const section of sections) {
+    const visible = filterVisibleEntries(section.project.secret, section.terminals);
+    if (visible.length === 0) continue;
+    const color = projectBadgeColor(section.project.secret);
+    visible.forEach((terminal, index) => {
+      const baseEntry = toTileEntry(section.project.secret)(terminal);
+      const badge: { color: string; name?: string } = index === 0
+        ? { color, name: section.project.name }
+        : { color };
+      flat.push({
+        secret: section.project.secret,
+        project: section.project,
+        entry: { ...baseEntry, projectBadge: badge },
+      });
+    });
+  }
+
+  if (flat.length === 0) {
+    root.appendChild(toElement(
+      <div className="terminal-dashboard-all-hidden">All Terminals Hidden</div>
+    ));
+    return;
+  }
+
+  const flowGrid = toElement(<div className="terminal-dashboard-grid terminal-dashboard-grid-flow"></div>);
+  root.appendChild(flowGrid);
+
+  // Build a lookup from terminalId → project so the per-tile callbacks (right-
+  // click, dedicated-bar mount, etc.) can recover the originating project
+  // without a fresh /projects fetch. Flow mode collapses the per-project
+  // handle map down to one global handle, so we need this side table.
+  const tileProject = new Map<string, ProjectInfo>();
+  for (const f of flat) tileProject.set(f.entry.id, f.project);
+  const projectFor = (entry: TileEntry): ProjectInfo | null => tileProject.get(entry.id) ?? null;
+
+  const handle = mountTileGrid({
+    container: flowGrid,
+    cssPrefix: 'terminal-dashboard',
+    centerSizeFrac: 0.7,
+    centerScope: 'viewport',
+    centerReferenceEl: rootElement ?? undefined,
+    getSliderValue: () => sliderValue,
+    onContextMenu: (entry, e) => {
+      const project = projectFor(entry);
+      if (project === null) return;
+      onTileContextMenu(entry, project.secret, e);
+    },
+    onTileEnlarge: (_entry, target) => {
+      if (target === 'center') centeredHandle = handle;
+    },
+    onTileShrink: () => {
+      if (centeredHandle === handle && !handle.isCentered()) centeredHandle = null;
+    },
+    onDedicatedBarMount: (bar, entry, term) => {
+      if (sizerContainer !== null) sizerContainer.style.display = 'none';
+      if (layoutToggleButton !== null) layoutToggleButton.style.display = 'none';
+      if (hideButton !== null) hideButton.style.display = 'none';
+      const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
+      const project = projectFor(entry);
+      if (label !== null && project !== null) {
+        const terminalLabel = entry.label;
+        label.replaceChildren();
+        label.appendChild(toElement(
+          <span className="terminal-dashboard-dedicated-project">{project.name}</span>
+        ));
+        label.appendChild(toElement(
+          <span className="terminal-dashboard-dedicated-sep">{'›'}</span>
+        ));
+        label.appendChild(toElement(
+          <span className="terminal-dashboard-dedicated-terminal">{terminalLabel}</span>
+        ));
+      }
+      const search = new SearchAddon();
+      term.loadAddon(search);
+      const searchSlot = document.getElementById('terminal-dashboard-search-slot');
+      let handleLocal: TerminalSearchHandle | null = null;
+      if (searchSlot !== null) {
+        handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });
+        searchSlot.replaceChildren(handleLocal.root);
+        searchSlot.style.display = '';
+        dedicatedSearchHandle = handleLocal;
+      }
+      return () => {
+        try { handleLocal?.dispose(); } catch { /* ignore */ }
+        if (searchSlot !== null) {
+          searchSlot.replaceChildren();
+          searchSlot.style.display = 'none';
+        }
+        dedicatedSearchHandle = null;
+        if (sizerContainer !== null && active) sizerContainer.style.display = '';
+        if (layoutToggleButton !== null && active) layoutToggleButton.style.display = '';
+        if (hideButton !== null && active) hideButton.style.display = '';
+      };
+    },
+  });
+  // Use a sentinel "flow" key so the bell long-poll fan-out treats it
+  // uniformly. The bell-poll subscription iterates per-secret, but in flow
+  // mode every project's pending bells need to land on the same handle —
+  // we wrap the per-secret callback in the bell subscription path below
+  // (handled by enterDashboard's subscription).
+  gridHandles.set(FLOW_HANDLE_KEY, handle);
+  handle.rebuild(flat.map(f => f.entry));
+}
+
+/** HS-7662 — sentinel key for the single flow-mode tile-grid handle in the
+ *  shared `gridHandles` map. Distinguishes from per-project secrets so the
+ *  bell fan-out + cross-handle iteration in enterDashboard can recognise
+ *  the flow-mode handle and pass it the union of every project's pending
+ *  bells (rather than treating it like a per-project handle that only
+ *  cares about its own secret). */
+const FLOW_HANDLE_KEY = '__flow_handle__';
+
+/** HS-7662 — derive a stable color for a project's flow-mode badge from
+ *  the project's secret. Same secret always produces the same hue, so
+ *  badges remain consistent across reloads. HSL with fixed saturation +
+ *  lightness for visual harmony. */
+function projectBadgeColor(secret: string): string {
+  let hash = 0;
+  for (let i = 0; i < secret.length; i++) {
+    hash = ((hash << 5) - hash) + secret.charCodeAt(i);
+    hash |= 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 65%, 55%)`;
 }
 
 async function fetchProjectSections(): Promise<ProjectSectionData[]> {
@@ -768,11 +1007,17 @@ function openDashboardTileRename(entry: TileEntry): void {
     // Update the tile DOM directly via data-terminal-id; cheaper than asking
     // the shared module for a rename-API and still works because
     // refreshDashboardGrid would clobber the rename anyway on next refresh.
+    // HS-7662 — write to the inner `.terminal-dashboard-tile-name` span so
+    // the project badge + project-name prefix (in flow mode) survive the
+    // rename. Older sectioned-mode tiles without the wrapper still work
+    // because the fallback overwrites the whole label.
     const labelEl = document.querySelector<HTMLElement>(
       `.terminal-dashboard-tile[data-terminal-id="${CSS.escape(entry.id)}"] .terminal-dashboard-tile-label`,
     );
     if (labelEl !== null) {
-      labelEl.textContent = resolved;
+      const nameEl = labelEl.querySelector<HTMLElement>('.terminal-dashboard-tile-name');
+      if (nameEl !== null) nameEl.textContent = resolved;
+      else labelEl.textContent = resolved;
       labelEl.setAttribute('title', resolved);
     }
     overlay.remove();

@@ -93,6 +93,18 @@ export interface TileEntry {
    *  original list-response shape (e.g., the dashboard needs `dynamic` to
    *  decide whether the Close Tab option is enabled). */
   metadata?: unknown;
+  /** HS-7662 — flow-layout mode shows a per-project marker before the
+   *  terminal label so a single grid mixing terminals from many projects
+   *  reads at a glance. Two parts:
+   *  - `color` — the small dot drawn in front of the label. The first tile
+   *    of a project's run AND every subsequent tile share the same color so
+   *    the visual grouping is preserved across the row.
+   *  - `name` — when set, renders as `{name} ›` BEFORE the terminal label
+   *    (not after the dot). The flow-mode caller sets `name` only on the
+   *    first tile of each project run; subsequent tiles get the dot alone.
+   *  Both are absent in sectioned mode (label is the bare terminal name).
+   */
+  projectBadge?: { color: string; name?: string };
 }
 
 export interface TileGridOptions {
@@ -275,6 +287,13 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     const cwdLabel = entry.cwdLabel ?? '';
     const cwdRaw = entry.cwdRaw ?? '';
     const cwdClass = `${cssPrefix}-tile-cwd`;
+    // HS-7662 — flow-mode project badge: small colored dot before the label,
+    // plus optionally a `{ProjectName} ›` prefix on the first tile of each
+    // project's run. Both are absent in sectioned mode.
+    const badge = entry.projectBadge;
+    const fullLabelTitle = badge?.name !== undefined && badge.name !== ''
+      ? `${badge.name} › ${entry.label}`
+      : entry.label;
     const root = toElement(
       <div
         className={`${tileClass} ${tileClass}-${entry.state}${initialBell ? ' has-bell' : ''}`}
@@ -284,7 +303,15 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
         <div className={previewClass}>
           {renderPreviewContent(entry.state, entry.exitCode)}
         </div>
-        <div className={labelClass} title={entry.label}>{entry.label}</div>
+        <div className={labelClass} title={fullLabelTitle}>
+          {badge !== undefined
+            ? <span className={`${cssPrefix}-tile-badge`} style={`background:${badge.color}`} aria-hidden="true"></span>
+            : null}
+          {badge?.name !== undefined && badge.name !== ''
+            ? <span className={`${cssPrefix}-tile-project`}>{badge.name}{' › '}</span>
+            : null}
+          <span className={`${cssPrefix}-tile-name`}>{entry.label}</span>
+        </div>
         {cwdLabel === ''
           ? null
           : <div className={cwdClass} title={cwdRaw}>{cwdLabel}</div>}

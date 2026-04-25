@@ -17,6 +17,14 @@ pageRoutes.get('/', (c) => {
           <div className="app-title" id="app-title-area">
             <h1>Hot Sheet</h1>
           </div>
+          {/* HS-7662 — Flow / Sectioned layout toggle for the dashboard.
+              Sits between the dashboard toggle and the size slider per the
+              §25.10.5 spec. Lucide `text-wrap` icon. Active state mirrors
+              `#terminal-dashboard-toggle`. Visibility tracks the sizer —
+              hidden when dashboard isn't active and during dedicated view. */}
+          <button type="button" className="terminal-dashboard-layout-toggle" id="terminal-dashboard-layout-toggle" title="Toggle flow layout" style="display:none">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-4"/><path d="m16 16-2 2 2 2"/><path d="M3 18h7"/></svg>
+          </button>
           <div className="terminal-dashboard-sizer" id="terminal-dashboard-sizer" style="display:none" title="Tile size">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M14 15H9v-5"/><path d="M16 3h5v5"/><path d="M21 3 9 15"/></svg>
             <input type="range" id="terminal-dashboard-size-slider" min="0" max="100" step="1" value="33" aria-label="Dashboard tile size" />

@@ -253,7 +253,7 @@ A user can declutter the dashboard by hiding individual terminals from the tile 
 
 **Cross-section coordination.** State changes fire a module-level subscription; the dashboard's `paintDashboardSections` re-renders from the cached `lastSectionData` without re-fetching `/projects` or `/terminal/list`, so toggling rows in the dialog feels instantaneous.
 
-## 25.10.5 Flow layout mode (HS-7624 — spec, follow-up ticket implements)
+## 25.10.5 Flow layout mode (HS-7624 spec / HS-7662 implementation)
 
 The default sectioned layout (§25.4) renders one section per project with its own grid. When projects have only 1–2 terminals each, this leaves substantial whitespace at the right of every section's row — wasted screen on multi-project setups. **Flow mode** is an alternate layout in which every project's terminals share a single grid that wraps across rows in registered-project order, packing tiles densely.
 
@@ -273,15 +273,14 @@ The default sectioned layout (§25.4) renders one section per project with its o
 
 **No `+` button or terminal count in flow mode.** The user explicitly noted: "there's no need to show the terminal count or to be able to dynamically add terminals when in flow mode". The per-project `+` button (§25.4 HS-7064) is omitted in flow layout — the `+` belongs to a project, but flow mode dissolves the project boundary in the grid. Adding a new terminal in flow mode is done via the existing per-terminal Settings → Terminal outline editor or via switching back to sectioned mode and using the inline `+`. The terminal-count badge in section headings is also dropped because there are no headings.
 
-**Implementation outline (defers to the follow-up ticket).** Engineering work to land flow mode:
-1. Add the `dashboard_layout_mode` key to `/file-settings` validation + the file-settings TypeScript type.
-2. Add the toolbar toggle button + active-state handling in `terminalDashboard.tsx` (mirrors `#terminal-dashboard-toggle`).
-3. Refactor `renderDashboardGrid` to branch on the persisted mode: sectioned mode keeps its current path, flow mode mounts a single `mountTileGrid` against a new container and feeds it a flat `TileEntry[]` covering every project's terminals (skipping empty projects).
-4. Extend `TileEntry.label` building to inject the `{ProjectName} › ` prefix for first-of-run tiles, and a `projectBadge: { name, color }` field for subsequent tiles. The shared `terminalTileGrid.tsx` module renders the badge if present.
-5. Add SCSS for the badge: small accent-coloured pill before the terminal name, matching the project-tab dot pattern.
-6. E2E tests: toggle persists across reload, flow mode renders a flat grid, empty projects are dropped, tile interactions (click-center / dblclick-dedicated / bell) work identically across modes.
-
-The implementation is non-trivial (~400 lines of refactor + tests) and is filed as a separate follow-up ticket alongside this spec landing.
+**Implementation (HS-7662).**
+- Persisted layout mode: `/file-settings` key `dashboard_layout_mode: 'sectioned' | 'flow'` (default `'sectioned'`). The dashboard fetches it once at init via a cached promise so first-paint always reflects the saved value (no flicker from a sectioned-then-flow re-render).
+- Toolbar toggle: `#terminal-dashboard-layout-toggle` (Lucide `text-wrap`) sits between the dashboard toggle and the size slider. Pressed-state mirrors `#terminal-dashboard-toggle`'s `.active` modifier (accent-tinted background + border).
+- Render branch in `paintDashboardSections`: `paintSectionedLayout` keeps the per-project section logic (heading + `+` add-terminal button + `(N terminals)` count + per-section `.terminal-dashboard-grid` mount with one `TileGridHandle` per project secret); `paintFlowLayout` mounts a single `.terminal-dashboard-grid.terminal-dashboard-grid-flow` against a single `TileGridHandle` keyed by the sentinel `__flow_handle__` in the shared `gridHandles` map. The bell long-poll subscription's fan-out checks the sentinel and forwards the union of every project's pending bell IDs (instead of a per-secret subset) so a tile in any project can light up.
+- Tile labels: `TileEntry.projectBadge` is a new optional field with shape `{ color: string; name?: string }`. The shared `terminalTileGrid.tsx` `renderTile` renders the dot + optional `{Project} ›` prefix BEFORE a `.terminal-dashboard-tile-name` span that holds the actual terminal name. Sectioned mode passes `projectBadge: undefined` so the existing label markup is unchanged; flow mode sets `name` only on the first tile of each project's run and `color` (derived from a stable hash of the project secret → HSL hue) on every tile in the run.
+- Per-tile callbacks (right-click context menu, dedicated-bar mount, on-tile-enlarge / -shrink) recover the originating project via a `Map<terminalId, ProjectInfo>` built at paint time — flow mode collapses the per-project handle map down to one global handle, so we need this side table.
+- Cross-mode behavior parity: bell + click-to-center + dblclick-dedicated + xterm mount + history-replay + OSC 7 CWD chip + lazy/exited placeholders all flow through the same `terminalTileGrid.tsx` per the §25.10.5 spec; no behavioral fork.
+- SCSS: `.terminal-dashboard-tile-badge` (8 px circle, color from inline-style hue), `.terminal-dashboard-tile-project` (muted-color `{Project} ›` prefix), `.terminal-dashboard-tile-name` (the bare terminal name), `.terminal-dashboard-layout-toggle` (26 × 26 muted-pill matching the §22 hide-terminal eye icon, with `.active` accent treatment). Drawer-grid parallel classes (`.drawer-terminal-grid-tile-badge` / `-project` / `-name`) are emitted for symmetry but currently unused by the drawer-grid module (which doesn't span projects).
 
 ## 25.10.6 Show / Hide Terminals dialog (HS-7661)
 
