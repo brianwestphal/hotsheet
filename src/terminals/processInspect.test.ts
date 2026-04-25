@@ -3,10 +3,50 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_EXEMPT_PROCESSES,
   descendantChain,
+  normalizeComm,
   parsePsOutput,
   pickForegroundProcess,
   SHELL_BASENAMES,
 } from './processInspect.js';
+
+describe('normalizeComm', () => {
+  it('strips Unix path prefix (macOS ps -o comm reports full executable path)', () => {
+    expect(normalizeComm('/bin/zsh')).toBe('zsh');
+    expect(normalizeComm('/usr/local/bin/htop')).toBe('htop');
+    expect(normalizeComm('/usr/libexec/foo-bar')).toBe('foo-bar');
+  });
+
+  it('strips Windows backslash path prefix', () => {
+    expect(normalizeComm('C:\\Windows\\System32\\cmd.exe')).toBe('cmd');
+    expect(normalizeComm('C:\\Program Files\\PowerShell\\7\\pwsh.exe')).toBe('pwsh');
+  });
+
+  it('strips the leading dash on login-shell commands', () => {
+    expect(normalizeComm('-zsh')).toBe('zsh');
+    expect(normalizeComm('-bash')).toBe('bash');
+  });
+
+  it('strips Windows .exe suffix (case-insensitive)', () => {
+    expect(normalizeComm('cmd.exe')).toBe('cmd');
+    expect(normalizeComm('PWSH.EXE')).toBe('PWSH');
+  });
+
+  it('returns the input unchanged when already a basename', () => {
+    expect(normalizeComm('claude')).toBe('claude');
+    expect(normalizeComm('node')).toBe('node');
+  });
+
+  it('returns empty string for empty / whitespace input', () => {
+    expect(normalizeComm('')).toBe('');
+    expect(normalizeComm('   ')).toBe('');
+  });
+
+  it('handles a command name that itself starts with a dash by only stripping one dash', () => {
+    // Pathological — login shell whose argv[0] is `-something`. Strip only
+    // the leading dash, not arbitrary dash prefixes.
+    expect(normalizeComm('-zsh')).toBe('zsh');
+  });
+});
 
 describe('parsePsOutput', () => {
   it('skips a header line that does not start with a digit', () => {
@@ -41,6 +81,23 @@ describe('parsePsOutput', () => {
   it('returns an empty array for empty input', () => {
     expect(parsePsOutput('')).toEqual([]);
     expect(parsePsOutput('\n\n')).toEqual([]);
+  });
+
+  it('normalizes macOS-style full-path comm values to basenames (HS-7790)', () => {
+    // macOS `ps -o pid,ppid,comm -A` emits the executable's full path as the
+    // comm column. Without normalization the shell + exempt-list comparisons
+    // never match, so the user's "exempt zsh" choice is silently ignored.
+    const out = '  PID  PPID COMM\n12345 1 /bin/zsh\n23456 12345 /usr/local/bin/htop\n';
+    const rows = parsePsOutput(out);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].comm).toBe('zsh');
+    expect(rows[1].comm).toBe('htop');
+  });
+
+  it('normalizes login-shell comm values that have a leading dash (HS-7790)', () => {
+    const out = '  PID  PPID COMM\n100 1 -zsh\n';
+    const rows = parsePsOutput(out);
+    expect(rows[0].comm).toBe('zsh');
   });
 });
 
@@ -179,5 +236,18 @@ describe('pickForegroundProcess', () => {
     expect(DEFAULT_EXEMPT_PROCESSES).toContain('tmux');
     expect(DEFAULT_EXEMPT_PROCESSES).toContain('less');
     expect(DEFAULT_EXEMPT_PROCESSES).toContain('htop');
+  });
+
+  it('end-to-end: a real macOS-style ps tree with /bin/zsh as the only descendant resolves to an idle exempt shell (HS-7790)', () => {
+    // This is the exact failure mode reported in HS-7790: user has zsh in
+    // their exempt list AND the only running process is zsh, but the prompt
+    // still fired because ps emitted `/bin/zsh` and the comparison missed.
+    const out = '  PID  PPID COMM\n100 1 /sbin/launchd\n200 100 /bin/zsh\n';
+    const rows = parsePsOutput(out);
+    const chain = descendantChain(rows, 200);
+    const info = pickForegroundProcess(chain, ['zsh']);
+    expect(info.command).toBe('zsh');
+    expect(info.isShell).toBe(true);
+    expect(info.isExempt).toBe(true);
   });
 });

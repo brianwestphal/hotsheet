@@ -1,5 +1,7 @@
 import { subscribeToBellState } from './bellPoll.js';
 import {
+  applyHideButtonBadge,
+  countHiddenForProject,
   filterVisible as filterVisibleEntries,
   subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
@@ -232,12 +234,24 @@ function rebuildVisibleTiles(): void {
 }
 
 /** HS-7661 — subscribe to hidden-state changes so the grid rebuilds
- *  when the user toggles a row in the dialog. Idempotent. */
+ *  when the user toggles a row in the dialog. Idempotent.
+ *  HS-7823 — also refreshes the eye-icon hidden-count badge. */
 function attachHiddenSubscription(): void {
   if (hiddenChangeUnsubscribe !== null) return;
   hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
+    refreshHideBtnBadge();
     if (gridHandle !== null) rebuildVisibleTiles();
   });
+}
+
+/** HS-7823 — repaint the drawer-grid eye-icon badge from the active
+ *  project's hidden count. Called from the hidden-change subscription
+ *  + when grid chrome shows so a project switch reflects immediately. */
+function refreshHideBtnBadge(): void {
+  if (hideBtn === null) return;
+  const project = getActiveProject();
+  const count = project === null ? 0 : countHiddenForProject(project.secret);
+  applyHideButtonBadge(hideBtn, count);
 }
 
 function detachHiddenSubscription(): void {
@@ -438,6 +452,9 @@ function showGridChrome(): void {
     sizeSlider.value = String(project === null ? 33 : getProjectGridSliderValue(project.secret));
   }
   refreshSnapPointIndicators();
+  // HS-7823 — keep the eye-icon badge in sync when chrome shows (covers
+  // the project-switch case where the count was for a different project).
+  refreshHideBtnBadge();
   if (toggleBtn !== null) toggleBtn.classList.add('active');
 }
 

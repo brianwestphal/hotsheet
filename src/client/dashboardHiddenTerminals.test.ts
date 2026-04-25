@@ -1,9 +1,14 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   _resetForTests,
+  applyHideButtonBadge,
+  countHiddenAcrossAllProjects,
+  countHiddenForProject,
   filterVisible,
   getHiddenTerminals,
+  hydratePersistedHiddenForProject,
   isTerminalHidden,
   setTerminalHidden,
   subscribeToHiddenChanges,
@@ -126,5 +131,99 @@ describe('dashboardHiddenTerminals (HS-7661)', () => {
     unsub();
     setTerminalHidden('s1', 'b', true);
     expect(fires).toBe(1);
+  });
+
+  // HS-7823 — badge count helpers + DOM helper for the eye-icon button.
+  it('countHiddenAcrossAllProjects sums across every project', () => {
+    setTerminalHidden('s1', 'a', true);
+    setTerminalHidden('s1', 'b', true);
+    setTerminalHidden('s2', 'x', true);
+    expect(countHiddenAcrossAllProjects()).toBe(3);
+  });
+
+  it('countHiddenAcrossAllProjects returns 0 when nothing is hidden', () => {
+    expect(countHiddenAcrossAllProjects()).toBe(0);
+  });
+
+  it('countHiddenForProject scopes the count to the given secret', () => {
+    setTerminalHidden('s1', 'a', true);
+    setTerminalHidden('s1', 'b', true);
+    setTerminalHidden('s2', 'x', true);
+    expect(countHiddenForProject('s1')).toBe(2);
+    expect(countHiddenForProject('s2')).toBe(1);
+    expect(countHiddenForProject('s3')).toBe(0);
+  });
+
+  it('applyHideButtonBadge adds a .hide-btn-badge child with the count when > 0', () => {
+    const btn = document.createElement('button');
+    applyHideButtonBadge(btn, 3);
+    const badge = btn.querySelector('.hide-btn-badge');
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toBe('3');
+  });
+
+  it('applyHideButtonBadge clamps very large counts to 99+', () => {
+    const btn = document.createElement('button');
+    applyHideButtonBadge(btn, 137);
+    expect(btn.querySelector('.hide-btn-badge')!.textContent).toBe('99+');
+  });
+
+  it('applyHideButtonBadge removes the badge when count drops to 0', () => {
+    const btn = document.createElement('button');
+    applyHideButtonBadge(btn, 2);
+    expect(btn.querySelector('.hide-btn-badge')).not.toBeNull();
+    applyHideButtonBadge(btn, 0);
+    expect(btn.querySelector('.hide-btn-badge')).toBeNull();
+  });
+
+  it('applyHideButtonBadge updates an existing badge in place rather than recreating it', () => {
+    const btn = document.createElement('button');
+    applyHideButtonBadge(btn, 1);
+    const original = btn.querySelector('.hide-btn-badge');
+    applyHideButtonBadge(btn, 2);
+    const updated = btn.querySelector('.hide-btn-badge');
+    expect(updated).toBe(original);
+    expect(updated!.textContent).toBe('2');
+  });
+
+  it('applyHideButtonBadge tolerates a null button (no-op)', () => {
+    expect(() => applyHideButtonBadge(null, 5)).not.toThrow();
+  });
+
+  // HS-7825 — hydratePersistedHiddenForProject seeds the in-memory map from
+  // persisted ids. Drives the auto-hide-on-relaunch behaviour spec.
+  it('hydratePersistedHiddenForProject seeds the hidden set and notifies subscribers', () => {
+    let fires = 0;
+    const unsub = subscribeToHiddenChanges(() => { fires++; });
+    hydratePersistedHiddenForProject('s1', ['default', 'claude']);
+    expect(getHiddenTerminals('s1').size).toBe(2);
+    expect(isTerminalHidden('s1', 'default')).toBe(true);
+    expect(isTerminalHidden('s1', 'claude')).toBe(true);
+    expect(fires).toBe(1);
+    unsub();
+  });
+
+  it('hydratePersistedHiddenForProject silently drops dynamic ids (defense in depth)', () => {
+    hydratePersistedHiddenForProject('s1', ['default', 'dyn-abc', 'claude']);
+    expect(isTerminalHidden('s1', 'default')).toBe(true);
+    expect(isTerminalHidden('s1', 'claude')).toBe(true);
+    expect(isTerminalHidden('s1', 'dyn-abc')).toBe(false);
+  });
+
+  it('hydratePersistedHiddenForProject with an empty list clears existing state for that project', () => {
+    setTerminalHidden('s1', 'a', true);
+    setTerminalHidden('s1', 'b', true);
+    expect(getHiddenTerminals('s1').size).toBe(2);
+    hydratePersistedHiddenForProject('s1', []);
+    expect(getHiddenTerminals('s1').size).toBe(0);
+  });
+
+  it('hydratePersistedHiddenForProject is a no-op when the new set matches the current set (no fire)', () => {
+    hydratePersistedHiddenForProject('s1', ['a', 'b']);
+    let fires = 0;
+    const unsub = subscribeToHiddenChanges(() => { fires++; });
+    hydratePersistedHiddenForProject('s1', ['b', 'a']); // same set, different order
+    expect(fires).toBe(0);
+    unsub();
   });
 });

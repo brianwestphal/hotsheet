@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'fs';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { homedir } from 'os';
@@ -47,6 +48,22 @@ const dynamicConfigs = new Map<string, TerminalConfig>();
 
 export function getDynamicTerminalConfig(secret: string, terminalId: string): TerminalConfig | null {
   return dynamicConfigs.get(`${secret}::${terminalId}`) ?? null;
+}
+
+/**
+ * Return every dynamic config the server knows about for a project. Used by
+ * the §37 quit-confirm aggregator to label dynamic-terminal entries with the
+ * user's friendly name (HS-7789) — without this, the dialog falls back to
+ * the raw `dyn-…` id because the persisted `listTerminalConfigs` doesn't
+ * contain dynamic terminals.
+ */
+export function listDynamicTerminalConfigs(secret: string): TerminalConfig[] {
+  const prefix = `${secret}::`;
+  const out: TerminalConfig[] = [];
+  for (const [key, config] of dynamicConfigs.entries()) {
+    if (key.startsWith(prefix)) out.push(config);
+  }
+  return out;
 }
 
 /** GET /api/terminal/list — list terminal ids/configs the client can attach to. */
@@ -277,9 +294,77 @@ terminalRoutes.post('/destroy', async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * GET /api/terminal/command-suggestions — HS-7791. Curated list of common
+ * commands the Edit Terminal dialog uses to populate a combobox so users
+ * don't have to remember `{{claudeCommand}}` syntax or type their shell path
+ * by hand. Always includes the `{{claudeCommand}}` sentinel first; on Unix
+ * also surfaces `process.env.SHELL` (the user's default login shell) plus
+ * any well-known shells found via `/etc/shells`; on Windows surfaces COMSPEC,
+ * `pwsh.exe`, and `powershell.exe` when they exist.
+ *
+ * Read-only and per-instance — the response shape is `{ suggestions: string[] }`
+ * with the entries pre-deduplicated and ordered by likelihood-to-be-used.
+ */
+terminalRoutes.get('/command-suggestions', (c) => {
+  return c.json({ suggestions: collectCommandSuggestions() });
+});
+
 function defaultShellCommand(): string {
   if (process.platform === 'win32') return process.env.COMSPEC ?? 'cmd.exe';
   return process.env.SHELL ?? '/bin/sh';
+}
+
+/**
+ * Build the suggestion list for the Edit Terminal command combobox (HS-7791).
+ * Order: `{{claudeCommand}}` sentinel → user's default login shell → any
+ * additional shells discovered on the system (via `/etc/shells` on Unix or
+ * well-known paths on Windows). Duplicates removed; entries returned as-is
+ * (full path included) so the user sees what would actually exec.
+ */
+export function collectCommandSuggestions(): string[] {
+  const out: string[] = ['{{claudeCommand}}'];
+  const seen = new Set<string>(out);
+
+  const add = (entry: string | undefined | null): void => {
+    if (typeof entry !== 'string') return;
+    const trimmed = entry.trim();
+    if (trimmed === '') return;
+    if (seen.has(trimmed)) return;
+    seen.add(trimmed);
+    out.push(trimmed);
+  };
+
+  const userShell = defaultShellCommand();
+  add(userShell);
+
+  if (process.platform === 'win32') {
+    // Probe well-known PowerShell + cmd locations. We can't rely on `which`
+    // on Windows so check absolute paths directly.
+    const candidates = [
+      'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      'C:\\Windows\\System32\\cmd.exe',
+    ];
+    for (const path of candidates) {
+      try { if (existsSync(path)) add(path); } catch { /* probe is best-effort */ }
+    }
+  } else {
+    // Unix: read /etc/shells. Lines starting with `#` are comments; everything
+    // else is a shell path. Filter to entries that exist on disk so we don't
+    // surface stale registrations.
+    try {
+      if (existsSync('/etc/shells')) {
+        const lines = readFileSync('/etc/shells', 'utf8').split(/\r?\n/);
+        for (const raw of lines) {
+          const line = raw.trim();
+          if (line === '' || line.startsWith('#')) continue;
+          if (existsSync(line)) add(line);
+        }
+      }
+    } catch { /* /etc/shells read is best-effort */ }
+  }
+  return out;
 }
 
 /** Capitalize the basename of a shell path/command for use as a tab label. */

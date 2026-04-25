@@ -72,8 +72,37 @@ vi.mock('./notify.js', () => ({
 }));
 
 const mockBellPending = new Map<string, Array<{ terminalId: string; message: string | null }>>();
+const mockAliveTerminals: Array<{ secret: string; terminalId: string; rootPid: number }> = [];
 vi.mock('../terminals/registry.js', () => ({
   listBellPendingForProject: vi.fn((secret: string) => mockBellPending.get(secret) ?? []),
+  listAliveTerminalsAcrossProjects: vi.fn(() => mockAliveTerminals),
+}));
+
+const mockConfiguredTerminals = new Map<string, Array<{ id: string; name?: string; command: string }>>();
+const mockDynamicTerminals = new Map<string, Array<{ id: string; name?: string; command: string }>>();
+vi.mock('../terminals/config.js', () => ({
+  DEFAULT_TERMINAL_ID: 'default',
+  listTerminalConfigs: vi.fn((dataDir: string) => {
+    for (const project of mockProjects) {
+      if (project.dataDir === dataDir) return mockConfiguredTerminals.get(project.secret) ?? [];
+    }
+    return [];
+  }),
+}));
+
+vi.mock('./terminal.js', () => ({
+  listDynamicTerminalConfigs: vi.fn((secret: string) => mockDynamicTerminals.get(secret) ?? []),
+}));
+
+vi.mock('../file-settings.js', () => ({
+  readFileSettings: vi.fn(() => ({})),
+}));
+
+vi.mock('../terminals/processInspect.js', () => ({
+  DEFAULT_EXEMPT_PROCESSES: ['screen', 'tmux', 'less', 'more', 'view', 'mandoc', 'tail', 'log', 'top', 'htop'],
+  inspectForegroundProcess: vi.fn(() => Promise.resolve({
+    command: 'zsh', isShell: true, isExempt: true, error: null,
+  })),
 }));
 
 // Mock fs.existsSync to return true for our mock project dirs
@@ -112,6 +141,9 @@ afterAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   mockProjects = [mockProject, mockProject2];
+  mockAliveTerminals.length = 0;
+  mockConfiguredTerminals.clear();
+  mockDynamicTerminals.clear();
 });
 
 function post(body: unknown) {
@@ -309,5 +341,60 @@ describe('GET /projects/bell-state', () => {
     expect(elapsed).toBeLessThan(500);
     const body = await res.json() as { v: number };
     expect(body.v).toBe(42);
+  });
+});
+
+// HS-7596 / §37 — /api/projects/quit-summary aggregator.
+describe('GET /projects/quit-summary', () => {
+  it('labels dynamic terminals via the in-memory dynamic-config registry, not just the persisted list (HS-7789)', async () => {
+    // Persisted (configured) terminals: a "default" terminal labelled "Claude".
+    mockConfiguredTerminals.set('test-secret-123', [
+      { id: 'default', name: 'Claude', command: 'claude' },
+    ]);
+    // Dynamic terminal: id is `dyn-…` and the label lives in the dynamic-config
+    // registry (only). Pre-fix this would fall through to the raw id in the dialog.
+    mockDynamicTerminals.set('test-secret-123', [
+      { id: 'dyn-moews3gs-i9y3oh', name: 'Build', command: '/bin/zsh' },
+    ]);
+    mockAliveTerminals.push(
+      { secret: 'test-secret-123', terminalId: 'default', rootPid: 1000 },
+      { secret: 'test-secret-123', terminalId: 'dyn-moews3gs-i9y3oh', rootPid: 2000 },
+    );
+
+    const res = await app.request('/api/projects/quit-summary');
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      projects: Array<{
+        secret: string;
+        entries: Array<{ terminalId: string; label: string; foregroundCommand: string }>;
+      }>;
+    };
+    const target = body.projects.find(p => p.secret === 'test-secret-123');
+    expect(target).toBeDefined();
+    const dynamicEntry = target!.entries.find(e => e.terminalId === 'dyn-moews3gs-i9y3oh');
+    expect(dynamicEntry).toBeDefined();
+    expect(dynamicEntry!.label).toBe('Build');
+    const persistedEntry = target!.entries.find(e => e.terminalId === 'default');
+    expect(persistedEntry).toBeDefined();
+    expect(persistedEntry!.label).toBe('Claude');
+  });
+
+  it('falls back to a friendly basename derived from the dynamic config command when name is omitted', async () => {
+    // Dynamic terminal without an explicit name — the route should derive a
+    // basename from the command (matches /create's friendlyShellName).
+    mockDynamicTerminals.set('test-secret-123', [
+      { id: 'dyn-abc', command: '/bin/zsh' },
+    ]);
+    mockAliveTerminals.push({ secret: 'test-secret-123', terminalId: 'dyn-abc', rootPid: 3000 });
+
+    const res = await app.request('/api/projects/quit-summary');
+    const body = await res.json() as {
+      projects: Array<{ secret: string; entries: Array<{ terminalId: string; label: string }> }>;
+    };
+    const target = body.projects.find(p => p.secret === 'test-secret-123');
+    const entry = target?.entries.find(e => e.terminalId === 'dyn-abc');
+    expect(entry).toBeDefined();
+    // Falls back to the command basename — `zsh` — not the raw id.
+    expect(entry!.label).toBe('zsh');
   });
 });

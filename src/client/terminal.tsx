@@ -33,6 +33,7 @@ import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
+import { configuredSubsetInStripOrder, reorderConfigsById, reorderIds } from './terminalTabReorder.js';
 import { pickNearestTerminalTabId } from './terminalTabSelection.js';
 import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
 
@@ -483,7 +484,7 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
   // pane both rendered with no header / no label).
   const tabName = tabDisplayName(config);
   const tabBtn = toElement(
-    <button className="drawer-tab drawer-terminal-tab" data-drawer-tab={`terminal:${config.id}`} data-terminal-id={config.id}>
+    <button className="drawer-tab drawer-terminal-tab" data-drawer-tab={`terminal:${config.id}`} data-terminal-id={config.id} draggable="true">
       <span className="drawer-tab-label">{tabName}</span>
       {config.dynamic === true
         ? raw(`<button class="drawer-tab-close" title="Close terminal">${CLOSE_ICON}</button>`)
@@ -500,11 +501,18 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     e.stopPropagation();
     void closeDynamicTerminal(config.id);
   });
+  // HS-7827 — block dragstart from the close button so the native drag
+  // gesture stays bound to the tab body.
+  closeBtn?.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation(); });
   tabBtn.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     e.stopPropagation();
     showTabContextMenu(e, config.id);
   });
+  // HS-7827 — drag-to-reorder. Configured-id reorder is persisted to
+  // settings.terminals; dynamic-id reorder lives in memory only (per
+  // the ticket's "for configured terminals at least" caveat).
+  attachTabDragHandlers(tabBtn, config.id);
 
   const pane = toElement(
     <div className="drawer-tab-content drawer-terminal-pane" data-drawer-panel={`terminal:${config.id}`} style="display:none">
@@ -615,6 +623,100 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
   });
 
   return inst;
+}
+
+/** HS-7827 — wire HTML5 drag handlers on a drawer terminal tab button.
+ *  Tracks the dragged terminal id at module scope and reorders the strip
+ *  on drop. Configured-id reorder is persisted to settings.terminals via
+ *  PATCH; dynamic-id reorder lives in memory only. */
+let tabDragFromId: string | null = null;
+function attachTabDragHandlers(tabBtn: HTMLElement, terminalId: string): void {
+  tabBtn.addEventListener('dragstart', (e) => {
+    tabDragFromId = terminalId;
+    if (e.dataTransfer !== null) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Required by Firefox to start the drag — payload itself is unused.
+      e.dataTransfer.setData('text/plain', terminalId);
+    }
+    tabBtn.classList.add('dragging');
+  });
+  tabBtn.addEventListener('dragend', () => {
+    tabDragFromId = null;
+    tabBtn.classList.remove('dragging');
+    document.querySelectorAll('.drawer-terminal-tab.drag-over')
+      .forEach(el => el.classList.remove('drag-over'));
+  });
+  tabBtn.addEventListener('dragover', (e) => {
+    if (tabDragFromId === null || tabDragFromId === terminalId) return;
+    e.preventDefault();
+    if (e.dataTransfer !== null) e.dataTransfer.dropEffect = 'move';
+    tabBtn.classList.add('drag-over');
+  });
+  tabBtn.addEventListener('dragleave', () => {
+    tabBtn.classList.remove('drag-over');
+  });
+  tabBtn.addEventListener('drop', (e) => {
+    e.preventDefault();
+    tabBtn.classList.remove('drag-over');
+    if (tabDragFromId === null || tabDragFromId === terminalId) return;
+    void reorderTabAfterDrop(tabDragFromId, terminalId);
+    tabDragFromId = null;
+  });
+}
+
+async function reorderTabAfterDrop(fromId: string, toId: string): Promise<void> {
+  const tabStrip = document.getElementById('drawer-terminal-tabs');
+  if (tabStrip === null) return;
+  const currentOrder: string[] = [];
+  for (const el of tabStrip.querySelectorAll<HTMLElement>('.drawer-terminal-tab')) {
+    const id = el.dataset.terminalId;
+    if (typeof id === 'string' && id !== '') currentOrder.push(id);
+  }
+  const nextOrder = reorderIds(currentOrder, fromId, toId);
+  if (nextOrder.join('|') === currentOrder.join('|')) return;
+
+  // Apply the visual reorder by re-appending tabs (and matching panes) in
+  // the new order. Browsers handle move-via-append cleanly — no flicker.
+  const paneContainer = document.getElementById('drawer-terminal-panes');
+  for (const id of nextOrder) {
+    const tab = tabStrip.querySelector<HTMLElement>(`.drawer-terminal-tab[data-terminal-id="${CSS.escape(id)}"]`);
+    if (tab !== null) tabStrip.appendChild(tab);
+    if (paneContainer !== null) {
+      const pane = paneContainer.querySelector<HTMLElement>(`.drawer-terminal-pane[data-drawer-panel="${CSS.escape(`terminal:${id}`)}"]`);
+      if (pane !== null) paneContainer.appendChild(pane);
+    }
+  }
+
+  // Persist the configured-only subset to settings.terminals. Dynamic ids
+  // are intentionally NOT persisted — their position in the strip is a
+  // session-only concern (per the HS-7827 spec).
+  const canonicalIds = lastKnownConfigs.configured.map(c => c.id);
+  const newConfiguredOrder = configuredSubsetInStripOrder(nextOrder, canonicalIds);
+  if (newConfiguredOrder.join('|') === canonicalIds.join('|')) return; // no change to persist
+  const reorderedConfigs = reorderConfigsById(lastKnownConfigs.configured, newConfiguredOrder);
+  // Strip the runtime-only fields the cache carries from /terminal/list
+  // (`bellPending`, `state`, `exitCode`, `notificationMessage`, `dynamic`)
+  // before persisting — settings.terminals is the canonical config shape.
+  const persistShape = reorderedConfigs.map(({ id, name, command, cwd, lazy, theme, fontFamily, fontSize }) => {
+    const out: { id: string; name?: string; command: string; cwd?: string; lazy?: boolean; theme?: string; fontFamily?: string; fontSize?: number } = { id, command };
+    if (name !== undefined) out.name = name;
+    if (cwd !== undefined) out.cwd = cwd;
+    if (lazy !== undefined) out.lazy = lazy;
+    if (theme !== undefined) out.theme = theme;
+    if (fontFamily !== undefined) out.fontFamily = fontFamily;
+    if (fontSize !== undefined) out.fontSize = fontSize;
+    return out;
+  });
+  // Update the local cache so a subsequent rebuild before the PATCH
+  // round-trips reflects the new order. /terminal/list will re-confirm
+  // after the server applies the patch.
+  lastKnownConfigs = { ...lastKnownConfigs, configured: persistShape.map(c => ({ ...c, dynamic: false })) };
+  try {
+    await api('/file-settings', { method: 'PATCH', body: { terminals: persistShape } });
+  } catch {
+    // PATCH failed — the in-memory + DOM order still moved, so the user
+    // sees their reorder; on the next reload the server-side order wins.
+  }
 }
 
 /** Re-render the CWD chip on the terminal toolbar. HS-7262.

@@ -67,6 +67,44 @@ export interface FeedbackDraftSeed {
 }
 
 /**
+ * HS-7822 — given the active feedback note id and the list of saved drafts
+ * for the ticket, pick the draft (if any) that should pre-populate the
+ * auto-shown dialog.
+ *
+ * Selection order:
+ * 1. The most recently updated draft whose `parentNoteId === activeFeedbackNoteId`.
+ * 2. Otherwise the most recently updated free-floating draft (`parentNoteId === null`)
+ *    — these survive when the parent note was deleted (§21.2.3) and still
+ *    represent the user's in-progress response.
+ * 3. Otherwise null — caller falls back to the bare-prompt auto-show.
+ *
+ * Generic in the draft shape — only the `parentNoteId` + `updatedAt` fields
+ * are inspected, so the caller can pass the full `FeedbackDraft` and use the
+ * returned reference verbatim. Pure: no DOM, no network. Unit-testable.
+ */
+export function pickDraftForFeedbackNote<T extends { parentNoteId: string | null; updatedAt?: string }>(
+  drafts: T[],
+  activeFeedbackNoteId: string,
+): T | null {
+  if (drafts.length === 0) return null;
+  const byUpdatedDesc = (a: { updatedAt?: string }, b: { updatedAt?: string }): number => {
+    const av = a.updatedAt ?? '';
+    const bv = b.updatedAt ?? '';
+    if (av === bv) return 0;
+    return av > bv ? -1 : 1;
+  };
+  const matching = drafts
+    .filter(d => d.parentNoteId === activeFeedbackNoteId)
+    .sort(byUpdatedDesc);
+  if (matching.length > 0) return matching[0];
+  const floating = drafts
+    .filter(d => d.parentNoteId === null)
+    .sort(byUpdatedDesc);
+  if (floating.length > 0) return floating[0];
+  return null;
+}
+
+/**
  * Show the feedback dialog for a ticket (HS-6998).
  *
  * The prompt is split into top-level markdown blocks (paragraphs, lists,

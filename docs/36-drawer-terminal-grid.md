@@ -110,6 +110,8 @@ Mirrors §25.10.4 — a user can hide individual terminals from the drawer-grid 
 
 **2. Eye-icon button in the drawer toolbar** (`#drawer-grid-hide-btn`, Lucide `eye`). Sits to the right of the size slider per the user's HS-7661 feedback. Visibility tracks the slider — visible only while drawer-grid mode is active. Click opens the **Show / Hide Terminals** dialog in `single-project` mode (see §25.10.6) — only this project's terminals are listed. Toggle a row → the dashboard rebuilds immediately and the row treatment updates in-place.
 
+**Hidden-count badge (HS-7823).** When N > 0 terminals are hidden in the active project, the eye icon shows a small numeric badge at its top-right (shared `.hide-btn-badge` style with the dashboard's badge — see §25.10.4). The drawer-grid scopes the count to the active project (`countHiddenForProject`); the dashboard's badge sums across every project. The badge updates from the same `subscribeToHiddenChanges` subscription that rebuilds the visible-tile list, plus a `refreshHideBtnBadge()` call on every `showGridChrome()` so a project switch repaints the count without a flicker.
+
 **State** is shared with the global Terminal Dashboard (per the user's feedback answer #2: "both") — `dashboardHiddenTerminals.ts` keys by `(secret, terminalId)` so a hide operation in either surface filters the same tile out of both views. Session-only — clears on page reload.
 
 **Disabled-state gate (§36.7) counts ALL terminals.** Per the user's feedback answer #6, the toggle's enable rule remains "≥2 terminals exist" — hiding terminals does NOT disable the toggle. So a 2-terminal project where the user hides one still has the toggle enabled, and the grid would render with one visible tile + the eye icon to toggle the other back.

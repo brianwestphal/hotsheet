@@ -179,6 +179,8 @@ The previous `terminal_enabled` checkbox (a per-project "show terminal tabs in t
 
 Settings UI lives on its own **Terminal** tab in the Settings dialog (HS-6337) — moved out of Experimental. The tab button only shows when the client is running inside Tauri (HS-6437).
 
+**Edit Terminal — Command combobox (HS-7791).** The Command field in the Edit Terminal dialog is a combobox: a free-text `<input>` paired with an HTML `<datalist>` populated from `GET /api/terminal/command-suggestions`. The dropdown surfaces the `{{claudeCommand}}` sentinel first, then the user's default login shell (`process.env.SHELL` on Unix, `process.env.COMSPEC` on Windows), then any additional shells discovered via `/etc/shells` (Unix) or well-known PowerShell + cmd locations (Windows). Suggestions are deduplicated and filtered to entries that actually exist on disk so users don't see ghost shells. Free-text typing remains the primary path — the dropdown is purely a discoverability aid for the common cases. The client caches the response per session in `terminalsSettings.tsx` so subsequent dialog opens are instant. See `collectCommandSuggestions` in `src/routes/terminal.ts` (5 unit tests in `terminalCommandSuggestions.test.ts`).
+
 ## 22.11 Tauri / native dependency
 
 `node-pty` is a native addon. It is the **second** native dep in Hot Sheet (PGLite is the first, and is WASM rather than a prebuilt binary — so `node-pty` is the first true native-binary dep).
@@ -198,6 +200,7 @@ New:
 - `POST /api/terminal/restart` — kill the session and start fresh. Body: `{ command? }` (optional override for this invocation).
 - `POST /api/terminal/kill` — kill the session without restart. Body: `{ signal? }` (default `SIGHUP`; pass `SIGKILL` to force-quit after a polite stop has stalled, see §22.4).
 - `GET /api/terminal/ws?project=<secret>` — WebSocket upgrade (see §22.9).
+- `GET /api/terminal/command-suggestions` — HS-7791. Returns `{ suggestions: string[] }` for the Edit Terminal command-combobox dropdown (see §22.10).
 
 Existing:
 
@@ -267,8 +270,8 @@ Deliberately not included in the current iteration:
 
 ### 22.17.1 Model
 
-- **Configured default terminals**: user-editable list stored in `.hotsheet/settings.json` under `terminals` (see §22.10). Each entry has a stable `id`, a tab name, a command template, an optional cwd override, and a per-terminal lazy flag. The list is rendered as an outline in Settings → Experimental → Embedded Terminal (one row per terminal, drag to reorder, edit-modal for the fields). Drag order in the list = left-to-right order in the drawer tab strip.
-- **Dynamic terminals**: ad-hoc terminals created at runtime via the drawer's **+** button. They are never written to `settings.json`. Their `TerminalConfig` lives in an in-memory map on the server (`dynamicConfigs`) keyed by `(secret, terminalId)`, and their PTY state lives in the same `TerminalRegistry` as configured terminals.
+- **Configured default terminals**: user-editable list stored in `.hotsheet/settings.json` under `terminals` (see §22.10). Each entry has a stable `id`, a tab name, a command template, an optional cwd override, and a per-terminal lazy flag. The list is rendered as an outline in Settings → Experimental → Embedded Terminal (one row per terminal, drag to reorder, edit-modal for the fields). Drag order in the list = left-to-right order in the drawer tab strip — and HS-7827 also lets the user drag the drawer tabs themselves to reorder, persisting the new order back to `terminals[]` so the order matches across drawer + dashboard + relaunch.
+- **Dynamic terminals**: ad-hoc terminals created at runtime via the drawer's **+** button. They are never written to `settings.json`. Their `TerminalConfig` lives in an in-memory map on the server (`dynamicConfigs`) keyed by `(secret, terminalId)`, and their PTY state lives in the same `TerminalRegistry` as configured terminals. Dynamic-tab position in the strip can move within a session via drag-and-drop (HS-7827), but is NOT persisted — on next reload, dynamic tabs follow the configured tabs in registration order.
 
 ### 22.17.2 Drawer tab strip
 
@@ -283,6 +286,14 @@ Layout (left to right):
 The group `(3, 4, 5)` lives inside a horizontally scrollable wrapper so the tab strip never overflows the drawer width. The scrollbar is thin and auto-hides when not needed.
 
 The divider and the scrollable wrapper are both hidden on web (non-desktop) sessions; Commands Log remains visible.
+
+### 22.17.2.1 Drag-to-reorder (HS-7827)
+
+Each terminal tab in the drawer strip is `draggable="true"`. The user can drag a tab onto another tab to reorder; the visual feedback is the dragged tab fading to half opacity (`.dragging`) while the hovered drop target gains a leading-edge accent inset (`.drag-over`). On drop, the strip re-appends tab elements + matching panes in the new order (no flicker — browsers handle move-via-append cleanly), then computes the configured-id-only subset of the new strip order and PATCHes `/file-settings` with the reordered `terminals[]` array.
+
+- **Configured-only persistence.** Only configured terminals (settings-backed, non-`dyn-*` ids) contribute to the persisted order. Dynamic tabs can be dragged within the session for visual rearrangement, but on next reload they fall back to the server-returned ordering (typically registration order, after the configured tabs).
+- **Dashboard parity.** The terminal dashboard (§25) iterates `data.configured` from `/terminal/list`, which is built from `listTerminalConfigs(dataDir)` — itself reading `terminals[]` in array order. Reordering the drawer strip therefore propagates to the dashboard automatically on its next /list fetch.
+- **Pure helpers.** `src/client/terminalTabReorder.ts` exposes `reorderIds(currentOrder, fromId, toId)` (splice-and-insert), `configuredSubsetInStripOrder(stripOrder, canonicalIds)` (filter dynamic ids out, preserve relative configured order), and `reorderConfigsById(configs, idOrder)` (apply id ordering to the persisted config-shape array). 16 unit tests in `terminalTabReorder.test.ts`.
 
 ### 22.17.3 Creating dynamic terminals
 

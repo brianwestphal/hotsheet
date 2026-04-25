@@ -262,6 +262,7 @@ projectRoutes.post('/reorder', async (c) => {
 projectRoutes.get('/quit-summary', async (c) => {
   const { listAliveTerminalsAcrossProjects } = await import('../terminals/registry.js');
   const { listTerminalConfigs, DEFAULT_TERMINAL_ID } = await import('../terminals/config.js');
+  const { listDynamicTerminalConfigs } = await import('./terminal.js');
   const { readFileSettings } = await import('../file-settings.js');
   const {
     DEFAULT_EXEMPT_PROCESSES,
@@ -301,12 +302,14 @@ projectRoutes.get('/quit-summary', async (c) => {
       ? exemptRaw.filter((s): s is string => typeof s === 'string' && s !== '')
       : DEFAULT_EXEMPT_PROCESSES;
 
-    // Resolve labels via the configured-terminal list so each entry shows
-    // the user's chosen tab name (or the derived basename) — matches how the
-    // drawer / dashboard label tabs.
+    // Resolve labels via the configured-terminal list AND the in-memory
+    // dynamic-terminal registry (HS-7789) so each entry shows the user's
+    // chosen tab name (or the friendly fallback assigned at /create time) —
+    // matches how the drawer / dashboard label tabs.
     const configured = listTerminalConfigs(project.dataDir);
+    const dynamicConfigs = listDynamicTerminalConfigs(project.secret);
     const labelByTid = new Map<string, string>();
-    for (const cfg of configured) {
+    for (const cfg of [...configured, ...dynamicConfigs]) {
       const fallback = cfg.command.trim().split(/\s+/)[0]?.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '') ?? cfg.id;
       const label = (cfg.name !== undefined && cfg.name !== '')
         ? cfg.name

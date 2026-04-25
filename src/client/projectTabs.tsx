@@ -58,6 +58,14 @@ export async function initProjectTabs(): Promise<void> {
 
   renderTabs();
   void refreshProjectChannelStatus();
+  // HS-7825 — hydrate persisted hidden-terminal state for every project so
+  // the dashboard's per-project filter starts in the right state on first
+  // open. Fire-and-forget; the dashboard renders an unfiltered view if the
+  // hydration is slower than the user's first toggle.
+  void (async () => {
+    const { initPersistedHiddenTerminals } = await import('./persistedHiddenTerminals.js');
+    await initPersistedHiddenTerminals(projectList);
+  })();
 }
 
 /** Switch to a different project. */
@@ -80,6 +88,13 @@ export async function refreshProjectTabs(): Promise<void> {
     projectList = [];
   }
   renderTabs();
+  // HS-7825 — re-hydrate persisted hidden-terminal state when the project
+  // list changes (a new project added) so its persisted filter is applied
+  // before the user opens the dashboard.
+  void (async () => {
+    const { initPersistedHiddenTerminals } = await import('./persistedHiddenTerminals.js');
+    await initPersistedHiddenTerminals(projectList);
+  })();
 }
 
 /** Switch to the next or previous tab. */

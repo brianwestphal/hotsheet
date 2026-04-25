@@ -134,6 +134,35 @@ test.describe('Feedback drafts + dont-close-on-clickaway (HS-7599)', () => {
     expect(noteId).not.toBe('');
   });
 
+  test('relaunch + click awaiting-feedback ticket auto-opens the saved draft (HS-7822)', async ({ page }) => {
+    // Pre-fix, the auto-show on detail-panel-open ignored saved drafts and
+    // always showed the bare prompt — users had to manually click the inline
+    // draft entry to recover their work after relaunch. The fix awaits the
+    // /feedback-drafts fetch before deciding which form to show.
+    await createTicket(page, 'Relaunch draft ticket');
+    await addFeedbackNote(page, 'Relaunch draft ticket', 'What about C?');
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openDetail(page, 'Relaunch draft ticket');
+    const overlay = page.locator('.feedback-dialog-overlay');
+    await expect(overlay).toBeVisible({ timeout: 5000 });
+    // Save a draft so it persists to the server.
+    await overlay.locator('#feedback-catchall-text').fill('Saved before relaunch');
+    await overlay.locator('#feedback-save-draft').click();
+    await expect(overlay).toHaveCount(0, { timeout: 5000 });
+
+    // Simulate relaunch: full reload. After reload, click the ticket again.
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openDetail(page, 'Relaunch draft ticket');
+
+    // The dialog should auto-open with the SAVED DRAFT pre-populated, NOT
+    // the bare original prompt. The catch-all should hold the saved text.
+    const reopened = page.locator('.feedback-dialog-overlay');
+    await expect(reopened).toBeVisible({ timeout: 5000 });
+    await expect(reopened.locator('#feedback-catchall-text')).toHaveValue('Saved before relaunch');
+  });
+
   test('clicking a saved draft re-opens the dialog with the restored response, and Submit deletes the draft', async ({ page }) => {
     await createTicket(page, 'Reopen draft ticket');
     await addFeedbackNote(page, 'Reopen draft ticket', 'Pick A or B?');

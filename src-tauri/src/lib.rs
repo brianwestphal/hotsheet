@@ -895,6 +895,20 @@ pub fn run() {
                 .accelerator("CmdOrCtrl+O")
                 .build(app)?;
 
+            // HS-7596 / §37 — custom Quit item instead of the predefined `.quit()`.
+            // The predefined item maps to NSApp::terminate: on macOS, which in
+            // this Tauri version does NOT fire RunEvent::ExitRequested reliably
+            // — so ⌘Q bypassed the confirm dialog. By owning the menu item we
+            // route every ⌘Q press (and dock-menu / app-menu Quit clicks that
+            // hit this item) through our `on_menu_event` handler, which emits
+            // the same `quit-confirm-requested` event the red-traffic-light
+            // close uses. After the user confirms, `confirm_quit` sets the
+            // flag and calls `app.exit(0)` to actually exit.
+            let quit_item = MenuItemBuilder::new("Quit Hot Sheet")
+                .id("app-quit")
+                .accelerator("CmdOrCtrl+Q")
+                .build(app)?;
+
             let app_menu = SubmenuBuilder::new(app, "Hot Sheet")
                 .about(Some(tauri::menu::AboutMetadataBuilder::new()
                     .name(Some("Hot Sheet"))
@@ -908,7 +922,7 @@ pub fn run() {
                 .hide_others()
                 .show_all()
                 .separator()
-                .quit()
+                .item(&quit_item)
                 .build()?;
             let file_menu = SubmenuBuilder::new(app, "File")
                 .item(&open_folder_item)
@@ -954,6 +968,22 @@ pub fn run() {
                 "app-open-folder" => {
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.eval("window.dispatchEvent(new Event('app:open-folder'))");
+                    }
+                }
+                "app-quit" => {
+                    // HS-7596 / §37 — route ⌘Q (and the App menu / dock menu
+                    // Quit click) through the same confirm flow as the red
+                    // traffic-light close. If the user has already confirmed
+                    // (e.g. they clicked Quit Anyway and `confirm_quit` is now
+                    // re-issuing the exit), exit immediately. Otherwise emit
+                    // the JS event — the frontend shows the dialog and
+                    // ultimately calls `confirm_quit` (which calls app.exit(0))
+                    // or just leaves the app running.
+                    let confirmed = app.state::<QuitConfirmed>();
+                    if confirmed.0.load(Ordering::SeqCst) {
+                        app.exit(0);
+                    } else if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.emit("quit-confirm-requested", ());
                     }
                 }
                 _ => {}

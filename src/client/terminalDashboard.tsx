@@ -3,6 +3,8 @@ import { SearchAddon } from '@xterm/addon-search';
 import { api, apiWithSecret } from './api.js';
 import { subscribeToBellState } from './bellPoll.js';
 import {
+  applyHideButtonBadge,
+  countHiddenAcrossAllProjects,
   filterVisible as filterVisibleEntries,
   setTerminalHidden,
   subscribeToHiddenChanges,
@@ -405,10 +407,15 @@ function enterDashboard(): void {
   // HS-7661 — re-render the sections (using cached lastSectionData) when
   // hidden-terminal state changes. No fetch round-trip; the subscription
   // fires after every `setTerminalHidden` / `unhideAll*` call.
+  // HS-7823 — refresh the eye-icon badge count alongside the re-render.
   hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
+    applyHideButtonBadge(hideButton, countHiddenAcrossAllProjects());
     if (!active || rootElement === null) return;
     paintDashboardSections(rootElement, lastSectionData);
   });
+  // HS-7823 — initial paint of the badge so the count is correct on first
+  // dashboard open even when no toggle has fired this session yet.
+  applyHideButtonBadge(hideButton, countHiddenAcrossAllProjects());
 }
 
 async function renderDashboardGrid(root: HTMLElement): Promise<void> {
@@ -488,25 +495,27 @@ function paintSectionedLayout(root: HTMLElement, sections: ProjectSectionData[])
  *  list of tiles in registered-project order. Empty projects (zero
  *  terminals OR every terminal hidden) are dropped entirely (per user
  *  feedback #5). The first tile of each project's run gets the project
- *  name as a label prefix; subsequent tiles in the same run get only a
- *  small project-color badge. No `+` button, no terminal-count headings,
- *  no per-section chrome (per user feedback #7 + §25.10.5 spec). */
+ *  name as a `{ProjectName} ›` label prefix; subsequent tiles in the same
+ *  run render the bare terminal label (the run itself is what groups
+ *  them visually — HS-7824 dropped the colored badge dots that originally
+ *  marked subsequent tiles since they didn't actually clarify grouping).
+ *  No `+` button, no terminal-count headings, no per-section chrome (per
+ *  user feedback #7 + §25.10.5 spec). */
 function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): void {
   // Build flat tile list, marking first-of-run for each project.
   const flat: { secret: string; entry: TileEntry; project: ProjectInfo }[] = [];
   for (const section of sections) {
     const visible = filterVisibleEntries(section.project.secret, section.terminals);
     if (visible.length === 0) continue;
-    const color = projectBadgeColor(section.project.secret);
     visible.forEach((terminal, index) => {
       const baseEntry = toTileEntry(section.project.secret)(terminal);
-      const badge: { color: string; name?: string } = index === 0
-        ? { color, name: section.project.name }
-        : { color };
+      const projectBadge: { name?: string } | undefined = index === 0
+        ? { name: section.project.name }
+        : undefined;
       flat.push({
         secret: section.project.secret,
         project: section.project,
-        entry: { ...baseEntry, projectBadge: badge },
+        entry: projectBadge !== undefined ? { ...baseEntry, projectBadge } : baseEntry,
       });
     });
   }
@@ -605,20 +614,6 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
  *  bells (rather than treating it like a per-project handle that only
  *  cares about its own secret). */
 const FLOW_HANDLE_KEY = '__flow_handle__';
-
-/** HS-7662 — derive a stable color for a project's flow-mode badge from
- *  the project's secret. Same secret always produces the same hue, so
- *  badges remain consistent across reloads. HSL with fixed saturation +
- *  lightness for visual harmony. */
-function projectBadgeColor(secret: string): string {
-  let hash = 0;
-  for (let i = 0; i < secret.length; i++) {
-    hash = ((hash << 5) - hash) + secret.charCodeAt(i);
-    hash |= 0;
-  }
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 65%, 55%)`;
-}
 
 async function fetchProjectSections(): Promise<ProjectSectionData[]> {
   let projects: ProjectInfo[] = [];

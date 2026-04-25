@@ -66,10 +66,30 @@ export interface PsRow {
 }
 
 /**
+ * Normalize a `comm` value from ps to a plain basename. macOS `ps -o comm`
+ * returns the executable's full path (e.g. `/bin/zsh`) — Linux varies — and
+ * login shells get a leading `-` (e.g. `-zsh`). Strip both so downstream
+ * shell-list / exempt-list comparisons see a stable token (HS-7790).
+ */
+export function normalizeComm(raw: string): string {
+  let s = raw.trim();
+  if (s === '') return s;
+  // Strip directory prefix (handles both `/` and Windows `\`).
+  const slashIdx = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+  if (slashIdx >= 0) s = s.slice(slashIdx + 1);
+  // Strip the leading dash that login shells get (e.g. `-zsh`).
+  if (s.startsWith('-')) s = s.slice(1);
+  // Strip Windows .exe extension so `cmd.exe` matches `cmd`.
+  s = s.replace(/\.exe$/i, '');
+  return s;
+}
+
+/**
  * Parse the output of `ps -o pid,ppid,comm -A` into a list of {pid, ppid,
- * comm} rows. Skips the header line + any malformed rows. The macOS / Linux
- * variants of `ps` both produce three space-separated columns; comm is the
- * basename (no path) for either.
+ * comm} rows. Skips the header line + any malformed rows. macOS `ps -o comm`
+ * emits the executable's full path while Linux emits the basename; the row's
+ * `comm` is normalized to a plain basename via `normalizeComm` so downstream
+ * shell / exempt-list checks compare apples to apples regardless of platform.
  */
 export function parsePsOutput(stdout: string): PsRow[] {
   const lines = stdout.split('\n');
@@ -80,16 +100,16 @@ export function parsePsOutput(stdout: string): PsRow[] {
   for (let i = start; i < lines.length; i++) {
     const line = lines[i].trim();
     if (line === '') continue;
-    // Split on whitespace, respecting that comm may contain spaces in pathological
-    // cases — but `ps -o comm` outputs the basename only, so 3 columns is safe.
+    // Split on whitespace. `comm` may legitimately contain spaces in a path
+    // (rare); join from index 2 to end so we don't drop those.
     const parts = line.split(/\s+/);
     if (parts.length < 3) continue;
     const pid = Number.parseInt(parts[0], 10);
     const ppid = Number.parseInt(parts[1], 10);
     if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
-    // Comm may be the rest of the line (in case `ps` decides to include
-    // spaces); join from index 2 to end.
-    const comm = parts.slice(2).join(' ').trim();
+    const rawComm = parts.slice(2).join(' ').trim();
+    if (rawComm === '') continue;
+    const comm = normalizeComm(rawComm);
     if (comm === '') continue;
     rows.push({ pid, ppid, comm });
   }

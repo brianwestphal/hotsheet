@@ -22,6 +22,9 @@ const JSON_VALUE_KEYS = new Set([
   'categories', 'custom_views', 'custom_commands', 'auto_context', 'terminals',
   // HS-7596 — quit-confirm exempt list (array of process basenames).
   'quit_confirm_exempt_processes',
+  // HS-7825 — persisted hidden-terminal ids (configured terminals only;
+  // dynamic terminals are session-only). See docs/38-terminal-visibility.md.
+  'hidden_terminals',
 ]);
 
 export interface FileSettings {

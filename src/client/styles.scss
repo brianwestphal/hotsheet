@@ -271,22 +271,12 @@ input, select, textarea {
   // flow-only tweaks without disturbing sectioned-mode grid styling.
 }
 
-// HS-7662 — flow-mode tile label additions. The badge is a small colored
-// dot rendered before the terminal name; the project span is the
+// HS-7662 — flow-mode tile label additions. The project span is the
 // `{ProjectName} ›` prefix that appears only on the first tile of each
-// project's run. Both share the existing `.terminal-dashboard-tile-label`
+// project's run. It shares the existing `.terminal-dashboard-tile-label`
 // container so font-size / weight / overflow ellipsis come from there.
-.terminal-dashboard-tile-badge,
-.drawer-terminal-grid-tile-badge {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 6px;
-  vertical-align: middle;
-  flex-shrink: 0;
-}
-
+// (HS-7824 dropped the colored badge dot that originally accompanied the
+// prefix — it didn't actually clarify grouping in practice.)
 .terminal-dashboard-tile-project,
 .drawer-terminal-grid-tile-project {
   color: var(--text-muted);
@@ -732,6 +722,7 @@ input, select, textarea {
 // neighbouring chrome buttons.
 .terminal-dashboard-hide-btn,
 .drawer-grid-hide-btn {
+  position: relative; // anchor the HS-7823 badge
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -750,6 +741,29 @@ input, select, textarea {
     color: var(--text);
     border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
   }
+}
+
+// HS-7823 — small numeric badge anchored to the top-right of the eye-icon
+// button when N > 0 terminals are hidden in the relevant scope (global
+// dashboard = across every project; drawer-grid = the active project only).
+// Removed from the DOM by `applyHideButtonBadge` when the count drops to 0,
+// so no `:empty` guard needed here.
+.hide-btn-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text, #fff);
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+  box-sizing: border-box;
 }
 
 .drawer-grid-hide-btn {
@@ -5879,6 +5893,17 @@ body.terminal-dashboard-active {
   display: flex;
   align-items: stretch;
   flex-shrink: 0;
+}
+
+// HS-7827 — drag-to-reorder visual feedback. The dragging tab fades to half
+// opacity so the user can see the strip's potential drop targets through it;
+// hovered drop targets get a tinted accent border on their leading edge.
+.drawer-terminal-tab.dragging {
+  opacity: 0.4;
+}
+
+.drawer-terminal-tab.drag-over {
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .drawer-tab-add {

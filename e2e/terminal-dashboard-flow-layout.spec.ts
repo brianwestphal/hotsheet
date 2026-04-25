@@ -129,10 +129,11 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
     const tiles = flow.locator('.terminal-dashboard-tile');
     await expect(tiles).toHaveCount(3);
 
-    // Every tile in flow mode has a project-color badge.
-    await expect(flow.locator('.terminal-dashboard-tile-badge')).toHaveCount(3);
+    // HS-7824 — colored badge dots were dropped; only the project-name
+    // prefix on the first tile of each run remains.
+    await expect(flow.locator('.terminal-dashboard-tile-badge')).toHaveCount(0);
 
-    // The FIRST tile of each project run also has a project-name prefix
+    // The FIRST tile of each project run gets a project-name prefix
     // (`{ProjectName} ›`). Since this fixture only has one project, that's
     // exactly one project-prefix span.
     await expect(flow.locator('.terminal-dashboard-tile-project')).toHaveCount(1);

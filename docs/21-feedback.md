@@ -27,6 +27,7 @@ AI tools and automated workflows can request user feedback by adding notes with 
   - **Submit** (right side, primary): Creates a new note with the response text, uploads attachments, and notifies the Claude Channel (if connected) that feedback was provided. If the dialog was reopened from a saved draft, the draft is deleted on successful submit.
 - Click-outside-overlay dismisses the dialog ONLY when the dialog has no text in any input (per HS-7599). When any text is present, the click is ignored — the user can still close explicitly via × / Later / Esc / Save Draft.
 - The dialog only auto-shows once per detail-panel open (tracked by note ID) to avoid re-opening on every poll refresh.
+- **Auto-show prefers a saved draft (HS-7822).** When the latest note is a FEEDBACK NEEDED request AND a saved draft exists for it, the auto-show opens the dialog with the draft pre-loaded — same form the user gets from clicking the inline draft entry — instead of the bare original prompt. Selection order: a draft whose `parentNoteId` matches the active feedback note wins; otherwise the most recently updated free-floating draft (per §21.2.3) is used; otherwise the bare prompt. The fix is the `pickDraftForFeedbackNote` pure helper in `feedbackDialog.tsx` plus an `await` on the `/feedback-drafts` fetch in `detail.tsx` before deciding which form to show. Pre-fix, the drafts fetch was fire-and-forget so on relaunch the user always saw the original form even when their work was in the database.
 
 ### 21.2.1 Click-to-insert inline responses (HS-6998)
 

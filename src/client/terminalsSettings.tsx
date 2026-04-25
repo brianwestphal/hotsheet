@@ -27,6 +27,38 @@ let terminals: EditableTerminalConfig[] = [];
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let dragFromIndex: number | null = null;
 
+/**
+ * Module-level cache of the Edit Terminal command-combobox suggestions
+ * (HS-7791). Populated lazily on first dialog open via
+ * `GET /api/terminal/command-suggestions`. We never invalidate — the
+ * suggestions only depend on the user's environment (default shell +
+ * `/etc/shells`) which doesn't change while Hot Sheet is running.
+ */
+let commandSuggestionsCache: string[] | null = null;
+let commandSuggestionsPromise: Promise<string[]> | null = null;
+const COMMAND_SUGGESTIONS_DATALIST_ID = 'term-edit-command-suggestions';
+
+async function loadCommandSuggestions(): Promise<string[]> {
+  if (commandSuggestionsCache !== null) return commandSuggestionsCache;
+  if (commandSuggestionsPromise === null) {
+    commandSuggestionsPromise = (async () => {
+      try {
+        const res = await api<{ suggestions?: string[] }>('/terminal/command-suggestions');
+        const list = Array.isArray(res.suggestions) ? res.suggestions : ['{{claudeCommand}}'];
+        commandSuggestionsCache = list;
+        return list;
+      } catch {
+        // Network error — surface the sentinel alone so the dropdown still has
+        // at least one entry. Don't cache the failure; allow a retry on the
+        // next open.
+        commandSuggestionsPromise = null;
+        return ['{{claudeCommand}}'];
+      }
+    })();
+  }
+  return commandSuggestionsPromise;
+}
+
 const TRASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
 const PENCIL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
 
@@ -219,8 +251,19 @@ function openEditor(index: number): void {
           </div>
           <div className="settings-field">
             <label>Command</label>
-            <input type="text" className="term-edit-command" value={entry.command} placeholder="{{claudeCommand}}" />
-            <span className="settings-hint">{'Use {{claudeCommand}} to resolve to claude. Any shell-valid command works.'}</span>
+            {/* HS-7791 — combobox via native <input list> + <datalist>. The
+                datalist is populated asynchronously below from
+                /api/terminal/command-suggestions; the input remains freely
+                editable so the user can type any shell-valid command. */}
+            <input
+              type="text"
+              className="term-edit-command"
+              list={COMMAND_SUGGESTIONS_DATALIST_ID}
+              value={entry.command}
+              placeholder="{{claudeCommand}}"
+            />
+            <datalist id={COMMAND_SUGGESTIONS_DATALIST_ID}></datalist>
+            <span className="settings-hint">{'Pick a common command from the dropdown or type your own. Use {{claudeCommand}} to resolve to claude.'}</span>
           </div>
           <div className="settings-field">
             <label>Working directory</label>
@@ -311,6 +354,22 @@ function openEditor(index: number): void {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) void close(); });
   document.body.appendChild(overlay);
   (overlay.querySelector('.term-edit-name') as HTMLInputElement).focus();
+
+  // HS-7791 — populate the command-combobox <datalist> from the cached
+  // suggestions endpoint. Done after appendChild so the option elements land
+  // in a node that's already in the document tree (Safari has historically
+  // treated detached datalists as empty for autocomplete purposes).
+  void (async () => {
+    const suggestions = await loadCommandSuggestions();
+    const dl = overlay.querySelector<HTMLDataListElement>(`#${COMMAND_SUGGESTIONS_DATALIST_ID}`);
+    if (dl === null) return;
+    dl.innerHTML = '';
+    for (const s of suggestions) {
+      const opt = document.createElement('option');
+      opt.value = s;
+      dl.appendChild(opt);
+    }
+  })();
 }
 
 function escapeHtml(s: string): string {

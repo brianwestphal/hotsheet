@@ -3,7 +3,7 @@ import { marked } from 'marked';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
-import { getTicketFeedbackState, shouldAutoShowFeedback, showFeedbackDialog } from './feedbackDialog.js';
+import { getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog } from './feedbackDialog.js';
 import { type FeedbackDraft, parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
 import type { Ticket } from './state.js';
@@ -282,29 +282,61 @@ async function loadDetail(id: number) {
   const notesContainer = document.getElementById('detail-notes');
   const noteBeingEdited = notesContainer?.querySelector('.note-edit-area') as HTMLElement | null;
   const parsedNotes = parseNotesJson(ticket.notes);
+  // HS-7822 — auto-show the feedback dialog if the last note is a FEEDBACK
+  // NEEDED request, but ONLY after we know whether a saved draft for that
+  // note exists. Pre-fix, the auto-show fired synchronously with `prompt`
+  // alone while the drafts fetch was fire-and-forget — so on relaunch the
+  // user always saw the original feedback form, never their draft. Now the
+  // gate is held until drafts arrive (or fail) and we pass the matching
+  // draft as `draftSeed` when one is found.
+  const feedbackState = getTicketFeedbackState(parsedNotes);
   if (!noteBeingEdited || document.activeElement !== noteBeingEdited) {
     renderNotes(ticket.id, parsedNotes);
     // HS-7599: load any feedback drafts for this ticket and re-render once
     // they arrive so saved drafts appear inline below their parent FEEDBACK
     // NEEDED note (or free-floating at the end if the parent's gone).
     void api<FeedbackDraft[]>(`/tickets/${ticket.id}/feedback-drafts`).then((drafts) => {
-      if (Array.isArray(drafts)) {
-        setTicketDrafts(ticket.id, drafts);
-        // Only re-render if the panel is still showing this ticket and no
-        // note is being edited (avoid clobbering an in-progress edit).
-        if (state.activeTicketId === ticket.id) {
-          const editingNow = document.getElementById('detail-notes')?.querySelector('.note-edit-area') as HTMLElement | null;
-          if (editingNow === null || document.activeElement !== editingNow) {
-            renderNotes(ticket.id, parsedNotes);
-          }
+      const list = Array.isArray(drafts) ? drafts : [];
+      setTicketDrafts(ticket.id, list);
+      // Only re-render if the panel is still showing this ticket and no
+      // note is being edited (avoid clobbering an in-progress edit).
+      if (state.activeTicketId === ticket.id) {
+        const editingNow = document.getElementById('detail-notes')?.querySelector('.note-edit-area') as HTMLElement | null;
+        if (editingNow === null || document.activeElement !== editingNow) {
+          renderNotes(ticket.id, parsedNotes);
         }
       }
-    }).catch(() => { /* fine — server may be older */ });
-  }
-
-  // Auto-show feedback dialog if the last note is a feedback request
-  const feedbackState = getTicketFeedbackState(parsedNotes);
-  if (feedbackState && shouldAutoShowFeedback(id, feedbackState.noteId)) {
+      // HS-7822 auto-show with optional draft seed.
+      if (feedbackState !== null && state.activeTicketId === ticket.id
+          && shouldAutoShowFeedback(ticket.id, feedbackState.noteId)) {
+        const seed = pickDraftForFeedbackNote(list, feedbackState.noteId);
+        requestAnimationFrame(() => {
+          if (seed !== null) {
+            showFeedbackDialog(ticket.id, ticket.ticket_number, seed.promptText, {
+              id: seed.id,
+              parentNoteId: seed.parentNoteId,
+              promptText: seed.promptText,
+              partitions: seed.partitions,
+            });
+          } else {
+            showFeedbackDialog(ticket.id, ticket.ticket_number, feedbackState.prompt);
+          }
+        });
+      }
+    }).catch(() => {
+      // Drafts fetch failed (older server / transient network) — fall back
+      // to the original auto-show flow without a seed so the user still
+      // gets prompted.
+      if (feedbackState !== null && state.activeTicketId === ticket.id
+          && shouldAutoShowFeedback(ticket.id, feedbackState.noteId)) {
+        requestAnimationFrame(() => showFeedbackDialog(ticket.id, ticket.ticket_number, feedbackState.prompt));
+      }
+    });
+  } else if (feedbackState !== null && shouldAutoShowFeedback(id, feedbackState.noteId)) {
+    // The user is editing a note in this panel and we're skipping the
+    // drafts re-render. Auto-show without a seed — losing the edit by
+    // clobbering with renderNotes is worse than showing a stale form;
+    // the user can dismiss the dialog and pick the draft from the list.
     requestAnimationFrame(() => showFeedbackDialog(id, ticket.ticket_number, feedbackState.prompt));
   }
 
