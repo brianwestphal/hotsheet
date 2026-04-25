@@ -73,6 +73,11 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     void import('./quitConfirmSettingsUI.js').then(({ loadAndWireQuitConfirmSettings }) => {
       void loadAndWireQuitConfirmSettings();
     });
+    // HS-7830 — wire the Reset visibility button + live-update its
+    // status text from the dashboardHiddenTerminals subscription.
+    void import('./hiddenTerminalsResetUI.js').then(({ loadAndWireHiddenTerminalsReset }) => {
+      loadAndWireHiddenTerminalsReset();
+    });
   });
 
   closeBtn.addEventListener('click', () => {

@@ -545,6 +545,16 @@ pageRoutes.get('/', (c) => {
                   <div id="settings-terminals-list" className="settings-terminals-list"></div>
                   <button id="settings-terminals-add-btn" className="btn btn-sm" style="margin-top:8px">Add Terminal</button>
                 </div>
+                {/* HS-7830 — Reset visibility affordance. Clears the persisted
+                    `hidden_terminals` for this project so every configured
+                    terminal shows up in the dashboard / drawer-grid again
+                    without needing to open the Show / Hide Terminals dialog
+                    (§25.10.6). See docs/38-terminal-visibility.md §38.7. */}
+                <div className="settings-field" style="margin-top:12px">
+                  <label>Hidden terminals</label>
+                  <span className="settings-hint" style="margin-bottom:6px;display:block" id="settings-hidden-terminals-status">No terminals hidden for this project.</span>
+                  <button type="button" id="settings-hidden-terminals-reset" className="btn btn-sm" disabled>Reset visibility</button>
+                </div>
                 <div className="settings-field">
                   <label htmlFor="settings-terminal-scrollback">Scrollback (bytes)</label>
                   <input type="number" id="settings-terminal-scrollback" min="65536" max="16777216" placeholder="1048576" />

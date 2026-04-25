@@ -65,6 +65,38 @@ export function writeFileSettings(dataDir: string, updates: Partial<FileSettings
   return merged;
 }
 
+/**
+ * HS-7829 — pure helper that returns the new `hidden_terminals` value after
+ * pruning ids that are no longer present in the supplied configured-terminal
+ * id set. Used by the `/file-settings` PATCH handler whenever the user
+ * saves a new `terminals[]` array — without this, deleted terminals'
+ * hidden-state ids would accumulate forever in `settings.json`.
+ *
+ * Returns null when no prune is needed (every existing hidden id is still
+ * present, or the input is empty / unrecognised). The caller writes back
+ * only when a non-null array is returned, so a no-op skips the disk
+ * round-trip.
+ *
+ * Pure: no I/O. Test-friendly via `prune-hidden-terminals.test.ts`.
+ */
+export function prunedHiddenTerminals(
+  currentHidden: unknown,
+  configuredIds: ReadonlySet<string>,
+): string[] | null {
+  // Tolerate the legacy stringified-JSON shape for parity with how the
+  // /file-settings GET endpoint surfaced JSON-valued keys before HS-7825.
+  let raw: unknown = currentHidden;
+  if (typeof raw === 'string' && raw !== '') {
+    try { raw = JSON.parse(raw); } catch { return null; }
+  }
+  if (!Array.isArray(raw)) return null;
+  const ids: string[] = raw.filter((s): s is string => typeof s === 'string' && s !== '');
+  if (ids.length === 0) return null;
+  const pruned = ids.filter(id => configuredIds.has(id));
+  if (pruned.length === ids.length) return null; // nothing to prune
+  return pruned;
+}
+
 /** Read project settings from settings.json as Record\<string, string\> for API compatibility.
  *  JSON-valued keys are stringified. Reserved keys (appName, secret, etc.) are excluded. */
 export function readProjectSettings(dataDir: string): Record<string, string> {

@@ -54,26 +54,43 @@ A user who hides a dynamic terminal and then closes it sees it disappear from th
 - `src/client/projectTabs.tsx` — calls `initPersistedHiddenTerminals` after the project-list fetch in both `initProjectTabs` (boot) and `refreshProjectTabs` (project added / removed).
 - `src/file-settings.ts` — new entry in `JSON_VALUE_KEYS` so the array round-trips through `/file-settings` natively rather than as a stringified blob.
 
-## 38.7 Out of scope (deferred)
+## 38.7 Stale-id cleanup on terminal deletion (HS-7829)
 
-- **Cleanup of stale ids on terminal deletion.** When the user removes a configured terminal from Settings → Terminal, its id might still appear in `hidden_terminals`. The list is harmless (the id resolves to nothing on next read) but accumulates over time. A follow-up ticket will hook into the terminals-settings save path to prune ids that no longer correspond to a configured terminal.
-- **Dialog "Reset" affordance.** Today `unhideAllInProject` clears the persisted set as a side effect of clearing the in-memory state. An explicit "Reset to defaults" button in the Settings → Terminal panel would let a user restore visibility without opening the dialog. Tracked separately.
+When the user removes a configured terminal from Settings → Terminal, the deleted terminal's id can still appear in the project's `hidden_terminals` array. Functionally harmless (the id resolves to nothing on next read) but stale entries would accumulate forever as users add/remove terminals.
+
+**Implementation.** The `/file-settings` PATCH handler in `src/routes/settings.ts` runs `prunedHiddenTerminals(currentHidden, configuredIds)` every time the patch contains a `terminals` key. The pure helper (in `src/file-settings.ts`) returns `null` when no prune is needed (every existing hidden id is still configured), or the new array when at least one id has been dropped. A non-null return triggers a second `writeFileSettings` call with the pruned list. Tolerates the legacy stringified-JSON shape and skips malformed input as a no-op. 8 unit tests in `file-settings.test.ts` cover empty input, every-id-still-present (no-op), partial-prune, full-prune, legacy-string shape, malformed input, empty-config-set, and order-preservation.
+
+The prune fires alongside the existing `eagerSpawnTerminals` call so a single terminals-list save handles both side effects. Dynamic-terminal ids (`dyn-*`) never enter `hidden_terminals` in the first place (the persistence layer filters them on write), so the prune doesn't need a special case.
+
+## 38.8 Reset visibility from Settings (HS-7830)
+
+A new "Reset visibility" button in Settings → Terminal (below the Default terminals list) clears the project's persisted hidden state without opening the Show / Hide Terminals dialog. The button is disabled when nothing is currently hidden, and a status hint above it reads "No terminals hidden for this project." vs. "{N} terminals are currently hidden for this project." so the user knows what the button would do before clicking.
+
+**Click flow.** Confirms via the in-app `confirmDialog` (so an accidental click doesn't reset hours of curated visibility), then calls `unhideAllInProject(secret)`. The persistence layer (`persistedHiddenTerminals.ts`) already subscribes to the change event and PATCHes `hidden_terminals: []` automatically — no explicit /file-settings call from the Settings UI. The button + status update live via the same `subscribeToHiddenChanges` subscription so toggling visibility in another window or via the dialog updates the status text in real time while Settings is open.
+
+**Implementation.** `src/client/hiddenTerminalsResetUI.tsx` exposes `loadAndWireHiddenTerminalsReset()`, called from `settingsDialog.tsx`'s on-open handler alongside the existing terminals / appearance / quit-confirm wiring. The handler is bound idempotently — each open swaps out the click listener so a project switch between dialog opens doesn't stale-close over an old `secret`.
+
+## 38.9 Out of scope (deferred)
+
 - **Cross-machine sync.** `hidden_terminals` is per-project, stored in `.hotsheet/settings.json` — same scope as every other per-project setting (§22.10, §37.5). Cross-machine sync of these settings is out of scope for v1; users who sync `.hotsheet/` via Dropbox / Drive get it implicitly.
 
-## 38.8 Manual test plan
+## 38.10 Manual test plan
 
-See [docs/manual-test-plan.md §13 (Show / Hide Terminals dialog)] for the existing flows. HS-7825 adds:
+See [docs/manual-test-plan.md §13 (Show / Hide Terminals dialog)] for the existing flows. HS-7825 + HS-7829 + HS-7830 add:
 
 1. Hide a configured terminal → reload → it stays hidden.
 2. Hide a configured terminal → quit and relaunch Hot Sheet → it stays hidden.
 3. "Show All" inside the dialog → reload → every terminal shows.
 4. Hide a dynamic terminal (`dyn-*`) → reload → it shows again (session-only behaviour preserved).
 5. Multi-project: hide a terminal in project A, switch to project B, reload, switch back to A — A's filter is restored.
+6. (HS-7829) Hide a configured terminal → delete that terminal in Settings → Terminal → save → check `.hotsheet/settings.json`: the deleted id is gone from `hidden_terminals`.
+7. (HS-7830) With at least one terminal hidden, open Settings → Terminal → status reads "{N} terminals are currently hidden..."; click Reset visibility → confirm → all terminals visible, button disables, status reads "No terminals hidden for this project."
+8. (HS-7830) Open Settings with nothing hidden → Reset visibility button is disabled; status reads "No terminals hidden for this project."
 
-## 38.9 Cross-references
+## 38.11 Cross-references
 
 - §25.10 (Show / Hide Terminals dialog — global mode).
 - §36.6.5 (Show / Hide Terminals dialog — per-project drawer-grid).
 - §22.10 (per-project terminal config; ids the persistence layer keys against).
 
-**Status:** Shipped (HS-7825). Cleanup-of-stale-ids + explicit Reset affordance are tracked in follow-up tickets.
+**Status:** Shipped (HS-7825 + HS-7829 stale-id cleanup + HS-7830 Reset visibility affordance).

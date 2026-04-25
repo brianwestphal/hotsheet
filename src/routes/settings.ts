@@ -99,6 +99,16 @@ settingsRoutes.patch('/file-settings', async (c) => {
   if ('terminals' in parsed.data) {
     const { eagerSpawnTerminals } = await import('../terminals/eagerSpawn.js');
     eagerSpawnTerminals(secret, dataDir);
+    // HS-7829 — prune any persisted hidden_terminals ids that no longer
+    // correspond to a configured terminal so deleted-terminal entries don't
+    // accumulate in settings.json forever. See docs/38-terminal-visibility.md
+    // §38.7. Pure helper returns null when no prune is needed so this is a
+    // single-disk-write no-op for unchanged hidden lists.
+    const { prunedHiddenTerminals, writeFileSettings: writeAgain } = await import('../file-settings.js');
+    const { listTerminalConfigs } = await import('../terminals/config.js');
+    const configuredIds = new Set(listTerminalConfigs(dataDir).map(t => t.id));
+    const pruned = prunedHiddenTerminals(updated.hidden_terminals, configuredIds);
+    if (pruned !== null) writeAgain(dataDir, { hidden_terminals: pruned });
   }
   return c.json(updated);
 });

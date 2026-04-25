@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { ensureSecret, getBackupDir, readFileSettings, writeFileSettings } from './file-settings.js';
+import { ensureSecret, getBackupDir, prunedHiddenTerminals, readFileSettings, writeFileSettings } from './file-settings.js';
 
 let tempDir: string;
 
@@ -173,5 +173,54 @@ describe('writeFileSettings edge cases', () => {
     expect(settings.backupDir).toBe('/backup');
     expect(settings.port).toBe(4174);
     expect(settings.appIcon).toBe('blue');
+  });
+});
+
+/**
+ * HS-7829 — `prunedHiddenTerminals` filters stale ids out of the persisted
+ * `hidden_terminals` array whenever the configured `terminals[]` changes.
+ * Pure helper, called from the `/file-settings` PATCH handler after a
+ * terminals-list save.
+ */
+describe('prunedHiddenTerminals (HS-7829)', () => {
+  it('returns null when nothing is hidden', () => {
+    expect(prunedHiddenTerminals(undefined, new Set(['a', 'b']))).toBeNull();
+    expect(prunedHiddenTerminals([], new Set(['a', 'b']))).toBeNull();
+  });
+
+  it('returns null when every hidden id is still present in the configured list', () => {
+    expect(prunedHiddenTerminals(['a', 'b'], new Set(['a', 'b', 'c']))).toBeNull();
+  });
+
+  it('returns the pruned subset when one id no longer exists', () => {
+    expect(prunedHiddenTerminals(['a', 'gone', 'b'], new Set(['a', 'b'])))
+      .toEqual(['a', 'b']);
+  });
+
+  it('returns an empty array when every hidden id has been removed from the config', () => {
+    expect(prunedHiddenTerminals(['gone1', 'gone2'], new Set(['a'])))
+      .toEqual([]);
+  });
+
+  it('tolerates the legacy stringified-JSON shape (defense in depth)', () => {
+    // Pre-HS-7825 callers occasionally stored JSON-valued keys as strings.
+    // The helper should parse and apply the same prune.
+    expect(prunedHiddenTerminals('["a", "gone"]', new Set(['a'])))
+      .toEqual(['a']);
+  });
+
+  it('returns null when input is malformed (not array, not parseable JSON)', () => {
+    expect(prunedHiddenTerminals('not-json', new Set(['a']))).toBeNull();
+    expect(prunedHiddenTerminals(42, new Set(['a']))).toBeNull();
+    expect(prunedHiddenTerminals({ id: 'a' }, new Set(['a']))).toBeNull();
+  });
+
+  it('returns the pruned list when configured ids set is empty (every hidden id gone)', () => {
+    expect(prunedHiddenTerminals(['a', 'b'], new Set())).toEqual([]);
+  });
+
+  it('preserves order of remaining ids', () => {
+    expect(prunedHiddenTerminals(['z', 'a', 'm', 'gone', 'k'], new Set(['z', 'a', 'm', 'k'])))
+      .toEqual(['z', 'a', 'm', 'k']);
   });
 });
