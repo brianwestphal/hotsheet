@@ -21,6 +21,14 @@ pageRoutes.get('/', (c) => {
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M14 15H9v-5"/><path d="M16 3h5v5"/><path d="M21 3 9 15"/></svg>
             <input type="range" id="terminal-dashboard-size-slider" min="0" max="100" step="1" value="33" aria-label="Dashboard tile size" />
           </div>
+          {/* HS-7661 — Show / Hide Terminals dialog opener for the global
+              dashboard. Sits to the right of the size slider per the user's
+              feedback ("near the slider yes, probably to the right of it").
+              Visibility tracks #terminal-dashboard-sizer; hidden when the
+              dashboard isn't active or while in dedicated view. */}
+          <button type="button" className="terminal-dashboard-hide-btn" id="terminal-dashboard-hide-btn" title="Show / hide terminals" style="display:none">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
           {/* HS-7331 — terminal dashboard search slot. Lives in the same header
               region as the sizer above, mutually exclusive: the sizer is visible
               in the grid view and the search slot is visible in the full-screen
@@ -263,6 +271,14 @@ pageRoutes.get('/', (c) => {
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M14 15H9v-5"/><path d="M16 3h5v5"/><path d="M21 3 9 15"/></svg>
                 <input type="range" id="drawer-grid-size-slider" min="0" max="100" step="1" value="33" aria-label="Grid tile size" />
               </div>
+              {/* HS-7661 — Show / Hide Terminals dialog opener for the
+                  drawer-grid view. Visible only while drawer-grid mode is
+                  active (toggled by drawerTerminalGrid.tsx alongside the
+                  sizer). Sits to the right of the slider per the user's
+                  feedback ("near the slider yes, probably to the right of it"). */}
+              <button type="button" className="drawer-grid-hide-btn" id="drawer-grid-hide-btn" title="Show / hide terminals" style="display:none">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
               {/* HS-6311 — toggle between drawer tabs and a grid view of every
                   terminal in the current project. Hidden in plain browsers
                   (Tauri-only per §36.8), disabled when ≤1 terminal exists.

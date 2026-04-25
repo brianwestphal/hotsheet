@@ -1,5 +1,10 @@
 import { subscribeToBellState } from './bellPoll.js';
 import {
+  filterVisible as filterVisibleEntries,
+  subscribeToHiddenChanges,
+} from './dashboardHiddenTerminals.js';
+import { showHideTerminalDialog } from './hideTerminalDialog.js';
+import {
   getActiveProject,
   getProjectGridActive,
   getProjectGridSliderValue,
@@ -56,6 +61,14 @@ let gridEl: HTMLElement | null = null;
 let toggleBtn: HTMLButtonElement | null = null;
 let sizerContainer: HTMLElement | null = null;
 let sizeSlider: HTMLInputElement | null = null;
+let hideBtn: HTMLButtonElement | null = null;
+/** HS-7661 — unsubscribe from hidden-terminal change events. Set when grid
+ *  mode is entered, cleared on exit. */
+let hiddenChangeUnsubscribe: (() => void) | null = null;
+/** HS-7661 — empty-state placeholder rendered inside the grid when every
+ *  terminal in the project is hidden. Kept as a separate node so we can
+ *  add/remove it without disturbing other grid children. */
+let allHiddenPlaceholder: HTMLElement | null = null;
 
 let gridHandle: TileGridHandle | null = null;
 let currentSnapPoints: SnapPoint[] = [];
@@ -81,6 +94,7 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
   toggleBtn = document.getElementById('drawer-grid-toggle') as HTMLButtonElement | null;
   sizerContainer = document.getElementById('drawer-grid-sizer');
   sizeSlider = document.getElementById('drawer-grid-size-slider') as HTMLInputElement | null;
+  hideBtn = document.getElementById('drawer-grid-hide-btn') as HTMLButtonElement | null;
   if (toggleBtn === null || gridEl === null) return;
 
   toggleBtn.style.display = '';
@@ -90,6 +104,31 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
     if (project === null) return;
     if (getProjectGridActive(project.secret)) exitGridModeInternal();
     else enterGridModeInternal();
+  });
+
+  // HS-7661 — Show / Hide Terminals dialog opener. Single-project mode:
+  // show only the active project's terminals, no grouping.
+  hideBtn?.addEventListener('click', () => {
+    const project = getActiveProject();
+    if (project === null) return;
+    showHideTerminalDialog({
+      mode: 'single-project',
+      groups: [{
+        secret: project.secret,
+        name: project.name,
+        terminals: lastKnownEntries.map(e => ({
+          id: e.id,
+          name: tileLabel(e),
+        })),
+      }],
+      onChange: () => {
+        // Rebuild + repaint when state mutates so the user sees the
+        // dashboard reflect the toggle without closing the dialog.
+        if (gridHandle !== null && getProjectGridActive(project.secret)) {
+          rebuildVisibleTiles();
+        }
+      },
+    });
   });
 
   sizeSlider?.addEventListener('input', () => {
@@ -108,6 +147,11 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
     const project = getActiveProject();
     if (project === null || !getProjectGridActive(project.secret)) return;
     if (e.key !== 'Escape') return;
+    // HS-7661 — when the hide-terminal dialog is open, let it consume the
+    // Esc itself. Without this, the drawer-grid handler runs first (it's
+    // registered earlier on the document) and would exit grid mode entirely
+    // before the dialog has a chance to close.
+    if (document.querySelector('.hide-terminal-dialog-overlay') !== null) return;
     if (gridHandle !== null && gridHandle.isDedicatedOpen()) {
       e.preventDefault();
       e.stopPropagation();
@@ -155,8 +199,51 @@ export function onTerminalListUpdated(entries: DrawerGridTileEntry[]): void {
   ensureGridHandle();
   attachResizeHandlers();
   attachBellSubscription();
-  if (gridHandle !== null) gridHandle.rebuild(entries.map(toTileEntry(project.secret)));
+  attachHiddenSubscription();
+  rebuildVisibleTiles();
   updateToggleEnabledState();
+}
+
+/** HS-7661 — rebuild the grid handle's tiles from `lastKnownEntries`,
+ *  filtered to non-hidden terminals only. When ALL terminals are hidden
+ *  but there are some configured, render the "All Terminals Hidden"
+ *  placeholder inside the grid container so the user can see the state
+ *  reflected without empty space. The placeholder is hidden/torn down by
+ *  `hideGridChrome` and recreated on every rebuild that needs it. */
+function rebuildVisibleTiles(): void {
+  const project = getActiveProject();
+  if (project === null || gridHandle === null) return;
+  const visible = filterVisibleEntries(project.secret, lastKnownEntries);
+  gridHandle.rebuild(visible.map(toTileEntry(project.secret)));
+  // Show / hide the all-hidden placeholder. We render it as a sibling of
+  // the tiles inside `gridEl` because mountTileGrid owns the tile children
+  // but doesn't touch other elements in the container.
+  if (gridEl === null) return;
+  if (allHiddenPlaceholder !== null) {
+    allHiddenPlaceholder.remove();
+    allHiddenPlaceholder = null;
+  }
+  if (visible.length === 0 && lastKnownEntries.length > 0) {
+    allHiddenPlaceholder = document.createElement('div');
+    allHiddenPlaceholder.className = 'drawer-terminal-grid-all-hidden';
+    allHiddenPlaceholder.textContent = 'All Terminals Hidden';
+    gridEl.appendChild(allHiddenPlaceholder);
+  }
+}
+
+/** HS-7661 — subscribe to hidden-state changes so the grid rebuilds
+ *  when the user toggles a row in the dialog. Idempotent. */
+function attachHiddenSubscription(): void {
+  if (hiddenChangeUnsubscribe !== null) return;
+  hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
+    if (gridHandle !== null) rebuildVisibleTiles();
+  });
+}
+
+function detachHiddenSubscription(): void {
+  if (hiddenChangeUnsubscribe === null) return;
+  hiddenChangeUnsubscribe();
+  hiddenChangeUnsubscribe = null;
 }
 
 export function isDrawerGridActive(): boolean {
@@ -221,7 +308,8 @@ function enterGridModeInternal(): void {
   ensureGridHandle();
   attachResizeHandlers();
   attachBellSubscription();
-  if (gridHandle !== null) gridHandle.rebuild(lastKnownEntries.map(toTileEntry(project.secret)));
+  attachHiddenSubscription();
+  rebuildVisibleTiles();
   updateToggleEnabledState();
   // HS-7657: refresh the terminal list so a dynamic terminal that was
   // spawned (via tab-strip click → WS attach → server lazy-spawn) AFTER the
@@ -252,9 +340,14 @@ function exitGridModeInternal(): void {
     gridHandle.dispose();
     gridHandle = null;
   }
+  if (allHiddenPlaceholder !== null) {
+    allHiddenPlaceholder.remove();
+    allHiddenPlaceholder = null;
+  }
   hideGridChrome();
   detachResizeHandlers();
   detachBellSubscription();
+  detachHiddenSubscription();
   updateToggleEnabledState();
   try { onExitGrid(); } catch { /* swallow — caller wiring is advisory */ }
 }
@@ -265,58 +358,68 @@ function ensureGridHandle(): void {
   gridHandle = mountTileGrid({
     container: gridEl,
     cssPrefix: 'drawer-terminal-grid',
-    centerSizeFrac: 0.9,
-    centerScope: 'container',
-    centerReferenceEl: gridEl,
+    centerSizeFrac: 0.7,
+    // HS-7659 — when a tile is enlarged (centered or in dedicated view) the
+    // overlay should cover the whole app, not just the narrow drawer band.
+    // We use viewport-scope: the centered tile + backdrop are positioned
+    // against the visual viewport (matching §25's behaviour) and the
+    // dedicated overlay's CSS is `position: fixed; inset: 0` so it pops out
+    // of the drawer's stacking context. The drawer panel itself stays in
+    // whatever expanded state the user had set — we never touch it. The
+    // bell + body-class chrome flips that earlier versions used to hide
+    // the expand button + slider are gone.
+    centerScope: 'viewport',
+    // Pass document.body as the centerReferenceEl so the dedicated overlay
+    // attaches there (rather than inside the drawer's gridEl) — combined
+    // with `position: fixed` it covers the whole window cleanly. The
+    // centered-tile positioning is computed against the visual viewport
+    // anyway when centerScope === 'viewport', so this only affects where
+    // the dedicated overlay + backdrop are mounted in the DOM.
+    centerReferenceEl: document.body,
     getSliderValue: () => {
       const project = getActiveProject();
       return project === null ? 33 : getProjectGridSliderValue(project.secret);
     },
-    // HS-7659 / HS-7660 — when a tile is enlarged (centered or opened in
-    // dedicated view) the user expects the maximized terminal to use the
-    // whole app surface, not just the drawer's narrow band. We auto-expand
-    // the drawer to full height on enlarge and restore the prior expanded
-    // state on shrink. The expand button + size slider hide alongside (via
-    // the body.drawer-grid-tile-enlarged class) so the chrome doesn't read
-    // as "you can still expand more" when we've already done it.
-    onTileEnlarge: () => { void enterDrawerEnlargedState(); },
-    onTileShrink: () => { void exitDrawerEnlargedState(); },
+    // HS-7661 — right-click on a tile opens a small context menu with
+    // "Hide in Dashboard". Click sets the terminal hidden in the
+    // session-only state; the hidden-change subscription rebuilds the
+    // grid so the tile disappears immediately.
+    onContextMenu: (entry, e) => {
+      e.preventDefault();
+      const project = getActiveProject();
+      if (project === null) return;
+      void showHideContextMenuAtPointer(e, project.secret, entry.id);
+    },
   });
 }
 
-/** Pre-enlarge expanded state, captured so we can restore it on shrink.
- *  Null when no enlargement is active. */
-let priorDrawerExpandedState: boolean | null = null;
-
-async function enterDrawerEnlargedState(): Promise<void> {
-  // Save state once (the user could chain center → dedicated → exit, and we
-  // want to track only the first enlarge → last shrink boundary).
-  if (priorDrawerExpandedState !== null) return;
-  try {
-    const { isDrawerExpanded, setDrawerExpanded } = await import('./commandLog.js');
-    priorDrawerExpandedState = isDrawerExpanded();
-    if (!priorDrawerExpandedState) setDrawerExpanded(true);
-  } catch { /* swallow — best-effort */ }
-  document.body.classList.add('drawer-grid-tile-enlarged');
-}
-
-async function exitDrawerEnlargedState(): Promise<void> {
-  if (priorDrawerExpandedState === null) return;
-  // Defer the body-class flip until any subsequent enlarge can short-circuit
-  // the import dance. The shrink callback fires both on uncenter AND on
-  // exit-from-dedicated; if the user goes center → dedicated → back-to-center,
-  // we shouldn't restore the drawer mid-flow. Detect a still-active enlarge
-  // by checking the grid handle's reported state.
-  if (gridHandle !== null && (gridHandle.isCentered() || gridHandle.isDedicatedOpen())) {
-    return;
-  }
-  const restore = priorDrawerExpandedState;
-  priorDrawerExpandedState = null;
-  try {
-    const { setDrawerExpanded } = await import('./commandLog.js');
-    setDrawerExpanded(restore);
-  } catch { /* swallow */ }
-  document.body.classList.remove('drawer-grid-tile-enlarged');
+/** HS-7661 — small context menu rendered at the pointer with one "Hide in
+ *  Dashboard" entry. Clicked → flip the entry to hidden via
+ *  `setTerminalHidden`. The hidden-state change-subscription will rebuild
+ *  the grid so the tile disappears. Other context menus (e.g. the
+ *  dashboard's HS-7065 close-tab / rename) live in their own handlers; the
+ *  drawer-grid only needs the hide entry in v1. */
+async function showHideContextMenuAtPointer(e: MouseEvent, secret: string, terminalId: string): Promise<void> {
+  document.querySelectorAll('.terminal-tile-context-menu').forEach(m => m.remove());
+  const { setTerminalHidden } = await import('./dashboardHiddenTerminals.js');
+  const { toElement } = await import('./dom.js');
+  const menu = toElement(
+    <div className="terminal-tile-context-menu context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}>
+      <div className="context-menu-item">
+        <span className="context-menu-label">Hide in Dashboard</span>
+      </div>
+    </div>
+  );
+  menu.querySelector('.context-menu-item')?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    menu.remove();
+    setTerminalHidden(secret, terminalId, true);
+  });
+  document.body.appendChild(menu);
+  setTimeout(() => {
+    const close = (): void => { menu.remove(); document.removeEventListener('click', close); };
+    document.addEventListener('click', close);
+  }, 0);
 }
 
 function showGridChrome(): void {
@@ -329,6 +432,7 @@ function showGridChrome(): void {
   }
   gridEl.style.display = '';
   if (sizerContainer !== null) sizerContainer.style.display = '';
+  if (hideBtn !== null) hideBtn.style.display = '';
   if (sizeSlider !== null) {
     const project = getActiveProject();
     sizeSlider.value = String(project === null ? 33 : getProjectGridSliderValue(project.secret));
@@ -343,6 +447,7 @@ function hideGridChrome(): void {
     gridEl.replaceChildren();
   }
   if (sizerContainer !== null) sizerContainer.style.display = 'none';
+  if (hideBtn !== null) hideBtn.style.display = 'none';
   if (toggleBtn !== null) toggleBtn.classList.remove('active');
 }
 

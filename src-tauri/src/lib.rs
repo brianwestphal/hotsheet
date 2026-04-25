@@ -649,18 +649,19 @@ async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// HS-7596 / §37 — flip the QuitConfirmed flag and re-issue the window
-/// close. Called from JS after the user clicks "Quit Anyway" in the §37
-/// confirm dialog. The CloseRequested handler will see the flag set and
-/// allow the close to proceed; the resulting RunEvent::Exit handler kills
-/// the sidecar as before.
+/// HS-7596 / §37 — flip the QuitConfirmed flag and re-issue the quit. Called
+/// from JS after the user clicks "Quit Anyway" in the §37 confirm dialog.
+/// Uses `app.exit(0)` (not `window.close()`) so the same code path covers
+/// every quit trigger — red traffic-light close, ⌘Q via the macOS Quit menu
+/// item, Alt+F4, or any future `app.exit()` call. With the flag set, both
+/// the `WindowEvent::CloseRequested` handler AND the `RunEvent::ExitRequested`
+/// handler pass-through and the resulting `RunEvent::Exit` kills the sidecar
+/// as before.
 #[tauri::command]
 fn confirm_quit(app: tauri::AppHandle) -> Result<(), String> {
     let confirmed = app.state::<QuitConfirmed>();
     confirmed.0.store(true, Ordering::SeqCst);
-    if let Some(window) = app.get_webview_window("main") {
-        window.close().map_err(|e| e.to_string())?;
-    }
+    app.exit(0);
     Ok(())
 }
 
@@ -1190,26 +1191,49 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                // Kill the sidecar process on app exit
-                if let Some(pid) = app_handle.state::<SidecarPid>().0.lock().unwrap().take() {
-                    #[cfg(unix)]
-                    {
-                        // Send SIGTERM to let the Node process clean up (release lock files, etc.)
-                        unsafe {
-                            libc::kill(pid as i32, libc::SIGTERM);
-                            libc::kill(-(pid as i32), libc::SIGTERM);
+            match event {
+                // HS-7596 / §37 — quit-confirm gate for the application-level
+                // quit path (⌘Q via the macOS Quit menu item, programmatic
+                // app.exit(), dock menu Quit). The window-level red traffic-
+                // light close goes through `WindowEvent::CloseRequested` and is
+                // handled there; this handler covers everything else. When the
+                // user has not yet confirmed, prevent the exit and emit the
+                // same `quit-confirm-requested` event the JS frontend already
+                // listens for. After the user confirms, `confirm_quit` flips
+                // the flag and calls `app.exit(0)` again — this fires
+                // `ExitRequested` a second time, the flag is now true so we
+                // do nothing, and the exit proceeds normally.
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    let confirmed = app_handle.state::<QuitConfirmed>();
+                    if !confirmed.0.load(Ordering::SeqCst) {
+                        api.prevent_exit();
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.emit("quit-confirm-requested", ());
                         }
-                        // Wait briefly for cleanup before the process is force-killed by OS
-                        std::thread::sleep(std::time::Duration::from_millis(300));
-                    }
-                    #[cfg(windows)]
-                    {
-                        let _ = std::process::Command::new("taskkill")
-                            .args(["/PID", &pid.to_string(), "/T", "/F"])
-                            .status();
                     }
                 }
+                tauri::RunEvent::Exit => {
+                    // Kill the sidecar process on app exit
+                    if let Some(pid) = app_handle.state::<SidecarPid>().0.lock().unwrap().take() {
+                        #[cfg(unix)]
+                        {
+                            // Send SIGTERM to let the Node process clean up (release lock files, etc.)
+                            unsafe {
+                                libc::kill(pid as i32, libc::SIGTERM);
+                                libc::kill(-(pid as i32), libc::SIGTERM);
+                            }
+                            // Wait briefly for cleanup before the process is force-killed by OS
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+                        }
+                        #[cfg(windows)]
+                        {
+                            let _ = std::process::Command::new("taskkill")
+                                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                                .status();
+                        }
+                    }
+                }
+                _ => {}
             }
         });
 }

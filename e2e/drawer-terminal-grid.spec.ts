@@ -144,13 +144,15 @@ test.describe('Drawer terminal grid view (HS-6311)', () => {
     expect(val).toBeLessThan(100);
   });
 
-  // HS-7659 / HS-7660 — when a tile is enlarged (centered or in dedicated
-  // view) inside the drawer grid, the user expects the maximized terminal to
-  // use the whole app surface rather than the narrow drawer band. The fix
-  // auto-expands the drawer to full height and hides the expand button +
-  // size slider while a tile is enlarged; on shrink, the drawer's pre-
-  // enlarge expanded state is restored.
-  test('enlarging a tile auto-expands the drawer + hides expand button + slider; shrinking restores prior state (HS-7659/HS-7660)', async ({ page, request }) => {
+  // HS-7659 — when a tile is enlarged (centered or in dedicated view) inside
+  // the drawer grid, the maximized terminal should render at an app-level
+  // overlay (full viewport), NOT by expanding the drawer panel. Earlier
+  // implementations (the original HS-7659/HS-7660 fix) auto-expanded the
+  // drawer + hid the expand button, which broke the chrome on exit. The
+  // current fix uses centerScope: 'viewport' + position-fixed CSS so the
+  // overlay covers the whole window without touching the drawer's expanded
+  // state — the expand button + slider stay visible and untouched.
+  test('enlarging a tile renders at viewport scope and leaves drawer chrome untouched (HS-7659)', async ({ page, request }) => {
     await request.patch('/api/file-settings', {
       headers,
       data: {
@@ -168,8 +170,9 @@ test.describe('Drawer terminal grid view (HS-6311)', () => {
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await expect(page.locator('#command-log-panel')).toBeVisible({ timeout: 5000 });
 
-    // Baseline: drawer NOT expanded; expand button + grid sizer visible
-    // (sizer becomes visible on grid toggle below).
+    // Baseline: drawer NOT expanded; expand button + grid sizer become
+    // visible once we enter grid mode. The drawer-expanded class on .app
+    // should stay absent throughout.
     const expandBtn = page.locator('#drawer-expand-btn');
     const sizer = page.locator('#drawer-grid-sizer');
     await expect(page.locator('.app.drawer-expanded')).toHaveCount(0);
@@ -182,21 +185,33 @@ test.describe('Drawer terminal grid view (HS-6311)', () => {
     await expect(expandBtn).toBeVisible();
     await expect(sizer).toBeVisible();
 
-    // Single-click a tile to center it. Targeting `[data-terminal-id="a"]`
-    // — the lazy fixture leaves both as `not_spawned` placeholders, so a
-    // single click triggers `spawnAndEnlarge(tile, 'center')`.
+    // Single-click a tile — spawns + centers since both tiles are lazy and
+    // start as `not_spawned` placeholders.
     await page.locator('.drawer-terminal-grid-tile[data-terminal-id="a"]').click();
-    // Drawer should auto-expand to full height; the body class is the gate.
-    await expect(page.locator('body.drawer-grid-tile-enlarged')).toHaveCount(1, { timeout: 5000 });
-    await expect(page.locator('.app.drawer-expanded')).toHaveCount(1);
-    // Expand button + sizer hidden by the body-class CSS rule.
-    await expect(expandBtn).toBeHidden();
-    await expect(sizer).toBeHidden();
 
-    // Press Esc to uncenter the tile. The drawer should restore its
-    // pre-enlarge expanded state (false) and the chrome should reappear.
+    // The centered tile should be at viewport scope: position-fixed with
+    // dimensions that exceed the drawer's height (the drawer is short by
+    // default, so any tile larger than ~200px tall is breaking out of it).
+    const centered = page.locator('.drawer-terminal-grid-tile.centered');
+    await expect(centered).toBeVisible({ timeout: 5000 });
+    const tileBox = await centered.boundingBox();
+    if (tileBox === null) throw new Error('centered tile has no bounding box');
+    // Default test viewport is around 1280x720; centerSizeFrac is 0.7 so the
+    // tile should be at least ~400 px tall — much larger than the drawer
+    // band ever is.
+    expect(tileBox.height).toBeGreaterThan(300);
+
+    // Drawer expanded state is unchanged: no `.app.drawer-expanded`, expand
+    // button + sizer still visible.
+    await expect(page.locator('.app.drawer-expanded')).toHaveCount(0);
+    await expect(expandBtn).toBeVisible();
+    await expect(sizer).toBeVisible();
+    // The legacy body class from the prior fix should NOT be present.
+    await expect(page.locator('body.drawer-grid-tile-enlarged')).toHaveCount(0);
+
+    // Press Esc to uncenter. Chrome remains visible and untouched.
     await page.keyboard.press('Escape');
-    await expect(page.locator('body.drawer-grid-tile-enlarged')).toHaveCount(0, { timeout: 5000 });
+    await expect(centered).toHaveCount(0, { timeout: 5000 });
     await expect(page.locator('.app.drawer-expanded')).toHaveCount(0);
     await expect(expandBtn).toBeVisible();
     await expect(sizer).toBeVisible();
@@ -235,6 +250,93 @@ test.describe('Drawer terminal grid view (HS-6311)', () => {
     const toggleMid = toggleBox!.y + toggleBox!.height / 2;
     const expandMid = expandBox!.y + expandBox!.height / 2;
     expect(Math.abs(toggleMid - expandMid)).toBeLessThan(1.5);
+  });
+
+  // HS-7661 — eye-icon dialog opens with the active project's terminals,
+  // toggling a row hides the tile, "Show all" restores it. Session-only
+  // state so the dialog reflects each click immediately.
+  test('drawer-grid eye icon hides + shows tiles via the dialog (HS-7661)', async ({ page, request }) => {
+    await request.patch('/api/file-settings', {
+      headers,
+      data: {
+        terminal_enabled: 'true',
+        drawer_open: 'true',
+        terminals: [
+          { id: 'a', name: 'A', command: '/bin/echo a', lazy: true },
+          { id: 'b', name: 'B', command: '/bin/echo b', lazy: true },
+        ],
+      },
+    });
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('#command-log-panel')).toBeVisible({ timeout: 5000 });
+
+    const toggle = page.locator('#drawer-grid-toggle');
+    await expect(toggle).toBeEnabled({ timeout: 5000 });
+    await toggle.click();
+    await expect(page.locator('#drawer-terminal-grid')).toBeVisible();
+
+    // Both tiles visible.
+    await expect(page.locator('.drawer-terminal-grid-tile[data-terminal-id="a"]')).toHaveCount(1);
+    await expect(page.locator('.drawer-terminal-grid-tile[data-terminal-id="b"]')).toHaveCount(1);
+
+    // Open the eye-icon dialog.
+    const eyeBtn = page.locator('#drawer-grid-hide-btn');
+    await expect(eyeBtn).toBeVisible();
+    await eyeBtn.click();
+    const dialog = page.locator('.hide-terminal-dialog-overlay');
+    await expect(dialog).toBeVisible();
+    // Both terminals listed.
+    await expect(dialog.locator('.hide-terminal-row[data-terminal-id="a"]')).toHaveCount(1);
+    await expect(dialog.locator('.hide-terminal-row[data-terminal-id="b"]')).toHaveCount(1);
+
+    // Click the "B" row to hide it. The grid rebuilds via the
+    // hidden-state subscription.
+    await dialog.locator('.hide-terminal-row[data-terminal-id="b"]').click();
+    await expect(dialog.locator('.hide-terminal-row[data-terminal-id="b"].is-hidden')).toHaveCount(1);
+    // Grid now only has tile A.
+    await expect(page.locator('.drawer-terminal-grid-tile[data-terminal-id="a"]')).toHaveCount(1);
+    await expect(page.locator('.drawer-terminal-grid-tile[data-terminal-id="b"]')).toHaveCount(0);
+
+    // "Show all" restores B.
+    await dialog.locator('.hide-terminal-show-all').click();
+    await expect(dialog.locator('.hide-terminal-row[data-terminal-id="b"].is-hidden')).toHaveCount(0);
+    await expect(page.locator('.drawer-terminal-grid-tile[data-terminal-id="b"]')).toHaveCount(1);
+
+    // Esc closes the dialog.
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+  });
+
+  // HS-7661 — when ALL terminals in the project are hidden, the grid shows
+  // an "All Terminals Hidden" placeholder rather than an empty white space.
+  test('drawer-grid shows "All Terminals Hidden" when every terminal is hidden (HS-7661)', async ({ page, request }) => {
+    await request.patch('/api/file-settings', {
+      headers,
+      data: {
+        terminal_enabled: 'true',
+        drawer_open: 'true',
+        terminals: [
+          { id: 'a', name: 'A', command: '/bin/echo a', lazy: true },
+          { id: 'b', name: 'B', command: '/bin/echo b', lazy: true },
+        ],
+      },
+    });
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('#command-log-panel')).toBeVisible({ timeout: 5000 });
+
+    await page.locator('#drawer-grid-toggle').click();
+    await expect(page.locator('#drawer-terminal-grid')).toBeVisible();
+    // Hide both via the dialog.
+    await page.locator('#drawer-grid-hide-btn').click();
+    const dialog = page.locator('.hide-terminal-dialog-overlay');
+    await dialog.locator('.hide-terminal-row[data-terminal-id="a"]').click();
+    await dialog.locator('.hide-terminal-row[data-terminal-id="b"]').click();
+    await page.keyboard.press('Escape');
+    // Placeholder visible, no tiles.
+    await expect(page.locator('.drawer-terminal-grid-all-hidden')).toBeVisible();
+    await expect(page.locator('.drawer-terminal-grid-tile')).toHaveCount(0);
   });
 
   test('clicking a drawer tab while in grid mode exits grid mode and activates that tab', async ({ page, request }) => {

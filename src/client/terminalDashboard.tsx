@@ -2,9 +2,15 @@ import { SearchAddon } from '@xterm/addon-search';
 
 import { apiWithSecret } from './api.js';
 import { subscribeToBellState } from './bellPoll.js';
+import {
+  filterVisible as filterVisibleEntries,
+  setTerminalHidden,
+  subscribeToHiddenChanges,
+} from './dashboardHiddenTerminals.js';
 import { restoreTicketList } from './dashboardMode.js';
 import { closeDetail } from './detail.js';
 import { toElement } from './dom.js';
+import { showHideTerminalDialog } from './hideTerminalDialog.js';
 import type { ProjectInfo } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { subscribeToDefaultAppearanceChanges } from './terminalAppearance.js';
@@ -101,6 +107,15 @@ let appearanceUnsubscribe: (() => void) | null = null;
 let sizerContainer: HTMLElement | null = null;
 let sizeSlider: HTMLInputElement | null = null;
 let currentSnapPoints: SnapPoint[] = [];
+/** HS-7661 — Show / Hide Terminals dialog opener for the global dashboard. */
+let hideButton: HTMLButtonElement | null = null;
+/** HS-7661 — last-fetched per-project section data, retained so the
+ *  hide-state subscription can re-render without re-fetching `/projects`
+ *  + per-project `/terminal/list` round-trips. */
+let lastSectionData: ProjectSectionData[] = [];
+/** HS-7661 — unsubscribe from hidden-state changes. Set on enterDashboard,
+ *  cleared on exitDashboard. */
+let hiddenChangeUnsubscribe: (() => void) | null = null;
 
 /** Module-level slider value persists across enter / exit calls (resets on
  *  page reload). HS-7129 default = 33; lines up with three tiles per row on
@@ -122,6 +137,21 @@ export function initTerminalDashboard(): void {
 
   sizerContainer = document.getElementById('terminal-dashboard-sizer');
   sizeSlider = document.getElementById('terminal-dashboard-size-slider') as HTMLInputElement | null;
+  hideButton = document.getElementById('terminal-dashboard-hide-btn') as HTMLButtonElement | null;
+  // HS-7661 — open the "Show / Hide Terminals" dialog in global mode (every
+  // project grouped). State changes fire the hidden-changes subscription
+  // (registered on `enterDashboard`) which re-runs `applyHiddenFiltering`
+  // so tiles disappear / reappear without a fetch round-trip.
+  hideButton?.addEventListener('click', () => {
+    showHideTerminalDialog({
+      mode: 'global',
+      groups: lastSectionData.map(s => ({
+        secret: s.project.secret,
+        name: s.project.name,
+        terminals: s.terminals.map(t => ({ id: t.id, name: tileEntryLabel(t) })),
+      })),
+    });
+  });
   sizeSlider?.addEventListener('input', () => {
     if (sizeSlider === null) return;
     const parsed = Number.parseFloat(sizeSlider.value);
@@ -137,6 +167,10 @@ export function initTerminalDashboard(): void {
   document.addEventListener('keydown', (e) => {
     if (!active) return;
     if (e.key !== 'Escape') return;
+    // HS-7661 — let the hide-terminal dialog consume Esc when open;
+    // otherwise the dashboard handler exits dashboard mode before the
+    // dialog has a chance to close.
+    if (document.querySelector('.hide-terminal-dialog-overlay') !== null) return;
     // Dedicated view active in any handle?
     for (const handle of gridHandles.values()) {
       if (handle.isDedicatedOpen()) {
@@ -188,6 +222,11 @@ export function exitDashboard(): void {
   }
   if (toggleButton !== null) toggleButton.classList.remove('active');
   if (sizerContainer !== null) sizerContainer.style.display = 'none';
+  if (hideButton !== null) hideButton.style.display = 'none';
+  if (hiddenChangeUnsubscribe !== null) {
+    hiddenChangeUnsubscribe();
+    hiddenChangeUnsubscribe = null;
+  }
   if (resizeHandler !== null) {
     window.removeEventListener('resize', resizeHandler);
     resizeHandler = null;
@@ -231,6 +270,7 @@ function enterDashboard(): void {
   document.body.classList.add(BODY_CLASS);
   if (toggleButton !== null) toggleButton.classList.add('active');
   if (sizerContainer !== null) sizerContainer.style.display = '';
+  if (hideButton !== null) hideButton.style.display = '';
   if (sizeSlider !== null) sizeSlider.value = String(sliderValue);
   if (rootElement !== null) {
     rootElement.style.display = '';
@@ -270,22 +310,69 @@ function enterDashboard(): void {
   appearanceUnsubscribe = subscribeToDefaultAppearanceChanges(() => {
     refreshDashboardGrid();
   });
+
+  // HS-7661 — re-render the sections (using cached lastSectionData) when
+  // hidden-terminal state changes. No fetch round-trip; the subscription
+  // fires after every `setTerminalHidden` / `unhideAll*` call.
+  hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
+    if (!active || rootElement === null) return;
+    paintDashboardSections(rootElement, lastSectionData);
+  });
 }
 
 async function renderDashboardGrid(root: HTMLElement): Promise<void> {
   root.replaceChildren(toElement(<div className="terminal-dashboard-loading">Loading terminals…</div>));
   const sections = await fetchProjectSections();
   if (!active) return; // user exited during fetch
+  lastSectionData = sections;
+  paintDashboardSections(root, sections);
+}
+
+/** HS-7661 — render the dashboard's project sections from cached
+ *  section data, applying the current hidden-terminal filter. Sections
+ *  whose terminals are ALL hidden are dropped entirely (per the user's
+ *  feedback: "hide the whole project"); sections with 0 configured
+ *  terminals still render their empty-state row per §25.10. When NO
+ *  visible tiles exist anywhere AND no projects have a 0-terminal
+ *  empty-state to show, the dashboard renders a centered "All Terminals
+ *  Hidden" placeholder. */
+function paintDashboardSections(root: HTMLElement, sections: ProjectSectionData[]): void {
+  // Dispose existing handles + clear the root before re-painting.
+  for (const handle of gridHandles.values()) handle.dispose();
+  gridHandles.clear();
   root.replaceChildren();
+
   if (sections.length === 0) {
-    root.appendChild(toElement(
-      <div className="terminal-dashboard-empty">No registered projects.</div>
-    ));
+    root.appendChild(toElement(<div className="terminal-dashboard-empty">No registered projects.</div>));
     return;
   }
+
+  // Compute total visible tiles across every project. If zero AND every
+  // project has at least one configured terminal (i.e. nothing is left to
+  // render an empty-state row for), surface the all-hidden placeholder.
+  let renderedAny = false;
+  let totalVisible = 0;
   for (const section of sections) {
-    root.appendChild(renderProjectSection(section));
+    const visible = filterVisibleEntries(section.project.secret, section.terminals);
+    totalVisible += visible.length;
   }
+  for (const section of sections) {
+    const visible = filterVisibleEntries(section.project.secret, section.terminals);
+    // Drop the section entirely when there are configured terminals but
+    // ALL of them are hidden — per the HS-7661 user answer "hide the whole
+    // project". Sections with zero CONFIGURED terminals fall through to
+    // the existing §25.10 empty-state row.
+    if (section.terminals.length > 0 && visible.length === 0) continue;
+    renderedAny = true;
+    root.appendChild(renderProjectSection(section, visible));
+  }
+
+  if (!renderedAny || totalVisible === 0) {
+    root.appendChild(toElement(
+      <div className="terminal-dashboard-all-hidden">All Terminals Hidden</div>
+    ));
+  }
+
   // Re-run sizing after every section is appended — `renderProjectSection`'s
   // internal `handle.rebuild()` already called `applySizing()` once, but that
   // happened against a DETACHED grid container (clientWidth === 0) and
@@ -318,7 +405,12 @@ async function fetchProjectSections(): Promise<ProjectSectionData[]> {
   return sections;
 }
 
-function renderProjectSection(data: ProjectSectionData): HTMLElement {
+function renderProjectSection(data: ProjectSectionData, visibleTerminals?: TerminalListEntry[]): HTMLElement {
+  // HS-7661 — `count` reflects all configured terminals (per user answer
+  // #6: "should count all terminals, not just visible ones"); `visible` is
+  // the filtered set used for the actual tile render. Default to the full
+  // list when no filter is provided so older callsites keep working.
+  const visible = visibleTerminals ?? data.terminals;
   const count = data.terminals.length;
   const headingText = count > 0
     ? `${data.project.name} (${count} ${count === 1 ? 'terminal' : 'terminals'})`
@@ -423,7 +515,7 @@ function renderProjectSection(data: ProjectSectionData): HTMLElement {
       },
     });
     gridHandles.set(data.project.secret, handle);
-    handle.rebuild(data.terminals.map(toTileEntry(data.project.secret)));
+    handle.rebuild(visible.map(toTileEntry(data.project.secret)));
   }
 
   const addBtn = section.querySelector<HTMLButtonElement>('.terminal-dashboard-add-terminal-btn');
@@ -463,6 +555,12 @@ function tileLabel(terminal: TerminalListEntry): string {
   if (clean.toLowerCase().includes('claude')) return 'claude';
   const base = clean.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '');
   return base !== '' ? base : 'terminal';
+}
+
+/** HS-7661 — alias used by the hide-dialog opener so the call site reads
+ *  clearly. Returns the same display label the tile shows. */
+function tileEntryLabel(terminal: TerminalListEntry): string {
+  return tileLabel(terminal);
 }
 
 /**
@@ -565,6 +663,12 @@ function onTileContextMenu(entry: TileEntry, secret: string, e: MouseEvent): voi
       </div>
       <div className="context-menu-separator"></div>
       <div className="context-menu-item" data-action="rename">Rename...</div>
+      <div className="context-menu-separator"></div>
+      {/* HS-7661 — hide this terminal from the dashboard. Session-only;
+          state lives in dashboardHiddenTerminals.ts. The hidden-state
+          subscription rebuilds the dashboard so the tile disappears
+          immediately. */}
+      <div className="context-menu-item" data-action="hide">Hide in Dashboard</div>
     </div>
   );
 
@@ -579,6 +683,7 @@ function onTileContextMenu(entry: TileEntry, secret: string, e: MouseEvent): voi
 
   bind('close', () => { void closeDashboardTile(entry, secret, isDynamic); });
   bind('rename', () => { openDashboardTileRename(entry); });
+  bind('hide', () => { setTerminalHidden(secret, entry.id, true); });
 
   document.body.appendChild(menu);
   // Clamp to viewport.

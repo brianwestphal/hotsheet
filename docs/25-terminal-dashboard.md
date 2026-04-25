@@ -236,6 +236,23 @@ Every registered project gets a section, even when it has zero terminals configu
 
 This makes the dashboard a faithful catalog of "your projects, at a glance" without silently omitting projects that happen to have no terminals yet.
 
+## 25.10.4 Hide a terminal (HS-7661)
+
+A user can declutter the dashboard by hiding individual terminals from the tile view without affecting the underlying terminal session or the drawer's tab strip. Two entry points:
+
+**1. Right-click on a tile** → context menu gains a third row, "Hide in Dashboard" (alongside the existing Close Tab + Rename items from §25.8.5). Click flips the tile's hidden state to true; the dashboard re-renders immediately and the tile disappears.
+
+**2. Eye-icon button in the dashboard header toolbar** (`#terminal-dashboard-hide-btn`, Lucide `eye`). Sits to the right of the size slider per the user's HS-7661 feedback. Visibility tracks the slider — visible when the dashboard is in grid view, hidden in dedicated view. Click opens the **Show / Hide Terminals** dialog (see §25.10.6).
+
+**Hidden state — session only.** Per the user's feedback answer to question 1 ("c"), state is module-level (`src/client/dashboardHiddenTerminals.ts`) and lives only for the current page. Reload returns every terminal to visible. The deliberately-volatile choice means the user can hide tiles to declutter the current session without committing to a permanent setting; if persistence is wanted later we'd add a `/file-settings` key.
+
+**Filtering rules.**
+- Tiles whose `(secret, terminalId)` is hidden are dropped from `data.terminals` before the per-section grid is rebuilt. The section's heading still reads `{ProjectName} ({n} terminals)` where `n` is the FULL configured-terminal count (per the user's answer #6: "should count all terminals, not just visible ones").
+- A project section with **all terminals hidden** is skipped entirely (per the user's answer #5: "hide the whole project"). Empty projects (zero configured terminals) still render their existing `No terminals configured.` row.
+- When **no project has any visible tiles** anywhere, the dashboard renders a centered `All Terminals Hidden` placeholder in place of the section list (per the user's answer #5).
+
+**Cross-section coordination.** State changes fire a module-level subscription; the dashboard's `paintDashboardSections` re-renders from the cached `lastSectionData` without re-fetching `/projects` or `/terminal/list`, so toggling rows in the dialog feels instantaneous.
+
 ## 25.10.5 Flow layout mode (HS-7624 — spec, follow-up ticket implements)
 
 The default sectioned layout (§25.4) renders one section per project with its own grid. When projects have only 1–2 terminals each, this leaves substantial whitespace at the right of every section's row — wasted screen on multi-project setups. **Flow mode** is an alternate layout in which every project's terminals share a single grid that wraps across rows in registered-project order, packing tiles densely.
@@ -265,6 +282,22 @@ The default sectioned layout (§25.4) renders one section per project with its o
 6. E2E tests: toggle persists across reload, flow mode renders a flat grid, empty projects are dropped, tile interactions (click-center / dblclick-dedicated / bell) work identically across modes.
 
 The implementation is non-trivial (~400 lines of refactor + tests) and is filed as a separate follow-up ticket alongside this spec landing.
+
+## 25.10.6 Show / Hide Terminals dialog (HS-7661)
+
+A modal dialog rendered on the body when the user clicks an eye-icon button (either the dashboard's header eye icon or the drawer-grid's toolbar eye icon — see §36.5).
+
+**Two presentation modes.** Picked by the calling surface, controls layout but not state semantics:
+- **`'global'`** — used by the dashboard's eye icon. Shows every project's terminals grouped under per-project headings. Per the user's feedback (#4), the global dashboard's dialog scopes across every project.
+- **`'single-project'`** — used by the drawer-grid's eye icon. Shows just the active project's terminals with no grouping (per the user's feedback #4: "in drawer-grid-mode, just the project ones").
+
+**Row treatment.** Each row shows an eye / eye-off icon, the terminal label, and a `Visible` / `Hidden` status text. Rows for currently-hidden terminals are styled with `.is-hidden` (dimmed label + reduced icon opacity) so the user can see at a glance which rows are off. Click toggles. Keyboard: row is focusable (`role="button"`, `tabIndex=0`) and Enter / Space toggles, matching standard list-item ARIA.
+
+**Show all.** A footer button clears every hidden row in scope — every project for the global mode, just this project for the single-project mode. Useful one-click recovery.
+
+**Dismissal.** × button, click outside the inner card, Esc. The Esc handler uses `stopImmediatePropagation` AND the dashboard / drawer-grid Esc handlers short-circuit when `.hide-terminal-dialog-overlay` is in the DOM — without that double guard, Esc would close the dialog AND drop the user out of dashboard / grid mode.
+
+**Implementation.** `src/client/hideTerminalDialog.tsx` — `showHideTerminalDialog(opts)` builds + mounts the overlay, `closeHideTerminalDialog()` tears it down. `refreshOpenHideDialog()` is exposed for callers that mutate hidden state outside the dialog (e.g. via the context-menu Hide entry) — no-op when the dialog isn't open. The dialog re-renders its body in-place after every toggle, so the user sees the row treatment update without losing scroll position or focus.
 
 ## 25.11 Tauri-only feature gating
 

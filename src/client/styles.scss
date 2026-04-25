@@ -283,6 +283,424 @@ input, select, textarea {
   padding: 12px 0;
 }
 
+// HS-7661 — centered "All Terminals Hidden" placeholder shown when every
+// project's terminals are filtered out. Renders inside the dashboard root
+// in place of the section list.
+.terminal-dashboard-all-hidden {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-style: italic;
+  padding: 48px 0;
+}
+
+// HS-7661 — Show / Hide Terminals dialog. Modal-style overlay rendered on
+// the body. Outer overlay is the dim backdrop, inner card holds the list.
+.hide-terminal-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2700;
+}
+
+.hide-terminal-dialog {
+  width: 480px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.hide-terminal-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+
+  .detail-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 0 4px;
+    &:hover { color: var(--text); }
+  }
+}
+
+.hide-terminal-dialog-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.hide-terminal-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.hide-terminal-show-all {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 12px;
+  font-size: 12px;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+}
+
+.hide-terminal-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 16px;
+  text-align: center;
+  font-style: italic;
+}
+
+.hide-terminal-group-heading {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 10px 16px 4px 16px;
+}
+
+.hide-terminal-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+
+  &:focus { outline: 2px solid var(--accent, #3b82f6); outline-offset: -2px; }
+
+  .hide-terminal-row-icon {
+    display: inline-flex;
+    width: 18px;
+    color: var(--text-muted);
+  }
+
+  .hide-terminal-row-label {
+    flex: 1;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hide-terminal-row-status {
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  // Greyed-out state when the terminal is currently hidden — per the
+  // HS-7661 description: "greyed out if hidden or black if not hidden".
+  &.is-hidden {
+    .hide-terminal-row-label { color: var(--text-muted); }
+    .hide-terminal-row-icon { opacity: 0.7; }
+  }
+}
+
+// HS-7596 — quit-confirm dialog. Modeled after the §22 hide-terminal-dialog
+// for visual parity (header + grouped list + footer). Higher z-index than
+// the hide dialog because it can be shown on top of any other surface.
+.quit-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3500;
+  animation: quit-confirm-overlay-fade 160ms ease-out;
+}
+
+@keyframes quit-confirm-overlay-fade {
+  from { background: rgba(0, 0, 0, 0); }
+  to   { background: rgba(0, 0, 0, 0.45); }
+}
+
+.quit-confirm-dialog {
+  width: 480px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  animation: quit-confirm-pop 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes quit-confirm-pop {
+  from { transform: scale(0.96); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+.quit-confirm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.quit-confirm-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.quit-confirm-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.quit-confirm-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px;
+  &:hover { color: var(--text); }
+}
+
+.quit-confirm-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.quit-confirm-intro {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.quit-confirm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.quit-confirm-project {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quit-confirm-project-heading {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 0 4px 2px;
+}
+
+.quit-confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  background: var(--bg-secondary, color-mix(in srgb, var(--text) 4%, transparent));
+  font-size: 13px;
+
+  .quit-confirm-row-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    width: 16px;
+    flex-shrink: 0;
+  }
+
+  .quit-confirm-row-label {
+    flex: 1;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .quit-confirm-row-cmd {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.quit-confirm-dont-ask {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 2px;
+  margin-top: 2px;
+
+  input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+  }
+
+  &:hover { color: var(--text); }
+}
+
+.quit-confirm-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 2%, transparent);
+}
+
+.quit-confirm-btn {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent, #3b82f6);
+    outline-offset: 1px;
+  }
+}
+
+.quit-confirm-btn-cancel {
+  // Default styling — same as base .quit-confirm-btn.
+}
+
+.quit-confirm-btn-danger {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+  font-weight: 600;
+
+  &:hover {
+    background: #dc2626;
+    border-color: #dc2626;
+    color: #fff;
+  }
+}
+
+// HS-7661 — eye-icon dialog opener buttons (one in the global dashboard
+// header, one in the drawer-grid toolbar). 26 × 26 muted-pill matching the
+// neighbouring chrome buttons.
+.terminal-dashboard-hide-btn,
+.drawer-grid-hide-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  }
+}
+
+.drawer-grid-hide-btn {
+  align-self: center;
+}
+
+// HS-7661 — drawer-grid all-hidden placeholder rendered inside the grid
+// container when every terminal in the project is hidden.
+.drawer-terminal-grid-all-hidden {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+  padding: 32px 0;
+  width: 100%;
+  min-height: 80px;
+}
+
 .terminal-dashboard-section {
   display: flex;
   flex-direction: column;
@@ -6386,17 +6804,6 @@ body.terminal-dashboard-active {
 // lets the two surfaces evolve independently (drawer is short + wide; the
 // dashboard is full-viewport with per-project sections).
 
-// HS-7660 — when a tile is enlarged (centered or in dedicated view) the
-// drawer auto-expands to full height; the expand button and the size slider
-// are irrelevant in that state, so hide them. body class set/cleared by
-// drawerTerminalGrid.tsx's enter/exit-enlarged-state handlers.
-body.drawer-grid-tile-enlarged {
-  #drawer-expand-btn,
-  #drawer-grid-sizer {
-    display: none !important;
-  }
-}
-
 .drawer-grid-toggle {
   display: inline-flex;
   align-items: center;
@@ -6591,14 +6998,15 @@ body.drawer-grid-tile-enlarged {
   flex-shrink: 0;
 }
 
-// Backdrop only dims the drawer panel area, not the full viewport — the
-// grid view is contained in the drawer so a full-screen backdrop would
-// needlessly obscure the ticket list / project tabs.
+// HS-7659 — backdrop dims the entire viewport, not just the drawer panel,
+// so the enlarged terminal reads as a full-app overlay. Mirrors §25's
+// dashboard backdrop. Mounted under document.body via centerScope:
+// 'viewport' in drawerTerminalGrid.tsx.
 .drawer-terminal-grid-center-backdrop {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 499;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.55);
   animation: drawer-terminal-grid-backdrop-fade 180ms ease-out;
 }
 
@@ -6621,14 +7029,16 @@ body.drawer-grid-tile-enlarged {
   50%      { transform: scale(1.08); }
 }
 
-// Dedicated full-drawer view — replaces the grid tiles while up. Absolute
-// positioning inside the drawer panel (not fixed to viewport) so it doesn't
-// overflow the drawer when the user has the drawer at a small height.
+// HS-7659 — dedicated full-app overlay. Pinned to the visual viewport
+// (matches §25's dashboard dedicated overlay) so the enlarged terminal
+// uses the entire window, not just the drawer band. Mounted at the body
+// level by terminalTileGrid via centerScope: 'viewport' so no parent
+// stacking context can clip it. z-index above the centered tile (500).
 .drawer-terminal-grid-dedicated {
-  position: absolute;
+  position: fixed;
   inset: 0;
   background: var(--bg);
-  z-index: 400;
+  z-index: 600;
   display: flex;
   flex-direction: column;
 }

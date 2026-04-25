@@ -88,7 +88,7 @@ Exactly mirrors §25.7 + §25.8 with the drawer's bounds as the "viewport":
 
 **Bell clearing on enlarge.** Entering the centered overlay or the dedicated view on a tile with `.has-bell` clears the outline and fires `POST /api/terminal/clear-bell` (§25.6). Exiting grid mode and subsequently activating that terminal's drawer tab also clears the bell via the existing §22 activation path.
 
-**Auto-expand drawer to full height on enlarge (HS-7659 / HS-7660).** Single-click center and double-click dedicated both auto-expand the drawer to full height (the same `.app.drawer-expanded` state the user can toggle manually via the expand button) so the maximized terminal occupies the whole app surface rather than just the narrow drawer band. The drawer's pre-enlarge expanded state is captured on the first enlarge of a chain (center → dedicated → exit) and restored on the final shrink — so a user who already has the drawer expanded sees no change, but a user with a half-height drawer gets the temporary full-height treatment. While any tile is enlarged, `body.drawer-grid-tile-enlarged` hides `#drawer-expand-btn` and `#drawer-grid-sizer` (the user has already implicitly maximized the drawer; the slider would also be irrelevant given the centered tile pins to a fixed fraction of the full body). The body class is set/cleared by `drawerTerminalGrid.tsx`'s `enterDrawerEnlargedState()` / `exitDrawerEnlargedState()` handlers, wired to `mountTileGrid`'s `onTileEnlarge` / `onTileShrink` hooks. The shrink handler short-circuits when the grid is still centered or in dedicated view (e.g. center → dedicated transition where the center fires shrink before the dedicated fires enlarge — we don't restore mid-flow). Regression covered by `drawer-terminal-grid.spec.ts` "enlarging a tile auto-expands the drawer + hides expand button + slider; shrinking restores prior state (HS-7659/HS-7660)".
+**App-level overlay on enlarge (HS-7659).** Single-click center and double-click dedicated both render the maximized terminal at an app-level overlay covering the entire viewport — NOT by expanding the drawer panel. The earlier implementation auto-expanded the drawer + hid the expand button while a tile was enlarged, but that had two problems: it visually conflated "you've maximized one terminal" with "your drawer is expanded," and the chrome flips meant the expand button could be left in a confusing state if the shrink path ever skipped restoration. The current model leaves the drawer entirely alone — the user's `.app.drawer-expanded` state, expand button, and size slider are all untouched throughout the enlarge → exit cycle. Mechanically: `mountTileGrid()` is configured with `centerScope: 'viewport'` and `centerReferenceEl: document.body`, so the centered tile positions against the visual viewport (matching §25's dashboard) and both the backdrop (`position: fixed; inset: 0`) and the dedicated overlay (`position: fixed; inset: 0; z-index: 600`) cover the full window. No body-class chrome flips, no `commandLog` imports, no state to restore. Regression covered by `drawer-terminal-grid.spec.ts` "enlarging a tile renders at viewport scope and leaves drawer chrome untouched (HS-7659)".
 
 **Cursor ring / focus.** Only the centered tile and the dedicated view's xterm take keyboard input. Grid tiles set `pointer-events: none` on their xterm root so stray clicks don't leak into the scaled canvas.
 
@@ -101,6 +101,20 @@ Implementation: two new `Map<secret, …>` structures in `src/client/state.tsx`:
 - `projectGridSliderValue: Map<secret, number>` — the slider value last used in this project (0..100, default `33`).
 
 `setActiveProject` saves the current project's grid state before switching and restores the destination project's grid state afterwards. `clearPerProjectSessionState(secret)` (HS-7360) also wipes these two maps so a removed project doesn't leak state.
+
+## 36.6.5 Hide a terminal from the grid (HS-7661)
+
+Mirrors §25.10.4 — a user can hide individual terminals from the drawer-grid view without affecting the underlying session or the drawer's tab strip. Two entry points:
+
+**1. Right-click on a tile** → small context menu with one entry: "Hide in Dashboard". Click sets the terminal hidden via the shared `dashboardHiddenTerminals.ts` state, which in turn fires the change subscription that rebuilds the drawer-grid (filtering out the hidden terminal).
+
+**2. Eye-icon button in the drawer toolbar** (`#drawer-grid-hide-btn`, Lucide `eye`). Sits to the right of the size slider per the user's HS-7661 feedback. Visibility tracks the slider — visible only while drawer-grid mode is active. Click opens the **Show / Hide Terminals** dialog in `single-project` mode (see §25.10.6) — only this project's terminals are listed. Toggle a row → the dashboard rebuilds immediately and the row treatment updates in-place.
+
+**State** is shared with the global Terminal Dashboard (per the user's feedback answer #2: "both") — `dashboardHiddenTerminals.ts` keys by `(secret, terminalId)` so a hide operation in either surface filters the same tile out of both views. Session-only — clears on page reload.
+
+**Disabled-state gate (§36.7) counts ALL terminals.** Per the user's feedback answer #6, the toggle's enable rule remains "≥2 terminals exist" — hiding terminals does NOT disable the toggle. So a 2-terminal project where the user hides one still has the toggle enabled, and the grid would render with one visible tile + the eye icon to toggle the other back.
+
+**All-hidden empty state.** When every terminal in the project is hidden, the grid container renders a `.drawer-terminal-grid-all-hidden` placeholder ("All Terminals Hidden") in place of the tile list (per the user's feedback answer #5). Toggling any row back from the dialog rebuilds the grid normally.
 
 ## 36.7 Disabled-state logic
 

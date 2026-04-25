@@ -171,37 +171,48 @@ interface QuitDialogChoice {
 
 function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<QuitDialogChoice> {
   return new Promise<QuitDialogChoice>((resolve) => {
+    const totalTerminals = contributing.reduce((acc, p) => acc + p.entries.length, 0);
+    const intro = totalTerminals === 1
+      ? 'A terminal is running an active process. Quitting will stop it.'
+      : `${totalTerminals} terminals are running active processes. Quitting will stop all of them.`;
     const overlay = toElement(
-      <div className="confirm-dialog-overlay quit-confirm-overlay" role="dialog" aria-modal="true" aria-label="Quit Hot Sheet?">
-        <div className="confirm-dialog quit-confirm-dialog">
-          <div className="confirm-dialog-header">Quit Hot Sheet?</div>
-          <div className="confirm-dialog-body">
-            <div className="quit-confirm-intro">
-              The following terminals are running active processes. Quitting will stop all of them.
-            </div>
-            <ul className="quit-confirm-list">
+      <div className="quit-confirm-overlay" role="dialog" aria-modal="true" aria-label="Quit Hot Sheet?">
+        <div className="quit-confirm-dialog">
+          <div className="quit-confirm-header">
+            <span className="quit-confirm-title">
+              <span className="quit-confirm-icon" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+              </span>
+              Quit Hot Sheet?
+            </span>
+            <button className="quit-confirm-close" type="button" data-action="cancel" title="Cancel">{'×'}</button>
+          </div>
+          <div className="quit-confirm-body">
+            <div className="quit-confirm-intro">{intro}</div>
+            <div className="quit-confirm-list" data-role="list">
               {contributing.map(project => (
-                <li className="quit-confirm-project">
-                  <div className="quit-confirm-project-name">{project.name}</div>
-                  <ul>
-                    {project.entries.map(entry => (
-                      <li>
-                        <span className="quit-confirm-entry-label">{entry.label}</span>
-                        <span className="quit-confirm-entry-cmd">{`(${entry.foregroundCommand})`}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </li>
+                <div className="quit-confirm-project">
+                  <div className="quit-confirm-project-heading">{project.name}</div>
+                  {project.entries.map(entry => (
+                    <div className="quit-confirm-row">
+                      <span className="quit-confirm-row-icon" aria-hidden="true">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+                      </span>
+                      <span className="quit-confirm-row-label">{entry.label}</span>
+                      <span className="quit-confirm-row-cmd">{entry.foregroundCommand}</span>
+                    </div>
+                  ))}
+                </div>
               ))}
-            </ul>
+            </div>
             <label className="quit-confirm-dont-ask">
               <input type="checkbox" className="quit-confirm-dont-ask-cb" />
-              {' Don’t ask again for any project'}
+              <span>{'Don’t ask again for any project'}</span>
             </label>
           </div>
-          <div className="confirm-dialog-footer">
-            <button type="button" className="btn btn-sm quit-confirm-cancel">Cancel</button>
-            <button type="button" className="btn btn-sm btn-danger quit-confirm-proceed">Quit Anyway</button>
+          <div className="quit-confirm-footer">
+            <button type="button" className="quit-confirm-btn quit-confirm-btn-cancel" data-action="cancel">Cancel</button>
+            <button type="button" className="quit-confirm-btn quit-confirm-btn-danger" data-action="proceed">Quit Anyway</button>
           </div>
         </div>
       </div>
@@ -224,15 +235,20 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
     };
     document.addEventListener('keydown', onKey, true);
 
-    overlay.querySelector('.quit-confirm-cancel')?.addEventListener('click', () => { finish('cancel'); });
-    overlay.querySelector('.quit-confirm-proceed')?.addEventListener('click', () => { finish('proceed'); });
-    // Click backdrop = cancel (matches confirm-dialog convention).
+    overlay.querySelectorAll<HTMLElement>('[data-action="cancel"]').forEach(el => {
+      el.addEventListener('click', (ev) => { ev.stopPropagation(); finish('cancel'); });
+    });
+    overlay.querySelector('[data-action="proceed"]')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      finish('proceed');
+    });
+    // Click backdrop = cancel.
     overlay.addEventListener('click', (e) => { if (e.target === overlay) finish('cancel'); });
 
     document.body.appendChild(overlay);
     // Default-focus Cancel rather than Quit Anyway so a stray Enter doesn't
     // immediately destroy work — the user has to deliberately click /
     // Tab-then-Enter the Quit Anyway button.
-    overlay.querySelector<HTMLButtonElement>('.quit-confirm-cancel')?.focus();
+    overlay.querySelector<HTMLButtonElement>('.quit-confirm-btn-cancel')?.focus();
   });
 }
