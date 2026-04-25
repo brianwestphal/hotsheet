@@ -49,6 +49,23 @@ export function shouldAutoShowFeedback(ticketId: number, noteId: string): boolea
   return true;
 }
 
+/** HS-7599: a previously-saved draft to seed the dialog with. When provided,
+ *  the dialog ignores `prompt` and uses the draft's saved blocks verbatim
+ *  (so heuristic changes to `parseFeedbackBlocks` don't reshape the saved
+ *  draft), restores inline responses and the catch-all textarea, and clicks
+ *  on Save Draft / Submit operate against this draft id (PATCH on save,
+ *  DELETE on submit). */
+export interface FeedbackDraftSeed {
+  id: string;
+  parentNoteId: string | null;
+  promptText: string;
+  partitions: {
+    blocks: { markdown: string; html: string }[];
+    inlineResponses: { blockIndex: number; text: string }[];
+    catchAll: string;
+  };
+}
+
 /**
  * Show the feedback dialog for a ticket (HS-6998).
  *
@@ -58,13 +75,45 @@ export function shouldAutoShowFeedback(ticketId: number, noteId: string): boolea
  * inline textarea at any block boundary. A catch-all textarea always sits at
  * the bottom — when the prompt is a plain single question, that's the only
  * input the user needs.
+ *
+ * HS-7599: when `draftSeed` is provided, the dialog opens in "edit existing
+ * draft" mode — blocks come from the saved partitions (NOT a fresh
+ * `parseFeedbackBlocks(prompt)` call) so heuristic changes don't reshape the
+ * saved draft, inline responses are pre-inserted, and the catch-all is
+ * pre-filled. Save Draft writes back via PATCH; Submit deletes the draft.
  */
-export function showFeedbackDialog(ticketId: number, ticketNumber: string, prompt: string) {
+export function showFeedbackDialog(
+  ticketId: number,
+  ticketNumber: string,
+  prompt: string,
+  draftSeed?: FeedbackDraftSeed,
+  parentNoteId?: string,
+) {
   // Remove any existing feedback dialog
   document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
 
-  const blocks = parseFeedbackBlocks(prompt);
+  // HS-7599: re-opening an existing draft uses the saved block layout
+  // verbatim so future changes to parseFeedbackBlocks don't reshape it.
+  const blocks = draftSeed !== undefined ? draftSeed.partitions.blocks : parseFeedbackBlocks(prompt);
+  const effectivePrompt = draftSeed !== undefined ? draftSeed.promptText : prompt;
+  const effectiveParentNoteId = draftSeed?.parentNoteId ?? parentNoteId ?? null;
   const overlay = buildOverlay(ticketNumber, blocks);
+
+  // Restore inline responses from the draft seed BEFORE the insert-response
+  // wiring runs so each saved response lands in its original slot.
+  if (draftSeed !== undefined) {
+    for (const r of draftSeed.partitions.inlineResponses) {
+      if (r.text === '') continue;
+      const slot = overlay.querySelector<HTMLElement>(`.feedback-insert-slot[data-after-block="${r.blockIndex}"]`);
+      if (slot === null) continue;
+      const insertBtn = slot.querySelector('.feedback-insert-btn');
+      const responseEl = buildInlineResponse();
+      (responseEl.querySelector('textarea') as HTMLTextAreaElement).value = r.text;
+      slot.insertBefore(responseEl, insertBtn);
+    }
+    const catchAll = overlay.querySelector('#feedback-catchall-text') as HTMLTextAreaElement;
+    catchAll.value = draftSeed.partitions.catchAll;
+  }
 
   const pendingFiles: File[] = [];
   const fileListEl = overlay.querySelector('#feedback-files')!;
@@ -121,8 +170,18 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
   const close = () => overlay.remove();
   overlay.querySelector('#feedback-close')!.addEventListener('click', close);
   overlay.querySelector('#feedback-later')!.addEventListener('click', close);
-  // Click outside dialog to dismiss (unlike Not Working which preserves form state)
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  // HS-7599: click outside the dialog dismisses ONLY when no text has been
+  // entered. Any text in any input (catch-all or any inline textarea) keeps
+  // the dialog open so the user doesn't lose work to a stray click. The
+  // user can still close explicitly via the × / Later / Esc / Save Draft
+  // paths. Threshold per spec is "any text entered at all" — even
+  // whitespace/quoted-prompt-text doesn't count since those aren't pre-
+  // populated in this dialog.
+  overlay.addEventListener('click', (e) => {
+    if (e.target !== overlay) return;
+    if (overlayHasAnyText(overlay)) return;
+    close();
+  });
 
   // No Response Needed
   overlay.querySelector('#feedback-no-response')!.addEventListener('click', async () => {
@@ -135,6 +194,50 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
       close();
       void loadTickets();
     } catch {
+      btn.disabled = false;
+    }
+  });
+
+  // HS-7599: Save Draft. Persists the current dialog state to
+  // `feedback_drafts` so the user can come back later without sending. The
+  // saved partition structure is restored verbatim on click-to-reopen so
+  // future heuristic tweaks don't reshape an in-flight draft. POST creates
+  // a new draft (id generated client-side); PATCH updates the seed draft.
+  // After success the dialog closes and the notes list re-renders so the
+  // new draft entry appears inline after its FEEDBACK NEEDED parent (or
+  // free-floating at the end if `parentNoteId` is null).
+  overlay.querySelector('#feedback-save-draft')!.addEventListener('click', async () => {
+    const partitions = collectPartitions(overlay, blocks);
+    if (!partitionsHaveText(partitions)) {
+      focusFirstInput(overlay);
+      return;
+    }
+
+    const btn = overlay.querySelector('#feedback-save-draft') as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
+    try {
+      if (draftSeed !== undefined) {
+        await api(`/tickets/${ticketId}/feedback-drafts/${draftSeed.id}`, {
+          method: 'PATCH', body: { partitions },
+        });
+      } else {
+        const draftId = `fd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        await api(`/tickets/${ticketId}/feedback-drafts`, {
+          method: 'POST',
+          body: {
+            id: draftId,
+            parent_note_id: effectiveParentNoteId,
+            prompt_text: effectivePrompt,
+            partitions,
+          },
+        });
+      }
+      close();
+      void loadTickets();
+    } catch {
+      btn.textContent = 'Save Draft';
       btn.disabled = false;
     }
   });
@@ -162,6 +265,14 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
         await apiUpload(`/tickets/${ticketId}/attachments`, file);
       }
 
+      // HS-7599: clear the seed draft on successful submit so the user
+      // doesn't see a now-stale draft alongside the just-sent note.
+      if (draftSeed !== undefined) {
+        try {
+          await api(`/tickets/${ticketId}/feedback-drafts/${draftSeed.id}`, { method: 'DELETE' });
+        } catch { /* draft already gone — fine */ }
+      }
+
       close();
       void loadTickets();
 
@@ -174,6 +285,19 @@ export function showFeedbackDialog(ticketId: number, ticketNumber: string, promp
 
   document.body.appendChild(overlay);
   focusFirstInput(overlay);
+}
+
+/** HS-7599 — true when ANY input in the overlay has non-empty text. Drives
+ *  the don't-close-on-clickaway gate: per the spec the threshold is "any
+ *  text entered at all". Catch-all OR any inline-response textarea counts. */
+function overlayHasAnyText(overlay: HTMLElement): boolean {
+  const catchAll = overlay.querySelector<HTMLTextAreaElement>('#feedback-catchall-text');
+  if (catchAll !== null && catchAll.value !== '') return true;
+  const inlines = overlay.querySelectorAll<HTMLTextAreaElement>('.feedback-inline-textarea');
+  for (const ta of inlines) {
+    if (ta.value !== '') return true;
+  }
+  return false;
 }
 
 function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTMLElement {
@@ -212,9 +336,10 @@ function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTMLElemen
             <button className="btn btn-sm" id="feedback-add-file" style="margin-top:6px">Add File...</button>
             <input type="file" id="feedback-file-input" multiple={true} style="display:none" />
           </div>
-          <div style="display:flex;gap:8px;margin-top:16px;align-items:center">
+          <div style="display:flex;gap:8px;margin-top:16px;align-items:center;flex-wrap:wrap">
             <button className="feedback-later-link" id="feedback-later">Later</button>
             <div style="flex:1"></div>
+            <button className="btn btn-sm" id="feedback-save-draft" title="Save the response as a draft to come back to later (HS-7599)">Save Draft</button>
             <button className="btn btn-sm" id="feedback-no-response">No Response Needed</button>
             <button className="btn btn-sm btn-primary" id="feedback-submit">Submit</button>
           </div>
@@ -250,6 +375,40 @@ function collectResponse(overlay: HTMLElement, blocks: FeedbackBlock[]): string 
   if (!hasInline && !hasCatchAll) return null;
 
   return combineQuotedResponse(blocks, inline, catchAll);
+}
+
+/** HS-7599 — collect the dialog's working state in the shape that
+ *  `feedback_drafts.partitions_json` stores. Captures EMPTY inline responses
+ *  too so the user's "I clicked + Add response but didn't fill it in yet"
+ *  state survives a save/reopen round-trip. The blocks are passed through
+ *  verbatim — they were already either parsed at draft-creation time or
+ *  loaded from the saved seed. */
+function collectPartitions(overlay: HTMLElement, blocks: FeedbackBlock[]): {
+  blocks: { markdown: string; html: string }[];
+  inlineResponses: { blockIndex: number; text: string }[];
+  catchAll: string;
+} {
+  const catchAll = (overlay.querySelector('#feedback-catchall-text') as HTMLTextAreaElement).value;
+  const inlineResponses: { blockIndex: number; text: string }[] = [];
+  overlay.querySelectorAll<HTMLElement>('.feedback-insert-slot').forEach(slot => {
+    const blockIndex = Number(slot.getAttribute('data-after-block') ?? '-1');
+    slot.querySelectorAll<HTMLTextAreaElement>('.feedback-inline-textarea').forEach(ta => {
+      inlineResponses.push({ blockIndex, text: ta.value });
+    });
+  });
+  return {
+    blocks: blocks.map(b => ({ markdown: b.markdown, html: b.html })),
+    inlineResponses,
+    catchAll,
+  };
+}
+
+/** HS-7599 — true when the partitions snapshot has any non-empty text in
+ *  the catch-all or any inline response. Used to gate Save Draft so we
+ *  don't persist empty drafts. */
+function partitionsHaveText(partitions: ReturnType<typeof collectPartitions>): boolean {
+  if (partitions.catchAll.trim() !== '') return true;
+  return partitions.inlineResponses.some(r => r.text.trim() !== '');
 }
 
 function focusFirstInput(overlay: HTMLElement) {
@@ -294,12 +453,49 @@ export async function checkFeedbackState() {
   setProjectFeedback(secret, hasFeedback);
 }
 
-/** Notify the Claude channel that feedback was submitted. */
+/** Notify the Claude channel that feedback was submitted.
+ *
+ *  HS-7601 follow-up: surface a warning toast when channel comm fails — the
+ *  same warning shape the megaphone uses (`note-megaphone-warning`), so the
+ *  user knows their feedback note WAS saved but the trigger to Claude
+ *  didn't reach because (most commonly) Claude isn't connected. Without
+ *  this, a user submits feedback against an offline channel, sees nothing,
+ *  and waits indefinitely for Claude to pick up — the warning at least
+ *  flags the disconnect immediately. The warning auto-dismisses after 6 s
+ *  and is non-blocking — the feedback note itself was saved.
+ */
 async function notifyChannel(ticketNumber: string) {
   try {
-    const { isChannelAlive, triggerChannelAndMarkBusy } = await import('./channelUI.js');
-    if (isChannelAlive()) {
-      triggerChannelAndMarkBusy(`Feedback was provided on ticket ${ticketNumber}. Please re-read the worklist and continue work on this ticket.`);
+    const { isChannelEnabled } = await import('./experimentalSettings.js');
+    if (!isChannelEnabled()) {
+      showFeedbackChannelWarning('Channel feature not enabled in Settings → Experimental — Claude was not notified.');
+      return;
     }
-  } catch { /* channel not available */ }
+    const { isChannelAlive, triggerChannelAndMarkBusy } = await import('./channelUI.js');
+    if (!isChannelAlive()) {
+      showFeedbackChannelWarning('Claude is not connected — feedback was saved but Claude was not notified. Launch Claude Code with channel support to re-trigger.');
+      return;
+    }
+    triggerChannelAndMarkBusy(`Feedback was provided on ticket ${ticketNumber}. Please re-read the worklist and continue work on this ticket.`);
+  } catch (err) {
+    showFeedbackChannelWarning(`Failed to notify Claude: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** HS-7601 follow-up — surface a warning when post-submit channel comm
+ *  fails. Mirrors `showMegaphoneWarning` in `noteRenderer.tsx` so the two
+ *  notification paths read consistently. Prepended to `#detail-notes` so the
+ *  user sees it immediately above the just-saved feedback note. */
+function showFeedbackChannelWarning(message: string): void {
+  document.querySelectorAll('.note-megaphone-warning').forEach(el => el.remove());
+  const alert = toElement(
+    <div className="note-megaphone-warning no-upnext-alert">
+      <span>{message}</span>
+      <button className="no-upnext-dismiss" type="button">{'×'}</button>
+    </div>
+  );
+  alert.querySelector('button')?.addEventListener('click', () => alert.remove());
+  setTimeout(() => alert.remove(), 6000);
+  const notesContainer = document.getElementById('detail-notes');
+  if (notesContainer !== null) notesContainer.prepend(alert);
 }

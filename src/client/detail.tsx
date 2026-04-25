@@ -4,7 +4,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
 import { getTicketFeedbackState, shouldAutoShowFeedback, showFeedbackDialog } from './feedbackDialog.js';
-import { parseNotesJson, renderNotes, setPendingFocusNoteId } from './noteRenderer.js';
+import { type FeedbackDraft, parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
@@ -284,6 +284,22 @@ async function loadDetail(id: number) {
   const parsedNotes = parseNotesJson(ticket.notes);
   if (!noteBeingEdited || document.activeElement !== noteBeingEdited) {
     renderNotes(ticket.id, parsedNotes);
+    // HS-7599: load any feedback drafts for this ticket and re-render once
+    // they arrive so saved drafts appear inline below their parent FEEDBACK
+    // NEEDED note (or free-floating at the end if the parent's gone).
+    void api<FeedbackDraft[]>(`/tickets/${ticket.id}/feedback-drafts`).then((drafts) => {
+      if (Array.isArray(drafts)) {
+        setTicketDrafts(ticket.id, drafts);
+        // Only re-render if the panel is still showing this ticket and no
+        // note is being edited (avoid clobbering an in-progress edit).
+        if (state.activeTicketId === ticket.id) {
+          const editingNow = document.getElementById('detail-notes')?.querySelector('.note-edit-area') as HTMLElement | null;
+          if (editingNow === null || document.activeElement !== editingNow) {
+            renderNotes(ticket.id, parsedNotes);
+          }
+        }
+      }
+    }).catch(() => { /* fine — server may be older */ });
   }
 
   // Auto-show feedback dialog if the last note is a feedback request

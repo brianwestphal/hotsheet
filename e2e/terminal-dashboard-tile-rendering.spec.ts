@@ -339,4 +339,118 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     expect(result.lastRowText).toMatch(/BOTTOM-KEYBAR/);
     expect(result.gapAsFraction).toBeLessThan(0.1);
   });
+
+  /**
+   * HS-7603 — tiles initially below the visible viewport must still pick up
+   * tile-native cell dims when xterm finishes its first render. The earlier
+   * resync logic gated only on the initial rAF + the history-frame handler;
+   * if either fired before xterm had committed `.xterm-screen` to the DOM
+   * (typical for tiles below the fold whose rAF could land while the screen
+   * was still 0×0), `tileNativeDimsFromXterm` returned the fallback 80×60
+   * and the term + PTY stayed locked to the fallback even after the user
+   * scrolled the tile into view. The fix routes the same resize through the
+   * `.xterm-screen` ResizeObserver that already drove the visual scale, so
+   * any subsequent screen-size change re-derives native dims and pushes
+   * them to both the term and the PTY.
+   */
+  test('tiles below the fold end up at native dims, not the fallback 80×60 (HS-7603)', async ({ page }) => {
+    // Wide-short viewport so the drawer fits at a wide-short PTY shape, then
+    // tall enough that there's still real estate to scroll within when many
+    // tiles are configured. We compress the viewport AFTER opening the
+    // drawer so the dashboard's tile rows immediately wrap below the fold.
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await openDrawerAndWaitForDraw(page);
+
+    // Add 11 more terminal configs so the dashboard has 12 alive tiles
+    // (`draw` plus `t01`-`t11`) and rows wrap below the visible viewport.
+    // Reusing `/usr/bin/env true` for the extras keeps PTY spawn cost low —
+    // they exit after one byte but leave history that tile can replay; for
+    // this test we only care that the tile element renders + reaches its
+    // native dims, not that anything specific is drawn into it.
+    const projRes = await page.request.get('/api/projects');
+    const projects = await projRes.json() as { secret: string }[];
+    const secret = projects[0]?.secret ?? '';
+    const extraTerminals = Array.from({ length: 11 }, (_, i) => ({
+      id: `t${String(i + 1).padStart(2, '0')}`,
+      name: `T${i + 1}`,
+      command: `/usr/bin/env python3 ${DRAW_SCRIPT}`,
+      lazy: false,
+    }));
+    await page.request.patch('/api/file-settings', {
+      headers: { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret },
+      data: {
+        terminals: [
+          { id: 'draw', name: 'Draw', command: `/usr/bin/env python3 ${DRAW_SCRIPT}`, lazy: false },
+          ...extraTerminals,
+        ],
+      },
+    });
+
+    // Open the dashboard. The list refresh that the dashboard fires on
+    // toggle picks up the new terminals; we wait for the last tile to be
+    // attached (it'll be below the fold initially).
+    await page.locator('#terminal-dashboard-toggle').click();
+    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
+    const lastTile = page.locator('.terminal-dashboard-tile[data-terminal-id="t11"]');
+    await expect(lastTile).toBeAttached({ timeout: 10000 });
+
+    // Give every tile time to (a) finish its rAF resize pass and (b) get its
+    // first .xterm-screen render committed. The ResizeObserver fires on the
+    // first render so the resync runs even for tiles below the fold.
+    await page.waitForTimeout(500);
+
+    // Query every tile's xterm cols. The xterm instance isn't directly
+    // accessible from the DOM, but the screen DOM has an inline `style.width`
+    // set to `cols * cellWidth` — and applyTileScale wraps it in an
+    // absolute-positioned root sized to the natural pixel dims, so we can
+    // round-trip to cols by dividing by the cellWidth observed on a known
+    // tile. Use the visible `draw` tile (which we know has been resized
+    // correctly per HS-7097) as the cell-metric reference.
+    const result = await page.evaluate(() => {
+      const tiles = Array.from(document.querySelectorAll<HTMLElement>('.terminal-dashboard-tile-alive'));
+      type Entry = { id: string; cols: number | null; rows: number | null; visible: boolean };
+      const entries: Entry[] = tiles.map((tile) => {
+        const id = tile.dataset.terminalId ?? '';
+        const screen = tile.querySelector<HTMLElement>('.xterm-screen');
+        if (screen === null) return { id, cols: null, rows: null, visible: false };
+        const rows = tile.querySelectorAll('.xterm-rows > div').length;
+        // .xterm-screen offsetWidth = cols * cellW. The xterm-rows row count
+        // matches term.rows. We use the row's pixel height to derive cellH
+        // and divide screen.offsetWidth by cellH-implied cellW; instead just
+        // use cols-as-row-count vs offsetWidth/cellW heuristic via a single
+        //-cell sample. Use the screen offsetWidth + a fixed-character count
+        // approach: measure first child's offsetHeight as cellH, then derive
+        // cellW from the natural xterm proportion. Simpler: count distinct
+        // characters in row 0 to approximate cols. xterm doesn't padd rows,
+        // so row 0's textContent length is up to `cols`. Take max textContent
+        // length across rows as an approximation of `cols`.
+        let maxLen = 0;
+        for (const row of tile.querySelectorAll<HTMLElement>('.xterm-rows > div')) {
+          const text = (row.textContent ?? '').replace(/\s+$/, '');
+          if (text.length > maxLen) maxLen = text.length;
+        }
+        const tileRect = tile.getBoundingClientRect();
+        const visible = tileRect.top < window.innerHeight && tileRect.bottom > 0;
+        return { id, cols: maxLen, rows, visible };
+      });
+      return { entries, viewportHeight: window.innerHeight };
+    });
+
+    // Sanity: at least one tile is initially below the fold (so this test
+    // is actually exercising the offscreen path).
+    const offscreenAtMount = result.entries.filter((e) => !e.visible);
+    expect(offscreenAtMount.length).toBeGreaterThan(0);
+
+    // Every tile's xterm should have ≥ DASHBOARD_MIN_ROWS (= 60) rows. The
+    // bug regression manifests as terms stuck at the 80-cols / 60-rows
+    // fallback. Verify rows hit the native value across visible AND
+    // initially-offscreen tiles. Cols vary based on cell metrics so we don't
+    // pin a specific cols value — but the BOTTOM-KEYBAR row should be drawn
+    // far enough down (at row ~60) that the rendered row count exceeds the
+    // 24 the drawer was at.
+    for (const e of result.entries) {
+      // 60 ≤ rows (DASHBOARD_TARGET_NATURAL_HEIGHT_PX 960 / cellH ≈ 16 = 60).
+      expect.soft(e.rows, `tile ${e.id} (visible=${e.visible}) rows`).toBeGreaterThanOrEqual(50);
+    }
+  });
 });

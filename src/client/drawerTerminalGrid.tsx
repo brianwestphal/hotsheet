@@ -223,6 +223,26 @@ function enterGridModeInternal(): void {
   attachBellSubscription();
   if (gridHandle !== null) gridHandle.rebuild(lastKnownEntries.map(toTileEntry(project.secret)));
   updateToggleEnabledState();
+  // HS-7657: refresh the terminal list so a dynamic terminal that was
+  // spawned (via tab-strip click → WS attach → server lazy-spawn) AFTER the
+  // last `/terminal/list` call is reflected in the tile state. Without this,
+  // `lastKnownEntries` is whatever was captured by the most recent call to
+  // `loadAndRenderTerminalTabs`, which doesn't fire on WS-driven lazy spawn
+  // — the grid would show the dynamic as "Not yet started" even though the
+  // user had been using it in the drawer's tab view. The list call refreshes
+  // every tile's state via `onTerminalListUpdated` → grid rebuild.
+  void refreshTerminalListForGrid();
+}
+
+/** Trigger a fresh `/terminal/list` fetch via the existing
+ *  `loadAndRenderTerminalTabs` path so `onTerminalListUpdated` fires with
+ *  current server state. Dynamic-import to avoid the circular dep
+ *  (terminal.tsx → drawerTerminalGrid.tsx). HS-7657 fix. */
+async function refreshTerminalListForGrid(): Promise<void> {
+  try {
+    const { loadAndRenderTerminalTabs } = await import('./terminal.js');
+    await loadAndRenderTerminalTabs();
+  } catch { /* swallow — best-effort refresh */ }
 }
 
 function exitGridModeInternal(): void {
@@ -252,7 +272,51 @@ function ensureGridHandle(): void {
       const project = getActiveProject();
       return project === null ? 33 : getProjectGridSliderValue(project.secret);
     },
+    // HS-7659 / HS-7660 — when a tile is enlarged (centered or opened in
+    // dedicated view) the user expects the maximized terminal to use the
+    // whole app surface, not just the drawer's narrow band. We auto-expand
+    // the drawer to full height on enlarge and restore the prior expanded
+    // state on shrink. The expand button + size slider hide alongside (via
+    // the body.drawer-grid-tile-enlarged class) so the chrome doesn't read
+    // as "you can still expand more" when we've already done it.
+    onTileEnlarge: () => { void enterDrawerEnlargedState(); },
+    onTileShrink: () => { void exitDrawerEnlargedState(); },
   });
+}
+
+/** Pre-enlarge expanded state, captured so we can restore it on shrink.
+ *  Null when no enlargement is active. */
+let priorDrawerExpandedState: boolean | null = null;
+
+async function enterDrawerEnlargedState(): Promise<void> {
+  // Save state once (the user could chain center → dedicated → exit, and we
+  // want to track only the first enlarge → last shrink boundary).
+  if (priorDrawerExpandedState !== null) return;
+  try {
+    const { isDrawerExpanded, setDrawerExpanded } = await import('./commandLog.js');
+    priorDrawerExpandedState = isDrawerExpanded();
+    if (!priorDrawerExpandedState) setDrawerExpanded(true);
+  } catch { /* swallow — best-effort */ }
+  document.body.classList.add('drawer-grid-tile-enlarged');
+}
+
+async function exitDrawerEnlargedState(): Promise<void> {
+  if (priorDrawerExpandedState === null) return;
+  // Defer the body-class flip until any subsequent enlarge can short-circuit
+  // the import dance. The shrink callback fires both on uncenter AND on
+  // exit-from-dedicated; if the user goes center → dedicated → back-to-center,
+  // we shouldn't restore the drawer mid-flow. Detect a still-active enlarge
+  // by checking the grid handle's reported state.
+  if (gridHandle !== null && (gridHandle.isCentered() || gridHandle.isDedicatedOpen())) {
+    return;
+  }
+  const restore = priorDrawerExpandedState;
+  priorDrawerExpandedState = null;
+  try {
+    const { setDrawerExpanded } = await import('./commandLog.js');
+    setDrawerExpanded(restore);
+  } catch { /* swallow */ }
+  document.body.classList.remove('drawer-grid-tile-enlarged');
 }
 
 function showGridChrome(): void {

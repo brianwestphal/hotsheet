@@ -473,11 +473,17 @@ async function saveDrawerState(): Promise<void> {
 // area so the drawer claims everything below the header. Persisted per-project
 // alongside the existing drawer_open / drawer_active_tab keys.
 
-function isDrawerExpanded(): boolean {
+/** HS-7660 — exposed so the drawer-grid module's enlarge / shrink callbacks
+ *  can save the drawer's pre-enlarge expanded state. */
+export function isDrawerExpanded(): boolean {
   return document.querySelector('.app')?.classList.contains('drawer-expanded') === true;
 }
 
-function setDrawerExpanded(expanded: boolean): void {
+/** HS-7660 — exposed so the drawer-grid module can force the drawer to full
+ *  height when a tile is centered / opened in dedicated view, then restore on
+ *  shrink. The expand button + slider visibility flips alongside the class
+ *  via the existing CSS rules. */
+export function setDrawerExpanded(expanded: boolean): void {
   const app = document.querySelector('.app');
   if (!app) return;
   app.classList.toggle('drawer-expanded', expanded);

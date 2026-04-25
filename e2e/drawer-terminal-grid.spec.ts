@@ -144,6 +144,99 @@ test.describe('Drawer terminal grid view (HS-6311)', () => {
     expect(val).toBeLessThan(100);
   });
 
+  // HS-7659 / HS-7660 — when a tile is enlarged (centered or in dedicated
+  // view) inside the drawer grid, the user expects the maximized terminal to
+  // use the whole app surface rather than the narrow drawer band. The fix
+  // auto-expands the drawer to full height and hides the expand button +
+  // size slider while a tile is enlarged; on shrink, the drawer's pre-
+  // enlarge expanded state is restored.
+  test('enlarging a tile auto-expands the drawer + hides expand button + slider; shrinking restores prior state (HS-7659/HS-7660)', async ({ page, request }) => {
+    await request.patch('/api/file-settings', {
+      headers,
+      data: {
+        terminal_enabled: 'true',
+        drawer_open: 'true',
+        drawer_expanded: 'false',
+        drawer_active_tab: 'commands-log',
+        terminals: [
+          { id: 'a', name: 'A', command: '/bin/echo a', lazy: true },
+          { id: 'b', name: 'B', command: '/bin/echo b', lazy: true },
+        ],
+      },
+    });
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('#command-log-panel')).toBeVisible({ timeout: 5000 });
+
+    // Baseline: drawer NOT expanded; expand button + grid sizer visible
+    // (sizer becomes visible on grid toggle below).
+    const expandBtn = page.locator('#drawer-expand-btn');
+    const sizer = page.locator('#drawer-grid-sizer');
+    await expect(page.locator('.app.drawer-expanded')).toHaveCount(0);
+
+    // Enter grid mode.
+    const toggle = page.locator('#drawer-grid-toggle');
+    await expect(toggle).toBeEnabled({ timeout: 5000 });
+    await toggle.click();
+    await expect(page.locator('#drawer-terminal-grid')).toBeVisible();
+    await expect(expandBtn).toBeVisible();
+    await expect(sizer).toBeVisible();
+
+    // Single-click a tile to center it. Targeting `[data-terminal-id="a"]`
+    // — the lazy fixture leaves both as `not_spawned` placeholders, so a
+    // single click triggers `spawnAndEnlarge(tile, 'center')`.
+    await page.locator('.drawer-terminal-grid-tile[data-terminal-id="a"]').click();
+    // Drawer should auto-expand to full height; the body class is the gate.
+    await expect(page.locator('body.drawer-grid-tile-enlarged')).toHaveCount(1, { timeout: 5000 });
+    await expect(page.locator('.app.drawer-expanded')).toHaveCount(1);
+    // Expand button + sizer hidden by the body-class CSS rule.
+    await expect(expandBtn).toBeHidden();
+    await expect(sizer).toBeHidden();
+
+    // Press Esc to uncenter the tile. The drawer should restore its
+    // pre-enlarge expanded state (false) and the chrome should reappear.
+    await page.keyboard.press('Escape');
+    await expect(page.locator('body.drawer-grid-tile-enlarged')).toHaveCount(0, { timeout: 5000 });
+    await expect(page.locator('.app.drawer-expanded')).toHaveCount(0);
+    await expect(expandBtn).toBeVisible();
+    await expect(sizer).toBeVisible();
+  });
+
+  // HS-7658 — the drawer-grid toggle button used to render top-aligned in
+  // the toolbar row because `.drawer-tabs-end` is `align-items: stretch` and
+  // the toggle has a fixed 26 × 26 px size. align-self: center pins it to
+  // the row's vertical centre, matching the expand button on the right.
+  test('drawer-grid toggle button is vertically centered in the toolbar (HS-7658)', async ({ page, request }) => {
+    await request.patch('/api/file-settings', {
+      headers,
+      data: {
+        terminal_enabled: 'true',
+        drawer_open: 'true',
+        terminals: [
+          { id: 'a', name: 'A', command: '/bin/echo a', lazy: true },
+          { id: 'b', name: 'B', command: '/bin/echo b', lazy: true },
+        ],
+      },
+    });
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('#command-log-panel')).toBeVisible({ timeout: 5000 });
+
+    const toggle = page.locator('#drawer-grid-toggle');
+    const expandBtn = page.locator('#drawer-expand-btn');
+    await expect(toggle).toBeVisible({ timeout: 5000 });
+    await expect(expandBtn).toBeVisible();
+
+    // Compare vertical centers — should match within 1 px (anti-aliasing).
+    const toggleBox = await toggle.boundingBox();
+    const expandBox = await expandBtn.boundingBox();
+    expect(toggleBox).not.toBeNull();
+    expect(expandBox).not.toBeNull();
+    const toggleMid = toggleBox!.y + toggleBox!.height / 2;
+    const expandMid = expandBox!.y + expandBox!.height / 2;
+    expect(Math.abs(toggleMid - expandMid)).toBeLessThan(1.5);
+  });
+
   test('clicking a drawer tab while in grid mode exits grid mode and activates that tab', async ({ page, request }) => {
     await request.patch('/api/file-settings', {
       headers,

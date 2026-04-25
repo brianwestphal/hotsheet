@@ -497,10 +497,22 @@ input, select, textarea {
 // strip stays above (part of the app header), but the grid + tiles are
 // hidden beneath this overlay.
 .terminal-dashboard-dedicated {
-  position: absolute;
+  // HS-7602: pin to the visible viewport, not the dashboard's scrolled
+  // content. The dashboard root is `position: relative; overflow-y: auto`,
+  // so an absolutely-positioned `inset: 0` overlay scrolls along with the
+  // content — meaning if the user had scrolled down before double-clicking
+  // a tile, the dedicated view rendered at the top of the scrolled-up area
+  // (above the viewport) and the dashboard remained scrollable underneath.
+  // `position: fixed; inset: 0` covers the visible viewport unconditionally
+  // and stays above the dashboard regardless of scroll. Safe because
+  // `body.terminal-dashboard-active` hides every other surface, so the
+  // dashboard occupies the full viewport whenever this overlay can mount.
+  // z-index bumped above the centered tile (z-index: 500) so that a
+  // dedicated view opened from a centered tile lands on top.
+  position: fixed;
   inset: 0;
   background: var(--bg);
-  z-index: 400;
+  z-index: 600;
   display: flex;
   flex-direction: column;
 }
@@ -4979,6 +4991,89 @@ body.terminal-dashboard-active {
   padding: 8px 0;
 }
 
+// HS-7599: feedback draft entry. Visually distinct from a regular note —
+// dashed border + muted background + a "Draft" badge — so the user can see
+// at a glance that this is unsaved-and-not-yet-sent state. Click reopens
+// the feedback dialog with the saved partition structure restored verbatim.
+.feedback-draft-entry {
+  border: 1px dashed var(--accent, #3b82f6);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent, #3b82f6) 4%, transparent);
+  padding: 6px 10px;
+  margin-top: 4px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: color-mix(in srgb, var(--accent, #3b82f6) 10%, transparent);
+  }
+
+  .feedback-draft-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .feedback-draft-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    background: var(--accent, #3b82f6);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-radius: 3px;
+  }
+
+  .note-timestamp {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .feedback-draft-preview {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: block;
+  }
+}
+
+// HS-7600: bottom "Add note" affordance rendered after the last note in the
+// list. The header `+` is a tight square button; this one is a wide pill
+// inviting the user to click after they've finished reading existing notes,
+// so they don't scroll back up to add a new one.
+.detail-add-note-bottom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  svg { flex-shrink: 0; }
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--text-muted);
+  }
+}
+
 .note-edit-area {
   width: 100%;
   padding: 4px 6px;
@@ -5007,6 +5102,65 @@ body.terminal-dashboard-active {
   font-size: 11px;
   color: var(--text-muted);
   margin-bottom: 2px;
+}
+
+// HS-7601 — top row holding the timestamp on the left + the megaphone send
+// button on the right. Same visual line as the timestamp; the megaphone
+// only renders when channel feature is enabled and the note isn't a
+// FEEDBACK NEEDED prompt.
+.note-timestamp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+
+  .note-timestamp { margin-bottom: 0; }
+}
+
+.note-megaphone-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover:not(:disabled):not(.is-busy) {
+    background: var(--bg-hover);
+    color: var(--accent, #3b82f6);
+    border-color: color-mix(in srgb, var(--accent, #3b82f6) 50%, transparent);
+  }
+
+  // ~2 s post-click busy state — accent-tinted background + accent
+  // colour + a subtle pulse so the user can see something happened. The
+  // JS removes `.is-busy` after 2000 ms.
+  &.is-busy {
+    background: color-mix(in srgb, var(--accent, #3b82f6) 18%, transparent);
+    color: var(--accent, #3b82f6);
+    border-color: var(--accent, #3b82f6);
+    cursor: default;
+    animation: note-megaphone-pulse 0.6s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes note-megaphone-pulse {
+  from { opacity: 0.7; }
+  to   { opacity: 1; }
+}
+
+// HS-7601 — channel-warning toast surfaced when the megaphone send (or the
+// post-submit feedback notify) can't reach Claude. Shape mirrors
+// `.no-upnext-alert` from channelUI; we just scope the layout to the notes
+// container so it lands inline above the relevant note.
+.note-megaphone-warning {
+  margin: 0 0 6px 0;
 }
 
 .note-text {
@@ -6232,10 +6386,27 @@ body.terminal-dashboard-active {
 // lets the two surfaces evolve independently (drawer is short + wide; the
 // dashboard is full-viewport with per-project sections).
 
+// HS-7660 — when a tile is enlarged (centered or in dedicated view) the
+// drawer auto-expands to full height; the expand button and the size slider
+// are irrelevant in that state, so hide them. body class set/cleared by
+// drawerTerminalGrid.tsx's enter/exit-enlarged-state handlers.
+body.drawer-grid-tile-enlarged {
+  #drawer-expand-btn,
+  #drawer-grid-sizer {
+    display: none !important;
+  }
+}
+
 .drawer-grid-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  // HS-7658 — `.drawer-tabs-end` is `align-items: stretch`, so a 26 px
+  // fixed-height button defaults to top-aligned in the toolbar row and
+  // reads as misaligned next to the expand button (which fills the row's
+  // full height via stretch). align-self center pins it to the row's
+  // vertical centre.
+  align-self: center;
   width: 26px;
   height: 26px;
   padding: 0;
@@ -6271,6 +6442,9 @@ body.terminal-dashboard-active {
 .drawer-grid-sizer {
   display: inline-flex;
   align-items: center;
+  // HS-7658 — match `.drawer-grid-toggle`: align-self center so the slider
+  // visually aligns with the expand button on the right.
+  align-self: center;
   gap: 6px;
   height: 26px;
   padding: 0 6px;

@@ -69,7 +69,7 @@ The interface is divided into:
   - Details (textarea, auto-saves with 300ms debounce)
   - Category, Priority, Status (dropdowns, save immediately on change)
   - Up Next (checkbox, with smart re-opening logic for completed/verified tickets)
-- **Notes display**: Timestamped entries rendered as Markdown via `marked`. Empty notes show muted placeholder text. Notes containing images from remote plugins (GitHub) are proxied through the server for private repo auth, and render clickable download links below the note content (web: blob download; Tauri: opens in system browser).
+- **Notes display**: Timestamped entries rendered as Markdown via `marked`. Empty notes show muted placeholder text. Notes containing images from remote plugins (GitHub) are proxied through the server for private repo auth, and render clickable download links below the note content (web: blob download; Tauri: opens in system browser). A small `+` icon next to the **Notes** label adds a new empty note at the top; HS-7600 also renders a wide "Add note" pill at the bottom of the list (only when `notes.length > 0`) so users who scrolled down to read existing notes can add a new one without scrolling back up. Both buttons trigger the same add-note flow — the bottom button forwards `click()` to the header button so the logic stays in one place.
 - **Metadata**: Created, updated, completed, and verified timestamps.
 - **Attachments**: List of attached files with upload, reveal-in-finder, and delete actions.
 - **Read-only mode**: During backup preview, all editing is disabled.

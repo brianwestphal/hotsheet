@@ -30,6 +30,7 @@ import { notifyMutation } from './notify.js';
 import { isPluginEnabledForProject } from './plugins.js';
 import {
   BatchActionSchema, CreateTicketSchema, DuplicateSchema,
+  FeedbackDraftCreateSchema, FeedbackDraftUpdateSchema,
   NotesBulkSchema, NotesEditSchema,   parseBody,
 QueryTicketsSchema,
   SortBySchema, SortDirSchema,
@@ -226,6 +227,65 @@ ticketRoutes.delete('/tickets/:id/notes/:noteId', async (c) => {
   if (!notes) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
   return c.json(notes);
+});
+
+// --- Feedback drafts (HS-7599 / docs/21-feedback.md §21.2.3) ---
+
+/** GET /api/tickets/:id/feedback-drafts — list every draft for this ticket
+ *  in created-at order. Drafts live in their own table (NOT in
+ *  `tickets.notes`) so they don't sync to GitHub / other plugins —
+ *  feedback drafts are private, local-only state. The client renders each
+ *  draft inline after its `parent_note_id` (if that note still exists) or
+ *  as free-floating at the end of the list. */
+ticketRoutes.get('/tickets/:id/feedback-drafts', async (c) => {
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const { listFeedbackDrafts } = await import('../db/feedbackDrafts.js');
+  const drafts = await listFeedbackDrafts(id);
+  return c.json(drafts);
+});
+
+ticketRoutes.post('/tickets/:id/feedback-drafts', async (c) => {
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const raw: unknown = await c.req.json();
+  const parsed = parseBody(FeedbackDraftCreateSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const { createFeedbackDraft } = await import('../db/feedbackDrafts.js');
+  const draft = await createFeedbackDraft({
+    id: parsed.data.id,
+    ticketId: id,
+    parentNoteId: parsed.data.parent_note_id,
+    promptText: parsed.data.prompt_text,
+    partitions: parsed.data.partitions,
+  });
+  notifyMutation(c.get('dataDir'));
+  return c.json(draft);
+});
+
+ticketRoutes.patch('/tickets/:id/feedback-drafts/:draftId', async (c) => {
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const draftId = c.req.param('draftId');
+  const raw: unknown = await c.req.json();
+  const parsed = parseBody(FeedbackDraftUpdateSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const { updateFeedbackDraft } = await import('../db/feedbackDrafts.js');
+  const draft = await updateFeedbackDraft(draftId, parsed.data.partitions);
+  if (draft === null) return c.json({ error: 'Not found' }, 404);
+  notifyMutation(c.get('dataDir'));
+  return c.json(draft);
+});
+
+ticketRoutes.delete('/tickets/:id/feedback-drafts/:draftId', async (c) => {
+  const id = parseIntParam(c);
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const draftId = c.req.param('draftId');
+  const { deleteFeedbackDraft } = await import('../db/feedbackDrafts.js');
+  const deleted = await deleteFeedbackDraft(draftId);
+  if (!deleted) return c.json({ error: 'Not found' }, 404);
+  notifyMutation(c.get('dataDir'));
+  return c.json({ ok: true });
 });
 
 ticketRoutes.delete('/tickets/:id/hard', async (c) => {

@@ -134,6 +134,58 @@ test.describe('Detail panel interactions', () => {
     await expect(noteEntry.locator('.note-text')).toContainText('Typed into the new note', { timeout: 5000 });
   });
 
+  // HS-7601 — megaphone button on each non-feedback note: visible when the
+  // channel feature is enabled, hidden on FEEDBACK NEEDED notes (those are
+  // Claude → user, not user → Claude), and surfaces a warning when Claude
+  // isn't connected at click time.
+  test('megaphone button hidden when channel feature is disabled (HS-7601)', async ({ page, request }) => {
+    // Default test config has channel disabled — confirm.
+    await createTicket(page, 'Megaphone disabled ticket');
+    await openDetail(page, 'Megaphone disabled ticket');
+    // Add a note to render an entry.
+    await page.locator('#detail-add-note-btn').click();
+    const noteEntry = page.locator('#detail-notes .note-entry').first();
+    await noteEntry.locator('textarea.note-edit-area').fill('Hello world');
+    await page.locator('#detail-body').click({ position: { x: 5, y: 5 } });
+    await expect(noteEntry.locator('.note-text')).toContainText('Hello world');
+    // Megaphone should NOT be present (channel disabled by default in tests).
+    await expect(noteEntry.locator('.note-megaphone-btn')).toHaveCount(0);
+    // Cleanup so no test pollution
+    void request;
+  });
+
+// HS-7600: a second "Add note" pill at the bottom of the notes list so the
+  // user doesn't have to scroll back up after reading existing notes. Hidden
+  // when the list is empty (the empty-state row reads cleanly without it).
+  test('bottom add-note button is hidden on empty list and visible once a note exists, and adds a new note (HS-7600)', async ({ page }) => {
+    await createTicket(page, 'Bottom add note ticket');
+    await openDetail(page, 'Bottom add note ticket');
+
+    // Empty notes list — the bottom pill is NOT rendered, only the
+    // notes-empty row.
+    await expect(page.locator('#detail-notes .notes-empty')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.detail-add-note-bottom-btn')).toHaveCount(0);
+
+    // Add a first note via the header button so the list is non-empty.
+    await page.locator('#detail-add-note-btn').click();
+    const firstNote = page.locator('#detail-notes .note-entry').first();
+    await firstNote.locator('textarea.note-edit-area').fill('First note');
+    await page.locator('#detail-body').click({ position: { x: 5, y: 5 } });
+    await expect(firstNote.locator('.note-text')).toContainText('First note', { timeout: 5000 });
+
+    // Bottom add-note pill is now visible.
+    const bottomBtn = page.locator('.detail-add-note-bottom-btn');
+    await expect(bottomBtn).toBeVisible();
+    await expect(bottomBtn).toContainText('Add note');
+
+    // Click it — a second note appears in edit mode (same flow as the header
+    // button, since the bottom one forwards click to it).
+    await bottomBtn.click();
+    const noteEntries = page.locator('#detail-notes .note-entry');
+    await expect(noteEntries).toHaveCount(2);
+    await expect(noteEntries.nth(1).locator('textarea.note-edit-area')).toBeFocused();
+  });
+
   test('empty note shows placeholder when unfocused', async ({ page }) => {
     await createTicket(page, 'Empty note ticket');
     await openDetail(page, 'Empty note ticket');

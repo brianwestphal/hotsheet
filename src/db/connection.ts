@@ -240,6 +240,31 @@ async function initSchema(db: PGlite): Promise<void> {
     -- HS-5056: last_synced_text enables three-way edit/delete detection for notes.
     -- Without it we can only tell if a note is new — we can't tell which side edited it.
     ALTER TABLE note_sync ADD COLUMN IF NOT EXISTS last_synced_text TEXT;
+
+    -- HS-7599: feedback drafts. A user-saved partial response to a FEEDBACK
+    -- NEEDED note that the user wants to come back to later. Drafts live in
+    -- their own table, NOT in tickets.notes, so they don't sync to GitHub /
+    -- other plugin backends (drafts are local-only). parent_note_id links
+    -- a draft to the FEEDBACK NEEDED note that prompted it; nulled when the
+    -- parent note is deleted but the draft itself is preserved as
+    -- free-floating per the §21 lifecycle rule. prompt_text is a snapshot
+    -- of the original feedback prompt at save-time so the click-to-reopen
+    -- flow can reconstruct the dialog even after the parent note is gone
+    -- or its prefix has cleared. partitions_json stores the block structure
+    -- + inline responses + catch-all verbatim (see §21.2.3 for the saved
+    -- shape) so future changes to parseFeedbackBlocks heuristics do not
+    -- reshape an existing draft when it is re-opened.
+    CREATE TABLE IF NOT EXISTS feedback_drafts (
+      id TEXT PRIMARY KEY,
+      ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      parent_note_id TEXT,
+      prompt_text TEXT NOT NULL DEFAULT '',
+      partitions_json TEXT NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_feedback_drafts_ticket ON feedback_drafts(ticket_id);
+    CREATE INDEX IF NOT EXISTS idx_feedback_drafts_parent_note ON feedback_drafts(parent_note_id);
   `);
 
   // Migration: ensure all existing notes have stable persisted IDs

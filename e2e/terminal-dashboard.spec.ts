@@ -331,6 +331,59 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
   });
 
+  // HS-7602: when the dashboard has enough tiles to scroll and the user
+  // double-clicks one near the bottom, the dedicated overlay must cover the
+  // visible viewport, not anchor to the top of the scrolled-up content. The
+  // earlier `position: absolute; inset: 0` rule scrolled with the dashboard's
+  // overflow container, so the overlay rendered above the viewport while the
+  // grid stayed visible underneath.
+  test('dedicated view covers the visible viewport even when the dashboard is scrolled (HS-7602)', async ({ page }) => {
+    const configured = Array.from({ length: 30 }, (_, i) => ({
+      id: `t${i}`,
+      name: `T${i}`,
+      command: 'echo',
+      lazy: false,
+      bellPending: false,
+      state: 'alive' as const,
+    }));
+    await page.route('**/api/terminal/list*', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ configured, dynamic: [] }),
+      });
+    });
+    await page.setViewportSize({ width: 800, height: 600 });
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.locator('#terminal-dashboard-toggle').click();
+
+    const dashboard = page.locator('#terminal-dashboard-root');
+    await expect(dashboard).toBeVisible();
+    // Wait for tiles to render, then scroll the dashboard so the last tile
+    // sits below the visible viewport before we double-click one near the
+    // bottom of the scrolled content.
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="t29"]')).toBeAttached();
+    const scrollTop = await dashboard.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      return el.scrollTop;
+    });
+    expect(scrollTop).toBeGreaterThan(0);
+
+    await page.locator('.terminal-dashboard-tile[data-terminal-id="t29"]').dblclick();
+    const dedicated = page.locator('.terminal-dashboard-dedicated[data-terminal-id="t29"]');
+    await expect(dedicated).toBeVisible();
+
+    // Bug repro: with `position: absolute; inset: 0` inside the scrolled
+    // dashboard, this rect would have a negative `top`. The fix uses
+    // `position: fixed; inset: 0` so the rect lines up with the viewport.
+    const rect = await dedicated.evaluate((el) => el.getBoundingClientRect());
+    expect(rect.top).toBe(0);
+    expect(rect.left).toBe(0);
+    expect(rect.width).toBeGreaterThan(0);
+    expect(rect.height).toBeGreaterThan(0);
+  });
+
   // HS-6837: a pending bell on a tile's project/terminal surfaces via
   // subscribeToBellState (the cross-project long-poll in §24). Clicking the
   // tile (zoom) clears the outline and fires POST /api/terminal/clear-bell.

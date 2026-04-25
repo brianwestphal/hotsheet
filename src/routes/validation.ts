@@ -51,6 +51,37 @@ export const NotesBulkSchema = z.object({
   notes: z.string(),
 });
 
+/** HS-7599 — feedback draft create/update payload. The client builds this
+ *  from the in-progress feedback dialog state and POSTs to
+ *  `/api/tickets/:id/feedback-drafts`. `partitions` mirrors the dialog's
+ *  working state shape: blocks (parsed at save time so future heuristic
+ *  changes don't reshape the saved draft), inline responses keyed by block
+ *  index, and the catch-all textarea contents. `parent_note_id` is the
+ *  FEEDBACK NEEDED note that prompted the draft, or null if the parent has
+ *  been deleted (free-floating draft). `prompt_text` is a snapshot of the
+ *  feedback prompt so the dialog can be reconstructed even after the parent
+ *  note disappears. */
+export const FeedbackDraftCreateSchema = z.object({
+  id: z.string().min(1),
+  parent_note_id: z.union([z.string(), z.null()]),
+  prompt_text: z.string(),
+  partitions: z.object({
+    blocks: z.array(z.object({
+      markdown: z.string(),
+      html: z.string(),
+    })),
+    inlineResponses: z.array(z.object({
+      blockIndex: z.number().int(),
+      text: z.string(),
+    })),
+    catchAll: z.string(),
+  }),
+});
+
+export const FeedbackDraftUpdateSchema = z.object({
+  partitions: FeedbackDraftCreateSchema.shape.partitions,
+});
+
 export const QueryTicketsSchema = z.object({
   logic: z.enum(['all', 'any']),
   conditions: z.array(z.object({

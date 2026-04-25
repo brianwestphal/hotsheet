@@ -370,21 +370,30 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     tile.targetRows = term.rows;
 
     // HS-7097: observe `.xterm-screen` so every xterm render commits scaling.
+    // HS-7603 follow-up: also re-run the cell-metrics → term/PTY resize logic
+    // here. Tiles that mount while scrolled offscreen (or any tile where the
+    // initial rAF / first history-frame fired before xterm had committed its
+    // first paint to `.xterm-screen`) get `screen.offsetWidth === 0` and
+    // `tileNativeDimsFromXterm` returns the fallback 80×60. Without this hook
+    // the term + PTY stay locked to the fallback even after the user scrolls
+    // the tile into view and xterm finally renders. The observer fires every
+    // time `.xterm-screen` gets a new size, which is exactly the moment cell
+    // metrics become authoritative — so we re-derive native dims and resize
+    // the term + PTY whenever the computed native shape differs from what the
+    // tile is currently sized to. The check is idempotent: once the term is
+    // at native dims, subsequent observer fires recompute the same native and
+    // skip the resize.
     const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
     if (screen !== null) {
-      const observer = new ResizeObserver(() => { reapplyTileScaleFromPreview(tile); });
+      const observer = new ResizeObserver(() => {
+        reapplyTileScaleFromPreview(tile);
+        resyncTilePtyFromCellMetrics(tile);
+      });
       observer.observe(screen);
       tile.screenObserver = observer;
     }
     requestAnimationFrame(() => {
-      if (tile.term !== null && tile.xtermRoot !== null) {
-        const native = tileNativeDimsFromXterm(tile.term, tile.xtermRoot);
-        if (native !== null) {
-          try { tile.term.resize(native.cols, native.rows); } catch { /* xterm disposed */ }
-          tile.targetCols = native.cols;
-          tile.targetRows = native.rows;
-        }
-      }
+      resyncTilePtyFromCellMetrics(tile);
       reapplyTileScaleFromPreview(tile);
     });
 
@@ -425,17 +434,13 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
             replayHistoryToTerm(tile.term, { bytes: msg.bytes, cols: msg.cols, rows: msg.rows });
             // HS-7097 follow-up: resize local xterm + the server-side PTY to
             // tile-native 4:3 so a running TUI redraws to fill the tile.
-            if (tile.xtermRoot !== null) {
-              const native = tileNativeDimsFromXterm(tile.term, tile.xtermRoot);
-              if (native !== null) {
-                try { tile.term.resize(native.cols, native.rows); } catch { /* disposed */ }
-                tile.targetCols = native.cols;
-                tile.targetRows = native.rows;
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'resize', cols: native.cols, rows: native.rows }));
-                }
-              }
-            }
+            // HS-7603: routed through `resyncTilePtyFromCellMetrics` so a
+            // miss here (e.g. xterm hasn't committed its first paint to
+            // `.xterm-screen` yet — common for tiles initially scrolled
+            // offscreen) is recovered later by the `.xterm-screen`
+            // ResizeObserver running the same pass once cell metrics
+            // become authoritative.
+            resyncTilePtyFromCellMetrics(tile);
           }
         } catch { /* non-JSON frame */ }
       }
@@ -452,6 +457,41 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     const cellH = screen.offsetHeight / term.rows;
     if (!Number.isFinite(cellW) || !Number.isFinite(cellH) || cellW <= 0 || cellH <= 0) return null;
     return tileNativeGridFromCellMetrics(cellW, cellH);
+  }
+
+  /** HS-7603: re-derive the tile's native cols × rows from the latest
+   *  `.xterm-screen` cell metrics and, if they differ from the term's current
+   *  shape, resize the term + send a `'resize'` message to the server PTY.
+   *  Idempotent — safe to call from rAF, the `.xterm-screen` ResizeObserver,
+   *  and the history-frame handler without redundant resizes.
+   *
+   *  Skip-condition gates on BOTH the term's current `cols/rows` AND
+   *  `tile.targetCols/Rows` (the last value we sent the server). `term.cols`
+   *  on its own can lag the server: `replayHistoryToTerm` resizes the term
+   *  down to the history frame's geometry (typically the drawer's narrower
+   *  shape) and we need to push it back to native afterwards even though
+   *  `tile.targetCols/Rows` is already at native from an earlier rAF pass.
+   *  `tile.targetCols/Rows` on its own can lag the term: after a successful
+   *  resize the term IS at native but skipping the server send would leave
+   *  the PTY at whatever size another subscriber set it to. Both conditions
+   *  must be satisfied to skip. */
+  function resyncTilePtyFromCellMetrics(tile: InternalTile): void {
+    if (tile.term === null || tile.xtermRoot === null) return;
+    const native = tileNativeDimsFromXterm(tile.term, tile.xtermRoot);
+    if (native === null) return;
+    const termAlreadyNative = tile.term.cols === native.cols && tile.term.rows === native.rows;
+    const targetAlreadyNative = tile.targetCols === native.cols && tile.targetRows === native.rows;
+    if (termAlreadyNative && targetAlreadyNative) return;
+    if (!termAlreadyNative) {
+      try { tile.term.resize(native.cols, native.rows); } catch { /* disposed */ }
+    }
+    tile.targetCols = native.cols;
+    tile.targetRows = native.rows;
+    if (tile.ws !== null && tile.ws.readyState === WebSocket.OPEN) {
+      try {
+        tile.ws.send(JSON.stringify({ type: 'resize', cols: native.cols, rows: native.rows }));
+      } catch { /* ws closed */ }
+    }
   }
 
   // --- Tile sizing ---
