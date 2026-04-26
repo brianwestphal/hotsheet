@@ -23,8 +23,13 @@ const JSON_VALUE_KEYS = new Set([
   // HS-7596 — quit-confirm exempt list (array of process basenames).
   'quit_confirm_exempt_processes',
   // HS-7825 — persisted hidden-terminal ids (configured terminals only;
-  // dynamic terminals are session-only). See docs/38-terminal-visibility.md.
+  // dynamic terminals are session-only). Mirrors the active grouping's
+  // hiddenIds post-HS-7826 so older clients reading settings.json still
+  // see the user's filter.
   'hidden_terminals',
+  // HS-7826 — visibility groupings (named visibility configurations).
+  // See docs/39-visibility-groupings.md.
+  'visibility_groupings',
 ]);
 
 export interface FileSettings {
@@ -77,7 +82,7 @@ export function writeFileSettings(dataDir: string, updates: Partial<FileSettings
  * only when a non-null array is returned, so a no-op skips the disk
  * round-trip.
  *
- * Pure: no I/O. Test-friendly via `prune-hidden-terminals.test.ts`.
+ * Pure: no I/O.
  */
 export function prunedHiddenTerminals(
   currentHidden: unknown,
@@ -95,6 +100,40 @@ export function prunedHiddenTerminals(
   const pruned = ids.filter(id => configuredIds.has(id));
   if (pruned.length === ids.length) return null; // nothing to prune
   return pruned;
+}
+
+/**
+ * HS-7826 — pure helper paralleling `prunedHiddenTerminals` but for the
+ * new `visibility_groupings` shape. Walks every grouping's `hiddenIds`
+ * and drops ids that are no longer in the configured-terminal set.
+ * Returns null when no prune is needed; otherwise returns the new
+ * groupings array. Tolerates the stringified-JSON shape and skips
+ * malformed input as a no-op.
+ */
+export function prunedVisibilityGroupings(
+  currentGroupings: unknown,
+  configuredIds: ReadonlySet<string>,
+): Array<{ id: string; name: string; hiddenIds: string[] }> | null {
+  let raw: unknown = currentGroupings;
+  if (typeof raw === 'string' && raw !== '') {
+    try { raw = JSON.parse(raw); } catch { return null; }
+  }
+  if (!Array.isArray(raw)) return null;
+  let changed = false;
+  const out: Array<{ id: string; name: string; hiddenIds: string[] }> = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const obj = item as { id?: unknown; name?: unknown; hiddenIds?: unknown };
+    if (typeof obj.id !== 'string' || obj.id === '') continue;
+    const name = typeof obj.name === 'string' ? obj.name : '';
+    const ids: string[] = Array.isArray(obj.hiddenIds)
+      ? obj.hiddenIds.filter((s): s is string => typeof s === 'string' && s !== '')
+      : [];
+    const kept = ids.filter(id => configuredIds.has(id));
+    if (kept.length !== ids.length) changed = true;
+    out.push({ id: obj.id, name, hiddenIds: kept });
+  }
+  return changed ? out : null;
 }
 
 /** Read project settings from settings.json as Record\<string, string\> for API compatibility.

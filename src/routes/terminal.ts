@@ -15,6 +15,8 @@ import {
   ensureSpawned,
   getBellPending,
   getCurrentCwd,
+  getLastOutputAtMs,
+  getLastSpinnerAtMs,
   getNotificationMessage,
   getTerminalPid,
   getTerminalStatus,
@@ -111,7 +113,10 @@ terminalRoutes.get('/list', (c) => {
   // HS-7278 — currentCwd is set when the PTY pushed an OSC 7 CWD
   // (`\x1b]7;file://host/path\x07`); the dashboard renders it as a tile badge
   // so the user can tell where each shell is without enlarging the tile.
-  const annotate = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean; notificationMessage: string | null; currentCwd: string | null; state: TerminalState; exitCode: number | null })[] =>
+  // HS-6702 — `lastSpinnerAtMs` + `lastOutputAtMs` let the channel-UI
+  // distinguish channel-busy-but-Claude-idle from channel-busy-and-Claude-
+  // working. See `containsClaudeSpinner` in `src/terminals/claudeSpinner.ts`.
+  const annotate = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean; notificationMessage: string | null; currentCwd: string | null; state: TerminalState; exitCode: number | null; lastSpinnerAtMs: number | null; lastOutputAtMs: number | null })[] =>
     items.map(item => {
       const status = getTerminalStatus(secret, dataDir, item.id);
       return {
@@ -121,6 +126,8 @@ terminalRoutes.get('/list', (c) => {
         currentCwd: getCurrentCwd(secret, item.id),
         state: status.state,
         exitCode: status.exitCode,
+        lastSpinnerAtMs: getLastSpinnerAtMs(secret, item.id),
+        lastOutputAtMs: getLastOutputAtMs(secret, item.id),
       };
     });
 

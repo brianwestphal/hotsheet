@@ -5,6 +5,7 @@ import { spawn as spawnPty } from 'node-pty';
 import { dirname, join } from 'path';
 
 import { readFileSettings } from '../file-settings.js';
+import { containsClaudeSpinner } from './claudeSpinner.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from './config.js';
 import { resolveTerminalCommand } from './resolveCommand.js';
 import { RingBuffer } from './ringBuffer.js';
@@ -122,6 +123,16 @@ interface SessionState {
    *  prompt at the right geometry instead of the startup-time 80×24 output
    *  leaking through as stray characters (HS-6799). */
   hasBeenAttached: boolean;
+  /** Wall-clock ms timestamp of the last PTY chunk (`pty.onData`). Used by
+   *  the HS-6702 PTY-activity busy detection to spot terminals that have
+   *  been silent for a while. */
+  lastOutputAtMs: number | null;
+  /** Wall-clock ms timestamp of the last PTY chunk that contained a Claude
+   *  busy-spinner glyph (`· ✢ ✳ ✶ ✻ ✽`). The channel-UI degraded-busy
+   *  state fires when channel-busy is true AND `nowMs - lastSpinnerAtMs >
+   *  5000` (i.e. Claude looks idle even though the channel hook says busy).
+   *  Reset to null on PTY restart. HS-6702. */
+  lastSpinnerAtMs: number | null;
 }
 
 const sessions = new Map<string, SessionState>();
@@ -340,6 +351,11 @@ export function restartTerminal(
       session.bellPending = false;
       bellFlipped = true;
     }
+    // HS-6702 — reset PTY-activity timestamps on restart so a stale
+    // spinner from the previous Claude session doesn't paint the new
+    // process as "still busy".
+    session.lastOutputAtMs = null;
+    session.lastSpinnerAtMs = null;
   }
   spawnIntoSession(session, dataDir);
   if (bellFlipped) {
@@ -389,6 +405,28 @@ export function getBellPending(
   terminalId: string = DEFAULT_TERMINAL_ID,
 ): boolean {
   return sessions.get(sessionKey(secret, terminalId))?.bellPending === true;
+}
+
+/** HS-6702 — most recent timestamp at which a Claude busy-spinner glyph
+ *  appeared in this terminal's PTY output. `null` when no spinner has
+ *  been seen since the session started or last restart. The
+ *  `/api/terminal/list` route surfaces this so the channel-UI can decide
+ *  whether to render its degraded-busy state. */
+export function getLastSpinnerAtMs(
+  secret: string,
+  terminalId: string = DEFAULT_TERMINAL_ID,
+): number | null {
+  return sessions.get(sessionKey(secret, terminalId))?.lastSpinnerAtMs ?? null;
+}
+
+/** HS-6702 — most recent timestamp at which the PTY emitted ANY output.
+ *  Useful as a last-resort idle heuristic when spinner detection isn't
+ *  applicable (e.g. terminals running something other than Claude). */
+export function getLastOutputAtMs(
+  secret: string,
+  terminalId: string = DEFAULT_TERMINAL_ID,
+): number | null {
+  return sessions.get(sessionKey(secret, terminalId))?.lastOutputAtMs ?? null;
 }
 
 /**
@@ -511,6 +549,8 @@ function createSession(
     bellScanAfterEsc: false,
     oscAccumulator: null,
     hasBeenAttached: false,
+    lastOutputAtMs: null,
+    lastSpinnerAtMs: null,
   };
 }
 
@@ -684,6 +724,15 @@ function spawnIntoSession(session: SessionState, dataDir: string): void {
   const dData = pty.onData((str) => {
     const chunk = Buffer.from(str, 'utf8');
     session.scrollback.push(chunk);
+    // HS-6702 — PTY-activity timestamp + Claude spinner detection.
+    // `lastOutputAtMs` ticks on every chunk so the client can spot
+    // long-silent terminals; `lastSpinnerAtMs` only updates when the
+    // chunk contains one of the Claude busy-spinner glyphs, which is
+    // the more reliable signal (Claude pulses the spinner ~10 Hz while
+    // working, so any 5+ s gap means Claude really is idle).
+    const nowMs = Date.now();
+    session.lastOutputAtMs = nowMs;
+    if (containsClaudeSpinner(str)) session.lastSpinnerAtMs = nowMs;
     // HS-6603 §24.2 — server-side bell detection. Always run the scanner so
     // cross-chunk OSC/DCS/APC/PM/SOS state is tracked even when `bellPending`
     // is already set (HS-6766). The scanner returns `bell` only for BELs that

@@ -1,4 +1,5 @@
-import { api } from './api.js';
+import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
+import { api, apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
 import {
   startPermissionPolling, stopPermissionPolling,
@@ -17,6 +18,49 @@ let shellBusyState = false;
 // Spinner SVG shared by channel and shell indicator states (12x12)
 const SPINNER_12 = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
 
+/** HS-6702 — most-recent Claude busy-spinner timestamp across all alive
+ *  terminals in the active project, polled every 2s while the channel is
+ *  reporting busy. Null when we haven't polled yet or no spinner has been
+ *  seen recently. The poll only runs while `isChannelBusy()` is true so
+ *  it doesn't cost anything during idle periods. */
+let mostRecentSpinnerAtMs: number | null = null;
+let spinnerPollInterval: ReturnType<typeof setInterval> | null = null;
+
+async function refreshSpinnerActivity(): Promise<void> {
+  const project = getActiveProject();
+  if (project === null) return;
+  try {
+    const data = await apiWithSecret<{
+      configured: { lastSpinnerAtMs?: number | null }[];
+      dynamic: { lastSpinnerAtMs?: number | null }[];
+    }>(project.secret, '/terminal/list');
+    let newest: number | null = null;
+    for (const e of [...data.configured, ...data.dynamic]) {
+      const t = e.lastSpinnerAtMs ?? null;
+      if (t !== null && (newest === null || t > newest)) newest = t;
+    }
+    mostRecentSpinnerAtMs = newest;
+  } catch { /* network blip — keep last value */ }
+}
+
+function startSpinnerPoll(): void {
+  if (spinnerPollInterval !== null) return;
+  // Fire once immediately so the indicator becomes accurate within a few
+  // hundred ms of channel-busy flipping on, then continue every 2 s.
+  void refreshSpinnerActivity().then(updateStatusIndicator);
+  spinnerPollInterval = setInterval(() => {
+    void refreshSpinnerActivity().then(updateStatusIndicator);
+  }, 2000);
+}
+
+function stopSpinnerPoll(): void {
+  if (spinnerPollInterval !== null) {
+    clearInterval(spinnerPollInterval);
+    spinnerPollInterval = null;
+  }
+  mostRecentSpinnerAtMs = null;
+}
+
 /** Unified status indicator renderer. Resolves channel vs. shell busy states
  *  into a single indicator to avoid conflicting innerHTML writes. */
 function updateStatusIndicator() {
@@ -29,8 +73,17 @@ function updateStatusIndicator() {
   }
   if (isChannelBusy()) {
     indicator.style.display = '';
-    indicator.className = 'channel-status-indicator busy';
-    indicator.innerHTML = `${SPINNER_12} Claude working`;
+    // HS-6702 — degraded-busy when the channel says busy but no Claude
+    // spinner has been seen in the last 5 s. Different label + class so
+    // the user knows the channel might be stuck.
+    const degraded = shouldShowDegradedBusy(true, mostRecentSpinnerAtMs, Date.now());
+    if (degraded) {
+      indicator.className = 'channel-status-indicator busy degraded';
+      indicator.innerHTML = `${SPINNER_12} Claude idle (channel busy)`;
+    } else {
+      indicator.className = 'channel-status-indicator busy';
+      indicator.innerHTML = `${SPINNER_12} Claude working`;
+    }
   } else if (shellBusyState) {
     indicator.style.display = '';
     indicator.className = 'channel-status-indicator busy';
@@ -132,6 +185,10 @@ export function extendBusyForProject(secret: string) {
   const activeSecret = getActiveProject()?.secret;
   if (secret === activeSecret) {
     channelBusy = true;
+    // HS-6702 — start the spinner-activity poll while the channel is busy
+    // for the active project so `updateStatusIndicator` can decide between
+    // "Claude working" (recent spinner) and "Claude idle (channel busy)".
+    startSpinnerPoll();
     updateStatusIndicator();
   }
   // Reset the 30s idle timer
@@ -142,6 +199,7 @@ export function extendBusyForProject(secret: string) {
     heartbeatTimers.delete(secret);
     if (secret === getActiveProject()?.secret) {
       channelBusy = false;
+      stopSpinnerPoll();
       updateStatusIndicator();
     }
   }, 30000));
@@ -156,6 +214,7 @@ export function clearBusyForProject(secret: string) {
   const activeSecret = getActiveProject()?.secret;
   if (secret === activeSecret) {
     channelBusy = false;
+    stopSpinnerPoll();
     updateStatusIndicator();
   }
 }
@@ -178,6 +237,9 @@ export function setChannelBusy(busy: boolean) {
     if (busy) markProjectBusy(activeSecret);
     else clearProjectBusy(activeSecret);
   }
+  // HS-6702 — start/stop the spinner-activity poll alongside channel-busy.
+  if (busy) startSpinnerPoll();
+  else stopSpinnerPoll();
   const indicator = document.getElementById('channel-status-indicator');
   if (!indicator) return;
   const channelSection = document.getElementById('channel-play-section');

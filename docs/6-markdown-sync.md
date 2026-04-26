@@ -9,6 +9,7 @@
   - Workflow instructions with curl examples for updating ticket status via the API.
   - Ticket creation instructions with curl examples.
   - Feedback request instructions (`FEEDBACK NEEDED:` and `IMMEDIATE FEEDBACK NEEDED:` note prefixes) — see [21-feedback.md](21-feedback.md).
+  - **Note formatting guidance** (HS-7828) telling the AI that notes render as Markdown in the Hot Sheet UI and to use real Markdown structure (paragraph breaks, bullet lists, **bold**, `inline code`, `### Headings`) instead of walls of plain text. Notes longer than ~6 lines should lead with a `**TL;DR:**` line so a reader scanning the notes column gets the high bit immediately. Includes an example shape (TL;DR + Root cause + Fix + Tests sections) and a practical tip to write longer JSON payloads to a temp file and use `curl --data-binary @/tmp/notes.json` rather than inlining (avoids shell-escaping pain on backticks, dollar signs, quotes).
   - Per-ticket details: ID, type, priority, status, title, details, notes (with timestamps), and attachment list.
   - A category descriptions reference.
   - Guidance that status updates and completion notes are required.

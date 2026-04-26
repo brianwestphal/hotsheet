@@ -403,6 +403,119 @@ input, select, textarea {
   }
 }
 
+// HS-7826 — visibility groupings tab bar at the top of the dialog body.
+// Horizontally scrollable so a long list of groupings doesn't push the
+// dialog wider; the trailing `+` button scrolls with the tabs.
+.hide-terminal-dialog-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 8px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: thin;
+}
+
+.hide-terminal-tab {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  max-width: 200px;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  &.is-active {
+    background: var(--bg);
+    color: var(--text);
+    border-color: var(--border);
+    border-bottom-color: var(--bg);
+    margin-bottom: -1px; // overlap the tabs container's bottom border
+  }
+
+  &.dragging { opacity: 0.4; }
+  &.drag-over { box-shadow: inset 2px 0 0 var(--accent); }
+}
+
+.hide-terminal-tab-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hide-terminal-tab-add {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+
+  &:hover { background: var(--bg-hover); color: var(--text); }
+}
+
+.hide-terminal-tab-menu {
+  // Inherits .context-menu visuals; no overrides needed.
+}
+
+.context-menu-item.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+// Tiny in-app prompt for grouping name input.
+.grouping-prompt-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.grouping-prompt-dialog {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.grouping-prompt-header {
+  font-weight: 600;
+  font-size: 14px;
+}
+.grouping-prompt-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.grouping-prompt-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .hide-terminal-dialog-body {
   flex: 1;
   overflow-y: auto;
@@ -767,6 +880,28 @@ input, select, textarea {
 }
 
 .drawer-grid-hide-btn {
+  align-self: center;
+}
+
+// HS-7826 — visibility-grouping selector dropdowns. One next to the
+// dashboard's eye icon, one in the drawer-grid toolbar. Hidden when the
+// project has only the Default grouping.
+.terminal-dashboard-grouping-select,
+.drawer-grid-grouping-select {
+  height: 26px;
+  padding: 2px 6px;
+  margin-left: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  align-self: center;
+  max-width: 160px;
+}
+
+.drawer-grid-grouping-select {
   align-self: center;
 }
 
@@ -4275,6 +4410,15 @@ body.terminal-dashboard-active {
 
   &.busy {
     color: var(--accent);
+  }
+
+  // HS-6702 — degraded-busy: channel says busy but no Claude spinner
+  // glyph has appeared in the last 5 s. Muted colour + paused animation
+  // signals "channel might be stuck" without panicking the user.
+  &.busy.degraded {
+    color: var(--text-muted);
+
+    svg { animation: none; opacity: 0.7; }
   }
 
   svg {

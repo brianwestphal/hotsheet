@@ -99,16 +99,20 @@ settingsRoutes.patch('/file-settings', async (c) => {
   if ('terminals' in parsed.data) {
     const { eagerSpawnTerminals } = await import('../terminals/eagerSpawn.js');
     eagerSpawnTerminals(secret, dataDir);
-    // HS-7829 — prune any persisted hidden_terminals ids that no longer
-    // correspond to a configured terminal so deleted-terminal entries don't
-    // accumulate in settings.json forever. See docs/38-terminal-visibility.md
-    // §38.7. Pure helper returns null when no prune is needed so this is a
-    // single-disk-write no-op for unchanged hidden lists.
-    const { prunedHiddenTerminals, writeFileSettings: writeAgain } = await import('../file-settings.js');
+    // HS-7829 / HS-7826 — prune any persisted hidden ids (legacy
+    // `hidden_terminals` flat list AND modern `visibility_groupings` per-
+    // grouping arrays) that no longer correspond to a configured terminal
+    // so deleted-terminal entries don't accumulate in settings.json.
+    // See docs/38-terminal-visibility.md §38.7 + docs/39-visibility-groupings.md.
+    const { prunedHiddenTerminals, prunedVisibilityGroupings, writeFileSettings: writeAgain } = await import('../file-settings.js');
     const { listTerminalConfigs } = await import('../terminals/config.js');
     const configuredIds = new Set(listTerminalConfigs(dataDir).map(t => t.id));
-    const pruned = prunedHiddenTerminals(updated.hidden_terminals, configuredIds);
-    if (pruned !== null) writeAgain(dataDir, { hidden_terminals: pruned });
+    const prunedFlat = prunedHiddenTerminals(updated.hidden_terminals, configuredIds);
+    const prunedGroupings = prunedVisibilityGroupings(updated.visibility_groupings, configuredIds);
+    const followup: Record<string, unknown> = {};
+    if (prunedFlat !== null) followup.hidden_terminals = prunedFlat;
+    if (prunedGroupings !== null) followup.visibility_groupings = prunedGroupings;
+    if (Object.keys(followup).length > 0) writeAgain(dataDir, followup);
   }
   return c.json(updated);
 });

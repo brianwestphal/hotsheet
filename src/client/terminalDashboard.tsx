@@ -111,6 +111,18 @@ let sizeSlider: HTMLInputElement | null = null;
 let currentSnapPoints: SnapPoint[] = [];
 /** HS-7661 — Show / Hide Terminals dialog opener for the global dashboard. */
 let hideButton: HTMLButtonElement | null = null;
+/** HS-7826 — visibility-grouping `<select>` next to the eye icon. */
+let groupingSelect: HTMLSelectElement | null = null;
+
+function refreshDashboardGroupingSelect(): void {
+  if (groupingSelect === null) return;
+  void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
+    refreshGroupingSelect({
+      selectEl: groupingSelect!,
+      getSecret: () => lastSectionData[0]?.project.secret ?? null,
+    });
+  });
+}
 /** HS-7661 — last-fetched per-project section data, retained so the
  *  hide-state subscription can re-render without re-fetching `/projects`
  *  + per-project `/terminal/list` round-trips. */
@@ -154,7 +166,20 @@ export function initTerminalDashboard(): void {
   sizerContainer = document.getElementById('terminal-dashboard-sizer');
   sizeSlider = document.getElementById('terminal-dashboard-size-slider') as HTMLInputElement | null;
   hideButton = document.getElementById('terminal-dashboard-hide-btn') as HTMLButtonElement | null;
+  groupingSelect = document.getElementById('terminal-dashboard-grouping-select') as HTMLSelectElement | null;
   layoutToggleButton = document.getElementById('terminal-dashboard-layout-toggle') as HTMLButtonElement | null;
+  // HS-7826 — wire the grouping selector. Scope: the first project in
+  // registered order (since groupings are per-project; the dialog's tab
+  // bar already scopes to that project). Dropdown auto-hides when the
+  // scoped project has only one grouping.
+  if (groupingSelect !== null) {
+    void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
+      wireGroupingSelectChange({
+        selectEl: groupingSelect!,
+        getSecret: () => lastSectionData[0]?.project.secret ?? null,
+      });
+    });
+  }
   // HS-7662 — fire-and-forget eagerly load the persisted layout mode so the
   // first dashboard open paints the right layout without flicker. The fetch
   // is shared with /file-settings calls elsewhere on page load (api wraps
@@ -248,6 +273,7 @@ export function exitDashboard(): void {
   if (toggleButton !== null) toggleButton.classList.remove('active');
   if (sizerContainer !== null) sizerContainer.style.display = 'none';
   if (hideButton !== null) hideButton.style.display = 'none';
+  if (groupingSelect !== null) groupingSelect.style.display = 'none';
   if (layoutToggleButton !== null) layoutToggleButton.style.display = 'none';
   if (hiddenChangeUnsubscribe !== null) {
     hiddenChangeUnsubscribe();
@@ -408,11 +434,15 @@ function enterDashboard(): void {
   // hidden-terminal state changes. No fetch round-trip; the subscription
   // fires after every `setTerminalHidden` / `unhideAll*` call.
   // HS-7823 — refresh the eye-icon badge count alongside the re-render.
+  // HS-7826 — refresh the grouping selector dropdown so adding / renaming
+  // / deleting / switching groupings updates the chrome immediately.
   hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
     applyHideButtonBadge(hideButton, countHiddenAcrossAllProjects());
+    refreshDashboardGroupingSelect();
     if (!active || rootElement === null) return;
     paintDashboardSections(rootElement, lastSectionData);
   });
+  refreshDashboardGroupingSelect();
   // HS-7823 — initial paint of the badge so the count is correct on first
   // dashboard open even when no toggle has fired this session yet.
   applyHideButtonBadge(hideButton, countHiddenAcrossAllProjects());
@@ -560,6 +590,7 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
       if (sizerContainer !== null) sizerContainer.style.display = 'none';
       if (layoutToggleButton !== null) layoutToggleButton.style.display = 'none';
       if (hideButton !== null) hideButton.style.display = 'none';
+      if (groupingSelect !== null) groupingSelect.style.display = 'none';
       const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
       const project = projectFor(entry);
       if (label !== null && project !== null) {
@@ -595,6 +626,10 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
         if (sizerContainer !== null && active) sizerContainer.style.display = '';
         if (layoutToggleButton !== null && active) layoutToggleButton.style.display = '';
         if (hideButton !== null && active) hideButton.style.display = '';
+        // HS-7826 — restore the grouping selector if it should be visible
+        // (active && >1 grouping). refreshDashboardGroupingSelect handles
+        // the visibility check based on current groupings count.
+        if (active) refreshDashboardGroupingSelect();
       };
     },
   });
@@ -702,6 +737,9 @@ function renderProjectSection(data: ProjectSectionData, visibleTerminals?: Termi
       onDedicatedBarMount: (bar, entry, term) => {
         // Hide the slider, show the search slot, mount the search widget.
         if (sizerContainer !== null) sizerContainer.style.display = 'none';
+        // HS-7826 — also hide the grouping selector while the dedicated
+        // view is open; it shares the toolbar real estate with the sizer.
+        if (groupingSelect !== null) groupingSelect.style.display = 'none';
 
         // Add the project breadcrumb to the bar (between Back and the label).
         // Append each breadcrumb span individually — the JSX runtime's Fragment
@@ -745,6 +783,8 @@ function renderProjectSection(data: ProjectSectionData, visibleTerminals?: Termi
           }
           dedicatedSearchHandle = null;
           if (sizerContainer !== null && active) sizerContainer.style.display = '';
+          // HS-7826 — restore the grouping selector visibility (count-aware).
+          if (active) refreshDashboardGroupingSelect();
         };
       },
     });

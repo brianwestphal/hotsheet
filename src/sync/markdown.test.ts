@@ -58,6 +58,24 @@ describe('worklist sync', () => {
     expect(content).toContain('http://localhost:9999/api');
   });
 
+  it('includes note-formatting guidance + TL;DR encouragement (HS-7828)', () => {
+    const content = readFileSync(join(tempDir, 'worklist.md'), 'utf-8');
+    expect(content).toContain('### Note formatting');
+    // Tells Claude that notes render as Markdown
+    expect(content).toContain('Markdown');
+    // Names every formatting affordance the user wanted called out
+    expect(content).toContain('Paragraph breaks');
+    expect(content).toContain('Bullet lists');
+    expect(content).toContain('Bold');
+    expect(content).toContain('Inline code');
+    expect(content).toContain('Headings');
+    // TL;DR rule for longer notes is explicit
+    expect(content).toContain('TL;DR:');
+    expect(content).toContain('longer than ~6 lines');
+    // Practical curl-encoding tip so the AI doesn't trip on shell escaping
+    expect(content).toContain('--data-binary @');
+  });
+
   it('includes ticket details and notes', async () => {
     const t = await createTicket('Detailed ticket', { up_next: true, details: 'Important details' });
     await updateTicket(t.id, { notes: 'A test note' });

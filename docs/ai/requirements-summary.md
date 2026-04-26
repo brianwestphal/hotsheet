@@ -402,7 +402,23 @@ HS-7825. Configured-terminal hidden state (originally session-only, HS-7661) now
 
 **HS-7830 follow-up — Reset visibility from Settings.** New "Reset visibility" button + status hint in Settings → Terminal (below the Default terminals list) clears the project's persisted hidden state without opening the Show / Hide Terminals dialog. Status hint shows the live hidden-count (or "No terminals hidden" when zero); button is disabled at zero. Click confirms via `confirmDialog` then calls `unhideAllInProject(secret)` — the existing persistence-layer subscription PATCHes `hidden_terminals: []` automatically. New module `src/client/hiddenTerminalsResetUI.tsx` (`loadAndWireHiddenTerminalsReset`), wired from `settingsDialog.tsx`'s on-open handler. See §38.8.
 
-**Status:** Shipped (HS-7825 + HS-7829 + HS-7830). Cross-refs: §25 (dashboard's Show / Hide Terminals dialog — global mode), §36 (drawer-grid Show / Hide Terminals dialog — single-project mode), §22.10 (`terminals[]` config the persistence layer keys against).
+**Status:** Shipped (HS-7825 + HS-7829 + HS-7830). Generalised by §39 (HS-7826) — see below. Cross-refs: §25 (dashboard's Show / Hide Terminals dialog — global mode), §36 (drawer-grid Show / Hide Terminals dialog — single-project mode), §22.10 (`terminals[]` config the persistence layer keys against).
+
+---
+
+## 39. Visibility groupings (`39-visibility-groupings.md`)
+
+HS-7826. Generalises §38's flat `hidden_terminals` shape into named per-project **visibility groupings** so the user can switch between contexts (e.g. "claude only", "server logs", "single app") without re-toggling rows. Each grouping carries `{ id, name, hiddenIds }`; the project carries an ordered list + an active id. A Default grouping (literal id `'default'`) is always present and refused for deletion (rename works since the id is the invariant).
+
+**Persistence.** Two new per-project file-settings keys (`visibility_groupings`, `active_visibility_grouping_id`) added to `JSON_VALUE_KEYS`. `hidden_terminals` (HS-7825) is still written as a mirror of the active grouping's `hiddenIds` so older clients reading the same `settings.json` still see the user's filter. Migration on first read: when only the legacy `hidden_terminals` exists, `parsePersistedState` synthesises a Default grouping seeded with those ids.
+
+**UI changes.** The Show / Hide Terminals dialog gains a tab bar at the top: Default tab leftmost (always present), `+` button at end (Lucide `plus`, opens an in-app name prompt), right-click context menu (Rename… / Delete with Default's Delete disabled), HTML5 drag-and-drop to reorder, horizontally scrollable strip for many groupings. Toggling a row writes against the active grouping's `hiddenIds` (not the legacy flat shape). Footer "Show all in this grouping" button clears just the active grouping. A `<select>` dropdown next to the eye icon (dashboard + drawer-grid) appears when `groupings.length > 1` and lets the user switch active groupings without opening the dialog.
+
+**Implementation.** Pure helpers in `src/client/visibilityGroupings.ts` (42 unit tests). State refactored in `src/client/dashboardHiddenTerminals.ts` from `Map<secret, Set<terminalId>>` to `Map<secret, ProjectVisibilityState>` — pre-HS-7826 public API delegates to the active grouping for back-compat. New persistence shape + migration in `persistedHiddenTerminals.ts`. Stale-id cleanup walks every grouping (`prunedVisibilityGroupings` in `src/file-settings.ts`, called from `/file-settings` PATCH alongside `prunedHiddenTerminals`). Dialog UI in `hideTerminalDialog.tsx` plus the new `visibilityGroupingSelect.ts` helper for the dropdowns.
+
+**Out of scope.** Duplicate-grouping affordance, keyboard shortcuts (Cmd/Ctrl+1..9), live cross-window sync of active grouping, cross-project (global) groupings.
+
+**Status:** Shipped. Cross-refs: §38 (single-grouping precursor), §25 (dashboard dialog opener), §36 (drawer-grid dialog opener), §22.10 (terminals[] config).
 
 ---
 

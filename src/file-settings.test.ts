@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { ensureSecret, getBackupDir, prunedHiddenTerminals, readFileSettings, writeFileSettings } from './file-settings.js';
+import { ensureSecret, getBackupDir, prunedHiddenTerminals, prunedVisibilityGroupings, readFileSettings, writeFileSettings } from './file-settings.js';
 
 let tempDir: string;
 
@@ -222,5 +222,61 @@ describe('prunedHiddenTerminals (HS-7829)', () => {
   it('preserves order of remaining ids', () => {
     expect(prunedHiddenTerminals(['z', 'a', 'm', 'gone', 'k'], new Set(['z', 'a', 'm', 'k'])))
       .toEqual(['z', 'a', 'm', 'k']);
+  });
+});
+
+/**
+ * HS-7826 — `prunedVisibilityGroupings` is the parallel of
+ * `prunedHiddenTerminals` for the new groupings shape. Walks every
+ * grouping's `hiddenIds`, drops ids no longer in the configured set,
+ * returns null when no prune is needed.
+ */
+describe('prunedVisibilityGroupings (HS-7826)', () => {
+  it('returns null when no grouping has stale ids', () => {
+    const groupings = [
+      { id: 'default', name: 'Default', hiddenIds: ['t1'] },
+      { id: 'g-1', name: 'Logs', hiddenIds: ['t1', 't2'] },
+    ];
+    expect(prunedVisibilityGroupings(groupings, new Set(['t1', 't2']))).toBeNull();
+  });
+
+  it('strips stale ids from every grouping and preserves grouping order + names', () => {
+    const groupings = [
+      { id: 'default', name: 'Default', hiddenIds: ['t1', 'gone'] },
+      { id: 'g-1', name: 'Logs', hiddenIds: ['gone', 't2'] },
+    ];
+    const next = prunedVisibilityGroupings(groupings, new Set(['t1', 't2']));
+    expect(next).toEqual([
+      { id: 'default', name: 'Default', hiddenIds: ['t1'] },
+      { id: 'g-1', name: 'Logs', hiddenIds: ['t2'] },
+    ]);
+  });
+
+  it('tolerates the stringified-JSON shape', () => {
+    const raw = JSON.stringify([{ id: 'default', name: 'Default', hiddenIds: ['gone', 't1'] }]);
+    const next = prunedVisibilityGroupings(raw, new Set(['t1']));
+    expect(next).toEqual([{ id: 'default', name: 'Default', hiddenIds: ['t1'] }]);
+  });
+
+  it('drops malformed grouping entries (missing id, wrong type)', () => {
+    const raw = [
+      { id: 'a', name: 'A', hiddenIds: ['t1', 'gone'] },
+      { name: 'no-id', hiddenIds: [] },
+      'string-not-object',
+    ];
+    const next = prunedVisibilityGroupings(raw, new Set(['t1']));
+    expect(next).toEqual([{ id: 'a', name: 'A', hiddenIds: ['t1'] }]);
+  });
+
+  it('returns null when input is malformed', () => {
+    expect(prunedVisibilityGroupings('not-json', new Set(['t1']))).toBeNull();
+    expect(prunedVisibilityGroupings(42, new Set(['t1']))).toBeNull();
+  });
+
+  it('returns an empty hiddenIds array per grouping when configured set is empty', () => {
+    const groupings = [{ id: 'a', name: 'A', hiddenIds: ['t1', 't2'] }];
+    expect(prunedVisibilityGroupings(groupings, new Set())).toEqual([
+      { id: 'a', name: 'A', hiddenIds: [] },
+    ]);
   });
 });

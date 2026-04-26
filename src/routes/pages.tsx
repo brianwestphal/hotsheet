@@ -37,6 +37,10 @@ pageRoutes.get('/', (c) => {
           <button type="button" className="terminal-dashboard-hide-btn" id="terminal-dashboard-hide-btn" title="Show / hide terminals" style="display:none">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
+          {/* HS-7826 — visibility-grouping selector. Hidden when the project
+              has only the Default grouping; populated by the dashboard
+              module when groupings change. */}
+          <select id="terminal-dashboard-grouping-select" className="terminal-dashboard-grouping-select" title="Visibility grouping" style="display:none"></select>
           {/* HS-7331 — terminal dashboard search slot. Lives in the same header
               region as the sizer above, mutually exclusive: the sizer is visible
               in the grid view and the search slot is visible in the full-screen
@@ -287,6 +291,9 @@ pageRoutes.get('/', (c) => {
               <button type="button" className="drawer-grid-hide-btn" id="drawer-grid-hide-btn" title="Show / hide terminals" style="display:none">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
+              {/* HS-7826 — drawer-grid visibility-grouping selector. Hidden
+                  when the project has only the Default grouping. */}
+              <select id="drawer-grid-grouping-select" className="drawer-grid-grouping-select" title="Visibility grouping" style="display:none"></select>
               {/* HS-6311 — toggle between drawer tabs and a grid view of every
                   terminal in the current project. Hidden in plain browsers
                   (Tauri-only per §36.8), disabled when ≤1 terminal exists.

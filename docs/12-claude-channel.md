@@ -158,6 +158,19 @@ Each heartbeat or busy signal extends a 30-second sliding timer per project. If 
 
 Hooks are installed and updated by `installHeartbeatHook()` during server startup and when the channel is enabled via settings.
 
+### PTY-activity busy detection (HS-6702)
+
+The hook-based detection above can lag reality: a Claude session that crashes mid-tool-use might not fire a Stop hook, leaving the channel state stuck on "busy" even though Claude is idle. HS-6702 adds a PTY-activity heuristic that complements (does NOT replace) the hooks. The server-side PTY data handler in `src/terminals/registry.ts` stamps two timestamps on every chunk:
+
+- `lastOutputAtMs` — wall-clock ms when the PTY last emitted ANY bytes.
+- `lastSpinnerAtMs` — wall-clock ms when the PTY last emitted one of the Claude busy-spinner glyphs (`· ✢ ✳ ✶ ✻ ✽` — captured from the user's HS-6702 ticket note). Detected via `containsClaudeSpinner` (pure helper in `src/terminals/claudeSpinner.ts`).
+
+Both are reset on PTY restart so a stale spinner from the previous Claude session doesn't paint the new process as still busy. `/api/terminal/list` annotates each entry with these timestamps so the client can read them without a separate endpoint.
+
+Client side: `src/client/channelUI.tsx` runs a 2-second polling loop while `isChannelBusy()` is true. The poll calls `/api/terminal/list` for the active project, picks the most recent `lastSpinnerAtMs` across all alive terminals, and feeds it to `shouldShowDegradedBusy(channelBusy, lastSpinnerAtMs, now)` (pure helper, 6 unit tests). When the helper returns true (channel busy AND Claude has been spinner-silent for ≥5 s), the indicator renders a "**Claude idle (channel busy)**" label with a paused spinner + muted colour — letting the user spot a stuck channel without the false confidence of the regular animated indicator.
+
+11 unit tests in `src/terminals/claudeSpinner.test.ts` cover the spinner-glyph constant, the chunk scanner, and the degraded-busy decision helper across boundary timestamps.
+
 ## 12.10 Permission Relay
 
 When Claude needs approval to run a tool (Bash, Write, Edit, etc.), the channel server receives a permission request notification and forwards it to Hot Sheet.

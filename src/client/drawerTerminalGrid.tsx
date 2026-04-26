@@ -64,6 +64,8 @@ let toggleBtn: HTMLButtonElement | null = null;
 let sizerContainer: HTMLElement | null = null;
 let sizeSlider: HTMLInputElement | null = null;
 let hideBtn: HTMLButtonElement | null = null;
+/** HS-7826 — visibility-grouping `<select>` next to the eye icon. */
+let groupingSelect: HTMLSelectElement | null = null;
 /** HS-7661 — unsubscribe from hidden-terminal change events. Set when grid
  *  mode is entered, cleared on exit. */
 let hiddenChangeUnsubscribe: (() => void) | null = null;
@@ -97,6 +99,15 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
   sizerContainer = document.getElementById('drawer-grid-sizer');
   sizeSlider = document.getElementById('drawer-grid-size-slider') as HTMLInputElement | null;
   hideBtn = document.getElementById('drawer-grid-hide-btn') as HTMLButtonElement | null;
+  groupingSelect = document.getElementById('drawer-grid-grouping-select') as HTMLSelectElement | null;
+  if (groupingSelect !== null) {
+    void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
+      wireGroupingSelectChange({
+        selectEl: groupingSelect!,
+        getSecret: () => getActiveProject()?.secret ?? null,
+      });
+    });
+  }
   if (toggleBtn === null || gridEl === null) return;
 
   toggleBtn.style.display = '';
@@ -235,12 +246,27 @@ function rebuildVisibleTiles(): void {
 
 /** HS-7661 — subscribe to hidden-state changes so the grid rebuilds
  *  when the user toggles a row in the dialog. Idempotent.
- *  HS-7823 — also refreshes the eye-icon hidden-count badge. */
+ *  HS-7823 — also refreshes the eye-icon hidden-count badge.
+ *  HS-7826 — also refreshes the grouping selector dropdown. */
 function attachHiddenSubscription(): void {
   if (hiddenChangeUnsubscribe !== null) return;
   hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
     refreshHideBtnBadge();
+    refreshDrawerGroupingSelect();
     if (gridHandle !== null) rebuildVisibleTiles();
+  });
+}
+
+/** HS-7826 — repaint the drawer-grid grouping selector from the active
+ *  project's groupings. Called from the change subscription + on grid
+ *  chrome show. Hides the select when only Default exists. */
+function refreshDrawerGroupingSelect(): void {
+  if (groupingSelect === null) return;
+  void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
+    refreshGroupingSelect({
+      selectEl: groupingSelect!,
+      getSecret: () => getActiveProject()?.secret ?? null,
+    });
   });
 }
 
@@ -455,6 +481,9 @@ function showGridChrome(): void {
   // HS-7823 — keep the eye-icon badge in sync when chrome shows (covers
   // the project-switch case where the count was for a different project).
   refreshHideBtnBadge();
+  // HS-7826 — keep the grouping selector dropdown in sync (visibility
+  // depends on the active project's grouping count).
+  refreshDrawerGroupingSelect();
   if (toggleBtn !== null) toggleBtn.classList.add('active');
 }
 
@@ -465,6 +494,7 @@ function hideGridChrome(): void {
   }
   if (sizerContainer !== null) sizerContainer.style.display = 'none';
   if (hideBtn !== null) hideBtn.style.display = 'none';
+  if (groupingSelect !== null) groupingSelect.style.display = 'none';
   if (toggleBtn !== null) toggleBtn.classList.remove('active');
 }
 
