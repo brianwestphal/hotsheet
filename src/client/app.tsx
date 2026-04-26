@@ -351,10 +351,21 @@ function bindLayoutToggle() {
     btn.addEventListener('click', () => {
       const layout = (btn as HTMLElement).dataset.layout as 'list' | 'columns';
       if (layout === 'columns' && !canUseColumnView()) return;
+      // HS-7756 — manually switching to columns while the include rows
+      // are toggled on means "restart the search" per the spec: clear
+      // the include flags + reload so column view can render the
+      // active-only result set. The search itself stays active and the
+      // include rows will re-render so the user can re-toggle.
+      const wasIncluding = state.includeBacklogInSearch || state.includeArchiveInSearch;
+      const needsReload = layout === 'columns' && wasIncluding;
+      if (needsReload) {
+        void import('./searchExtraRows.js').then(m => m.clearIncludeFlagsOnly());
+      }
       state.layout = layout;
       suppressAnimation();
       updateLayoutToggle();
-      renderTicketList();
+      if (needsReload) void loadTickets();
+      else renderTicketList();
       void api('/settings', { method: 'PATCH', body: { layout } });
     });
   });

@@ -440,6 +440,42 @@ describe('filtering', () => {
     expect(ids).not.toContain(bugId);
     expect(ids).not.toContain(featureId);
   });
+
+  // HS-7756 — `include_backlog` / `include_archive` flags on top of the
+  // default-active filter mix the normally-hidden buckets back in.
+  it('include_backlog mixes backlog rows into the active set (HS-7756)', async () => {
+    const t = await createTicket('Backlogged search target');
+    await updateTicket(t.id, { status: 'backlog' });
+    const withoutInclude = await getTickets({ search: 'Backlogged search target' });
+    expect(withoutInclude.map(x => x.id)).not.toContain(t.id);
+    const withInclude = await getTickets({ search: 'Backlogged search target', include_backlog: true });
+    expect(withInclude.map(x => x.id)).toContain(t.id);
+  });
+
+  it('include_archive mixes archive rows into the active set (HS-7756)', async () => {
+    const t = await createTicket('Archived search target');
+    await updateTicket(t.id, { status: 'archive' });
+    const withInclude = await getTickets({ search: 'Archived search target', include_archive: true });
+    expect(withInclude.map(x => x.id)).toContain(t.id);
+  });
+
+  it('countSearchMatchesInExcludedStatuses reports per-bucket counts (HS-7756)', async () => {
+    const { countSearchMatchesInExcludedStatuses } = await import('./tickets.js');
+    const a = await createTicket('Counter target one');
+    const b = await createTicket('Counter target two');
+    const c = await createTicket('Counter target three');
+    await updateTicket(a.id, { status: 'backlog' });
+    await updateTicket(b.id, { status: 'backlog' });
+    await updateTicket(c.id, { status: 'archive' });
+    const counts = await countSearchMatchesInExcludedStatuses('Counter target');
+    expect(counts.backlog).toBe(2);
+    expect(counts.archive).toBe(1);
+  });
+
+  it('countSearchMatchesInExcludedStatuses returns zeroes for empty search (HS-7756)', async () => {
+    const { countSearchMatchesInExcludedStatuses } = await import('./tickets.js');
+    expect(await countSearchMatchesInExcludedStatuses('')).toEqual({ backlog: 0, archive: 0 });
+  });
 });
 
 describe('sorting', () => {

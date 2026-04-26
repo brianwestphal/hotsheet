@@ -84,8 +84,31 @@ ticketRoutes.get('/tickets', async (c) => {
     if (sd.success) filters.sort_dir = sd.data;
   }
 
+  // HS-7756 — opt-in mix of normally-excluded buckets (backlog + archive)
+  // when the user clicks the "Include {N} ..." rows under the multi-select
+  // toolbar. Both default to false; truthy strings are 'true' / '1'.
+  const includeBacklog = c.req.query('include_backlog');
+  if (includeBacklog === 'true' || includeBacklog === '1') filters.include_backlog = true;
+  const includeArchive = c.req.query('include_archive');
+  if (includeArchive === 'true' || includeArchive === '1') filters.include_archive = true;
+
   const tickets = await getTickets(filters);
   return c.json(tickets);
+});
+
+/**
+ * HS-7756 — `GET /api/tickets/search-counts?search=<q>` — returns per-bucket
+ * match counts for the supplied search query, restricted to the buckets the
+ * main "active" view excludes (`backlog` + `archive`). Used by the client
+ * to decide whether to render the "Include {N} backlog items" /
+ * "Include {N} archive items" rows under the multi-select toolbar. Empty
+ * query returns zeroes; missing query returns zeroes.
+ */
+ticketRoutes.get('/tickets/search-counts', async (c) => {
+  const search = c.req.query('search') ?? '';
+  const { countSearchMatchesInExcludedStatuses } = await import('../db/tickets.js');
+  const counts = await countSearchMatchesInExcludedStatuses(search);
+  return c.json(counts);
 });
 
 ticketRoutes.post('/tickets', async (c) => {

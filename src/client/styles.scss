@@ -2352,6 +2352,59 @@ body.terminal-dashboard-active {
   min-height: 0;
 }
 
+// --- HS-7756 — Search "include extra bucket" rows ---
+// Rendered between the multi-select toolbar and the ticket list when a
+// search has matches in backlog / archive. Gray pill-row styling so the
+// affordance reads as soft / dismissable, not as a primary surface.
+.search-extra-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+
+  &:empty { display: none; }
+}
+
+.search-extra-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 8px 19px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 120ms ease, color 120ms ease;
+
+  &:hover { background: var(--bg-hover); color: var(--text); }
+
+  // Active state — the user has clicked the row to mix in those results.
+  // Tinted with the accent so they can see at a glance which buckets are
+  // currently included; click again to hide.
+  &.is-active {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent);
+  }
+}
+
+.search-extra-row-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+
+  svg { width: 14px; height: 14px; }
+}
+
+.search-extra-row-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 // --- Batch Toolbar ---
 
 .batch-toolbar {

@@ -4,6 +4,7 @@ import { renderColumnView, renderPreviewColumnView, updateColumnSelectionClasses
 import { syncDetailPanel, updateStats } from './detail.js';
 import { toElement } from './dom.js';
 import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
+import { renderSearchExtraRows } from './searchExtraRows.js';
 import type { SyncedTicketInfo,Ticket  } from './state.js';
 import { setSyncedTicketMap, state } from './state.js';
 import {
@@ -324,7 +325,21 @@ export async function loadTickets() {
     params.set('status', 'active');
   }
 
+  // HS-7756 — clear the search-include flags + restore the pre-include
+  // view mode whenever the search becomes empty. This handles every clear
+  // path (`×` button, programmatic reset, project switch to a project with
+  // no saved query) without each one needing to know about includes.
+  if (state.search === '') {
+    const { clearSearchIncludeState } = await import('./searchExtraRows.js');
+    clearSearchIncludeState();
+  }
+
   if (state.search) params.set('search', state.search);
+  // HS-7756 — opt-in extra-bucket inclusion when the user has clicked
+  // the "Include {N} ..." rows. Server-side OR's these into the WHERE
+  // clause, so the merged result set comes back already-sorted.
+  if (state.includeBacklogInSearch) params.set('include_backlog', 'true');
+  if (state.includeArchiveInSearch) params.set('include_archive', 'true');
 
   params.set('sort_by', state.sortBy);
   params.set('sort_dir', state.sortDir);
@@ -336,6 +351,21 @@ export async function loadTickets() {
     setSyncedTicketMap(await api<Record<number, SyncedTicketInfo>>('/sync/tickets'));
   } catch { /* non-critical */ }
   renderTicketList();
+  // HS-7756 — fetch + render the per-bucket search counts. Done after the
+  // main render so the user sees their tickets immediately and the
+  // "Include {N} ..." rows pop in a moment later if applicable. Empty
+  // search clears the counts inline.
+  if (state.search === '') {
+    state.searchExtraCounts = { backlog: 0, archive: 0 };
+    renderSearchExtraRows(() => { void loadTickets(); });
+  } else {
+    void api<{ backlog: number; archive: number }>(`/tickets/search-counts?search=${encodeURIComponent(state.search)}`)
+      .then(counts => {
+        state.searchExtraCounts = counts;
+        renderSearchExtraRows(() => { void loadTickets(); });
+      })
+      .catch(() => { /* non-critical */ });
+  }
 }
 
 function loadPreviewTickets() {

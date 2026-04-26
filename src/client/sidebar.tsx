@@ -110,6 +110,9 @@ export function bindSearchInput() {
   function clearAndReload(): void {
     input.value = '';
     state.search = '';
+    // HS-7756 — `loadTickets` itself resets the include flags + restores
+    // the saved view mode when it sees `state.search === ''`, so no
+    // explicit cleanup needed here.
     updateSearchBoxClass();
     suppressAnimation();
     void loadTickets();

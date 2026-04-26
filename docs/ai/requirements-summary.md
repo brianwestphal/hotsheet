@@ -422,6 +422,20 @@ HS-7826. Generalises §38's flat `hidden_terminals` shape into named per-project
 
 ---
 
+## 40. Search "include archive + backlog" rows (`40-search-include-rows.md`)
+
+HS-7756. When the user types a search query, the default views (All, Up Next, category filters, custom views without `includeArchived`) hide tickets whose status is `backlog` or `archive`. Pre-HS-7756, that meant a perfect match in archive from six months ago would silently fail to surface. HS-7756 adds an opt-in mechanism: a server-side count of matches in those buckets is fetched alongside the main result, and when `> 0`, gray "Include {N} backlog items" / "Include {N} archive items" rows appear under the multi-select toolbar. Click → those rows mix into the result set, sorted alongside the active matches. The counts and the rows only show while a search is active; clearing the search clears both.
+
+**Server.** New `GET /api/tickets/search-counts?search=<q>` route + `countSearchMatchesInExcludedStatuses(search)` pure helper in `src/db/tickets.ts`. `GET /api/tickets` gains `include_backlog=true` / `include_archive=true` query-string flags that OR-in those statuses to the WHERE clause's status filter. `TicketFilters` shape extended.
+
+**Client.** New `src/client/searchExtraRows.tsx` (`renderSearchExtraRows`, `clearSearchIncludeState`, `clearIncludeFlagsOnly`). State extended with `includeBacklogInSearch`, `includeArchiveInSearch`, `viewModeBeforeSearchInclude`, `searchExtraCounts`. `loadTickets()` runs `clearSearchIncludeState()` when search empties + sends the include flags + fires the count fetch. View-mode auto-switch: clicking an Include row while in column view saves the layout and force-flips to list (column view groups by status; mixing backlog / archive in wouldn't fit). Manually clicking the column-view button while includes are on clears the flags + reloads (per the spec "restart the search").
+
+**Tests.** 4 new unit tests in `src/db/queries.test.ts` cover `include_backlog`, `include_archive`, `countSearchMatchesInExcludedStatuses` (per-bucket counts + empty-search short-circuit). 126/126 db tests pass.
+
+**Status:** Shipped. Cross-refs: §3 (ticket statuses — backlog + archive), §4.3 / §4.4 (List + Column views the auto-switch flips between), §9 (API endpoints).
+
+---
+
 ## 26. Shell integration via OSC 133 (`26-shell-integration-osc133.md`)
 
 Design spike (HS-7265) — **no code yet**. Proposes handling the four-mark FinalTerm/iTerm2/VS Code shell-integration protocol: `\e]133;A\a` (prompt start), `;B\a` (command start), `;C\a` (output start), `;D;<exit>\a` (command end). Unlocks gutter exit-code glyphs, "copy last output", jump-to-prev/next-command, and an Ask-Claude-about-this channel trigger (the Hot-Sheet-specific wedge vs. VS Code). Data model: per-terminal `shellIntegration.commands` bounded-ring (500 records) of `CommandRecord { promptStart, commandStart, outputStart, commandEnd, exitCode, commandText, decorations }` keyed to `term.registerMarker` IMarkers (survive scrollback trim via xterm's own line-follow semantics). Rehydrates automatically on reattach because replay bytes go through xterm's parser. Phased: **Phase 1a** (HS-7267) foundation + gutter glyphs; **Phase 1b** (HS-7268) copy-last-output toolbar button; **Phase 2** (HS-7269) jump shortcuts + hover popover with Copy / Rerun; **Phase 3** (HS-7270) Ask-Claude-about-this channel integration. Shell rc fragments intentionally NOT shipped — users opt in via Starship / VS Code's published rc / a 15-line snippet we document. OSC 633 (VS Code's superset) and iTerm2 OSC 1337 explicitly out of scope for v1.

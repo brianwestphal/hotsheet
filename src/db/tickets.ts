@@ -164,21 +164,37 @@ function buildTicketWhereClause(filters: TicketFilters): { where: string; values
   const values: unknown[] = [];
   let paramIdx = 1;
 
-  // By default, exclude deleted/backlog/archive tickets from main views
+  // By default, exclude deleted/backlog/archive tickets from main views.
+  // HS-7756 — when `include_backlog` / `include_archive` are set on top of
+  // the normal status filter, the WHERE clause OR-s in those statuses so
+  // search matches from the backlog / archive buckets show up alongside
+  // the active set.
+  const extraStatusInclusions: string[] = [];
+  if (filters.include_backlog === true) extraStatusInclusions.push('backlog');
+  if (filters.include_archive === true) extraStatusInclusions.push('archive');
+  const wrapWithExtras = (statusCondition: string): string => {
+    if (extraStatusInclusions.length === 0) return statusCondition;
+    const extras = extraStatusInclusions.map(s => `'${s}'`).join(', ');
+    return `(${statusCondition} OR status IN (${extras}))`;
+  };
+
   if (filters.status === 'open') {
-    conditions.push(`status IN ('not_started', 'started')`);
+    conditions.push(wrapWithExtras(`status IN ('not_started', 'started')`));
   } else if (filters.status === 'non_verified') {
-    conditions.push(`status IN ('not_started', 'started', 'completed')`);
+    conditions.push(wrapWithExtras(`status IN ('not_started', 'started', 'completed')`));
   } else if (filters.status === 'active') {
     // "All Tickets" — excludes deleted, backlog, archive
-    conditions.push(`status NOT IN ('deleted', 'backlog', 'archive')`);
+    conditions.push(wrapWithExtras(`status NOT IN ('deleted', 'backlog', 'archive')`));
   } else if (filters.status) {
+    // Specific status filter (e.g. `status=backlog` itself) — extras are
+    // ignored because picking a specific status is already an explicit
+    // request for that bucket only.
     conditions.push(`status = $${paramIdx}`);
     values.push(filters.status);
     paramIdx++;
   } else {
     // Default: exclude deleted, backlog, archive (same as 'active')
-    conditions.push(`status NOT IN ('deleted', 'backlog', 'archive')`);
+    conditions.push(wrapWithExtras(`status NOT IN ('deleted', 'backlog', 'archive')`));
   }
 
   if (filters.category !== undefined && filters.category !== '') {
@@ -245,6 +261,41 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
     values
   );
   return result.rows;
+}
+
+/**
+ * HS-7756 — return per-status match counts for a search query, scoped to
+ * the buckets (`backlog` + `archive`) that the main "active" view hides.
+ * The client uses these counts to render the "Include {N} backlog items"
+ * + "Include {N} archive items" rows under the multi-select toolbar.
+ *
+ * Search semantics match `getTickets`'s WHERE clause exactly so the
+ * counts and the on-toggle-include results stay in sync.
+ */
+export async function countSearchMatchesInExcludedStatuses(
+  search: string,
+): Promise<{ backlog: number; archive: number }> {
+  if (search === '') return { backlog: 0, archive: 0 };
+  const db = await getDb();
+  const like = `%${escapeIlike(search)}%`;
+  // Run both counts in parallel — independent queries, server doesn't care.
+  const [backlogRes, archiveRes] = await Promise.all([
+    db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM tickets
+       WHERE status = 'backlog'
+         AND (title ILIKE $1 OR details ILIKE $1 OR ticket_number ILIKE $1 OR tags ILIKE $1 OR notes ILIKE $1)`,
+      [like],
+    ),
+    db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM tickets
+       WHERE status = 'archive'
+         AND (title ILIKE $1 OR details ILIKE $1 OR ticket_number ILIKE $1 OR tags ILIKE $1 OR notes ILIKE $1)`,
+      [like],
+    ),
+  ]);
+  const backlog = Number.parseInt(backlogRes.rows[0]?.count ?? '0', 10) || 0;
+  const archive = Number.parseInt(archiveRes.rows[0]?.count ?? '0', 10) || 0;
+  return { backlog, archive };
 }
 
 // --- Duplicate ---

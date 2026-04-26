@@ -52,6 +52,14 @@ export interface TicketFilters {
   search?: string;
   sort_by?: 'created' | 'modified' | 'priority' | 'category' | 'status';
   sort_dir?: 'asc' | 'desc';
+  /** HS-7756 — when true, also include `backlog` rows in the result set
+   *  (in addition to whatever the `status` filter normally returns). The
+   *  client toggles this from the "Include {N} backlog items" row that
+   *  appears under the multi-select toolbar when a search has matches in
+   *  the backlog bucket. */
+  include_backlog?: boolean;
+  /** HS-7756 — same as `include_backlog` but for the archive bucket. */
+  include_archive?: boolean;
 }
 
 export const DEFAULT_CATEGORIES: CategoryDef[] = [

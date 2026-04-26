@@ -192,6 +192,21 @@ export interface AppState {
     tier: string;
     filename: string;
   } | null;
+  /** HS-7756 — when the user clicks the "Include {N} backlog items" row
+   *  under the multi-select toolbar, mix backlog rows into the search
+   *  result set. Cleared on every fresh `state.search` change. */
+  includeBacklogInSearch: boolean;
+  includeArchiveInSearch: boolean;
+  /** HS-7756 — view mode the user was in BEFORE either include row was
+   *  toggled. We auto-switch column view → list view when including extras
+   *  (column view groups by status; mixing in archive/backlog wouldn't
+   *  fit) and revert to this on clear. `null` when no auto-switch is
+   *  pending. */
+  viewModeBeforeSearchInclude: 'list' | 'columns' | null;
+  /** HS-7756 — last-fetched per-bucket search counts. Drives the
+   *  visibility of the "Include {N} ..." rows. Both default to 0 when
+   *  no search is active or no matches exist outside the active set. */
+  searchExtraCounts: { backlog: number; archive: number };
 }
 
 export const state: AppState = {
@@ -215,6 +230,10 @@ export const state: AppState = {
   search: '',
   settings: { ...DEFAULT_SETTINGS },
   backupPreview: null,
+  includeBacklogInSearch: false,
+  includeArchiveInSearch: false,
+  viewModeBeforeSearchInclude: null,
+  searchExtraCounts: { backlog: 0, archive: 0 },
 };
 
 const LUCIDE_14 = 'xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';

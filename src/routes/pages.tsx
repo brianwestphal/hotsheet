@@ -180,6 +180,13 @@ pageRoutes.get('/', (c) => {
 
           <div className="content-area detail-side" id="content-area">
             <main className="main-content">
+              {/* HS-7756 — gray rows ("Include {N} backlog items" /
+                  "Include {N} archive items") rendered between the
+                  multi-select toolbar and the ticket list when a search
+                  is active and there are matches in the buckets the
+                  active view normally hides. Populated by ticketList.tsx
+                  via `renderSearchExtraRows`. */}
+              <div className="search-extra-rows" id="search-extra-rows"></div>
               <div className="batch-toolbar" id="batch-toolbar">
                 <input type="checkbox" id="batch-select-all" className="batch-select-all" title="Select all / none" />
                 <button id="batch-category" className="btn btn-sm batch-dropdown-btn" title="Set category" disabled>Category</button>
