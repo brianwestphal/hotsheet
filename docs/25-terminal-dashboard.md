@@ -24,7 +24,7 @@ A new iconic toggle button sits **before the first project tab** in the top tool
 
 1. The `#terminal-dashboard-toggle` button (so the user can exit).
 2. The project-tab strip (so the user can navigate to a specific project's ticket view).
-3. The tile-size slider (HS-7031) — at the far right of the header, a lucide `scaling` icon followed by a ~200 px range input. See §25.4.
+3. The tile-size slider (HS-7031) — at the far right of the header, a ~200 px range input. (HS-7832 dropped the leading `scaling` icon — the native range thumb carries the meaning on its own and the leading icon was visual noise.) See §25.4.
 
 Everything else in the top toolbar — search, layout toggles, Settings button, help icon, any plugin-contributed toolbar extensions (see [18-plugins.md](18-plugins.md) §18 `toolbar` location), and the Claude-channel play/status cluster — is hidden. The footer status bar, ticket sidebar, list/column/kanban ticket area, right-side detail panel, and per-project bottom drawer (Commands Log + terminal tabs) are all hidden as well. The dashboard owns the entire content area below the slim header.
 
@@ -199,7 +199,7 @@ Double-clicking any tile opens a **dedicated terminal view** — the entire dash
 
 Right-clicking any tile — live, lazy, or exited — opens a small context menu positioned at the pointer with two entries, matching the drawer terminal tab menu (§22 / HS-6668, HS-6701) minus the linear-order actions that don't fit a 2D grid:
 
-1. **Close Tab.** Destroys the terminal via `POST /api/terminal/destroy`. Enabled only for dynamic terminals (created via the drawer's `+` or the dashboard's §25.4 plus button). Configured terminals from `settings.json` are intentionally not closable here — the Settings → Terminal panel is the source of truth for those, and a one-click destroy in the dashboard would silently diverge from the saved config. Alive dynamic terminals route through the same in-app confirm dialog the drawer uses (`confirmDialog` with "Close terminal?" message); exited / never-spawned tabs close silently. After destroy, the dashboard refreshes via `refreshDashboardGrid()` so the tile disappears.
+1. **Close Terminal.** (HS-7834 — renamed from "Close Tab" since the dashboard shows tiles, not tabs.) Destroys the terminal via `POST /api/terminal/destroy`. Enabled only for dynamic terminals (created via the drawer's `+` or the dashboard's §25.4 plus button). Configured terminals from `settings.json` are intentionally not closable here — the Settings → Terminal panel is the source of truth for those, and a one-click destroy in the dashboard would silently diverge from the saved config. Alive dynamic terminals route through the same in-app confirm dialog the drawer uses (`confirmDialog` with "Close terminal?" message); exited / never-spawned tabs close silently. After destroy, the dashboard refreshes via `refreshDashboardGrid()` so the tile disappears.
 2. **Rename...** Opens the same transient rename dialog the drawer uses (HS-6668) — updates the tile's label in place without persisting to `settings.json`. A dashboard refresh (manual `+` button, context-menu close, project list change) OR a page reload restores the original configured / server-derived name.
 
 **Why no "Close Tabs to the Left / Right".** The drawer tab strip is a single linear sequence; the dashboard is a wrapping 2D flex grid where "left" and "right" aren't well-defined across row breaks. Dropping those two menu items was an explicit HS-7065 call-out.
@@ -240,7 +240,7 @@ This makes the dashboard a faithful catalog of "your projects, at a glance" with
 
 A user can declutter the dashboard by hiding individual terminals from the tile view without affecting the underlying terminal session or the drawer's tab strip. Two entry points:
 
-**1. Right-click on a tile** → context menu gains a third row, "Hide in Dashboard" (alongside the existing Close Tab + Rename items from §25.8.5). Click flips the tile's hidden state to true; the dashboard re-renders immediately and the tile disappears.
+**1. Right-click on a tile** → context menu shows **Close Terminal** (HS-7834 — renamed from "Close Tab") immediately followed by **Hide in Dashboard** since the two actions are related (both make the tile go away), then a separator, then **Rename...** below. Each entry carries a Lucide icon (HS-7835): `x` for Close Terminal, `eye-off` for Hide in Dashboard, `pencil` for Rename. Click flips the tile's hidden state to true; the dashboard re-renders immediately and the tile disappears.
 
 **2. Eye-icon button in the dashboard header toolbar** (`#terminal-dashboard-hide-btn`, Lucide `eye`). Sits to the right of the size slider per the user's HS-7661 feedback. Visibility tracks the slider — visible when the dashboard is in grid view, hidden in dedicated view. Click opens the **Show / Hide Terminals** dialog (see §25.10.6).
 
@@ -259,7 +259,7 @@ A user can declutter the dashboard by hiding individual terminals from the tile 
 
 The default sectioned layout (§25.4) renders one section per project with its own grid. When projects have only 1–2 terminals each, this leaves substantial whitespace at the right of every section's row — wasted screen on multi-project setups. **Flow mode** is an alternate layout in which every project's terminals share a single grid that wraps across rows in registered-project order, packing tiles densely.
 
-**Toggle.** A new toolbar button in the dashboard header — Lucide `text-wrap` glyph, `#terminal-dashboard-layout-toggle` — flips the layout between sectioned and flow. Pressed-state matches the size-slider toggle visual: accent-tinted background + accent border when flow is active. The button sits between the existing terminal-dashboard toggle and the size slider.
+**Toggle.** A new toolbar button in the dashboard header — Lucide `text-wrap` glyph, `#terminal-dashboard-layout-toggle` — flips the layout between sectioned and flow. Pressed-state matches the size-slider toggle visual: accent-tinted background + accent border when flow is active. The button sits between the size slider and the eye icon (HS-7833 moved it from its original position between the dashboard toggle and the slider).
 
 **Persistence.** The active mode is stored in `/file-settings` under the new key `dashboard_layout_mode: 'sectioned' | 'flow'` (default `'sectioned'`). Per-user across reloads (NOT per-project — flow is a viewing preference, not a per-project setting). User confirmation: "a" was the chosen option from §25 layout-mode question 2.
 
@@ -277,7 +277,7 @@ The default sectioned layout (§25.4) renders one section per project with its o
 
 **Implementation (HS-7662).**
 - Persisted layout mode: `/file-settings` key `dashboard_layout_mode: 'sectioned' | 'flow'` (default `'sectioned'`). The dashboard fetches it once at init via a cached promise so first-paint always reflects the saved value (no flicker from a sectioned-then-flow re-render).
-- Toolbar toggle: `#terminal-dashboard-layout-toggle` (Lucide `text-wrap`) sits between the dashboard toggle and the size slider. Pressed-state mirrors `#terminal-dashboard-toggle`'s `.active` modifier (accent-tinted background + border).
+- Toolbar toggle: `#terminal-dashboard-layout-toggle` (Lucide `text-wrap`) sits between the size slider and the eye icon hide button (HS-7833 moved it here from its original position between the dashboard toggle and the slider). Pressed-state mirrors `#terminal-dashboard-toggle`'s `.active` modifier (accent-tinted background + border).
 - Render branch in `paintDashboardSections`: `paintSectionedLayout` keeps the per-project section logic (heading + `+` add-terminal button + `(N terminals)` count + per-section `.terminal-dashboard-grid` mount with one `TileGridHandle` per project secret); `paintFlowLayout` mounts a single `.terminal-dashboard-grid.terminal-dashboard-grid-flow` against a single `TileGridHandle` keyed by the sentinel `__flow_handle__` in the shared `gridHandles` map. The bell long-poll subscription's fan-out checks the sentinel and forwards the union of every project's pending bell IDs (instead of a per-secret subset) so a tile in any project can light up.
 - Tile labels: `TileEntry.projectBadge` is an optional field with shape `{ name?: string }` (HS-7824 simplified — `color` was dropped). The shared `terminalTileGrid.tsx` `renderTile` renders an optional `{Project} ›` prefix BEFORE a `.terminal-dashboard-tile-name` span that holds the actual terminal name. Sectioned mode passes `projectBadge: undefined` so the existing label markup is unchanged; flow mode sets `projectBadge: { name }` only on the first tile of each project's run and leaves it undefined on subsequent tiles.
 - Per-tile callbacks (right-click context menu, dedicated-bar mount, on-tile-enlarge / -shrink) recover the originating project via a `Map<terminalId, ProjectInfo>` built at paint time — flow mode collapses the per-project handle map down to one global handle, so we need this side table.

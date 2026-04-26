@@ -121,11 +121,13 @@ function getEntryText(entry: LogEntry): string {
 
 function showContextMenu(x: number, y: number, entries: LogEntry[]) {
   dismissContextMenu();
+  // HS-7835 — consistent icon-row markup with the other context menus
+  // (`.dropdown-icon` + `.context-menu-label` spans).
   const menu = toElement(
     <div className="command-log-context-menu" style={`left:${x}px;top:${y}px`}>
       <div className="context-menu-item" data-action="copy">
-        {raw('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>')}
-        Copy{entries.length > 1 ? ` (${entries.length} entries)` : ''}
+        <span className="dropdown-icon">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>')}</span>
+        <span className="context-menu-label">Copy{entries.length > 1 ? ` (${entries.length} entries)` : ''}</span>
       </div>
     </div>
   );

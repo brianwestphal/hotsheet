@@ -1,3 +1,4 @@
+import { raw } from '../jsx-runtime.js';
 import { confirmDialog } from './confirm.js';
 import {
   addGroupingForProject,
@@ -13,6 +14,7 @@ import {
   unhideAllInGrouping,
 } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
+import { ICON_PENCIL, ICON_TRASH } from './icons.js';
 import { DEFAULT_GROUPING_ID, type VisibilityGrouping } from './visibilityGroupings.js';
 
 /**
@@ -240,12 +242,15 @@ function showTabContextMenu(
 ): void {
   document.querySelectorAll('.note-context-menu, .hide-terminal-tab-menu').forEach(m => m.remove());
   const isDefault = grouping.id === DEFAULT_GROUPING_ID;
+  // HS-7835 — Lucide pencil + trash glyphs.
   const menu = toElement(
     <div className="hide-terminal-tab-menu context-menu" style={`top:${e.clientY}px;left:${e.clientX}px;z-index:2800`}>
       <div className="context-menu-item" data-action="rename">
+        <span className="dropdown-icon">{raw(ICON_PENCIL)}</span>
         <span className="context-menu-label">Rename…</span>
       </div>
       <div className={`context-menu-item${isDefault ? ' is-disabled' : ' danger'}`} data-action="delete" data-disabled={isDefault ? 'true' : 'false'}>
+        <span className="dropdown-icon">{raw(ICON_TRASH)}</span>
         <span className="context-menu-label">{isDefault ? 'Delete (Default cannot be deleted)' : 'Delete'}</span>
       </div>
     </div>

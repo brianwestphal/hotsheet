@@ -1,5 +1,6 @@
 import { SearchAddon } from '@xterm/addon-search';
 
+import { raw } from '../jsx-runtime.js';
 import { api, apiWithSecret } from './api.js';
 import { subscribeToBellState } from './bellPoll.js';
 import {
@@ -13,6 +14,7 @@ import { restoreTicketList } from './dashboardMode.js';
 import { closeDetail } from './detail.js';
 import { toElement } from './dom.js';
 import { showHideTerminalDialog } from './hideTerminalDialog.js';
+import { ICON_EYE_OFF, ICON_PENCIL, ICON_X } from './icons.js';
 import type { ProjectInfo } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { subscribeToDefaultAppearanceChanges } from './terminalAppearance.js';
@@ -928,21 +930,32 @@ function onTileContextMenu(entry: TileEntry, secret: string, e: MouseEvent): voi
       className="terminal-dashboard-tile-context-menu command-log-context-menu"
       style={`left:${e.clientX}px;top:${e.clientY}px`}
     >
+      {/* HS-7834 — "Close Tab" renamed to "Close Terminal" in the dashboard
+          context menu (the tab metaphor lives in the drawer; the dashboard
+          shows tiles, not tabs). Hide-in-Dashboard moved up next to Close
+          since the two actions are related — both make the tile go away.
+          HS-7835 — every item carries a Lucide icon. */}
       <div
         className={`context-menu-item${closeDisabled ? ' disabled' : ''}`}
         data-action="close"
         title={closeDisabled ? 'Configured terminals must be removed from Settings → Terminal' : undefined}
       >
-        Close Tab
+        <span className="dropdown-icon">{raw(ICON_X)}</span>
+        <span className="context-menu-label">Close Terminal</span>
       </div>
-      <div className="context-menu-separator"></div>
-      <div className="context-menu-item" data-action="rename">Rename...</div>
-      <div className="context-menu-separator"></div>
       {/* HS-7661 — hide this terminal from the dashboard. Session-only;
           state lives in dashboardHiddenTerminals.ts. The hidden-state
           subscription rebuilds the dashboard so the tile disappears
           immediately. */}
-      <div className="context-menu-item" data-action="hide">Hide in Dashboard</div>
+      <div className="context-menu-item" data-action="hide">
+        <span className="dropdown-icon">{raw(ICON_EYE_OFF)}</span>
+        <span className="context-menu-label">Hide in Dashboard</span>
+      </div>
+      <div className="context-menu-separator"></div>
+      <div className="context-menu-item" data-action="rename">
+        <span className="dropdown-icon">{raw(ICON_PENCIL)}</span>
+        <span className="context-menu-label">Rename...</span>
+      </div>
     </div>
   );
 

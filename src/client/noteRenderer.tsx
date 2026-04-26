@@ -5,6 +5,7 @@ import { api } from './api.js';
 import { toElement } from './dom.js';
 import { isChannelEnabled } from './experimentalSettings.js';
 import { parseFeedbackPrefix, showFeedbackDialog } from './feedbackDialog.js';
+import { ICON_TRASH } from './icons.js';
 import { appendImageDownloadLinks, proxyGitHubImages } from './imageProxy.js';
 import { state } from './state.js';
 import { pushNotesUndo } from './undo/actions.js';
@@ -170,9 +171,11 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
         e.preventDefault();
         document.querySelectorAll('.note-context-menu').forEach(m => m.remove());
 
+        // HS-7835 — Lucide trash icon.
         const menu = toElement(
           <div className="note-context-menu context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}>
             <div className="context-menu-item danger">
+              <span className="dropdown-icon">{raw(ICON_TRASH)}</span>
               <span className="context-menu-label">Delete Note</span>
             </div>
           </div>
@@ -316,9 +319,11 @@ function buildDraftEntry(ticketId: number, draft: FeedbackDraft, notes: NoteEntr
   entry.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     document.querySelectorAll('.note-context-menu').forEach(m => m.remove());
+    // HS-7835 — Lucide trash icon.
     const menu = toElement(
       <div className="note-context-menu context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}>
         <div className="context-menu-item danger">
+          <span className="dropdown-icon">{raw(ICON_TRASH)}</span>
           <span className="context-menu-label">Delete Draft</span>
         </div>
       </div>

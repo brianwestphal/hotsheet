@@ -1,6 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
+import { ICON_FOLDER_OPEN, ICON_GLOBE, ICON_POWER, ICON_SETTINGS, ICON_UNINSTALL } from './icons.js';
 import { createPreferenceRow, renderConfigLayout } from './pluginConfigDialog.js';
 import type { PluginInfo, SyncConflict } from './pluginTypes.js';
 import { STATUS_DOT } from './pluginTypes.js';
@@ -235,8 +236,16 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
 
   const menu = toElement(<div className="context-menu" style={`top:${e.clientY}px;left:${e.clientX}px;z-index:3000`}></div>);
 
+  // HS-7835 — Lucide icons on every plugin context-menu entry.
+  const iconRow = (icon: string, label: string, extra: string = ''): HTMLElement => toElement(
+    <div className={`context-menu-item${extra}`}>
+      <span className="dropdown-icon">{raw(icon)}</span>
+      <span className="context-menu-label">{label}</span>
+    </div>
+  );
+
   // Configure
-  const configItem = toElement(<div className="context-menu-item">Configure...</div>);
+  const configItem = iconRow(ICON_SETTINGS, 'Configure...');
   configItem.addEventListener('click', () => {
     menu.remove();
     void showPluginConfigDialog(plugin);
@@ -245,7 +254,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
 
   // Enable / Disable for this project
   if (plugin.enabled) {
-    const disableItem = toElement(<div className="context-menu-item">Disable</div>);
+    const disableItem = iconRow(ICON_POWER, 'Disable');
     disableItem.addEventListener('click', async () => {
       menu.remove();
       await api(`/plugins/${plugin.id}/disable`, { method: 'POST' });
@@ -254,7 +263,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
     });
     menu.appendChild(disableItem);
   } else {
-    const enableItem = toElement(<div className="context-menu-item">Enable</div>);
+    const enableItem = iconRow(ICON_POWER, 'Enable');
     enableItem.addEventListener('click', async () => {
       menu.remove();
       await api(`/plugins/${plugin.id}/enable`, { method: 'POST' });
@@ -267,7 +276,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
   // Bulk enable/disable on all open projects
   menu.appendChild(toElement(<div className="context-menu-separator"></div>));
 
-  const enableAllItem = toElement(<div className="context-menu-item">Enable on All Projects</div>);
+  const enableAllItem = iconRow(ICON_GLOBE, 'Enable on All Projects');
   enableAllItem.addEventListener('click', async () => {
     menu.remove();
     await api(`/plugins/${plugin.id}/enable-all`, { method: 'POST' });
@@ -276,7 +285,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
   });
   menu.appendChild(enableAllItem);
 
-  const disableAllItem = toElement(<div className="context-menu-item">Disable on All Projects</div>);
+  const disableAllItem = iconRow(ICON_GLOBE, 'Disable on All Projects');
   disableAllItem.addEventListener('click', async () => {
     menu.remove();
     await api(`/plugins/${plugin.id}/disable-all`, { method: 'POST' });
@@ -289,7 +298,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
   menu.appendChild(toElement(<div className="context-menu-separator"></div>));
 
   // Uninstall
-  const uninstallItem = toElement(<div className="context-menu-item danger">Uninstall</div>);
+  const uninstallItem = iconRow(ICON_UNINSTALL, 'Uninstall', ' danger');
   uninstallItem.addEventListener('click', (ev) => {
     ev.stopPropagation();
     // Replace the menu content with a confirmation prompt
@@ -320,7 +329,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
   // Show in Finder
   if (plugin.path != null && plugin.path !== '') {
     menu.appendChild(toElement(<div className="context-menu-separator"></div>));
-    const revealItem = toElement(<div className="context-menu-item">Show in Finder</div>);
+    const revealItem = iconRow(ICON_FOLDER_OPEN, 'Show in Finder');
     revealItem.addEventListener('click', async () => {
       menu.remove();
       try { await api(`/plugins/${plugin.id}/reveal`, { method: 'POST' }); } catch { /* ignore */ }

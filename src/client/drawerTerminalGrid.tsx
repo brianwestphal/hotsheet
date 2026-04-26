@@ -443,9 +443,13 @@ async function showHideContextMenuAtPointer(e: MouseEvent, secret: string, termi
   document.querySelectorAll('.terminal-tile-context-menu').forEach(m => m.remove());
   const { setTerminalHidden } = await import('./dashboardHiddenTerminals.js');
   const { toElement } = await import('./dom.js');
+  const { raw } = await import('../jsx-runtime.js');
+  const { ICON_EYE_OFF } = await import('./icons.js');
   const menu = toElement(
     <div className="terminal-tile-context-menu context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}>
+      {/* HS-7835 — Lucide icon prefix for the single hide action. */}
       <div className="context-menu-item">
+        <span className="dropdown-icon">{raw(ICON_EYE_OFF)}</span>
         <span className="context-menu-label">Hide in Dashboard</span>
       </div>
     </div>

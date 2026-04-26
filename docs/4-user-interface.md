@@ -21,7 +21,7 @@ The interface is divided into:
 - The active sidebar view (All, Up Next, category filter, custom view, etc.) is remembered per project and restored on switch. If a saved view references a custom view that doesn't exist in the target project, it falls back to "All".
 - The segmented controls (layout toggle, detail position toggle) update to reflect the switched project's saved settings.
 - Right-click on a tab shows a context menu with:
-  - Close Tab, Close Other Tabs, Close Tabs to the Left, Close Tabs to the Right (disabled when not applicable).
+  - Close Tab, Close Other Tabs, Close Tabs to the Left, Close Tabs to the Right (disabled when not applicable). Each entry carries a Lucide icon (HS-7835): `x` for Close Tab, `between-horizontal-end` for Close Other Tabs, `arrow-left-from-line` / `arrow-right-from-line` for the directional close items.
   - A separator, then "Show in Finder" with a folder icon. Opens the project's root folder (parent of `.hotsheet/`) using the OS file manager.
 - Keyboard shortcuts for tab management:
   - Cmd/Ctrl+Shift+[ or ] — Switch to previous/next tab (works even in text fields).

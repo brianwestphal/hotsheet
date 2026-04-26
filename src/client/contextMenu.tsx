@@ -1,7 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
 import { toElement } from './dom.js';
-import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_TAG, ICON_TRASH } from './icons.js';
+import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH } from './icons.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS, syncedTicketMap, VERIFIED_SVG } from './state.js';
@@ -78,10 +78,12 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
     action: () => applyToSelected('status', s.value),
   })));
 
-  // Up Next toggle
-  addActionItem(menu, ticket.up_next ? '\u2605 Up Next' : '\u2606 Up Next', () => {
+  // Up Next toggle (HS-7835 \u2014 Lucide star icon replaces the unicode prefix.
+  // Filled variant when the ticket is already up_next so the user sees the
+  // current state at a glance, same affordance as the original `\u2605`/`\u2606`.).
+  addActionItem(menu, 'Up Next', () => {
     void applyToSelected('up_next', !ticket.up_next);
-  });
+  }, { icon: ticket.up_next ? ICON_STAR_FILLED : ICON_STAR });
 
   addSeparator(menu);
 

@@ -43,3 +43,44 @@ export const ICON_INFO = `<svg ${LUCIDE_14}><circle cx="12" cy="12" r="10"/><pat
 export const ICON_SHARE = `<svg ${LUCIDE_14}><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" x2="12" y1="2" y2="15"/></svg>`;
 
 export const ICON_SHARE_2 = `<svg ${LUCIDE_14}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>`;
+
+// HS-7835 — additional icons used by context menus across the app.
+
+/** Lucide `x` — generic close / dismiss. */
+export const ICON_X = `<svg ${LUCIDE_14}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
+
+/** Lucide `circle-x` — disable / cancel / not-working. */
+export const ICON_X_CIRCLE = `<svg ${LUCIDE_14}><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>`;
+
+/** Lucide `arrow-left-from-line` — Close tabs to the left. */
+export const ICON_CLOSE_LEFT = `<svg ${LUCIDE_14}><path d="m9 6-6 6 6 6"/><path d="M3 12h14"/><path d="M21 19V5"/></svg>`;
+
+/** Lucide `arrow-right-from-line` — Close tabs to the right. */
+export const ICON_CLOSE_RIGHT = `<svg ${LUCIDE_14}><path d="M3 5v14"/><path d="M21 12H7"/><path d="m15 18 6-6-6-6"/></svg>`;
+
+/** Lucide `between-horizontal-end` — Close OTHER tabs (keep this one, close
+ *  rest). Two arrows pointing inward from horizontal lines. */
+export const ICON_CLOSE_OTHERS = `<svg ${LUCIDE_14}><rect width="13" height="7" x="3" y="3" rx="1"/><path d="m22 15-3-3 3-3"/><rect width="13" height="7" x="3" y="14" rx="1"/></svg>`;
+
+/** Lucide `settings` — Configure. */
+export const ICON_SETTINGS = `<svg ${LUCIDE_14}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`;
+
+/** Lucide `power` — Enable / Disable plugin. */
+export const ICON_POWER = `<svg ${LUCIDE_14}><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></svg>`;
+
+/** Lucide `globe` — Apply on all projects (the "all projects" cousin of
+ *  the per-project enable/disable items in the plugin context menu). */
+export const ICON_GLOBE = `<svg ${LUCIDE_14}><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>`;
+
+/** Lucide `package-x` — Uninstall a plugin. */
+export const ICON_UNINSTALL = `<svg ${LUCIDE_14}><path d="M16.5 9.4 7.55 4.24"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0"/><path d="m7.5 4.27 9 5.15"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" x2="12" y1="22" y2="12"/><path d="m17 17 5 5"/><path d="m22 17-5 5"/></svg>`;
+
+/** Lucide `star` (outline) — Up Next, currently OFF. */
+export const ICON_STAR = `<svg ${LUCIDE_14}><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+
+/** Lucide `star` filled — Up Next, currently ON. Same path but filled
+ *  to communicate the current state in toggle context menus. */
+export const ICON_STAR_FILLED = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+
+/** Lucide `external-link` — Push to remote / open external. */
+export const ICON_EXTERNAL_LINK = `<svg ${LUCIDE_14}><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>`;

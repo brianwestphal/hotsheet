@@ -16,6 +16,7 @@ import {
   isDrawerGridActive,
   onTerminalListUpdated,
 } from './drawerTerminalGrid.js';
+import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_PENCIL, ICON_X } from './icons.js';
 import { getActiveProject, state } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
 import {
@@ -1766,14 +1767,30 @@ function showTabContextMenu(e: MouseEvent, clickedId: string): void {
   dismissTabContextMenu();
   const isClickedDynamic = isDynamic(clickedId);
 
+  // HS-7835 — Lucide icons on every entry.
   const menu = toElement(
     <div className="terminal-tab-context-menu command-log-context-menu" style={`left:${e.clientX}px;top:${e.clientY}px`}>
-      <div className={`context-menu-item${isClickedDynamic ? '' : ' disabled'}`} data-action="close">Close Tab</div>
-      <div className="context-menu-item" data-action="close-others">Close Other Tabs</div>
-      <div className="context-menu-item" data-action="close-left">Close Tabs to the Left</div>
-      <div className="context-menu-item" data-action="close-right">Close Tabs to the Right</div>
+      <div className={`context-menu-item${isClickedDynamic ? '' : ' disabled'}`} data-action="close">
+        <span className="dropdown-icon">{raw(ICON_X)}</span>
+        <span className="context-menu-label">Close Tab</span>
+      </div>
+      <div className="context-menu-item" data-action="close-others">
+        <span className="dropdown-icon">{raw(ICON_CLOSE_OTHERS)}</span>
+        <span className="context-menu-label">Close Other Tabs</span>
+      </div>
+      <div className="context-menu-item" data-action="close-left">
+        <span className="dropdown-icon">{raw(ICON_CLOSE_LEFT)}</span>
+        <span className="context-menu-label">Close Tabs to the Left</span>
+      </div>
+      <div className="context-menu-item" data-action="close-right">
+        <span className="dropdown-icon">{raw(ICON_CLOSE_RIGHT)}</span>
+        <span className="context-menu-label">Close Tabs to the Right</span>
+      </div>
       <div className="context-menu-separator"></div>
-      <div className="context-menu-item" data-action="rename">Rename...</div>
+      <div className="context-menu-item" data-action="rename">
+        <span className="dropdown-icon">{raw(ICON_PENCIL)}</span>
+        <span className="context-menu-label">Rename...</span>
+      </div>
     </div>
   );
 

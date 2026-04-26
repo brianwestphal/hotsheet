@@ -2,7 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { toElement } from './dom.js';
-import { ICON_FOLDER } from './icons.js';
+import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_FOLDER, ICON_X } from './icons.js';
 import { getMinimizedPermissionSecrets, reopenMinimizedForSecret } from './permissionOverlay.js';
 import type { ProjectInfo } from './state.js';
 import { clearPerProjectSessionState, getActiveProject, setActiveProject } from './state.js';
@@ -169,11 +169,13 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
   const hasRight = idx < projectList.length - 1;
   const canClose = projectList.length > 1;
 
-  const items: { label: string; action: () => void; disabled?: boolean }[] = [
-    { label: 'Close Tab', action: () => void removeProject(project), disabled: !canClose },
-    { label: 'Close Other Tabs', action: () => void removeOtherProjects(project), disabled: projectList.length <= 1 },
-    { label: 'Close Tabs to the Left', action: () => void removeProjectsInDirection(project, 'left'), disabled: !hasLeft },
-    { label: 'Close Tabs to the Right', action: () => void removeProjectsInDirection(project, 'right'), disabled: !hasRight },
+  // HS-7835 — Lucide icons on every entry (matches the §22 terminal-tab
+  // context menu visually).
+  const items: { label: string; action: () => void; disabled?: boolean; icon: string }[] = [
+    { label: 'Close Tab', action: () => void removeProject(project), disabled: !canClose, icon: ICON_X },
+    { label: 'Close Other Tabs', action: () => void removeOtherProjects(project), disabled: projectList.length <= 1, icon: ICON_CLOSE_OTHERS },
+    { label: 'Close Tabs to the Left', action: () => void removeProjectsInDirection(project, 'left'), disabled: !hasLeft, icon: ICON_CLOSE_LEFT },
+    { label: 'Close Tabs to the Right', action: () => void removeProjectsInDirection(project, 'right'), disabled: !hasRight, icon: ICON_CLOSE_RIGHT },
   ];
 
   const folderIcon = ICON_FOLDER;
@@ -182,6 +184,7 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
     <div className="tab-context-menu" id="tab-context-menu">
       {items.map(item => (
         <div className={`tab-context-item${item.disabled === true ? ' disabled' : ''}`}>
+          <span className="tab-context-icon">{raw(item.icon)}</span>
           {item.label}
         </div>
       ))}
