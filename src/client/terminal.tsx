@@ -602,6 +602,33 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
       terminalId: inst.id,
       isDynamic: inst.config.dynamic === true,
       onApply: () => { void reapplyAppearance(inst); },
+      // HS-7896 — give the popover a live read of `inst.config` so it shows
+      // the correct selected theme / font / size when opening, and let it
+      // mutate `inst.config` synchronously when the user picks a new value
+      // so reapplyAppearance sees the change on the first re-render. Without
+      // these hooks the popover wrote to disk but the live xterm kept
+      // reading the stale snapshot.
+      getCurrentConfigOverride: () => {
+        const out: { theme?: string; fontFamily?: string; fontSize?: number } = {};
+        if (inst.config.theme !== undefined) out.theme = inst.config.theme;
+        if (inst.config.fontFamily !== undefined) out.fontFamily = inst.config.fontFamily;
+        if (inst.config.fontSize !== undefined) out.fontSize = inst.config.fontSize;
+        return out;
+      },
+      onConfigOverrideChange: (partial) => {
+        if ('theme' in partial) {
+          if (partial.theme === undefined) delete inst.config.theme;
+          else inst.config.theme = partial.theme;
+        }
+        if ('fontFamily' in partial) {
+          if (partial.fontFamily === undefined) delete inst.config.fontFamily;
+          else inst.config.fontFamily = partial.fontFamily;
+        }
+        if ('fontSize' in partial) {
+          if (partial.fontSize === undefined) delete inst.config.fontSize;
+          else inst.config.fontSize = partial.fontSize;
+        }
+      },
     });
   });
 

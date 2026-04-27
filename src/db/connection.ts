@@ -127,6 +127,27 @@ export async function closeDbForDir(dataDir: string): Promise<void> {
   }
 }
 
+/**
+ * HS-7931 — close every cached PGLite instance. Used by `gracefulShutdown`
+ * (`src/lifecycle.ts`) so every shutdown path gives PGLite a chance to
+ * CHECKPOINT and remove its `postmaster.pid` instead of leaving the file
+ * stale for HS-7888 to clean up on relaunch. Per-instance failures are
+ * logged but don't stop subsequent instances from being closed — losing a
+ * single project's clean close is much better than blocking the user's
+ * quit.
+ */
+export async function closeAllDatabases(): Promise<void> {
+  const entries = Array.from(databases.entries());
+  databases.clear();
+  for (const [dbPath, db] of entries) {
+    try {
+      await db.close();
+    } catch (err) {
+      console.error(`[db] close failed for ${dbPath}:`, err);
+    }
+  }
+}
+
 export function adoptDb(instance: PGlite): void {
   if (defaultDbPath !== null) {
     databases.set(defaultDbPath, instance);

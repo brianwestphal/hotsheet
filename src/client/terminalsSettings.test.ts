@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveNameFromCommand } from './terminalsSettings.js';
+import { COMMAND_INPUT_PLACEHOLDER, deriveNameFromCommand } from './terminalsSettings.js';
+
+describe('COMMAND_INPUT_PLACEHOLDER (HS-7895)', () => {
+  it('is not the {{claudeCommand}} sentinel — placeholder must not show an unresolved template tag', () => {
+    expect(COMMAND_INPUT_PLACEHOLDER).not.toContain('{{claudeCommand}}');
+    expect(COMMAND_INPUT_PLACEHOLDER).not.toContain('{{');
+    expect(COMMAND_INPUT_PLACEHOLDER).not.toContain('}}');
+  });
+
+  it('is non-empty so the empty-state field still gets a discoverable cue', () => {
+    expect(COMMAND_INPUT_PLACEHOLDER.length).toBeGreaterThan(0);
+  });
+});
 
 describe('deriveNameFromCommand (HS-7858)', () => {
   it('returns "Claude" for the {{claudeCommand}} sentinel', () => {

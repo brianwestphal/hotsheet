@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 
 import { runWithDataDir } from './db/connection.js';
 import { readFileSettings } from './file-settings.js';
+import { gracefulShutdown, registerHttpServerForShutdown } from './lifecycle.js';
 import { getMimeType } from './mime-types.js';
 import { getProjectBySecret } from './projects.js';
 import { apiRoutes } from './routes/api.js';
@@ -146,14 +147,20 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   // Graceful shutdown endpoint (used by stale instance cleanup and `--close`).
   // HS-7528: kill every live PTY before the process exits so interactive
   // shells don't outlive the Hot Sheet instance that launched them.
-  // SIGINT/SIGTERM signal handlers in `cli.ts` already do this, but those
-  // aren't on the `/api/shutdown` path — without this call the PTYs orphan
-  // whenever the client uses the HTTP shutdown route (e.g. `hotsheet --close`
-  // or the stale-instance auto-cleanup).
+  // HS-7931: also `await db.close()` per cached PGLite instance so the
+  // postmaster.pid + WAL get a clean checkpoint instead of being left for
+  // HS-7888's reactive mitigation to mop up. The full pipeline lives in
+  // `src/lifecycle.ts` and is shared with the SIGINT/SIGTERM handlers in
+  // `cli.ts`.
   app.post('/api/shutdown', (c) => {
     console.log('[server] Shutdown requested');
-    void import('./terminals/registry.js').then(m => m.destroyAllTerminals()).catch(() => { /* registry may already be torn down */ });
-    setTimeout(() => process.exit(0), 500);
+    void gracefulShutdown('http').finally(() => {
+      // Yield once so Hono's response flushes to the client before we exit.
+      // Without it the curl that triggered the shutdown sometimes races the
+      // socket close and reports "Empty reply from server" even though the
+      // shutdown ran cleanly.
+      setImmediate(() => process.exit(0));
+    });
     return c.json({ ok: true });
   });
 
@@ -187,6 +194,9 @@ export async function startServer(port: number, dataDir: string, options?: { noO
 
   if (httpServer !== null) {
     wireTerminalWebSocket(httpServer);
+    // HS-7931: register the live HTTP server with the lifecycle module so
+    // `gracefulShutdown` can close it before issuing CHECKPOINTs.
+    registerHttpServerForShutdown(httpServer);
   }
 
   if (actualPort !== port) {

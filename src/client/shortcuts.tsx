@@ -119,6 +119,24 @@ export function bindKeyboardShortcuts() {
       return;
     }
 
+    // HS-7926 — Cmd+T (macOS) / Ctrl+T (Windows/Linux) opens a new dynamic
+    // terminal. Mirrors Terminal.app / iTerm2 / VS Code's "new tab" shortcut.
+    // Fires regardless of focus context (including inside an xterm helper
+    // textarea or an INPUT) — Cmd+T is reserved by every macOS app for "new
+    // tab" so users expect it to work everywhere. The "+" add-terminal
+    // button at `#drawer-add-terminal-btn` lives inside
+    // `#drawer-terminal-tabs-wrap` which is `display:none` when no
+    // configured terminals exist; clicking a hidden button still fires the
+    // handler so the shortcut works in every state.
+    if (isNewTerminalShortcut(e)) {
+      const btn = document.getElementById('drawer-add-terminal-btn');
+      if (btn !== null) {
+        e.preventDefault();
+        btn.click();
+        return;
+      }
+    }
+
     // Cmd/Ctrl+O: Open Folder (browser mode — Tauri handles via menu)
     if ((e.metaKey || e.ctrlKey) && e.key === 'o' && !getTauriInvoke()) {
       e.preventDefault();
@@ -351,18 +369,49 @@ function isTerminalFocused(): boolean {
 }
 
 /**
- * Switch to the previous/next terminal tab relative to the current one.
- * Wraps at either end. No-op if fewer than two terminal tabs exist
- * (HS-6472).
+ * HS-7926 — Cmd+T (macOS) / Ctrl+T (Windows/Linux) shortcut predicate. Pure
+ * helper so the conditional in the keydown handler is testable. Excludes
+ * Shift (Cmd+Shift+T = "reopen closed tab") and Alt to leave room for any
+ * future variant. Case-insensitive on the letter for keyboard-layout
+ * tolerance.
  */
-function switchTerminalTabByOffset(offset: number): void {
-  const tabs = Array.from(document.querySelectorAll<HTMLElement>('.drawer-terminal-tab'));
-  if (tabs.length < 2) return;
-  const currentIdx = tabs.findIndex(t => t.classList.contains('active'));
+export function isNewTerminalShortcut(e: { metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; key: string }): boolean {
+  if (!(e.metaKey || e.ctrlKey)) return false;
+  if (e.altKey || e.shiftKey) return false;
+  return e.key.toLowerCase() === 't';
+}
+
+/**
+ * Pure helper: given a list of `.drawer-tab[data-drawer-tab]` elements + an
+ * offset, return the `data-drawer-tab` id of the wrap-around target, or
+ * `null` if there are fewer than two cyclable tabs.
+ *
+ * HS-7927 broadens the cycle from "terminal tabs only" (HS-6472) to "every
+ * cyclable drawer tab" — Commands Log + every terminal. The
+ * `[data-drawer-tab]` filter excludes the "+" add-terminal button (which
+ * has the `drawer-tab` class but no `data-drawer-tab`).
+ *
+ * Exported so the unit test can pin down the selection + wrap-around
+ * behaviour without running the live keyboard handler.
+ */
+export function pickNextDrawerTabId(
+  tabs: ReadonlyArray<{ active: boolean; tabId: string }>,
+  offset: number,
+): string | null {
+  if (tabs.length < 2) return null;
+  const currentIdx = tabs.findIndex(t => t.active);
   const start = currentIdx === -1 ? 0 : currentIdx;
   const nextIdx = ((start + offset) % tabs.length + tabs.length) % tabs.length;
-  const target = tabs[nextIdx];
-  const tabId = target.dataset.drawerTab ?? '';
-  if (tabId === '') return;
-  void import('./commandLog.js').then(({ switchDrawerTab }) => { switchDrawerTab(tabId); });
+  return tabs[nextIdx]!.tabId;
+}
+
+function switchTerminalTabByOffset(offset: number): void {
+  const tabs = Array.from(document.querySelectorAll<HTMLElement>('.drawer-tab[data-drawer-tab]'));
+  const tabSummaries = tabs.map(el => ({
+    active: el.classList.contains('active'),
+    tabId: el.dataset.drawerTab ?? '',
+  }));
+  const targetId = pickNextDrawerTabId(tabSummaries, offset);
+  if (targetId === null || targetId === '') return;
+  void import('./commandLog.js').then(({ switchDrawerTab }) => { switchDrawerTab(targetId); });
 }

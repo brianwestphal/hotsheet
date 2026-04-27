@@ -156,7 +156,7 @@ Every terminal toolbar (drawer + dashboard dedicated view) gains a **gear icon**
 
 **Persistence per terminal type:**
 
-- **Configured terminals.** Changes made in the popover persist to `settings.json` via `PATCH /api/file-settings` — the same debounced-save path the existing terminals settings UI uses. The `terminals[]` entry for that id gets updated `theme` / `fontFamily` / `fontSize` fields.
+- **Configured terminals.** Changes made in the popover persist to `settings.json` via `PATCH /api/file-settings` — the same debounced-save path the existing terminals settings UI uses. The `terminals[]` entry for that id gets updated `theme` / `fontFamily` / `fontSize` fields. The popover ALSO mutates the caller's in-memory `inst.config` snapshot synchronously through the `onConfigOverrideChange(partial)` callback (HS-7896) before invoking `onApply` — without that synchronous mutation the live `reapplyAppearance` call would read the stale snapshot and reapply the OLD theme, leaving the user's gear-button click looking like a no-op. The same callback receives `{theme: undefined, fontFamily: undefined, fontSize: undefined}` for "Reset to project default" so the in-memory snapshot doesn't outlive the cleared file values.
 - **Dynamic terminals.** Changes are stored in the session-override map only. PTY restart (Stop → Start) preserves the override; page reload clears it. This matches the session-only scope of dynamic terminals themselves.
 
 **Dismissal.** Click outside the popover, press Escape, or click the gear button again. Capture-phase document listener pattern (matches the existing OSC 133 popover in §32).

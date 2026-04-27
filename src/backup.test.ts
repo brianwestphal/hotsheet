@@ -1,10 +1,18 @@
 import { PGlite } from '@electric-sql/pglite';
-import { existsSync, readFileSync, rmSync } from 'fs';
+import { createHash } from 'crypto';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { gunzipSync } from 'zlib';
 
+import {
+  attachmentBlobsDir,
+  ATTACHMENT_MANIFEST_VERSION,
+  manifestSiblingFilename,
+  readManifest,
+} from './attachmentBackup.js';
 import { type BackupInfo, createBackup, findOverdueTiers, listBackups, triggerMissedBackups } from './backup.js';
+import { addAttachment } from './db/attachments.js';
 import { getDb, SCHEMA_VERSION } from './db/connection.js';
 import { createTicket } from './db/queries.js';
 import { type JsonDbExport, jsonSiblingFilename } from './dbJsonExport.js';
@@ -182,6 +190,44 @@ describe('JSON co-save integration (HS-7893)', () => {
     expect(decoded.schemaVersion).toBe(SCHEMA_VERSION);
     const tickets = decoded.tables.tickets as { title: string }[];
     expect(tickets.some(t => t.title === 'JSON cosave ticket')).toBe(true);
+  }, 60_000);
+});
+
+/** HS-7929: every backup writes a `backup-<TS>.attachments.json` manifest
+ *  sibling next to the tarball + JSON co-save, and copies each attachment
+ *  blob into the centralised `<backupRoot>/attachments/<sha>` store. */
+describe('Attachment manifest integration (HS-7929)', () => {
+  it('writes a manifest + hash-addressed blobs alongside the tarball', async () => {
+    // Add a real attachment file under the live attachments dir.
+    const ticket = await createTicket('Attachment-bearing ticket');
+    const liveAttachmentsDir = join(tempDir, 'attachments');
+    mkdirSync(liveAttachmentsDir, { recursive: true });
+    const filename = `HS-${ticket.ticket_number}_a.bin`;
+    const storedPath = join(liveAttachmentsDir, filename);
+    const buf = Buffer.from('attachment-payload');
+    writeFileSync(storedPath, buf);
+    await addAttachment(ticket.id, 'a.bin', storedPath);
+
+    const info = await createBackup(tempDir, '5min');
+    expect(info).not.toBeNull();
+
+    const dir = join(tempDir, 'backups', info!.tier);
+    const manifestPath = join(dir, manifestSiblingFilename(info!.filename));
+    expect(existsSync(manifestPath)).toBe(true);
+
+    const manifest = readManifest(manifestPath);
+    expect(manifest).not.toBeNull();
+    expect(manifest!.schemaVersion).toBe(ATTACHMENT_MANIFEST_VERSION);
+    expect(manifest!.tarball).toBe(info!.filename);
+
+    const expectedSha = createHash('sha256').update(buf).digest('hex');
+    const ours = manifest!.entries.find(e => e.sha === expectedSha);
+    expect(ours).toBeDefined();
+    expect(ours!.originalName).toBe('a.bin');
+
+    const blobsDir = attachmentBlobsDir(join(tempDir, 'backups'));
+    expect(existsSync(join(blobsDir, expectedSha))).toBe(true);
+    expect(readFileSync(join(blobsDir, expectedSha)).equals(buf)).toBe(true);
   }, 60_000);
 });
 

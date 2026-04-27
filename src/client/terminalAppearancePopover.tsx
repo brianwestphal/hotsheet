@@ -44,6 +44,28 @@ export interface AppearancePopoverOptions {
   /** Called after any apply (theme / font / size / reset) so the caller can
    *  re-run applyAppearanceToTerm against the live xterm. */
   onApply: () => void;
+  /**
+   * HS-7896 — read the configured terminal's current appearance override
+   *  (the in-memory snapshot the caller holds, e.g. `inst.config`). The
+   *  popover uses this to (a) display the correct selected theme / font /
+   *  size when opening for a configured terminal that already has overrides
+   *  and (b) so the caller can keep its in-memory copy aligned with the
+   *  user's edits via `onConfigOverrideChange`. Returns `{}` when no
+   *  override is set. Optional — dynamic terminals can omit it.
+   */
+  getCurrentConfigOverride?: () => Partial<TerminalAppearance>;
+  /**
+   * HS-7896 — called synchronously when the user changes a field on a
+   *  CONFIGURED terminal so the caller can update its in-memory config
+   *  before `onApply` runs. Without this hook the caller's
+   *  `inst.config.{theme,fontFamily,fontSize}` stays stale, the live xterm's
+   *  `reapplyAppearance` reads the old values, and the new theme never
+   *  reaches the canvas — that was the HS-7896 user-reported bug. Pass a
+   *  field with value `undefined` to mean "delete this field" (the
+   *  reset-to-project-default semantics). Optional — dynamic terminals can
+   *  omit it.
+   */
+  onConfigOverrideChange?: (partial: Partial<TerminalAppearance>) => void;
 }
 
 interface OpenPopover {
@@ -101,9 +123,15 @@ export function dismissAppearancePopover(): void {
 }
 
 function buildPopoverElement(opts: AppearancePopoverOptions): HTMLElement {
+  // HS-7896 — pull the configured override from the caller's in-memory snapshot
+  // so a configured terminal with `theme: 'dracula'` opens with Dracula
+  // selected (pre-fix the popover hard-coded `configOverride: {}` and the
+  // dropdown always showed the project default, which both misled the user
+  // and made the post-edit reapply look broken).
+  const configOverride = opts.getCurrentConfigOverride?.() ?? {};
   const current = resolveAppearance({
     projectDefault: getProjectDefault(),
-    configOverride: {}, // configured-override is fetched below if needed
+    configOverride,
     sessionOverride: getSessionOverride(opts.terminalId),
   });
 
@@ -153,11 +181,26 @@ function buildPopoverElement(opts: AppearancePopoverOptions): HTMLElement {
   const sizeInc = popover.querySelector<HTMLButtonElement>('.terminal-appearance-size-inc')!;
   const resetBtn = popover.querySelector<HTMLButtonElement>('.terminal-appearance-reset')!;
 
+  // HS-7896 — explicitly seed the form-control values from the resolved
+  // appearance. The `selected` attribute on `<option>` from JSX-generated
+  // innerHTML is parsed inconsistently (happy-dom in tests, and historically
+  // some WebKit edge cases for `<select>` mounted via `<template>` content)
+  // — setting `.value` directly is the robust path that mirrors what the
+  // user picked across both runtime environments.
+  themeSel.value = current.theme;
+  fontSel.value = current.fontFamily;
+  sizeInput.value = String(current.fontSize);
+
   const applyField = (field: keyof TerminalAppearance, value: string | number): void => {
     if (opts.isDynamic) {
       setSessionOverride(opts.terminalId, { [field]: value } as Partial<TerminalAppearance>);
       opts.onApply();
     } else {
+      // HS-7896 — update the caller's in-memory config snapshot SYNCHRONOUSLY
+      // before kicking off the disk persist + onApply, so reapplyAppearance
+      // (which reads `inst.config` via resolveInstanceAppearance) sees the
+      // freshly chosen value on the very first re-render.
+      opts.onConfigOverrideChange?.({ [field]: value } as Partial<TerminalAppearance>);
       void persistConfiguredOverride(opts.terminalId, { [field]: value } as Partial<TerminalAppearance>);
       opts.onApply();
     }
@@ -186,6 +229,11 @@ function buildPopoverElement(opts: AppearancePopoverOptions): HTMLElement {
     if (opts.isDynamic) {
       clearSessionOverride(opts.terminalId);
     } else {
+      // HS-7896 — clear the caller's in-memory snapshot too. Without this the
+      // post-reset `inst.config` still carries the previous theme / font /
+      // size and `reapplyAppearance` would re-apply them despite the disk
+      // values being cleared.
+      opts.onConfigOverrideChange?.({ theme: undefined, fontFamily: undefined, fontSize: undefined });
       void clearConfiguredOverride(opts.terminalId);
     }
     // Update the popover controls to reflect the post-reset state.

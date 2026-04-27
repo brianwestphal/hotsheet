@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { clearRecoveryMarker, closeDb, getDb, readRecoveryMarker, setDataDir } from './connection.js';
+import { clearRecoveryMarker, closeAllDatabases, closeDb, getDb, getDbForDir, readRecoveryMarker, setDataDir } from './connection.js';
 import { createTicket, getTickets } from './queries.js';
 
 let dataDir: string;
@@ -162,5 +162,64 @@ describe('DB recovery marker (HS-7899)', () => {
       JSON.stringify({ recoveredAt: new Date().toISOString() }) // missing corruptPath
     );
     expect(readRecoveryMarker(dataDir)).toBeNull();
+  });
+});
+
+/** HS-7931: `closeAllDatabases` is the central choke point used by
+ *  `gracefulShutdown` (`src/lifecycle.ts`). It must close every cached
+ *  PGLite instance — leaving even one open means the process exit will
+ *  leave a stale `postmaster.pid` for HS-7888 to clean up next launch. */
+describe('closeAllDatabases (HS-7931)', () => {
+  it('closes every cached instance and clears the cache so the next getDb opens a fresh handle', async () => {
+    const dataDirA = join(tmpdir(), `hs-close-all-a-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const dataDirB = join(tmpdir(), `hs-close-all-b-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dataDirA, { recursive: true });
+    mkdirSync(dataDirB, { recursive: true });
+    try {
+      const dbA = await getDbForDir(dataDirA);
+      const dbB = await getDbForDir(dataDirB);
+
+      // Sanity — each instance is a live PGLite handle.
+      expect(typeof dbA.close).toBe('function');
+      expect(typeof dbB.close).toBe('function');
+
+      await closeAllDatabases();
+
+      // After closeAll, asking for the same dataDir returns a NEW handle —
+      // the cache was cleared.
+      const dbAAfter = await getDbForDir(dataDirA);
+      expect(dbAAfter).not.toBe(dbA);
+      await closeAllDatabases();
+    } finally {
+      rmSync(dataDirA, { recursive: true, force: true });
+      rmSync(dataDirB, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps closing remaining instances even if one close throws', async () => {
+    const dataDir1 = join(tmpdir(), `hs-close-all-fail-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dataDir1, { recursive: true });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const db = await getDbForDir(dataDir1);
+      // Patch close to throw the first time so we can prove the function
+      // doesn't bail on the rest of the cache (none here, but the contract
+      // is what's being asserted).
+      const original = db.close.bind(db);
+      let firstCallThrew = false;
+      (db as unknown as { close: () => Promise<void> }).close = async () => {
+        firstCallThrew = true;
+        throw new Error('synthetic close failure');
+      };
+      await expect(closeAllDatabases()).resolves.toBeUndefined();
+      expect(firstCallThrew).toBe(true);
+      // Restore + actually close so the temp dir cleanup doesn't race a
+      // live PGLite holding handles.
+      (db as unknown as { close: () => Promise<void> }).close = original;
+      await original();
+    } finally {
+      errorSpy.mockRestore();
+      rmSync(dataDir1, { recursive: true, force: true });
+    }
   });
 });

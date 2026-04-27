@@ -23,6 +23,16 @@ interface EditableTerminalConfig extends TerminalTabConfig {
   id: string;
 }
 
+/**
+ * HS-7895 — placeholder for the Edit Terminal Command input. The pre-fix
+ * placeholder was the literal sentinel `{{claudeCommand}}`, which (a) shows
+ * an unresolved template tag in the empty state and (b) nudges users toward
+ * Claude even when they wanted a different shell. The hint text below the
+ * field still teaches the sentinel; the placeholder no longer doubles as a
+ * tutorial.
+ */
+export const COMMAND_INPUT_PLACEHOLDER = 'Pick a command…';
+
 let terminals: EditableTerminalConfig[] = [];
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let dragFromIndex: number | null = null;
@@ -263,7 +273,7 @@ function openEditor(index: number, focusField: 'name' | 'command' = 'name'): voi
                 type="text"
                 className="term-edit-command"
                 value={entry.command}
-                placeholder="{{claudeCommand}}"
+                placeholder={COMMAND_INPUT_PLACEHOLDER}
                 autocomplete="off"
                 spellcheck="false"
               />

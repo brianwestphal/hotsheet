@@ -563,15 +563,35 @@ async function setupInstanceLifecycle(actualPort: number): Promise<void> {
   // HS-7528: pre-import the registry so the synchronous `process.on('exit')`
   // handler can kill PTYs without waiting on an async import. Covers the
   // `process.exit()` path (e.g. `/api/shutdown`, stale-instance cleanup,
-  // crashes) — the SIGINT / SIGTERM handlers below also route through this.
+  // crashes) — the SIGINT / SIGTERM handlers below route through the async
+  // `gracefulShutdown` pipeline (HS-7931) so PGLite gets a chance to
+  // CHECKPOINT and remove `postmaster.pid` instead of leaving it stale for
+  // HS-7888 to mop up on relaunch.
   const { destroyAllTerminals } = await import('./terminals/registry.js');
+  const { gracefulShutdown } = await import('./lifecycle.js');
   const cleanupInstance = (): void => {
     try { destroyAllTerminals(); } catch { /* already torn down */ }
     removeInstanceFile();
   };
+  // HS-7931: synchronous exit handler stays as the lockfile-removal safety
+  // net for paths the async pipeline didn't get to (uncaught exceptions,
+  // explicit `process.exit()` from elsewhere).
   process.on('exit', () => { cleanupInstance(); });
-  process.on('SIGINT', () => { cleanupInstance(); process.exit(0); });
-  process.on('SIGTERM', () => { cleanupInstance(); process.exit(0); });
+
+  // HS-7931: signal handlers route through `gracefulShutdown`. A SECOND
+  // identical signal during the await escalates to `process.exit(1)` so a
+  // hung close can't trap the user — they can always Ctrl-C twice to bail.
+  let signalCount = 0;
+  const handleSignal = (signal: 'SIGINT' | 'SIGTERM'): void => {
+    signalCount += 1;
+    if (signalCount > 1) {
+      console.error(`[cli] received second ${signal} during shutdown — forcing exit(1)`);
+      process.exit(1);
+    }
+    void gracefulShutdown(signal).then(() => process.exit(0));
+  };
+  process.on('SIGINT', () => { handleSignal('SIGINT'); });
+  process.on('SIGTERM', () => { handleSignal('SIGTERM'); });
 }
 
 async function main() {

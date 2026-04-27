@@ -58,11 +58,13 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `types.ts` | `Ticket`, `TicketCategory`, `TicketPriority`, `AppEnv` |
 | `projects.ts` / `project-list.ts` | Multi-project registry (secret ↔ dataDir) |
 | `instance.ts` | `~/.hotsheet/instance.json` PID + port; stale cleanup |
+| `lifecycle.ts` | HS-7931 graceful-shutdown pipeline: `gracefulShutdown(reason)` closes HTTP → destroys PTYs → `closeAllDatabases()` → removes lockfile. Idempotent; shared by `/api/shutdown`, SIGINT, SIGTERM. `registerHttpServerForShutdown(server)` wires the live server in. |
 | `lock.ts` | `.hotsheet/hotsheet.lock` — single instance per dataDir |
 | `file-settings.ts` | Read/write `.hotsheet/settings.json` (reserved vs user keys) |
 | `global-config.ts` | `~/.hotsheet/config.json` (channel enabled, share stats) |
 | `backup.ts` | 3-tier automated backups (5min/hourly/daily); CHECKPOINT before dump, startup catch-up for overdue tiers, JSON co-save sibling |
 | `dbJsonExport.ts` | HS-7893 versioned JSON snapshot of every table; atomic gzip write co-saved alongside each tarball |
+| `attachmentBackup.ts` | HS-7929 attachment-blob backups: streaming `hashFile`, hash-addressed `<backupRoot>/attachments/<sha256>` store with link-then-copy fallback, atomic `<base>.attachments.json` manifest writes, daily orphan GC (aborts on any parse failure), `restoreAttachmentsFromManifest` with `-restored-<TS>` collision suffix |
 | `db/repair.ts` | HS-7897 Repair Database helpers: `findWorkingBackup`, cross-platform `pg_resetwal` probe + run flow, install-hint pure helpers |
 | `cleanup.ts` | Prune old trash/completed/verified + orphaned attachments |
 | `demo.ts` | `--demo:N` seed data |

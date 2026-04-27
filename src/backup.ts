@@ -2,6 +2,13 @@ import { PGlite } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
+import {
+  buildAttachmentManifest,
+  deleteManifestSibling,
+  manifestSiblingFilename,
+  runAttachmentGc,
+  writeManifestAtomically,
+} from './attachmentBackup.js';
 import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
 import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from './dbJsonExport.js';
 import { getBackupDir } from './file-settings.js';
@@ -28,6 +35,9 @@ interface BackupState {
   fiveMinTimer: ReturnType<typeof setTimeout> | null;
   hourlyInterval: ReturnType<typeof setInterval> | null;
   dailyInterval: ReturnType<typeof setInterval> | null;
+  /** HS-7929 — daily attachment-blob GC. Independent cadence; runs at
+   *  startup once + every 24h while the process is alive. */
+  attachmentGcInterval: ReturnType<typeof setInterval> | null;
 }
 
 /** Per-project backup scheduler state. Each project gets its own timers.
@@ -38,7 +48,13 @@ const backupStates = new Map<string, BackupState>();
 function getOrCreateState(dataDir: string): BackupState {
   let state = backupStates.get(dataDir);
   if (!state) {
-    state = { backupInProgress: false, fiveMinTimer: null, hourlyInterval: null, dailyInterval: null };
+    state = {
+      backupInProgress: false,
+      fiveMinTimer: null,
+      hourlyInterval: null,
+      dailyInterval: null,
+      attachmentGcInterval: null,
+    };
     backupStates.set(dataDir, state);
   }
   return state;
@@ -109,6 +125,20 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
       console.error(`JSON co-save failed (${tier}):`, jsonErr);
     }
 
+    // HS-7929: capture each attachment blob into the centralised
+    // hash-addressed store at `<backupRoot>/attachments/<sha>` and write a
+    // `backup-<TS>.attachments.json` manifest sibling. Same best-effort
+    // policy as the JSON co-save — failures here log but don't fail the
+    // tarball.
+    try {
+      const backupRoot = backupsDir(dataDir);
+      const manifest = await buildAttachmentManifest(db, backupRoot, filename);
+      const manifestPath = join(dir, manifestSiblingFilename(filename));
+      writeManifestAtomically(manifestPath, manifest);
+    } catch (attachErr) {
+      console.error(`Attachment manifest failed (${tier}):`, attachErr);
+    }
+
     // Get ticket count for metadata
     let ticketCount = 0;
     try {
@@ -149,10 +179,15 @@ function pruneBackups(dataDir: string, tier: Tier): void {
 
   for (let i = 0; i < files.length; i++) {
     if (i >= config.maxCount || files[i].date.getTime() < cutoff) {
-      try { rmSync(join(dir, files[i].filename), { force: true }); } catch { /* ignore */ }
+      const tarballPath = join(dir, files[i].filename);
+      try { rmSync(tarballPath, { force: true }); } catch { /* ignore */ }
       // HS-7893: keep tarball + JSON-sibling in lockstep — pruning one
       // without the other leaves orphans cluttering the backup dir.
       try { rmSync(join(dir, jsonSiblingFilename(files[i].filename)), { force: true }); } catch { /* ignore */ }
+      // HS-7929: drop the attachment-manifest sibling too. The orphan blobs
+      // (referenced only by the deleted manifest) get reclaimed by the
+      // daily GC, not here — keeps the prune step cheap.
+      deleteManifestSibling(tarballPath);
     }
   }
 }
@@ -281,6 +316,39 @@ export async function restoreBackup(dataDir: string, tier: string, filename: str
   // The connection module needs to adopt this instance
   const { adoptDb } = await import('./db/connection.js');
   adoptDb(newDb);
+
+  // HS-7929: re-hydrate attachment binaries from the manifest sibling, if
+  // present. Without this step, restored attachments table rows point at
+  // `stored_path` paths that may not exist (the live attachments dir was
+  // deleted along with `db/` above, OR the user is restoring to a fresh
+  // machine). The manifest tells us which sha-addressed blobs were live at
+  // backup time; we copy them back in-place + rewrite `stored_path` so
+  // every restored row resolves.
+  try {
+    const { readManifest, restoreAttachmentsFromManifest, attachmentBlobsDir } = await import('./attachmentBackup.js');
+    const manifestPath = join(tierDir(dataDir, tier as Tier), manifestSiblingFilename(filename));
+    const manifest = readManifest(manifestPath);
+    if (manifest !== null) {
+      const blobsDir = attachmentBlobsDir(backupsDir(dataDir));
+      const liveAttachmentsDir = join(dataDir, 'attachments');
+      const restored = await restoreAttachmentsFromManifest(manifest, blobsDir, liveAttachmentsDir);
+      // Update each restored attachments row's `stored_path` so it resolves
+      // to whatever final filename we landed on (handles the
+      // `-restored-<TS>` suffix case).
+      for (const r of restored) {
+        const newStoredPath = join(liveAttachmentsDir, r.finalStoredName);
+        await newDb.query(
+          'UPDATE attachments SET stored_path = $1 WHERE id = $2',
+          [newStoredPath, r.attachmentId],
+        );
+      }
+      if (restored.length > 0) {
+        console.log(`[attachmentBackup] restore: re-hydrated ${restored.length} attachment(s) from manifest`);
+      }
+    }
+  } catch (err) {
+    console.error('[attachmentBackup] restore: manifest-based re-hydration failed (continuing):', err);
+  }
 }
 
 function scheduleFiveMinBackup(dataDir: string): void {
@@ -328,6 +396,30 @@ export function initBackupScheduler(dataDir: string): void {
   // alive. The startup catch-up above handles short-lived processes.
   state.hourlyInterval = setInterval(() => void createBackup(dataDir, 'hourly'), TIERS['hourly'].intervalMs);
   state.dailyInterval = setInterval(() => void createBackup(dataDir, 'daily'), TIERS['daily'].intervalMs);
+
+  // HS-7929: daily attachment-blob GC, parallel cadence to the daily-tier
+  // backup but independent of it. Runs once at startup (delayed to let the
+  // initial backup catch-up settle) + every 24h thereafter. GC is a no-op
+  // when `<backupRoot>/attachments/` doesn't exist (e.g. before any backup
+  // has fired) so the startup call is cheap.
+  setTimeout(() => {
+    void runAttachmentGc(backupsDir(dataDir)).then(stats => {
+      if (stats.deleted > 0) {
+        console.log(`[attachmentBackup] GC: reclaimed ${stats.deleted} blob(s), ${(stats.bytesReclaimed / 1024 / 1024).toFixed(2)} MB`);
+      }
+    }).catch(err => {
+      console.error('[attachmentBackup] GC startup run failed:', err);
+    });
+  }, 30_000);
+  state.attachmentGcInterval = setInterval(() => {
+    void runAttachmentGc(backupsDir(dataDir)).then(stats => {
+      if (stats.deleted > 0) {
+        console.log(`[attachmentBackup] GC: reclaimed ${stats.deleted} blob(s), ${(stats.bytesReclaimed / 1024 / 1024).toFixed(2)} MB`);
+      }
+    }).catch(err => {
+      console.error('[attachmentBackup] GC daily run failed:', err);
+    });
+  }, 24 * 60 * 60 * 1000);
 }
 
 /** HS-7894: detect tiers whose newest backup is older than the tier's
