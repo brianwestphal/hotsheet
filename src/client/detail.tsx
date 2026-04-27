@@ -1,3 +1,5 @@
+import './markdownSetup.js';
+
 import { marked } from 'marked';
 
 import { raw } from '../jsx-runtime.js';
@@ -18,9 +20,6 @@ export { displayTag, extractBracketTags, hasTag, normalizeTag, parseTags, render
 /** Suppress auto-read for the current ticket (set when user explicitly marks as unread). */
 let suppressAutoRead = false;
 export function setSuppressAutoRead(suppress: boolean) { suppressAutoRead = suppress; }
-
-// Configure marked for safe rendering
-marked.setOptions({ breaks: true });
 
 // --- Detail field button helpers ---
 

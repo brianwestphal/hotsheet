@@ -10,6 +10,7 @@ import { applyPerProjectDrawerState, initCommandLog, refreshCommandLog } from '.
 import { TIMERS } from './constants/timers.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
+import { initDbRecoveryBanner } from './dbRecoveryBanner.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, openDetailAndFocusNote, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
@@ -157,6 +158,10 @@ async function init() {
   bindKeyboardShortcuts();
   bindSettingsDialog(rebuildCategoryUI);
   bindBackupsUI();
+  // HS-7899: surface the launch-time DB-recovery banner once the
+  // backups UI is wired (the banner's "Restore from backup" button
+  // opens Settings → Backups, which depends on bindBackupsUI).
+  void initDbRecoveryBanner();
   bindCopyPrompt();
   bindOpenFolder();
 

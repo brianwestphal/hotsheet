@@ -24,8 +24,10 @@
 
 import {
   addGrouping as addGroupingPure,
+  addGroupingWithId as addGroupingWithIdPure,
   DEFAULT_GROUPING_ID,
   deleteGrouping as deleteGroupingPure,
+  generateGroupingId as generateGroupingIdPure,
   getActiveGrouping,
   initialProjectState,
   type ProjectVisibilityState,
@@ -278,6 +280,34 @@ export function addGroupingForProject(secret: string, name: string): VisibilityG
   const { state: next, grouping } = addGroupingPure(state, name);
   setProjectState(secret, next);
   return grouping;
+}
+
+/** HS-7826 follow-up — variant of `addGroupingForProject` that uses a
+ *  caller-provided id, so the global Show / Hide Terminals dialog can fan a
+ *  single grouping creation across every project under the SAME id. Without
+ *  the shared id, switching the active grouping in the dropdown would only
+ *  match in the project where it was originally created and the other
+ *  projects would silently fall back to Default. */
+export function addGroupingForProjectWithId(secret: string, id: string, name: string): VisibilityGrouping {
+  const state = getOrInit(secret);
+  const { state: next, grouping } = addGroupingWithIdPure(state, id, name);
+  setProjectState(secret, next);
+  return grouping;
+}
+
+/** HS-7826 follow-up — generate a fresh grouping id that doesn't collide
+ *  with any existing grouping across the supplied secrets. Used by the
+ *  dialog's cross-project "Add grouping" path to mint a single id that's
+ *  safe to use as the explicit id in `addGroupingForProjectWithId` for
+ *  every secret. */
+export function generateGroupingIdAcrossProjects(secrets: readonly string[]): string {
+  const seen = new Set<string>();
+  for (const s of secrets) {
+    const st = projectStates.get(s);
+    if (st === undefined) continue;
+    for (const g of st.groupings) seen.add(g.id);
+  }
+  return generateGroupingIdPure(Array.from(seen).map(id => ({ id, name: '', hiddenIds: [] })));
 }
 
 /** Rename a grouping. No-op when name doesn't change after trimming. */

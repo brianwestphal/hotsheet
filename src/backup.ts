@@ -3,9 +3,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join } from 'path';
 
 import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
+import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from './dbJsonExport.js';
 import { getBackupDir } from './file-settings.js';
 
-interface BackupInfo {
+export interface BackupInfo {
   tier: '5min' | 'hourly' | 'daily';
   filename: string;
   createdAt: string;
@@ -80,6 +81,13 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     const dir = tierDir(dataDir, tier);
     mkdirSync(dir, { recursive: true });
 
+    // HS-7891: force a checkpoint before dumping. dumpDataDir() snapshots
+    // PGLite's WASM-memfs at this exact moment, so without an explicit
+    // CHECKPOINT pg_control may point at a WAL position the dump captures
+    // as zero/garbage — restore then PANICs with "could not locate a valid
+    // checkpoint record". The CHECKPOINT flushes WAL into the data files so
+    // the snapshot is internally consistent.
+    await db.exec('CHECKPOINT');
     const blob = await db.dumpDataDir('gzip');
     const buffer = Buffer.from(await blob.arrayBuffer());
 
@@ -87,6 +95,19 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     const filename = `backup-${formatTimestamp(now)}.tar.gz`;
     const filePath = join(dir, filename);
     writeFileSync(filePath, buffer);
+
+    // HS-7893: co-save a versioned JSON snapshot of every row in every
+    // table alongside the tarball. Pure escape hatch — the JSON has no
+    // restore UI; it's there so a corrupt tarball doesn't take user data
+    // with it. Failures here are logged but never fail the whole backup
+    // because the tarball is the primary artifact.
+    try {
+      const exportData = await buildJsonExport(db);
+      const jsonPath = join(dir, jsonSiblingFilename(filename));
+      writeJsonExportAtomically(jsonPath, exportData);
+    } catch (jsonErr) {
+      console.error(`JSON co-save failed (${tier}):`, jsonErr);
+    }
 
     // Get ticket count for metadata
     let ticketCount = 0;
@@ -129,6 +150,9 @@ function pruneBackups(dataDir: string, tier: Tier): void {
   for (let i = 0; i < files.length; i++) {
     if (i >= config.maxCount || files[i].date.getTime() < cutoff) {
       try { rmSync(join(dir, files[i].filename), { force: true }); } catch { /* ignore */ }
+      // HS-7893: keep tarball + JSON-sibling in lockstep — pruning one
+      // without the other leaves orphans cluttering the backup dir.
+      try { rmSync(join(dir, jsonSiblingFilename(files[i].filename)), { force: true }); } catch { /* ignore */ }
     }
   }
 }
@@ -290,12 +314,44 @@ export function initBackupScheduler(dataDir: string): void {
     rmSync(previewDir, { recursive: true, force: true });
   }
 
-  // Initial backup after a short delay, then start the recurring 5-min cycle
+  // HS-7894: catch up on overdue backups at startup, then enter the
+  // normal 5-min cycle. Without the catch-up, daily/hourly backups go
+  // missing for users who quit Hot Sheet before 24h of process uptime —
+  // setInterval timers reset on every restart, so the daily timer never
+  // fires for a typical dev workstation. The catch-up creates one
+  // backup per overdue tier (5min, hourly, daily) sequentially.
   setTimeout(() => {
-    void createBackup(dataDir, '5min').then(() => scheduleFiveMinBackup(dataDir));
+    void triggerMissedBackups(dataDir).then(() => scheduleFiveMinBackup(dataDir));
   }, 10_000);
 
-  // Schedule recurring hourly and daily backups
+  // Recurring hourly + daily intervals keep firing while the process is
+  // alive. The startup catch-up above handles short-lived processes.
   state.hourlyInterval = setInterval(() => void createBackup(dataDir, 'hourly'), TIERS['hourly'].intervalMs);
   state.dailyInterval = setInterval(() => void createBackup(dataDir, 'daily'), TIERS['daily'].intervalMs);
+}
+
+/** HS-7894: detect tiers whose newest backup is older than the tier's
+ *  interval (or that have no backup at all). Pure function exported for
+ *  unit testing. */
+export function findOverdueTiers(backups: BackupInfo[], now: number): Tier[] {
+  const overdue: Tier[] = [];
+  for (const tier of Object.keys(TIERS) as Tier[]) {
+    const inTier = backups.filter(b => b.tier === tier);
+    const lastTime = inTier.length === 0
+      ? 0
+      : Math.max(...inTier.map(b => new Date(b.createdAt).getTime()));
+    if (now - lastTime >= TIERS[tier].intervalMs) overdue.push(tier);
+  }
+  return overdue;
+}
+
+/** HS-7894: create one backup per overdue tier, sequentially. The
+ *  per-dataDir `backupInProgress` flag is shared across tiers, so racing
+ *  three setIntervals against each other can drop two of the three;
+ *  awaiting between tiers avoids that. */
+export async function triggerMissedBackups(dataDir: string): Promise<void> {
+  const overdue = findOverdueTiers(listBackups(dataDir), Date.now());
+  for (const tier of overdue) {
+    await createBackup(dataDir, tier);
+  }
 }

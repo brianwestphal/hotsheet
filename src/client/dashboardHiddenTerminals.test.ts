@@ -3,14 +3,21 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   _resetForTests,
+  addGroupingForProjectWithId,
   applyHideButtonBadge,
   countHiddenAcrossAllProjects,
   countHiddenForProject,
   filterVisible,
+  generateGroupingIdAcrossProjects,
+  getActiveGroupingId,
+  getGroupings,
   getHiddenTerminals,
   hydratePersistedHiddenForProject,
   isTerminalHidden,
+  isTerminalHiddenInGrouping,
+  setActiveGroupingForProject,
   setTerminalHidden,
+  setTerminalHiddenInGrouping,
   subscribeToHiddenChanges,
   unhideAllEverywhere,
   unhideAllInProject,
@@ -225,5 +232,53 @@ describe('dashboardHiddenTerminals (HS-7661)', () => {
     hydratePersistedHiddenForProject('s1', ['b', 'a']); // same set, different order
     expect(fires).toBe(0);
     unsub();
+  });
+});
+
+describe('cross-project grouping fan-out (HS-7826 follow-up)', () => {
+  it('generateGroupingIdAcrossProjects returns an id not used in any of the supplied projects', () => {
+    addGroupingForProjectWithId('s1', 'g-shared', 'Servers');
+    addGroupingForProjectWithId('s2', 'g-shared', 'Servers');
+    const id = generateGroupingIdAcrossProjects(['s1', 's2', 's3']);
+    expect(id).not.toBe('g-shared');
+    expect(id.startsWith('g-')).toBe(true);
+  });
+
+  it('addGroupingForProjectWithId adds the grouping with the supplied id (idempotent on re-add)', () => {
+    addGroupingForProjectWithId('s1', 'g-shared', 'Servers');
+    addGroupingForProjectWithId('s1', 'g-shared', 'Apps'); // second call same id is a no-op
+    const groupings = getGroupings('s1');
+    expect(groupings).toHaveLength(2);
+    expect(groupings[1]).toEqual({ id: 'g-shared', name: 'Servers', hiddenIds: [] });
+  });
+
+  it('a shared id lets activeId stay aligned across projects when the dialog fans out', () => {
+    // Mirror what the dialog now does: add the same grouping under the same
+    // id in every project, then activate it in every project.
+    addGroupingForProjectWithId('s1', 'g-shared', 'Servers');
+    addGroupingForProjectWithId('s2', 'g-shared', 'Servers');
+    setActiveGroupingForProject('s1', 'g-shared');
+    setActiveGroupingForProject('s2', 'g-shared');
+    expect(getActiveGroupingId('s1')).toBe('g-shared');
+    expect(getActiveGroupingId('s2')).toBe('g-shared');
+  });
+
+  it('toggling visibility against the terminal\'s own project (not the dialog scope) shows up in that project\'s active filter — the HS-7826-follow-up regression case', () => {
+    addGroupingForProjectWithId('s1', 'g-shared', 'Servers');
+    addGroupingForProjectWithId('s2', 'g-shared', 'Servers');
+    setActiveGroupingForProject('s1', 'g-shared');
+    setActiveGroupingForProject('s2', 'g-shared');
+
+    // Pre-fix the dialog wrote everything against dialog-scope (s1) so a
+    // toggle on a terminal whose project was s2 disappeared as far as
+    // `filterVisible(s2, …)` was concerned. Post-fix the dialog routes the
+    // toggle to the terminal's own project secret.
+    setTerminalHiddenInGrouping('s2', 'g-shared', 'claude-id', true);
+
+    expect(isTerminalHiddenInGrouping('s2', 'g-shared', 'claude-id')).toBe(true);
+    expect(filterVisible('s2', [{ id: 'claude-id' }, { id: 'server-id' }]))
+      .toEqual([{ id: 'server-id' }]);
+    // s1's active grouping stays untouched.
+    expect(isTerminalHiddenInGrouping('s1', 'g-shared', 'claude-id')).toBe(false);
   });
 });

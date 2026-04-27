@@ -170,15 +170,20 @@ export function initTerminalDashboard(): void {
   hideButton = document.getElementById('terminal-dashboard-hide-btn') as HTMLButtonElement | null;
   groupingSelect = document.getElementById('terminal-dashboard-grouping-select') as HTMLSelectElement | null;
   layoutToggleButton = document.getElementById('terminal-dashboard-layout-toggle') as HTMLButtonElement | null;
-  // HS-7826 — wire the grouping selector. Scope: the first project in
-  // registered order (since groupings are per-project; the dialog's tab
-  // bar already scopes to that project). Dropdown auto-hides when the
-  // scoped project has only one grouping.
+  // HS-7826 — wire the grouping selector. Primary scope: the first project
+  // in registered order (drives the visible options + the displayed active
+  // id, since groupings are stored per-project but the dashboard renders a
+  // single dropdown for everything).
+  // HS-7826 follow-up — `getAdditionalSecrets` returns every other project
+  // in the dashboard so picking a different grouping in the dropdown flips
+  // the active id across ALL projects, keeping each project's filter
+  // aligned with what the dropdown displays.
   if (groupingSelect !== null) {
     void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
       wireGroupingSelectChange({
         selectEl: groupingSelect!,
         getSecret: () => lastSectionData[0]?.project.secret ?? null,
+        getAdditionalSecrets: () => lastSectionData.slice(1).map(s => s.project.secret),
       });
     });
   }

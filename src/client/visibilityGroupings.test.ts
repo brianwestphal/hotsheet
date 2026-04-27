@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   addGrouping,
+  addGroupingWithId,
   DEFAULT_GROUPING_ID,
   DEFAULT_GROUPING_NAME,
   deleteGrouping,
@@ -107,6 +108,39 @@ describe('addGrouping (HS-7826)', () => {
   it('does not mutate the input state', () => {
     const s0 = initialProjectState();
     addGrouping(s0, 'X');
+    expect(s0.groupings).toHaveLength(1);
+  });
+});
+
+describe('addGroupingWithId (HS-7826 follow-up — cross-project fan-out)', () => {
+  it('appends a new grouping under the supplied id', () => {
+    const s0 = initialProjectState();
+    const { state, grouping } = addGroupingWithId(s0, 'g-shared-1', 'Servers');
+    expect(grouping.id).toBe('g-shared-1');
+    expect(grouping.name).toBe('Servers');
+    expect(state.groupings).toHaveLength(2);
+    expect(state.groupings[1]).toBe(grouping);
+  });
+
+  it('is a no-op when the id is already present (returns the existing grouping)', () => {
+    const s0 = initialProjectState();
+    const { state: s1, grouping: g1 } = addGroupingWithId(s0, 'g-shared', 'Servers');
+    const { state: s2, grouping: g2 } = addGroupingWithId(s1, 'g-shared', 'Apps');
+    expect(s2).toBe(s1);
+    expect(g2).toBe(g1);
+    expect(s2.groupings).toHaveLength(2);
+    expect(s2.groupings[1].name).toBe('Servers');
+  });
+
+  it('falls back to "New grouping" when name is empty', () => {
+    const s0 = initialProjectState();
+    const { grouping } = addGroupingWithId(s0, 'g-new', '   ');
+    expect(grouping.name).toBe('New grouping');
+  });
+
+  it('does not mutate the input state', () => {
+    const s0 = initialProjectState();
+    addGroupingWithId(s0, 'g-x', 'X');
     expect(s0.groupings).toHaveLength(1);
   });
 });

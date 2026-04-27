@@ -1,3 +1,5 @@
+import './markdownSetup.js';
+
 import { marked } from 'marked';
 
 import { raw } from '../jsx-runtime.js';

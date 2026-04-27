@@ -1,8 +1,79 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { PGlite } from '@electric-sql/pglite';
-import { mkdirSync, renameSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
+
+/** HS-7893: schema version stamp written into JSON-format backup files.
+ *  Bump this manually whenever `initSchema` adds/removes/renames a column,
+ *  changes a type, or adds a new table. The JSON co-save is a pure escape
+ *  hatch — restoration is manual / scripted — but the version field lets
+ *  a reader know whether the rows match today's schema. Start at 1; the
+ *  exact value is opaque, only equality with the current code's version
+ *  matters. */
+export const SCHEMA_VERSION = 1;
+
+/** HS-7899: written into a marker file when `recoverFromOpenFailure`
+ *  falls all the way through to the rename-as-corrupt + fresh-cluster
+ *  path. The client polls for this on launch so it can prompt the user
+ *  to restore from backup instead of silently presenting an empty
+ *  Hot Sheet. Persisted (rather than process-local) so the prompt
+ *  survives subsequent restarts until the user dismisses or restores. */
+export interface DbRecoveryMarker {
+  /** Absolute path the live `db/` directory was renamed to. */
+  corruptPath: string;
+  /** ISO 8601 timestamp of when recovery happened. */
+  recoveredAt: string;
+  /** Underlying error message that triggered the recovery, for the UI. */
+  errorMessage: string;
+}
+
+const RECOVERY_MARKER_FILENAME = '.db-recovery-marker.json';
+
+function recoveryMarkerPath(dataDir: string): string {
+  return join(dataDir, RECOVERY_MARKER_FILENAME);
+}
+
+/** Read the marker file for this dataDir, or null if no recovery has
+ *  happened (or the user has already dismissed). Tolerates corrupt /
+ *  unreadable marker files by returning null and silently moving on —
+ *  the marker is informational, not load-bearing. */
+export function readRecoveryMarker(dataDir: string): DbRecoveryMarker | null {
+  const path = recoveryMarkerPath(dataDir);
+  if (!existsSync(path)) return null;
+  try {
+    const raw = readFileSync(path, 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== 'object') return null;
+    const obj = parsed as Partial<DbRecoveryMarker>;
+    if (typeof obj.corruptPath !== 'string') return null;
+    if (typeof obj.recoveredAt !== 'string') return null;
+    return {
+      corruptPath: obj.corruptPath,
+      recoveredAt: obj.recoveredAt,
+      errorMessage: typeof obj.errorMessage === 'string' ? obj.errorMessage : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeRecoveryMarker(dataDir: string, marker: DbRecoveryMarker): void {
+  try {
+    writeFileSync(recoveryMarkerPath(dataDir), JSON.stringify(marker, null, 2));
+  } catch (writeErr: unknown) {
+    const writeMessage = writeErr instanceof Error ? writeErr.message : String(writeErr);
+    console.error(`Could not write DB recovery marker: ${writeMessage}`);
+  }
+}
+
+/** Clear the marker. Called when the user dismisses the recovery banner
+ *  or successfully restores from backup. Idempotent — missing file is
+ *  fine. */
+export function clearRecoveryMarker(dataDir: string): void {
+  const path = recoveryMarkerPath(dataDir);
+  try { rmSync(path, { force: true }); } catch { /* ignore */ }
+}
 
 // Per-dataDir database instances
 const databases = new Map<string, PGlite>();
@@ -93,28 +164,95 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
   if (existing) return existing;
 
   try {
-    const db = new PGlite(dbPath);
-    await db.waitReady;
-    await initSchema(db);
-    databases.set(dbPath, db);
-    return db;
+    return await openAndCacheDb(dbPath);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes('Aborted') || message.includes('RuntimeError')) {
-      const corruptPath = `${dbPath}-corrupt-${Date.now()}`;
-      console.error(`Database appears to be corrupt. Preserving as ${corruptPath} and recreating...`);
-      try {
-        renameSync(dbPath, corruptPath);
-      } catch {
-        try { rmSync(dbPath, { recursive: true, force: true }); } catch { /* may not exist */ }
-      }
-      const db = new PGlite(dbPath);
-      await db.waitReady;
-      await initSchema(db);
-      databases.set(dbPath, db);
-      return db;
+    return await recoverFromOpenFailure(dbPath, err);
+  }
+}
+
+async function openAndCacheDb(dbPath: string): Promise<PGlite> {
+  const db = new PGlite(dbPath);
+  await db.waitReady;
+  await initSchema(db);
+  databases.set(dbPath, db);
+  return db;
+}
+
+async function recoverFromOpenFailure(dbPath: string, err: unknown): Promise<PGlite> {
+  const message = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error ? err.stack : undefined;
+
+  // Only attempt recovery for the WASM-aborted / runtime-error class that
+  // PGLite throws on a bad data dir. Other errors (permission, ENOSPC,
+  // schema mismatch, etc.) propagate unchanged. Match on either the
+  // message substring (production "Aborted()" case) or the constructor
+  // name "RuntimeError" — message-only matching missed the
+  // `RuntimeError: unreachable` variant.
+  const errName = err instanceof Error ? err.name : '';
+  const isRuntimeFailure =
+    message.includes('Aborted') || message.includes('RuntimeError') || errName === 'RuntimeError';
+  if (!isRuntimeFailure) throw err;
+
+  // HS-7889: surface the underlying error. The previous "appears corrupt"
+  // log hid both `err.message` (e.g. "Aborted(). Build with -sASSERTIONS
+  // for more info.") and PGLite's PANIC stderr line, so users saw "tickets
+  // gone" with zero cause.
+  console.error('Failed to open database:', message);
+  if (stack !== undefined) console.error(stack);
+
+  // HS-7888 mitigation: a stale postmaster.pid from an unclean shutdown
+  // alone can block open even when the data files are healthy. Try
+  // removing it and reopening before giving up. Safe because a live
+  // instance is already gated by .hotsheet/.lock at the CLI layer.
+  if (tryRemoveStalePostmasterPid(dbPath)) {
+    try {
+      return await openAndCacheDb(dbPath);
+    } catch (retryErr: unknown) {
+      const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+      console.error('Retry after stale postmaster.pid removal also failed:', retryMessage);
     }
+  }
+
+  // Last resort. Preserve the original directory so the user can recover
+  // it manually via the disaster-recovery runbook (docs/7-backup-restore.md
+  // §7.8: pg_resetwal + loadDataDir). Never auto-delete — the data may be
+  // 100% recoverable with out-of-band tools, as proven by the 2026-04-27
+  // incident which restored 639/639 tickets.
+  const corruptPath = `${dbPath}-corrupt-${Date.now()}`;
+  console.error(`Database appears to be corrupt. Preserving as ${corruptPath} and recreating...`);
+  try {
+    renameSync(dbPath, corruptPath);
+  } catch (renameErr: unknown) {
+    const renameMessage = renameErr instanceof Error ? renameErr.message : String(renameErr);
+    // Previous behavior was to rmSync the live data on rename failure —
+    // pure data loss. Surface the original error instead so the user can
+    // intervene manually.
+    console.error(`Could not preserve corrupt database directory: ${renameMessage}. Aborting auto-recreate to avoid data loss.`);
     throw err;
+  }
+  // HS-7899: drop a marker the client polls on launch so the user gets
+  // prompted to restore from backup instead of seeing a silently empty
+  // Hot Sheet. dbPath is `<dataDir>/db`; the marker lives next to other
+  // .hotsheet/ state alongside it.
+  const dataDir = dbPath.replace(/[\\/]db$/, '');
+  writeRecoveryMarker(dataDir, {
+    corruptPath,
+    recoveredAt: new Date().toISOString(),
+    errorMessage: message,
+  });
+  return await openAndCacheDb(dbPath);
+}
+
+function tryRemoveStalePostmasterPid(dbPath: string): boolean {
+  const pidPath = join(dbPath, 'postmaster.pid');
+  if (!existsSync(pidPath)) return false;
+  try {
+    rmSync(pidPath, { force: true });
+    return true;
+  } catch (rmErr: unknown) {
+    const rmMessage = rmErr instanceof Error ? rmErr.message : String(rmErr);
+    console.error(`Could not remove stale postmaster.pid: ${rmMessage}`);
+    return false;
   }
 }
 

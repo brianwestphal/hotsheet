@@ -82,6 +82,24 @@ export function addGrouping(
 ): { state: ProjectVisibilityState; grouping: VisibilityGrouping } {
   const name = rawName.trim() === '' ? 'New grouping' : rawName.trim();
   const id = generateGroupingId(state.groupings);
+  return addGroupingWithId(state, id, name);
+}
+
+/** HS-7826 follow-up — variant of `addGrouping` that uses a caller-provided
+ *  id, so the same grouping can be added under the same id across multiple
+ *  per-project states (the cross-project fan-out the global Show / Hide
+ *  Terminals dialog needs to keep its tab bar consistent). When the id is
+ *  already present in `state`, the call is a no-op. */
+export function addGroupingWithId(
+  state: ProjectVisibilityState,
+  id: string,
+  rawName: string,
+): { state: ProjectVisibilityState; grouping: VisibilityGrouping } {
+  const name = rawName.trim() === '' ? 'New grouping' : rawName.trim();
+  const existing = state.groupings.find(g => g.id === id);
+  if (existing !== undefined) {
+    return { state, grouping: existing };
+  }
   const grouping: VisibilityGrouping = { id, name, hiddenIds: [] };
   return {
     state: {

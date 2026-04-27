@@ -92,6 +92,14 @@ pageRoutes.get('/', (c) => {
           </div>
         </div>
 
+        <div id="db-recovery-banner" className="db-recovery-banner" style="display:none">
+          <span id="db-recovery-banner-label">Database recovery occurred.</span>
+          <div className="db-recovery-banner-actions">
+            <button id="db-recovery-restore-btn" className="btn btn-sm btn-accent">Restore from backup…</button>
+            <button id="db-recovery-dismiss-btn" className="btn btn-sm">Dismiss</button>
+          </div>
+        </div>
+
         <div id="skills-banner" className="skills-banner" style="display:none">
           <span>AI tool skills created. Restart your AI tool to use the new ticket creation skills (hs-bug, hs-feature, etc.).</span>
           <button id="skills-banner-dismiss" className="btn btn-sm">Dismiss</button>
@@ -479,6 +487,15 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint" id="settings-backup-dir-hint">Leave empty to use the default location inside the data directory.</span>
               </div>
               <div id="backup-list" className="backup-list">Loading backups...</div>
+              <div className="settings-section-header" style="margin-top:24px">
+                <h3>Database Repair</h3>
+              </div>
+              <div id="db-repair-status" className="db-repair-status">Checking database health…</div>
+              <div className="db-repair-actions">
+                <button className="btn btn-sm" id="db-repair-find-working-btn">Find a working backup</button>
+                <button className="btn btn-sm" id="db-repair-pg-resetwal-btn">Run pg_resetwal…</button>
+              </div>
+              <div id="db-repair-result" className="db-repair-result"></div>
             </div>
             <div className="settings-tab-panel" data-panel="context">
               <div className="settings-section-header">

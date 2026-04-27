@@ -2090,6 +2090,48 @@ body.terminal-dashboard-active {
   border-top: 1px solid var(--border);
 }
 
+// HS-7791 follow-up — custom command-combobox popover. Replaces the native
+// `<datalist>` popup which rendered as white-on-white in Tauri's WKWebView
+// even with `color-scheme: light` set. The popover anchors directly under
+// the input via `position: absolute` on the wrapper.
+.cmd-combobox {
+  position: relative;
+}
+
+.cmd-combobox-popover {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.cmd-combobox-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+
+  &:hover,
+  &.is-active {
+    background: var(--bg-selected);
+    color: var(--accent);
+  }
+}
+
 // (old .settings-command-row removed — editor is now in .cmd-editor-dialog-body modal)
 
 // --- Color Dropdown ---
@@ -3882,6 +3924,97 @@ body.terminal-dashboard-active {
   gap: 8px;
   flex-shrink: 0;
 
+}
+
+// --- DB Recovery Banner (HS-7899) ---
+// Surfaces silently-recreated empty DBs so the user gets the option to
+// restore from backup instead of starting blank. Red palette to make it
+// look more urgent than the warning-yellow preview banner — this means
+// data was lost.
+
+.db-recovery-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: #fee2e2;
+  border-bottom: 2px solid #dc2626;
+  font-size: 13px;
+  font-weight: 500;
+  color: #7f1d1d;
+  flex-shrink: 0;
+}
+
+.db-recovery-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+// --- Database Repair (HS-7897) ---
+.db-repair-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  margin-bottom: 12px;
+
+  &.is-healthy {
+    border-color: #16a34a;
+    color: #166534;
+    background: #f0fdf4;
+  }
+
+  &.is-recovered {
+    border-color: #dc2626;
+    color: #7f1d1d;
+    background: #fef2f2;
+  }
+}
+
+.db-repair-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.db-repair-result {
+  font-size: 13px;
+  line-height: 1.5;
+
+  &:empty {
+    display: none;
+  }
+
+  .db-repair-result-ok {
+    color: #166534;
+  }
+
+  .db-repair-result-err {
+    color: #b91c1c;
+  }
+
+  pre {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    font-size: 12px;
+    overflow-x: auto;
+    margin: 8px 0;
+    white-space: pre-wrap;
+  }
+
+  .db-repair-result-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
 }
 
 // --- Backup List in Settings ---

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 
 import { cleanupPreview, createBackup, listBackups, loadBackupForPreview, restoreBackup, triggerManualBackup } from '../backup.js';
+import { clearRecoveryMarker } from '../db/connection.js';
 import { scheduleAllSync } from '../sync/markdown.js';
 import type { AppEnv } from '../types.js';
 import { CreateBackupSchema, parseBody, RestoreBackupSchema } from './validation.js';
@@ -56,6 +57,10 @@ backupRoutes.post('/restore', async (c) => {
   try {
     await restoreBackup(dataDir, parsed.data.tier, parsed.data.filename);
     scheduleAllSync(dataDir);
+    // HS-7899: a successful restore resolves the recovery situation, so
+    // wipe the marker. Otherwise the launch banner would keep prompting
+    // even after the user already recovered.
+    clearRecoveryMarker(dataDir);
     return c.json({ ok: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Restore failed';

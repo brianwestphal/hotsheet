@@ -76,6 +76,7 @@ Tickets progress through these statuses:
 - **Bulk replace**: `PUT /api/tickets/:id/notes-bulk` replaces the entire notes array (used by undo system).
 - All note operations are tracked in the undo stack.
 - Notes are displayed in the detail panel and included in markdown exports.
+- **Markdown rendering** — notes render as Markdown via `marked` (configured in `src/client/markdownSetup.ts`). Standard inline + block syntax is supported (links, code, bold, italics, lists, headings, tables, images), but **raw HTML in notes is escaped, not rendered as live HTML** (HS-7855 / HS-7857). This protects the layout from completion notes that mention tag-like fragments inline (e.g. `<span class=hide-btn-badge>`, `<input type=text>`) without wrapping them in backticks — without the escape, an absolutely-positioned `<span>` referenced in a note would leak out of the notes area and become a real on-screen element.
 
 ### 3.6 Batch Operations
 

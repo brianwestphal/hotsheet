@@ -36,7 +36,6 @@ let dragFromIndex: number | null = null;
  */
 let commandSuggestionsCache: string[] | null = null;
 let commandSuggestionsPromise: Promise<string[]> | null = null;
-const COMMAND_SUGGESTIONS_DATALIST_ID = 'term-edit-command-suggestions';
 
 async function loadCommandSuggestions(): Promise<string[]> {
   if (commandSuggestionsCache !== null) return commandSuggestionsCache;
@@ -214,7 +213,7 @@ function renderRow(index: number): HTMLElement {
   return row;
 }
 
-function openEditor(index: number): void {
+function openEditor(index: number, focusField: 'name' | 'command' = 'name'): void {
   document.querySelectorAll('.cmd-editor-overlay').forEach(el => el.remove());
   const entry = terminals[index];
 
@@ -251,18 +250,25 @@ function openEditor(index: number): void {
           </div>
           <div className="settings-field">
             <label>Command</label>
-            {/* HS-7791 — combobox via native <input list> + <datalist>. The
-                datalist is populated asynchronously below from
-                /api/terminal/command-suggestions; the input remains freely
-                editable so the user can type any shell-valid command. */}
-            <input
-              type="text"
-              className="term-edit-command"
-              list={COMMAND_SUGGESTIONS_DATALIST_ID}
-              value={entry.command}
-              placeholder="{{claudeCommand}}"
-            />
-            <datalist id={COMMAND_SUGGESTIONS_DATALIST_ID}></datalist>
+            {/* HS-7791 — custom combobox (we used to delegate to the native
+                <input list> + <datalist> pair, but the system-rendered popup
+                in Tauri's WKWebView ignored our `color-scheme: light` and
+                rendered options as white-on-white per the HS-7791 follow-up).
+                The popover below is fully styled via the app's tokens so
+                contrast is guaranteed and the look matches the rest of the
+                app. The input stays freely editable so any shell-valid
+                command can be typed. */}
+            <div className="cmd-combobox">
+              <input
+                type="text"
+                className="term-edit-command"
+                value={entry.command}
+                placeholder="{{claudeCommand}}"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <div className="cmd-combobox-popover" hidden></div>
+            </div>
             <span className="settings-hint">{'Pick a common command from the dropdown or type your own. Use {{claudeCommand}} to resolve to claude.'}</span>
           </div>
           <div className="settings-field">
@@ -353,23 +359,115 @@ function openEditor(index: number): void {
   overlay.querySelector('.cmd-editor-done-btn')?.addEventListener('click', () => { void close(); });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) void close(); });
   document.body.appendChild(overlay);
-  (overlay.querySelector('.term-edit-name') as HTMLInputElement).focus();
+  const nameInput = overlay.querySelector<HTMLInputElement>('.term-edit-name');
+  const cmdInput = overlay.querySelector<HTMLInputElement>('.term-edit-command');
+  const cmdPopover = overlay.querySelector<HTMLDivElement>('.cmd-combobox-popover');
 
-  // HS-7791 — populate the command-combobox <datalist> from the cached
-  // suggestions endpoint. Done after appendChild so the option elements land
-  // in a node that's already in the document tree (Safari has historically
-  // treated detached datalists as empty for autocomplete purposes).
-  void (async () => {
-    const suggestions = await loadCommandSuggestions();
-    const dl = overlay.querySelector<HTMLDataListElement>(`#${COMMAND_SUGGESTIONS_DATALIST_ID}`);
-    if (dl === null) return;
-    dl.innerHTML = '';
-    for (const s of suggestions) {
-      const opt = document.createElement('option');
-      opt.value = s;
-      dl.appendChild(opt);
+  // HS-7858 — for new terminals (added via `addTerminalEntry` with focusField
+  // = 'command'), focus the command field so the popover opens immediately
+  // and the user can pick. Otherwise focus the name field as before.
+  if (focusField === 'command' && cmdInput !== null) {
+    cmdInput.focus();
+  } else if (nameInput !== null) {
+    nameInput.focus();
+  }
+
+  // HS-7791 — wire the custom combobox popover. Suggestions come from the
+  // cached /api/terminal/command-suggestions response; clicks populate the
+  // input; focus shows everything; typing filters by substring (case
+  // insensitive) so the user can keep narrowing as they type.
+  // HS-7858 — when the user commits a command via click or Enter and the
+  // name field is currently empty, auto-derive a sensible default name from
+  // the chosen command (see `deriveNameFromCommand`).
+  if (cmdInput !== null && cmdPopover !== null) {
+    void wireCommandCombobox(cmdInput, cmdPopover, (value) => {
+      if (nameInput !== null && nameInput.value.trim() === '') {
+        const derived = deriveNameFromCommand(value);
+        if (derived !== '') nameInput.value = derived;
+      }
+    });
+  }
+}
+
+/** HS-7791 follow-up — render + behaviour for the per-input command combobox.
+ *  Lives next to the input and is fully styled via app tokens (the native
+ *  datalist popup didn't honour our colour-scheme in Tauri's WKWebView and
+ *  rendered as white-on-white). The optional `onCommit` callback fires after
+ *  a value is committed via click or Enter (HS-7858 uses it to auto-populate
+ *  the sibling name field when blank). */
+async function wireCommandCombobox(
+  input: HTMLInputElement,
+  popover: HTMLDivElement,
+  onCommit?: (value: string) => void,
+): Promise<void> {
+  const suggestions = await loadCommandSuggestions();
+  let activeIndex = -1;
+  let visibleMatches: string[] = [];
+
+  const render = () => {
+    const filter = input.value.trim().toLowerCase();
+    visibleMatches = filter === ''
+      ? suggestions.slice()
+      : suggestions.filter(s => s.toLowerCase().includes(filter));
+    if (visibleMatches.length === 0) {
+      popover.hidden = true;
+      popover.innerHTML = '';
+      return;
     }
-  })();
+    popover.innerHTML = '';
+    visibleMatches.forEach((s, i) => {
+      const opt = toElement(
+        <button type="button" className={`cmd-combobox-option${i === activeIndex ? ' is-active' : ''}`} data-value={s}>
+          {s}
+        </button>
+      );
+      // Use mousedown so the input doesn't blur (and dismiss the popover)
+      // before the click registers.
+      opt.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        commit(s);
+      });
+      popover.appendChild(opt);
+    });
+    popover.hidden = false;
+  };
+
+  const commit = (value: string) => {
+    input.value = value;
+    popover.hidden = true;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    if (onCommit !== undefined) onCommit(value);
+  };
+
+  input.addEventListener('focus', () => { activeIndex = -1; render(); });
+  input.addEventListener('input', () => { activeIndex = -1; render(); });
+  input.addEventListener('blur', () => {
+    setTimeout(() => { popover.hidden = true; }, 150);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (popover.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      activeIndex = -1; render();
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (visibleMatches.length === 0) return;
+      activeIndex = (activeIndex + 1) % visibleMatches.length;
+      render();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (visibleMatches.length === 0) return;
+      activeIndex = activeIndex <= 0 ? visibleMatches.length - 1 : activeIndex - 1;
+      render();
+    } else if (e.key === 'Enter' && activeIndex >= 0 && activeIndex < visibleMatches.length) {
+      e.preventDefault();
+      commit(visibleMatches[activeIndex]);
+    } else if (e.key === 'Escape' && !popover.hidden) {
+      popover.hidden = true;
+      activeIndex = -1;
+    }
+  });
 }
 
 function escapeHtml(s: string): string {
@@ -396,10 +494,31 @@ function scheduleSave(): Promise<void> {
   });
 }
 
-/** Add a blank new terminal to the end and open the editor on it. */
+/** Add a blank new terminal to the end and open the editor on it.
+ *
+ *  HS-7858 — neither name nor command get a default value: the user is
+ *  expected to make an explicit choice from the combobox. The name will
+ *  auto-populate when they commit a command (see `wireCommandCombobox`),
+ *  and `openEditor`'s focusField parameter routes initial focus to the
+ *  command field so the popover opens immediately. */
 export function addTerminalEntry(): void {
   const id = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  terminals.push({ id, name: 'Terminal', command: '{{claudeCommand}}' });
+  terminals.push({ id, command: '' });
   renderList();
-  openEditor(terminals.length - 1);
+  openEditor(terminals.length - 1, 'command');
+}
+
+/** HS-7858 — derive a sensible default tab name from the chosen command.
+ *  The sentinel `{{claudeCommand}}` becomes "Claude"; everything else uses
+ *  the basename of the path with any trailing `.exe` / `.cmd` / `.ps1` /
+ *  `.bat` extension stripped (so `C:\\Windows\\System32\\cmd.exe` →
+ *  `cmd`, `/bin/zsh` → `zsh`). Whitespace-only input falls through to an
+ *  empty string so callers can decide how to handle it. */
+export function deriveNameFromCommand(command: string): string {
+  const trimmed = command.trim();
+  if (trimmed === '') return '';
+  if (trimmed === '{{claudeCommand}}') return 'Claude';
+  const slash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  const base = slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+  return base.replace(/\.(exe|cmd|ps1|bat)$/i, '');
 }

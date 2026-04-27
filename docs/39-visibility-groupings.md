@@ -72,14 +72,30 @@ Both dropdowns are populated by `src/client/visibilityGroupingSelect.ts` (`refre
 - **Drawer-grid wiring** (`src/client/drawerTerminalGrid.tsx`): same pattern — `groupingSelect` ref, `refreshDrawerGroupingSelect()` helper called from the change subscription + `showGridChrome()`. Hidden by `hideGridChrome()`.
 - **SCSS** (`src/client/styles.scss`): `.hide-terminal-dialog-tabs`, `.hide-terminal-tab` (+ `.is-active`, `.dragging`, `.drag-over`), `.hide-terminal-tab-label`, `.hide-terminal-tab-add`, `.context-menu-item.is-disabled`, `.grouping-prompt-overlay` + dialog, `.terminal-dashboard-grouping-select`, `.drawer-grid-grouping-select`.
 
-## 39.7 Out of scope (deferred)
+## 39.7 Cross-project fan-out (HS-7826 follow-up)
+
+Original v1 stored per-project state and the dialog wrote everything against the FIRST project's groupings (`dialogScope`). When the dashboard's eye icon opens the dialog in `'global'` mode (every project's terminals together), that meant a hide-toggle on a row from any project but the first wrote into the wrong project's state — the dashboard's per-project filter (`filterVisible(secret, …)`) reads each project's OWN active grouping, so the dialog said "hidden" while the dashboard kept showing the tile (the user-reported HS-7826 follow-up: "terminal visibility doesn't match what's described in dialog").
+
+The dialog now treats grouping CRUD operations as cross-project fan-out and routes visibility toggles to the terminal's actual project:
+
+- **`dialogScopes(opts)`** — deduplicated list of every secret in `opts.groups`. In `'single-project'` mode this is one secret; in `'global'` mode it's every project on the dashboard.
+- **Add grouping** — `generateGroupingIdAcrossProjects(scopes)` mints one id that doesn't collide in any scope; `addGroupingForProjectWithId(secret, id, name)` is then called for every scope. The shared id is what makes `setActiveGroupingForProject` (also fanned out) consistent across projects.
+- **Rename / delete / reorder grouping** — fanned out across every scope so the per-project tab order, names, and grouping list stay aligned.
+- **Activate grouping** (tab click + dropdown change) — fanned out across every scope. The dashboard's `<select>` wiring uses the new `getAdditionalSecrets` callback in `GroupingSelectOptions` to pick up every other section's project.
+- **Toggle visibility row** — uses `group.secret` (the terminal's own project) instead of `dialogScope`, so the toggle lands in the correct per-project grouping.
+- **Show all in this grouping** — fanned out, so the footer button empties the active grouping in every project (consistent with the dashboard's cross-project view).
+
+The persistence layer is unchanged — each project still serialises its own `visibility_groupings` + `active_visibility_grouping_id` keys. The fan-out happens in the in-memory state layer and the dialog logic, not in the file shape. New tests in `dashboardHiddenTerminals.test.ts` (`generateGroupingIdAcrossProjects`, `addGroupingForProjectWithId` idempotence, the cross-project "active id stays aligned" + "toggle on terminal's own project" cases) plus the `addGroupingWithId` cases in `visibilityGroupings.test.ts` lock down the regression.
+
+`'single-project'` mode (drawer-grid eye icon) is functionally unchanged — `dialogScopes` returns one entry and the fan-out reduces to a single-project call. The drawer-grid's `<select>` wiring doesn't pass `getAdditionalSecrets`, so its change handler still flips only the active project.
+
+## 39.8 Out of scope (deferred)
 
 - **Duplicate grouping affordance** — copy an existing grouping's hiddenIds into a new one. Useful when the user wants a slight variant of an existing setup. Tracked as a follow-up.
 - **Keyboard shortcuts** for switching groupings (e.g. Cmd/Ctrl+1..9 to flip to the Nth tab).
 - **Cross-window sync** — when a second Hot Sheet window changes the active grouping, the first window's dropdown only updates after a settings reload. Live cross-window sync would require a long-poll subscription channel (out of scope for v1).
-- **Global groupings (across projects)** — every grouping is per-project today. Cross-project groupings would require a secondary scoping concept and aren't part of the user's spec.
 
-## 39.8 Manual test plan
+## 39.9 Manual test plan
 
 See [docs/manual-test-plan.md §13 (Show / Hide Terminals dialog)] for the existing flows. HS-7826 adds:
 
@@ -92,6 +108,8 @@ See [docs/manual-test-plan.md §13 (Show / Hide Terminals dialog)] for the exist
 7. Drag a tab to a new position → strip reorders + persists.
 8. Reload Hot Sheet → tab bar order, names, and active id all restored.
 9. Quit + relaunch Hot Sheet → same as reload above.
+10. **Cross-project fan-out (HS-7826 follow-up)** — open the dashboard's eye icon dialog with multiple projects registered. Create a "Servers" grouping, click the new tab, then hide a terminal in EACH project. Close the dialog and confirm the dashboard tiles match the dialog: the hidden Claude / app terminals are gone in every project. Pre-fix, only the FIRST project's hidden state was honoured; everything else stayed visible.
+11. Same flow but switch the active grouping via the dashboard's `<select>` dropdown — every project's filter should swap together.
 10. Create a second grouping → grouping selector dropdown appears next to the eye icon (dashboard + drawer-grid). Pick a grouping in the dropdown → dashboard / drawer-grid filter updates.
 11. Delete every non-Default grouping → grouping selector disappears.
 12. Delete a configured terminal in Settings → Terminal → check `.hotsheet/settings.json`: the deleted id is gone from EVERY grouping's `hiddenIds`, not just `hidden_terminals`.

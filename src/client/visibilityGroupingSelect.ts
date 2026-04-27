@@ -28,6 +28,12 @@ export interface GroupingSelectOptions {
    *  refresh — for the drawer-grid this is the active project, which can
    *  change without us being told (project switch). */
   getSecret: () => string | null;
+  /** HS-7826 follow-up — optional list of additional secrets to fan a
+   *  grouping change out to. The dashboard uses this to keep every
+   *  registered project's `activeId` in sync with what the dropdown shows
+   *  (otherwise picking a tab in the dropdown only flipped the first
+   *  project's filter and the rest stayed on their previous active ids). */
+  getAdditionalSecrets?: () => string[];
 }
 
 /** Re-render a grouping select against the current state. Returns the
@@ -63,11 +69,22 @@ export function refreshGroupingSelect(opts: GroupingSelectOptions): { count: num
 
 /** One-time wiring: attach a `change` listener that flips the active
  *  grouping for the current scope. Idempotent — caller's responsibility
- *  to call once per `selectEl`. */
+ *  to call once per `selectEl`. When `getAdditionalSecrets` is supplied,
+ *  the active grouping is also flipped for those secrets so the
+ *  dashboard's cross-project filter agrees with the dropdown. */
 export function wireGroupingSelectChange(opts: GroupingSelectOptions): void {
   opts.selectEl.addEventListener('change', () => {
-    const secret = opts.getSecret();
-    if (secret === null || secret === '') return;
-    setActiveGroupingForProject(secret, opts.selectEl.value);
+    const primary = opts.getSecret();
+    if (primary === null || primary === '') return;
+    const value = opts.selectEl.value;
+    setActiveGroupingForProject(primary, value);
+    if (opts.getAdditionalSecrets !== undefined) {
+      const seen = new Set<string>([primary]);
+      for (const s of opts.getAdditionalSecrets()) {
+        if (s === '' || seen.has(s)) continue;
+        seen.add(s);
+        setActiveGroupingForProject(s, value);
+      }
+    }
   });
 }

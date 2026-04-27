@@ -20,6 +20,8 @@
  * interleaved in the correct order — the reader sees the original question
  * text right next to each answer.
  */
+import './markdownSetup.js';
+
 import { marked, type Tokens } from 'marked';
 
 export interface FeedbackBlock {

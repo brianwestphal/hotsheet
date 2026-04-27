@@ -1,8 +1,20 @@
 import { api } from './api.js';
+import { bindDbRepairUI, refreshDbRepairStatus } from './dbRepairUI.js';
 import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
+
+/** HS-7890: turn an `api()` rejection into a user-readable label.
+ *  `api()` throws an Error whose `.message` is the server's `error` field
+ *  (or "Server returned NNN" / "Unable to reach the server" for transport
+ *  failures). Falling back to "Unknown error" only happens for non-Error
+ *  throws — in normal failure modes the prefix + real message reaches
+ *  the UI so the user can act on it. */
+export function formatBackupErrorMessage(prefix: string, err: unknown): string {
+  const message = err instanceof Error && err.message !== '' ? err.message : 'Unknown error';
+  return `${prefix}: ${message}`;
+}
 
 interface BackupInfo {
   tier: string;
@@ -37,6 +49,9 @@ function tierLabel(tier: string): string {
 }
 
 export async function loadBackupList(): Promise<void> {
+  // HS-7897: Settings → Backups also hosts the Database Repair panel; refresh
+  // its status pill whenever the backup list reloads (i.e. each Settings open).
+  void refreshDbRepairStatus();
   const container = document.getElementById('backup-list');
   if (!container) return;
 
@@ -77,8 +92,10 @@ export async function loadBackupList(): Promise<void> {
         container.appendChild(row);
       }
     }
-  } catch {
-    container.textContent = 'Failed to load backups.';
+  } catch (err) {
+    // HS-7890: surface real cause for the listing call too.
+    console.error('Backup listing failed:', err);
+    container.textContent = formatBackupErrorMessage('Failed to load backups', err);
   }
 }
 
@@ -110,9 +127,13 @@ async function startPreview(tier: string, filename: string, createdAt: string): 
 
     label.textContent = `Previewing backup from ${new Date(createdAt).toLocaleString()} (${result.stats.total} tickets, ${result.stats.open} open) — read-only`;
     void loadTickets();
-  } catch {
-    label.textContent = 'Failed to load backup preview.';
-    setTimeout(() => { banner.style.display = 'none'; }, 3000);
+  } catch (err) {
+    // HS-7890: surface the real cause. Previously we showed a generic
+    // "Failed to load backup preview." that hid the actual API error
+    // (e.g. PGLite PANIC when the tarball is unrecoverable).
+    console.error('Backup preview failed:', err);
+    label.textContent = formatBackupErrorMessage('Failed to load backup preview', err);
+    setTimeout(() => { banner.style.display = 'none'; }, 8000);
   }
 }
 
@@ -139,14 +160,25 @@ async function confirmRestore(): Promise<void> {
       body: { tier: state.backupPreview.tier, filename: state.backupPreview.filename },
     });
     window.location.reload();
-  } catch {
-    btn.textContent = 'Restore failed';
+  } catch (err) {
+    // HS-7890: surface the real cause. Previously the user saw "Restore
+    // failed" with no diagnostic info, which made WAL-corruption tarballs
+    // (HS-7891) impossible to debug from the UI.
+    console.error('Backup restore failed:', err);
+    btn.textContent = formatBackupErrorMessage('Restore failed', err);
+    btn.title = err instanceof Error ? err.message : '';
     btn.disabled = false;
-    setTimeout(() => { btn.textContent = 'Restore This Backup'; }, 3000);
+    setTimeout(() => {
+      btn.textContent = 'Restore This Backup';
+      btn.title = '';
+    }, 8000);
   }
 }
 
 export function bindBackupsUI(): void {
+  // HS-7897: Database Repair panel lives in the same Settings → Backups
+  // tab; bind its buttons here so the wiring runs once at app init.
+  bindDbRepairUI();
   document.getElementById('backup-cancel-btn')?.addEventListener('click', () => {
     void cancelPreview();
   });
@@ -159,6 +191,7 @@ export function bindBackupsUI(): void {
   backupNowBtn?.addEventListener('click', async () => {
     backupNowBtn.textContent = 'Backing up...';
     (backupNowBtn as HTMLButtonElement).disabled = true;
+    let resetMs = 1500;
     try {
       const result = await api<{ error?: string }>('/backups/now', { method: 'POST' });
       if (result.error !== undefined && result.error !== '') {
@@ -167,12 +200,17 @@ export function bindBackupsUI(): void {
         backupNowBtn.textContent = 'Done!';
         void loadBackupList();
       }
-    } catch {
-      backupNowBtn.textContent = 'Failed';
+    } catch (err) {
+      // HS-7890: surface real cause for ad-hoc backups too.
+      console.error('Manual backup failed:', err);
+      backupNowBtn.textContent = formatBackupErrorMessage('Failed', err);
+      backupNowBtn.title = err instanceof Error ? err.message : '';
+      resetMs = 8000;
     }
     setTimeout(() => {
       backupNowBtn.textContent = 'Backup Now';
+      backupNowBtn.title = '';
       (backupNowBtn as HTMLButtonElement).disabled = false;
-    }, 1500);
+    }, resetMs);
   });
 }

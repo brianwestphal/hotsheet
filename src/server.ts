@@ -12,6 +12,7 @@ import { getMimeType } from './mime-types.js';
 import { getProjectBySecret } from './projects.js';
 import { apiRoutes } from './routes/api.js';
 import { backupRoutes } from './routes/backups.js';
+import { dbRoutes } from './routes/db.js';
 import { pageRoutes } from './routes/pages.js';
 import { projectRoutes } from './routes/projects.js';
 import { wireTerminalWebSocket } from './terminals/websocket.js';
@@ -139,6 +140,7 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   // API routes
   app.route('/api', apiRoutes);
   app.route('/api/backups', backupRoutes);
+  app.route('/api/db', dbRoutes);
   app.route('/api/projects', projectRoutes);
 
   // Graceful shutdown endpoint (used by stale instance cleanup and `--close`).
