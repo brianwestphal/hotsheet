@@ -6,10 +6,12 @@ import {
   buildAttachmentManifest,
   deleteManifestSibling,
   manifestSiblingFilename,
+  reanalyzeMissingManifests,
   runAttachmentGc,
   writeManifestAtomically,
 } from './attachmentBackup.js';
 import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
+import { fsyncDbDir } from './db/fsyncWrap.js';
 import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from './dbJsonExport.js';
 import { getBackupDir } from './file-settings.js';
 
@@ -104,6 +106,13 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     // checkpoint record". The CHECKPOINT flushes WAL into the data files so
     // the snapshot is internally consistent.
     await db.exec('CHECKPOINT');
+    // HS-7935: PGLite's WASM ↔ host-fs bridge silently no-ops the postgres
+    // `fsync()` calls (HS-7932 spike), so the CHECKPOINT-rewritten files
+    // are still in the host kernel page cache rather than physical disk.
+    // Walk `<dataDir>/db/` and explicitly fsync every regular file so
+    // durability isn't bounded by the OS's natural dirty-page flush
+    // interval (~30s).
+    fsyncDbDir(dataDir);
     const blob = await db.dumpDataDir('gzip');
     const buffer = Buffer.from(await blob.arrayBuffer());
 
@@ -397,11 +406,27 @@ export function initBackupScheduler(dataDir: string): void {
   state.hourlyInterval = setInterval(() => void createBackup(dataDir, 'hourly'), TIERS['hourly'].intervalMs);
   state.dailyInterval = setInterval(() => void createBackup(dataDir, 'daily'), TIERS['daily'].intervalMs);
 
+  // HS-7937: at startup, rebuild any missing attachment manifests for
+  // tarballs older than 24h. Critically scheduled BEFORE the daily GC so
+  // any rebuilt manifests are visible to the GC's reference-set union —
+  // otherwise the GC would treat their blobs as orphans and reclaim them.
+  // Runs once; manifests are written by the normal backup path going
+  // forward, so re-analysis only matters at boot.
+  setTimeout(() => {
+    void reanalyzeMissingManifests(backupsDir(dataDir)).then(stats => {
+      if (stats.rebuilt > 0 || stats.failed > 0) {
+        console.log(`[attachmentBackup] reanalyze: rebuilt=${stats.rebuilt} skipped=${stats.skipped} failed=${stats.failed}`);
+      }
+    }).catch(err => {
+      console.error('[attachmentBackup] reanalyze startup run failed:', err);
+    });
+  }, 25_000);
+
   // HS-7929: daily attachment-blob GC, parallel cadence to the daily-tier
   // backup but independent of it. Runs once at startup (delayed to let the
-  // initial backup catch-up settle) + every 24h thereafter. GC is a no-op
-  // when `<backupRoot>/attachments/` doesn't exist (e.g. before any backup
-  // has fired) so the startup call is cheap.
+  // initial backup catch-up + reanalyze settle) + every 24h thereafter.
+  // GC is a no-op when `<backupRoot>/attachments/` doesn't exist (e.g.
+  // before any backup has fired) so the startup call is cheap.
   setTimeout(() => {
     void runAttachmentGc(backupsDir(dataDir)).then(stats => {
       if (stats.deleted > 0) {

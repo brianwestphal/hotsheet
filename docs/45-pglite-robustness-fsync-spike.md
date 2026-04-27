@@ -2,7 +2,7 @@
 
 HS-7932 spike result. Companion to [45. PGLite Robustness](45-pglite-robustness.md) §45.5.
 
-> **Verdict:** PGLite does **NOT** flush writes to disk via `fsync` on any platform. Emscripten's NODEFS backend (which PGLite uses for host-fs persistence) doesn't define a `fsync` stream operation, so PostgreSQL's internal `fsync()` calls are silently no-ops. Recommend a follow-up implementation ticket to wrap our application boundaries (post-CHECKPOINT, pre-close) with explicit `fs.fsyncSync` calls. Filed as **HS-7935**.
+> **Verdict:** PGLite does **NOT** flush writes to disk via `fsync` on any platform. Emscripten's NODEFS backend (which PGLite uses for host-fs persistence) doesn't define a `fsync` stream operation, so PostgreSQL's internal `fsync()` calls are silently no-ops. **Mitigation shipped (HS-7935):** new `src/db/fsyncWrap.ts` exposes `fsyncDir(path)` + `fsyncDbDir(dataDir)` that walk every regular file in a tree and call `fs.fsyncSync(fd)` per file. Wired into `createBackup` (after `CHECKPOINT`, before `dumpDataDir`) and `closeAllDatabases` (after each `db.close()` returns). 11 unit tests + 1 integration against a real PGLite cluster.
 
 ## Method
 

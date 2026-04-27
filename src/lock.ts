@@ -12,7 +12,13 @@ process.stderr.on('error', (err: NodeJS.ErrnoException) => { if (err.code !== 'E
 const lockPaths = new Set<string>();
 let exitHandlerRegistered = false;
 
-function releaseAllLocks(): void {
+/** HS-7934 — exposed so `gracefulShutdown` (`src/lifecycle.ts`) can release
+ *  file locks as part of the unified shutdown pipeline instead of the lock
+ *  module installing its own SIGINT/SIGTERM handler that races
+ *  gracefulShutdown's process.exit(0) and beats it. The synchronous
+ *  `process.on('exit')` registration below stays as the safety net for
+ *  paths the async pipeline didn't catch. */
+export function releaseAllLocks(): void {
   for (const p of lockPaths) {
     try { rmSync(p, { force: true }); } catch { /* shutting down */ }
   }
@@ -62,8 +68,14 @@ export function acquireLock(dataDir: string): void {
 
   if (!exitHandlerRegistered) {
     exitHandlerRegistered = true;
+    // HS-7934: synchronous `process.on('exit')` stays as the safety net.
+    // SIGINT/SIGTERM handlers were dropped — the HS-7931 graceful-shutdown
+    // pipeline in `src/cli.ts` + `src/lifecycle.ts` now handles signals
+    // for the whole process and calls `releaseAllLocks` via the lifecycle
+    // pipeline. Pre-fix the lock module's own SIGINT handler ran a
+    // synchronous `process.exit(0)` that beat the async gracefulShutdown
+    // and short-circuited the close pipeline — including the second-
+    // signal escalation path.
     process.on('exit', releaseAllLocks);
-    process.on('SIGINT', () => { releaseAllLocks(); process.exit(0); });
-    process.on('SIGTERM', () => { releaseAllLocks(); process.exit(0); });
   }
 }

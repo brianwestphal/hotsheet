@@ -557,6 +557,41 @@ async function ensureHooksForRunningInstance(port: number): Promise<void> {
   } catch { /* non-critical */ }
 }
 
+/**
+ * HS-7934 — pure factory for the SIGINT/SIGTERM handler used by
+ * `setupInstanceLifecycle` below. Exported so a unit test can prove the
+ * single-signal happy path + double-signal escalation contract without
+ * spawning a real child process. The runtime hooks are passed in
+ * (`runShutdown`, `exit`, `setImmediate`, `log`) so a test can substitute
+ * synchronous doubles + count calls.
+ *
+ * Contract:
+ *   1. First signal → `runShutdown(signal)`. After it resolves, schedule
+ *      `exit(0)` via `setImmediate` so any pending signal-handler queue
+ *      drains first (the SECOND signal might be one of those).
+ *   2. Second signal observed before exit(0) fires → `exit(1)` immediately.
+ */
+export interface SignalHandlerHooks {
+  runShutdown: (signal: 'SIGINT' | 'SIGTERM') => Promise<void>;
+  exit: (code: number) => void;
+  setImmediate: (fn: () => void) => void;
+  log: (msg: string) => void;
+}
+
+export function createSignalHandler(hooks: SignalHandlerHooks): (signal: 'SIGINT' | 'SIGTERM') => Promise<void> {
+  let signalCount = 0;
+  return async (signal): Promise<void> => {
+    signalCount += 1;
+    if (signalCount > 1) {
+      hooks.log(`[cli] received second ${signal} during shutdown — forcing exit(1)`);
+      hooks.exit(1);
+      return;
+    }
+    await hooks.runShutdown(signal);
+    hooks.setImmediate(() => hooks.exit(0));
+  };
+}
+
 /** Write instance file and register exit cleanup handlers. */
 async function setupInstanceLifecycle(actualPort: number): Promise<void> {
   writeInstanceFile(actualPort);
@@ -581,17 +616,20 @@ async function setupInstanceLifecycle(actualPort: number): Promise<void> {
   // HS-7931: signal handlers route through `gracefulShutdown`. A SECOND
   // identical signal during the await escalates to `process.exit(1)` so a
   // hung close can't trap the user — they can always Ctrl-C twice to bail.
-  let signalCount = 0;
-  const handleSignal = (signal: 'SIGINT' | 'SIGTERM'): void => {
-    signalCount += 1;
-    if (signalCount > 1) {
-      console.error(`[cli] received second ${signal} during shutdown — forcing exit(1)`);
-      process.exit(1);
-    }
-    void gracefulShutdown(signal).then(() => process.exit(0));
-  };
-  process.on('SIGINT', () => { handleSignal('SIGINT'); });
-  process.on('SIGTERM', () => { handleSignal('SIGTERM'); });
+  // HS-7934: use `setImmediate` to yield to pending signal handlers before
+  // calling `process.exit(0)` — without it, a late-arriving second signal
+  // can be queued behind gracefulShutdown's resolution microtask, exit(0)
+  // fires, and the escalation path never runs. The setImmediate hop puts
+  // exit(0) on the immediate-callback queue which runs AFTER any pending
+  // signal handler.
+  const handler = createSignalHandler({
+    runShutdown: gracefulShutdown,
+    exit: (code) => process.exit(code),
+    setImmediate: (fn) => { setImmediate(fn); },
+    log: (m) => { console.error(m); },
+  });
+  process.on('SIGINT', () => { void handler('SIGINT'); });
+  process.on('SIGTERM', () => { void handler('SIGTERM'); });
 }
 
 async function main() {
@@ -709,7 +747,27 @@ async function main() {
   }
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+// HS-7934 — only run `main()` when this file is the actual entry point.
+// Without the guard, importing `cli.js` from a unit test (e.g. to grab
+// `createSignalHandler`) triggers the full Hot Sheet startup + a process
+// exit from inside the vitest worker. The check matches both raw `node`
+// invocation and `tsx` (which preserves `process.argv[1]`).
+const isEntryPoint = (() => {
+  try {
+    const entry = process.argv[1];
+    if (typeof entry !== 'string' || entry === '') return false;
+    const url = import.meta.url;
+    if (url === `file://${entry}`) return true;
+    // tsx normalises paths but keeps the .ts extension; allow basename match.
+    return url.endsWith('/cli.ts') && entry.endsWith('/cli.ts');
+  } catch {
+    return false;
+  }
+})();
+
+if (isEntryPoint) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

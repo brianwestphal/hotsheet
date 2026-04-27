@@ -14,6 +14,7 @@ import type { Server as HttpServer } from 'http';
 
 import { closeAllDatabases } from './db/connection.js';
 import { removeInstanceFile } from './instance.js';
+import { releaseAllLocks } from './lock.js';
 
 export type ShutdownReason = 'http' | 'SIGINT' | 'SIGTERM' | 'test' | string;
 
@@ -39,8 +40,12 @@ export function registerHttpServerForShutdown(server: HttpServer | null): void {
  *   1. Close the HTTP server so a CHECKPOINT (inside `db.close()`) doesn't
  *      race in-flight writes.
  *   2. Destroy PTYs (idempotent if already torn down).
- *   3. Close every cached PGLite instance — PGLite internally CHECKPOINTs and
- *      removes its `postmaster.pid`.
+ *   3. Close every cached PGLite instance. The close path runs an internal
+ *      CHECKPOINT so the WAL is flushed into the data files; HS-7935's
+ *      `fsyncDir` then ensures those writes hit physical disk. Note: PGLite
+ *      0.3.16 does NOT remove `postmaster.pid` on close — that file stays
+ *      until the next launch's HS-7888 stale-pid mitigation drops it. The
+ *      durability win here is the CHECKPOINT, not the pid removal.
  *   4. Remove `~/.hotsheet/instance.json`.
  *
  * Any individual step that throws is logged and the pipeline continues — the
@@ -71,6 +76,7 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   await closeHttpServer();
   await destroyTerminals();
   await closeDatabases();
+  releaseProjectLocks();
   removeLockfile();
 
   console.log(`[lifecycle] gracefulShutdown(${reason}) — done`);
@@ -117,5 +123,19 @@ function removeLockfile(): void {
     removeInstanceFile();
   } catch (err) {
     console.error('[lifecycle] removeInstanceFile error:', err);
+  }
+}
+
+/** HS-7934 — release `<dataDir>/hotsheet.lock` files. Was its own SIGINT
+ *  handler in `src/lock.ts` until HS-7934 — that handler called
+ *  `process.exit(0)` synchronously and beat this pipeline's async
+ *  resolution, which both skipped the rest of the pipeline AND
+ *  short-circuited the second-signal escalation path. Folded in here so
+ *  every shutdown path runs the same ordered cleanup. */
+function releaseProjectLocks(): void {
+  try {
+    releaseAllLocks();
+  } catch (err) {
+    console.error('[lifecycle] releaseAllLocks error:', err);
   }
 }

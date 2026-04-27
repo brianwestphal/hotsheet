@@ -2,7 +2,7 @@
 
 HS-7902. Audit + design for making the PGLite cluster more robust against the failure classes that drove the HS-7888..7894 incident chain.
 
-> **Status:** §45.3 graceful-close pipeline **shipped** (HS-7931). §45.5 fsync verification (HS-7932) and §45.6 checkpoint-timeout benchmark (HS-7933) still open. The design below is preserved verbatim — the shipped code follows it exactly.
+> **Status:** §45.3 graceful-close pipeline **shipped** (HS-7931). §45.5 fsync gap **mitigated by wrapping our application boundaries** with explicit `fs.fsyncSync` (HS-7935) — upstream PGLite still no-ops `fsync` per the HS-7932 spike. §45.6 checkpoint-timeout benchmark **infeasible** until PGLite exposes a config-passing API (HS-7933 spike + HS-7936 upstream ask). §45.9 e2e harness **shipped** (HS-7934) covering 3 of 4 scenarios; the double-signal escalation case is covered by a focused unit test (HS-7939 follow-up for the e2e variant). The design below is preserved verbatim.
 
 ## 45.1 Why this ticket exists
 

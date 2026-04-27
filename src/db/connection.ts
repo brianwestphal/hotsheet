@@ -130,20 +130,36 @@ export async function closeDbForDir(dataDir: string): Promise<void> {
 /**
  * HS-7931 — close every cached PGLite instance. Used by `gracefulShutdown`
  * (`src/lifecycle.ts`) so every shutdown path gives PGLite a chance to
- * CHECKPOINT and remove its `postmaster.pid` instead of leaving the file
- * stale for HS-7888 to clean up on relaunch. Per-instance failures are
- * logged but don't stop subsequent instances from being closed — losing a
- * single project's clean close is much better than blocking the user's
- * quit.
+ * CHECKPOINT (the close path internally flushes WAL into the data files)
+ * before the process exits. PGLite 0.3.16 does NOT remove `postmaster.pid`
+ * on close — that's still cleaned up by HS-7888's stale-pid mitigation on
+ * next launch. The durability win here is the CHECKPOINT, not pid removal.
+ * Per-instance failures are logged but don't stop subsequent instances
+ * from being closed — losing a single project's clean close is much
+ * better than blocking the user's quit.
+ *
+ * HS-7935 — after each close, walk `<dbDir>` and explicitly `fs.fsyncSync`
+ * every regular file. PGLite's NODEFS bridge silently no-ops `fsync` so
+ * the close-time CHECKPOINT lands in the host kernel page cache without
+ * being flushed to physical disk. The wrap closes that durability gap.
  */
 export async function closeAllDatabases(): Promise<void> {
   const entries = Array.from(databases.entries());
   databases.clear();
+  // Lazy-import the fsync helper so test files that mock the module don't
+  // have to know about it.
+  const { fsyncDir } = await import('./fsyncWrap.js');
   for (const [dbPath, db] of entries) {
     try {
       await db.close();
     } catch (err) {
       console.error(`[db] close failed for ${dbPath}:`, err);
+    }
+    // Best-effort flush. Per-file errors are logged inside fsyncDir.
+    try {
+      fsyncDir(dbPath);
+    } catch (err) {
+      console.error(`[db] fsync failed for ${dbPath}:`, err);
     }
   }
 }

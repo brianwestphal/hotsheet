@@ -30,12 +30,15 @@ import {
   hashFile,
   manifestSiblingFilename,
   readManifest,
+  reanalyzeMissingManifests,
   restoreAttachmentsFromManifest,
   runAttachmentGc,
   writeManifestAtomically,
   type AttachmentManifest,
   type AttachmentRowSource,
 } from './attachmentBackup.js';
+import { gzipSync } from 'zlib';
+import { utimesSync } from 'fs';
 
 let backupRoot: string;
 let liveAttachmentsDir: string;
@@ -370,5 +373,167 @@ describe('restoreAttachmentsFromManifest (HS-7929)', () => {
     };
     const restored = await restoreAttachmentsFromManifest(manifest, blobsDir, liveAttachmentsDir);
     expect(restored).toHaveLength(0);
+  });
+});
+
+/** HS-7937 — startup re-analysis rebuilds missing manifests from the JSON
+ *  co-save sibling + on-disk hashing of any still-live attachments. */
+describe('reanalyzeMissingManifests (HS-7937)', () => {
+  function writeJsonCosave(tarballPath: string, attachmentsRows: Array<{ id: number; ticket_id: number; original_filename: string; stored_path: string }>): string {
+    const sibling = tarballPath.replace(/\.tar\.gz$/, '.json.gz');
+    const json = JSON.stringify({
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      tables: { attachments: attachmentsRows, tickets: [] },
+    });
+    writeFileSync(sibling, gzipSync(Buffer.from(json, 'utf-8')));
+    return sibling;
+  }
+
+  function placeOldTarball(tier: '5min' | 'hourly' | 'daily', name: string, ageMs: number): string {
+    const tierDir = join(backupRoot, tier);
+    mkdirSync(tierDir, { recursive: true });
+    const path = join(tierDir, name);
+    writeFileSync(path, 'fake tarball content');
+    const past = (Date.now() - ageMs) / 1000;
+    utimesSync(path, past, past);
+    return path;
+  }
+
+  it('rebuilds the manifest from the JSON co-save when the tarball is older than 24h and has live attachments on disk', async () => {
+    const tarballPath = placeOldTarball('5min', 'backup-old.tar.gz', 25 * 60 * 60 * 1000);
+    const liveFile = join(liveAttachmentsDir, 'HS-1_a.bin');
+    writeFileSync(liveFile, 'payload-A');
+    writeJsonCosave(tarballPath, [
+      { id: 1, ticket_id: 100, original_filename: 'a.bin', stored_path: liveFile },
+    ]);
+
+    const stats = await reanalyzeMissingManifests(backupRoot);
+    expect(stats).toEqual({ rebuilt: 1, skipped: 0, failed: 0 });
+
+    const manifestPath = tarballPath.replace(/\.tar\.gz$/, '.attachments.json');
+    const manifest = readManifest(manifestPath);
+    expect(manifest).not.toBeNull();
+    expect(manifest!.entries).toHaveLength(1);
+    expect(manifest!.entries[0]?.attachmentId).toBe(1);
+    expect(manifest!.entries[0]?.sha).toBe(expectedSha(Buffer.from('payload-A')));
+
+    // The blob must also have been deposited into the centralised store.
+    const blobsDir = attachmentBlobsDir(backupRoot);
+    expect(existsSync(join(blobsDir, manifest!.entries[0]!.sha))).toBe(true);
+  });
+
+  it('skips tarballs younger than 24h (default) so we don\'t hash live attachments on every boot', async () => {
+    const tarballPath = placeOldTarball('5min', 'backup-fresh.tar.gz', 1 * 60 * 60 * 1000);
+    const liveFile = join(liveAttachmentsDir, 'HS-1_a.bin');
+    writeFileSync(liveFile, 'payload-A');
+    writeJsonCosave(tarballPath, [
+      { id: 1, ticket_id: 100, original_filename: 'a.bin', stored_path: liveFile },
+    ]);
+
+    const stats = await reanalyzeMissingManifests(backupRoot);
+    expect(stats).toEqual({ rebuilt: 0, skipped: 1, failed: 0 });
+    const manifestPath = tarballPath.replace(/\.tar\.gz$/, '.attachments.json');
+    expect(existsSync(manifestPath)).toBe(false);
+  });
+
+  it('skips tarballs that already have a manifest sibling (no double-rebuild)', async () => {
+    const tarballPath = placeOldTarball('5min', 'backup-has-manifest.tar.gz', 25 * 60 * 60 * 1000);
+    const liveFile = join(liveAttachmentsDir, 'HS-1_a.bin');
+    writeFileSync(liveFile, 'payload-A');
+    writeJsonCosave(tarballPath, [
+      { id: 1, ticket_id: 100, original_filename: 'a.bin', stored_path: liveFile },
+    ]);
+    // Pre-populate a manifest with sentinel content so we can detect overwrites.
+    const manifestPath = tarballPath.replace(/\.tar\.gz$/, '.attachments.json');
+    const sentinel: AttachmentManifest = {
+      schemaVersion: ATTACHMENT_MANIFEST_VERSION,
+      createdAt: '2020-01-01T00:00:00.000Z',
+      tarball: 'backup-has-manifest.tar.gz',
+      entries: [],
+    };
+    writeManifestAtomically(manifestPath, sentinel);
+
+    const stats = await reanalyzeMissingManifests(backupRoot);
+    expect(stats.rebuilt).toBe(0);
+    // Sentinel survived — the existing manifest was not touched.
+    expect(readManifest(manifestPath)?.createdAt).toBe('2020-01-01T00:00:00.000Z');
+  });
+
+  it('falls back to cross-referencing other manifests when a row\'s live file is missing', async () => {
+    // Sibling tarball has a manifest that records a sha for attachmentId=1.
+    // Then we drop a separate old tarball whose live file is gone.
+    // Expect: reanalyze recovers attachmentId=1's entry by sha cross-ref.
+    const blobsDir = attachmentBlobsDir(backupRoot);
+    mkdirSync(blobsDir, { recursive: true });
+    const xrefBuf = Buffer.from('cross-ref-payload');
+    const xrefSha = expectedSha(xrefBuf);
+    writeFileSync(join(blobsDir, xrefSha), xrefBuf);
+
+    const siblingTier = join(backupRoot, 'hourly');
+    mkdirSync(siblingTier, { recursive: true });
+    const siblingManifest: AttachmentManifest = {
+      schemaVersion: ATTACHMENT_MANIFEST_VERSION,
+      createdAt: new Date().toISOString(),
+      tarball: 'backup-sibling.tar.gz',
+      entries: [{ attachmentId: 1, ticketId: 100, originalName: 'a.bin', storedName: 'HS-100_a.bin', sha: xrefSha, size: xrefBuf.length }],
+    };
+    writeManifestAtomically(join(siblingTier, 'backup-sibling.attachments.json'), siblingManifest);
+
+    const tarballPath = placeOldTarball('5min', 'backup-target.tar.gz', 25 * 60 * 60 * 1000);
+    const ghostPath = join(liveAttachmentsDir, 'HS-100_a.bin');
+    // Don't create the live file — simulate a row whose blob is gone.
+    writeJsonCosave(tarballPath, [
+      { id: 1, ticket_id: 100, original_filename: 'a.bin', stored_path: ghostPath },
+    ]);
+
+    const stats = await reanalyzeMissingManifests(backupRoot);
+    expect(stats.rebuilt).toBe(1);
+    const targetManifestPath = tarballPath.replace(/\.tar\.gz$/, '.attachments.json');
+    const m = readManifest(targetManifestPath);
+    expect(m?.entries).toHaveLength(1);
+    expect(m?.entries[0]?.sha).toBe(xrefSha);
+  });
+
+  it('drops rows that can be neither hashed live nor cross-referenced', async () => {
+    const tarballPath = placeOldTarball('5min', 'backup-partial.tar.gz', 25 * 60 * 60 * 1000);
+    const liveFile = join(liveAttachmentsDir, 'HS-100_present.bin');
+    writeFileSync(liveFile, 'present-payload');
+    const ghostPath = join(liveAttachmentsDir, 'HS-200_ghost.bin'); // never created
+    writeJsonCosave(tarballPath, [
+      { id: 1, ticket_id: 100, original_filename: 'present.bin', stored_path: liveFile },
+      { id: 2, ticket_id: 200, original_filename: 'ghost.bin', stored_path: ghostPath },
+    ]);
+
+    const stats = await reanalyzeMissingManifests(backupRoot);
+    expect(stats.rebuilt).toBe(1);
+    const m = readManifest(tarballPath.replace(/\.tar\.gz$/, '.attachments.json'));
+    expect(m?.entries).toHaveLength(1);
+    expect(m?.entries[0]?.attachmentId).toBe(1);
+  });
+
+  it('marks the tarball as failed when the JSON co-save sibling is missing', async () => {
+    placeOldTarball('5min', 'backup-orphan.tar.gz', 25 * 60 * 60 * 1000);
+    // No JSON co-save written.
+
+    const stats = await reanalyzeMissingManifests(backupRoot);
+    expect(stats).toEqual({ rebuilt: 0, skipped: 0, failed: 1 });
+  });
+
+  it('is a silent no-op when the backup root is empty', async () => {
+    const stats = await reanalyzeMissingManifests(backupRoot);
+    expect(stats).toEqual({ rebuilt: 0, skipped: 0, failed: 0 });
+  });
+
+  it('respects a custom minTarballAgeMs (used by tests + future tuning)', async () => {
+    const tarballPath = placeOldTarball('5min', 'backup-1h-old.tar.gz', 60 * 60 * 1000);
+    const liveFile = join(liveAttachmentsDir, 'HS-1_a.bin');
+    writeFileSync(liveFile, 'payload');
+    writeJsonCosave(tarballPath, [
+      { id: 1, ticket_id: 100, original_filename: 'a.bin', stored_path: liveFile },
+    ]);
+
+    const stats = await reanalyzeMissingManifests(backupRoot, { minTarballAgeMs: 30 * 60 * 1000 });
+    expect(stats.rebuilt).toBe(1);
   });
 });

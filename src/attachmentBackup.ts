@@ -34,6 +34,7 @@ import {
 import { createReadStream } from 'fs';
 import { join } from 'path';
 import { pipeline } from 'stream/promises';
+import { gunzipSync } from 'zlib';
 
 /**
  * Manifest schema version. Incremented when the manifest's shape changes
@@ -420,4 +421,202 @@ function appendRestoredSuffix(storedName: string, ts: string): string {
   const dotIdx = storedName.lastIndexOf('.');
   if (dotIdx === -1) return `${storedName}-restored-${ts}`;
   return `${storedName.slice(0, dotIdx)}-restored-${ts}${storedName.slice(dotIdx)}`;
+}
+
+/**
+ * HS-7937 — translate a tarball filename to its JSON co-save sibling.
+ * Mirrors `jsonSiblingFilename` from `src/dbJsonExport.ts`. Defined here
+ * (instead of imported) to keep `attachmentBackup.ts` independent of the
+ * JSON-export module's exports.
+ */
+function jsonCosaveFilename(tarballFilename: string): string {
+  return tarballFilename.replace(/\.tar\.gz$/, '.json.gz');
+}
+
+interface JsonCosaveAttachmentRow {
+  id: number;
+  ticket_id: number;
+  original_filename: string;
+  stored_path: string;
+}
+
+interface JsonCosave {
+  schemaVersion?: number;
+  exportedAt?: string;
+  tables?: { attachments?: JsonCosaveAttachmentRow[] };
+}
+
+/**
+ * Read + ungzip + parse a `.json.gz` co-save's `attachments` rows. Returns
+ * `null` on any failure (missing file, malformed gzip / JSON, missing
+ * tables key) — callers treat that as "rebuild not possible from this
+ * cosave".
+ */
+function readJsonCosaveAttachmentRows(jsonCosavePath: string): JsonCosaveAttachmentRow[] | null {
+  if (!existsSync(jsonCosavePath)) return null;
+  try {
+    const buf = readFileSync(jsonCosavePath);
+    const json = gunzipSync(buf).toString('utf-8');
+    const raw = JSON.parse(json) as JsonCosave;
+    const rows = raw.tables?.attachments;
+    if (!Array.isArray(rows)) return null;
+    return rows.filter((r): r is JsonCosaveAttachmentRow =>
+      typeof r === 'object' && r !== null
+        && typeof (r as JsonCosaveAttachmentRow).id === 'number'
+        && typeof (r as JsonCosaveAttachmentRow).ticket_id === 'number'
+        && typeof (r as JsonCosaveAttachmentRow).original_filename === 'string'
+        && typeof (r as JsonCosaveAttachmentRow).stored_path === 'string',
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * HS-7937 — index every existing manifest by `attachmentId → {sha, storedName, size}` so a
+ * rebuild can recover an entry whose live file is gone but whose blob is
+ * referenced by a sibling backup's manifest. Returns the union of all
+ * mappings; if multiple manifests carry the same attachmentId with
+ * different shas, the most recently scanned wins (cheap deterministic
+ * choice — the rebuild path is best-effort).
+ */
+function indexExistingManifestEntries(backupRoot: string): Map<number, { sha: string; storedName: string; size: number }> {
+  const out = new Map<number, { sha: string; storedName: string; size: number }>();
+  for (const tier of ['5min', 'hourly', 'daily']) {
+    const tierPath = join(backupRoot, tier);
+    if (!existsSync(tierPath)) continue;
+    for (const name of readdirSync(tierPath)) {
+      if (!name.endsWith('.attachments.json')) continue;
+      const m = readManifest(join(tierPath, name));
+      if (m === null) continue;
+      for (const e of m.entries) {
+        out.set(e.attachmentId, { sha: e.sha, storedName: e.storedName, size: e.size });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * HS-7937 — rebuild a single tarball's manifest from its `.json.gz`
+ * co-save sibling + on-disk hashing of any still-live attachments. Best-
+ * effort: rows whose live file is missing fall back to the cross-reference
+ * index from existing manifests; rows that can't be recovered either way
+ * are dropped with a warning.
+ */
+async function rebuildManifestFromJsonCosave(
+  backupRoot: string,
+  tarballFilename: string,
+  jsonCosavePath: string,
+  crossRefIndex: Map<number, { sha: string; storedName: string; size: number }>,
+): Promise<AttachmentManifest | null> {
+  const rows = readJsonCosaveAttachmentRows(jsonCosavePath);
+  if (rows === null) return null;
+
+  const blobsDir = attachmentBlobsDir(backupRoot);
+  const entries: AttachmentManifestEntry[] = [];
+  for (const row of rows) {
+    let sha: string | null = null;
+    let size: number | null = null;
+    let storedName: string;
+    if (existsSync(row.stored_path)) {
+      try {
+        const hashed = await hashFile(row.stored_path);
+        sha = hashed.sha;
+        size = hashed.size;
+        await ensureBlobInStore(blobsDir, row.stored_path, sha);
+        storedName = basename(row.stored_path);
+      } catch (err) {
+        console.error(`[attachmentBackup] reanalyze: hash failed for ${row.stored_path}:`, err);
+      }
+    }
+    if (sha === null) {
+      // Live file gone — try the cross-reference index.
+      const xref = crossRefIndex.get(row.id);
+      if (xref !== undefined && existsSync(join(blobsDir, xref.sha))) {
+        sha = xref.sha;
+        size = xref.size;
+        storedName = xref.storedName;
+      } else {
+        console.warn(`[attachmentBackup] reanalyze: dropping attachment ${row.id} (${row.original_filename}) — live file missing and no cross-ref blob in store`);
+        continue;
+      }
+    }
+    entries.push({
+      attachmentId: row.id,
+      ticketId: row.ticket_id,
+      originalName: row.original_filename,
+      storedName: storedName!,
+      sha: sha!,
+      size: size!,
+    });
+  }
+
+  return {
+    schemaVersion: ATTACHMENT_MANIFEST_VERSION,
+    createdAt: new Date().toISOString(),
+    tarball: tarballFilename,
+    entries,
+  };
+}
+
+/**
+ * HS-7937 — startup pass: walk every tarball under
+ * `<backupRoot>/{5min,hourly,daily}/`, find any without an
+ * `.attachments.json` manifest sibling, and rebuild the manifest for ones
+ * older than `minTarballAgeMs` (default 24h). Younger tarballs are skipped
+ * to avoid hashing live attachments on every boot — a manifest will be
+ * written by the next normal backup or by the explicit failure-recovery
+ * path before the 24h window elapses.
+ *
+ * Returns `{ rebuilt, skipped, failed }`. The function never throws; per-
+ * tarball failures are logged and counted.
+ */
+export async function reanalyzeMissingManifests(
+  backupRoot: string,
+  options: { now?: number; minTarballAgeMs?: number } = {},
+): Promise<{ rebuilt: number; skipped: number; failed: number }> {
+  const now = options.now ?? Date.now();
+  const minAge = options.minTarballAgeMs ?? 24 * 60 * 60 * 1000;
+
+  const crossRefIndex = indexExistingManifestEntries(backupRoot);
+  let rebuilt = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const tier of ['5min', 'hourly', 'daily']) {
+    const tierPath = join(backupRoot, tier);
+    if (!existsSync(tierPath)) continue;
+    for (const name of readdirSync(tierPath)) {
+      if (!name.endsWith('.tar.gz')) continue;
+      const tarballPath = join(tierPath, name);
+      const manifestPath = join(tierPath, manifestSiblingFilename(name));
+      if (existsSync(manifestPath)) continue;
+
+      let mtimeMs: number;
+      try { mtimeMs = statSync(tarballPath).mtimeMs; } catch { failed++; continue; }
+      if (now - mtimeMs < minAge) { skipped++; continue; }
+
+      const jsonCosavePath = join(tierPath, jsonCosaveFilename(name));
+      try {
+        const manifest = await rebuildManifestFromJsonCosave(backupRoot, name, jsonCosavePath, crossRefIndex);
+        if (manifest === null) {
+          console.warn(`[attachmentBackup] reanalyze: cannot rebuild manifest for ${tarballPath} — JSON co-save missing or unreadable`);
+          failed++;
+          continue;
+        }
+        writeManifestAtomically(manifestPath, manifest);
+        // Surface it in the index so later iterations in this same pass
+        // can cross-reference it.
+        for (const e of manifest.entries) {
+          crossRefIndex.set(e.attachmentId, { sha: e.sha, storedName: e.storedName, size: e.size });
+        }
+        rebuilt++;
+      } catch (err) {
+        console.error(`[attachmentBackup] reanalyze failed for ${tarballPath}:`, err);
+        failed++;
+      }
+    }
+  }
+  return { rebuilt, skipped, failed };
 }

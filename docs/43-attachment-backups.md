@@ -2,7 +2,7 @@
 
 HS-7900. Companion to [41. Backup JSON co-save](41-backup-json-cosave.md) and [7. Backup & Restore](7-backup-restore.md). Covers the binary blobs under `.hotsheet/attachments/<file>` that neither the PGLite tarball nor the HS-7893 JSON co-save touch — both formats only carry the `attachments` table rows, and `stored_path` in those rows points at live files that can disappear.
 
-> **Status:** §43.6 backup-side capture, §43.8 daily GC, §43.9 restore re-hydration **shipped** (HS-7929). §43.7 manifest re-analysis at startup is the only out-of-scope piece — filed as **HS-7937** for a follow-up. The design below describes the implemented system; the only gap is the missing-manifest reconstruction path.
+> **Status:** §43.6 backup-side capture, §43.7 manifest re-analysis, §43.8 daily GC, §43.9 restore re-hydration all **shipped** (HS-7929 + HS-7937). The design below describes the implemented system.
 
 ## 43.1 Goals
 

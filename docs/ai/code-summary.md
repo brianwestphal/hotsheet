@@ -49,7 +49,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 
 | File | Role |
 |---|---|
-| `cli.ts` | CLI entry + arg parsing, multi-project boot |
+| `cli.ts` | CLI entry + arg parsing, multi-project boot. Exports pure `createSignalHandler(hooks)` factory (HS-7934) so the SIGINT/SIGTERM escalation logic is unit-testable without spawning a child process. Entry-point guard ensures `main()` only runs when the file is `process.argv[1]` (else importing `cli.js` from a unit test would trigger a full Hot Sheet startup) |
 | `server.ts` | Hono app, middleware, static assets, secret validation |
 | `channel.ts` | MCP server (stdio + HTTP). `CHANNEL_VERSION=3` |
 | `channel-config.ts` | `.mcp.json` registration + `EXPECTED_CHANNEL_VERSION` check |
@@ -58,7 +58,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `types.ts` | `Ticket`, `TicketCategory`, `TicketPriority`, `AppEnv` |
 | `projects.ts` / `project-list.ts` | Multi-project registry (secret ↔ dataDir) |
 | `instance.ts` | `~/.hotsheet/instance.json` PID + port; stale cleanup |
-| `lifecycle.ts` | HS-7931 graceful-shutdown pipeline: `gracefulShutdown(reason)` closes HTTP → destroys PTYs → `closeAllDatabases()` → removes lockfile. Idempotent; shared by `/api/shutdown`, SIGINT, SIGTERM. `registerHttpServerForShutdown(server)` wires the live server in. |
+| `lifecycle.ts` | HS-7931 + HS-7934 graceful-shutdown pipeline: `gracefulShutdown(reason)` closes HTTP → destroys PTYs → `closeAllDatabases()` → `releaseAllLocks()` → removes instance file. Idempotent; shared by `/api/shutdown`, SIGINT, SIGTERM. `registerHttpServerForShutdown(server)` wires the live server in. The lock-release step was folded in (HS-7934) after `lock.ts`'s own SIGINT handler proved to race the async pipeline. |
 | `lock.ts` | `.hotsheet/hotsheet.lock` — single instance per dataDir |
 | `file-settings.ts` | Read/write `.hotsheet/settings.json` (reserved vs user keys) |
 | `global-config.ts` | `~/.hotsheet/config.json` (channel enabled, share stats) |
@@ -66,6 +66,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `dbJsonExport.ts` | HS-7893 versioned JSON snapshot of every table; atomic gzip write co-saved alongside each tarball |
 | `attachmentBackup.ts` | HS-7929 attachment-blob backups: streaming `hashFile`, hash-addressed `<backupRoot>/attachments/<sha256>` store with link-then-copy fallback, atomic `<base>.attachments.json` manifest writes, daily orphan GC (aborts on any parse failure), `restoreAttachmentsFromManifest` with `-restored-<TS>` collision suffix |
 | `db/repair.ts` | HS-7897 Repair Database helpers: `findWorkingBackup`, cross-platform `pg_resetwal` probe + run flow, install-hint pure helpers |
+| `db/fsyncWrap.ts` | HS-7935 explicit-fsync wrapper. `fsyncDir(path, fsyncFn?)` recursively walks a directory tree and `fs.fsyncSync`'s every regular file to close the gap left by Emscripten's NODEFS no-oping `fsync` (HS-7932 spike). Wired into `createBackup` after `CHECKPOINT` + `closeAllDatabases` after each `db.close()`. Best-effort: per-file errors are logged + counted, never thrown |
 | `cleanup.ts` | Prune old trash/completed/verified + orphaned attachments |
 | `demo.ts` | `--demo:N` seed data |
 | `skills.ts` | Generates `.claude/skills/hotsheet` + per-category `hs-{cat}` + Cursor/Copilot/Windsurf files |
