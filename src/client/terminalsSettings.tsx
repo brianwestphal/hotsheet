@@ -37,6 +37,21 @@ let terminals: EditableTerminalConfig[] = [];
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let dragFromIndex: number | null = null;
 
+/** Test-only — read the current in-memory terminals array. Used by the
+ *  HS-7958 unit test to assert that add-then-cancel doesn't leak a stub
+ *  entry into the configured list. */
+export function _getTerminalsForTests(): readonly EditableTerminalConfig[] {
+  return terminals;
+}
+
+/** Test-only — reset the module-level state so each test starts clean. */
+export function _resetTerminalsForTests(): void {
+  terminals = [];
+  if (saveTimeout !== null) clearTimeout(saveTimeout);
+  saveTimeout = null;
+  dragFromIndex = null;
+}
+
 /**
  * Module-level cache of the Edit Terminal command-combobox suggestions
  * (HS-7791). Populated lazily on first dialog open via
@@ -187,7 +202,7 @@ function renderRow(index: number): HTMLElement {
   editBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    openEditor(index);
+    openEditor(terminals[index], { mode: 'edit' });
   });
   deleteBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -223,9 +238,29 @@ function renderRow(index: number): HTMLElement {
   return row;
 }
 
-function openEditor(index: number, focusField: 'name' | 'command' = 'name'): void {
+/**
+ * Open the terminal-edit dialog.
+ *
+ * `mode: 'edit'` (default) — operates on an existing entry already in the
+ * `terminals[]` array. The Done / Cancel-by-X actions both commit the
+ * dialog state back into the entry (preserving the long-standing edit
+ * behaviour where dragging the X is "save and close").
+ *
+ * `mode: 'add'` (HS-7958) — operates on a fresh entry NOT yet in
+ * `terminals[]`. The dialog only commits the entry on the final
+ * "Add Terminal" button click; clicking X or the backdrop discards the
+ * entry entirely so the user can abandon a half-typed new terminal
+ * without leaving a stub row in the list. The footer button text and
+ * the dialog header swap for the add case.
+ */
+function openEditor(
+  entry: EditableTerminalConfig,
+  options: { focusField?: 'name' | 'command'; mode?: 'edit' | 'add' } = {},
+): void {
   document.querySelectorAll('.cmd-editor-overlay').forEach(el => el.remove());
-  const entry = terminals[index];
+  const focusField = options.focusField ?? 'name';
+  const mode = options.mode ?? 'edit';
+  const isAdd = mode === 'add';
 
   // HS-7562 — pre-resolve the appearance defaults the dialog will display.
   // Per the user's clarifying answer (4/25/2026): no separate sentinel
@@ -246,12 +281,18 @@ function openEditor(index: number, focusField: 'name' | 'command' = 'name'): voi
     .map(f => `<option value="${f.id}"${f.id === initialFontFamily ? ' selected' : ''}>${escapeHtml(f.name)}</option>`)
     .join('');
 
+  // HS-7958 — the dialog field ids previously included the array index, but
+  // in add-mode the entry isn't in the array yet. Use the entry's own id so
+  // labels stay correctly wired in both modes (and so multiple add-flows
+  // wouldn't ever collide if we ever stack them).
+  const fieldIdSuffix = entry.id;
+
   const overlay = toElement(
     <div className="cmd-editor-overlay">
       <div className="cmd-editor-dialog">
         <div className="cmd-editor-dialog-header">
-          <span>Edit Terminal</span>
-          <button className="cmd-editor-close-btn" title="Close">{'×'}</button>
+          <span>{isAdd ? 'New Terminal' : 'Edit Terminal'}</span>
+          <button className="cmd-editor-close-btn" title={isAdd ? 'Cancel' : 'Close'}>{'×'}</button>
         </div>
         <div className="cmd-editor-dialog-body">
           <div className="settings-field">
@@ -299,19 +340,19 @@ function openEditor(index: number, focusField: 'name' | 'command' = 'name'): voi
           <details className="term-edit-appearance" open={appearanceOpenByDefault}>
             <summary>Appearance</summary>
             <div className="settings-field">
-              <label htmlFor={`term-edit-theme-${index}`}>Theme</label>
-              {raw(`<select id="term-edit-theme-${index}" class="term-edit-theme">${themeOptions}</select>`)}
+              <label htmlFor={`term-edit-theme-${fieldIdSuffix}`}>Theme</label>
+              {raw(`<select id="term-edit-theme-${fieldIdSuffix}" class="term-edit-theme">${themeOptions}</select>`)}
               <span className="settings-hint">Default selected = current project default. Pick a different theme to override for this terminal only.</span>
             </div>
             <div className="settings-field">
-              <label htmlFor={`term-edit-font-${index}`}>Font</label>
-              {raw(`<select id="term-edit-font-${index}" class="term-edit-font">${fontOptions}</select>`)}
+              <label htmlFor={`term-edit-font-${fieldIdSuffix}`}>Font</label>
+              {raw(`<select id="term-edit-font-${fieldIdSuffix}" class="term-edit-font">${fontOptions}</select>`)}
             </div>
             <div className="settings-field">
-              <label htmlFor={`term-edit-font-size-${index}`}>Font size</label>
+              <label htmlFor={`term-edit-font-size-${fieldIdSuffix}`}>Font size</label>
               <input
                 type="number"
-                id={`term-edit-font-size-${index}`}
+                id={`term-edit-font-size-${fieldIdSuffix}`}
                 className="term-edit-font-size"
                 min={String(MIN_FONT_SIZE)}
                 max={String(MAX_FONT_SIZE)}
@@ -322,13 +363,17 @@ function openEditor(index: number, focusField: 'name' | 'command' = 'name'): voi
           </details>
         </div>
         <div className="cmd-editor-dialog-footer">
-          <button className="btn btn-sm cmd-editor-done-btn">Done</button>
+          <button className="btn btn-sm cmd-editor-done-btn">{isAdd ? 'Add Terminal' : 'Done'}</button>
         </div>
       </div>
     </div>
   );
 
-  const close = async () => {
+  /** Read the dialog state and produce the resulting EditableTerminalConfig
+   *  with the same fall-through-to-`{{claudeCommand}}` rule the long-standing
+   *  edit flow uses. Pure of side effects so the add-mode commit path can
+   *  call it once and discard the dialog without committing. */
+  const collectUpdated = (): EditableTerminalConfig => {
     const name = (overlay.querySelector('.term-edit-name') as HTMLInputElement).value;
     const command = (overlay.querySelector('.term-edit-command') as HTMLInputElement).value;
     const cwd = (overlay.querySelector('.term-edit-cwd') as HTMLInputElement).value.trim();
@@ -354,7 +399,23 @@ function openEditor(index: number, focusField: 'name' | 'command' = 'name'): voi
       const parsed = Number.parseFloat(sizeInput.value);
       if (Number.isFinite(parsed)) updated.fontSize = clampFontSize(parsed);
     }
-    terminals[index] = updated;
+    return updated;
+  };
+
+  /** Persist the dialog result into the `terminals[]` array, save, and
+   *  notify any mounted xterm. The branch on add vs edit determines whether
+   *  we push a new entry or replace an existing one. */
+  const commit = async (): Promise<void> => {
+    const updated = collectUpdated();
+    if (isAdd) {
+      // HS-7958 — only NOW does the terminal join the configured list. The
+      // entry's id was generated at addTerminalEntry time and is reused here.
+      terminals.push(updated);
+    } else {
+      const idx = terminals.findIndex(t => t.id === updated.id);
+      if (idx === -1) terminals.push(updated);
+      else terminals[idx] = updated;
+    }
     overlay.remove();
     renderList();
     await scheduleSave();
@@ -365,9 +426,22 @@ function openEditor(index: number, focusField: 'name' | 'command' = 'name'): voi
       detail: { terminalId: updated.id },
     }));
   };
-  overlay.querySelector('.cmd-editor-close-btn')?.addEventListener('click', () => { void close(); });
-  overlay.querySelector('.cmd-editor-done-btn')?.addEventListener('click', () => { void close(); });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) void close(); });
+
+  /** Cancel path: in add-mode this discards the entry entirely (HS-7958
+   *  requirement — clicking X on a new terminal cancels creation). In
+   *  edit-mode it preserves the long-standing "X = save and close" behaviour
+   *  so existing-terminal edits keep their current commit semantics. */
+  const cancel = async (): Promise<void> => {
+    if (isAdd) {
+      overlay.remove();
+      return;
+    }
+    await commit();
+  };
+
+  overlay.querySelector('.cmd-editor-close-btn')?.addEventListener('click', () => { void cancel(); });
+  overlay.querySelector('.cmd-editor-done-btn')?.addEventListener('click', () => { void commit(); });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) void cancel(); });
   document.body.appendChild(overlay);
   const nameInput = overlay.querySelector<HTMLInputElement>('.term-edit-name');
   const cmdInput = overlay.querySelector<HTMLInputElement>('.term-edit-command');
@@ -504,7 +578,14 @@ function scheduleSave(): Promise<void> {
   });
 }
 
-/** Add a blank new terminal to the end and open the editor on it.
+/** Open the editor in add-mode for a fresh terminal entry.
+ *
+ *  HS-7958 — the entry is NOT pushed into `terminals[]` here. The push
+ *  happens inside the editor's `commit()` path when the user clicks
+ *  "Add Terminal". Clicking X / the backdrop discards the entry entirely
+ *  (no stub row left in the list, no debounced save fired). Pre-fix the
+ *  blank entry was pushed eagerly + persisted on close regardless of
+ *  intent.
  *
  *  HS-7858 — neither name nor command get a default value: the user is
  *  expected to make an explicit choice from the combobox. The name will
@@ -513,9 +594,8 @@ function scheduleSave(): Promise<void> {
  *  command field so the popover opens immediately. */
 export function addTerminalEntry(): void {
   const id = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  terminals.push({ id, command: '' });
-  renderList();
-  openEditor(terminals.length - 1, 'command');
+  const draft: EditableTerminalConfig = { id, command: '' };
+  openEditor(draft, { focusField: 'command', mode: 'add' });
 }
 
 /** HS-7858 — derive a sensible default tab name from the chosen command.

@@ -14,10 +14,12 @@ import {
   getSessionOverride,
   notifyDefaultAppearanceChanged,
   resolveAppearance,
+  resolveAppearanceBackground,
   setSessionOverride,
   subscribeToDefaultAppearanceChanges,
   type XtermLikeForAppearance,
 } from './terminalAppearance.js';
+import { getThemeById, TERMINAL_THEMES } from './terminalThemes.js';
 import { _resetFontCacheForTests } from './terminalFonts.js';
 
 beforeEach(() => {
@@ -183,5 +185,36 @@ describe('project-default change pub/sub', () => {
     expect(b).toBe(1);
     offA();
     offB();
+  });
+});
+
+/**
+ * HS-7960 — `resolveAppearanceBackground` returns the active theme's
+ * background colour, used by the drawer + dashboard dedicated view to paint
+ * the padded gutter around the xterm canvas in a colour that matches the
+ * canvas itself (no app-coloured seam).
+ */
+describe('resolveAppearanceBackground (HS-7960)', () => {
+  it('returns the configured theme bg for a known theme id', () => {
+    const dracula = getThemeById('dracula');
+    expect(dracula).not.toBeUndefined();
+    const out = resolveAppearanceBackground({ theme: 'dracula', fontFamily: 'system', fontSize: 13 });
+    expect(out).toBe(dracula!.background);
+  });
+
+  it('falls back to the default theme bg for an unknown theme id', () => {
+    const def = getThemeById('default');
+    expect(def).not.toBeUndefined();
+    const out = resolveAppearanceBackground({ theme: 'no-such-theme', fontFamily: 'system', fontSize: 13 });
+    expect(out).toBe(def!.background);
+  });
+
+  it('returns a non-empty colour string for every shipped theme', () => {
+    for (const t of TERMINAL_THEMES) {
+      const out = resolveAppearanceBackground({ theme: t.id, fontFamily: 'system', fontSize: 13 });
+      expect(typeof out).toBe('string');
+      expect(out.length).toBeGreaterThan(0);
+      expect(out).toBe(t.background);
+    }
   });
 });

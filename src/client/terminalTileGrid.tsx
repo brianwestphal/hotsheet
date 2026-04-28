@@ -849,11 +849,16 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     const pane = overlay.querySelector<HTMLElement>(`.${dedicatedPaneClass}`);
     const backBtn = overlay.querySelector<HTMLElement>(`.${dedicatedBackClass}`);
     const bar = overlay.querySelector<HTMLElement>(`.${dedicatedBarClass}`);
+    const dedicatedBody = overlay.querySelector<HTMLElement>(`.${dedicatedBodyClass}`);
     if (pane === null || backBtn === null || bar === null) return;
     backBtn.addEventListener('click', () => { exitDedicatedView(); });
 
     const appearance = resolveTileAppearance(tile);
     const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
+    // HS-7960 — paint the dedicated-body padded gutter with the active
+    // theme's bg so the area around the xterm canvas reads as part of the
+    // terminal frame, matching the drawer's HS-7960 treatment.
+    if (dedicatedBody !== null) dedicatedBody.style.backgroundColor = themeData.background;
     const term = new XTerm({
       fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       fontSize: 13,

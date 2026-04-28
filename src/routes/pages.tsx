@@ -246,7 +246,17 @@ pageRoutes.get('/', (c) => {
                   <input type="text" id="detail-title" />
                 </div>
                 <div className="detail-field detail-field-full">
-                  <label>Details</label>
+                  {/* HS-7957 — Details label is a flex row so the right-side
+                      reader-mode book button sits opposite the label text.
+                      The button is disabled (greyed) when the textarea is
+                      empty; bound in `bindDetailReaderButton` in
+                      `src/client/detail.tsx`. */}
+                  <label className="detail-details-label">
+                    <span>Details</span>
+                    <button id="detail-reader-btn" className="detail-reader-btn" type="button" title="Open in reader mode" disabled>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 8h2"/><path d="M6 12h2"/></svg>
+                    </button>
+                  </label>
                   <textarea id="detail-details" rows={6} placeholder="Add details..."></textarea>
                 </div>
                 <div className="detail-field detail-field-full">

@@ -149,6 +149,32 @@ export function computeSliderSnapPoints(rootWidth: number): SnapPoint[] {
 export const SLIDER_SNAP_THRESHOLD = 2.5;
 
 /**
+ * HS-7950 — pixel offset of a snap-point tick relative to the slider's left
+ * edge, accounting for the fact that the native `input[type="range"]` thumb
+ * occupies a fixed `thumbWidthPx` regardless of `value`. Without this
+ * compensation, a tick rendered at `left: 0%` sits under the slider's
+ * geometric edge while the thumb's *center* at `value=0` sits half a thumb
+ * inwards — and the misalignment grows toward both ends of the track,
+ * making the leftmost ticks bunch under non-existent thumb positions and
+ * the rightmost ticks fall off into empty rail.
+ *
+ * Effective travel range of the thumb centre is
+ * `[thumbWidthPx/2, sliderWidthPx - thumbWidthPx/2]`. The tick at
+ * `sliderValue=v` (0..100) lands at:
+ *
+ *     leftPx = thumbWidthPx/2 + (v/100) * (sliderWidthPx - thumbWidthPx)
+ *
+ * Pure helper so the production wire-up + tests can both call it with the
+ * exact same numbers — alignment is a fiddly mental model and an empirical
+ * regression is easy to introduce.
+ */
+export function tickLeftPx(sliderValue: number, sliderWidthPx: number, thumbWidthPx: number): number {
+  const v = Math.max(0, Math.min(100, sliderValue));
+  const usable = Math.max(0, sliderWidthPx - thumbWidthPx);
+  return thumbWidthPx / 2 + (v / 100) * usable;
+}
+
+/**
  * If `rawValue` is within `SLIDER_SNAP_THRESHOLD` of any snap point, return
  * that snap point's exact slider value. Otherwise return `rawValue` verbatim
  * (no snap). Picks the nearest snap if multiple are in range.

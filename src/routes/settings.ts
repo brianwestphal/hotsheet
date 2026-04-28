@@ -82,6 +82,13 @@ settingsRoutes.patch('/file-settings', async (c) => {
   const raw: unknown = await c.req.json();
   const parsed = parseBody(UpdateFileSettingsSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  // HS-7949 — capture the configured-terminal id set BEFORE the write so the
+  // post-write follow-up step can diff (newIds = afterWrite - beforeWrite)
+  // and apply the new-terminals-hidden-in-non-Default-groupings rule.
+  // Captured unconditionally (cheap) rather than gated on `'terminals' in
+  // parsed.data` to keep the control flow flat.
+  const { listTerminalConfigs: listTerminalConfigsForDiff } = await import('../terminals/config.js');
+  const previousConfiguredIds = new Set(listTerminalConfigsForDiff(dataDir).map(t => t.id));
   const updated = writeFileSettings(dataDir, parsed.data);
   // Update project tab name when appName changes
   if ('appName' in parsed.data) {
@@ -104,14 +111,27 @@ settingsRoutes.patch('/file-settings', async (c) => {
     // grouping arrays) that no longer correspond to a configured terminal
     // so deleted-terminal entries don't accumulate in settings.json.
     // See docs/38-terminal-visibility.md §38.7 + docs/39-visibility-groupings.md.
-    const { prunedHiddenTerminals, prunedVisibilityGroupings, writeFileSettings: writeAgain } = await import('../file-settings.js');
+    // HS-7949 — additionally hide any newly-added terminal id in every
+    // non-Default grouping. The previous configured set was captured before
+    // the write so we can diff (`previousConfiguredIds` vs `configuredIds`).
+    // See docs/39-visibility-groupings.md §39.X.
+    const { prunedHiddenTerminals, prunedVisibilityGroupings, addNewTerminalsToNonDefaultGroupings, writeFileSettings: writeAgain } = await import('../file-settings.js');
     const { listTerminalConfigs } = await import('../terminals/config.js');
     const configuredIds = new Set(listTerminalConfigs(dataDir).map(t => t.id));
     const prunedFlat = prunedHiddenTerminals(updated.hidden_terminals, configuredIds);
     const prunedGroupings = prunedVisibilityGroupings(updated.visibility_groupings, configuredIds);
+    // Compose: start from the post-prune groupings (or the current groupings
+    // if no prune was needed), then layer the HS-7949 new-id-hidden-in-non-
+    // Default-groupings rule on top. Order matters — pruning must happen
+    // first so we don't accidentally re-add an already-removed-but-still-
+    // configured id, and the new-id step only ever appends.
+    const groupingsAfterPrune = prunedGroupings ?? updated.visibility_groupings;
+    const newIds = [...configuredIds].filter(id => !previousConfiguredIds.has(id));
+    const groupingsAfterNewHide = addNewTerminalsToNonDefaultGroupings(groupingsAfterPrune, newIds);
     const followup: Record<string, unknown> = {};
     if (prunedFlat !== null) followup.hidden_terminals = prunedFlat;
-    if (prunedGroupings !== null) followup.visibility_groupings = prunedGroupings;
+    if (groupingsAfterNewHide !== null) followup.visibility_groupings = groupingsAfterNewHide;
+    else if (prunedGroupings !== null) followup.visibility_groupings = prunedGroupings;
     if (Object.keys(followup).length > 0) writeAgain(dataDir, followup);
   }
   return c.json(updated);

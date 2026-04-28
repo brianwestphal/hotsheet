@@ -14,6 +14,7 @@ import {
   SLIDER_SNAP_THRESHOLD,
   TILE_ASPECT,
   TILE_GAP,
+  tickLeftPx,
   tileNativeGridFromCellMetrics,
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
@@ -452,5 +453,56 @@ describe('maybeSnapSliderValue (HS-7271)', () => {
 
   it('returns raw value with an empty snap list', () => {
     expect(maybeSnapSliderValue(37, [])).toBe(37);
+  });
+});
+
+/**
+ * HS-7950 — `tickLeftPx` shifts each snap-point tick from its naive
+ * `sliderValue%` position to the centre of where the native range thumb
+ * actually sits at that value. Without this, leftmost ticks bunched under
+ * a non-existent thumb position and rightmost ticks fell off the rail.
+ *
+ * The math: thumb centre travels `[thumbW/2, sliderW - thumbW/2]` as
+ * value goes 0..100. So a tick at slider value v lands at
+ * `thumbW/2 + (v/100) * (sliderW - thumbW)`.
+ */
+describe('tickLeftPx (HS-7950)', () => {
+  it('value 0 lands at half a thumb in from the left edge', () => {
+    expect(tickLeftPx(0, 200, 16)).toBe(8);
+  });
+
+  it('value 100 lands at half a thumb in from the right edge', () => {
+    expect(tickLeftPx(100, 200, 16)).toBe(192);
+  });
+
+  it('value 50 lands at the midpoint of the slider', () => {
+    expect(tickLeftPx(50, 200, 16)).toBe(100);
+  });
+
+  it('clamps a sub-zero value to 0', () => {
+    expect(tickLeftPx(-10, 200, 16)).toBe(8);
+  });
+
+  it('clamps an over-100 value to 100', () => {
+    expect(tickLeftPx(150, 200, 16)).toBe(192);
+  });
+
+  it('handles a wider thumb proportionally (thumbW=24)', () => {
+    expect(tickLeftPx(0, 200, 24)).toBe(12);
+    expect(tickLeftPx(100, 200, 24)).toBe(188);
+    expect(tickLeftPx(50, 200, 24)).toBe(100);
+  });
+
+  it('degenerate sliderW <= thumbW collapses every tick to thumbW/2 (no usable range)', () => {
+    expect(tickLeftPx(0, 16, 16)).toBe(8);
+    expect(tickLeftPx(50, 16, 16)).toBe(8);
+    expect(tickLeftPx(100, 16, 16)).toBe(8);
+    expect(tickLeftPx(50, 10, 16)).toBe(8); // smaller-than-thumb slider stays clamped
+  });
+
+  it('unstyled CSS-default thumb (16px) keeps midpoint exact at any slider width', () => {
+    for (const w of [80, 100, 200, 320, 480]) {
+      expect(tickLeftPx(50, w, 16)).toBeCloseTo(w / 2, 5);
+    }
   });
 });

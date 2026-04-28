@@ -136,6 +136,67 @@ export function prunedVisibilityGroupings(
   return changed ? out : null;
 }
 
+/**
+ * HS-7949 — when a new terminal id appears in the configured set, it should
+ * default to **hidden** in every non-Default grouping (and stay visible in
+ * the Default grouping). Without this, a freshly-added terminal pops up in
+ * every named grouping the user has built — undoing the curation that's the
+ * whole point of having multiple groupings.
+ *
+ * Pure helper: takes the existing `visibility_groupings` (whatever shape
+ * survived parsing — usually the post-prune array from
+ * `prunedVisibilityGroupings`) plus the list of newly-added terminal ids,
+ * and returns a new groupings array with each new id appended to every
+ * non-Default grouping's `hiddenIds`. Returns `null` when no change is
+ * required (no new ids OR no non-Default groupings exist OR every new id
+ * is already in every non-Default grouping). Tolerates the
+ * stringified-JSON shape and skips malformed input as a no-op.
+ *
+ * The Default grouping id is hard-coded to `'default'` here — same constant
+ * the client uses (`DEFAULT_GROUPING_ID` in
+ * `src/client/visibilityGroupings.ts`). The server has no other reason to
+ * import client code, so duplicating the literal is preferable to a circular
+ * dependency.
+ */
+export function addNewTerminalsToNonDefaultGroupings(
+  currentGroupings: unknown,
+  newTerminalIds: readonly string[],
+): Array<{ id: string; name: string; hiddenIds: string[] }> | null {
+  if (newTerminalIds.length === 0) return null;
+  let raw: unknown = currentGroupings;
+  if (typeof raw === 'string' && raw !== '') {
+    try { raw = JSON.parse(raw); } catch { return null; }
+  }
+  if (!Array.isArray(raw)) return null;
+  let changed = false;
+  const out: Array<{ id: string; name: string; hiddenIds: string[] }> = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const obj = item as { id?: unknown; name?: unknown; hiddenIds?: unknown };
+    if (typeof obj.id !== 'string' || obj.id === '') continue;
+    const name = typeof obj.name === 'string' ? obj.name : '';
+    const ids: string[] = Array.isArray(obj.hiddenIds)
+      ? obj.hiddenIds.filter((s): s is string => typeof s === 'string' && s !== '')
+      : [];
+    // The Default grouping is the user's "show everything" baseline — new
+    // terminals stay visible there. Every other grouping gets the new id
+    // appended to its hidden list.
+    if (obj.id === 'default') {
+      out.push({ id: obj.id, name, hiddenIds: ids });
+      continue;
+    }
+    const existing = new Set(ids);
+    const additions = newTerminalIds.filter(id => !existing.has(id));
+    if (additions.length === 0) {
+      out.push({ id: obj.id, name, hiddenIds: ids });
+      continue;
+    }
+    changed = true;
+    out.push({ id: obj.id, name, hiddenIds: [...ids, ...additions] });
+  }
+  return changed ? out : null;
+}
+
 /** Read project settings from settings.json as Record\<string, string\> for API compatibility.
  *  JSON-valued keys are stringified. Reserved keys (appName, secret, etc.) are excluded. */
 export function readProjectSettings(dataDir: string): Record<string, string> {

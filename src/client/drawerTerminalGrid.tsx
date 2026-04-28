@@ -19,6 +19,7 @@ import {
   maybeSnapSliderValue,
   ROOT_PADDING,
   type SnapPoint,
+  tickLeftPx,
 } from './terminalDashboardSizing.js';
 import { mountTileGrid, type TileEntry, type TileGridHandle } from './terminalTileGrid.js';
 
@@ -580,10 +581,14 @@ function refreshSnapPointIndicators(): void {
   ticksEl.style.left = `${sliderRect.left - containerRect.left}px`;
   ticksEl.style.width = `${sliderRect.width}px`;
   ticksEl.innerHTML = '';
+  // HS-7950 — see the dashboard sizer's matching block for context. Same
+  // thumb-width hint, same `tickLeftPx` shift to keep ticks centred under
+  // the thumb at every snap value.
+  const thumbWidthPx = parseFloat(getComputedStyle(sizeSlider).getPropertyValue('--range-thumb-w')) || 16;
   for (const pt of currentSnapPoints) {
     const tick = document.createElement('span');
     tick.className = 'drawer-grid-sizer-tick';
-    tick.style.left = `${pt.sliderValue}%`;
+    tick.style.left = `${tickLeftPx(pt.sliderValue, sliderRect.width, thumbWidthPx)}px`;
     tick.title = `${pt.perRow} per row`;
     ticksEl.appendChild(tick);
   }

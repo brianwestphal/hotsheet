@@ -9,8 +9,15 @@ import { isChannelEnabled } from './experimentalSettings.js';
 import { parseFeedbackPrefix, showFeedbackDialog } from './feedbackDialog.js';
 import { ICON_TRASH } from './icons.js';
 import { appendImageDownloadLinks, proxyGitHubImages } from './imageProxy.js';
+import { buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
 import { state } from './state.js';
 import { pushNotesUndo } from './undo/actions.js';
+
+/** HS-7957 — Lucide `book-open-text` glyph. Inline SVG (not a sprite ref)
+ *  for CSP friendliness in Tauri's WKWebView. Inherits `currentColor` so the
+ *  hover state lights up alongside the megaphone. See docs/49-reader-mode.md
+ *  §49.3 for the path data origin. */
+const BOOK_READER_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 8h2"/><path d="M6 12h2"/></svg>';
 
 /** HS-7601 — the megaphone button only appears when the channel feature is
  *  enabled. Wraps `isChannelEnabled` so the call site reads clearly. */
@@ -102,15 +109,30 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
     // (no point sending an empty note as feedback).
     const feedbackPrefix = parseFeedbackPrefix(note.text);
     const showMegaphone = feedbackPrefix === null && !isEmpty && isChannelFeatureEnabled();
+    // HS-7957 — show the book-open-text reader-mode button on every
+    // non-empty note (regardless of channel state). Sits to the LEFT of the
+    // megaphone in the timestamp row's right-side cluster, so the order is
+    // [timestamp] ... [book] [megaphone?]. Empty notes get neither button.
+    const showReader = !isEmpty;
+    const showRightCluster = showReader || showMegaphone;
     const entry = toElement(
       <div className={`note-entry${isEmpty ? ' note-empty' : ''}`} data-note-id={note.id ?? ''}>
-        {note.created_at !== '' || showMegaphone
+        {note.created_at !== '' || showRightCluster
           ? <div className="note-timestamp-row">
               {note.created_at !== '' ? <span className="note-timestamp">{new Date(note.created_at).toLocaleString()}</span> : <span></span>}
-              {showMegaphone
-                ? <button className="note-megaphone-btn" title="Send this note to Claude via channel" type="button" data-note-id={note.id ?? ''}>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
-                  </button>
+              {showRightCluster
+                ? <span className="note-actions">
+                    {showReader
+                      ? <button className="note-reader-btn" title="Open in reader mode" type="button" data-note-id={note.id ?? ''}>
+                          {raw(BOOK_READER_ICON)}
+                        </button>
+                      : null}
+                    {showMegaphone
+                      ? <button className="note-megaphone-btn" title="Send this note to Claude via channel" type="button" data-note-id={note.id ?? ''}>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
+                        </button>
+                      : null}
+                  </span>
                 : null}
             </div>
           : null}
@@ -119,6 +141,25 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
         </div>
       </div>
     );
+
+    // HS-7957 — book button: open the note's body in the reader overlay.
+    // Stops propagation so the click doesn't also trigger the note-entry
+    // click-to-edit handler. Snapshot of `note.text` at click time, so a
+    // reader opened on a note that's already mid-edit shows the persisted
+    // value (the inline edit-area writes back on commit, not on every
+    // keystroke).
+    {
+      const readerBtn = entry.querySelector<HTMLButtonElement>('.note-reader-btn');
+      if (readerBtn !== null) {
+        readerBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openReaderOverlay({
+            title: buildNoteReaderTitle(note.created_at),
+            markdown: note.text,
+          });
+        });
+      }
+    }
 
     // HS-7601 — megaphone button: send this note to Claude via the channel
     // as if the user proactively flagged it. Stops propagation so it doesn't

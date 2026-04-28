@@ -29,6 +29,8 @@ interface SpawnedHotSheet {
   homeDir: string;
   /** Resolves when GET / returns 200, or rejects after `timeoutMs`. */
   ready: Promise<void>;
+  /** Resolves once `marker` appears in the child's combined stdout/stderr. */
+  waitForOutput: (marker: string, timeoutMs: number) => Promise<void>;
 }
 
 let activeChildren: SpawnedHotSheet[] = [];
@@ -75,11 +77,43 @@ function spawnHotSheet(): SpawnedHotSheet {
     env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, PLUGINS_ENABLED: 'false' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  proc.stdout?.on('data', (c) => { if (process.env.HS_E2E_DEBUG) process.stderr.write(`[child:${port}:out] ${c}`); });
-  proc.stderr?.on('data', (c) => { if (process.env.HS_E2E_DEBUG) process.stderr.write(`[child:${port}:err] ${c}`); });
+  // Buffer stdout/stderr so individual tests can synchronise on log lines
+  // (HS-7939 — the double-SIGINT test waits for `gracefulShutdown(...) — starting`
+  // before firing the second signal, replacing the timing-window guess with a
+  // deterministic stdout-driven handoff).
+  let buffered = '';
+  const waiters: Array<{ marker: string; resolve: () => void }> = [];
+  const onChunk = (c: Buffer | string): void => {
+    const text = typeof c === 'string' ? c : c.toString('utf-8');
+    buffered += text;
+    for (let i = waiters.length - 1; i >= 0; i--) {
+      const w = waiters[i] as { marker: string; resolve: () => void };
+      if (buffered.includes(w.marker)) {
+        w.resolve();
+        waiters.splice(i, 1);
+      }
+    }
+    if (process.env.HS_E2E_DEBUG !== undefined) process.stderr.write(`[child:${port}] ${text}`);
+  };
+  proc.stdout?.on('data', onChunk);
+  proc.stderr?.on('data', onChunk);
   proc.on('error', (err) => { console.error(`[child:${port}] spawn error:`, err); });
+  const waitForOutput = (marker: string, timeoutMs: number): Promise<void> => {
+    if (buffered.includes(marker)) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const entry = { marker, resolve: () => resolve() };
+      waiters.push(entry);
+      const t = setTimeout(() => {
+        const idx = waiters.indexOf(entry);
+        if (idx >= 0) waiters.splice(idx, 1);
+        reject(new Error(`Timed out after ${timeoutMs}ms waiting for child output to contain: ${marker}`));
+      }, timeoutMs);
+      const wrapped = entry.resolve;
+      entry.resolve = (): void => { clearTimeout(t); wrapped(); };
+    });
+  };
   const ready = waitForServerReady(port, 30_000);
-  const out: SpawnedHotSheet = { proc, port, dataDir, homeDir, ready };
+  const out: SpawnedHotSheet = { proc, port, dataDir, homeDir, ready, waitForOutput };
   activeChildren.push(out);
   return out;
 }
@@ -176,7 +210,14 @@ describe('graceful shutdown e2e (HS-7934)', () => {
       env: { ...process.env, HOME: reSpawnHome, USERPROFILE: reSpawnHome, PLUGINS_ENABLED: 'false' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    activeChildren.push({ proc: reSpawnProc, port: reSpawnPort, dataDir: reSpawnDataDir, homeDir: reSpawnHome, ready: Promise.resolve() });
+    activeChildren.push({
+      proc: reSpawnProc,
+      port: reSpawnPort,
+      dataDir: reSpawnDataDir,
+      homeDir: reSpawnHome,
+      ready: Promise.resolve(),
+      waitForOutput: () => Promise.resolve(),
+    });
     try {
       await waitForServerReady(reSpawnPort, 20_000);
       const res = await fetch(`http://localhost:${reSpawnPort}/api/tickets?status=not_started`);
@@ -205,19 +246,56 @@ describe('graceful shutdown e2e (HS-7934)', () => {
     expect(elapsed).toBeLessThan(10_000);
   }, 30_000);
 
-  // The double-SIGINT escalation contract is verified by the unit test in
-  // `src/cli.signalEscalation.test.ts` against the pure handler logic. An
-  // earlier attempt at proving it through a spawned `tsx` child here was
-  // racy — the second signal's delivery timing depends on `tsx`'s signal-
-  // forwarding behaviour, the OS's standard-signal coalescing rules, and
-  // the gracefulShutdown pipeline's exact runtime, none of which compose
-  // into a deterministic window for a JS-driven `proc.kill` pair.
-  // Standalone probe (raw `node` running an analogous handler) confirms
-  // the pattern works; it's the spawned-tsx envelope that makes the
-  // window unreliable. Tracked as **HS-7939** for a future revisit.
-  it.skip('a second SIGINT during graceful shutdown forces exit code 1 (covered by signalEscalation.test.ts)', async () => {
-    /* see comment block above */
-  });
+  // HS-7939 — deterministic double-SIGINT escalation. The earlier attempt
+  // at proving the contract through a spawned-tsx child was racy because the
+  // shutdown pipeline can complete in well under a millisecond on a fresh DB,
+  // so a JS-driven second `proc.kill` would routinely arrive after `exit(0)`
+  // had already been scheduled. The fix here is to hold an in-flight
+  // long-poll request open before sending SIGINT: `httpServer.close()` blocks
+  // on existing connections, which pins `closeHttpServer` (the first await
+  // inside `runShutdownPipeline`) for the long-poll's full 30s window. We
+  // then wait for the `[lifecycle] gracefulShutdown(...) — starting` stdout
+  // marker — printed synchronously at the top of `runShutdownPipeline` —
+  // before firing the second SIGINT. With both gates in place the second
+  // signal is guaranteed to land while `signalCount === 1` is awaiting, and
+  // the escalation handler in `createSignalHandler` synchronously calls
+  // `process.exit(1)`. Pure-handler coverage stays in
+  // `src/cli.signalEscalation.test.ts`; this test pins the OS-level signal
+  // delivery + tsx-envelope path that the unit test cannot reach.
+  it('a second SIGINT during graceful shutdown forces exit code 1', async () => {
+    const child = spawnHotSheet();
+    await child.ready;
+
+    // Open a long-poll request and DO NOT await it. The server will hold the
+    // connection until either a change lands (which won't happen here) or
+    // its 30s timeout elapses. While the connection is open, `server.close()`
+    // inside the gracefulShutdown pipeline blocks — giving us the deterministic
+    // window we need.
+    const longPollAbort = new AbortController();
+    const longPoll = fetch(`http://localhost:${child.port}/api/poll?version=0`, {
+      signal: longPollAbort.signal,
+    }).catch(() => undefined);
+
+    // Give the request time to actually be in-flight on the server before we
+    // start tearing it down. Without this, `server.close()` may complete
+    // immediately because no connections are registered yet.
+    await new Promise(r => setTimeout(r, 250));
+
+    child.proc.kill('SIGINT');
+    // Synchronisation point: the `— starting` line is logged at the top of
+    // `runShutdownPipeline`, before the first await. Once we see it the
+    // shutdown is in flight and pinned by the long-poll connection.
+    await child.waitForOutput('[lifecycle] gracefulShutdown(SIGINT) — starting', 10_000);
+
+    child.proc.kill('SIGINT');
+    const exit = await waitForExit(child.proc, 15_000);
+    expect(exit.code).toBe(1);
+
+    // Drop the long-poll listener; the process is gone so the fetch will
+    // already have rejected, but aborting belt-and-braces is harmless.
+    longPollAbort.abort();
+    await longPoll;
+  }, 30_000);
 
   it('concurrent /api/shutdown + SIGINT collapse to a single shutdown (idempotence)', async () => {
     const child = spawnHotSheet();

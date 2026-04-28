@@ -141,6 +141,18 @@ export async function applyAppearanceToTerm(
   term.options.fontSize = clampFontSize(appearance.fontSize);
 }
 
+/**
+ * HS-7960 — resolve the active theme background colour for an appearance,
+ * exported so callers (drawer terminal, dashboard tile, dashboard dedicated
+ * view) can paint their padded gutter to match the canvas. Returns the
+ * theme's `background` field directly; falls back to the default theme's bg
+ * when the configured theme id is unknown.
+ */
+export function resolveAppearanceBackground(appearance: TerminalAppearance): string {
+  const theme = getThemeById(appearance.theme) ?? getThemeById(DEFAULT_THEME_ID)!;
+  return theme.background;
+}
+
 // ---- Project-default state + loader --------------------------------------
 
 /**

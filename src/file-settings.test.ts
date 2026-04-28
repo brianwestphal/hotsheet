@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { ensureSecret, getBackupDir, prunedHiddenTerminals, prunedVisibilityGroupings, readFileSettings, writeFileSettings } from './file-settings.js';
+import { addNewTerminalsToNonDefaultGroupings, ensureSecret, getBackupDir, prunedHiddenTerminals, prunedVisibilityGroupings, readFileSettings, writeFileSettings } from './file-settings.js';
 
 let tempDir: string;
 
@@ -277,6 +277,99 @@ describe('prunedVisibilityGroupings (HS-7826)', () => {
     const groupings = [{ id: 'a', name: 'A', hiddenIds: ['t1', 't2'] }];
     expect(prunedVisibilityGroupings(groupings, new Set())).toEqual([
       { id: 'a', name: 'A', hiddenIds: [] },
+    ]);
+  });
+});
+
+/**
+ * HS-7949 — `addNewTerminalsToNonDefaultGroupings` is the post-prune step
+ * that ensures a freshly-added terminal id starts hidden in every
+ * non-Default grouping. Default keeps showing it. Pure helper, no I/O.
+ */
+describe('addNewTerminalsToNonDefaultGroupings (HS-7949)', () => {
+  it('returns null when no new ids', () => {
+    const groupings = [
+      { id: 'default', name: 'Default', hiddenIds: [] },
+      { id: 'g-1', name: 'Logs', hiddenIds: ['t1'] },
+    ];
+    expect(addNewTerminalsToNonDefaultGroupings(groupings, [])).toBeNull();
+  });
+
+  it('appends each new id to every non-Default grouping; Default stays untouched', () => {
+    const groupings = [
+      { id: 'default', name: 'Default', hiddenIds: [] },
+      { id: 'g-logs', name: 'Logs', hiddenIds: ['t1'] },
+      { id: 'g-claude', name: 'Claude', hiddenIds: [] },
+    ];
+    const next = addNewTerminalsToNonDefaultGroupings(groupings, ['new-1', 'new-2']);
+    expect(next).toEqual([
+      { id: 'default', name: 'Default', hiddenIds: [] },
+      { id: 'g-logs', name: 'Logs', hiddenIds: ['t1', 'new-1', 'new-2'] },
+      { id: 'g-claude', name: 'Claude', hiddenIds: ['new-1', 'new-2'] },
+    ]);
+  });
+
+  it('skips an id already hidden in a non-Default grouping (idempotent)', () => {
+    const groupings = [
+      { id: 'default', name: 'Default', hiddenIds: [] },
+      { id: 'g-1', name: 'Logs', hiddenIds: ['t1'] },
+    ];
+    expect(addNewTerminalsToNonDefaultGroupings(groupings, ['t1'])).toBeNull();
+  });
+
+  it('partial-already-hidden case still appends only the genuinely-new id', () => {
+    const groupings = [
+      { id: 'default', name: 'Default', hiddenIds: [] },
+      { id: 'g-1', name: 'Logs', hiddenIds: ['t1'] },
+    ];
+    expect(addNewTerminalsToNonDefaultGroupings(groupings, ['t1', 't2'])).toEqual([
+      { id: 'default', name: 'Default', hiddenIds: [] },
+      { id: 'g-1', name: 'Logs', hiddenIds: ['t1', 't2'] },
+    ]);
+  });
+
+  it('returns null when there are no non-Default groupings to hide in', () => {
+    const groupings = [{ id: 'default', name: 'Default', hiddenIds: [] }];
+    expect(addNewTerminalsToNonDefaultGroupings(groupings, ['new'])).toBeNull();
+  });
+
+  it('tolerates the stringified-JSON shape', () => {
+    const raw = JSON.stringify([
+      { id: 'default', name: 'Default', hiddenIds: [] },
+      { id: 'g-1', name: 'Logs', hiddenIds: [] },
+    ]);
+    expect(addNewTerminalsToNonDefaultGroupings(raw, ['new'])).toEqual([
+      { id: 'default', name: 'Default', hiddenIds: [] },
+      { id: 'g-1', name: 'Logs', hiddenIds: ['new'] },
+    ]);
+  });
+
+  it('drops malformed grouping entries (missing id, wrong type)', () => {
+    const raw = [
+      { id: 'g-keep', name: 'Keep', hiddenIds: [] },
+      { name: 'no-id', hiddenIds: [] },
+      'string-not-object',
+    ];
+    expect(addNewTerminalsToNonDefaultGroupings(raw, ['new'])).toEqual([
+      { id: 'g-keep', name: 'Keep', hiddenIds: ['new'] },
+    ]);
+  });
+
+  it('returns null when input is malformed', () => {
+    expect(addNewTerminalsToNonDefaultGroupings('not-json', ['new'])).toBeNull();
+    expect(addNewTerminalsToNonDefaultGroupings(42, ['new'])).toBeNull();
+    expect(addNewTerminalsToNonDefaultGroupings(null, ['new'])).toBeNull();
+  });
+
+  it('preserves existing hiddenIds order (additions appended at the end)', () => {
+    const groupings = [
+      { id: 'default', name: 'Default', hiddenIds: [] },
+      { id: 'g-1', name: 'Logs', hiddenIds: ['existing-a', 'existing-b'] },
+    ];
+    const next = addNewTerminalsToNonDefaultGroupings(groupings, ['new-1']);
+    expect(next).toEqual([
+      { id: 'default', name: 'Default', hiddenIds: [] },
+      { id: 'g-1', name: 'Logs', hiddenIds: ['existing-a', 'existing-b', 'new-1'] },
     ]);
   });
 });

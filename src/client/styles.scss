@@ -309,6 +309,14 @@ input, select, textarea {
     width: 200px;
     accent-color: var(--accent, #3b82f6);
     cursor: pointer;
+    // HS-7950 — thumb width hint for `tickLeftPx` so snap-point ticks
+    // line up with the centre of the thumb at each value (rather than
+    // assuming the thumb's centre travels the full 0..100 % of the
+    // track, which native range inputs do NOT). Tuned to match the
+    // 16-px native thumb that Chrome / Safari render on macOS for an
+    // unstyled `input[type="range"]` with `accent-color`. Read from JS
+    // via `getComputedStyle(slider).getPropertyValue('--range-thumb-w')`.
+    --range-thumb-w: 16px;
   }
 
   svg { display: block; flex-shrink: 0; }
@@ -5708,38 +5716,87 @@ body.terminal-dashboard-active {
     border-left-color: var(--border);
   }
 
+  // HS-7930 — the slot itself becomes the hover surface so the user can
+  // hover anywhere in the gap between two blocks (or above the first / below
+  // the last) and see a split-point indicator. The trigger button is hidden
+  // until the slot is hovered, keeping the prompt stack visually clean for
+  // prompts the user doesn't intend to insert into. A 1 px accent bar in the
+  // gap surfaces the exact location the click would target.
   .feedback-insert-slot {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 4px 0;
+    align-items: stretch;
+    justify-content: center;
+    gap: 0;
+    padding: 6px 0;
+    min-height: 14px;
+    cursor: pointer;
   }
 
-  // Full-width click target so the user can drop a response anywhere between
-  // two blocks. Shows just "+" by default; reveals " Add response here" on
-  // hover so the stack stays visually quiet when there are many blocks.
   .feedback-insert-btn {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     width: 100%;
     text-align: left;
     background: none;
     border: none;
-    color: var(--text-muted);
+    color: #3b82f6;
     cursor: pointer;
     font-size: 11px;
-    padding: 2px 12px;
-    opacity: 0.5;
-    transition: opacity 120ms ease, color 120ms ease;
+    padding: 0 12px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 100ms ease;
 
-    .feedback-insert-label { display: none; }
-
-    &:hover {
-      opacity: 1;
-      color: #3b82f6;
-      text-decoration: underline;
-
-      .feedback-insert-label { display: inline; }
+    // The "+" glyph rendered alongside the always-visible label on hover.
+    .feedback-insert-plus {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      font-size: 11px;
+      line-height: 1;
     }
+    .feedback-insert-label { display: inline; }
+  }
+
+  // The visual indicator bar — invisible until the slot is hovered. Sits
+  // beneath the (also-hidden) button so the bar + label appear together.
+  .feedback-insert-slot::before {
+    content: '';
+    display: block;
+    height: 1px;
+    background: #3b82f6;
+    opacity: 0;
+    transition: opacity 100ms ease;
+    margin: 0 12px 4px;
+  }
+
+  // Reveal everything when the user is hovering the gap. The button regains
+  // pointer-events at the same time so the click target lights up only with
+  // the visible affordance.
+  .feedback-insert-slot:hover {
+    &::before { opacity: 0.45; }
+
+    .feedback-insert-btn {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+
+  // When the user has already inserted a response in this slot, the inline
+  // textarea owns the visual space; suppress the indicator + button so the
+  // gap doesn't double-up. The trigger is still discoverable in adjacent
+  // empty slots above and below.
+  .feedback-insert-slot:has(.feedback-inline-response) {
+    cursor: default;
+
+    &::before { display: none; }
+    .feedback-insert-btn { display: none; }
   }
 
   .feedback-inline-response {
@@ -5948,6 +6005,38 @@ body.terminal-dashboard-active {
   margin-bottom: 2px;
 
   .note-timestamp { margin-bottom: 0; }
+}
+
+// HS-7957 — right-side actions cluster inside the timestamp row. Holds the
+// reader-mode book button (always-on for non-empty notes) + the megaphone
+// (channel-conditional). Flex so the buttons line up tight.
+.note-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+// HS-7957 — reader-mode trigger on a note. Shape mirrors `.note-megaphone-btn`
+// so the two buttons read as siblings; sits LEFT of the megaphone in the row.
+.note-reader-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--accent, #3b82f6);
+    border-color: color-mix(in srgb, var(--accent, #3b82f6) 50%, transparent);
+  }
 }
 
 .note-megaphone-btn {
@@ -6654,10 +6743,20 @@ body.terminal-dashboard-active {
 .terminal-body {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  // HS-7960 — body background defaults to `--bg` but is overwritten inline
+  // (via JS) with the active terminal theme's background colour so the
+  // padded gutter around the xterm canvas reads as part of the terminal
+  // window rather than a competing app-coloured frame. The default below is
+  // the pre-paint fallback for the millisecond before `applyAppearanceToTerm`
+  // runs.
   background: var(--bg);
   padding: 4px 8px;
   position: relative;
+  // Need a flex column so `.terminal-canvas-host` can `flex: 1` into the
+  // body's content area without explicit height calculation.
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 
   // Focus ring rendered as a pointer-events-none overlay pseudo-element pinned
   // to the body bounds. Originally an inset box-shadow (HS-6535) but the
@@ -6679,17 +6778,34 @@ body.terminal-dashboard-active {
   &:focus-within::after {
     border-color: var(--accent, #3b82f6);
   }
+}
+
+// HS-7959 — padding-less inner host. xterm.js opens here, FitAddon reads
+// THIS element's parent height (host has zero padding/border, so border-box
+// height === content height === `.xterm`'s actual container height). Mirrors
+// the §25 dashboard dedicated view's `.terminal-dashboard-dedicated-pane`
+// pattern.
+.terminal-canvas-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
 
   .xterm {
     height: 100%;
     width: 100%;
-    background: var(--bg);
+    // HS-7960 — let the terminal theme's bg paint this layer too. Pre-fix
+    // the `.xterm` block was forced to `--bg` regardless of theme, which
+    // produced a colour seam between the `.terminal-body` gutter and the
+    // canvas when the theme bg differed from the app bg. With `inherit`
+    // the body's JS-set bg cascades through and the seam disappears.
+    background: inherit;
   }
 
   // xterm.js applies its own inline/default styles to internal elements that can
   // surface as a black strip below the rendered rows when the container is taller
-  // than rows × cellHeight. Force transparency so the `.terminal-body` background
-  // shows through instead (HS-6308).
+  // than rows × cellHeight. Force transparency so the body's theme-coloured
+  // background shows through instead (HS-6308 + HS-7960).
   .xterm-viewport,
   .xterm-screen {
     background-color: transparent !important;
@@ -7286,6 +7402,10 @@ body.terminal-dashboard-active {
   input[type="range"] {
     width: 100px;
     accent-color: var(--accent, #3b82f6);
+    // HS-7950 — same thumb-width hint as the dashboard sizer (see
+    // `.terminal-dashboard-sizer input[type="range"]`); used by `tickLeftPx`
+    // to keep snap-point ticks centred under the thumb at every value.
+    --range-thumb-w: 16px;
   }
 }
 
@@ -7523,4 +7643,140 @@ body.terminal-dashboard-active {
   // sub-cell slop after FitAddon's integer rounding splits symmetrically
   // left/right inside `.xterm-screen` rather than leaking as a right-only gap.
   flex: 0 0 auto;
+}
+
+// =============================================================================
+// HS-7957 / HS-7961 — Reader mode (notes + Details)
+// docs/49-reader-mode.md
+// =============================================================================
+
+// Details label is now a flex row so the reader-mode book button sits to the
+// right of the "Details" word. Pre-HS-7957 the label was a plain text node.
+.detail-details-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+
+  > span {
+    flex: 1;
+  }
+}
+
+// Same hover treatment as `.note-reader-btn` so the two read as siblings of
+// the same UI affordance, just rendered in different chrome contexts.
+.detail-reader-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--accent, #3b82f6);
+    border-color: color-mix(in srgb, var(--accent, #3b82f6) 50%, transparent);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+}
+
+// Almost-full-viewport read-only overlay. Stacking: z-index 2400 sits below
+// the feedback dialog (2500) so a Provide-Feedback flow opened on top still
+// wins, and above everything else. Backdrop is dimmed but transparent enough
+// that the user keeps spatial context with the underlying ticket panel.
+.reader-mode-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 2400;
+}
+
+.reader-mode-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 90vw;
+  height: 90vh;
+  // max-width clamps the line length to a comfortable reading width on big
+  // monitors — long lines of body text past ~960 px are tiring to scan.
+  max-width: min(960px, 90vw);
+  max-height: 90vh;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.reader-mode-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.reader-mode-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reader-mode-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--border);
+  }
+}
+
+// Body — scroll-bounded content area. Reuses the inline `.note-markdown`
+// CSS by sharing the class on the element, so headings / lists / code blocks
+// / tables look identical to how the same markdown renders inside notes.
+.reader-mode-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 32px;
+  // Slightly bumped line-height for read-heavy mode.
+  line-height: 1.6;
+
+  .reader-mode-empty {
+    color: var(--text-muted);
+    text-align: center;
+    margin-top: 48px;
+  }
 }

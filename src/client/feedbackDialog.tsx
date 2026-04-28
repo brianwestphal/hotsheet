@@ -194,13 +194,24 @@ export function showFeedbackDialog(
     }
   });
 
-  // Insert-response buttons — adds an inline textarea after the targeted block.
-  overlay.querySelectorAll<HTMLButtonElement>('.feedback-insert-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const slot = btn.closest('.feedback-insert-slot');
-      if (slot == null) return;
+  // HS-7930 — the slot itself is the click target so the user can drop a
+  // response anywhere in the gap between two blocks. The hover-only
+  // `.feedback-insert-btn` inside is purely decorative (it surfaces the
+  // "+ Add response here" label as the visible affordance once the slot is
+  // hovered). One response per slot — clicking a slot that already has a
+  // response is a no-op so the user can interact with their own textarea /
+  // × button without spawning duplicates. Removing the response (× button
+  // on the inline-response card) restores the click-to-add affordance,
+  // matching the user's "deleting a text field would undo this" semantics.
+  overlay.querySelectorAll<HTMLElement>('.feedback-insert-slot').forEach(slot => {
+    slot.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('.feedback-inline-response') !== null) return;
+      if (slot.querySelector('.feedback-inline-response') !== null) return;
       const responseEl = buildInlineResponse();
-      slot.insertBefore(responseEl, btn);
+      const insertBtn = slot.querySelector('.feedback-insert-btn');
+      if (insertBtn !== null) slot.insertBefore(responseEl, insertBtn);
+      else slot.appendChild(responseEl);
       (responseEl.querySelector('textarea') as HTMLTextAreaElement).focus();
     });
   });

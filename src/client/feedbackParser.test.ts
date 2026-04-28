@@ -24,20 +24,23 @@ describe('parseFeedbackBlocks (HS-6998)', () => {
     expect(blocks[2].markdown).toBe('Third.');
   });
 
-  it('keeps a flat-tag list as a single block (HS-7558 heuristic does NOT match)', () => {
-    // Items have no sentence-ending punctuation AND list isn't first → no split.
+  it('always splits a flat-tag list into per-item blocks (HS-7930 — uniform always-split)', () => {
+    // Pre-HS-7930 the HS-7558 heuristic kept this list grouped because items
+    // lacked sentence punctuation AND the list wasn't the first block. The
+    // dialog now hides every insert affordance until the user hovers, so the
+    // finer-grained always-split layout adds zero visual noise to prompts the
+    // user doesn't intend to insert into — and any case where the heuristic
+    // disagreed with the user is now their call.
     const blocks = parseFeedbackBlocks('Intro.\n\n- one\n- two\n- three\n\nOutro.');
-    expect(blocks).toHaveLength(3);
+    expect(blocks).toHaveLength(5);
     expect(blocks[0].markdown).toBe('Intro.');
-    expect(blocks[1].markdown).toMatch(/- one/);
-    expect(blocks[1].markdown).toMatch(/- two/);
-    expect(blocks[1].markdown).toMatch(/- three/);
-    expect(blocks[2].markdown).toBe('Outro.');
+    expect(blocks[1].markdown).toMatch(/^- one/);
+    expect(blocks[2].markdown).toMatch(/^- two/);
+    expect(blocks[3].markdown).toMatch(/^- three/);
+    expect(blocks[4].markdown).toBe('Outro.');
   });
 
-  it('splits a leading numbered list into one block per item (HS-7558 — first-block rule)', () => {
-    // List is the FIRST meaningful block — heuristic always splits regardless
-    // of whether items end with punctuation. This is the screenshot scenario.
+  it('splits a leading numbered list into one block per item (HS-7930 — uniform always-split)', () => {
     const blocks = parseFeedbackBlocks('1. first\n2. second\n3. third');
     expect(blocks).toHaveLength(3);
     expect(blocks[0].markdown).toMatch(/^1\. first/);
@@ -45,10 +48,9 @@ describe('parseFeedbackBlocks (HS-6998)', () => {
     expect(blocks[2].markdown).toMatch(/^3\. third/);
   });
 
-  it('splits a mid-prompt list when every item ends with sentence punctuation (HS-7558 — punctuation rule)', () => {
+  it('splits a mid-prompt list of questions into per-item blocks (HS-7930 — uniform always-split)', () => {
     const prompt = 'Some intro paragraph.\n\n1. First question?\n2. Second question.\n3. Third!';
     const blocks = parseFeedbackBlocks(prompt);
-    // intro paragraph + 3 question items = 4 blocks
     expect(blocks).toHaveLength(4);
     expect(blocks[0].markdown).toBe('Some intro paragraph.');
     expect(blocks[1].markdown).toMatch(/^1\. First question\?/);
@@ -56,23 +58,26 @@ describe('parseFeedbackBlocks (HS-6998)', () => {
     expect(blocks[3].markdown).toMatch(/^3\. Third!/);
   });
 
-  it('keeps a mid-prompt option list as one block when items lack sentence punctuation (HS-7558 — heuristic miss)', () => {
+  it('splits a mid-prompt option list into per-item blocks (HS-7930 — uniform always-split)', () => {
+    // Pre-HS-7930 the HS-7558 heuristic kept option menus grouped because
+    // items lacked sentence punctuation. Now they split too — the user picks
+    // which gaps to use via the hover-only indicator.
     const prompt = 'Pick one:\n\n- option A\n- option B\n- option C';
     const blocks = parseFeedbackBlocks(prompt);
-    // Items don't end in punctuation AND list isn't first → no split.
-    expect(blocks).toHaveLength(2);
+    expect(blocks).toHaveLength(4);
     expect(blocks[0].markdown).toBe('Pick one:');
-    expect(blocks[1].markdown).toMatch(/option A/);
-    expect(blocks[1].markdown).toMatch(/option C/);
+    expect(blocks[1].markdown).toMatch(/^- option A/);
+    expect(blocks[2].markdown).toMatch(/^- option B/);
+    expect(blocks[3].markdown).toMatch(/^- option C/);
   });
 
-  it('keeps a mid-prompt list as one block when only SOME items end in punctuation (HS-7558 — must-be-every-item)', () => {
+  it('splits a mid-prompt list with mixed punctuation into per-item blocks (HS-7930 — uniform always-split)', () => {
     const prompt = 'Outline:\n\n- First section name?\n- Second section name\n- Third question?';
     const blocks = parseFeedbackBlocks(prompt);
-    // "Second section name" has no sentence terminator → all-or-nothing.
-    expect(blocks).toHaveLength(2);
-    expect(blocks[1].markdown).toMatch(/First section/);
-    expect(blocks[1].markdown).toMatch(/Third question/);
+    expect(blocks).toHaveLength(4);
+    expect(blocks[1].markdown).toMatch(/First section name\?/);
+    expect(blocks[2].markdown).toMatch(/Second section name/);
+    expect(blocks[3].markdown).toMatch(/Third question\?/);
   });
 
   it('preserves sub-bullets nested under the parent list item when splitting (HS-7558 — sub-bullets stay with parent)', () => {
@@ -115,7 +120,7 @@ describe('parseFeedbackBlocks (HS-6998)', () => {
     expect(blocks[1].markdown).toBe('B');
   });
 
-  it('handles the reported problem prompt — paragraph, bullet list, question paragraph, options list', () => {
+  it('handles the reported problem prompt — paragraph, bullet list, question paragraph, options list (HS-7930 always-split)', () => {
     const prompt = [
       'I closed this with the Arabic fix shipped, but my close note implicitly asked about extending the same pattern to CJK and symbol emoji.',
       '',
@@ -130,12 +135,18 @@ describe('parseFeedbackBlocks (HS-6998)', () => {
       '3. comprehensive',
     ].join('\n');
     const blocks = parseFeedbackBlocks(prompt);
-    // Expected: intro paragraph, bullet list (one block), question paragraph, options list (one block)
-    expect(blocks).toHaveLength(4);
+    // Pre-HS-7930: 4 blocks (intro, bullet list, question, options list).
+    // Post-HS-7930: 1 + 3 + 1 + 3 = 8 blocks (intro, 3 bullet items,
+    // question, 3 numbered items).
+    expect(blocks).toHaveLength(8);
     expect(blocks[0].markdown).toMatch(/^I closed this/);
     expect(blocks[1].markdown).toMatch(/CJK \(kanji/);
-    expect(blocks[2].markdown).toMatch(/^Question:/);
-    expect(blocks[3].markdown).toMatch(/Just CJK/);
+    expect(blocks[2].markdown).toMatch(/Symbol emoji/);
+    expect(blocks[3].markdown).toMatch(/Hebrew, Thai/);
+    expect(blocks[4].markdown).toMatch(/^Question:/);
+    expect(blocks[5].markdown).toMatch(/Just CJK/);
+    expect(blocks[6].markdown).toMatch(/symbol emoji/);
+    expect(blocks[7].markdown).toMatch(/comprehensive/);
   });
 });
 

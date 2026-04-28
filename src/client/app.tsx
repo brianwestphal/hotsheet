@@ -20,6 +20,7 @@ import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
 import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
 import { initQuitConfirm } from './quitConfirm.js';
+import { buildDetailsReaderTitle, openReaderOverlay, syncDetailReaderButton } from './readerOverlay.js';
 import { bindSettingsDialog } from './settingsDialog.js';
 import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
 import { initShare } from './share.js';
@@ -432,6 +433,13 @@ function bindDetailAutoSave() {
         const key = fieldId.replace('detail-', '');
         recordTextChange(ticket, key, el.value);
       }
+      // HS-7957 — keep the Details reader-mode button disabled when the
+      // textarea is empty (nothing to read). Re-evaluated on every input
+      // event AND on detail-panel load (see syncDetailReaderButton call in
+      // detail.tsx). The button itself is wired in `bindDetailReaderButton`.
+      if (fieldId === 'detail-details') {
+        syncDetailReaderButton();
+      }
       const currentTimeout = getDetailSaveTimeout();
       if (currentTimeout) clearTimeout(currentTimeout);
       const newTimeout = setTimeout(() => {
@@ -446,6 +454,30 @@ function bindDetailAutoSave() {
     });
   }
 }
+
+/** HS-7957 — wire the Details reader-mode book button. Click opens the
+ *  reader overlay with the *current* textarea value (snapshot at click time,
+ *  per docs/49-reader-mode.md §49.5) so a mid-edit reader shows the working
+ *  state. The button's `disabled` state is kept in sync by
+ *  `syncDetailReaderButton`, called from `bindDetailAutoSave`'s input
+ *  handler and `detail.tsx`'s load paths. */
+function bindDetailReaderButton() {
+  const btn = document.getElementById('detail-reader-btn') as HTMLButtonElement | null;
+  if (btn === null) return;
+  btn.addEventListener('click', () => {
+    if (btn.disabled) return;
+    const detailsArea = document.getElementById('detail-details') as HTMLTextAreaElement;
+    const ticket = state.tickets.find(t => t.id === state.activeTicketId) ?? null;
+    openReaderOverlay({
+      title: buildDetailsReaderTitle(ticket?.ticket_number, ticket?.title),
+      markdown: detailsArea.value,
+    });
+  });
+  // Sync on initial bind so a fresh page load with no ticket selected leaves
+  // the button correctly disabled.
+  syncDetailReaderButton();
+}
+
 
 /** Category, priority, and status dropdown binding. */
 function bindDetailDropdowns() {
@@ -676,6 +708,7 @@ function bindDetailPanel() {
   });
 
   bindDetailAutoSave();
+  bindDetailReaderButton();
   bindDetailDropdowns();
   bindDetailUpNext();
   bindDetailNotes();

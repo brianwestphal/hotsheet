@@ -1,10 +1,11 @@
+// @vitest-environment happy-dom
 /**
  * HS-7927 — drawer tab cycling now spans Commands Log + every terminal,
  * not just the terminal tabs (the original HS-6472 behaviour).
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { isNewTerminalShortcut, pickNextDrawerTabId } from './shortcuts.js';
+import { isCommandsLogFocused, isNewTerminalShortcut, pickNextDrawerTabId } from './shortcuts.js';
 
 describe('isNewTerminalShortcut (HS-7926)', () => {
   const base = { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, key: 't' };
@@ -88,5 +89,49 @@ describe('pickNextDrawerTabId (HS-7927)', () => {
       { active: false, tabId: 'terminal:a' },
     ];
     expect(pickNextDrawerTabId(tabs, 1)).toBe('terminal:a');
+  });
+});
+
+describe('isCommandsLogFocused (HS-7927 follow-up)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('returns true when focus is on the commands-log search input', () => {
+    document.body.innerHTML = `
+      <div id="drawer-panel-commands-log">
+        <input id="command-log-search" />
+      </div>
+    `;
+    const input = document.getElementById('command-log-search') as HTMLInputElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    expect(isCommandsLogFocused()).toBe(true);
+  });
+
+  it('returns true for any focusable descendant of #drawer-panel-commands-log', () => {
+    document.body.innerHTML = `
+      <div id="drawer-panel-commands-log">
+        <div>
+          <button id="nested-btn">x</button>
+        </div>
+      </div>
+    `;
+    (document.getElementById('nested-btn') as HTMLButtonElement).focus();
+    expect(isCommandsLogFocused()).toBe(true);
+  });
+
+  it('returns false when focus is on an unrelated input', () => {
+    document.body.innerHTML = `
+      <div id="drawer-panel-commands-log"></div>
+      <input id="other" />
+    `;
+    (document.getElementById('other') as HTMLInputElement).focus();
+    expect(isCommandsLogFocused()).toBe(false);
+  });
+
+  it('returns false when nothing is focused (activeElement === body)', () => {
+    document.body.innerHTML = `<div id="drawer-panel-commands-log"></div>`;
+    expect(isCommandsLogFocused()).toBe(false);
   });
 });

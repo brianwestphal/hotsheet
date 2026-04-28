@@ -8,6 +8,7 @@ import { toElement } from './dom.js';
 import { getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog } from './feedbackDialog.js';
 import { type FeedbackDraft, parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
+import { syncDetailReaderButton } from './readerOverlay.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { parseTags, renderDetailTags } from './tags.js';
@@ -167,6 +168,9 @@ function loadPreviewDetail(id: number) {
   upnextBtn.textContent = ticket.up_next ? '\u2605' : '\u2606';
   upnextBtn.classList.toggle('active', ticket.up_next);
   (document.getElementById('detail-details') as HTMLTextAreaElement).value = ticket.details;
+  // HS-7957 — sync the Details reader-mode button after populating the
+  // textarea so it disables itself for empty-Details tickets.
+  syncDetailReaderButton();
 
   setDetailReadOnly(true);
 
@@ -257,6 +261,12 @@ async function loadDetail(id: number) {
   if (document.activeElement !== detailsArea) {
     detailsArea.value = ticket.details;
   }
+  // HS-7957 — keep the Details reader-mode book button's `disabled` state in
+  // sync with the textarea's current emptiness on every detail-load. Without
+  // this, opening a ticket with empty Details would show the button enabled
+  // (initial bind state was for a fresh empty textarea, but subsequent loads
+  // could leave the previous ticket's enabled state stale).
+  syncDetailReaderButton();
 
   // Render attachments with selection support
   const attContainer = document.getElementById('detail-attachments')!;

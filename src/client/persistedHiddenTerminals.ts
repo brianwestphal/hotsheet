@@ -94,7 +94,7 @@ async function writeNow(secret: string): Promise<void> {
   if (lastPersisted.get(secret) === serialised) return; // no-op
   lastPersisted.set(secret, serialised);
   try {
-    await apiWithSecret(secret, '/file-settings', { method: 'PATCH', body: payload });
+    await apiWithSecret('/file-settings', secret, { method: 'PATCH', body: payload });
   } catch {
     // Best-effort. The change is still in memory; next toggle will
     // schedule another write attempt.
@@ -116,7 +116,7 @@ export async function initPersistedHiddenTerminals(projects: ProjectInfo[]): Pro
         visibility_groupings?: unknown;
         active_visibility_grouping_id?: unknown;
         hidden_terminals?: string[] | string;
-      }>(p.secret, '/file-settings');
+      }>('/file-settings', p.secret);
       const legacy = readLegacyHiddenTerminals(fs.hidden_terminals);
       const state = parsePersistedState(fs.visibility_groupings, fs.active_visibility_grouping_id, legacy);
       hydratePersistedStateForProject(p.secret, state);

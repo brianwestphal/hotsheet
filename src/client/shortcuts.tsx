@@ -89,17 +89,21 @@ export function bindKeyboardShortcuts() {
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const offset = e.key === 'ArrowLeft' ? -1 : 1;
-        const inTerminal = isTerminalFocused();
-        // With Alt/Option held, always route to project tabs (even from within
-        // a terminal, where Cmd+Shift+Arrow is normally used for terminal tabs).
+        // HS-7927 follow-up: focus inside the commands-log pane is treated
+        // the same as focus inside a terminal pane — Cmd+Shift+Arrow cycles
+        // drawer tabs, Opt+Cmd+Shift+Arrow escapes back to project tabs.
+        // The search input inside the commands-log pane is otherwise
+        // indistinguishable from any other text input, so without this gate
+        // Cmd+Shift+Arrow on the search field would just no-op.
+        const inDrawer = isTerminalFocused() || isCommandsLogFocused();
         if (e.altKey) {
-          if (!isInput || inTerminal) {
+          if (!isInput || inDrawer) {
             e.preventDefault();
             switchTabByOffset(offset);
           }
           return;
         }
-        if (inTerminal) {
+        if (inDrawer) {
           e.preventDefault();
           switchTerminalTabByOffset(offset);
           return;
@@ -366,6 +370,22 @@ function isTerminalFocused(): boolean {
   const active = document.activeElement;
   if (!(active instanceof HTMLElement)) return false;
   return active.closest('.drawer-terminal-pane, .xterm') !== null;
+}
+
+/**
+ * HS-7927 follow-up — true when keyboard focus is inside the drawer's
+ * commands-log pane (its search input is the realistic case). Used to make
+ * Cmd+Shift+Arrow cycle drawer tabs from within commands-log just like it
+ * does from within a terminal pane, treating commands-log as a peer drawer
+ * tab rather than a "regular" input that swallows the shortcut.
+ *
+ * Exported so the unit test can verify the focus check against a mounted
+ * DOM without having to drive the live keyboard handler.
+ */
+export function isCommandsLogFocused(): boolean {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return false;
+  return active.closest('#drawer-panel-commands-log') !== null;
 }
 
 /**

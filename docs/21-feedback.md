@@ -50,7 +50,7 @@ AI-generated feedback prompts are unpredictable — sometimes a neat numbered li
 **Edge cases:**
 - Empty prompt — no blocks are rendered; only the catch-all textarea is shown. The `+ Add response` affordance is absent (there's nothing to insert between).
 - Prompts with only one block — a single `+ Add response` slot appears after the block, plus the catch-all. Equivalent to the single-textarea flow most of the time.
-- Lists — see §21.2.2 for the HS-7558 split-into-items heuristic. Lists that match the heuristic become one block per item (with one `+ Add response` slot per item); lists that don't match stay grouped as a single block (matching the original HS-6998 v1 behavior).
+- Lists — see §21.2.2. As of HS-7930 every top-level list is unconditionally split into one block per item, so every gap (between paragraphs, between list items, between headings) is a potential insertion point. The dialog's hover-only indicator (§21.2.3) keeps the visual cost zero for prompts the user doesn't intend to insert into.
 - Code blocks, headings, blockquotes — each is a distinct block and can have its own inline response.
 
 ### 21.2.3 Save Draft + don't-close-on-clickaway (HS-7599)
@@ -83,26 +83,34 @@ The `partitions` JSON shape is `{blocks: [{markdown, html}], inlineResponses: [{
 
 **Tests.** 7 unit tests in `src/db/feedbackDrafts.test.ts` cover CRUD round-trips, partition idempotency, listing order, free-floating drafts, missing-id PATCH returns null, and FK CASCADE on parent ticket delete. 4 e2e tests in `e2e/feedback-drafts.spec.ts` cover empty-input click-away closes the dialog, populated-input click-away keeps it open, Save Draft persists + renders inline, and click-to-reopen restores the catch-all + Submit deletes the draft.
 
-### 21.2.2 Per-list-item insertion points (HS-7558)
+### 21.2.2 Uniform always-split insertion points (HS-7930, supersedes the HS-7558 heuristic)
 
-The HS-6998 v1 always rendered a list as a single block, which meant a numbered list of question — the most natural shape for a multi-part feedback prompt — only got ONE `+ Add response here` slot at the end of the whole list. Users wanted to answer question-by-question. HS-7558 extends `parseFeedbackBlocks` with a heuristic that splits a list into per-item blocks when it "looks like a question set."
+HS-7558 introduced a per-list **heuristic** that decided whether to split a list into per-item blocks based on whether it "looked like a question set" (first-block rule + every-item-ends-in-punctuation rule). The heuristic was right often enough to be useful but wrong often enough that the user reported it: option menus that ended in punctuation got over-split, mid-prompt question lists that didn't all end in `?` got under-split, and the user's intent didn't always match the markdown shape.
 
-**The heuristic.** A top-level list is split into one block per item when EITHER:
-1. The list is the **first meaningful block** of the prompt (paragraphs / headings / etc. before it would push it later in the order). Rationale: a leading numbered list of questions is almost always a question set, regardless of whether each item ends with sentence punctuation. This is the screenshot scenario from the original ticket.
-2. **Every item's first line ends with `.`, `?`, or `!`.** Picks up question lists in the middle of a prompt while still leaving option menus / flat tag lists alone. The first-line-only check matters: items with sub-bullets ("1. Top question? — sub a — sub b") have the parent question on line 1 and bullets after; the heuristic ignores the sub-bullets when deciding whether the list is question-shaped.
+HS-7930 throws the heuristic out and goes uniform: **every top-level list is always split into one block per item.** That gives the user a click-to-add-response point between every list item, every paragraph, every heading. The visual cost (more potential insertion points) is offset by §21.2.3's hover-only affordance — the dialog hides every insert indicator until the user hovers the gap, so a prompt the user doesn't intend to insert into is visually identical to a single rendered markdown block.
 
-If neither holds, the list stays grouped as a single block. Examples:
+Examples (post-HS-7930):
 
-- `- foo / - bar / - baz` mid-prompt — items lack sentence punctuation, list isn't first → **not split**, stays one block.
-- `1. Question A? / 2. Question B! / 3. Question C.` mid-prompt — every item ends in punctuation → **split**, three blocks.
-- `1. heading / 2. another` at top of prompt — first-block rule wins → **split**, two blocks. (Edge case: a leading list that's a tag list rather than a question list will get split too. Acceptable trade-off — tag lists at the top are rare in feedback prompts, and the user can just ignore the extra slots.)
-- `Outline: / - First section name? / - Second section name / - Third question?` — only some items end in punctuation → **all-or-nothing**, list stays grouped.
+- `- foo / - bar / - baz` mid-prompt → 3 blocks (one per item).
+- `1. Question A? / 2. Question B! / 3. Question C.` → 3 blocks.
+- `Pick one: / - option A / - option B / - option C` → 4 blocks (intro + 3 items).
+- `Outline: / - First section name? / - Second section name / - Third question?` → 4 blocks.
 
-**Sub-bullets stay with their parent.** When a list item has sub-bullets nested under it, splitting puts the parent + its sub-bullets into ONE block. Sub-bullets are typically clarifications of the question, not separate questions. Example: `1. Top question? — sub a — sub b — 2. Plain question?` produces 2 blocks (block 0 contains the parent + both sub-bullets, block 1 contains the second top-level question).
+**Sub-bullets stay with their parent.** When a list item has sub-bullets nested under it, the parent + its sub-bullets stay in ONE block — sub-bullets are typically clarifications of the question, not separate questions. Example: `1. Top question? — sub a — sub b — 2. Plain question?` produces 2 blocks (block 0 contains the parent + both sub-bullets, block 1 contains the second top-level question).
 
-**Backward compat.** Existing prompts with no top-level lists are unaffected. Prompts with non-question lists (option menus, flat tags) are unaffected. Only question-shaped lists pick up the new per-item slots.
+**Backward compat for saved drafts.** A saved feedback draft snapshots its `partitions.blocks` array verbatim. Drafts saved against the HS-7558 heuristic stay grouped the way they were saved; drafts saved against HS-7930 always-split slot in transparently. The §21.2.3 "saved partition structure is authoritative" rule covers both shapes — `blockIndex` is just an integer index into whatever the draft's own array shape is.
 
-**Implementation.** `shouldSplitListIntoItems(list, isFirstBlock)` is a pure helper in `feedbackParser.ts` that gates the split per-list. `combineQuotedResponse` is unchanged — `blockIndex` indexes into whatever block list `parseFeedbackBlocks` returns, so per-item blocks slot in transparently. 4 new unit tests in `feedbackParser.test.ts` cover the four cases (leading list always splits, mid-prompt sentence-punctuated list splits, mid-prompt option list stays grouped, partial-punctuation list stays grouped) plus a sub-bullet preservation test. The existing "treats a list as a single block" test was renamed and updated; the existing "treats a numbered list the same way" test was renamed to reflect the new leading-list-always-splits behavior.
+**Implementation.** `parseFeedbackBlocks` lost its `shouldSplitListIntoItems` heuristic and now unconditionally splits every top-level list into one block per item. `combineQuotedResponse` is unchanged. Tests in `feedbackParser.test.ts` were renamed + updated to reflect the always-split behavior; the heuristic-specific cases that used to assert "stays grouped" now assert "splits per item."
+
+### 21.2.3 Hover-only insert indicator (HS-7930)
+
+The HS-6998 v1 / HS-7558 dialog rendered a visible `+ Add response here` button beneath every block, pulling the eye to insertion affordances even on prompts the user intended to answer with a single catch-all reply. HS-7930 makes the affordance hover-only:
+
+- The `.feedback-insert-slot` between every two blocks is the click target. Default state: an empty 14-pixel-tall gap, no visible content, cursor: pointer.
+- On hover: a thin 1 px accent-coloured indicator bar appears in the gap, and the "+ Add response here" label fades in beneath it. Clicking anywhere in the slot inserts the inline textarea at that position.
+- One response per slot. Once a textarea is inserted, the slot's hover indicator + button are hidden via `:has(.feedback-inline-response)` so the gap doesn't double-up. Clicking the textarea's `×` button removes it and restores the click-to-add affordance — matching the user's "deleting a text field would undo this" semantics.
+
+The implementation lives entirely in `src/client/styles.scss` (`.feedback-insert-slot` rules) + the slot-level click listener in `feedbackDialog.tsx`. The `.feedback-insert-btn` element survives as the visible label inside the slot but is purely decorative (its `pointer-events` are gated by `:hover` on the parent slot, so the slot is the actual click target and the button just renders the affordance).
 
 ### 21.3 Provide Feedback Link
 

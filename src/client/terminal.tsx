@@ -25,6 +25,7 @@ import {
   getSessionOverride,
   loadProjectDefaultAppearance,
   resolveAppearance,
+  resolveAppearanceBackground,
   subscribeToDefaultAppearanceChanges,
 } from './terminalAppearance.js';
 import { mountAppearancePopover } from './terminalAppearancePopover.js';
@@ -84,6 +85,10 @@ interface TerminalInstance {
   search: SearchAddon | null;
   searchHandle: TerminalSearchHandle | null;
   body: HTMLElement;
+  /** HS-7959 — inner padding-less host that owns the xterm. Distinct from
+   *  `body` (which keeps the visual padding + focus ring) so xterm's
+   *  FitAddon can read accurate parent dimensions. */
+  canvasHost: HTMLElement;
   header: HTMLElement;
   label: HTMLElement;
   statusDot: HTMLElement;
@@ -551,11 +556,23 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
           {raw(SETTINGS_ICON)}
         </button>
       </div>
-      <div className="terminal-body"></div>
+      {/* HS-7959 — `.terminal-body` keeps its visual padding + focus ring,
+          but xterm mounts inside an inner `.terminal-canvas-host` with NO
+          padding so xterm's `FitAddon` reads the parent's true content
+          height. Pre-fix the FitAddon was reading the body's border-box
+          height (because `box-sizing: border-box` is global) and ignoring
+          the parent's own padding, so it over-counted rows by `padding * 2 /
+          cellHeight` and the bottom row was clipped at certain drawer
+          heights. Mirrors the pattern §25's dashboard dedicated view uses
+          (`.terminal-dashboard-dedicated-pane`, see HS-7098). */}
+      <div className="terminal-body">
+        <div className="terminal-canvas-host"></div>
+      </div>
     </div>
   );
   const header = pane.querySelector<HTMLElement>('.terminal-header')!;
   const body = pane.querySelector<HTMLElement>('.terminal-body')!;
+  const canvasHost = pane.querySelector<HTMLElement>('.terminal-canvas-host')!;
   const statusDot = pane.querySelector<HTMLElement>('.terminal-status-dot')!;
   const labelText = pane.querySelector<HTMLElement>('.terminal-label')!;
   const powerBtn = pane.querySelector<HTMLButtonElement>('.terminal-power-btn')!;
@@ -569,6 +586,7 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     search: null,
     searchHandle: null,
     body,
+    canvasHost,
     header,
     label: labelText,
     statusDot,
@@ -844,6 +862,10 @@ function resolveAppearanceThemeForInit(inst: TerminalInstance) {
 async function reapplyAppearance(inst: TerminalInstance): Promise<void> {
   if (inst.term === null) return;
   const appearance = resolveInstanceAppearance(inst);
+  // HS-7960 — paint the body's padded gutter with the new theme background
+  // synchronously, BEFORE the async font load runs, so a slow font fetch
+  // doesn't leave the gutter in the previous theme's colour mid-flight.
+  inst.body.style.backgroundColor = resolveAppearanceBackground(appearance);
   await applyAppearanceToTerm(inst.term, appearance);
 }
 
@@ -890,7 +912,17 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
     searchHandle = mountTerminalSearch(term, search);
     searchSlot.replaceChildren(searchHandle.root);
   }
-  term.open(inst.body);
+  // HS-7959 — mount the xterm inside the inner padding-less canvas host so
+  // FitAddon's `parent.height - elementPadding` math reflects the real
+  // available area. Mounting on `inst.body` directly meant FitAddon read the
+  // padded body's border-box height and over-counted rows.
+  term.open(inst.canvasHost);
+
+  // HS-7960 — paint the body's gutter to match the theme background BEFORE
+  // the async appearance load runs (which is fire-and-forget below). Without
+  // this synchronous prime the very first canvas paint would flash with the
+  // app's `--bg` for a frame on themes whose background differs.
+  inst.body.style.backgroundColor = resolveAppearanceBackground(resolveInstanceAppearance(inst));
 
   // HS-6307 — apply full appearance (font family + size; theme is already set
   // synchronously on XTerm construction via resolveAppearanceThemeForInit).
@@ -898,6 +930,9 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
   // the System stack via CSS cascade while the webfont resolves.
   void reapplyAppearance(inst);
 
+  // Clicking anywhere in the body (including the visible padding gutters
+  // outside the xterm canvas) focuses the terminal — preserves the
+  // pre-HS-7959 click-to-focus reach.
   inst.body.addEventListener('click', () => { term.focus(); });
 
   // HS-7329 — Cmd/Ctrl+K clears the terminal (see `isClearTerminalShortcut`).

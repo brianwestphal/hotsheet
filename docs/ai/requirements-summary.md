@@ -518,6 +518,76 @@ HS-7902. Audit + design for closing the gap that drove the HS-7888..7894 inciden
 
 ---
 
+## 46. Service / client decoupling (`46-service-client-decoupling.md`)
+
+HS-7938. Detach the Hot Sheet service (HTTP + dataDir + plugins + backups + channel + terminal PTYs) from the Tauri desktop client so multiple clients of varying form factors (desktop browser, Tauri shell, mobile browser, future iOS app) can connect simultaneously to a single service instance over WebSocket for near-real-time synchronisation. The original "iPhone remote access" framing was a narrow slice of this broader architecture — the user's revised goal is one service / many clients, with the desktop client as the primary form factor and the mobile client as a first-class secondary.
+
+**Architecture.** Service owns the dataDir + write authority + plugins + backups + channel + terminal PTYs + markdown export. Client owns per-client UI state (selection, search, drawer position) + a WebSocket subscription. Tauri shell becomes either co-located (today's default — spawns sidecar) or remote (`--service-url <url>`, no sidecar). Service-only mode (`--service-only`) supports headless deployment.
+
+**Synchronisation.** Replace `/api/poll` long-poll with `/ws/sync?project=<secret>` WebSocket. Service emits typed events on every mutation: `ticket-created`, `ticket-updated`, `ticket-deleted`, `note-added`, `category-changed`, etc. Each event carries a monotonic `seq: number` so reconnecting clients can request "everything after seq N" via `?since=`. Heartbeat ping/pong every 20s; exponential-backoff reconnect; auto-fallback to polling if the WebSocket can't sustain. Bounded retention (last 1000 events / ~15min) before clients fall back to a full state refetch.
+
+**Conflict resolution.** Last-write-wins for scalar fields with a non-blocking "X also edited this. Reload?" toast on the losing client. Append-only for notes (no conflicts possible). Optimistic-concurrency `If-Match` headers on risky operations (bulk move, restore-from-backup) returning 409 + current version on mismatch. Plugin sync engine (`sync_outbox`, `ticket_sync`) audit before HS-7945 ships — single-writer assumption today.
+
+**Auth.** Per-project `X-Hotsheet-Secret` header for HTTP (unchanged); same secret as `Sec-WebSocket-Protocol` subprotocol for WebSocket connect. `--bind` opt-in for non-localhost (HS-7940). `isTrustedOrigin` covering localhost + Tailscale CGNAT + user-configured. Per-client identity deferred until users actually need device-level revocation.
+
+**Status:** Design only. Implementation = HS-7940 (server-side bind + auth — ships first, unblocks rest) + HS-7944 (service-only + Tauri remote shell) + HS-7945 (WebSocket push) + HS-7946 (conflict UX) + HS-7941 (PWA + mobile responsive) + HS-7942 (Tailscale UX sugar).
+
+**Cross-refs:** §1 (overview), §2 (`settings.json:secret`), §9 (REST API surface), §10 (Tauri wrapper + localhost assumption being relaxed), §18 (plugin sync engine — single-writer model HS-7945 audits), §22 (terminal drawer — multi-client read access is open question §46.10.7), §37 (quit confirmation), §45 (graceful shutdown).
+
+---
+
+## 47. Richer permission overlay (`47-richer-permission-overlay.md`)
+
+HS-6703 follow-up to HS-6602. Two scoped enhancements to the existing Claude permission popup (§12.10) so the user can (1) see what an Edit would actually change and (2) stop being asked the same question repeatedly. Independent features — diff preview is a pure UI change with no settings-schema or security implications; the allow-list is the larger piece needing a dedicated security model. Both reuse the existing channel-server / overlay codepaths — no new transport.
+
+**Edit-tool diff preview (HS-7951).** Detect `perm.tool_name === 'Edit'` (and `'Write'`); replace today's flat-JSON preview with an inline unified diff of `old_string` vs `new_string` rendered inside the popup (max-height ≈ 240px scroll-bounded). Branched return shape from `formatInputPreview` — `{kind: 'diff', oldStr, newStr, filePath, replaceAll}` for Edit, existing `{kind: 'string'}` otherwise. Truncated content marked `… (truncated)` rather than falling back to JSON. `Write` shipped as all-added; real-diff-against-disk-contents is a Phase-2 enhancement.
+
+**Per-project allow-list (HS-7952 server gate / HS-7953 UI).** New `permission_allow_rules: [{id, tool, pattern, added_at, added_by}]` key in `<dataDir>/settings.json` (file-based, per-project for free). Auto-allow gated in **main server** (not channel server — keeps trust boundary inside dataDir): on `notifyPermission()`, fetch pending, check rules, immediately POST `/permission/respond` with `behavior: 'allow'` if a rule matches the primary input field (`Bash` → `command`, `Read` → `file_path`, `Glob` → `pattern`, etc.). Pattern auto-anchored via `^...$` wrap at match time. Auto-allows logged to `command_log` as `Permission: <tool> — Auto-allowed (rule <id>)` for audit. **Edit / Write deliberately not allow-listable** — file path alone doesn't capture diff intent. Overlay shortcut: "Always allow" link below Minimize / No-response-needed pre-fills `^<escaped-primary-value>$` editable inline; confirm writes the rule + clicks Allow on the current request. Settings → Permissions management page: table sorted by recency, +Add dialog with "Test pattern" dry-run helper to surface the implicit anchoring.
+
+**Security model.** Compromised dataDir = no new threat (already trust root for the secret). Pattern over-match mitigated by anchored matching + UI hint + dry-run. Catastrophic backtracking mitigated by 50ms eval timeout; bad rule logs + skips. No cross-project contamination — settings are per-`dataDir`. Auto-allow audit gap closed by mandatory command-log entry on every fire.
+
+**Status:** Design only. Implementation = HS-7951 (diff preview ships first — no settings, no security model) + HS-7952 (allow-list server gate) + HS-7953 (allow-list UI) — last two ship together (server without UI is invisible, UI without server is decorative).
+
+**Out of scope.** Terminal-output scraping for non-MCP Claude prompts (rejected in HS-6602); cross-project/global rules (per-project keeps blast-radius bounded); allow-rules in the channel server; auto-deny rules (Claude Code already does this); pattern-language extensions beyond regex.
+
+**Cross-refs:** §12 (channel + permission relay), §14 (commands log — auto-allow audit sink), §2 (`settings.json` — where rules live), §9 (REST API surface).
+
+---
+
+## 48. Git status tracker (`48-git-status-tracker.md`)
+
+HS-7598. Sidebar chip exposing the project's git state — branch, working-tree dirtiness, commits ahead/behind upstream — so the user can answer "do I need to commit?" / "do I need to push?" without dropping into a terminal. The originating ticket asked "maybe a built-in plugin?" — the design picks **core feature with auto-detection** (the plugin system is for ticketing-backend integrations, not a fit; almost every Hot Sheet `dataDir` is inside a git repo, so opt-in adds friction for the 95% case; non-git projects pay zero cost via existing `isGitRepo` short-circuit; "built-in plugin" effectively *is* "always-on core feature" — the wrapper is just paperwork).
+
+**Server (§48.3).** New `src/git/status.ts` with `getGitStatus(projectRoot): GitStatus | null` — fields = `branch`, `detached`, `upstream`, `ahead`, `behind`, `staged`, `unstaged`, `untracked`, `conflicted`, `lastFetchedAt`. Spawns `git` with `args: string[]` (no shell), `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, 2s timeout per call; conservative defaults on per-call failure rather than crashing the whole status fetch. `git status --porcelain=v1 --no-renames` bucketed into the four file-counters. New routes `GET /api/git/status` (cached 500ms per project) + `POST /api/git/fetch` (30s timeout, runs against the upstream of the current branch, no-op without upstream). New `command_log` event type `git_status` for fetch trigger + result + stderr-on-failure. Chokidar watcher on `<gitRoot>/.git/index` + `<gitRoot>/.git/HEAD` bumps a per-project `gitChangeVersion` and notifies `/api/poll` waiters; filters to exact filenames so `index.lock` thrash doesn't trigger feedback loops.
+
+**Client (§48.4).** Sidebar chip between `#channel-commands-container` and the Views section in `pages.tsx`. Layout: branch icon + name + ahead/behind glyphs + total uncommitted count. Tint precedence (left-to-right): conflict (red) > behind (amber) > ahead (blue) > dirty (yellow) > clean (muted/green). Tooltip shows full breakdown. Subscribes to existing `/api/poll` version stream — no dedicated git long-poll. Refetches once on `window.focus` (user often alt-tabs from terminal after `git commit`). Phase 3 click → non-modal expanded popover with per-bucket file lists; click-row → reveal in finder via existing `openInFileManager` Tauri command.
+
+**Settings.** Three new project-settings keys: `git_tracking_enabled` (default true), `git_chip_show_clean` (default true), `git_auto_fetch_interval_ms` (default 0 — opt-in only because background `git fetch` against authenticated remotes is a credential-prompt hazard). Settings → General "Git Status" sub-section.
+
+**Status:** Design only. Implementation = HS-7954 (Phase 1: branch + dirty, no remote tracking) + HS-7955 (Phase 2: ahead/behind + manual fetch + opt-in auto-fetch timer) + HS-7956 (Phase 3: expanded popover with file-row reveal-in-finder).
+
+**Out of scope.** Commit / stage / push / pull / branch-switch UI (Hot Sheet stays read-only against the git index — write operations expand the security surface to credentials, signed commits, hooks). Inline diff viewer (terminal already gives `git diff`). Multi-worktree / submodule traversal. Stash management. GitHub/GitLab PR + CI surfacing (the `plugins/github-issues/` plugin is the right home if/when wanted). Background auto-fetch by default — opt-in via `git_auto_fetch_interval_ms`.
+
+**Cross-refs:** §1 (local-first developer focus), §2 (settings.json schema), §5 (`openInFileManager` Phase 3 reuses), §9 (REST API), §14 (`git_status` event type), §22 (terminal — alternative path today), §29 (OSC 7 cwd chip — the per-terminal companion to this per-project chip).
+
+---
+
+## 49. Reader mode for notes + Details (`49-reader-mode.md`)
+
+HS-7957. Almost-full-viewport overlay (90 vw / 90 vh, max-width `min(960px, 90vw)`) renders a single note's body or a ticket's Details as read-only markdown so the user can scan long-form content without fighting the constrained detail-panel scrollbar. Trigger is a Lucide `book-open-text` icon button — on every non-empty note's `.note-timestamp-row` (positioned LEFT of the megaphone when it's shown, otherwise alone on the right edge), AND on the Details `<label>` row converted to a flex layout. Disabled on the Details trigger when the textarea is empty.
+
+**Overlay.** Single client module `src/client/readerOverlay.tsx` exporting `openReaderOverlay({ title, markdown })`. Header carries the title (e.g. `Note from <localised timestamp>` or `Details for <ticketNumber>: <title>`) + close `×`. Body is `<div class="reader-mode-body note-markdown">` rendering `marked.parse(markdown)` — reuses the same CSS as inline-rendered notes for visual identity. Dismiss via three equivalent paths: X click, Escape (capture-phase listener so it beats the global blur-input handler), backdrop click (`e.target === overlay`). Z-index 2400 (below the feedback dialog at 2500, above everything else). Tauri-safe — plain `position: fixed; inset: 0` div on `document.body`, no native dialogs.
+
+**Read-only by design.** The detail panel is the editor; reader mode is the reader. A user who wants to edit dismisses the overlay and clicks through to the underlying field. Snapshotting the textarea value at click time means a mid-edit reader shows what the user is currently editing (not the persisted value).
+
+**Status:** Shipped (HS-7961). New `src/client/readerOverlay.tsx` exports `openReaderOverlay({title, markdown})` + the two pure title-builder helpers + `syncDetailReaderButton()`. Wired into `noteRenderer.tsx` (book button on every non-empty note's timestamp row, inside a new `.note-actions` cluster left of the megaphone) and `routes/pages.tsx` (Details `<label>` → `.detail-details-label` flex row + `#detail-reader-btn`). Auto-save input listener in `app.tsx::bindDetailAutoSave` calls `syncDetailReaderButton()` on every Details edit; `detail.tsx::loadDetail` and `loadPreviewDetail` call it on every ticket load. SCSS adds `.note-actions`, `.note-reader-btn`, `.detail-details-label`, `.detail-reader-btn` (hover treatments mirror `.note-megaphone-btn` so the affordances read as siblings) + the overlay rules (`.reader-mode-overlay` z-index 2400, `.reader-mode-dialog` 90vw/90vh max-width `min(960px, 90vw)`, header + scroll-bounded body using `.note-markdown` for content). 18 unit tests in `readerOverlay.test.ts`. Out-of-scope items (editing in reader mode, print view, fields beyond notes/details, multi-note prev/next) preserved per §49.2.
+
+**Out of scope.** Editing in reader mode (detail panel is the editor); print view (`Cmd/Ctrl+P` already handles); reader mode for fields beyond notes + details (title / category / etc. are short); multi-note prev/next navigation (deferred to follow-up if the reading flow proves common).
+
+**Cross-refs:** §3 (notes data model), §4 (detail-panel layout), §12.10 (established overlay pattern reused), §21 (feedback dialog — same overlay structure pattern). HS-7601 (megaphone — the new book button sits to its left in the timestamp row).
+
+---
+
 ## 26. Shell integration via OSC 133 (`26-shell-integration-osc133.md`)
 
 Design spike (HS-7265) — **no code yet**. Proposes handling the four-mark FinalTerm/iTerm2/VS Code shell-integration protocol: `\e]133;A\a` (prompt start), `;B\a` (command start), `;C\a` (output start), `;D;<exit>\a` (command end). Unlocks gutter exit-code glyphs, "copy last output", jump-to-prev/next-command, and an Ask-Claude-about-this channel trigger (the Hot-Sheet-specific wedge vs. VS Code). Data model: per-terminal `shellIntegration.commands` bounded-ring (500 records) of `CommandRecord { promptStart, commandStart, outputStart, commandEnd, exitCode, commandText, decorations }` keyed to `term.registerMarker` IMarkers (survive scrollback trim via xterm's own line-follow semantics). Rehydrates automatically on reattach because replay bytes go through xterm's parser. Phased: **Phase 1a** (HS-7267) foundation + gutter glyphs; **Phase 1b** (HS-7268) copy-last-output toolbar button; **Phase 2** (HS-7269) jump shortcuts + hover popover with Copy / Rerun; **Phase 3** (HS-7270) Ask-Claude-about-this channel integration. Shell rc fragments intentionally NOT shipped — users opt in via Starship / VS Code's published rc / a 15-line snippet we document. OSC 633 (VS Code's superset) and iTerm2 OSC 1337 explicitly out of scope for v1.
@@ -658,6 +728,7 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 43 — attachment backups | Shipped | HS-7929 + HS-7937. `src/attachmentBackup.ts`: streaming hash, link-then-copy blob store, atomic manifest writes, GC that aborts on parse failure, restore with `-restored-<TS>` collision suffix, **and startup re-analysis that rebuilds missing manifests from the JSON co-save + on-disk hashing + cross-reference index across sibling manifests**. 31 unit tests + 1 integration |
 | 44 — WASM pg_resetwal spike | Design only — deferred | HS-7901: four-option survey (patch PGLite bundle / standalone lazy-loaded WASM / TS port / status quo). Verdict = defer; keep §42's system-binary path until either PGLite upstream lands utility-binary support OR a real user hits the no-admin / Tauri-only wall. If forced to act sooner, Option 2 (standalone lazy-loaded WASM) is the recommended path |
 | 45 — PGLite robustness | Mostly shipped | HS-7902 design + HS-7931 graceful close + HS-7934 (lock-release fold-in + e2e harness + signal-escalation unit test) + HS-7935 (explicit fsync wraps) all shipped. Pipeline: HTTP close → PTY destroy → `closeAllDatabases()` (with per-instance fsyncDir) → `releaseAllLocks()` → instance file removal. HS-7933 (checkpoint-timeout benchmark) blocked upstream on HS-7936 |
+| 46 — service / client decoupling | Design only | HS-7938: detach service from client; multiple simultaneous clients (desktop + mobile) over WebSocket push. Six follow-ups: HS-7940 (server-side `--bind` + `isTrustedOrigin` + GET-secret), HS-7944 (`--service-only` + Tauri `--service-url` remote mode), HS-7945 (WebSocket push replacing `/api/poll`), HS-7946 (multi-client conflict UX), HS-7941 (PWA + mobile responsive), HS-7942 (Tailscale UX sugar) |
 | tauri-architecture | Shipped | — |
 | tauri-setup | Shipped | — |
 | plugin-development-guide | Shipped (living doc) | — |

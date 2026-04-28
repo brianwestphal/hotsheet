@@ -23,6 +23,7 @@ import {
   maybeSnapSliderValue,
   ROOT_PADDING,
   type SnapPoint,
+  tickLeftPx,
 } from './terminalDashboardSizing.js';
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
@@ -133,10 +134,16 @@ let lastSectionData: ProjectSectionData[] = [];
  *  cleared on exitDashboard. */
 let hiddenChangeUnsubscribe: (() => void) | null = null;
 
-/** Module-level slider value persists across enter / exit calls (resets on
- *  page reload). HS-7129 default = 33; lines up with three tiles per row on
- *  a typical laptop. */
+/** Module-level slider value persists across enter / exit calls. HS-7129
+ *  default = 33; lines up with three tiles per row on a typical laptop.
+ *  HS-7948: hydrated from `/file-settings` (`dashboard_slider_value`) on app
+ *  boot and persisted (debounced) on every input change so the user's chosen
+ *  scale survives reloads + relaunches instead of snapping back to 33. */
 let sliderValue = 33;
+const DEFAULT_SLIDER_VALUE = 33;
+let sliderValueLoadPromise: Promise<void> | null = null;
+let sliderPersistTimeout: ReturnType<typeof setTimeout> | null = null;
+const SLIDER_PERSIST_DEBOUNCE_MS = 250;
 
 /** HS-7662 — layout mode for the dashboard grid. `'sectioned'` renders one
  *  `<section>` per project (the default §25.4 behaviour); `'flow'` renders
@@ -192,6 +199,9 @@ export function initTerminalDashboard(): void {
   // is shared with /file-settings calls elsewhere on page load (api wraps
   // a single in-flight request when the cache is warm).
   void loadLayoutMode();
+  // HS-7948 — same pattern for the persisted slider value so the user's
+  // chosen scale is restored before the dashboard first paints.
+  void loadSliderValue();
   layoutToggleButton?.addEventListener('click', () => {
     setLayoutMode(layoutMode === 'sectioned' ? 'flow' : 'sectioned');
   });
@@ -212,11 +222,12 @@ export function initTerminalDashboard(): void {
   sizeSlider?.addEventListener('input', () => {
     if (sizeSlider === null) return;
     const parsed = Number.parseFloat(sizeSlider.value);
-    const rawValue = Number.isFinite(parsed) ? parsed : 33;
+    const rawValue = Number.isFinite(parsed) ? parsed : DEFAULT_SLIDER_VALUE;
     const snapped = maybeSnapSliderValue(rawValue, currentSnapPoints);
     sliderValue = snapped;
     if (snapped !== rawValue) sizeSlider.value = String(snapped);
     if (active) applyAllSizing();
+    schedulePersistSliderValue();
   });
 
   // Esc routing: dedicated → centered → bare-grid → exit.
@@ -330,6 +341,62 @@ function loadLayoutMode(): Promise<void> {
     applyLayoutToggleVisualState();
   })();
   return layoutModeLoadPromise;
+}
+
+/** HS-7948 — pure: parse a `dashboard_slider_value` settings entry into a
+ *  numeric slider value, returning `null` for any malformed / out-of-range
+ *  input so the caller can keep the existing default. Accepts native
+ *  numbers AND numeric strings (for forwards compat with a future settings
+ *  shape that stringifies values). Exported for unit testing — DOM- and
+ *  fetch-free so the validation rules can be pinned without touching the
+ *  live `<input type="range">`. */
+export function parsePersistedSliderValue(raw: unknown): number | null {
+  if (raw === undefined || raw === null) return null;
+  const parsed = typeof raw === 'number' ? raw : (typeof raw === 'string' ? Number.parseFloat(raw) : Number.NaN);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed < 0 || parsed > 100) return null;
+  return parsed;
+}
+
+/** HS-7948 — load the persisted dashboard slider value (`dashboard_slider_value`)
+ *  from `/file-settings` once and cache the resulting promise. Resolves
+ *  silently on error so the dashboard still works when the settings endpoint
+ *  is briefly unavailable. Updates the live `<input type="range">`'s value
+ *  when the load completes so the thumb reflects the persisted scale even if
+ *  the user opens the dashboard before the fetch resolves. */
+function loadSliderValue(): Promise<void> {
+  if (sliderValueLoadPromise !== null) return sliderValueLoadPromise;
+  sliderValueLoadPromise = (async () => {
+    try {
+      const fs = await api<{ dashboard_slider_value?: number | string }>('/file-settings');
+      const parsed = parsePersistedSliderValue(fs.dashboard_slider_value);
+      if (parsed !== null) {
+        sliderValue = parsed;
+        if (sizeSlider !== null) sizeSlider.value = String(sliderValue);
+        if (active) applyAllSizing();
+      }
+    } catch {
+      // Keep the default — silent failure is the right call here, the same
+      // way `loadLayoutMode` swallows.
+    }
+  })();
+  return sliderValueLoadPromise;
+}
+
+/** HS-7948 — debounced persistence of the slider value to `/file-settings`.
+ *  Debounce keeps a fast drag (input fires on every micro-move) from spamming
+ *  the settings endpoint with a write per pixel; 250 ms = roughly the gap
+ *  after the user releases the thumb. Idempotent: rescheduling cancels any
+ *  pending write. */
+function schedulePersistSliderValue(): void {
+  if (sliderPersistTimeout !== null) clearTimeout(sliderPersistTimeout);
+  sliderPersistTimeout = setTimeout(() => {
+    sliderPersistTimeout = null;
+    void api('/file-settings', {
+      method: 'PATCH',
+      body: { dashboard_slider_value: sliderValue },
+    }).catch(() => { /* swallow — UI already reflects the new value */ });
+  }, SLIDER_PERSIST_DEBOUNCE_MS);
 }
 
 /** HS-7662 — flip the layout mode and persist to `/file-settings`.
@@ -460,7 +527,9 @@ async function renderDashboardGrid(root: HTMLElement): Promise<void> {
   // HS-7662 — await both fetches in parallel. The layout-mode load is
   // typically resolved by initTerminalDashboard's eager call, so this is
   // usually instant.
-  const [sections] = await Promise.all([fetchProjectSections(), loadLayoutMode()]);
+  // HS-7948 — also await the persisted slider value so the very first
+  // paint applies the user's saved scale rather than the default 33.
+  const [sections] = await Promise.all([fetchProjectSections(), loadLayoutMode(), loadSliderValue()]);
   if (!active) return; // user exited during fetch
   lastSectionData = sections;
   paintDashboardSections(root, sections);
@@ -903,10 +972,16 @@ function refreshSnapPointIndicators(): void {
   ticksEl.style.left = `${sliderRect.left - containerRect.left}px`;
   ticksEl.style.width = `${sliderRect.width}px`;
   ticksEl.innerHTML = '';
+  // HS-7950 — read the per-instance thumb-width hint from CSS so the tick
+  // helper can shift each tick from its naive `sliderValue%` position to
+  // the thumb's centre at that value. Falls back to 16 (matches the
+  // CSS default for the unstyled native macOS / Chrome / Safari thumb)
+  // if the variable is missing — defensive against a CSS regression.
+  const thumbWidthPx = parseFloat(getComputedStyle(sizeSlider).getPropertyValue('--range-thumb-w')) || 16;
   for (const pt of currentSnapPoints) {
     const tick = document.createElement('span');
     tick.className = 'terminal-dashboard-sizer-tick';
-    tick.style.left = `${pt.sliderValue}%`;
+    tick.style.left = `${tickLeftPx(pt.sliderValue, sliderRect.width, thumbWidthPx)}px`;
     tick.title = `${pt.perRow} per row`;
     ticksEl.appendChild(tick);
   }

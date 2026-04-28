@@ -1,7 +1,18 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment happy-dom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isConfiguredTerminalId } from './dashboardHiddenTerminals.js';
-import { computePersistedIds } from './persistedHiddenTerminals.js';
+import {
+  _resetForTests as _resetHiddenForTests,
+  addGroupingForProjectWithId,
+  isConfiguredTerminalId,
+  setActiveGroupingForProject,
+} from './dashboardHiddenTerminals.js';
+import {
+  _flushForTests,
+  _resetForTests,
+  computePersistedIds,
+  initPersistedHiddenTerminals,
+} from './persistedHiddenTerminals.js';
 
 /**
  * HS-7825 — pure-helper tests for the persistence layer of the
@@ -51,5 +62,66 @@ describe('computePersistedIds (HS-7825)', () => {
   it('returns an empty array when the only hidden ids are dynamic', () => {
     const set = new Set(['dyn-1', 'dyn-2']);
     expect(computePersistedIds(set)).toEqual([]);
+  });
+});
+
+/**
+ * HS-7947 — regression: every fetch this module makes must hit
+ * `/api/file-settings`, not `/api/<secret>`. The earlier bug had the
+ * arguments to `apiWithSecret(path, secret)` swapped, so the GET on boot
+ * resolved to `/api/<secret>` (404 → silent catch → empty in-memory state)
+ * and the subsequent PATCH wrote nothing. Visible to the user as "I created
+ * a non-Default grouping, relaunched, and it's gone."
+ *
+ * Test by intercepting `fetch`, kicking through one full hydrate + change +
+ * write cycle, and asserting the URLs.
+ */
+describe('initPersistedHiddenTerminals + writeNow URLs (HS-7947)', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  let observedUrls: string[];
+
+  beforeEach(() => {
+    observedUrls = [];
+    fetchSpy = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url = typeof input === 'string' ? input : (input instanceof URL ? input.toString() : input.url);
+      observedUrls.push(url);
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    _resetForTests();
+    _resetHiddenForTests();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    _resetForTests();
+    _resetHiddenForTests();
+  });
+
+  it('hydration GET hits /api/file-settings (not /api/<secret>)', async () => {
+    await initPersistedHiddenTerminals([
+      { secret: 'sec1', name: 'p1', dataDir: '/d1' },
+    ]);
+    expect(observedUrls).toContain('/api/file-settings');
+    // Negative — defensive: there should be no URL of the form `/api/sec1`
+    // (which would mean the path/secret args to `apiWithSecret` were
+    // swapped again).
+    expect(observedUrls.some(u => u === '/api/sec1' || u.startsWith('/api/sec1?'))).toBe(false);
+  });
+
+  it('mutation PATCH after a grouping change also hits /api/file-settings', async () => {
+    await initPersistedHiddenTerminals([
+      { secret: 'sec1', name: 'p1', dataDir: '/d1' },
+    ]);
+    observedUrls.length = 0;
+    addGroupingForProjectWithId('sec1', 'g-shared', 'Servers');
+    setActiveGroupingForProject('sec1', 'g-shared');
+    _flushForTests();
+    // _flushForTests() schedules an async writeNow; await a microtask flush
+    // so the in-test fetch settles before we assert.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(observedUrls).toContain('/api/file-settings');
+    expect(observedUrls.some(u => u === '/api/sec1' || u.startsWith('/api/sec1?'))).toBe(false);
   });
 });
