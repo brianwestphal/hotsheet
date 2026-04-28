@@ -123,17 +123,19 @@ The matched field for pattern-comparison is the *primary input field* per `prima
 - All other tools (including `Edit` / `Write`) — pattern matches the JSON-stringified entire input. We deliberately do NOT auto-allow `Edit` / `Write` matching by file path alone, because the same path can carry arbitrarily different diffs. Allow-rules for write-side tools are out of scope until a clearer pattern-language emerges.
 
 ### 47.4.3 Overlay shortcut
-When the popup renders, it includes a "**Always allow**" link below the existing Minimize / No-response-needed row, conditional on:
+When the popup renders, it includes a "**Always allow this**" link + a small gear button below the existing Minimize / No-response-needed row, conditional on:
 
 - `perm.tool_name` has a primary input field (i.e. is in `primaryFieldKey`'s switch).
 - The primary value is non-empty.
 
-Clicking the link:
+**HS-7976 — one-click commit.** Clicking the link commits immediately:
 
-1. Pre-fills a small inline input with `^<escaped-primary-value>$` (regex-escaped exact match).
-2. The user can edit the pattern (e.g. broaden `^git status$` to `^git (status|diff)$`).
-3. Confirm button writes the rule to `permission_allow_rules` via `POST /api/settings` and immediately clicks Allow on the current request.
-4. Cancel collapses the inline editor and leaves the popup as-is.
+1. Saves a rule with the auto-generated `^<regex-escaped-primary-value>$` (regex-escaped exact match) to `permission_allow_rules` via `PATCH /api/settings`.
+2. Calls the same Allow handler the green check would, so the current request goes through.
+
+Users who want to broaden the pattern click the **gear button** to the right of the link — that reveals the inline editor (input + Save & Allow / Cancel) so they can tweak the pattern before saving. The pre-HS-7976 flow always showed this editor and required two clicks; HS-7976 made the common case (commit as-is) one click.
+
+The allow-list rules live ENTIRELY inside Hot Sheet — they aren't passed to Claude. When Claude requests permission, the server-side `routes/channel.ts::fetchPermission` checks `permission_allow_rules` BEFORE rendering the popup; on match it auto-replies `{behavior: 'allow'}` to the channel and writes a `Permission: <tool> — Auto-allowed (rule <id>)` audit entry to `command_log` so the user can see what Hot Sheet accepted on their behalf.
 
 A small pill near the link displays existing matching-rule count if any: "2 rules apply" — clicking opens the management page filtered to this tool.
 

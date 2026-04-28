@@ -198,6 +198,15 @@ Settings UI lives on its own **Terminal** tab in the Settings dialog (HS-6337) �
 
 **Tauri-only feature gating (HS-6437).** The embedded-terminal feature only makes sense when Hot Sheet is running on the user's own machine — i.e. inside the Tauri desktop app. When the client is accessed via a plain browser (no `window.__TAURI__`), the UI hides both the drawer terminal tab strip (`applyTerminalTabVisibility()` treats non-Tauri as disabled regardless of the saved setting) and the Settings → Embedded Terminal section (`#settings-terminal-section` is toggled in `bindSettingsDialog`). Server-side, `eagerSpawnTerminals()` returns early unless `terminal_enabled` is true so that a web-only deployment never launches PTYs nobody will ever see.
 
+**HS-7927 second follow-up (drawer-tab cycling from a focused tab button).** The first HS-7927 follow-up wired `isCommandsLogFocused()` to detect focus inside `#drawer-panel-commands-log` (search input + log entries). But after a user *clicks* the Commands Log tab button to switch to it, focus stays on the BUTTON — which lives in `.drawer-tabs`, OUTSIDE the panel — so subsequent Cmd+Shift+Arrows fell through to project-tab cycling. The helper now also returns true when focus is anywhere within `#command-log-panel` AND the active `.drawer-tab` is `commands-log`, so the freshly-clicked tab button counts. Three new tests in `shortcuts.test.ts` (focused tab button + active class → true, focused other tab → false, focused tab button without `.active` → false). 20/20 tests passing.
+
+**HS-7977 plug.** HS-6437's gate hid the *tab strip* but two other paths still spawned terminal panes in a browser: `openPanel()` and `applyPerProjectDrawerState()` both call `loadAndRenderTerminalTabs()` unconditionally. If the saved `drawer_active_tab` was `terminal:<id>`, the drawer would activate that pane and (via `loadAndRenderTerminalTabs`) connect xterm + open PTY WebSockets nobody could see. Two fixes:
+
+1. `loadAndRenderTerminalTabs()` early-returns when `getTauriInvoke() === null`, so configured terminal panes never get added to `#drawer-terminal-panes` in a browser.
+2. `switchDrawerTab()` runs every requested tab through `resolveDrawerTabForTauri(tab, isTauri)` (in `src/client/drawerTabGating.ts`); a `terminal:*` tab in a browser silently rewrites to `commands-log` so a stale saved active-tab never tries to activate a pane that isn't mounted.
+
+The pure helper has unit-test coverage in `src/client/drawerTabGating.test.ts` (eight cases — Tauri / browser × commands-log / configured terminal / dynamic terminal, plus negative tests against the prefix anchor).
+
 ## 22.12 API endpoints
 
 New:

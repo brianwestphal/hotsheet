@@ -307,16 +307,49 @@ input, select, textarea {
 
   input[type="range"] {
     width: 200px;
-    accent-color: var(--accent, #3b82f6);
     cursor: pointer;
-    // HS-7950 — thumb width hint for `tickLeftPx` so snap-point ticks
-    // line up with the centre of the thumb at each value (rather than
-    // assuming the thumb's centre travels the full 0..100 % of the
-    // track, which native range inputs do NOT). Tuned to match the
-    // 16-px native thumb that Chrome / Safari render on macOS for an
-    // unstyled `input[type="range"]` with `accent-color`. Read from JS
-    // via `getComputedStyle(slider).getPropertyValue('--range-thumb-w')`.
+    // HS-7950 follow-up — explicit thumb styling so we KNOW the thumb's
+    // width across platforms. The previous fix (HS-7950 v1) read a CSS
+    // variable hint and assumed the native browser thumb was 16 px wide,
+    // but native sliders with `accent-color` render thumbs anywhere from
+    // 14 px (Chrome / macOS) to 20 px (Firefox / Linux), so the ticks
+    // never quite landed under the visual thumb centre. Reset
+    // `appearance: none` and define explicit `::-webkit-slider-thumb` and
+    // `::-moz-range-thumb` rules with a known size — now `tickLeftPx`
+    // can rely on the same `--range-thumb-w` value the renderer uses.
+    appearance: none;
+    -webkit-appearance: none;
+    height: 16px;
+    background: transparent;
     --range-thumb-w: 16px;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-hover, rgba(0, 0, 0, 0.08));
+  }
+  input[type="range"]::-moz-range-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-hover, rgba(0, 0, 0, 0.08));
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent, #3b82f6);
+    margin-top: -6px; // align thumb centre with the 4-px track centre
+    cursor: pointer;
+    border: none;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent, #3b82f6);
+    cursor: pointer;
+    border: none;
   }
 
   svg { display: block; flex-shrink: 0; }
@@ -4790,6 +4823,13 @@ body.terminal-dashboard-active {
 .column-body {
   flex: 1;
   overflow-y: auto;
+  // HS-7972 — reserve a stable gutter for the scrollbar so its appear /
+  // disappear while content height shifts (during a poll-driven re-render
+  // or while the user scrolls past the bottom edge) doesn't cause the
+  // column contents to jitter horizontally. Browsers without support fall
+  // back to the default `auto` behavior; both Chromium and WebKit
+  // (the Tauri WKWebView) honor this.
+  scrollbar-gutter: stable;
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -5812,87 +5852,55 @@ body.terminal-dashboard-active {
     border-left-color: var(--border);
   }
 
-  // HS-7930 — the slot itself becomes the hover surface so the user can
-  // hover anywhere in the gap between two blocks (or above the first / below
-  // the last) and see a split-point indicator. The trigger button is hidden
-  // until the slot is hovered, keeping the prompt stack visually clean for
-  // prompts the user doesn't intend to insert into. A 1 px accent bar in the
-  // gap surfaces the exact location the click would target.
+  // HS-7930 (revised) — collapsed-by-default insertion gap. The slot is a
+  // 6 px zero-content hover zone between adjacent prompt blocks; the user
+  // sees nothing in idle state. On hover, a 2 px solid accent line lights
+  // up in the middle of the gap (drop-target style) marking the exact
+  // split point a click would target. No "+ Add response here" button or
+  // label any more — the hover line is the entire affordance.
   .feedback-insert-slot {
     display: flex;
     flex-direction: column;
     align-items: stretch;
     justify-content: center;
     gap: 0;
-    padding: 6px 0;
-    min-height: 14px;
+    padding: 0;
+    min-height: 6px;
     cursor: pointer;
   }
 
+  // The decorative `<button>` rendered inside the slot for compatibility
+  // with HS-7558 callers; visually suppressed in HS-7930 — the slot itself
+  // is the click target.
   .feedback-insert-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    text-align: left;
-    background: none;
-    border: none;
-    color: #3b82f6;
-    cursor: pointer;
-    font-size: 11px;
-    padding: 0 12px;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 100ms ease;
-
-    // The "+" glyph rendered alongside the always-visible label on hover.
-    .feedback-insert-plus {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 14px;
-      height: 14px;
-      border: 1px solid currentColor;
-      border-radius: 50%;
-      font-size: 11px;
-      line-height: 1;
-    }
-    .feedback-insert-label { display: inline; }
+    display: none;
   }
 
-  // The visual indicator bar — invisible until the slot is hovered. Sits
-  // beneath the (also-hidden) button so the bar + label appear together.
+  // Drop-target indicator. Invisible at rest; on slot hover, becomes a 2 px
+  // accent-coloured bar spanning the slot width. `transition` keeps the
+  // appearance gentle rather than snappy.
   .feedback-insert-slot::before {
     content: '';
     display: block;
-    height: 1px;
+    height: 2px;
     background: #3b82f6;
     opacity: 0;
     transition: opacity 100ms ease;
-    margin: 0 12px 4px;
+    margin: 0 12px;
   }
 
-  // Reveal everything when the user is hovering the gap. The button regains
-  // pointer-events at the same time so the click target lights up only with
-  // the visible affordance.
-  .feedback-insert-slot:hover {
-    &::before { opacity: 0.45; }
-
-    .feedback-insert-btn {
-      opacity: 1;
-      pointer-events: auto;
-    }
+  .feedback-insert-slot:hover::before {
+    opacity: 1;
   }
 
   // When the user has already inserted a response in this slot, the inline
-  // textarea owns the visual space; suppress the indicator + button so the
-  // gap doesn't double-up. The trigger is still discoverable in adjacent
-  // empty slots above and below.
+  // textarea owns the visual space; suppress the hover indicator so the
+  // gap doesn't double-up. Adjacent empty slots above / below still expose
+  // the affordance.
   .feedback-insert-slot:has(.feedback-inline-response) {
     cursor: default;
 
     &::before { display: none; }
-    .feedback-insert-btn { display: none; }
   }
 
   .feedback-inline-response {
@@ -7497,11 +7505,44 @@ body.terminal-dashboard-active {
 
   input[type="range"] {
     width: 100px;
-    accent-color: var(--accent, #3b82f6);
-    // HS-7950 — same thumb-width hint as the dashboard sizer (see
-    // `.terminal-dashboard-sizer input[type="range"]`); used by `tickLeftPx`
-    // to keep snap-point ticks centred under the thumb at every value.
+    cursor: pointer;
+    // HS-7950 follow-up — explicit thumb styling. See the dashboard sizer
+    // rule above for the rationale (native thumbs vary from 14 to 20 px;
+    // explicit styling means `tickLeftPx`'s 16 px assumption matches the
+    // renderer).
+    appearance: none;
+    -webkit-appearance: none;
+    height: 16px;
+    background: transparent;
     --range-thumb-w: 16px;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-hover, rgba(0, 0, 0, 0.08));
+  }
+  input[type="range"]::-moz-range-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-hover, rgba(0, 0, 0, 0.08));
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent, #3b82f6);
+    margin-top: -6px;
+    cursor: pointer;
+    border: none;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent, #3b82f6);
+    cursor: pointer;
+    border: none;
   }
 }
 
@@ -7747,12 +7788,18 @@ body.terminal-dashboard-active {
 // =============================================================================
 
 // Details label is now a flex row so the reader-mode book button sits to the
-// right of the "Details" word. Pre-HS-7957 the label was a plain text node.
-.detail-details-label {
+// FAR right edge of the textarea, mirroring the right-aligned book on a note.
+// Selector is intentionally compound so it beats the `.detail-field label`
+// rule above (specificity 0,1,1) — without that, `display: block` would win
+// and the book would render inline next to the word "Details" instead of
+// jumping to the right edge (HS-7961 follow-up).
+.detail-field .detail-details-label,
+label.detail-details-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  width: 100%;
 
   > span {
     flex: 1;
@@ -8014,15 +8061,19 @@ body.terminal-dashboard-active {
 // docs/48-git-status-tracker.md §48.4
 // =============================================================================
 
+// HS-7975 — restyled to a borderless sidebar row that highlights on hover.
+// Spans the full sidebar width; counts pill is right-aligned. Tint classes
+// drop the background + border treatment in favour of just colouring the
+// text + counts pill — the row's chrome only appears on hover.
 .sidebar-git-chip {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
-  margin: 0 8px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-secondary);
+  padding: 4px 12px;
+  margin: 0 0 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -8032,12 +8083,8 @@ body.terminal-dashboard-active {
   transition: background 100ms ease;
 
   &:hover {
-    background: var(--bg-hover, var(--bg-secondary));
+    background: var(--bg-hover, rgba(0, 0, 0, 0.04));
   }
-  // The chip lives in the sidebar (a flex column) — explicitly self-start
-  // so it doesn't stretch to the sidebar's full width.
-  align-self: flex-start;
-  max-width: calc(100% - 16px);
 
   .sidebar-git-icon {
     display: inline-flex;
@@ -8051,10 +8098,12 @@ body.terminal-dashboard-active {
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+    flex: 1;
   }
 
   .sidebar-git-counts {
     flex-shrink: 0;
+    margin-left: auto;
     padding: 1px 6px;
     border-radius: 999px;
     background: rgba(0, 0, 0, 0.06);
@@ -8064,33 +8113,13 @@ body.terminal-dashboard-active {
 
   // Tint precedence per docs/48-git-status-tracker.md §48.4.1:
   // conflict (red) > behind (amber) > ahead (blue) > dirty (yellow) > clean.
-  // Phase 1 only ever resolves clean / dirty / conflicted; the
-  // ahead / behind tints arrive with HS-7955.
-  &.is-clean {
-    color: #166534;
-    border-color: rgba(22, 101, 52, 0.3);
-    background: rgba(22, 101, 52, 0.08);
-  }
-  &.is-dirty {
-    color: #a16207;
-    border-color: rgba(161, 98, 7, 0.35);
-    background: rgba(161, 98, 7, 0.1);
-  }
-  &.is-conflicted {
-    color: #991b1b;
-    border-color: rgba(153, 27, 27, 0.45);
-    background: rgba(153, 27, 27, 0.1);
-  }
-  &.is-ahead {
-    color: #1e40af;
-    border-color: rgba(30, 64, 175, 0.4);
-    background: rgba(30, 64, 175, 0.1);
-  }
-  &.is-behind {
-    color: #b45309;
-    border-color: rgba(180, 83, 9, 0.4);
-    background: rgba(180, 83, 9, 0.1);
-  }
+  // Post-HS-7975: tint colours the text + counts pill only; the row chrome
+  // stays clean unless hovered.
+  &.is-clean    { color: #166534; }
+  &.is-dirty    { color: #a16207; }
+  &.is-conflicted { color: #991b1b; }
+  &.is-ahead    { color: #1e40af; }
+  &.is-behind   { color: #b45309; }
 }
 
 // HS-7955 — ahead/behind glyph cluster sits between the branch label and
@@ -8266,48 +8295,9 @@ body.terminal-dashboard-active {
   font-style: italic;
 }
 
-.git-popover-fetch-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
-}
-
-.git-popover-fetch-status {
-  color: var(--text-muted);
-  font-size: 11px;
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-
-  &.is-error {
-    color: #991b1b;
-  }
-}
-
-.git-popover-fetch-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: var(--accent, #3b82f6);
-  color: #ffffff;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 11px;
-
-  &:hover:not(:disabled) {
-    filter: brightness(1.05);
-  }
-  &:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-}
+// HS-7974 — fetch row + status text + button removed from the popover.
+// The user explicitly asked for them gone; the API endpoint
+// (`POST /api/git/fetch`) stays, but no UI surfaces it.
 
 .git-popover-file-menu {
   position: fixed;
@@ -8425,12 +8415,43 @@ body.terminal-dashboard-active {
   border-top: 1px solid var(--border);
 }
 
+// HS-7976 — link + gear button sit on a single row. The link allows
+// immediately with the auto-generated `^…$` pattern; the gear opens the
+// inline editor.
+.permission-popup-always-allow-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .permission-popup-always-allow-link {
   color: var(--accent, #3b82f6);
   font-size: 11px;
   text-decoration: underline;
 
   &:hover { text-decoration: none; }
+  &.is-saving { opacity: 0.6; pointer-events: none; }
+}
+
+.permission-popup-always-allow-customize {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--accent, #3b82f6);
+    border-color: color-mix(in srgb, var(--accent, #3b82f6) 50%, transparent);
+  }
 }
 
 .permission-popup-always-allow-form {

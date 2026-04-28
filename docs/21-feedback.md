@@ -104,13 +104,18 @@ Examples (post-HS-7930):
 
 ### 21.2.3 Hover-only insert indicator (HS-7930)
 
-The HS-6998 v1 / HS-7558 dialog rendered a visible `+ Add response here` button beneath every block, pulling the eye to insertion affordances even on prompts the user intended to answer with a single catch-all reply. HS-7930 makes the affordance hover-only:
+The HS-6998 v1 / HS-7558 dialog rendered a visible `+ Add response here` button beneath every block, pulling the eye to insertion affordances even on prompts the user intended to answer with a single catch-all reply. HS-7930 makes the affordance hover-only.
 
-- The `.feedback-insert-slot` between every two blocks is the click target. Default state: an empty 14-pixel-tall gap, no visible content, cursor: pointer.
-- On hover: a thin 1 px accent-coloured indicator bar appears in the gap, and the "+ Add response here" label fades in beneath it. Clicking anywhere in the slot inserts the inline textarea at that position.
-- One response per slot. Once a textarea is inserted, the slot's hover indicator + button are hidden via `:has(.feedback-inline-response)` so the gap doesn't double-up. Clicking the textarea's `×` button removes it and restores the click-to-add affordance — matching the user's "deleting a text field would undo this" semantics.
+**Iteration 1.** The first pass reduced the button to a hover-fade — at rest, a 14 px gap with the label hidden; on hover, a thin 1 px bar plus the "+ Add response here" label faded in. The user reported (a) the label stuck around after the cursor left and (b) the visible 14 px gap looked like blank padding when no insertion was intended.
 
-The implementation lives entirely in `src/client/styles.scss` (`.feedback-insert-slot` rules) + the slot-level click listener in `feedbackDialog.tsx`. The `.feedback-insert-btn` element survives as the visible label inside the slot but is purely decorative (its `pointer-events` are gated by `:hover` on the parent slot, so the slot is the actual click target and the button just renders the affordance).
+**Iteration 2 (current).** The dialog now collapses the gap to a 6 px zero-content hover zone with NO button text or icon at all. On hover the slot lights a 2 px accent-coloured bar (drop-target style) marking the exact split point a click would target. Cursor stays pointer. The whole affordance disappears the moment the cursor leaves — there's no labelled button to linger.
+
+- `.feedback-insert-slot { min-height: 6px; padding: 0; }` — invisible at rest, clickable everywhere in the gap.
+- `.feedback-insert-slot::before` — 2 px solid `#3b82f6` bar, `opacity: 0` at rest, `opacity: 1` on `:hover`, 100 ms transition.
+- `.feedback-insert-btn` — kept in the JSX for backwards-compat with HS-7558 callers but `display: none`. The slot itself is the click target.
+- One response per slot. Once a textarea is inserted, `:has(.feedback-inline-response)` hides the bar so the gap doesn't double-up; clicking the textarea's `×` button removes the textarea and restores the click-to-add affordance.
+
+The implementation lives entirely in `src/client/styles.scss` (`.feedback-insert-slot` rules) + the slot-level click listener in `feedbackDialog.tsx`.
 
 ### 21.3 Provide Feedback Link
 

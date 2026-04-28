@@ -381,11 +381,25 @@ function isTerminalFocused(): boolean {
  *
  * Exported so the unit test can verify the focus check against a mounted
  * DOM without having to drive the live keyboard handler.
+ *
+ * HS-7927 second follow-up — also returns true when the active drawer tab
+ * is `commands-log` AND focus is anywhere within `#command-log-panel`
+ * (e.g. on the Commands Log tab button itself). After clicking the tab to
+ * switch to it, the Commands Log pane often has no focused element of its
+ * own — focus stays briefly on the tab button or reverts to `<body>`.
+ * Without this broader check, Cmd+Shift+Arrow in that state would fall
+ * through to project-tab cycling, which is exactly what the user reported.
  */
 export function isCommandsLogFocused(): boolean {
   const active = document.activeElement;
   if (!(active instanceof HTMLElement)) return false;
-  return active.closest('#drawer-panel-commands-log') !== null;
+  if (active.closest('#drawer-panel-commands-log') !== null) return true;
+  // Tab-button focus + focus elsewhere in the drawer chrome counts when
+  // commands-log is the active drawer tab.
+  const drawer = document.getElementById('command-log-panel');
+  if (drawer === null || !drawer.contains(active)) return false;
+  const activeTabBtn = drawer.querySelector<HTMLElement>('.drawer-tab.active');
+  return activeTabBtn?.dataset.drawerTab === 'commands-log';
 }
 
 /**

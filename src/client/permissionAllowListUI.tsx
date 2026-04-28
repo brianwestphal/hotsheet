@@ -222,9 +222,18 @@ export function buildAlwaysAllowAffordance(opts: {
   if (opts.primaryValue === '') return null;
   if (!TOOLS_FOR_RULE.includes(opts.toolName)) return null;
   const initial = `^${regexEscape(opts.primaryValue)}$`;
+  // HS-7976 — clicking "Always allow this" now commits the auto-generated
+  // `^…$` pattern immediately (no second step). The gear button next to the
+  // link opens the inline editor for users who want to broaden the pattern
+  // before saving.
   const root = toElement(
     <div className="permission-popup-always-allow">
-      <a className="permission-popup-always-allow-link" href="#">Always allow this</a>
+      <div className="permission-popup-always-allow-row">
+        <a className="permission-popup-always-allow-link" href="#">Always allow this</a>
+        <button className="permission-popup-always-allow-customize" type="button" title="Customize matching rule" aria-label="Customize matching rule">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
       <div className="permission-popup-always-allow-form" style="display:none">
         <input type="text" className="permission-popup-always-allow-input" value={initial} />
         <button className="btn btn-sm permission-popup-always-allow-confirm" type="button">Save & Allow</button>
@@ -234,23 +243,34 @@ export function buildAlwaysAllowAffordance(opts: {
     </div>
   );
 
+  const linkRow = root.querySelector<HTMLElement>('.permission-popup-always-allow-row')!;
   const link = root.querySelector<HTMLAnchorElement>('.permission-popup-always-allow-link')!;
+  const customize = root.querySelector<HTMLButtonElement>('.permission-popup-always-allow-customize')!;
   const form = root.querySelector<HTMLElement>('.permission-popup-always-allow-form')!;
   const input = root.querySelector<HTMLInputElement>('.permission-popup-always-allow-input')!;
   const confirm = root.querySelector<HTMLButtonElement>('.permission-popup-always-allow-confirm')!;
   const cancel = root.querySelector<HTMLButtonElement>('.permission-popup-always-allow-cancel')!;
   const errorEl = root.querySelector<HTMLElement>('.permission-popup-always-allow-error')!;
 
+  // HS-7976 — link click commits the default pattern immediately.
   link.addEventListener('click', (e) => {
     e.preventDefault();
-    link.style.display = 'none';
+    if (link.classList.contains('is-saving')) return;
+    link.classList.add('is-saving');
+    void saveRuleAndCommit(initial);
+  });
+  // Gear icon opens the inline editor for users who want to broaden the
+  // auto-generated pattern.
+  customize.addEventListener('click', (e) => {
+    e.preventDefault();
+    linkRow.style.display = 'none';
     form.style.display = '';
     input.focus();
     input.select();
   });
   cancel.addEventListener('click', () => {
     form.style.display = 'none';
-    link.style.display = '';
+    linkRow.style.display = '';
     errorEl.style.display = 'none';
   });
   confirm.addEventListener('click', () => {
@@ -271,6 +291,13 @@ export function buildAlwaysAllowAffordance(opts: {
     }
     errorEl.style.display = 'none';
     confirm.disabled = true;
+    await saveRuleAndCommit(pattern, () => { confirm.disabled = false; });
+  }
+
+  /** Shared between the link's "use default pattern" path and the form's
+   *  "Save & Allow" path. `onSaveError` lets the form path re-enable its
+   *  Save button if the PATCH fails. */
+  async function saveRuleAndCommit(pattern: string, onSaveError?: () => void): Promise<void> {
     try {
       const fs = await api<{ permission_allow_rules?: unknown }>('/file-settings');
       const existing = parseRules(fs.permission_allow_rules);
@@ -288,7 +315,8 @@ export function buildAlwaysAllowAffordance(opts: {
     } catch {
       errorEl.textContent = 'Failed to save rule';
       errorEl.style.display = '';
-      confirm.disabled = false;
+      link.classList.remove('is-saving');
+      onSaveError?.();
       return;
     }
     // Rule saved — invoke the caller's allow-the-current-request handler.

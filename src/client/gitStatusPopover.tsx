@@ -1,7 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
-import { formatRelativeTime, type FetchResult, triggerGitFetch } from './gitStatusChip.js';
 
 /**
  * HS-7956 — Phase 3 expanded popover for the sidebar git status chip.
@@ -14,7 +13,6 @@ import { formatRelativeTime, type FetchResult, triggerGitFetch } from './gitStat
  *   - Ahead/behind line (only when upstream): `3 ahead • 1 behind`
  *   - Working-tree section: bucket counters (clickable to expand into a
  *     file list — fetched on demand via `?files=true`)
- *   - "Last fetched N minutes ago" + "Fetch now" button
  *
  * File-row interactions:
  *   - Click → reveal in file manager via `POST /api/git/reveal`
@@ -46,7 +44,6 @@ interface GitStatusJson {
 }
 
 const CLOSE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
-const REFRESH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>';
 
 let activePopover: HTMLElement | null = null;
 let activeAnchor: HTMLElement | null = null;
@@ -134,20 +131,8 @@ function paintPopover(popover: HTMLElement, data: GitStatusJson): void {
 
   const ab = buildAheadBehindLine(data);
 
-  // Always show fetch row when an upstream exists.
-  const fetchRow = data.upstream !== null
-    ? <div className="git-popover-fetch-row">
-        <span className="git-popover-fetch-status">
-          {data.lastFetchedAt !== null
-            ? `Last fetched ${formatRelativeTime(Date.now() - data.lastFetchedAt)}`
-            : 'Not fetched yet this session'}
-        </span>
-        <button className="git-popover-fetch-btn" type="button" title="Run git fetch">
-          {raw(REFRESH_ICON)} <span>Fetch now</span>
-        </button>
-      </div>
-    : null;
-
+  // HS-7974 — fetch row removed (last-fetched-at line + "Fetch now" button).
+  // The user explicitly asked for it gone; the chip stays read-only.
   bodyEl.replaceChildren();
   if (ab !== null) bodyEl.appendChild(toElement(<div className="git-popover-ab">{ab}</div>));
   const bucketsEl = toElement(<div className="git-popover-buckets"></div>);
@@ -160,7 +145,6 @@ function paintPopover(popover: HTMLElement, data: GitStatusJson): void {
     if (row !== null) bucketsEl.appendChild(row);
   }
   bodyEl.appendChild(bucketsEl);
-  if (fetchRow !== null) bodyEl.appendChild(toElement(fetchRow));
 
   // Wire bucket-row expand/collapse toggles.
   bodyEl.querySelectorAll<HTMLElement>('.git-popover-bucket-header').forEach(header => {
@@ -184,13 +168,6 @@ function paintPopover(popover: HTMLElement, data: GitStatusJson): void {
     });
   });
 
-  // Wire fetch button.
-  const fetchBtn = bodyEl.querySelector<HTMLButtonElement>('.git-popover-fetch-btn');
-  if (fetchBtn !== null) {
-    fetchBtn.addEventListener('click', () => {
-      void runFetchFromPopover(fetchBtn);
-    });
-  }
 }
 
 function bucketRow(kind: 'staged' | 'unstaged' | 'untracked' | 'conflicted', label: string, count: number, files: GitStatusFiles | undefined): HTMLElement | null {
@@ -222,39 +199,6 @@ function bucketRow(kind: 'staged' | 'unstaged' | 'untracked' | 'conflicted', lab
     }
   }
   return root;
-}
-
-async function runFetchFromPopover(btn: HTMLButtonElement): Promise<void> {
-  btn.disabled = true;
-  const originalLabel = btn.querySelector('span')?.textContent ?? 'Fetch now';
-  const labelEl = btn.querySelector<HTMLElement>('span');
-  if (labelEl !== null) labelEl.textContent = 'Fetching…';
-  let result: FetchResult;
-  try {
-    result = await triggerGitFetch();
-  } catch {
-    result = { ok: false, lastFetchedAt: null, error: 'Network error' };
-  }
-  btn.disabled = false;
-  if (labelEl !== null) labelEl.textContent = originalLabel;
-  // Surface a brief success/failure status next to the button. For failure
-  // we keep the popover open with the error inline; for success we re-fetch
-  // the popover data so the new ahead/behind reflects the post-fetch state.
-  const statusEl = btn.parentElement?.querySelector<HTMLElement>('.git-popover-fetch-status');
-  if (statusEl !== null && statusEl !== undefined) {
-    if (result.ok) {
-      statusEl.textContent = 'Just fetched';
-      // Re-fetch so the buckets / ahead-behind / lastFetchedAt all update.
-      if (activePopover !== null) {
-        void api<GitStatusJson | null>('/git/status?files=true').then(fresh => {
-          if (fresh !== null && activePopover !== null) paintPopover(activePopover, fresh);
-        }).catch(() => { /* ignore */ });
-      }
-    } else {
-      statusEl.textContent = `Fetch failed: ${result.error}`;
-      statusEl.classList.add('is-error');
-    }
-  }
 }
 
 function showFileContextMenu(row: HTMLElement, e: MouseEvent): void {

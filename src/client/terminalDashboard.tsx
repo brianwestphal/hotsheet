@@ -533,6 +533,13 @@ async function renderDashboardGrid(root: HTMLElement): Promise<void> {
   if (!active) return; // user exited during fetch
   lastSectionData = sections;
   paintDashboardSections(root, sections);
+  // HS-7970 — refresh the grouping selector NOW that `lastSectionData` is
+  // populated. `enterDashboard` ran `refreshDashboardGroupingSelect()` synchronously
+  // before this fetch resolved, when `lastSectionData` was still empty —
+  // which made the select think there was no scope project, so it hid
+  // itself. Re-run with real data so a project that has multiple groupings
+  // shows the dropdown next to the eye icon.
+  refreshDashboardGroupingSelect();
 }
 
 /** HS-7661 — render the dashboard's project sections from cached

@@ -18,7 +18,7 @@ import {
 } from './drawerTerminalGrid.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_PENCIL, ICON_X } from './icons.js';
 import { getActiveProject, state } from './state.js';
-import { openExternalUrl } from './tauriIntegration.js';
+import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 import {
   applyAppearanceToTerm,
   getProjectDefault,
@@ -234,6 +234,13 @@ export function initTerminal(): void {
  * whenever the user saves the Embedded Terminal settings.
  */
 export async function loadAndRenderTerminalTabs(): Promise<void> {
+  // HS-7977: terminals are a Tauri-only feature. Web/browser deployments must
+  // never spawn xterm/PTY instances or render terminal panes. The drawer tab
+  // strip is hidden via applyTerminalTabVisibility, but the panes container
+  // would still be populated here without this gate, leaking terminal output
+  // into the drawer when a saved active tab is `terminal:*`.
+  if (getTauriInvoke() === null) return;
+
   const active = getActiveProject();
   const activeSecret = active?.secret ?? null;
 
@@ -1703,6 +1710,17 @@ function doFit(inst: TerminalInstance): void {
 async function createDynamicTerminal(): Promise<void> {
   try {
     const { config } = await api<{ config: TerminalTabConfig }>('/terminal/create', { method: 'POST' });
+    // HS-7949 follow-up — apply the same "new terminals are hidden in non-
+    // Default visibility groupings" rule to dynamic terminals (drawer "+"
+    // button) that the server-side `addNewTerminalsToNonDefaultGroupings`
+    // applies to configured terminals (Settings → Terminal). Without this,
+    // a `dyn-*` id pops into every named grouping the user has built —
+    // exactly the regression the user reported.
+    const active = getActiveProject();
+    if (active !== null && active !== undefined) {
+      const { hideNewTerminalInNonDefaultGroupings } = await import('./dashboardHiddenTerminals.js');
+      hideNewTerminalInNonDefaultGroupings(active.secret, config.id);
+    }
     await loadAndRenderTerminalTabs();
     await selectDrawerTab(`terminal:${config.id}`);
   } catch { /* ignore */ }

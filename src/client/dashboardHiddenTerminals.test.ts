@@ -12,6 +12,7 @@ import {
   getActiveGroupingId,
   getGroupings,
   getHiddenTerminals,
+  hideNewTerminalInNonDefaultGroupings,
   hydratePersistedHiddenForProject,
   isTerminalHidden,
   isTerminalHiddenInGrouping,
@@ -280,5 +281,51 @@ describe('cross-project grouping fan-out (HS-7826 follow-up)', () => {
       .toEqual([{ id: 'server-id' }]);
     // s1's active grouping stays untouched.
     expect(isTerminalHiddenInGrouping('s1', 'g-shared', 'claude-id')).toBe(false);
+  });
+});
+
+describe('hideNewTerminalInNonDefaultGroupings (HS-7949 follow-up)', () => {
+  it('hides the new id in every non-Default grouping but leaves Default alone', () => {
+    addGroupingForProjectWithId('s1', 'g-claude', 'Claude');
+    addGroupingForProjectWithId('s1', 'g-server', 'Server');
+
+    hideNewTerminalInNonDefaultGroupings('s1', 'dyn-new');
+
+    expect(isTerminalHiddenInGrouping('s1', 'default', 'dyn-new')).toBe(false);
+    expect(isTerminalHiddenInGrouping('s1', 'g-claude', 'dyn-new')).toBe(true);
+    expect(isTerminalHiddenInGrouping('s1', 'g-server', 'dyn-new')).toBe(true);
+  });
+
+  it('is idempotent — calling twice does not duplicate the id', () => {
+    addGroupingForProjectWithId('s1', 'g-claude', 'Claude');
+    hideNewTerminalInNonDefaultGroupings('s1', 'dyn-new');
+    hideNewTerminalInNonDefaultGroupings('s1', 'dyn-new');
+    const claude = getGroupings('s1').find(g => g.id === 'g-claude')!;
+    expect(claude.hiddenIds.filter(id => id === 'dyn-new')).toHaveLength(1);
+  });
+
+  it('is a no-op when the project has no non-Default groupings', () => {
+    let notifyCount = 0;
+    const unsubscribe = subscribeToHiddenChanges(() => { notifyCount++; });
+    // Force-create the project state so the helper has something to read.
+    setTerminalHidden('s1', 'tmp', false);
+    notifyCount = 0; // ignore the previous notify
+    hideNewTerminalInNonDefaultGroupings('s1', 'dyn-new');
+    expect(notifyCount).toBe(0);
+    unsubscribe();
+  });
+
+  it('is a no-op when the project state has not been initialised yet', () => {
+    let notifyCount = 0;
+    const unsubscribe = subscribeToHiddenChanges(() => { notifyCount++; });
+    hideNewTerminalInNonDefaultGroupings('never-seen-secret', 'dyn-new');
+    expect(notifyCount).toBe(0);
+    unsubscribe();
+  });
+
+  it('applies to configured ids too (not just dyn-* — the helper is shape-agnostic)', () => {
+    addGroupingForProjectWithId('s1', 'g-claude', 'Claude');
+    hideNewTerminalInNonDefaultGroupings('s1', 'configured-id');
+    expect(isTerminalHiddenInGrouping('s1', 'g-claude', 'configured-id')).toBe(true);
   });
 });

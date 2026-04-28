@@ -93,7 +93,9 @@ A noisy editor that touches `.git/index.lock` should NOT trigger a re-render. Th
 
 ### 48.4.1 Sidebar placement
 
-A new `<div className="sidebar-git">` chip rendered between the existing `#channel-commands-container` block and the "Views" section in `src/routes/pages.tsx`. (Above the views label so it stays visible regardless of which view is selected.) When git tracking is disabled OR the project isn't a git repo, the chip is `display: none`.
+A `<div id="sidebar-git-chip" className="sidebar-git-chip">` row rendered ABOVE the channel play button in `src/routes/pages.tsx`. Originally HS-7954 placed it between `#channel-commands-container` and the Views section with bordered chrome and tinted backgrounds; HS-7975 moved it above the play button and restyled it as a borderless full-width sidebar row that highlights only on hover. When git tracking is disabled OR the project isn't a git repo, the row is `display: none`.
+
+Layout (HS-7975): full sidebar width, padding `4px 12px`, no border, transparent background. The branch label `flex: 1`, the count pill is `margin-left: auto` so it right-aligns. The tint classes (`is-clean`, `is-dirty`, `is-conflicted`, `is-ahead`, `is-behind`) colour the text + count pill only — the row chrome is plain unless hovered.
 
 Layout:
 ```
@@ -126,12 +128,10 @@ Clicking the chip slides open a small popover anchored under it:
 │   1 unstaged                             │
 │   1 untracked                            │
 │                                          │
-│ Last fetched 4 minutes ago               │
-│ [ Fetch now ]                            │
 └─────────────────────────────────────────┘
 ```
 
-The popover is non-modal (per the §12.10 popup pattern). "Fetch now" POSTs `/api/git/fetch` and shows a small inline spinner; the chip refreshes on completion. Phase 3 may add a clickable per-bucket file list (staged → list of paths; click to copy or reveal in finder), but this is incremental — the v1 expanded panel just shows counts.
+The popover is non-modal (per the §12.10 popup pattern). The popover is read-only — the previous "Last fetched … / Fetch now" row was removed in HS-7974 at the user's request (the API endpoint stays, no UI surfaces it). Phase 3 may add a clickable per-bucket file list (staged → list of paths; click to copy or reveal in finder), but this is incremental — the v1 expanded panel just shows counts.
 
 ### 48.4.3 Polling
 
@@ -142,7 +142,7 @@ On tab focus (`window.addEventListener('focus', …)`) the client also refetches
 ### 48.4.4 Tauri-safe interactions
 
 - The chip is rendered server-side in `pages.tsx`; the click handler lives in client code.
-- "Fetch now" is a POST to `/api/git/fetch` — no `window.open`, no native dialog.
+- The fetch endpoint (`POST /api/git/fetch`) stays available but the popover no longer surfaces a button that calls it (HS-7974).
 - Phase 3's "Reveal in Finder" for a file path goes through the existing `openInFileManager` Tauri command (per §5).
 
 ### 48.4.5 No git on PATH

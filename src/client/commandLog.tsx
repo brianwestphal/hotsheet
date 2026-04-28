@@ -2,6 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { activeFilterTypes, ALL_FILTER_TYPES, dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
 import { toElement } from './dom.js';
+import { resolveDrawerTabForTauri } from './drawerTabGating.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 
 let runningShellIds: number[] = [];
@@ -380,6 +381,7 @@ function updateToggleIcon(isOpen: boolean) {
 /** Switch which drawer tab is visible. Both tab contents remain mounted.
  *  tab id is `commands-log` or `terminal:<terminalId>`. */
 export function switchDrawerTab(tab: string) {
+  tab = resolveDrawerTabForTauri(tab, getTauriInvoke() !== null);
   const changed = tab !== activeTab;
   activeTab = tab;
   // HS-6311 — clicking a drawer tab while in grid mode exits grid mode first

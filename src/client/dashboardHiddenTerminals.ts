@@ -367,3 +367,31 @@ export function unhideAllInGrouping(secret: string, groupingId: string): void {
   const next = updateGroupingById(state, groupingId, g => g.hiddenIds.length === 0 ? g : ({ ...g, hiddenIds: [] }));
   setProjectState(secret, next);
 }
+
+/**
+ * HS-7949 follow-up — mark a freshly-added terminal id as hidden in every
+ * non-Default grouping for one project. Mirrors the server-side
+ * `addNewTerminalsToNonDefaultGroupings` but operates on the in-memory
+ * client state (because dynamic terminals don't go through the
+ * `/file-settings` PATCH that fires the server-side helper). The
+ * `subscribeToHiddenChanges` notify+PATCH chain persists the new state
+ * automatically.
+ *
+ * No-op when the project has only the Default grouping (or no groupings).
+ * No-op when the id is already hidden in every non-Default grouping.
+ *
+ * Exported for unit tests.
+ */
+export function hideNewTerminalInNonDefaultGroupings(secret: string, terminalId: string): void {
+  const state = projectStates.get(secret);
+  if (state === undefined) return;
+  let changed = false;
+  const groupings = state.groupings.map(g => {
+    if (g.id === 'default') return g;
+    if (g.hiddenIds.includes(terminalId)) return g;
+    changed = true;
+    return { ...g, hiddenIds: [...g.hiddenIds, terminalId] };
+  });
+  if (!changed) return;
+  setProjectState(secret, { groupings, activeId: state.activeId });
+}

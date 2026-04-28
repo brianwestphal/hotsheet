@@ -19,6 +19,7 @@ import {
   getActiveGroupingId,
   getGroupings,
   setActiveGroupingForProject,
+  subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
 
 export interface GroupingSelectOptions {
@@ -68,10 +69,23 @@ export function refreshGroupingSelect(opts: GroupingSelectOptions): { count: num
 }
 
 /** One-time wiring: attach a `change` listener that flips the active
- *  grouping for the current scope. Idempotent — caller's responsibility
- *  to call once per `selectEl`. When `getAdditionalSecrets` is supplied,
- *  the active grouping is also flipped for those secrets so the
- *  dashboard's cross-project filter agrees with the dropdown. */
+ *  grouping for the current scope, AND subscribes the select to hidden-
+ *  state changes so it refreshes on every state mutation (e.g. when
+ *  `initPersistedHiddenTerminals` finishes hydrating from `/file-settings`
+ *  on app boot). Idempotent — caller's responsibility to call once per
+ *  `selectEl`. When `getAdditionalSecrets` is supplied, the active
+ *  grouping is also flipped for those secrets so the dashboard's
+ *  cross-project filter agrees with the dropdown.
+ *
+ *  HS-7970 — the boot-time subscription is what fixes "the grouping
+ *  dropdown is missing after app restore": before HS-7970 the select was
+ *  refreshed only by the dashboard / drawer-grid's own subscriptions,
+ *  which were attached AFTER the user explicitly entered dashboard / grid
+ *  mode — so a hydration-completes-before-enter race left the select stuck
+ *  on the pre-hydration single-Default state. The subscription here is
+ *  wider: it's attached the moment the select is wired (typically inside
+ *  `init*` at app boot) and stays alive for the lifetime of the page.
+ */
 export function wireGroupingSelectChange(opts: GroupingSelectOptions): void {
   opts.selectEl.addEventListener('change', () => {
     const primary = opts.getSecret();
@@ -87,4 +101,9 @@ export function wireGroupingSelectChange(opts: GroupingSelectOptions): void {
       }
     }
   });
+  // HS-7970 — refresh the select whenever ANY hidden-state mutation lands.
+  // Covers the boot-time hydration race + per-project grouping add / remove
+  // / rename (the dashboard + drawer-grid subscriptions only fire while
+  // their respective views are active; this one is always-on).
+  subscribeToHiddenChanges(() => { refreshGroupingSelect(opts); });
 }

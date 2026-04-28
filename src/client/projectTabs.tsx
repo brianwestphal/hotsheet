@@ -4,6 +4,7 @@ import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } fr
 import { toElement } from './dom.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_FOLDER, ICON_X } from './icons.js';
 import { getMinimizedPermissionSecrets, reopenMinimizedForSecret } from './permissionOverlay.js';
+import { computeProjectTabsFingerprint } from './projectTabsFingerprint.js';
 import type { ProjectInfo } from './state.js';
 import { clearPerProjectSessionState, getActiveProject, setActiveProject } from './state.js';
 
@@ -437,6 +438,16 @@ function setupScrollObserver() {
 
 // --- Render ---
 
+/** HS-7972 — fingerprint of the rendered tab strip. Skipping the DOM rebuild
+ *  when the strip is identical eliminates the per-poll-tick teardown that
+ *  was clearing the user's `:hover` state mid-hover (causing the visible
+ *  outline flicker the user reported). */
+let lastRenderedTabsFingerprint: string | null = null;
+
+function computeTabsFingerprint(activeSecret: string | null): string {
+  return computeProjectTabsFingerprint(projectList, activeSecret);
+}
+
 function renderTabs() {
   const titleArea = document.getElementById('app-title-area');
   if (!titleArea) return;
@@ -444,11 +455,27 @@ function renderTabs() {
   if (projectList.length < 2) {
     // Single project — show the project name as h1
     const name = projectList.length === 1 ? projectList[0].name : 'Hot Sheet';
+    const fingerprint = computeTabsFingerprint(null);
+    if (lastRenderedTabsFingerprint === fingerprint && document.querySelector('#app-title-area h1') !== null) return;
+    lastRenderedTabsFingerprint = fingerprint;
     titleArea.innerHTML = '';
     titleArea.appendChild(toElement(<h1>{name}</h1>));
     titleArea.classList.remove('has-tabs');
     return;
   }
+
+  // HS-7972 — skip the DOM rebuild when the strip is identical to what's
+  // already there. Active-state changes are picked up by `setActiveProject`
+  // → `renderTabs` so the fingerprint includes the active secret. Status
+  // dots + bell glyphs are toggled in-place by `updateStatusDots` /
+  // `updateProjectBellIndicators` and don't go through this path, so they
+  // can't be missed by the fingerprint short-circuit.
+  const activeSecret = getActiveProject()?.secret ?? null;
+  const fingerprint = computeTabsFingerprint(activeSecret);
+  if (lastRenderedTabsFingerprint === fingerprint && document.querySelector('.project-tabs-inner') !== null) {
+    return;
+  }
+  lastRenderedTabsFingerprint = fingerprint;
 
   titleArea.classList.add('has-tabs');
   titleArea.innerHTML = '';

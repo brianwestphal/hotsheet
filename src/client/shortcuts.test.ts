@@ -134,4 +134,48 @@ describe('isCommandsLogFocused (HS-7927 follow-up)', () => {
     document.body.innerHTML = `<div id="drawer-panel-commands-log"></div>`;
     expect(isCommandsLogFocused()).toBe(false);
   });
+
+  // HS-7927 second follow-up — focus on the Commands Log tab BUTTON (which
+  // lives in `.drawer-tabs`, OUTSIDE `#drawer-panel-commands-log`) also
+  // counts as "commands-log focused" so Cmd+Shift+Arrow cycles drawer tabs
+  // even though the user just clicked the tab button.
+  it('returns true when focus is on the Commands Log tab button and commands-log is the active drawer tab', () => {
+    document.body.innerHTML = `
+      <div id="command-log-panel">
+        <div class="drawer-tabs">
+          <button class="drawer-tab active" data-drawer-tab="commands-log" id="drawer-tab-commands-log"></button>
+          <button class="drawer-tab" data-drawer-tab="terminal:default"></button>
+        </div>
+        <div id="drawer-panel-commands-log"></div>
+      </div>
+    `;
+    (document.getElementById('drawer-tab-commands-log') as HTMLButtonElement).focus();
+    expect(isCommandsLogFocused()).toBe(true);
+  });
+
+  it('returns false when focus is on a terminal tab button (commands-log is not the active drawer tab)', () => {
+    document.body.innerHTML = `
+      <div id="command-log-panel">
+        <div class="drawer-tabs">
+          <button class="drawer-tab" data-drawer-tab="commands-log"></button>
+          <button class="drawer-tab active" data-drawer-tab="terminal:default" id="drawer-tab-terminal"></button>
+        </div>
+      </div>
+    `;
+    (document.getElementById('drawer-tab-terminal') as HTMLButtonElement).focus();
+    expect(isCommandsLogFocused()).toBe(false);
+  });
+
+  it('returns false when focus is in the drawer chrome but no drawer tab is active', () => {
+    document.body.innerHTML = `
+      <div id="command-log-panel">
+        <div class="drawer-tabs">
+          <button class="drawer-tab" data-drawer-tab="commands-log" id="drawer-tab-commands-log"></button>
+        </div>
+      </div>
+    `;
+    (document.getElementById('drawer-tab-commands-log') as HTMLButtonElement).focus();
+    // No `.active` class — the tab is focused but not active. Should be false.
+    expect(isCommandsLogFocused()).toBe(false);
+  });
 });

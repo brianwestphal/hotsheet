@@ -125,6 +125,16 @@ pageRoutes.get('/', (c) => {
           <nav className="sidebar">
             <div className="channel-disconnected-warning" id="channel-disconnected" style="display:none">Claude not connected</div>
             <div className="channel-version-warning" id="channel-version-warning" style="display:none">Channel outdated — run <code>/mcp</code> in Claude Code to reconnect</div>
+            {/* HS-7954 — git status chip. Hidden by default; populated +
+                shown by `gitStatusChip.tsx` once the first /api/git/status
+                resolves to a non-null GitStatus. HS-7975 — moved ABOVE the
+                play button, restyled to a borderless full-width row with
+                the count right-aligned and a hover highlight. */}
+            <div id="sidebar-git-chip" className="sidebar-git-chip" style="display:none">
+              <span className="sidebar-git-icon"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/></svg></span>
+              <span className="sidebar-git-branch"></span>
+              <span className="sidebar-git-counts"></span>
+            </div>
             <div className="sidebar-channel-play" id="channel-play-section" style="display:none">
               <button className="channel-play-btn" id="channel-play-btn" title="Run worklist (double-click for auto mode)">
                 <span className="channel-play-icon" id="channel-play-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg></span>
@@ -132,16 +142,6 @@ pageRoutes.get('/', (c) => {
               </button>
             </div>
             <div id="channel-commands-container"></div>
-            {/* HS-7954 — git status chip. Hidden by default; populated +
-                shown by `gitStatusChip.tsx` once the first /api/git/status
-                resolves to a non-null GitStatus. Sits above the Views
-                section so it's visible regardless of which view is selected
-                (per docs/48-git-status-tracker.md §48.4.1). */}
-            <div id="sidebar-git-chip" className="sidebar-git-chip" style="display:none">
-              <span className="sidebar-git-icon"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/></svg></span>
-              <span className="sidebar-git-branch"></span>
-              <span className="sidebar-git-counts"></span>
-            </div>
             {PLUGINS_ENABLED ? <div id="plugin-sidebar-top" className="plugin-sidebar-actions"></div> : null}
             <div className="sidebar-copy-prompt" id="copy-prompt-section" style="display:none">
               <button className="copy-prompt-btn" id="copy-prompt-btn" title="Copy worklist prompt to clipboard">

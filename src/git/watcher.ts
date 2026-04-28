@@ -76,7 +76,18 @@ interface WatcherEntry {
   watchers: FSWatcher[];
   /** Per-project monotonic counter — bumped on every detected change. */
   version: number;
+  /** HS-7972 — pending debounce timer. macOS `fs.watch` fires multiple times
+   *  for a single git operation (and occasionally spuriously when the
+   *  channel server is busy); without this debounce a burst can trigger 10+
+   *  `/api/poll` wakes per second, causing visible UI thrash (project tabs
+   *  + ticket list + detail panel re-render every 100 ms). */
+  debounce: NodeJS.Timeout | null;
 }
+
+/** HS-7972 — coalesce burst fs.watch events into a single notification.
+ *  250 ms is short enough that a real `git commit` still feels instant in
+ *  the chip but long enough that macOS' multi-event bursts collapse. */
+const WATCHER_DEBOUNCE_MS = 250;
 
 const watchers = new Map<string, WatcherEntry>();
 const subscribers = new Set<(projectRoot: string) => void>();
@@ -111,27 +122,40 @@ export function ensureGitWatcher(projectRoot: string): void {
 
   const filenames = ['index', 'HEAD'];
   const handles: FSWatcher[] = [];
+
+  // HS-7972 — debounced notify. fs.watch on macOS frequently fires multiple
+  // events per single git operation (and is otherwise unreliable when the
+  // user's terminal is touching the working tree). Without coalescing, a
+  // burst can wake the long-poll 10× per second, triggering visible UI
+  // thrash. 250 ms collapses bursts while keeping a real commit instant.
+  const fireDebounced = () => {
+    const entry = watchers.get(projectRoot);
+    if (entry === undefined) return;
+    if (entry.debounce !== null) clearTimeout(entry.debounce);
+    entry.debounce = setTimeout(() => {
+      const e2 = watchers.get(projectRoot);
+      if (e2 === undefined) return;
+      e2.debounce = null;
+      cache.delete(projectRoot);
+      e2.version++;
+      for (const sub of subscribers) {
+        try { sub(projectRoot); } catch { /* swallow */ }
+      }
+    }, WATCHER_DEBOUNCE_MS);
+  };
+
   for (const file of filenames) {
     const target = join(gitDir, file);
     if (!existsSync(target)) continue;
     try {
-      const handle = fsWatch(target, () => {
-        // Drop the cache + bump the version + notify subscribers. The
-        // subscribers (the long-poll layer) decide what to do with it.
-        cache.delete(projectRoot);
-        const entry = watchers.get(projectRoot);
-        if (entry !== undefined) entry.version++;
-        for (const sub of subscribers) {
-          try { sub(projectRoot); } catch { /* swallow */ }
-        }
-      });
+      const handle = fsWatch(target, () => fireDebounced());
       handles.push(handle);
     } catch {
       // fs.watch isn't supported on every filesystem (e.g. some FUSE
       // mounts). Degraded mode — focus-refetch on the client still works.
     }
   }
-  watchers.set(projectRoot, { watchers: handles, version: 0 });
+  watchers.set(projectRoot, { watchers: handles, version: 0, debounce: null });
 }
 
 /** Tear down a project's watcher + drop its cache entry. Called on
@@ -142,6 +166,7 @@ export function disposeGitWatcher(projectRoot: string): void {
     for (const handle of entry.watchers) {
       try { handle.close(); } catch { /* ignore */ }
     }
+    if (entry.debounce !== null) clearTimeout(entry.debounce);
     watchers.delete(projectRoot);
   }
   cache.delete(projectRoot);
