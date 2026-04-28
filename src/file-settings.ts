@@ -30,6 +30,9 @@ const JSON_VALUE_KEYS = new Set([
   // HS-7826 — visibility groupings (named visibility configurations).
   // See docs/39-visibility-groupings.md.
   'visibility_groupings',
+  // HS-7952 — per-project permission allow-rules (auto-allow specific
+  // tool/pattern pairs without showing the popup). See docs/47-richer-permission-overlay.md.
+  'permission_allow_rules',
 ]);
 
 export interface FileSettings {

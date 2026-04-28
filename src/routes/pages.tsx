@@ -413,6 +413,10 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
               <span>Terminal</span>
             </button>
+            <button className="settings-tab" data-tab="permissions" id="settings-tab-permissions">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span>Permissions</span>
+            </button>
             <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>
               <span>Experimental</span>
@@ -540,6 +544,29 @@ pageRoutes.get('/', (c) => {
                 <div id="plugin-conflict-list"></div>
               </div>
             </div> : null}
+            {/* HS-7953 — Permission allow-list management. Lists configured
+                rules; +Add inline form; per-row delete. Populated by
+                `permissionAllowListUI.tsx::loadAndRenderAllowList`. */}
+            <div className="settings-tab-panel" data-panel="permissions" id="settings-permissions-panel">
+              <div className="settings-section-header">
+                <h3>Auto-allow rules</h3>
+              </div>
+              <p className="settings-hint">Permission requests that match a rule below are auto-allowed without showing the popup. Patterns are JS regex anchored with <code>^…$</code> so <code>git status</code> matches <code>git status</code> exactly, not <code>cd /tmp &amp;&amp; git status</code>. Edit / Write requests are never allow-listable — file path alone doesn't capture diff intent.</p>
+              <div id="permission-allow-list" className="permission-allow-list">Loading rules…</div>
+              <div className="permission-allow-add">
+                <select id="permission-allow-add-tool" className="btn btn-sm">
+                  <option value="Bash">Bash</option>
+                  <option value="Read">Read</option>
+                  <option value="NotebookRead">NotebookRead</option>
+                  <option value="Glob">Glob</option>
+                  <option value="WebFetch">WebFetch</option>
+                  <option value="WebSearch">WebSearch</option>
+                </select>
+                <input type="text" id="permission-allow-add-pattern" placeholder="^git (status|diff)$" className="permission-allow-add-input" />
+                <button className="btn btn-sm" id="permission-allow-add-btn">+ Add rule</button>
+              </div>
+              <p className="settings-hint" id="permission-allow-add-error" style="display:none;color:#991b1b"></p>
+            </div>
             <div className="settings-tab-panel" data-panel="experimental" id="settings-experimental-panel">
               <div className="settings-field">
                 <label className="settings-checkbox-label">

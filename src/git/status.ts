@@ -235,3 +235,70 @@ export function bucketPorcelain(output: string): { staged: number; unstaged: num
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// HS-7956 — per-bucket file lists (Phase 3 popover)
+// ---------------------------------------------------------------------------
+
+const FILES_PER_BUCKET_CAP = 200;
+
+export interface GitStatusFiles {
+  staged: string[];
+  unstaged: string[];
+  untracked: string[];
+  conflicted: string[];
+  /** Per-bucket truncation flags — true when the actual count exceeded the
+   *  per-bucket cap and the array was clipped. The chip's expanded popover
+   *  shows a "…and N more" footer when any of these is true. */
+  truncated: { staged: boolean; unstaged: boolean; untracked: boolean; conflicted: boolean };
+}
+
+/** Read the per-bucket file lists from `git status --porcelain=v1`. Caps
+ *  each bucket at 200 entries — beyond that the popover gets unusable and
+ *  the user is better off in `git status` directly. Returns `null` when not
+ *  a git repo or git fails. */
+export function getGitStatusFiles(projectRoot: string, invoker: GitInvoker = defaultInvoker): GitStatusFiles | null {
+  if (!isGitRepo(projectRoot)) return null;
+  const root = getGitRoot(projectRoot) ?? projectRoot;
+  const res = invoker(['status', '--porcelain=v1', '--no-renames', '-z'], root);
+  if (res.status !== 0) return null;
+  return bucketPorcelainFiles(res.stdout);
+}
+
+/** Pure: parse `git status --porcelain=v1 -z` output into per-bucket file
+ *  lists. The `-z` flag separates entries with NUL bytes (instead of LF)
+ *  and disables path quoting — handles paths with spaces, embedded
+ *  newlines, and unicode reliably. Exported for tests. */
+export function bucketPorcelainFiles(output: string): GitStatusFiles {
+  const out: GitStatusFiles = {
+    staged: [], unstaged: [], untracked: [], conflicted: [],
+    truncated: { staged: false, unstaged: false, untracked: false, conflicted: false },
+  };
+  const conflictedCodes = new Set(['UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD']);
+  // -z output is a sequence of `XY <path>\0` records.
+  const records = output.split('\0').filter(r => r !== '');
+  for (const record of records) {
+    if (record.length < 3) continue;
+    const xy = record.slice(0, 2);
+    const path = record.slice(3); // skip the single space after XY
+    if (xy === '??') {
+      pushCapped(out.untracked, path, () => { out.truncated.untracked = true; });
+      continue;
+    }
+    if (conflictedCodes.has(xy)) {
+      pushCapped(out.conflicted, path, () => { out.truncated.conflicted = true; });
+      continue;
+    }
+    if (xy[0] !== ' ') pushCapped(out.staged, path, () => { out.truncated.staged = true; });
+    if (xy[1] !== ' ') pushCapped(out.unstaged, path, () => { out.truncated.unstaged = true; });
+  }
+  return out;
+}
+
+function pushCapped(arr: string[], item: string, onTruncate: () => void): void {
+  if (arr.length >= FILES_PER_BUCKET_CAP) {
+    onTruncate();
+    return;
+  }
+  arr.push(item);
+}

@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
+import { readFileSettings } from '../file-settings.js';
+import { extractPrimaryValue, findMatchingAllowRule, parseAllowRules } from '../permissionAllowRules.js';
 import type { AppEnv } from '../types.js';
 import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js';
 import { ChannelHeartbeatSchema, ChannelTriggerSchema, parseBody, PermissionRespondSchema } from './validation.js';
@@ -90,12 +92,51 @@ async function fetchPermission(dataDir: string): Promise<PermissionResult> {
     const data = await res.json() as PermissionResult;
     if (data.pending !== null) {
       const reqId = data.pending.request_id ?? '';
+      const toolName = data.pending.tool_name ?? 'unknown tool';
+      const description = data.pending.description ?? '';
+      const inputPreview = data.pending.input_preview ?? (
+        data.pending.tool_input !== undefined ? JSON.stringify(data.pending.tool_input, null, 2).slice(0, 2000) : ''
+      );
+
+      // HS-7952 — auto-allow gate. If a configured rule matches the
+      // (tool, primary-field-value) pair, immediately POST `/permission/respond`
+      // with `behavior: 'allow'` to the channel server. Bypasses the
+      // long-poll wake entirely so no popup ever renders for this
+      // request. Logged to `command_log` as
+      // `Permission: <tool> — Auto-allowed (rule <id>)` for audit.
+      if (reqId !== '' && !autoAllowedRequests.has(reqId)) {
+        const settings = readFileSettings(dataDir);
+        const rules = parseAllowRules(settings.permission_allow_rules);
+        if (rules.length > 0) {
+          const primary = extractPrimaryValue(toolName, inputPreview);
+          if (primary !== null) {
+            const match = findMatchingAllowRule(toolName, primary, rules);
+            if (match !== null) {
+              autoAllowedRequests.add(reqId);
+              // Log the auto-allow (audit trail).
+              addLogEntry(
+                'permission_request',
+                'incoming',
+                `Permission: ${toolName} — Auto-allowed (rule ${match.id})`,
+                (description !== '' ? description + '\n\n' : '') + inputPreview,
+              ).catch(() => {});
+              // Forward the allow to the channel server. Fire-and-forget;
+              // any error is logged + the user will see the popup on the
+              // next long-poll cycle (graceful degradation).
+              fetch(`http://127.0.0.1:${port}/permission/respond`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ request_id: reqId, behavior: 'allow' }),
+              }).catch(() => { /* swallow */ });
+              // Hide the pending state from the long-poll caller — the
+              // popup never renders for this request.
+              return { pending: null };
+            }
+          }
+        }
+      }
+
       if (reqId !== '' && !loggedPermissionRequests.has(reqId)) {
-        const toolName = data.pending.tool_name ?? 'unknown tool';
-        const description = data.pending.description ?? '';
-        const inputPreview = data.pending.input_preview ?? (
-          data.pending.tool_input !== undefined ? JSON.stringify(data.pending.tool_input, null, 2).slice(0, 2000) : ''
-        );
         const detail = (description !== '' ? description + '\n\n' : '') + inputPreview;
         addLogEntry('permission_request', 'incoming', `Permission: ${toolName}`, detail)
           .then(entry => { loggedPermissionRequests.set(reqId, entry.id); })
@@ -107,6 +148,12 @@ async function fetchPermission(dataDir: string): Promise<PermissionResult> {
     return { pending: null };
   }
 }
+
+/** HS-7952 — request_ids we've already auto-allowed, so a long-poll race
+ *  doesn't double-allow + double-log the same request. The set never gets
+ *  GC'd within a process lifetime — request_ids are random per-Claude-call,
+ *  not enumerated, so unbounded growth is bounded by Claude's usage. */
+const autoAllowedRequests = new Set<string>();
 
 /** Long-poll: returns immediately if a permission is pending, otherwise waits up to 3s. */
 channelRoutes.get('/channel/permission', async (c) => {

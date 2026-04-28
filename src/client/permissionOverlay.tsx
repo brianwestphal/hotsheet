@@ -2,7 +2,9 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
 import { toElement } from './dom.js';
+import { extractPrimaryValue } from '../permissionAllowRules.js';
 import { renderEditDiffPreview } from './editDiffPreview.js';
+import { buildAlwaysAllowAffordance } from './permissionAllowListUI.js';
 import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
 import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
@@ -235,6 +237,25 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   if (editDiff !== null) {
     const slot = popup.querySelector<HTMLElement>('.permission-popup-diff-slot');
     if (slot !== null) slot.replaceWith(renderEditDiffPreview(editDiff));
+  }
+
+  // HS-7953 — "Always allow this" affordance below the links row. Skipped
+  // for non-allow-listable tools (Edit / Write / unknown) and when the
+  // primary-field value is empty. Confirming a new rule writes to
+  // settings.json then immediately invokes the allow-current-request path.
+  const primaryValue = perm.input_preview !== undefined
+    ? extractPrimaryValue(perm.tool_name, perm.input_preview)
+    : null;
+  if (primaryValue !== null) {
+    const affordance = buildAlwaysAllowAffordance({
+      toolName: perm.tool_name,
+      primaryValue,
+      onCommit: () => { respondToPermission('allow'); },
+    });
+    if (affordance !== null) {
+      const linksRow = popup.querySelector('.permission-popup-links');
+      linksRow?.parentElement?.insertBefore(affordance, linksRow.nextSibling);
+    }
   }
 
   function clearPopupOnly() {

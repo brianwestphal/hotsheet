@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { repositionGitStatusPopover, toggleGitStatusPopover } from './gitStatusPopover.js';
 
 /**
  * HS-7954 — sidebar git status chip. Subscribes to (a) the existing
@@ -50,6 +51,14 @@ export function initGitStatusChip(): void {
   // Re-fetch on window focus (user often alt-tabs back from a terminal
   // after `git commit` and expects to see the change).
   window.addEventListener('focus', () => { void refresh(); });
+
+  // HS-7956 — click the chip to toggle the expanded popover.
+  chipEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (chipEl !== null) toggleGitStatusPopover(chipEl);
+  });
+  // Keep the popover anchored on window resize.
+  window.addEventListener('resize', repositionGitStatusPopover);
 }
 
 /** Public — call from the existing poll loop on every version bump so

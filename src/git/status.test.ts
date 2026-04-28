@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { bucketPorcelain } from './status.js';
+import { bucketPorcelain, bucketPorcelainFiles } from './status.js';
 
 describe('bucketPorcelain (HS-7954)', () => {
   it('returns all-zero for empty input', () => {
@@ -61,5 +61,51 @@ describe('bucketPorcelain (HS-7954)', () => {
     // The path can contain trailing whitespace which should be irrelevant
     // to the count.
     expect(bucketPorcelain('?? path with trailing space   \n')).toEqual({ staged: 0, unstaged: 0, untracked: 1, conflicted: 0 });
+  });
+});
+
+/**
+ * HS-7956 — `bucketPorcelainFiles` parses `git status --porcelain=v1 -z`
+ * output into per-bucket file path lists with a 200-cap per bucket and
+ * truncation flags. The `-z` format is NUL-separated (no LF / no quoting)
+ * so paths with spaces / embedded newlines round-trip.
+ */
+describe('bucketPorcelainFiles (HS-7956)', () => {
+  it('returns empty arrays for empty input', () => {
+    const out = bucketPorcelainFiles('');
+    expect(out.staged).toEqual([]);
+    expect(out.unstaged).toEqual([]);
+    expect(out.untracked).toEqual([]);
+    expect(out.conflicted).toEqual([]);
+    expect(out.truncated).toEqual({ staged: false, unstaged: false, untracked: false, conflicted: false });
+  });
+
+  it('parses NUL-separated records into the right buckets', () => {
+    const records = ['A  src/added.ts', ' M src/modified.ts', '?? new.txt', 'UU conflict.ts', 'MM partial.ts'];
+    const out = bucketPorcelainFiles(records.join('\0') + '\0');
+    expect(out.staged).toEqual(['src/added.ts', 'partial.ts']);
+    expect(out.unstaged).toEqual(['src/modified.ts', 'partial.ts']);
+    expect(out.untracked).toEqual(['new.txt']);
+    expect(out.conflicted).toEqual(['conflict.ts']);
+  });
+
+  it('handles paths with spaces (the whole point of the -z format)', () => {
+    const out = bucketPorcelainFiles(['?? new file with spaces.ts'].join('\0') + '\0');
+    expect(out.untracked).toEqual(['new file with spaces.ts']);
+  });
+
+  it('flags truncation per bucket when the cap is exceeded', () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 250; i++) lines.push(`?? new${i}.ts`);
+    const out = bucketPorcelainFiles(lines.join('\0') + '\0');
+    expect(out.untracked.length).toBe(200);
+    expect(out.truncated.untracked).toBe(true);
+    // Other buckets aren't truncated.
+    expect(out.truncated.staged).toBe(false);
+  });
+
+  it('skips short / blank records (defensive)', () => {
+    const out = bucketPorcelainFiles('\0\0??' + '\0' + '\0');
+    expect(out.untracked).toEqual([]);
   });
 });

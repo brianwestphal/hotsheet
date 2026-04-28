@@ -23,6 +23,12 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       panels.forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       document.querySelector(`.settings-tab-panel[data-panel="${target}"]`)?.classList.add('active');
+      // HS-7953 — lazy-load the Permissions tab's allow-list when it's
+      // first shown so the rule list renders without an extra fetch on
+      // every settings-dialog open.
+      if (target === 'permissions') {
+        void import('./permissionAllowListUI.js').then(m => m.loadAndRenderAllowList());
+      }
     });
   });
 

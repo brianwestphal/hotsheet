@@ -8026,8 +8026,14 @@ body.terminal-dashboard-active {
   color: var(--text-muted);
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  cursor: default;
+  // HS-7956 — chip is clickable (toggles the expanded popover).
+  cursor: pointer;
   user-select: none;
+  transition: background 100ms ease;
+
+  &:hover {
+    background: var(--bg-hover, var(--bg-secondary));
+  }
   // The chip lives in the sidebar (a flex column) — explicitly self-start
   // so it doesn't stretch to the sidebar's full width.
   align-self: flex-start;
@@ -8096,4 +8102,355 @@ body.terminal-dashboard-active {
     font-weight: 600;
     letter-spacing: -0.25px;
   }
+}
+
+// =============================================================================
+// HS-7956 — Git status tracker Phase 3 expanded popover
+// docs/48-git-status-tracker.md §48.4.2
+// =============================================================================
+
+.git-popover {
+  position: fixed;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  z-index: 1500;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.git-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.git-popover-title {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.git-popover-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--border);
+  }
+}
+
+.git-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.git-popover-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 0;
+}
+
+.git-popover-ab {
+  font-weight: 600;
+  color: var(--accent, #3b82f6);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.git-popover-buckets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.git-popover-bucket {
+  display: flex;
+  flex-direction: column;
+}
+
+.git-popover-bucket-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--text);
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+
+  .git-popover-bucket-chevron {
+    transition: transform 100ms ease;
+    width: 10px;
+    color: var(--text-muted);
+    font-size: 9px;
+  }
+  .git-popover-bucket-count {
+    font-weight: 600;
+    min-width: 22px;
+  }
+  .git-popover-bucket-label {
+    color: var(--text-muted);
+  }
+}
+
+.git-popover-bucket.is-expanded .git-popover-bucket-chevron {
+  transform: rotate(90deg);
+}
+
+.git-popover-bucket-files {
+  display: none;
+  flex-direction: column;
+  margin-left: 24px;
+  padding: 2px 0;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+}
+
+.git-popover-bucket.is-expanded .git-popover-bucket-files {
+  display: flex;
+}
+
+.git-popover-file {
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--accent, #3b82f6);
+  }
+}
+
+.git-popover-file-more {
+  padding: 2px 6px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.git-popover-fetch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.git-popover-fetch-status {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &.is-error {
+    color: #991b1b;
+  }
+}
+
+.git-popover-fetch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--accent, #3b82f6);
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.05);
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+.git-popover-file-menu {
+  position: fixed;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 2px;
+  z-index: 1600;
+}
+
+.git-popover-file-menu-item {
+  display: block;
+  width: 100%;
+  padding: 4px 12px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  border-radius: 3px;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+}
+
+// =============================================================================
+// HS-7953 — Permission allow-list management
+// docs/47-richer-permission-overlay.md §47.4
+// =============================================================================
+
+// Settings → Permissions table.
+.permission-allow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.permission-allow-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 12px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+.permission-allow-row {
+  display: grid;
+  grid-template-columns: minmax(80px, auto) 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.permission-allow-tool {
+  font-weight: 600;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.permission-allow-pattern {
+  background: var(--bg-secondary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permission-allow-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.permission-allow-delete {
+  padding: 2px 8px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+// +Add row at the bottom of the table.
+.permission-allow-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.permission-allow-add-input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+}
+
+// "Always allow this" affordance inside the permission popup.
+.permission-popup-always-allow {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.permission-popup-always-allow-link {
+  color: var(--accent, #3b82f6);
+  font-size: 11px;
+  text-decoration: underline;
+
+  &:hover { text-decoration: none; }
+}
+
+.permission-popup-always-allow-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.permission-popup-always-allow-input {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  width: 100%;
+}
+
+.permission-popup-always-allow-form .btn {
+  align-self: flex-start;
 }

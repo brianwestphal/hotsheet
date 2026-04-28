@@ -600,30 +600,31 @@ function paintSectionedLayout(root: HTMLElement, sections: ProjectSectionData[])
 /** HS-7662 — flow layout: one grid container, one tile-grid handle, flat
  *  list of tiles in registered-project order. Empty projects (zero
  *  terminals OR every terminal hidden) are dropped entirely (per user
- *  feedback #5). The first tile of each project's run gets the project
- *  name as a `{ProjectName} ›` label prefix; subsequent tiles in the same
- *  run render the bare terminal label (the run itself is what groups
- *  them visually — HS-7824 dropped the colored badge dots that originally
- *  marked subsequent tiles since they didn't actually clarify grouping).
- *  No `+` button, no terminal-count headings, no per-section chrome (per
- *  user feedback #7 + §25.10.5 spec). */
+ *  feedback #5).
+ *
+ *  HS-7967 — every tile gets the project name as a `{ProjectName} ›` label
+ *  prefix, not just the first tile of each project's run. Originally the
+ *  prefix was only on the run's first tile (the visual run was supposed to
+ *  carry the grouping for subsequent tiles, after HS-7824 dropped the
+ *  colored badge dots that originally marked them); the user reported back
+ *  that "in flow mode" the lone first-tile prefix didn't reliably tell
+ *  them which project a given subsequent tile belonged to. Always-prefix
+ *  is unambiguous + symmetric, and the cost is just a few extra characters
+ *  per tile label. No `+` button, no terminal-count headings, no per-
+ *  section chrome (per user feedback #7 + §25.10.5 spec). */
 function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): void {
-  // Build flat tile list, marking first-of-run for each project.
   const flat: { secret: string; entry: TileEntry; project: ProjectInfo }[] = [];
   for (const section of sections) {
     const visible = filterVisibleEntries(section.project.secret, section.terminals);
     if (visible.length === 0) continue;
-    visible.forEach((terminal, index) => {
+    for (const terminal of visible) {
       const baseEntry = toTileEntry(section.project.secret)(terminal);
-      const projectBadge: { name?: string } | undefined = index === 0
-        ? { name: section.project.name }
-        : undefined;
       flat.push({
         secret: section.project.secret,
         project: section.project,
-        entry: projectBadge !== undefined ? { ...baseEntry, projectBadge } : baseEntry,
+        entry: { ...baseEntry, projectBadge: { name: section.project.name } },
       });
-    });
+    }
   }
 
   if (flat.length === 0) {
