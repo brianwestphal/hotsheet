@@ -7,13 +7,19 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildGenericCancelPayload,
+  buildGenericPayload,
   buildNumberedCancelPayload,
   buildNumberedPayload,
+  buildYesNoCancelPayload,
+  buildYesNoPayload,
   claudeNumberedParser,
+  genericParser,
   hashQuestion,
   isClaudeNumberedFooter,
   runParserRegistry,
   trimRows,
+  yesNoParser,
 } from './parsers.js';
 
 describe('hashQuestion (HS-7971)', () => {
@@ -321,5 +327,210 @@ describe('buildNumberedPayload (HS-7971)', () => {
 describe('buildNumberedCancelPayload (HS-7971)', () => {
   it('emits the Esc byte', () => {
     expect(buildNumberedCancelPayload()).toBe('\x1b');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HS-7986 Phase 2 — yesNoParser
+// ---------------------------------------------------------------------------
+
+describe('yesNoParser (HS-7986)', () => {
+  it('matches lowercase [y/n]', () => {
+    const m = yesNoParser.match(['Are you sure? [y/n]']);
+    expect(m).not.toBeNull();
+    expect(m!.shape).toBe('yesno');
+    expect(m!.parserId).toBe('yesno');
+    expect(m!.signature).toMatch(/^yesno:/);
+    if (m!.shape === 'yesno') {
+      expect(m!.yesIsCapital).toBe(false);
+      expect(m!.noIsCapital).toBe(false);
+    }
+  });
+
+  it('matches [Y/n] and surfaces the capital flag', () => {
+    const m = yesNoParser.match(['Continue? [Y/n]']);
+    expect(m).not.toBeNull();
+    if (m!.shape === 'yesno') {
+      expect(m!.yesIsCapital).toBe(true);
+      expect(m!.noIsCapital).toBe(false);
+    }
+  });
+
+  it('matches (y/N) parens variant', () => {
+    const m = yesNoParser.match(['Delete this file? (y/N)']);
+    expect(m).not.toBeNull();
+    if (m!.shape === 'yesno') {
+      expect(m!.yesIsCapital).toBe(false);
+      expect(m!.noIsCapital).toBe(true);
+    }
+  });
+
+  it('matches [yes/no] long-form', () => {
+    const m = yesNoParser.match(['Overwrite? [yes/no]']);
+    expect(m).not.toBeNull();
+    expect(m!.shape).toBe('yesno');
+  });
+
+  it('matches a trailing colon variant', () => {
+    const m = yesNoParser.match(['Proceed [y/n]:']);
+    expect(m).not.toBeNull();
+    if (m!.shape === 'yesno') {
+      // Trailing : stripped from question summary.
+      expect(m!.question).toBe('Proceed');
+    }
+  });
+
+  it('only inspects the trailing visible non-empty line', () => {
+    const m = yesNoParser.match([
+      'some earlier output',
+      'Continue? [y/n]',
+      '',
+    ]);
+    expect(m).not.toBeNull();
+  });
+
+  it('returns null when no marker is present', () => {
+    expect(yesNoParser.match(['just regular shell output'])).toBeNull();
+  });
+
+  it('rejects markdown list lines that contain a yes/no marker', () => {
+    expect(yesNoParser.match(['- this option offers [y/n] support'])).toBeNull();
+  });
+
+  it('rejects shell comments starting with #', () => {
+    expect(yesNoParser.match(['# example: prompt with [y/n]'])).toBeNull();
+  });
+
+  it('rejects numbered-list items', () => {
+    expect(yesNoParser.match(['1. like this [y/n]'])).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HS-7986 Phase 2 — genericParser
+// ---------------------------------------------------------------------------
+
+describe('genericParser (HS-7986)', () => {
+  it('matches a trailing question mark on the last visible line', () => {
+    const m = genericParser.match(['What is your name?']);
+    expect(m).not.toBeNull();
+    expect(m!.shape).toBe('generic');
+    if (m!.shape === 'generic') {
+      expect(m!.question).toBe('What is your name');
+      expect(m!.rawText).toBe('What is your name?');
+    }
+  });
+
+  it('matches a trailing `?:` cosmetic prompt suffix', () => {
+    const m = genericParser.match(['Pick a colour ?:']);
+    expect(m).not.toBeNull();
+  });
+
+  it('returns null when there is no trailing ?', () => {
+    expect(genericParser.match(['just regular output'])).toBeNull();
+  });
+
+  it('rejects a trailing question mark inside a markdown comment line', () => {
+    expect(genericParser.match(['> a quoted question?'])).toBeNull();
+  });
+
+  it('rejects a trailing question mark on a numbered-list line', () => {
+    expect(genericParser.match(['1. is this a question?'])).toBeNull();
+  });
+
+  it('preserves the full visible context as rawText', () => {
+    const rows = [
+      'Database connection lost.',
+      'Retry?',
+    ];
+    const m = genericParser.match(rows);
+    expect(m).not.toBeNull();
+    if (m!.shape === 'generic') {
+      expect(m!.rawText.split('\n')).toEqual(rows);
+    }
+  });
+
+  it('produces a parserId-prefixed signature', () => {
+    const m = genericParser.match(['Why?']);
+    expect(m!.signature).toMatch(/^generic:/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HS-7986 Phase 2 — registry priority
+// ---------------------------------------------------------------------------
+
+describe('runParserRegistry priority (HS-7986)', () => {
+  it('returns claude-numbered first when the prompt fits both shapes', () => {
+    const rows = [
+      'Continue [y/n]?',
+      '',
+      '> 1. Yes',
+      '  2. No',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const m = runParserRegistry(rows);
+    expect(m!.parserId).toBe('claude-numbered');
+  });
+
+  it('returns yesno when only yesno matches', () => {
+    const m = runParserRegistry(['Wipe disk? [y/N]']);
+    expect(m!.parserId).toBe('yesno');
+  });
+
+  it('returns generic only after the others fail', () => {
+    const m = runParserRegistry(['What is your favourite colour?']);
+    expect(m!.parserId).toBe('generic');
+  });
+
+  it('returns null when nothing matches', () => {
+    expect(runParserRegistry(['plain shell output'])).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HS-7986 Phase 2 — payload builders
+// ---------------------------------------------------------------------------
+
+describe('buildYesNoPayload (HS-7986)', () => {
+  const fakeMatch = {
+    parserId: 'yesno',
+    shape: 'yesno' as const,
+    question: 'Q',
+    questionLines: ['Q [y/n]'],
+    yesIsCapital: false,
+    noIsCapital: false,
+    signature: 'yesno:abc:0',
+  };
+
+  it('emits y\\r for yes', () => {
+    expect(buildYesNoPayload(fakeMatch, 'yes')).toBe('y\r');
+  });
+
+  it('emits n\\r for no', () => {
+    expect(buildYesNoPayload(fakeMatch, 'no')).toBe('n\r');
+  });
+});
+
+describe('buildYesNoCancelPayload (HS-7986)', () => {
+  it('emits Esc', () => {
+    expect(buildYesNoCancelPayload()).toBe('\x1b');
+  });
+});
+
+describe('buildGenericPayload (HS-7986)', () => {
+  it('appends \\r to the user text', () => {
+    expect(buildGenericPayload('hello')).toBe('hello\r');
+  });
+
+  it('handles empty input', () => {
+    expect(buildGenericPayload('')).toBe('\r');
+  });
+});
+
+describe('buildGenericCancelPayload (HS-7986)', () => {
+  it('emits Esc', () => {
+    expect(buildGenericCancelPayload()).toBe('\x1b');
   });
 });

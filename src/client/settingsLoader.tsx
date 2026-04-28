@@ -38,6 +38,12 @@ export async function loadSettings() {
     if (settings.shell_integration_ui !== '') {
       state.settings.shell_integration_ui = settings.shell_integration_ui !== 'false';
     }
+    // HS-7988 — §52 Phase 4 master toggle. Default true so the detector is
+    // on for everyone after upgrade; flipping false short-circuits the
+    // detector before the parser registry runs.
+    if (settings.terminal_prompt_detection_enabled !== undefined && settings.terminal_prompt_detection_enabled !== '') {
+      state.settings.terminal_prompt_detection_enabled = settings.terminal_prompt_detection_enabled !== 'false';
+    }
     if (settings.sort_by) state.sortBy = settings.sort_by;
     if (settings.sort_dir) state.sortDir = settings.sort_dir;
   } catch { /* use defaults */ }

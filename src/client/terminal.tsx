@@ -35,6 +35,7 @@ import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
 import {
+  clearDetectorSuppression,
   createDetector,
   type Detector,
   disposeDetector,
@@ -45,6 +46,10 @@ import {
   SCAN_ROW_COUNT,
 } from './terminalPrompt/detector.js';
 import { openTerminalPromptOverlay } from './terminalPromptOverlay.js';
+import { hasOpenDedicatedTerminalView } from './terminalDedicatedState.js';
+import { appendAllowRule } from './terminalPrompt/allowRulesStore.js';
+import { buildAllowRule } from './terminalPrompt/allowRules.js';
+import { tryAutoAllow } from './terminalPrompt/autoAllow.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { configuredSubsetInStripOrder, reorderConfigsById, reorderIds } from './terminalTabReorder.js';
 import { pickNearestTerminalTabId } from './terminalTabSelection.js';
@@ -137,6 +142,9 @@ interface TerminalInstance {
    *  PTY chunk because the detector needs the xterm Terminal handle, which
    *  is mounted later (`createInstance` returns before xterm activation). */
   promptDetector: Detector | null;
+  /** HS-7986 Phase 2 — terminal-header chip surfaced when the user has
+   *  clicked "Not a prompt" on the §52 overlay. Click resumes detection. */
+  promptResumeChip: HTMLButtonElement;
 }
 
 interface CommandRecord {
@@ -560,6 +568,13 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
             know the SearchAddon instance). Hidden slot until mount keeps the
             header's fixed-width layout stable before the first connect. */}
         <span className="terminal-search-slot"></span>
+        {/* HS-7986 — prompt-detection suppression resume chip. Hidden by
+            default; shown when the user clicks "Not a prompt — let me handle
+            it" on the §52 overlay so they can re-arm detection without
+            typing into the terminal. Click clears suppression. */}
+        <button className="terminal-header-btn terminal-prompt-resume-chip" title="Prompt detection paused — click to resume" style="display:none">
+          <span className="terminal-prompt-resume-label">Detection paused — Resume</span>
+        </button>
         {/* HS-7268 — copy-last-output button, hidden until OSC 133 escapes are
             seen on this terminal. Reveals in `handleOsc133` when `shellIntegration.enabled`
             flips; re-hides on PTY restart via `resetShellIntegration`. */}
@@ -599,6 +614,7 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
   const labelText = pane.querySelector<HTMLElement>('.terminal-label')!;
   const powerBtn = pane.querySelector<HTMLButtonElement>('.terminal-power-btn')!;
   const clearBtn = pane.querySelector<HTMLButtonElement>('.terminal-clear-btn')!;
+  const promptResumeChip = pane.querySelector<HTMLButtonElement>('.terminal-prompt-resume-chip')!;
 
   const inst: TerminalInstance = {
     id: config.id,
@@ -627,7 +643,16 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     hasBell: false,
     shellIntegration: { enabled: false, commands: [], current: null, nextId: 1 },
     promptDetector: null,
+    promptResumeChip,
   };
+
+  // HS-7986 — chip click resumes detection (clears suppressed flag) and hides
+  // the chip. The detector might still be `null` if the user has never had a
+  // prompt fire — guard accordingly.
+  promptResumeChip.addEventListener('click', () => {
+    if (inst.promptDetector !== null) clearDetectorSuppression(inst.promptDetector);
+    promptResumeChip.style.display = 'none';
+  });
 
   powerBtn.addEventListener('click', () => { void onPowerClick(inst); });
   clearBtn.addEventListener('click', () => { inst.term?.clear(); });
@@ -1003,7 +1028,11 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
     }
     // HS-7971 Phase 1 — a real user keystroke clears the per-instance
     // "Not a prompt" suppression so a subsequent prompt re-arms detection.
+    // HS-7986 Phase 2 — also hide the resume chip since suppression cleared.
     if (inst.promptDetector !== null) notifyUserKeystroke(inst.promptDetector);
+    if (inst.promptResumeChip.style.display !== 'none') {
+      inst.promptResumeChip.style.display = 'none';
+    }
   });
   term.onResize(({ cols, rows }) => {
     if (inst.ws !== null && inst.ws.readyState === WebSocket.OPEN) {
@@ -1728,24 +1757,51 @@ function kickPromptDetector(inst: TerminalInstance): void {
         return out;
       },
       isActive() {
-        return isTerminalTabActive(inst);
+        // HS-7988 — master toggle. When the user has disabled terminal-
+        // prompt detection in Settings → Permissions, never fire.
+        if (!state.settings.terminal_prompt_detection_enabled) return false;
+        // HS-7985 — when a dedicated view (dashboard or drawer-grid) is open,
+        // its own xterm + detector handle prompts there. Drawer surface stays
+        // silent so the user doesn't get two overlays for the same prompt.
+        return isTerminalTabActive(inst) && !hasOpenDedicatedTerminalView();
       },
       onMatch(match) {
         const detector = inst.promptDetector;
         if (detector === null) return;
+        const sendToPty = (payload: string): boolean => {
+          if (inst.ws === null || inst.ws.readyState !== WebSocket.OPEN) return false;
+          inst.ws.send(new TextEncoder().encode(payload));
+          return true;
+        };
+        // HS-7987 — auto-allow gate runs BEFORE we mount the overlay. On
+        // match it writes the rule's payload directly + posts the audit
+        // entry, and we keep the overlay closed so the user never sees it.
+        const auto = tryAutoAllow({ match, send: sendToPty });
+        if (auto.applied) {
+          markDetectorClosed(detector);
+          return;
+        }
         openTerminalPromptOverlay({
           match,
           anchor: inst.body,
-          onSend(payload) {
-            if (inst.ws === null || inst.ws.readyState !== WebSocket.OPEN) return false;
-            inst.ws.send(new TextEncoder().encode(payload));
-            return true;
-          },
+          onSend: sendToPty,
           onClose() {
             markDetectorClosed(detector);
           },
           onDismissAsNonPrompt() {
             markDetectorSuppressed(detector);
+            // HS-7986 — surface the resume chip so the user has a one-click
+            // way to re-arm detection without typing into the terminal.
+            inst.promptResumeChip.style.display = '';
+          },
+          onAddAllowRule(choiceIndex, choiceLabel) {
+            // HS-7987 — fire-and-forget rule persist. Errors are swallowed
+            // by the store; the user's response still lands via onSend
+            // even if the PATCH fails.
+            try {
+              const rule = buildAllowRule(match, choiceIndex, choiceLabel);
+              void appendAllowRule(rule);
+            } catch { /* generic shape would throw; we never pass the cb for generic anyway */ }
           },
         });
       },

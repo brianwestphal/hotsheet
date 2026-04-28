@@ -229,13 +229,133 @@ export const claudeNumberedParser: PromptParser = {
 };
 
 // ---------------------------------------------------------------------------
+// Parser: yesno
+// ---------------------------------------------------------------------------
+
+/**
+ * Matches the trailing line of a generic Unix-style yes/no prompt. Common
+ * shapes accepted:
+ *   - `Are you sure? [y/n]`
+ *   - `Continue? [Y/n]:`
+ *   - `Delete this file (y/N)?`
+ *   - `Overwrite? [yes/no]`
+ *
+ * Conservative — the marker MUST appear on the last visible non-empty row.
+ * False-positive defence: skip when the line looks like a markdown list /
+ * comment / numbered code block. Generic-fallback responses are NEVER
+ * allow-listable in Phase 3 (`docs/52-terminal-prompt-overlay.md` §52.1) —
+ * the same caution would apply if anyone tried to extend allow-rules to the
+ * yesno shape; today they're not on the auto-allow list either.
+ */
+const YESNO_MARKER_RX = /[[(]\s*(y(?:es)?)\s*\/\s*(n(?:o)?)\s*[\])]/i;
+
+function isUpperCase(letter: string): boolean {
+  return letter.length > 0 && letter === letter.toUpperCase() && letter !== letter.toLowerCase();
+}
+
+export const yesNoParser: PromptParser = {
+  id: 'yesno',
+  match(rows) {
+    const trimmed = trimRows(rows);
+    if (trimmed.length === 0) return null;
+    const last = trimmed[trimmed.length - 1];
+    const m = YESNO_MARKER_RX.exec(last);
+    if (m === null) return null;
+    // Skip lines that look like docs / code rather than prompts.
+    if (looksLikeDocsLine(last)) return null;
+
+    const yesIsCapital = isUpperCase(m[1][0]);
+    const noIsCapital = isUpperCase(m[2][0]);
+
+    // Strip the marker + trailing punctuation for the title-bar summary.
+    const summary = last
+      .replace(YESNO_MARKER_RX, '')
+      .replace(/[?:]\s*$/, '')
+      .trim();
+    const question = summary !== '' ? summary : 'Yes / No?';
+    const questionLines = [last];
+    const signature = `yesno:${hashQuestion(question)}:0`;
+
+    return {
+      parserId: 'yesno',
+      shape: 'yesno',
+      question,
+      questionLines,
+      yesIsCapital,
+      noIsCapital,
+      signature,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Parser: generic
+// ---------------------------------------------------------------------------
+
+/**
+ * Conservative trailing-`?` heuristic for prompts the registry doesn't
+ * specifically recognise. Last visible non-empty line must end with `?` (an
+ * optional trailing `:` or `>` is allowed for prompt cosmetics). Skip lines
+ * that start with markdown / comment / list markers since those are
+ * almost always documentation, not prompts.
+ *
+ * Generic-fallback responses are NEVER allow-listed in Phase 3 — see
+ * `docs/52-terminal-prompt-overlay.md` §52.1. Free-text answers are too
+ * risky to auto-respond.
+ */
+const GENERIC_TRAILING_RX = /\?\s*[:>]?\s*$/;
+const NUMBERED_LIST_RX = /^\s*\d+[.)]\s/;
+
+function looksLikeDocsLine(line: string): boolean {
+  const trimmedLeft = line.replace(/^\s+/, '');
+  if (trimmedLeft === '') return true;
+  const first = trimmedLeft[0];
+  if (first === '#' || first === '>' || first === '-' || first === '*' || first === '|') return true;
+  if (NUMBERED_LIST_RX.test(trimmedLeft)) return true;
+  return false;
+}
+
+export const genericParser: PromptParser = {
+  id: 'generic',
+  match(rows) {
+    const trimmed = trimRows(rows);
+    if (trimmed.length === 0) return null;
+    const last = trimmed[trimmed.length - 1];
+    if (!GENERIC_TRAILING_RX.test(last)) return null;
+    if (looksLikeDocsLine(last)) return null;
+
+    const summary = last.replace(/[?:>]\s*$/, '').trim();
+    const question = summary !== '' ? summary : '(unlabelled prompt)';
+    // Keep the full visible context for the monospaced reproduction in the
+    // overlay. The last 10 rows are usually enough but we cap by what we
+    // were given.
+    const rawText = trimmed.join('\n');
+    const signature = `generic:${hashQuestion(question)}:0`;
+
+    return {
+      parserId: 'generic',
+      shape: 'generic',
+      question,
+      questionLines: trimmed,
+      rawText,
+      signature,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
 /** Registry order is priority order. Parsers are tried in array order; first
- *  non-null match wins. Phase 1 ships only `claude-numbered`; HS-7971
- *  Phase 2 will add `yesno` and the `generic` fallback. */
-export const PROMPT_PARSERS: readonly PromptParser[] = [claudeNumberedParser];
+ *  non-null match wins. `claude-numbered` is most specific so it goes first;
+ *  `yesno` is next; `generic` is the heuristic fallback that catches
+ *  everything else. */
+export const PROMPT_PARSERS: readonly PromptParser[] = [
+  claudeNumberedParser,
+  yesNoParser,
+  genericParser,
+];
 
 /** Run every registered parser against the visible rows; return the first
  *  match, or null when nothing parses. */
@@ -272,5 +392,35 @@ export function buildNumberedPayload(choices: readonly ChoiceOption[], chosenInd
 
 /** Pure: build the cancel payload for a numbered prompt — sends Esc. */
 export function buildNumberedCancelPayload(): string {
+  return '\x1b';
+}
+
+/**
+ * Pure: build the keystroke payload for a yes/no prompt. Always returns
+ * lowercase `y\r` / `n\r` since virtually every CLI accepts either case.
+ * The match's `yesIsCapital` / `noIsCapital` flags are preserved on the
+ * `MatchResult` for future use (e.g. exact-case echo of the marker), but
+ * the response stays simple here.
+ */
+export function buildYesNoPayload(_match: YesNoMatch, choice: 'yes' | 'no'): string {
+  return (choice === 'yes' ? 'y' : 'n') + '\r';
+}
+
+/** Pure: build the cancel payload for yes/no prompts — sends Esc. Some
+ *  shells treat Esc as cancel; others ignore it and the prompt stays open
+ *  until the user responds. Returning Esc is the least-bad default. */
+export function buildYesNoCancelPayload(): string {
+  return '\x1b';
+}
+
+/** Pure: build the keystroke payload for the generic fallback. Caller
+ *  collects free-form text from the overlay's textarea and passes it here.
+ *  We always append `\r` so the shell processes it as a complete line. */
+export function buildGenericPayload(text: string): string {
+  return text + '\r';
+}
+
+/** Pure: cancel payload for the generic fallback. */
+export function buildGenericCancelPayload(): string {
   return '\x1b';
 }

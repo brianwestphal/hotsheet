@@ -8658,3 +8658,138 @@ label.detail-details-label {
   font-size: 11px;
   margin: 0 12px 8px;
 }
+
+// HS-7988 Phase 4 — Settings → Permissions sub-section divider + disabled-
+// state hint for the terminal-prompt rule list when the master toggle is
+// off (rules render greyed-out for review).
+.settings-section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 24px 0 16px;
+  opacity: 0.4;
+}
+
+.terminal-prompt-allow-rule-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  &.is-disabled {
+    opacity: 0.55;
+    pointer-events: none;
+  }
+}
+
+// HS-7987 Phase 3 — Always-allow checkbox row inside the overlay (numbered
+// + yesno shapes only; never generic). Sits between the choices and the
+// footer.
+.terminal-prompt-overlay-allow-rule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  &:hover {
+    color: var(--text);
+  }
+  input[type="checkbox"] {
+    margin: 0;
+  }
+}
+
+// HS-7986 Phase 2 — yes/no overlay variant. Two side-by-side buttons; reuse
+// the choice-button styling but lay out horizontally.
+.terminal-prompt-overlay-yesno {
+  .terminal-prompt-overlay-choices {
+    flex-direction: row;
+    gap: 8px;
+  }
+  .terminal-prompt-overlay-choice {
+    flex: 1;
+    justify-content: center;
+    padding: 10px 14px;
+  }
+  .terminal-prompt-overlay-yes {
+    border-color: rgba(34, 197, 94, 0.6);
+  }
+  .terminal-prompt-overlay-no {
+    border-color: rgba(239, 68, 68, 0.5);
+  }
+}
+
+// HS-7986 Phase 2 — generic-fallback overlay variant. Shows a verbatim
+// monospaced reproduction of the last visible terminal rows + a free-form
+// textarea for the user's response.
+.terminal-prompt-overlay-generic {
+  max-width: 640px;
+}
+
+.terminal-prompt-overlay-generic-context {
+  // Slightly more breathing room than the numbered-shape diff context — the
+  // generic shape uses up to 10 visible rows by default.
+  max-height: 280px;
+}
+
+.terminal-prompt-overlay-generic-input {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 28px;
+  &:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+    border-color: transparent;
+  }
+}
+
+.terminal-prompt-overlay-generic-footer {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.terminal-prompt-overlay-generic-submit {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--accent);
+  color: white;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+  &:hover {
+    filter: brightness(1.05);
+  }
+}
+
+// HS-7986 Phase 2 — terminal-header chip indicating the prompt detector is
+// suppressed. Tinted with --accent so it reads as an actionable affordance
+// next to the cosmetic header buttons.
+.terminal-prompt-resume-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  &:hover {
+    background: rgba(99, 102, 241, 0.08);
+  }
+}
+
+.terminal-prompt-resume-label {
+  line-height: 1;
+}

@@ -33,6 +33,10 @@ const JSON_VALUE_KEYS = new Set([
   // HS-7952 — per-project permission allow-rules (auto-allow specific
   // tool/pattern pairs without showing the popup). See docs/47-richer-permission-overlay.md.
   'permission_allow_rules',
+  // HS-7987 — per-project terminal-prompt allow-rules (auto-respond to a
+  // specific parser+question+choice signature without showing the §52
+  // overlay). See docs/52-terminal-prompt-overlay.md §52.7.
+  'terminal_prompt_allow_rules',
 ]);
 
 export interface FileSettings {

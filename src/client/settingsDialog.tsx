@@ -28,6 +28,8 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       // every settings-dialog open.
       if (target === 'permissions') {
         void import('./permissionAllowListUI.js').then(m => m.loadAndRenderAllowList());
+        // HS-7988 — same lazy load for the §52 terminal-prompt rules.
+        void import('./terminalPromptAllowListUI.js').then(m => m.loadAndRenderTerminalPromptAllowList());
       }
     });
   });
@@ -51,6 +53,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     (document.getElementById('settings-auto-order') as HTMLInputElement).checked = state.settings.auto_order;
     (document.getElementById('settings-hide-verified-column') as HTMLInputElement).checked = state.settings.hide_verified_column;
     (document.getElementById('settings-shell-integration-ui') as HTMLInputElement).checked = state.settings.shell_integration_ui;
+    (document.getElementById('settings-terminal-prompt-detection') as HTMLInputElement).checked = state.settings.terminal_prompt_detection_enabled;
     (document.getElementById('settings-notify-permission') as HTMLSelectElement).value = state.settings.notify_permission;
     (document.getElementById('settings-notify-completed') as HTMLSelectElement).value = state.settings.notify_completed;
     overlay.style.display = 'flex';
@@ -209,6 +212,18 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
     void api('/settings', { method: 'PATCH', body: { shell_integration_ui: String(shellIntegrationCheckbox.checked) } });
     document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
+  });
+
+  // HS-7988 — §52 master toggle. When false, the prompt detector's
+  // `isActive()` short-circuits and never fires the parser registry. The
+  // configured rules remain in settings.json (they render greyed-out in
+  // the Phase 4 list) but are inert.
+  const terminalPromptCheckbox = document.getElementById('settings-terminal-prompt-detection') as HTMLInputElement;
+  terminalPromptCheckbox.addEventListener('change', () => {
+    state.settings.terminal_prompt_detection_enabled = terminalPromptCheckbox.checked;
+    void api('/settings', { method: 'PATCH', body: { terminal_prompt_detection_enabled: String(terminalPromptCheckbox.checked) } });
+    // Re-render the rule list so the `is-disabled` class flips with the toggle.
+    void import('./terminalPromptAllowListUI.js').then(m => m.loadAndRenderTerminalPromptAllowList());
   });
 
   // Notification dropdowns

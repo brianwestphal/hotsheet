@@ -4,6 +4,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 
 import { apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
+import { state } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
 import {
   applyAppearanceToTerm,
@@ -21,6 +22,20 @@ import {
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
 import { isTerminalViewToggleShortcut } from './terminalKeybindings.js';
+import {
+  createDetector,
+  type Detector,
+  disposeDetector,
+  markDetectorClosed,
+  markDetectorSuppressed,
+  notifyChunk,
+  notifyUserKeystroke,
+  SCAN_ROW_COUNT,
+} from './terminalPrompt/detector.js';
+import { buildAllowRule } from './terminalPrompt/allowRules.js';
+import { appendAllowRule } from './terminalPrompt/allowRulesStore.js';
+import { tryAutoAllow } from './terminalPrompt/autoAllow.js';
+import { openTerminalPromptOverlay } from './terminalPromptOverlay.js';
 import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
 import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
 
@@ -226,6 +241,10 @@ interface DedicatedView {
    *  Called from `exitDedicatedView` so the callsite's bar chrome cleans
    *  up alongside the rest. */
   barDispose: (() => void) | null;
+  /** HS-7985 — per-dedicated-view prompt detector. Created lazily on the
+   *  first WS chunk so the xterm handle is live. Disposed by
+   *  `exitDedicatedView`. */
+  promptDetector: Detector | null;
 }
 
 const TILE_INITIAL_COLS = DASHBOARD_FALLBACK_COLS;
@@ -851,6 +870,10 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     const bar = overlay.querySelector<HTMLElement>(`.${dedicatedBarClass}`);
     const dedicatedBody = overlay.querySelector<HTMLElement>(`.${dedicatedBodyClass}`);
     if (pane === null || backBtn === null || bar === null) return;
+    // HS-7985 — anchor for the prompt overlay. Captured here so the closure
+    // below sees a non-nullable HTMLElement after the null-guard above
+    // narrows `pane`.
+    const promptOverlayAnchor: HTMLElement = dedicatedBody ?? pane;
     backBtn.addEventListener('click', () => { exitDedicatedView(); });
 
     const appearance = resolveTileAppearance(tile);
@@ -892,6 +915,11 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       if (dedicated?.ws !== null && dedicated?.ws.readyState === WebSocket.OPEN) {
         dedicated.ws.send(encoder.encode(data));
       }
+      // HS-7985 — clear any "Not a prompt" suppression so the next prompt
+      // re-arms detection in this dedicated view.
+      if (dedicated !== null && dedicated.promptDetector !== null) {
+        notifyUserKeystroke(dedicated.promptDetector);
+      }
     });
     term.onResize(({ cols, rows }) => {
       if (dedicated?.ws !== null && dedicated?.ws.readyState === WebSocket.OPEN) {
@@ -911,17 +939,92 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     });
     ws.addEventListener('message', (ev) => {
       const data: unknown = ev.data;
-      if (data instanceof ArrayBuffer) { term.write(new Uint8Array(data)); return; }
+      if (data instanceof ArrayBuffer) {
+        term.write(new Uint8Array(data));
+        // HS-7985 — feed the prompt detector after every chunk lands so it
+        // can scan the rendered buffer rows for an interactive prompt.
+        kickDedicatedPromptDetector();
+        return;
+      }
       if (typeof data === 'string') {
         try {
           const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
           if (msg.type === 'history' && typeof msg.bytes === 'string'
               && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
             applyDedicatedHistoryFrame(term, fit, { bytes: msg.bytes, cols: msg.cols, rows: msg.rows });
+            kickDedicatedPromptDetector();
           }
         } catch { /* non-JSON frame */ }
       }
     });
+
+    /**
+     * HS-7985 — lazy-create the dedicated view's prompt detector on first
+     * use (xterm handle is captured in closure). The overlay anchors to
+     * `dedicatedBody` (which has `position: relative` already, see
+     * styles.scss `.terminal-dashboard-dedicated-body` / `.drawer-terminal-grid-dedicated-body`).
+     * Reference `SCAN_ROW_COUNT` so future tuning of the constant in
+     * `terminalPrompt/detector.ts` is the only place the value lives.
+     */
+    function kickDedicatedPromptDetector(): void {
+      if (dedicated === null) return;
+      if (dedicated.promptDetector === null) {
+        dedicated.promptDetector = createDetector({
+          readRows(rowCount) {
+            const buf = term.buffer.active;
+            const baseY = buf.viewportY;
+            const visibleRows = term.rows;
+            const out: string[] = [];
+            const start = Math.max(0, visibleRows - rowCount);
+            for (let i = start; i < visibleRows; i++) {
+              const line = buf.getLine(baseY + i);
+              out.push(line === undefined ? '' : line.translateToString(true));
+            }
+            return out;
+          },
+          isActive() {
+            // HS-7988 — master toggle short-circuit. Identical behaviour to
+            // the drawer detector in terminal.tsx.
+            if (!state.settings.terminal_prompt_detection_enabled) return false;
+            // Only fire while this dedicated view is mounted. `dedicated`
+            // closes over the module-level pointer so a stale detector from
+            // a prior open view sees null and stays silent.
+            return dedicated !== null && dedicated.promptDetector !== null;
+          },
+          onMatch(match) {
+            const detector = dedicated?.promptDetector;
+            if (detector === null || detector === undefined) return;
+            const sendToPty = (payload: string): boolean => {
+              if (ws.readyState !== WebSocket.OPEN) return false;
+              ws.send(encoder.encode(payload));
+              return true;
+            };
+            // HS-7987 — auto-allow gate. Same behaviour as the drawer
+            // detector path; see `terminal.tsx::kickPromptDetector`.
+            const auto = tryAutoAllow({ match, send: sendToPty });
+            if (auto.applied) {
+              markDetectorClosed(detector);
+              return;
+            }
+            openTerminalPromptOverlay({
+              match,
+              anchor: promptOverlayAnchor,
+              onSend: sendToPty,
+              onClose() { markDetectorClosed(detector); },
+              onDismissAsNonPrompt() { markDetectorSuppressed(detector); },
+              onAddAllowRule(choiceIndex, choiceLabel) {
+                try {
+                  const rule = buildAllowRule(match, choiceIndex, choiceLabel);
+                  void appendAllowRule(rule);
+                } catch { /* generic never reaches here */ }
+              },
+            });
+          },
+        });
+      }
+      notifyChunk(dedicated.promptDetector);
+    }
+    void SCAN_ROW_COUNT;
 
     let barDispose: (() => void) | null = null;
     if (opts.onDedicatedBarMount !== undefined) {
@@ -929,7 +1032,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       if (typeof result === 'function') barDispose = result;
     }
 
-    dedicated = { tile, overlay, term, fit, ws, bodyResizeObserver, priorCenteredTile, barDispose };
+    dedicated = { tile, overlay, term, fit, ws, bodyResizeObserver, priorCenteredTile, barDispose, promptDetector: null };
     queueMicrotask(() => { term.focus(); });
   }
 
@@ -937,6 +1040,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     if (dedicated === null) return;
     const view = dedicated;
     dedicated = null;
+    if (view.promptDetector !== null) disposeDetector(view.promptDetector);
     view.bodyResizeObserver?.disconnect();
     if (view.barDispose !== null) {
       try { view.barDispose(); } catch { /* swallow */ }

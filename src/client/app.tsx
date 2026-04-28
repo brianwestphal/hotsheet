@@ -33,6 +33,7 @@ import { bindDetailTagInput } from './tagAutocomplete.js'; // .tsx file, JSX ena
 import { showTagsDialog } from './tagsDialog.js';
 import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
 import { initTerminal } from './terminal.js';
+import { loadAllowRules } from './terminalPrompt/allowRulesStore.js';
 import { initTerminalDashboard } from './terminalDashboard.js';
 import { maybeShowUpgradeNudge } from './upgradeNudge.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
@@ -100,6 +101,10 @@ async function reloadPluginToolbar() {
 
 async function reloadAppState() {
   await loadSettings();
+  // HS-7987 — hydrate the per-project terminal-prompt allow-rules cache so
+  // the §52 detector's auto-allow gate has the latest rules when the next
+  // chunk arrives. Failure leaves the cache empty (default-deny).
+  void loadAllowRules();
   // Sync toggle button UI to the new project's saved settings
   updateLayoutToggle();
   updateDetailPositionToggle();

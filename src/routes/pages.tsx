@@ -566,6 +566,24 @@ pageRoutes.get('/', (c) => {
                 <button className="btn btn-sm" id="permission-allow-add-btn">+ Add rule</button>
               </div>
               <p className="settings-hint" id="permission-allow-add-error" style="display:none;color:#991b1b"></p>
+
+              {/* HS-7988 — §52 Phase 4 — Terminal-prompt allow rules + master
+                  toggle. Master toggle short-circuits the detector entirely
+                  when off; rule list shows already-saved auto-allow signatures
+                  with delete affordance. New rules are added FROM THE OVERLAY,
+                  not here — keeps the surface area focused on review/cleanup. */}
+              <div className="settings-section-divider"></div>
+              <div className="settings-section-header">
+                <h3>Terminal prompts</h3>
+              </div>
+              <p className="settings-hint">Detect interactive prompts inside the embedded terminal (Claude Code's numbered choices, shell yes/no asks, etc.) and surface a click-to-answer overlay. Rules below cause the matching prompts to auto-respond and skip the overlay. New rules are added from the overlay's "Always allow this answer" checkbox.</p>
+              <div className="settings-field">
+                <label className="settings-checkbox-label">
+                  <input type="checkbox" id="settings-terminal-prompt-detection" />
+                  Detect interactive prompts in terminals
+                </label>
+              </div>
+              <div id="terminal-prompt-allow-list" className="permission-allow-list">Loading rules…</div>
             </div>
             <div className="settings-tab-panel" data-panel="experimental" id="settings-experimental-panel">
               <div className="settings-field">

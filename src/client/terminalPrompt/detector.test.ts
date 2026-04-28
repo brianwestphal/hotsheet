@@ -5,7 +5,14 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { decideDispatch } from './detector.js';
+import {
+  clearDetectorSuppression,
+  createDetector,
+  decideDispatch,
+  isDetectorSuppressed,
+  markDetectorSuppressed,
+  notifyUserKeystroke,
+} from './detector.js';
 
 const promptRows = [
   'Loading development channels can pose a security risk',
@@ -91,5 +98,40 @@ describe('decideDispatch (HS-7971)', () => {
     });
     expect(match).not.toBeNull();
     expect(nextLastSig).not.toBe('claude-numbered:00000000:0');
+  });
+});
+
+describe('suppression helpers (HS-7986)', () => {
+  function makeDetector() {
+    return createDetector({
+      readRows: () => [],
+      isActive: () => true,
+      onMatch: () => { /* noop */ },
+    });
+  }
+
+  it('isDetectorSuppressed returns false on a fresh detector', () => {
+    expect(isDetectorSuppressed(makeDetector())).toBe(false);
+  });
+
+  it('markDetectorSuppressed flips the suppressed flag and isDetectorSuppressed reflects it', () => {
+    const d = makeDetector();
+    markDetectorSuppressed(d);
+    expect(isDetectorSuppressed(d)).toBe(true);
+  });
+
+  it('clearDetectorSuppression resets the flag', () => {
+    const d = makeDetector();
+    markDetectorSuppressed(d);
+    expect(isDetectorSuppressed(d)).toBe(true);
+    clearDetectorSuppression(d);
+    expect(isDetectorSuppressed(d)).toBe(false);
+  });
+
+  it('notifyUserKeystroke also clears suppression', () => {
+    const d = makeDetector();
+    markDetectorSuppressed(d);
+    notifyUserKeystroke(d);
+    expect(isDetectorSuppressed(d)).toBe(false);
   });
 });

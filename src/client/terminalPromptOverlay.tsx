@@ -1,19 +1,27 @@
 import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
-import type { MatchResult } from './terminalPrompt/parsers.js';
-import { buildNumberedCancelPayload, buildNumberedPayload } from './terminalPrompt/parsers.js';
+import type { MatchResult, NumberedMatch, YesNoMatch, GenericMatch } from './terminalPrompt/parsers.js';
+import {
+  buildGenericCancelPayload,
+  buildGenericPayload,
+  buildNumberedCancelPayload,
+  buildNumberedPayload,
+  buildYesNoCancelPayload,
+  buildYesNoPayload,
+} from './terminalPrompt/parsers.js';
 
 /**
- * HS-7971 Phase 1 — terminal-prompt overlay UI.
+ * HS-7971 Phase 1 + Phase 2 (HS-7986) — terminal-prompt overlay UI.
  *
- * Per docs/52-terminal-prompt-overlay.md §52.5. Phase 1 only renders the
- * `numbered` shape (Claude-Ink style); `yesno` and `generic` are
- * Phase 2 follow-ups. Always-allow is Phase 3.
+ * Per docs/52-terminal-prompt-overlay.md §52.5. Phase 1 ships the
+ * `numbered` shape (Claude-Ink style). Phase 2 adds `yesno` (Yes / No
+ * buttons) and `generic` (monospaced reproduction + free-form textarea).
+ * Always-allow is Phase 3.
  *
  * The overlay is anchored to the active terminal pane (caller passes the
  * pane element). It is non-modal — the rest of the app stays interactive
- * while the overlay sits on top of the terminal canvas. Two dismissal
- * paths from Phase 1:
+ * while the overlay sits on top of the terminal canvas. Three dismissal
+ * paths:
  *   - Click a choice → `onChoose(payload)` writes the keystroke string to
  *     the PTY via the caller's hook.
  *   - Click "Cancel" / press Escape → cancel-payload (`\x1b`) sent to PTY.
@@ -46,25 +54,110 @@ export interface OpenTerminalPromptOverlayOptions {
    *  the detector to suppress further scans for this terminal until the
    *  user keys into it again. */
   onDismissAsNonPrompt: () => void;
+  /**
+   * HS-7987 — fired when the user submits a choice WITH the always-allow
+   * checkbox ticked. Caller persists the rule (via `appendAllowRule`).
+   * The overlay calls this before `onSend` so a successful PATCH lands
+   * before we close. Generic-shape overlays never invoke this — generic
+   * fallbacks are explicitly NOT allow-listable (see §52.1).
+   */
+  onAddAllowRule?: (choiceIndex: number, choiceLabel: string) => void;
 }
 
 /** Open the overlay. Returns the overlay element so the caller can remove
  *  it programmatically (e.g. on terminal-pane teardown). Idempotent —
  *  calling twice in a row removes any prior overlay first. */
 export function openTerminalPromptOverlay(opts: OpenTerminalPromptOverlayOptions): HTMLElement | null {
-  // Phase 1 — only `numbered` is implemented.
-  if (opts.match.shape !== 'numbered') return null;
-
   // Drop any prior overlay anchored to this pane so a re-trigger doesn't
   // stack two on top of each other.
   opts.anchor.querySelectorAll('.terminal-prompt-overlay').forEach(el => el.remove());
 
-  const { question, choices } = opts.match;
+  switch (opts.match.shape) {
+    case 'numbered':
+      return openNumberedOverlay(opts, opts.match);
+    case 'yesno':
+      return openYesNoOverlay(opts, opts.match);
+    case 'generic':
+      return openGenericOverlay(opts, opts.match);
+  }
+}
+
+/**
+ * HS-7987 — render the "Always allow this answer" checkbox row. Only
+ * shown for shapes that allow allow-rules (numbered + yesno) AND when the
+ * caller provided an `onAddAllowRule` handler. Generic-fallback overlays
+ * never get the checkbox — see docs/52 §52.1 for the rationale.
+ */
+function renderAllowRuleCheckbox(opts: OpenTerminalPromptOverlayOptions) {
+  if (opts.onAddAllowRule === undefined) return null;
+  if (opts.match.shape === 'generic') return null;
+  return (
+    <label className="terminal-prompt-overlay-allow-rule-row" title="Skip this prompt automatically next time and answer the same way">
+      <input type="checkbox" className="terminal-prompt-overlay-allow-rule" />
+      <span>Always allow this answer</span>
+    </label>
+  );
+}
+
+/** Wire the shared header / X-button / Esc-to-cancel / "Not a prompt"
+ *  affordances and return helpers the per-shape mounters use to actually
+ *  send a payload + close the overlay. */
+function wireSharedOverlay(
+  overlay: HTMLElement,
+  opts: OpenTerminalPromptOverlayOptions,
+  cancelPayload: string,
+): { close: () => void; send: (payload: string) => void } {
+  function close(): void {
+    overlay.remove();
+    document.removeEventListener('keydown', onKeydown, true);
+    opts.onClose();
+  }
+
+  function send(payload: string): void {
+    const ok = opts.onSend(payload);
+    if (!ok) {
+      const err = overlay.querySelector<HTMLElement>('.terminal-prompt-overlay-error');
+      if (err !== null) {
+        err.textContent = 'Terminal disconnected — couldn’t send response. Reconnect and try again.';
+        err.style.display = '';
+      }
+      return;
+    }
+    close();
+  }
+
+  overlay.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-cancel')?.addEventListener('click', () => {
+    send(cancelPayload);
+  });
+  overlay.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-close')?.addEventListener('click', () => {
+    close();
+  });
+  overlay.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-not-a-prompt')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    opts.onDismissAsNonPrompt();
+    close();
+  });
+
+  // Capture-phase Escape sends the shape's cancel payload — beats the
+  // global blur-input handler in shortcuts.tsx so Esc here means "send Esc
+  // to the PTY", not "blur whatever has focus".
+  function onKeydown(e: KeyboardEvent): void {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    send(cancelPayload);
+  }
+  document.addEventListener('keydown', onKeydown, true);
+
+  return { close, send };
+}
+
+function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: NumberedMatch): HTMLElement {
+  const { question, choices, questionLines } = match;
   // HS-7980 — preserve multi-line question / diff context in a monospaced
   // pre block. Claude's Edit-tool prompts render an inline diff above the
   // numbered choices; collapsing the diff into a single line throws away
   // the structure the user needs to make a decision.
-  const questionLines = opts.match.shape === 'numbered' ? opts.match.questionLines : [];
   const hasMultilineContext = questionLines.length > 1
     || (questionLines.length === 1 && questionLines[0].includes('\n'));
   const contextText = questionLines.join('\n');
@@ -85,12 +178,14 @@ export function openTerminalPromptOverlay(opts: OpenTerminalPromptOverlayOptions
             className={`terminal-prompt-overlay-choice${c.highlighted ? ' is-highlighted' : ''}`}
             type="button"
             data-choice-index={String(c.index)}
+            data-choice-label={c.label}
           >
             <span className="terminal-prompt-overlay-choice-num">{`${c.index + 1}.`}</span>
             <span className="terminal-prompt-overlay-choice-label">{c.label}</span>
           </button>
         ))}
       </div>
+      {renderAllowRuleCheckbox(opts)}
       <div className="terminal-prompt-overlay-footer">
         <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
         <a href="#" className="terminal-prompt-overlay-not-a-prompt">Not a prompt — let me handle it</a>
@@ -99,58 +194,118 @@ export function openTerminalPromptOverlay(opts: OpenTerminalPromptOverlayOptions
     </div>
   );
 
-  function close(): void {
-    overlay.remove();
-    document.removeEventListener('keydown', onKeydown, true);
-    opts.onClose();
-  }
+  const { send } = wireSharedOverlay(overlay, opts, buildNumberedCancelPayload());
+  const checkbox = overlay.querySelector<HTMLInputElement>('.terminal-prompt-overlay-allow-rule');
 
-  function send(payload: string): void {
-    const ok = opts.onSend(payload);
-    if (!ok) {
-      const err = overlay.querySelector<HTMLElement>('.terminal-prompt-overlay-error');
-      if (err !== null) {
-        err.textContent = 'Terminal disconnected — couldn’t send response. Reconnect and try again.';
-        err.style.display = '';
-      }
-      return;
-    }
-    close();
-  }
-
-  // Choice click → numbered payload via parser helper.
   overlay.querySelectorAll<HTMLButtonElement>('.terminal-prompt-overlay-choice').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.choiceIndex ?? '0', 10);
+      const label = btn.dataset.choiceLabel ?? '';
+      if (checkbox?.checked === true && opts.onAddAllowRule !== undefined) {
+        opts.onAddAllowRule(idx, label);
+      }
       send(buildNumberedPayload(choices, idx));
     });
   });
 
-  overlay.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-cancel')?.addEventListener('click', () => {
-    send(buildNumberedCancelPayload());
-  });
+  opts.anchor.appendChild(overlay);
+  return overlay;
+}
 
-  overlay.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-close')?.addEventListener('click', () => {
-    close();
-  });
+function openYesNoOverlay(opts: OpenTerminalPromptOverlayOptions, match: YesNoMatch): HTMLElement {
+  const { question } = match;
+  const overlay = toElement(
+    <div className="terminal-prompt-overlay terminal-prompt-overlay-yesno" role="dialog" aria-modal="false" aria-label={`Terminal prompt: ${question}`}>
+      <div className="terminal-prompt-overlay-header">
+        <span className="terminal-prompt-overlay-title">{question}</span>
+        <button className="terminal-prompt-overlay-close" type="button" title="Close (does not respond)" aria-label="Close">
+          {raw(X_ICON)}
+        </button>
+      </div>
+      <div className="terminal-prompt-overlay-choices">
+        <button className="terminal-prompt-overlay-choice terminal-prompt-overlay-yes" type="button" data-yesno="yes">
+          <span className="terminal-prompt-overlay-choice-label">Yes</span>
+        </button>
+        <button className="terminal-prompt-overlay-choice terminal-prompt-overlay-no" type="button" data-yesno="no">
+          <span className="terminal-prompt-overlay-choice-label">No</span>
+        </button>
+      </div>
+      {renderAllowRuleCheckbox(opts)}
+      <div className="terminal-prompt-overlay-footer">
+        <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
+        <a href="#" className="terminal-prompt-overlay-not-a-prompt">Not a prompt — let me handle it</a>
+      </div>
+      <p className="terminal-prompt-overlay-error" style="display:none"></p>
+    </div>
+  );
 
-  overlay.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-not-a-prompt')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    opts.onDismissAsNonPrompt();
-    close();
-  });
+  const { send } = wireSharedOverlay(overlay, opts, buildYesNoCancelPayload());
+  const checkbox = overlay.querySelector<HTMLInputElement>('.terminal-prompt-overlay-allow-rule');
 
-  // Capture-phase Escape closes-with-cancel — beats the global blur-input
-  // handler in shortcuts.tsx so Esc here means "send Esc to the PTY", not
-  // "blur whatever has focus".
-  function onKeydown(e: KeyboardEvent): void {
-    if (e.key !== 'Escape') return;
-    e.preventDefault();
-    e.stopPropagation();
-    send(buildNumberedCancelPayload());
-  }
-  document.addEventListener('keydown', onKeydown, true);
+  overlay.querySelectorAll<HTMLButtonElement>('[data-yesno]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const choice = btn.dataset.yesno === 'yes' ? 'yes' : 'no';
+      const label = choice === 'yes' ? 'Yes' : 'No';
+      const choiceIndex = choice === 'yes' ? 0 : 1;
+      if (checkbox?.checked === true && opts.onAddAllowRule !== undefined) {
+        opts.onAddAllowRule(choiceIndex, label);
+      }
+      send(buildYesNoPayload(match, choice));
+    });
+  });
 
   opts.anchor.appendChild(overlay);
+  return overlay;
+}
+
+function openGenericOverlay(opts: OpenTerminalPromptOverlayOptions, match: GenericMatch): HTMLElement {
+  const { question, rawText } = match;
+  const overlay = toElement(
+    <div className="terminal-prompt-overlay terminal-prompt-overlay-generic" role="dialog" aria-modal="false" aria-label={`Terminal prompt: ${question}`}>
+      <div className="terminal-prompt-overlay-header">
+        <span className="terminal-prompt-overlay-title">{question}</span>
+        <button className="terminal-prompt-overlay-close" type="button" title="Close (does not respond)" aria-label="Close">
+          {raw(X_ICON)}
+        </button>
+      </div>
+      <pre className="terminal-prompt-overlay-context terminal-prompt-overlay-generic-context">{rawText}</pre>
+      <textarea
+        className="terminal-prompt-overlay-generic-input"
+        placeholder="Type your response here…"
+        rows={2}
+        spellcheck={false}
+      ></textarea>
+      <div className="terminal-prompt-overlay-footer terminal-prompt-overlay-generic-footer">
+        <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
+        <button className="terminal-prompt-overlay-generic-submit" type="button">Send (Enter)</button>
+        <a href="#" className="terminal-prompt-overlay-not-a-prompt">Not a prompt — let me handle it</a>
+      </div>
+      <p className="terminal-prompt-overlay-error" style="display:none"></p>
+    </div>
+  );
+
+  const { send } = wireSharedOverlay(overlay, opts, buildGenericCancelPayload());
+
+  const textarea = overlay.querySelector<HTMLTextAreaElement>('.terminal-prompt-overlay-generic-input');
+  const submit = overlay.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-generic-submit');
+
+  function doSubmit(): void {
+    const text = textarea?.value ?? '';
+    send(buildGenericPayload(text));
+  }
+
+  submit?.addEventListener('click', doSubmit);
+
+  // Enter inside the textarea submits; Shift+Enter inserts a newline.
+  textarea?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      doSubmit();
+    }
+  });
+
+  opts.anchor.appendChild(overlay);
+  // Focus the textarea so the user can start typing immediately.
+  queueMicrotask(() => { textarea?.focus(); });
   return overlay;
 }

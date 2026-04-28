@@ -99,10 +99,25 @@ export function markDetectorClosed(detector: Detector): void {
 }
 
 /** Mark a detector as "user said this isn't a prompt". Suppresses further
- *  dispatches until `notifyUserKeystroke` is called. */
+ *  dispatches until `notifyUserKeystroke` or `clearDetectorSuppression` is
+ *  called. */
 export function markDetectorSuppressed(detector: Detector): void {
   detector.suppressed = true;
   detector.overlayOpen = false;
+}
+
+/** Pure check exported so the toolbar chip (HS-7986 Phase 2) can show /
+ *  hide based on detector state without poking at the field directly. */
+export function isDetectorSuppressed(detector: Detector): boolean {
+  return detector.suppressed;
+}
+
+/** HS-7986 — explicit "user clicked Resume in the toolbar chip". Clears
+ *  suppression so the next prompt fires again. Identical effect to
+ *  `notifyUserKeystroke` but named after the user's intent so the call site
+ *  reads cleanly. */
+export function clearDetectorSuppression(detector: Detector): void {
+  detector.suppressed = false;
 }
 
 /** The user typed something into this terminal. Clears suppression so a
