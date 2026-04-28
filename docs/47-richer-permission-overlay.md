@@ -5,7 +5,7 @@ HS-6703 follow-up to HS-6602. Two scoped enhancements to the existing Claude per
 1. **See what an `Edit` would actually change** — render a diff of `old_string` vs `new_string` inside the popup so the decision is no longer "trust the description and click Allow."
 2. **Stop being asked the same question every time** — register a per-project allow rule so future requests matching `{tool, pattern}` are auto-approved without surfacing a popup.
 
-> **Status:** Design only. Implementation phased into HS-7951 (Edit-tool diff preview), HS-7952 (per-project allow-list — server gating + settings schema), HS-7953 (per-project allow-list — overlay UI + settings management page).
+> **Status:** Partial. **HS-7951 — Edit-tool diff preview SHIPPED.** Implementation: new `formatEditDiff(toolName, raw)` in `permissionPreview.ts` returns a structured `{oldStr, newStr, filePath, replaceAll, truncated}` shape (or null for non-Edit/Write); new `src/client/editDiffPreview.tsx` exports `renderEditDiffPreview(diff)` plus 3 pure helpers (`splitLines`, `computeDiffOps`, `buildHunks`) backed by a Myers-LCS diff with default contextLines = 2. `permissionOverlay.tsx` branches on `editDiff !== null` and mounts the diff renderer instead of the flat-JSON `<pre>`. SCSS `.edit-diff-*` rules (red-tinted del rows, green-tinted add rows, ⋯ hunk separators, scroll-bounded body capped at 240 px). 48 unit tests across `permissionPreview.test.ts` (12 new) + `editDiffPreview.test.ts` (16 new). HS-7952 (server gate) + HS-7953 (UI) still queued — they ship together.
 
 ## 47.1 Problem statement
 

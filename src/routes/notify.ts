@@ -1,7 +1,15 @@
 // Shared change-tracking state for long-poll support.
 // All route groups that mutate data call notifyChange() to wake poll waiters.
 
+import { subscribeToGitChanges } from '../git/watcher.js';
 import { scheduleAllSync } from '../sync/markdown.js';
+
+// HS-7954 — git status changes (commits / stages / branch switches made
+// outside Hot Sheet) wake the same poll waiters Hot Sheet's own mutations
+// do, so subscribed clients refetch `/api/git/status` and re-render the
+// chip without the user needing to alt-tab. Subscribed once at module
+// load — process-lifetime, no need to GC.
+subscribeToGitChanges(() => { notifyChange(); });
 
 let changeVersion = 0;
 let pollWaiters: Array<(version: number) => void> = [];

@@ -28,15 +28,44 @@ jobs:
         id: tag_notes
         run: |
           TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          REPO="${{ github.repository }}"
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+
+          # User-authored tag annotation (if any). Empty when the tag is
+          # lightweight or carries no body — the platform-download section
+          # below stands on its own in that case so the release page never
+          # falls back to a generic "See the assets below" stub (HS-7963).
           NOTES=$(git tag -l --format='%(contents)' "$TAG" | sed '/^$/d')
-          if [ -z "$NOTES" ]; then
-            NOTES="See the assets below to download and install."
-          fi
+
+          {
+            if [ -n "$NOTES" ]; then
+              echo "$NOTES"
+              echo ""
+            fi
+            echo "## Download"
+            echo ""
+            echo "### macOS"
+            echo "- [Apple Silicon (.dmg)](${BASE}/HotSheet-${VERSION}-macOS-Apple-Silicon.dmg) — M1/M2/M3 Macs"
+            echo "- [Intel (.dmg)](${BASE}/HotSheet-${VERSION}-macOS-Intel.dmg) — older Macs"
+            echo ""
+            echo "### Linux"
+            echo "- [Debian / Ubuntu (.deb)](${BASE}/Hot.Sheet_${VERSION}_amd64.deb)"
+            echo "- [AppImage](${BASE}/Hot.Sheet_${VERSION}_amd64.AppImage) — runs on most distros, no install needed"
+            echo "- [Red Hat / Fedora (.rpm)](${BASE}/Hot.Sheet-${VERSION}-1.x86_64.rpm)"
+            echo ""
+            echo "### Windows"
+            echo "- [Installer (.exe)](${BASE}/Hot.Sheet_${VERSION}_x64-setup.exe)"
+            echo "- [MSI](${BASE}/Hot.Sheet_${VERSION}_x64_en-US.msi) — for managed-deployment environments"
+            echo ""
+            echo "Not sure which to pick? On macOS use the Apple Silicon build unless you have a 2019-or-older Intel Mac. On Linux pick the AppImage if you don't recognise the others. If a direct link 404s, the build for that platform may have failed — every shipped asset is also listed under \"Assets\" below."
+            echo ""
+            echo "---"
+            echo "**npm:** \`npm install -g hotsheet@${VERSION}\` — works everywhere Node 20+ runs but lacks the embedded terminal and a few other native-only features the installable builds ship with."
+          } > /tmp/release-notes.md
+
           echo "body<<ENDOFNOTES" >> "$GITHUB_OUTPUT"
-          echo "$NOTES" >> "$GITHUB_OUTPUT"
-          echo "" >> "$GITHUB_OUTPUT"
-          echo "---" >> "$GITHUB_OUTPUT"
-          echo "**npm:** \`npm install -g hotsheet@${TAG#v}\`" >> "$GITHUB_OUTPUT"
+          cat /tmp/release-notes.md >> "$GITHUB_OUTPUT"
           echo "ENDOFNOTES" >> "$GITHUB_OUTPUT"
 
       - name: Create release

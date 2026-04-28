@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { checkChannelDone, clearBusyForProject, extendBusyForProject } from './channelUI.js';
 import { refreshDetail } from './detail.js';
 import { checkFeedbackState } from './feedbackDialog.js';
+import { refreshGitStatusChip } from './gitStatusChip.js';
 import { refreshProjectChannelStatus, refreshProjectTabs } from './projectTabs.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
@@ -22,6 +23,11 @@ export function startLongPoll() {
         checkChannelDone();
         void refreshProjectTabs();
         void refreshProjectChannelStatus();
+        // HS-7954 — git status changes (.git/index / .git/HEAD writes
+        // detected by `src/git/watcher.ts`) ride on the same poll-version
+        // bump that ticket mutations use, so refresh the sidebar git chip
+        // here.
+        refreshGitStatusChip();
         // Check for heartbeats from Claude Code hooks
         void checkHeartbeats();
       }

@@ -14,6 +14,7 @@ import { initDbRecoveryBanner } from './dbRecoveryBanner.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, openDetailAndFocusNote, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
+import { initGitStatusChip } from './gitStatusChip.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { bindOpenFolder } from './openFolder.js';
 import { startLongPoll } from './poll.js';
@@ -33,6 +34,7 @@ import { showTagsDialog } from './tagsDialog.js';
 import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
 import { initTerminal } from './terminal.js';
 import { initTerminalDashboard } from './terminalDashboard.js';
+import { maybeShowUpgradeNudge } from './upgradeNudge.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';
 
@@ -165,6 +167,17 @@ async function init() {
   void initDbRecoveryBanner();
   bindCopyPrompt();
   bindOpenFolder();
+
+  // HS-7954 — wire the sidebar git status chip. Initial fetch happens
+  // immediately; subsequent refetches are driven by `/api/poll` version
+  // bumps (see `poll.tsx::refreshGitStatusChip`) and `window.focus`.
+  initGitStatusChip();
+
+  // HS-7962 — non-Tauri only: throttled (≤ once / 30 days) overlay nudging
+  // the user toward the installable build's embedded-terminal feature. Skips
+  // entirely when running under Tauri. Fire-and-forget — the dialog manages
+  // its own lifecycle.
+  maybeShowUpgradeNudge();
 
   // Load plugin UI elements and render toolbar buttons
   void reloadPluginToolbar();

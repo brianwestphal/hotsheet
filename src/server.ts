@@ -14,6 +14,7 @@ import { getProjectBySecret } from './projects.js';
 import { apiRoutes } from './routes/api.js';
 import { backupRoutes } from './routes/backups.js';
 import { dbRoutes } from './routes/db.js';
+import { gitRoutes } from './routes/git.js';
 import { pageRoutes } from './routes/pages.js';
 import { projectRoutes } from './routes/projects.js';
 import { wireTerminalWebSocket } from './terminals/websocket.js';
@@ -143,6 +144,8 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   app.route('/api/backups', backupRoutes);
   app.route('/api/db', dbRoutes);
   app.route('/api/projects', projectRoutes);
+  // HS-7954 — git status chip. `GET /api/git/status` returns `GitStatus | null`.
+  app.route('/api', gitRoutes);
 
   // Graceful shutdown endpoint (used by stale instance cleanup and `--close`).
   // HS-7528: kill every live PTY before the process exits so interactive

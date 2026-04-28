@@ -75,11 +75,26 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
 
   await closeHttpServer();
   await destroyTerminals();
+  await disposeGitWatchers();
   await closeDatabases();
   releaseProjectLocks();
   removeLockfile();
 
   console.log(`[lifecycle] gracefulShutdown(${reason}) — done`);
+}
+
+/** HS-7954 — close every `fs.watch` handle held by the git status watcher.
+ *  fs.watch handles ordinarily clean up on process exit, but properly
+ *  disposing them in the graceful pipeline is hygienic + makes the test
+ *  envelope happier (otherwise leaked handles can keep the event loop
+ *  alive longer than the test expects). */
+async function disposeGitWatchers(): Promise<void> {
+  try {
+    const { disposeAllGitWatchers } = await import('./git/watcher.js');
+    disposeAllGitWatchers();
+  } catch (err) {
+    console.error('[lifecycle] disposeAllGitWatchers error:', err);
+  }
 }
 
 async function closeHttpServer(): Promise<void> {

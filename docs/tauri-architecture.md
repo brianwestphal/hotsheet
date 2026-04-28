@@ -152,6 +152,8 @@ Triggered by git tags (`v*`) or manual dispatch. Builds for 4 targets:
 
 macOS builds are code-signed and notarized via Apple Developer credentials. All builds are update-signed with the Tauri updater key. Creates a draft GitHub Release with all artifacts + `latest.json` for auto-updates.
 
+**Per-platform release notes (HS-7963).** The `Extract release notes from tag` step composes the release body to include direct download links per platform (macOS Apple Silicon / macOS Intel / Linux deb+AppImage+rpm / Windows exe+msi) on top of any tag-annotation body the maintainer wrote, plus a closing npm-install hint. Asset URLs are deterministic — composed from `${{ github.repository }}` + the tag — so they're embedded at release-create time even though the rename step (`HotSheet-<version>-macOS-{Apple-Silicon,Intel}.dmg`) runs in a later job. If a build for a given platform fails, its direct link 404s; the user falls through to the always-present "Assets" list below.
+
 ## Auto-updates
 
 The app checks for updates on every launch via `tauri-plugin-updater`. Updates are served from GitHub Releases — the CI generates a `latest.json` file that the updater reads to determine if a new version is available. Updates are verified against a public key embedded in `tauri.conf.json`.

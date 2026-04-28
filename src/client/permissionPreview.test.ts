@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatInputPreview } from './permissionPreview.js';
+import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
 
 describe('formatInputPreview (HS-6634)', () => {
   it('returns empty string for empty input', () => {
@@ -99,5 +99,102 @@ describe('formatInputPreview (HS-6634)', () => {
   it('handles truncated JSON when command field is not first', () => {
     const raw = '{"description":"run build","command":"npm run build && npm';
     expect(formatInputPreview('Bash', raw)).toBe('npm run build && npm…');
+  });
+});
+
+/**
+ * HS-7951 — `formatEditDiff` extracts `old_string` / `new_string` (and
+ * optional `file_path` / `replace_all`) from the Edit / Write tool's
+ * `input_preview` JSON. Returns null for any non-Edit/Write tool, malformed
+ * JSON without recoverable fields, or missing required fields.
+ */
+describe('formatEditDiff (HS-7951)', () => {
+  it('returns null for tools that arent Edit / Write', () => {
+    const raw = JSON.stringify({ old_string: 'a', new_string: 'b' });
+    expect(formatEditDiff('Bash', raw)).toBeNull();
+    expect(formatEditDiff('Read', raw)).toBeNull();
+    expect(formatEditDiff('Glob', raw)).toBeNull();
+  });
+
+  it('returns null for empty input or non-JSON-shaped strings', () => {
+    expect(formatEditDiff('Edit', '')).toBeNull();
+    expect(formatEditDiff('Edit', 'not json at all')).toBeNull();
+  });
+
+  it('parses a well-formed Edit input with old_string / new_string', () => {
+    const raw = JSON.stringify({
+      file_path: '/tmp/foo.ts',
+      old_string: 'const x = 1;',
+      new_string: 'const x = 42;',
+    });
+    const out = formatEditDiff('Edit', raw);
+    expect(out).not.toBeNull();
+    expect(out!.oldStr).toBe('const x = 1;');
+    expect(out!.newStr).toBe('const x = 42;');
+    expect(out!.filePath).toBe('/tmp/foo.ts');
+    expect(out!.replaceAll).toBe(false);
+    expect(out!.truncated).toBe(false);
+  });
+
+  it('respects the replace_all flag when present', () => {
+    const raw = JSON.stringify({ old_string: 'a', new_string: 'b', replace_all: true });
+    const out = formatEditDiff('Edit', raw);
+    expect(out!.replaceAll).toBe(true);
+  });
+
+  it('returns null when Edit is missing old_string or new_string', () => {
+    expect(formatEditDiff('Edit', JSON.stringify({ old_string: 'a' }))).toBeNull();
+    expect(formatEditDiff('Edit', JSON.stringify({ new_string: 'b' }))).toBeNull();
+  });
+
+  it('Write defaults old_string to "" when only new_string (or `content`) is present', () => {
+    const out1 = formatEditDiff('Write', JSON.stringify({ file_path: '/tmp/x', new_string: 'hello' }));
+    expect(out1).not.toBeNull();
+    expect(out1!.oldStr).toBe('');
+    expect(out1!.newStr).toBe('hello');
+
+    // Some Write variants use `content` instead of `new_string`.
+    const out2 = formatEditDiff('Write', JSON.stringify({ file_path: '/tmp/x', content: 'world' }));
+    expect(out2).not.toBeNull();
+    expect(out2!.newStr).toBe('world');
+  });
+
+  it('returns null for Write without new_string AND without content', () => {
+    expect(formatEditDiff('Write', JSON.stringify({ file_path: '/tmp/x' }))).toBeNull();
+  });
+
+  it('returns null when the parsed JSON is null / array / scalar', () => {
+    expect(formatEditDiff('Edit', 'null')).toBeNull();
+    expect(formatEditDiff('Edit', '[1, 2, 3]')).toBeNull();
+  });
+
+  it('recovers from truncated JSON via the field-extractor fallback (Edit)', () => {
+    // Truncated mid-newer-string — should still produce a diff, with
+    // truncated=true.
+    const raw = '{"file_path":"/tmp/x","old_string":"foo","new_string":"bar baz qux';
+    const out = formatEditDiff('Edit', raw);
+    expect(out).not.toBeNull();
+    expect(out!.oldStr).toBe('foo');
+    expect(out!.newStr).toBe('bar baz qux');
+    expect(out!.filePath).toBe('/tmp/x');
+    expect(out!.truncated).toBe(true);
+  });
+
+  it('truncated Edit without old_string returns null (caller falls back to flat preview)', () => {
+    const raw = '{"file_path":"/tmp/x","new_string":"bar';
+    expect(formatEditDiff('Edit', raw)).toBeNull();
+  });
+
+  it('truncated Write recovers via new_string-only extractor', () => {
+    const raw = '{"file_path":"/tmp/x","new_string":"hello world';
+    const out = formatEditDiff('Write', raw);
+    expect(out).not.toBeNull();
+    expect(out!.newStr).toBe('hello world');
+    expect(out!.truncated).toBe(true);
+  });
+
+  it('handles non-string field values defensively (returns null for Edit)', () => {
+    const raw = JSON.stringify({ old_string: 42, new_string: ['nope'] });
+    expect(formatEditDiff('Edit', raw)).toBeNull();
   });
 });

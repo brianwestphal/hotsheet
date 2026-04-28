@@ -546,7 +546,7 @@ HS-6703 follow-up to HS-6602. Two scoped enhancements to the existing Claude per
 
 **Security model.** Compromised dataDir = no new threat (already trust root for the secret). Pattern over-match mitigated by anchored matching + UI hint + dry-run. Catastrophic backtracking mitigated by 50ms eval timeout; bad rule logs + skips. No cross-project contamination — settings are per-`dataDir`. Auto-allow audit gap closed by mandatory command-log entry on every fire.
 
-**Status:** Design only. Implementation = HS-7951 (diff preview ships first — no settings, no security model) + HS-7952 (allow-list server gate) + HS-7953 (allow-list UI) — last two ship together (server without UI is invisible, UI without server is decorative).
+**Status:** Partial — HS-7951 (Edit-tool diff preview) **shipped**. HS-7952 (allow-list server gate) + HS-7953 (allow-list UI) still queued, ship together. Diff-preview impl: `formatEditDiff` in `permissionPreview.ts` returns `{oldStr, newStr, filePath, replaceAll, truncated}` shape (or null for non-Edit/Write); new `src/client/editDiffPreview.tsx` exports `renderEditDiffPreview(diff)` plus pure helpers `splitLines` / `computeDiffOps` / `buildHunks` (Myers-LCS, default contextLines = 2, ⋯ separator between non-overlapping hunks). `permissionOverlay.tsx` branches on `editDiff !== null`. SCSS `.edit-diff-*` rules — red-tinted del rows, green-tinted add rows, scroll-bounded body capped at 240 px. Truncated `input_preview` recovers via `extractStringField` fallback + appends a `… (truncated)` footer. 28 new unit tests (12 in `permissionPreview.test.ts` + 16 in `editDiffPreview.test.ts`).
 
 **Out of scope.** Terminal-output scraping for non-MCP Claude prompts (rejected in HS-6602); cross-project/global rules (per-project keeps blast-radius bounded); allow-rules in the channel server; auto-deny rules (Claude Code already does this); pattern-language extensions beyond regex.
 
@@ -564,7 +564,7 @@ HS-7598. Sidebar chip exposing the project's git state — branch, working-tree 
 
 **Settings.** Three new project-settings keys: `git_tracking_enabled` (default true), `git_chip_show_clean` (default true), `git_auto_fetch_interval_ms` (default 0 — opt-in only because background `git fetch` against authenticated remotes is a credential-prompt hazard). Settings → General "Git Status" sub-section.
 
-**Status:** Design only. Implementation = HS-7954 (Phase 1: branch + dirty, no remote tracking) + HS-7955 (Phase 2: ahead/behind + manual fetch + opt-in auto-fetch timer) + HS-7956 (Phase 3: expanded popover with file-row reveal-in-finder).
+**Status:** Partial — **HS-7954 (Phase 1) + HS-7955 (Phase 2) shipped**. HS-7956 (Phase 3 — expanded popover with file-row reveal-in-finder) still queued. Phase 1 wire: new `src/git/status.ts` (`getGitStatus(projectRoot)` returning `GitStatus | null` + pure `bucketPorcelain` parser), new `src/git/watcher.ts` (500 ms cache + `fs.watch` on `.git/index` + `.git/HEAD`, bumps notify-poll waiters via the new `subscribeToGitChanges` pub/sub which `routes/notify.ts` chains into the existing `notifyChange()`), new `src/routes/git.ts` (`GET /api/git/status`). Watcher uses Node's built-in `fs.watch` — no chokidar dep needed (the design's mention was an overspec). Client: new `src/client/gitStatusChip.tsx` exports `initGitStatusChip()` + `refreshGitStatusChip()` + 3 pure helpers (`tintForStatus`, `countsLabel`, `tooltipForStatus`). Sidebar markup `<div id="sidebar-git-chip">` between `#channel-commands-container` and the Views section. Tints: clean (green) / dirty (yellow) / conflicted (red); ahead (blue) / behind (amber) reserved for HS-7955. SCSS `.sidebar-git-chip.is-{clean,dirty,conflicted,ahead,behind}` rules. Watcher disposal wired into `gracefulShutdown` between PTY destroy + DB close. 22 unit tests across `status.test.ts` (10 for porcelain parsing — staged / unstaged / untracked / partial-stage / 7 conflicted codes / blank-line skip / etc.) + `gitStatusChip.test.ts` (12 for tint precedence + count summing + tooltip formatting).
 
 **Out of scope.** Commit / stage / push / pull / branch-switch UI (Hot Sheet stays read-only against the git index — write operations expand the security surface to credentials, signed commits, hooks). Inline diff viewer (terminal already gives `git diff`). Multi-worktree / submodule traversal. Stash management. GitHub/GitLab PR + CI surfacing (the `plugins/github-issues/` plugin is the right home if/when wanted). Background auto-fetch by default — opt-in via `git_auto_fetch_interval_ms`.
 
@@ -585,6 +585,46 @@ HS-7957. Almost-full-viewport overlay (90 vw / 90 vh, max-width `min(960px, 90vw
 **Out of scope.** Editing in reader mode (detail panel is the editor); print view (`Cmd/Ctrl+P` already handles); reader mode for fields beyond notes + details (title / category / etc. are short); multi-note prev/next navigation (deferred to follow-up if the reading flow proves common).
 
 **Cross-refs:** §3 (notes data model), §4 (detail-panel layout), §12.10 (established overlay pattern reused), §21 (feedback dialog — same overlay structure pattern). HS-7601 (megaphone — the new book button sits to its left in the timestamp row).
+
+---
+
+## 50. Installable-version upgrade nudge (`50-upgrade-nudge.md`)
+
+HS-7962. Throttled (≤ once / 30 days) overlay shown on app boot for npm-launched users that promotes the Tauri-installable build's embedded-terminal feature + auto-updates + native-OS integration. Suppressed entirely under Tauri (`getTauriInvoke() !== null`) — already on the upgrade target. Per-platform CTA (`Download for macOS` / `Linux` / `Windows`) deep-links to the GitHub Releases asset matching the user's OS via a lazy `https://api.github.com/repos/brianwestphal/hotsheet/releases/latest` fetch + `pickPlatformAsset(assets, platform)` matcher (macOS prefers Apple-Silicon dmg, Linux prefers AppImage, Windows prefers .exe installer). Falls back to `/releases/latest` on any failure (rate limit, no internet, asset shape changed) so the button never dead-ends.
+
+**Detection.** `detectPlatform(userAgent)` scans `Mac` / `Windows` / `Linux` (case-insensitive) and returns `null` for unrecognised UAs (suppresses the nudge rather than rendering a misleading button). `shouldShowNudge(lastShownMs, nowMs, intervalMs?)` is the pure throttle gate — true on never-shown OR `(now - lastShown) >= intervalMs`, false on the `Number.MAX_SAFE_INTEGER` "Don't show again" sentinel.
+
+**Dismissal.** X / backdrop / CTA / View-All-Releases all write `Date.now()` (re-prompt in 30 days). Only the explicit "Don't show again" link writes the never-again sentinel.
+
+**UI.** 480 px overlay (clamped 92 vw), z-index 2300 (below the feedback dialog at 2500 + the reader overlay at 2400). Big full-width filled-bg primary CTA + centered link-style "View All Releases" + muted "Don't show again" footer link, per the user's spec ("a larger Download for macOS button with a filled background taking up the full dialog width, minus margins").
+
+**Status:** Shipped. New `src/client/upgradeNudge.tsx` (entry-point `maybeShowUpgradeNudge()` called once from `app.tsx::init`) + 24 unit tests in `upgradeNudge.test.ts`. SCSS in `styles.scss` under `.upgrade-nudge-*`.
+
+**Out of scope.** In-app upgrade flow (CTA opens external browser; user installs by hand); per-version re-prompting (throttle is purely time-based); server-side detection (the server can't distinguish — it serves the same client to either context); UA-architecture probing for Apple-Silicon-vs-Intel (Apple Silicon is the default; Intel users reach the right asset via "View All Releases" or the HS-7963 release-notes section).
+
+**Cross-refs:** §1 (architecture — npm vs Tauri distinction), §10 (desktop app — the upgrade target), §22 (embedded terminal — what HS-6437 hides from the npm-launched web client), HS-7963 (per-platform release notes — the "View All Releases" landing page is now self-explanatory thanks to that work).
+
+---
+
+## 51. Per-terminal shell history scoping (`51-shell-history.md`)
+
+HS-7964 (investigation) / HS-7965 (implementation). Each Hot Sheet terminal gets its own up-arrow history pool, scoped per (project, terminal id), so commands typed in project A's `zsh` terminal don't bleed into project B's `zsh` terminal — and the Claude tab's nothing isn't mixed with the shell tab's recall.
+
+**Why the simple `HISTFILE` env-var fix isn't enough.** Verified empirically: setting `HISTFILE` in the PTY's spawn env is silently clobbered on default-macOS zsh because `/etc/zshrc_Apple_Terminal` rewrites `HISTFILE` to a per-session file, and that rc runs AFTER our env injection but BEFORE the user's interactive prompt. So the fix has to inject AFTER the user's rc loads, which means using each shell's init-file override hook.
+
+**Per-shell mechanism.** bash uses `--rcfile <path>` CLI rewrite (env vars don't work — bash interactive shells only honour `--rcfile` for non-login interactive). zsh uses `ZDOTDIR=<dir>` env (cleanest). fish uses `XDG_CONFIG_HOME=<dir>` env + indexes by session NAME via `set -x fish_history hotsheet_<projectHash>_<terminalId>`. Other shells (sh / dash / ksh / pwsh / cmd) skipped — no equivalent override worth implementing.
+
+**Storage.** `<dataDir>/.hotsheet/shell_init/<terminalId>/` for generated rc files, `<dataDir>/.hotsheet/shell_history/<terminalId>` for bash + zsh history files. Fish history lands wherever fish puts it under the redirected `XDG_CONFIG_HOME` (session-name keyed by 8-char SHA-256-hex of dataDir + terminalId so multi-project doesn't collide). All under `<dataDir>/.hotsheet/` which is gitignored.
+
+**Wire-up.** New `src/terminals/shellHistory.ts` exposes `setupShellHistoryForSpawn({dataDir, terminalId, command}): {env, rewrittenCommand, shell}` + 9 pure helpers. `src/terminals/registry.ts::spawnIntoSession` calls it after `resolveTerminalCommand`; the PTY spawn uses `command: rewrittenCommand ?? resolved.command` (bash gets `--rcfile` injection; others unchanged) and `env: buildEnv(shellInit.env)` (existing scrub + standard vars + per-shell override vars). `buildEnv` extended from no-arg → `buildEnv(extra: Record<string, string> = {})`.
+
+**Settings.** New per-project key `terminal_history_scope: 'per-terminal' | 'inherit'` (default `'per-terminal'`). `'inherit'` falls back to pre-fix behaviour (no override). No UI in v1 — power users edit settings.json by hand.
+
+**Status:** Shipped. 25 unit tests in `shellHistory.test.ts` covering classification (path / args / .exe / case / unrecognised / empty), scope normalisation, shell-escape, fish-name sanitisation, all 4 init-file builders, and bash command rewrite (bare / with-args / already-has-rcfile / login-shell-skip / quote-escaping).
+
+**Out of scope.** Windows PowerShell + cmd history scoping (separate ticket if asked); migration of the user's existing global history; cross-terminal recall (`atuin` does this externally); TUI-level history (Claude / vim / less own their own state); GC sweep of orphaned per-terminal init dirs (low priority — files are tiny).
+
+**Cross-refs:** §22 (base terminal — where the spawn lives), §2 (settings.json schema home for the new key), HS-7964 (parent investigation).
 
 ---
 

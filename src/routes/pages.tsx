@@ -132,6 +132,16 @@ pageRoutes.get('/', (c) => {
               </button>
             </div>
             <div id="channel-commands-container"></div>
+            {/* HS-7954 — git status chip. Hidden by default; populated +
+                shown by `gitStatusChip.tsx` once the first /api/git/status
+                resolves to a non-null GitStatus. Sits above the Views
+                section so it's visible regardless of which view is selected
+                (per docs/48-git-status-tracker.md §48.4.1). */}
+            <div id="sidebar-git-chip" className="sidebar-git-chip" style="display:none">
+              <span className="sidebar-git-icon"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/></svg></span>
+              <span className="sidebar-git-branch"></span>
+              <span className="sidebar-git-counts"></span>
+            </div>
             {PLUGINS_ENABLED ? <div id="plugin-sidebar-top" className="plugin-sidebar-actions"></div> : null}
             <div className="sidebar-copy-prompt" id="copy-prompt-section" style="display:none">
               <button className="copy-prompt-btn" id="copy-prompt-btn" title="Copy worklist prompt to clipboard">

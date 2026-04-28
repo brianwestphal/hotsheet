@@ -3473,6 +3473,102 @@ body.terminal-dashboard-active {
   overflow-y: auto;
 }
 
+// HS-7951 — inline unified diff renderer for Edit/Write permission popups.
+// Replaces the flat-JSON `<pre>` dump with a colour-coded line-level view.
+.edit-diff-preview {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.04));
+  overflow: hidden;
+}
+
+.edit-diff-path {
+  padding: 4px 8px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.06));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edit-diff-replace-all {
+  color: var(--accent, #3b82f6);
+}
+
+.edit-diff-body {
+  max-height: 240px;
+  overflow-y: auto;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.edit-diff-line {
+  display: flex;
+  gap: 6px;
+  padding: 0 8px;
+  white-space: pre;
+
+  .edit-diff-gutter {
+    width: 12px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .edit-diff-text {
+    flex: 1;
+    word-break: break-all;
+    white-space: pre-wrap;
+  }
+}
+
+.edit-diff-add {
+  background: rgba(34, 197, 94, 0.12);
+  .edit-diff-gutter, .edit-diff-text { color: #166534; }
+}
+
+.edit-diff-del {
+  background: rgba(239, 68, 68, 0.12);
+  .edit-diff-gutter, .edit-diff-text { color: #991b1b; }
+}
+
+.edit-diff-ctx {
+  color: var(--text-primary);
+}
+
+.edit-diff-hunk-sep {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 2px 0;
+  font-size: 10px;
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.04));
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+}
+
+.edit-diff-empty {
+  padding: 6px 8px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.edit-diff-truncated {
+  padding: 4px 8px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.04));
+}
+
 // HS-6637 / HS-7266: bottom-left text links. "Minimize" drops the popup into
 // the owning tab's pulsating dot for later; "No response needed" dismisses
 // outright (user will respond via Claude directly).
@@ -7778,5 +7874,226 @@ body.terminal-dashboard-active {
     color: var(--text-muted);
     text-align: center;
     margin-top: 48px;
+  }
+}
+
+// =============================================================================
+// HS-7962 — npm-version → installable-version upgrade nudge dialog
+// =============================================================================
+
+.upgrade-nudge-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 2300;
+}
+
+.upgrade-nudge-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 480px;
+  max-width: 92vw;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.upgrade-nudge-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.upgrade-nudge-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.upgrade-nudge-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--border);
+  }
+}
+
+.upgrade-nudge-body {
+  padding: 18px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+
+  p {
+    margin: 0;
+    line-height: 1.55;
+    color: var(--text);
+  }
+}
+
+// HS-7962 spec: full-width filled-bg primary button (minus the body padding,
+// which the dialog already provides). Matches the visual weight the user
+// asked for ("a larger 'Download for macOS' button with a filled background
+// taking up the full dialog width, minus margins").
+.upgrade-nudge-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--accent, #3b82f6);
+  color: #ffffff;
+  border: 1px solid var(--accent, #3b82f6);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  transition: filter 120ms ease;
+
+  &:hover {
+    filter: brightness(1.05);
+  }
+}
+
+// HS-7962 spec: centered link-style "View All Releases" button below the CTA.
+.upgrade-nudge-secondary {
+  align-self: center;
+  background: transparent;
+  border: none;
+  color: var(--accent, #3b82f6);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 13px;
+  text-decoration: underline;
+
+  &:hover {
+    text-decoration: none;
+  }
+}
+
+// "Don't show again" — muted, lower-emphasis link styled subtly so the user
+// reads the CTAs first.
+.upgrade-nudge-dismiss {
+  align-self: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  margin-top: 4px;
+
+  &:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+}
+
+// =============================================================================
+// HS-7954 — Sidebar git status chip (Phase 1: branch + dirty)
+// docs/48-git-status-tracker.md §48.4
+// =============================================================================
+
+.sidebar-git-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  margin: 0 8px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  cursor: default;
+  user-select: none;
+  // The chip lives in the sidebar (a flex column) — explicitly self-start
+  // so it doesn't stretch to the sidebar's full width.
+  align-self: flex-start;
+  max-width: calc(100% - 16px);
+
+  .sidebar-git-icon {
+    display: inline-flex;
+    align-items: center;
+    color: inherit;
+    flex-shrink: 0;
+  }
+
+  .sidebar-git-branch {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .sidebar-git-counts {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.06);
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  // Tint precedence per docs/48-git-status-tracker.md §48.4.1:
+  // conflict (red) > behind (amber) > ahead (blue) > dirty (yellow) > clean.
+  // Phase 1 only ever resolves clean / dirty / conflicted; the
+  // ahead / behind tints arrive with HS-7955.
+  &.is-clean {
+    color: #166534;
+    border-color: rgba(22, 101, 52, 0.3);
+    background: rgba(22, 101, 52, 0.08);
+  }
+  &.is-dirty {
+    color: #a16207;
+    border-color: rgba(161, 98, 7, 0.35);
+    background: rgba(161, 98, 7, 0.1);
+  }
+  &.is-conflicted {
+    color: #991b1b;
+    border-color: rgba(153, 27, 27, 0.45);
+    background: rgba(153, 27, 27, 0.1);
+  }
+  &.is-ahead {
+    color: #1e40af;
+    border-color: rgba(30, 64, 175, 0.4);
+    background: rgba(30, 64, 175, 0.1);
+  }
+  &.is-behind {
+    color: #b45309;
+    border-color: rgba(180, 83, 9, 0.4);
+    background: rgba(180, 83, 9, 0.1);
+  }
+}
+
+// HS-7955 — ahead/behind glyph cluster sits between the branch label and
+// the local-counts pill.
+.sidebar-git-chip {
+  .sidebar-git-aheadbehind {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: -0.25px;
   }
 }

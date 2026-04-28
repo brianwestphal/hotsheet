@@ -63,6 +63,102 @@ export function formatInputPreview(toolName: string, raw: string): string {
   return lines.length > 0 ? lines.join('\n') : raw;
 }
 
+/**
+ * HS-7951 — pull `old_string` / `new_string` (and optional metadata) out of
+ * an Edit / Write tool-permission `input_preview`. Returns `null` for any
+ * tool that isn't Edit / Write, or any malformed / non-JSON / missing-field
+ * shape — caller falls back to the existing `formatInputPreview` flat-JSON
+ * renderer.
+ *
+ * Tolerant of a partial / truncated JSON body (Claude truncates `input_preview`
+ * at ~2000 chars). Exposes a `truncated` flag the renderer surfaces as a
+ * "… (truncated)" footer so the user knows the diff might be incomplete.
+ *
+ * Pure helper, no DOM. The renderer that turns this into an actual diff UI
+ * lives in `src/client/editDiffPreview.tsx`.
+ */
+export interface EditDiffShape {
+  /** Original text being replaced (empty for `Write`). */
+  oldStr: string;
+  /** New text. */
+  newStr: string;
+  /** Optional file path the Edit tool reported. */
+  filePath: string | null;
+  /** True when the Edit tool's `replace_all` flag was set. */
+  replaceAll: boolean;
+  /** True when the JSON body looked truncated mid-stream. */
+  truncated: boolean;
+}
+
+export function formatEditDiff(toolName: string, raw: string): EditDiffShape | null {
+  if (toolName !== 'Edit' && toolName !== 'Write') return null;
+  if (raw === '') return null;
+  const trimmed = raw.trim();
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return null;
+
+  let parsed: unknown;
+  let truncated = false;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    // Truncated mid-JSON. Fall back to the forgiving extractor for
+    // `old_string` / `new_string` so partial diffs still render.
+    const oldExtract = extractStringField(trimmed, 'old_string');
+    const newExtract = extractStringField(trimmed, 'new_string');
+    if (toolName === 'Edit') {
+      // Edit needs both fields. If either is missing entirely, defer to flat
+      // JSON renderer.
+      if (oldExtract === null || newExtract === null) return null;
+      return {
+        oldStr: oldExtract.value,
+        newStr: newExtract.value,
+        filePath: extractStringField(trimmed, 'file_path')?.value ?? null,
+        replaceAll: false,
+        truncated: oldExtract.truncated || newExtract.truncated,
+      };
+    }
+    // Write — only `new_string` matters; old_string is treated as empty
+    // (whole-file replace).
+    if (newExtract === null) return null;
+    return {
+      oldStr: '',
+      newStr: newExtract.value,
+      filePath: extractStringField(trimmed, 'file_path')?.value ?? null,
+      replaceAll: false,
+      truncated: newExtract.truncated,
+    };
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+
+  if (toolName === 'Edit') {
+    const oldStr = typeof obj.old_string === 'string' ? obj.old_string : null;
+    const newStr = typeof obj.new_string === 'string' ? obj.new_string : null;
+    if (oldStr === null || newStr === null) return null;
+    return {
+      oldStr,
+      newStr,
+      filePath: typeof obj.file_path === 'string' ? obj.file_path : null,
+      replaceAll: obj.replace_all === true,
+      truncated,
+    };
+  }
+
+  // Write — `new_string` is required; `old_string` defaults to empty.
+  const newStr = typeof obj.new_string === 'string'
+    ? obj.new_string
+    : (typeof obj.content === 'string' ? obj.content : null); // some Write variants use `content`
+  if (newStr === null) return null;
+  return {
+    oldStr: typeof obj.old_string === 'string' ? obj.old_string : '',
+    newStr,
+    filePath: typeof obj.file_path === 'string' ? obj.file_path : null,
+    replaceAll: false,
+    truncated,
+  };
+}
+
 function primaryFieldKey(toolName: string): string | null {
   switch (toolName) {
     case 'Bash':           return 'command';

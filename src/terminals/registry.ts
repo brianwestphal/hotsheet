@@ -9,6 +9,7 @@ import { containsClaudeSpinner } from './claudeSpinner.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from './config.js';
 import { resolveTerminalCommand } from './resolveCommand.js';
 import { RingBuffer } from './ringBuffer.js';
+import { setupShellHistoryForSpawn } from './shellHistory.js';
 
 export type TerminalState = 'alive' | 'exited' | 'not_spawned';
 
@@ -701,17 +702,28 @@ function spawnIntoSession(session: SessionState, dataDir: string): void {
     terminalId: session.terminalId,
     configOverride: session.configOverride ?? undefined,
   });
-  const pty = activeFactory({
+  // HS-7965 — generate per-terminal shell init files + collect env / command
+  // overrides so up-arrow recall is scoped per (project, terminal id) rather
+  // than sharing the user's global ~/.zsh_history / ~/.bash_history. No-op
+  // for non-bash/zsh/fish commands and for projects whose
+  // `terminal_history_scope` setting is `'inherit'`.
+  const shellInit = setupShellHistoryForSpawn({
+    dataDir,
+    terminalId: session.terminalId,
     command: resolved.command,
+  });
+  const finalCommand = shellInit.rewrittenCommand ?? resolved.command;
+  const pty = activeFactory({
+    command: finalCommand,
     cwd: resolved.cwd,
     cols: session.cols,
     rows: session.rows,
-    env: buildEnv(),
+    env: buildEnv(shellInit.env),
   });
 
   session.pty = pty;
   session.startedAt = Date.now();
-  session.command = resolved.command;
+  session.command = finalCommand;
   session.exitCode = null;
   // Fresh PTY — drop any OSC-scan state left from a previous process.
   session.bellScanInString = false;
@@ -799,12 +811,17 @@ function resolveScrollbackBytes(dataDir: string): number {
   return Math.max(SCROLLBACK_MIN, Math.min(SCROLLBACK_MAX, Math.floor(n)));
 }
 
-function buildEnv(): NodeJS.ProcessEnv {
+function buildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
     ...scrubParentEnv(process.env),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     HOTSHEET_IN_TERMINAL: '1',
+    // HS-7965 — per-(project, terminal) shell-history overrides (ZDOTDIR /
+    // XDG_CONFIG_HOME, possibly empty for non-shell or `inherit`-scope
+    // commands). The `extra` object is computed in `spawnIntoSession` via
+    // `setupShellHistoryForSpawn`.
+    ...extra,
   };
 }
 
