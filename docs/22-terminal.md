@@ -107,7 +107,12 @@ A per-project setting `terminal_command` (stored in `.hotsheet/settings.json`) h
 A user who wants a plain shell (or any other command) overrides `terminal_command` in settings — the value is passed verbatim, no substitution. The setting surface lives in the **Experimental** tab of the Settings dialog initially; graduates to its own section when the feature ships.
 
 Additional per-project settings:
-- `terminal_cwd` — working directory. Defaults to the project root (parent of `.hotsheet/`). Same semantics as `/api/shell/exec`.
+- `terminal_cwd` (legacy single-terminal) / `terminals[].cwd` (per-terminal) — working directory. Resolution rules (HS-7991):
+  - **Blank / unset** → project root (parent of `.hotsheet/`).
+  - **`{{projectDir}}` token** → substituted inline before path resolution. `{{projectDir}}/scratch` is equivalent to typing the absolute project-root-plus-`scratch` path.
+  - **Absolute path** (`/abs/...` on Unix, `C:\...` on Windows) → used verbatim.
+  - **Relative path** (`sub-folder` or `./scratch` or `../sibling`) → resolved against the project root via `path.resolve`.
+  - `~` is NOT expanded — it would cross the per-project boundary in a surprising way. Use `{{projectDir}}/...` or an absolute path for explicit cross-tree paths.
 - `terminal_scrollback_bytes` — ring buffer size. Default 1048576 (1 MiB). Range 64 KiB – 16 MiB.
 
 ## 22.6 Client UI (xterm.js)

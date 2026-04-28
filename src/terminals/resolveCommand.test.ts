@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { resolveTerminalCommand } from './resolveCommand.js';
+import { resolveTerminalCommand, resolveTerminalCwd } from './resolveCommand.js';
 
 function makeDataDir(settings: Record<string, unknown> = {}): string {
   const root = mkdtempSync(join(tmpdir(), 'hs-resolve-'));
@@ -89,5 +89,73 @@ describe('resolveTerminalCommand', () => {
       channelEnabledOverride: false,
     });
     expect(cwd).toBe('/some/override');
+  });
+
+  // HS-7991 — projectDir template + relative-path resolution.
+  it('expands {{projectDir}} in the cwd setting', () => {
+    const dataDir = dir({ terminal_cwd: '{{projectDir}}/scratch' });
+    const { cwd } = resolveTerminalCommand({
+      dataDir,
+      isClaudeOnPath: () => true,
+      channelEnabledOverride: false,
+    });
+    expect(cwd).toBe(join(dirname(dataDir), 'scratch'));
+  });
+
+  it('resolves relative paths against the project root', () => {
+    const dataDir = dir({ terminal_cwd: 'sub-folder' });
+    const { cwd } = resolveTerminalCommand({
+      dataDir,
+      isClaudeOnPath: () => true,
+      channelEnabledOverride: false,
+    });
+    expect(cwd).toBe(join(dirname(dataDir), 'sub-folder'));
+  });
+
+  it('resolves ./prefixed relative paths against the project root', () => {
+    const dataDir = dir({ terminal_cwd: './scratch' });
+    const { cwd } = resolveTerminalCommand({
+      dataDir,
+      isClaudeOnPath: () => true,
+      channelEnabledOverride: false,
+    });
+    expect(cwd).toBe(join(dirname(dataDir), 'scratch'));
+  });
+});
+
+describe('resolveTerminalCwd (HS-7991)', () => {
+  const PROJECT = '/abs/project';
+
+  it('returns project root when blank', () => {
+    expect(resolveTerminalCwd('', PROJECT)).toBe(PROJECT);
+    expect(resolveTerminalCwd(undefined, PROJECT)).toBe(PROJECT);
+  });
+
+  it('trims surrounding whitespace before deciding', () => {
+    expect(resolveTerminalCwd('   ', PROJECT)).toBe(PROJECT);
+  });
+
+  it('expands {{projectDir}} alone', () => {
+    expect(resolveTerminalCwd('{{projectDir}}', PROJECT)).toBe(PROJECT);
+  });
+
+  it('expands {{projectDir}} as a prefix', () => {
+    expect(resolveTerminalCwd('{{projectDir}}/foo', PROJECT)).toBe('/abs/project/foo');
+  });
+
+  it('uses absolute paths verbatim', () => {
+    expect(resolveTerminalCwd('/elsewhere', PROJECT)).toBe('/elsewhere');
+  });
+
+  it('resolves bare relative paths against the project root', () => {
+    expect(resolveTerminalCwd('foo', PROJECT)).toBe('/abs/project/foo');
+  });
+
+  it('resolves ./relative paths against the project root', () => {
+    expect(resolveTerminalCwd('./foo', PROJECT)).toBe('/abs/project/foo');
+  });
+
+  it('resolves ../parent paths against the project root', () => {
+    expect(resolveTerminalCwd('../sibling', PROJECT)).toBe('/abs/sibling');
   });
 });

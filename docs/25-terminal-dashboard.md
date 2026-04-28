@@ -146,7 +146,7 @@ Single-clicking a live tile smoothly transforms it to a centered overlay at roug
 
 While one tile is centered:
 
-- The centered tile is the only interactive terminal: its xterm helper textarea accepts keyboard input, and the focus ring from §22.6 applies. Users can type into the terminal without first entering dedicated view.
+- The centered tile is the only interactive terminal: its xterm helper textarea accepts keyboard input, and the focus ring from §22.6 applies. Users can type into the terminal without first entering dedicated view. **Mouse-wheel scrollback works** (HS-7990) — tile xterms carry a 1000-line scrollback ring (was 0 pre-fix) so the magnified view exposes the recent backlog without forcing the user into the dedicated view.
 - The backdrop dims every other tile to ~40 % opacity.
 - Clicking **outside the centered tile** (on the dim backdrop) returns the tile to its grid slot (reverse transform animation, ~200 ms). Clicking the **same centered tile** returns to the grid too, so users can toggle-zoom with a single click.
 - Clicking **a different tile** animates the current one back to its slot and zooms the new one in — the animations can overlap.

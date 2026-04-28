@@ -325,7 +325,7 @@ function openEditor(
           <div className="settings-field">
             <label>Working directory</label>
             <input type="text" className="term-edit-cwd" value={entry.cwd ?? ''} placeholder="(project root)" />
-            <span className="settings-hint">Leave blank to use the project root.</span>
+            <span className="settings-hint">{'Leave blank for the project root. Relative paths (e.g. sub-folder or ./scratch) resolve against the project root. Use {{projectDir}} to compose paths explicitly. Absolute paths (/abs/path) are used verbatim.'}</span>
           </div>
           <div className="settings-field settings-field-checkbox">
             <label>

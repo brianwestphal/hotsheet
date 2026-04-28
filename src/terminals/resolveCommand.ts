@@ -1,5 +1,5 @@
 import { existsSync } from 'fs';
-import { delimiter, dirname, join } from 'path';
+import { delimiter, dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
@@ -11,8 +11,36 @@ export interface ResolvedCommand {
 }
 
 const CLAUDE_TOKEN = '{{claudeCommand}}';
+const PROJECT_DIR_TOKEN = '{{projectDir}}';
 const CLAUDE_WITH_CHANNEL = 'claude --dangerously-load-development-channels server:hotsheet-channel';
 const CLAUDE_BASE = 'claude';
+
+/**
+ * Pure: resolve a user-entered terminal `cwd` string against the project
+ * root. HS-7991. Three rules in priority order:
+ *
+ * 1. **Empty / unset** → project root. Matches the placeholder hint
+ *    "Leave blank to use the project root."
+ * 2. **`{{projectDir}}` token** → substitute the project root inline
+ *    before path resolution, so `{{projectDir}}/scratch` works exactly
+ *    like a hand-typed absolute path.
+ * 3. **Absolute** → used verbatim (`/abs`, Windows `C:\...`).
+ * 4. **Relative** (after token expansion) → resolved against the project
+ *    root via `path.resolve`. Lets the user type `./sub-folder` or just
+ *    `sub-folder` and have it land in the project's subdirectory.
+ *
+ * `~` is NOT expanded here — most shells handle that on their own at
+ * launch time, and substituting `~` would cross the OS user-home boundary
+ * in a way that's surprising for a per-project setting. Use
+ * `{{projectDir}}/...` or an absolute path for explicit cross-tree paths.
+ */
+export function resolveTerminalCwd(cwdSetting: string | undefined, projectDir: string): string {
+  const trimmed = (cwdSetting ?? '').trim();
+  if (trimmed === '') return projectDir;
+  const expanded = trimmed.split(PROJECT_DIR_TOKEN).join(projectDir);
+  if (isAbsolute(expanded)) return expanded;
+  return resolvePath(projectDir, expanded);
+}
 
 export interface ResolveOptions {
   /** Path to the project's data directory (e.g. /path/to/project/.hotsheet). */
@@ -40,8 +68,8 @@ export interface ResolveOptions {
 export function resolveTerminalCommand(options: ResolveOptions): ResolvedCommand {
   const config = options.configOverride ?? lookupConfig(options);
   const template = config.command !== '' ? config.command : CLAUDE_TOKEN;
-  const cwdSetting = typeof config.cwd === 'string' ? config.cwd.trim() : '';
-  const cwd = cwdSetting !== '' ? cwdSetting : dirname(options.dataDir);
+  const projectDir = dirname(options.dataDir);
+  const cwd = resolveTerminalCwd(config.cwd, projectDir);
 
   const command = template.includes(CLAUDE_TOKEN)
     ? template.split(CLAUDE_TOKEN).join(pickClaudeCommand(options))

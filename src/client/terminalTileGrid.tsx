@@ -526,7 +526,14 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       fontSize: 13,
       cursorBlink: false,
-      scrollback: 0,
+      // HS-7990 — was `scrollback: 0`. Bumping to 1000 lines lets the user
+      // mouse-wheel through the back-buffer when a tile is centered /
+      // magnified (the ticket's request — only the dedicated view supported
+      // scrolling before). xterm allocates the scrollback ring lazily so a
+      // quiet tile pays nearly zero; a chatty tile caps at ~5 MB at 160 cols
+      // × 1000 lines × 32 bytes/cell. The HS-7968 virtualization disposes
+      // off-screen tiles, so only the on-screen subset holds scrollback.
+      scrollback: 1000,
       allowProposedApi: true,
       cols: TILE_INITIAL_COLS,
       rows: TILE_INITIAL_ROWS,
