@@ -1,5 +1,15 @@
 // Shared change-tracking state for long-poll support.
 // All route groups that mutate data call notifyChange() to wake poll waiters.
+//
+// HS-7972 — `changeVersion` ticks on **any** wake (heartbeats, channel
+// status, git status, ticket mutations, etc.) so cheap UI updates fire
+// promptly. `dataVersion` ticks **only** on real ticket-data mutations so
+// expensive rebuilds (loadTickets / refreshDetail) only run when ticket
+// data actually changed. Pre-fix the two were the same counter — every
+// PostToolUse hook from a busy `claude` process fired `notifyChange()` via
+// `/api/channel/heartbeat`, which pushed the client into a 10 Hz
+// loadTickets-and-rebuild loop and flickered hover state, project tabs,
+// scrollbars, and the reader-button affordance under the cursor.
 
 import { subscribeToGitChanges } from '../git/watcher.js';
 import { scheduleAllSync } from '../sync/markdown.js';
@@ -12,6 +22,7 @@ import { scheduleAllSync } from '../sync/markdown.js';
 subscribeToGitChanges(() => { notifyChange(); });
 
 let changeVersion = 0;
+let dataVersion = 0;
 let pollWaiters: Array<(version: number) => void> = [];
 
 export function notifyChange() {
@@ -30,13 +41,23 @@ export function getChangeVersion() {
   return changeVersion;
 }
 
+/** HS-7972 — bumps when ticket data actually mutated (created / edited /
+ *  deleted / archived / restored / etc.). Heartbeats and channel-status
+ *  pings DO NOT bump this counter, so the client can skip its expensive
+ *  loadTickets + refreshDetail rebuild when nothing visible changed. */
+export function getDataVersion() {
+  return dataVersion;
+}
+
 export function addPollWaiter(resolve: (version: number) => void) {
   pollWaiters.push(resolve);
 }
 
-/** Convenience: schedule markdown sync and wake long-poll waiters in one call. */
+/** Convenience: schedule markdown sync and wake long-poll waiters in one
+ *  call. HS-7972 — also bumps `dataVersion`, the only path that should. */
 export function notifyMutation(dataDir: string) {
   scheduleAllSync(dataDir);
+  dataVersion++;
   notifyChange();
 }
 

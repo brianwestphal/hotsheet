@@ -5,7 +5,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { isCommandsLogFocused, isNewTerminalShortcut, pickNextDrawerTabId } from './shortcuts.js';
+import { isCommandsLogFocused, isEditableTarget, isNewTerminalShortcut, pickNextDrawerTabId } from './shortcuts.js';
 
 describe('isNewTerminalShortcut (HS-7926)', () => {
   const base = { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, key: 't' };
@@ -92,90 +92,128 @@ describe('pickNextDrawerTabId (HS-7927)', () => {
   });
 });
 
+// HS-7927 third follow-up — predicate is now keyed on `getActiveDrawerTab()`
+// + drawer panel visibility, not on which DOM element happens to have focus.
+// `getActiveDrawerTab()` defaults to `'commands-log'` (the initial value in
+// `commandLog.tsx::activeTab`), which is what we exploit in the visible-panel
+// tests below; the negative cases mark a different drawer tab as `.active`
+// to drive the fallback path that disagrees with `getActiveDrawerTab()`.
 describe('isCommandsLogFocused (HS-7927 follow-up)', () => {
   afterEach(() => {
     document.body.innerHTML = '';
   });
 
-  it('returns true when focus is on the commands-log search input', () => {
+  function panel(inner: string, displayNone = false): void {
+    const styleAttr = displayNone ? ' style="display:none"' : '';
     document.body.innerHTML = `
+      <div id="command-log-panel"${styleAttr}>
+        ${inner}
+      </div>
+    `;
+  }
+
+  it('returns true when the panel is visible and the active drawer tab is commands-log (default activeTab)', () => {
+    panel('<div id="drawer-panel-commands-log"></div>');
+    expect(isCommandsLogFocused()).toBe(true);
+  });
+
+  it('returns true regardless of which element has focus, so long as the panel is visible and commands-log is active', () => {
+    panel(`
       <div id="drawer-panel-commands-log">
         <input id="command-log-search" />
       </div>
-    `;
-    const input = document.getElementById('command-log-search') as HTMLInputElement;
-    input.focus();
-    expect(document.activeElement).toBe(input);
+    `);
+    (document.getElementById('command-log-search') as HTMLInputElement).focus();
     expect(isCommandsLogFocused()).toBe(true);
   });
 
-  it('returns true for any focusable descendant of #drawer-panel-commands-log', () => {
-    document.body.innerHTML = `
-      <div id="drawer-panel-commands-log">
-        <div>
-          <button id="nested-btn">x</button>
-        </div>
-      </div>
-    `;
-    (document.getElementById('nested-btn') as HTMLButtonElement).focus();
+  it('returns true when focus is on body (the user-reported HS-7927 third-follow-up case)', () => {
+    panel('<div id="drawer-panel-commands-log"></div>');
+    // No element focused — activeElement === body. Pre-fix this returned
+    // false and Cmd+Shift+Arrow fell through to project-tab cycling.
+    (document.body as HTMLElement).focus();
     expect(isCommandsLogFocused()).toBe(true);
   });
 
-  it('returns false when focus is on an unrelated input', () => {
-    document.body.innerHTML = `
-      <div id="drawer-panel-commands-log"></div>
-      <input id="other" />
-    `;
-    (document.getElementById('other') as HTMLInputElement).focus();
+  it('returns false when the drawer panel is hidden (display:none)', () => {
+    panel('<div id="drawer-panel-commands-log"></div>', true);
     expect(isCommandsLogFocused()).toBe(false);
   });
 
-  it('returns false when nothing is focused (activeElement === body)', () => {
-    document.body.innerHTML = `<div id="drawer-panel-commands-log"></div>`;
+  it('returns false when the drawer panel is missing entirely', () => {
+    document.body.innerHTML = '';
     expect(isCommandsLogFocused()).toBe(false);
   });
+});
 
-  // HS-7927 second follow-up — focus on the Commands Log tab BUTTON (which
-  // lives in `.drawer-tabs`, OUTSIDE `#drawer-panel-commands-log`) also
-  // counts as "commands-log focused" so Cmd+Shift+Arrow cycles drawer tabs
-  // even though the user just clicked the tab button.
-  it('returns true when focus is on the Commands Log tab button and commands-log is the active drawer tab', () => {
+// HS-7978 — Cmd+A inside a contenteditable span (e.g. the custom-command-group
+// name) used to fall through to "select all tickets" because the isInput gate
+// only checked tag names. The user did Cmd+A → Backspace and accidentally
+// deleted every ticket in the project. The fix extracts an `isEditableTarget`
+// helper that also returns true for any element with `isContentEditable`.
+describe('isEditableTarget (HS-7978)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('returns true for INPUT elements', () => {
+    const input = document.createElement('input');
+    expect(isEditableTarget(input)).toBe(true);
+  });
+
+  it('returns true for TEXTAREA elements', () => {
+    const ta = document.createElement('textarea');
+    expect(isEditableTarget(ta)).toBe(true);
+  });
+
+  it('returns true for SELECT elements', () => {
+    const sel = document.createElement('select');
+    expect(isEditableTarget(sel)).toBe(true);
+  });
+
+  it('returns true for a contenteditable=true span (the custom-command-group rename case)', () => {
+    document.body.innerHTML = `<span contenteditable="true">Group name</span>`;
+    const span = document.querySelector('span') as HTMLSpanElement;
+    expect(isEditableTarget(span)).toBe(true);
+  });
+
+  it('returns true for a div nested under a contenteditable ancestor', () => {
     document.body.innerHTML = `
-      <div id="command-log-panel">
-        <div class="drawer-tabs">
-          <button class="drawer-tab active" data-drawer-tab="commands-log" id="drawer-tab-commands-log"></button>
-          <button class="drawer-tab" data-drawer-tab="terminal:default"></button>
-        </div>
-        <div id="drawer-panel-commands-log"></div>
+      <div contenteditable="true">
+        <div id="nested">child</div>
       </div>
     `;
-    (document.getElementById('drawer-tab-commands-log') as HTMLButtonElement).focus();
-    expect(isCommandsLogFocused()).toBe(true);
+    const nested = document.getElementById('nested') as HTMLDivElement;
+    // isContentEditable propagates to descendants in standard DOM semantics.
+    expect(isEditableTarget(nested)).toBe(true);
   });
 
-  it('returns false when focus is on a terminal tab button (commands-log is not the active drawer tab)', () => {
-    document.body.innerHTML = `
-      <div id="command-log-panel">
-        <div class="drawer-tabs">
-          <button class="drawer-tab" data-drawer-tab="commands-log"></button>
-          <button class="drawer-tab active" data-drawer-tab="terminal:default" id="drawer-tab-terminal"></button>
-        </div>
-      </div>
-    `;
-    (document.getElementById('drawer-tab-terminal') as HTMLButtonElement).focus();
-    expect(isCommandsLogFocused()).toBe(false);
+  it('returns false for a regular non-editable span', () => {
+    document.body.innerHTML = `<span>Plain text</span>`;
+    const span = document.querySelector('span') as HTMLSpanElement;
+    expect(isEditableTarget(span)).toBe(false);
   });
 
-  it('returns false when focus is in the drawer chrome but no drawer tab is active', () => {
+  it('returns false for a button', () => {
+    const btn = document.createElement('button');
+    expect(isEditableTarget(btn)).toBe(false);
+  });
+
+  it('returns false for a contenteditable=false span (explicit opt-out beneath an editable ancestor)', () => {
     document.body.innerHTML = `
-      <div id="command-log-panel">
-        <div class="drawer-tabs">
-          <button class="drawer-tab" data-drawer-tab="commands-log" id="drawer-tab-commands-log"></button>
-        </div>
+      <div contenteditable="true">
+        <span id="opt-out" contenteditable="false">Pinned text</span>
       </div>
     `;
-    (document.getElementById('drawer-tab-commands-log') as HTMLButtonElement).focus();
-    // No `.active` class — the tab is focused but not active. Should be false.
-    expect(isCommandsLogFocused()).toBe(false);
+    const span = document.getElementById('opt-out') as HTMLSpanElement;
+    expect(isEditableTarget(span)).toBe(false);
+  });
+
+  it('returns false for null target (no event target)', () => {
+    expect(isEditableTarget(null)).toBe(false);
+  });
+
+  it('returns false for non-HTMLElement targets (e.g. window, document)', () => {
+    expect(isEditableTarget(window as unknown as EventTarget)).toBe(false);
   });
 });

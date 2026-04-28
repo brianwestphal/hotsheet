@@ -5877,20 +5877,23 @@ body.terminal-dashboard-active {
   }
 
   // Drop-target indicator. Invisible at rest; on slot hover, becomes a 2 px
-  // accent-coloured bar spanning the slot width. `transition` keeps the
-  // appearance gentle rather than snappy.
+  // accent-coloured bar spanning the slot width. HS-7930 third pass — no
+  // opacity transition (the user reported the 100 ms fade as "lines don't
+  // disappear after hovering"); the bar is now `display: none` at rest and
+  // `display: block` on hover, so the on/off behaviour is instant. Also
+  // `pointer-events: none` so the bar itself can't intercept hover and
+  // creates exactly one hover region — the parent slot.
   .feedback-insert-slot::before {
     content: '';
-    display: block;
+    display: none;
     height: 2px;
     background: #3b82f6;
-    opacity: 0;
-    transition: opacity 100ms ease;
     margin: 0 12px;
+    pointer-events: none;
   }
 
   .feedback-insert-slot:hover::before {
-    opacity: 1;
+    display: block;
   }
 
   // When the user has already inserted a response in this slot, the inline
@@ -6195,18 +6198,27 @@ body.terminal-dashboard-active {
 
   &.note-markdown {
     white-space: normal;
-
-    p { margin: 0 0 8px; &:last-child { margin-bottom: 0; } }
-    h1, h2, h3, h4, h5, h6 { margin: 8px 0 4px; font-size: 14px; }
-    h1 { font-size: 16px; } h2 { font-size: 15px; }
-    ul, ol { margin: 4px 0; padding-left: 20px; }
-    code { background: var(--bg-secondary); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
-    pre { background: var(--bg-secondary); padding: 8px; border-radius: var(--radius); overflow-x: auto; margin: 4px 0; }
-    pre code { background: none; padding: 0; }
-    blockquote { border-left: 3px solid var(--border); padding-left: 12px; margin: 4px 0; color: var(--text-muted); }
-    a { color: var(--accent); text-decoration: none; &:hover { text-decoration: underline; } }
-    img { max-width: 100%; height: auto; border-radius: var(--radius); }
   }
+}
+
+// HS-7961 follow-up — `.note-markdown` rules used to live nested under
+// `.note-text`, requiring BOTH classes to match. The reader-mode body only
+// carries `.note-markdown` (no `.note-text`), so the markdown styling
+// silently fell back to browser defaults — paragraph margins were ~16 px
+// instead of 8 px, headings used the browser's huge defaults, code blocks
+// had no background. Lifted to a top-level selector so any element with
+// `.note-markdown` gets the same look.
+.note-markdown {
+  p { margin: 0 0 8px; &:last-child { margin-bottom: 0; } }
+  h1, h2, h3, h4, h5, h6 { margin: 8px 0 4px; font-size: 14px; }
+  h1 { font-size: 16px; } h2 { font-size: 15px; }
+  ul, ol { margin: 4px 0; padding-left: 20px; }
+  code { background: var(--bg-secondary); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+  pre { background: var(--bg-secondary); padding: 8px; border-radius: var(--radius); overflow-x: auto; margin: 4px 0; }
+  pre code { background: none; padding: 0; }
+  blockquote { border-left: 3px solid var(--border); padding-left: 12px; margin: 4px 0; color: var(--text-muted); }
+  a { color: var(--accent); text-decoration: none; &:hover { text-decoration: underline; } }
+  img { max-width: 100%; height: auto; border-radius: var(--radius); }
 }
 
 // --- Command Log Panel ---
@@ -7909,11 +7921,20 @@ label.detail-details-label {
 // Body — scroll-bounded content area. Reuses the inline `.note-markdown`
 // CSS by sharing the class on the element, so headings / lists / code blocks
 // / tables look identical to how the same markdown renders inside notes.
+//
+// HS-7961 follow-up — explicit `font-size: 13px` matches the inline note's
+// `.note-text` base; pre-fix the body inherited the browser default (16 px),
+// which made the rendered markdown look unrelated to how it appeared in the
+// detail panel. Pairs with the lifted top-level `.note-markdown` rules so
+// per-element overrides (h1 → 16 px, h2 → 15 px, code → 12 px, etc.) cascade
+// from the same base size.
 .reader-mode-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 24px 32px;
+  font-size: 13px;
+  color: var(--text);
   // Slightly bumped line-height for read-heavy mode.
   line-height: 1.6;
 
@@ -8474,4 +8495,166 @@ label.detail-details-label {
 
 .permission-popup-always-allow-form .btn {
   align-self: flex-start;
+}
+
+// =============================================================================
+// HS-7971 Phase 1 — Terminal permission-prompt overlay
+// docs/52-terminal-prompt-overlay.md §52.5
+// =============================================================================
+
+.terminal-prompt-overlay {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  max-width: 540px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.terminal-prompt-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.terminal-prompt-overlay-title {
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-prompt-overlay-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+}
+
+.terminal-prompt-overlay-context {
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--text);
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre;
+}
+
+.terminal-prompt-overlay-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+}
+
+.terminal-prompt-overlay-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 80ms ease, border-color 80ms ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+  }
+
+  &.is-highlighted {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: var(--accent);
+  }
+}
+
+.terminal-prompt-overlay-choice-num {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  min-width: 22px;
+}
+
+.terminal-prompt-overlay-choice-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-prompt-overlay-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px 10px;
+  font-size: 11px;
+}
+
+.terminal-prompt-overlay-cancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+}
+
+.terminal-prompt-overlay-not-a-prompt {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-decoration: none;
+
+  &:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+}
+
+.terminal-prompt-overlay-error {
+  color: #991b1b;
+  font-size: 11px;
+  margin: 0 12px 8px;
 }

@@ -8,7 +8,7 @@ import { openInFileManager } from '../open-in-file-manager.js';
 import { getAllProjects } from '../projects.js';
 import { consumeSkillsCreatedFlag, ensureSkillsForDir } from '../skills.js';
 import type { AppEnv } from '../types.js';
-import { addPollWaiter, getChangeVersion } from './notify.js';
+import { addPollWaiter, getChangeVersion, getDataVersion } from './notify.js';
 import { GlobalConfigSchema,parseBody, PrintSchema } from './validation.js';
 
 export const dashboardRoutes = new Hono<AppEnv>();
@@ -19,14 +19,14 @@ dashboardRoutes.get('/poll', async (c) => {
   const clientVersion = Math.max(0, parseInt(c.req.query('version') ?? '0', 10) || 0);
   const changeVersion = getChangeVersion();
   if (changeVersion > clientVersion) {
-    return c.json({ version: changeVersion });
+    return c.json({ version: changeVersion, dataVersion: getDataVersion() });
   }
   // Wait for a change or timeout after 30s
   const version = await Promise.race([
     new Promise<number>((resolve) => { addPollWaiter(resolve); }),
     new Promise<number>((resolve) => { setTimeout(() => resolve(getChangeVersion()), 30000); }),
   ]);
-  return c.json({ version });
+  return c.json({ version, dataVersion: getDataVersion() });
 });
 
 // --- Stats ---

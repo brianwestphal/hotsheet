@@ -1,5 +1,6 @@
 import { copyTickets, hasClipboardTickets, pasteTickets } from './clipboard.js';
 import { formatTicketForClipboard } from './clipboardUtil.js';
+import { getActiveDrawerTab } from './commandLog.js';
 import { showOpenFolderDialog } from './openFolder.js';
 import { showPrintDialog } from './print.js';
 import { closeActiveTab, switchTabByOffset } from './projectTabs.js';
@@ -56,8 +57,7 @@ export function bindKeyboardShortcuts() {
 
   document.addEventListener('keydown', (e) => {
     // Ignore if typing in an input/textarea (except specific shortcuts)
-    const tag = (e.target as HTMLElement).tagName;
-    const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    const isInput = isEditableTarget(e.target);
 
     // Close any open dialog on Escape
     if (e.key === 'Escape') {
@@ -164,7 +164,7 @@ export function bindKeyboardShortcuts() {
       // behaviours have also been removed (sidebar.tsx, terminalSearch.tsx)
       // so Esc is now consistently just "lose focus" across every input.
       const active = document.activeElement as HTMLElement | null;
-      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+      if (active && isEditableTarget(active)) {
         active.blur();
         return;
       }
@@ -361,6 +361,25 @@ export function bindKeyboardShortcuts() {
 }
 
 /**
+ * HS-7978 — true when the event target is something the user is editing:
+ * a real form input/textarea/select, OR any element with `contentEditable`
+ * (e.g. the custom-command-group name span uses `contentEditable="true"`).
+ * Pre-fix the gate only checked tag names, so Cmd+A inside a contenteditable
+ * span fell through to "select all tickets" and a fast Cmd+A → Backspace
+ * deleted the user's tickets instead of clearing the field text.
+ *
+ * Exported so unit tests can verify the predicate directly without driving
+ * the full keydown handler.
+ */
+export function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (target.isContentEditable) return true;
+  return false;
+}
+
+/**
  * True when keyboard focus is inside an embedded terminal — either the
  * xterm helper textarea or its surrounding pane. xterm mounts its I/O
  * surface as a TEXTAREA element, so we can't use the plain "isInput" test
@@ -389,16 +408,27 @@ function isTerminalFocused(): boolean {
  * own — focus stays briefly on the tab button or reverts to `<body>`.
  * Without this broader check, Cmd+Shift+Arrow in that state would fall
  * through to project-tab cycling, which is exactly what the user reported.
+ *
+ * HS-7927 third follow-up — earlier passes still failed when focus was on
+ * `<body>` and the drawer chrome didn't `contain(<body>)`. The user clicks
+ * inside the Commands Log content (often onto a non-focusable span / row)
+ * which sends focus back to `<body>`; both prior gates returned false and
+ * Cmd+Shift+Arrow fell through to project-tab cycling. The robust signal
+ * is `getActiveDrawerTab() === 'commands-log'` AND the drawer panel being
+ * visible — that's what the user actually means by "in commands log",
+ * regardless of which DOM element happens to have focus.
  */
 export function isCommandsLogFocused(): boolean {
-  const active = document.activeElement;
-  if (!(active instanceof HTMLElement)) return false;
-  if (active.closest('#drawer-panel-commands-log') !== null) return true;
-  // Tab-button focus + focus elsewhere in the drawer chrome counts when
-  // commands-log is the active drawer tab.
-  const drawer = document.getElementById('command-log-panel');
-  if (drawer === null || !drawer.contains(active)) return false;
-  const activeTabBtn = drawer.querySelector<HTMLElement>('.drawer-tab.active');
+  const drawerPanel = document.getElementById('command-log-panel');
+  // Drawer not in the DOM, or hidden via display:none → not "in" commands-log.
+  if (drawerPanel === null || drawerPanel.style.display === 'none') return false;
+  // The active drawer tab is the source of truth — set by `selectDrawerTab`
+  // and persisted in the per-project drawer state.
+  if (getActiveDrawerTab() === 'commands-log') return true;
+  // Defensive fallback for the rare case where `getActiveDrawerTab()` is
+  // stale (e.g. a user-script switched panels via DOM mutation): cross-check
+  // the visibly-active tab button.
+  const activeTabBtn = drawerPanel.querySelector<HTMLElement>('.drawer-tab.active');
   return activeTabBtn?.dataset.drawerTab === 'commands-log';
 }
 

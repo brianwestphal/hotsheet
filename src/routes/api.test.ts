@@ -70,6 +70,7 @@ interface FileSettingsResponse {
 
 interface PollResponse {
   version: number;
+  dataVersion: number;
 }
 
 interface OkResponse {
@@ -797,6 +798,34 @@ describe('long-poll', () => {
     const res = await pollPromise;
     const data = await res.json() as PollResponse;
     expect(data.version).toBeGreaterThan(version);
+  });
+
+  // HS-7972 — heartbeats and other non-mutation wakes bump `version` (so cheap
+  // UI surfaces refresh) but DO NOT bump `dataVersion`. Pre-fix every Claude
+  // Code PostToolUse hook fired a `notifyChange()` that re-rendered the whole
+  // ticket list at 5–10 Hz, flickering hover state and scrollbar gutters.
+  it('returns dataVersion in the poll response', async () => {
+    const res = await app.request('/api/poll?version=0');
+    const data = await res.json() as PollResponse;
+    expect(typeof data.dataVersion).toBe('number');
+  });
+
+  it('bumps dataVersion when a ticket is created (real mutation)', async () => {
+    const before = await (await app.request('/api/poll?version=0')).json() as PollResponse;
+    await app.request('/api/tickets', post({ title: 'mutation' }));
+    const after = await (await app.request('/api/poll?version=0')).json() as PollResponse;
+    expect(after.dataVersion).toBeGreaterThan(before.dataVersion);
+  });
+
+  it('does NOT bump dataVersion on a non-mutation notify (heartbeat / channel ping)', async () => {
+    // Drain to current.
+    const before = await (await app.request('/api/poll?version=0')).json() as PollResponse;
+    // /api/channel/notify is the cheap-wake path — channel server pings, etc.
+    await app.request('/api/channel/notify', { method: 'POST' });
+    const after = await (await app.request('/api/poll?version=0')).json() as PollResponse;
+    // version may bump (cheap waiters got woken) but dataVersion must not.
+    expect(after.dataVersion).toBe(before.dataVersion);
+    expect(after.version).toBeGreaterThan(before.version);
   });
 });
 

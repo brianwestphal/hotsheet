@@ -8,14 +8,25 @@ import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
 
 let pollVersion = 0;
+let pollDataVersion = 0;
 
 export function startLongPoll() {
   async function poll() {
     try {
-      const result = await api<{ version: number }>(`/poll?version=${pollVersion}`);
+      const result = await api<{ version: number; dataVersion?: number }>(`/poll?version=${pollVersion}`);
       if (result.version > pollVersion) {
         pollVersion = result.version;
-        if (state.backupPreview?.active !== true) {
+        // HS-7972 — only run the expensive ticket-list + detail-panel rebuild
+        // when ticket data actually changed. Heartbeats from Claude Code
+        // hooks (PostToolUse fires every tool call — 5–10×/sec when claude
+        // is busy) bump `version` for cheap UI wakes (channel status, tabs,
+        // git chip) but DO NOT bump `dataVersion`. Pre-fix every heartbeat
+        // re-rendered the whole list, flickering :hover state and the note
+        // reader-button under the cursor at the heartbeat rate.
+        const serverDataVersion = result.dataVersion ?? result.version;
+        const dataChanged = serverDataVersion > pollDataVersion;
+        pollDataVersion = serverDataVersion;
+        if (dataChanged && state.backupPreview?.active !== true) {
           await loadTickets();
           refreshDetail();
           void checkFeedbackState();

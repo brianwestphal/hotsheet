@@ -123,7 +123,7 @@ export function buildAheadBehindLine(status: GitStatusJson): string | null {
   return parts.join(' • ');
 }
 
-function paintPopover(popover: HTMLElement, data: GitStatusJson): void {
+export function paintPopover(popover: HTMLElement, data: GitStatusJson): void {
   const titleEl = popover.querySelector<HTMLElement>('.git-popover-title');
   const bodyEl = popover.querySelector<HTMLElement>('.git-popover-body');
   if (titleEl === null || bodyEl === null) return;
@@ -144,7 +144,12 @@ function paintPopover(popover: HTMLElement, data: GitStatusJson): void {
   ]) {
     if (row !== null) bucketsEl.appendChild(row);
   }
-  bodyEl.appendChild(bucketsEl);
+  // HS-7975 follow-up — only mount the buckets element when there's at least
+  // one bucket to show. Pre-fix the buckets div's `border-top` rendered as a
+  // bare horizontal separator in the popover whenever the working tree was
+  // clean (e.g. just "1 ahead" with no staged / unstaged / untracked /
+  // conflicted files), which the user flagged as visual noise.
+  if (bucketsEl.children.length > 0) bodyEl.appendChild(bucketsEl);
 
   // Wire bucket-row expand/collapse toggles.
   bodyEl.querySelectorAll<HTMLElement>('.git-popover-bucket-header').forEach(header => {

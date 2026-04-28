@@ -34,6 +34,17 @@ import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalView
 import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
+import {
+  createDetector,
+  type Detector,
+  disposeDetector,
+  markDetectorClosed,
+  markDetectorSuppressed,
+  notifyChunk,
+  notifyUserKeystroke,
+  SCAN_ROW_COUNT,
+} from './terminalPrompt/detector.js';
+import { openTerminalPromptOverlay } from './terminalPromptOverlay.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { configuredSubsetInStripOrder, reorderConfigsById, reorderIds } from './terminalTabReorder.js';
 import { pickNearestTerminalTabId } from './terminalTabSelection.js';
@@ -122,6 +133,10 @@ interface TerminalInstance {
    *  see no layout change. `commands` is a bounded ring (500) of per-prompt
    *  records; `current` is the in-flight record between A and D. */
   shellIntegration: ShellIntegrationState;
+  /** HS-7971 Phase 1 — terminal-prompt detector. Lazily created on the first
+   *  PTY chunk because the detector needs the xterm Terminal handle, which
+   *  is mounted later (`createInstance` returns before xterm activation). */
+  promptDetector: Detector | null;
 }
 
 interface CommandRecord {
@@ -611,6 +626,7 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     runtimeCwd: null,
     hasBell: false,
     shellIntegration: { enabled: false, commands: [], current: null, nextId: 1 },
+    promptDetector: null,
   };
 
   powerBtn.addEventListener('click', () => { void onPowerClick(inst); });
@@ -985,6 +1001,9 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
     if (inst.ws !== null && inst.ws.readyState === WebSocket.OPEN) {
       inst.ws.send(encoder.encode(data));
     }
+    // HS-7971 Phase 1 — a real user keystroke clears the per-instance
+    // "Not a prompt" suppression so a subsequent prompt re-arms detection.
+    if (inst.promptDetector !== null) notifyUserKeystroke(inst.promptDetector);
   });
   term.onResize(({ cols, rows }) => {
     if (inst.ws !== null && inst.ws.readyState === WebSocket.OPEN) {
@@ -1072,7 +1091,15 @@ function connect(inst: TerminalInstance): void {
   });
   ws.addEventListener('message', (ev) => {
     const data: unknown = ev.data;
-    if (data instanceof ArrayBuffer) { inst.term?.write(new Uint8Array(data)); return; }
+    if (data instanceof ArrayBuffer) {
+      inst.term?.write(new Uint8Array(data));
+      // HS-7971 Phase 1 — schedule a debounced parser scan after every PTY
+      // chunk lands in the xterm buffer. The detector handles its own
+      // debouncing + suppression; we just notify it that fresh bytes
+      // arrived.
+      kickPromptDetector(inst);
+      return;
+    }
     if (typeof data === 'string') {
       try {
         const msg = JSON.parse(data) as { type: string; [k: string]: unknown };
@@ -1666,12 +1693,70 @@ function teardown(inst: TerminalInstance): void {
   inst.searchHandle?.dispose();
   inst.searchHandle = null;
   inst.search = null;
+  if (inst.promptDetector !== null) {
+    disposeDetector(inst.promptDetector);
+    inst.promptDetector = null;
+  }
   inst.term?.dispose();
   inst.term = null;
   inst.fit = null;
   inst.mounted = false;
   inst.status = 'not-connected';
 }
+
+/**
+ * HS-7971 Phase 1 — kick the per-instance prompt detector. Lazy-init the
+ * detector on first use because `inst.term` isn't mounted at the time
+ * `createInstance` runs. Also re-uses an existing detector across PTY
+ * reconnects.
+ */
+function kickPromptDetector(inst: TerminalInstance): void {
+  if (inst.term === null) return;
+  if (inst.promptDetector === null) {
+    const term = inst.term;
+    inst.promptDetector = createDetector({
+      readRows(rowCount) {
+        const buf = term.buffer.active;
+        const baseY = buf.viewportY;
+        const visibleRows = term.rows;
+        const out: string[] = [];
+        const start = Math.max(0, visibleRows - rowCount);
+        for (let i = start; i < visibleRows; i++) {
+          const line = buf.getLine(baseY + i);
+          out.push(line === undefined ? '' : line.translateToString(true));
+        }
+        return out;
+      },
+      isActive() {
+        return isTerminalTabActive(inst);
+      },
+      onMatch(match) {
+        const detector = inst.promptDetector;
+        if (detector === null) return;
+        openTerminalPromptOverlay({
+          match,
+          anchor: inst.body,
+          onSend(payload) {
+            if (inst.ws === null || inst.ws.readyState !== WebSocket.OPEN) return false;
+            inst.ws.send(new TextEncoder().encode(payload));
+            return true;
+          },
+          onClose() {
+            markDetectorClosed(detector);
+          },
+          onDismissAsNonPrompt() {
+            markDetectorSuppressed(detector);
+          },
+        });
+      },
+    });
+  }
+  notifyChunk(inst.promptDetector);
+}
+
+// Reference SCAN_ROW_COUNT so the import is used (TypeScript noUnusedLocals
+// would flag it otherwise — keeps the constant import-stable for follow-ups).
+void SCAN_ROW_COUNT;
 
 function removeTerminalInstance(id: string): void {
   const inst = instances.get(id);
