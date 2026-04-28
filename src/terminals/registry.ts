@@ -9,6 +9,7 @@ import { containsClaudeSpinner } from './claudeSpinner.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from './config.js';
 import { resolveTerminalCommand } from './resolveCommand.js';
 import { RingBuffer } from './ringBuffer.js';
+import { buildScrollbackPreview } from './scrollbackSnapshot.js';
 import { setupShellHistoryForSpawn } from './shellHistory.js';
 
 export type TerminalState = 'alive' | 'exited' | 'not_spawned';
@@ -290,6 +291,23 @@ export function getTerminalStatus(
     rows: s.rows,
     scrollbackBytes: s.scrollback.size(),
   };
+}
+
+/**
+ * HS-7969 — return a plain-text preview of the last `maxLines` lines of a
+ * terminal's scrollback, ANSI-stripped. Returns the empty string when the
+ * session is unknown or the buffer is empty. Used by the §37 quit-confirm
+ * dialog's expand-row preview so the user can decide whether the terminal
+ * is safe to kill.
+ */
+export function getTerminalScrollbackPreview(
+  secret: string,
+  terminalId: string,
+  maxLines: number,
+): string {
+  const s = sessions.get(sessionKey(secret, terminalId));
+  if (!s) return '';
+  return buildScrollbackPreview(s.scrollback.snapshot(), maxLines);
 }
 
 /**

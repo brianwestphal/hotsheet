@@ -229,6 +229,20 @@ For both cases, the tile renders a **placeholder box** instead of an xterm canva
 
 **Eager-spawn note.** An eager-spawn terminal (`lazy: false`) that is alive will of course render as a live tile, not a placeholder — its PTY was spawned at project boot (§22.17.8). The placeholder rule is specifically for cold terminals.
 
+## 25.9.1 Tile virtualization (HS-7968)
+
+The xterm renderer + WebSocket per tile is heavy (canvas, WebGL, open file descriptor server-side). At dashboard sizes >50 tiles the eager-mount cost compounds linearly. To push the practical client-side ceiling from "total terminals in the project" to "terminals visible on screen at once" — typically 20–50 in dashboard view — the grid uses an `IntersectionObserver` to lazy-mount and dispose tiles based on viewport visibility.
+
+- **Initial state.** Every tile starts unmounted. The placeholder visual from §25.9 (or the empty alive-tile placeholder) renders immediately so the layout is stable.
+- **On-enter.** When a tile scrolls into view (with a 200px `rootMargin` so the mount fires slightly before the user reaches it), `mountTileXterm` + `connectTileSocket` run. Scrollback replays from the server's `attach()` history frame so the user never sees a blank tile if the PTY was already running. **Only alive tiles auto-mount** — exited / not-spawned tiles continue to show their placeholder (no PTY to attach to).
+- **On-exit.** When a tile scrolls off-screen, a debounced (`VIRT_DEFAULT_DEBOUNCE_MS = 8000` — 8 seconds, splitting the 5–10 s window the design called for) dispose timer is scheduled. If the tile re-enters before the timer fires (quick scroll), the timer is cancelled and the renderer stays mounted. If the timer fires while the tile is still off-screen + mounted, the xterm renderer + WebSocket recycle (`softDisposeTile`) — the **PTY + scrollback stay alive server-side**.
+- **Click-before-IO race.** If a user clicks a freshly-rendered alive tile before the IntersectionObserver has fired (microsecond window), `centerTile` calls `ensureTileMounted(tile)` to force-mount before the centering animation runs. Defensive only — in practice the observer fires first.
+- **Test-env fallback.** When `IntersectionObserver` is undefined (some test envs without a polyfill), the grid falls back to the pre-virtualization eager-mount behaviour so unit tests don't need to install a polyfill.
+
+The state machine itself is pure (no DOM, no IntersectionObserver dependency) and lives in `src/client/terminalTileVirtualization.ts`. It exposes `initialTileState`, `onTileEnter`, `onTileExit`, `onDisposeTimerFired` — each takes a state + event and returns `{next, actions}`. The grid module (`terminalTileGrid.tsx`) drives the side-effects: `mount`/`dispose`/`scheduleDispose`/`cancelDispose`. 12 unit tests in `terminalTileVirtualization.test.ts` cover the lifecycle, including the quick-scroll-no-churn case + the long-off-screen dispose-then-remount case.
+
+**Bell indicators stay correct** because `pendingBell` is read from the `/api/terminal/list` poll, not from xterm — independent of mount state. **Status dots stay correct** for the same reason. Tile click → enlarge / double-click → dedicated view / right-click → context menu all continue to work because the IntersectionObserver fires before any of those interactions are reachable for an in-viewport tile.
+
 ## 25.10 Projects with zero terminals
 
 Every registered project gets a section, even when it has zero terminals configured. The section shows:

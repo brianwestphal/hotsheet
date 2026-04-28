@@ -762,6 +762,14 @@ input, select, textarea {
   padding: 0 0 4px 2px;
 }
 
+// HS-7969 — wrap each row + its preview so the layout collapses cleanly
+// when the preview is hidden.
+.quit-confirm-row-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .quit-confirm-row {
   display: flex;
   align-items: center;
@@ -770,6 +778,29 @@ input, select, textarea {
   border-radius: var(--radius);
   background: var(--bg-secondary, color-mix(in srgb, var(--text) 4%, transparent));
   font-size: 13px;
+  // HS-7969 — row is now a `<button>`. Reset the default styling.
+  border: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  color: inherit;
+  &:hover {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+
+  .quit-confirm-row-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    width: 14px;
+    flex-shrink: 0;
+    transition: transform 120ms ease-out;
+  }
+  &.is-expanded .quit-confirm-row-chevron {
+    transform: rotate(90deg);
+  }
 
   .quit-confirm-row-icon {
     display: inline-flex;
@@ -801,6 +832,28 @@ input, select, textarea {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+}
+
+// HS-7969 — read-only preview block shown when a row is clicked. Renders
+// the last ~30 lines of the terminal's scrollback as plain text.
+.quit-confirm-row-preview {
+  margin: 0 8px 4px 28px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre;
+  overflow: auto;
+  max-height: 280px;
+  &[data-state="loading"],
+  &[data-state="error"] {
+    color: var(--text-muted);
+    font-style: italic;
   }
 }
 

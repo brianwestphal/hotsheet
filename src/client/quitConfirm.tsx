@@ -164,6 +164,22 @@ export async function runQuitConfirmFlow(): Promise<'proceed' | 'cancel'> {
   return choice.outcome;
 }
 
+/**
+ * HS-7969 — fetch the §37 quit-confirm row's preview text. Routed through
+ * the per-project `X-Hotsheet-Secret` header since the dialog spans every
+ * project. Returns empty string on any non-2xx response.
+ */
+async function fetchScrollbackPreview(secret: string, terminalId: string): Promise<string> {
+  if (secret === '' || terminalId === '') return '';
+  const url = `/api/terminal/scrollback-preview?terminalId=${encodeURIComponent(terminalId)}&maxLines=30`;
+  const res = await fetch(url, {
+    headers: { 'X-Hotsheet-Secret': secret },
+  });
+  if (!res.ok) return '';
+  const body = await res.json() as { text?: unknown };
+  return typeof body.text === 'string' ? body.text : '';
+}
+
 interface QuitDialogChoice {
   outcome: 'proceed' | 'cancel';
   dontAskAgain: boolean;
@@ -194,12 +210,24 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
                 <div className="quit-confirm-project">
                   <div className="quit-confirm-project-heading">{project.name}</div>
                   {project.entries.map(entry => (
-                    <div className="quit-confirm-row">
-                      <span className="quit-confirm-row-icon" aria-hidden="true">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
-                      </span>
-                      <span className="quit-confirm-row-label">{entry.label}</span>
-                      <span className="quit-confirm-row-cmd">{entry.foregroundCommand}</span>
+                    <div className="quit-confirm-row-container">
+                      <button
+                        className="quit-confirm-row"
+                        type="button"
+                        data-secret={project.secret}
+                        data-terminal-id={entry.terminalId}
+                        title="Click to preview the terminal's recent output"
+                      >
+                        <span className="quit-confirm-row-chevron" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                        </span>
+                        <span className="quit-confirm-row-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+                        </span>
+                        <span className="quit-confirm-row-label">{entry.label}</span>
+                        <span className="quit-confirm-row-cmd">{entry.foregroundCommand}</span>
+                      </button>
+                      <div className="quit-confirm-row-preview" data-state="collapsed" hidden></div>
                     </div>
                   ))}
                 </div>
@@ -241,6 +269,35 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
     overlay.querySelector('[data-action="proceed"]')?.addEventListener('click', (ev) => {
       ev.stopPropagation();
       finish('proceed');
+    });
+    // HS-7969 — click a terminal row to lazy-fetch + toggle a read-only
+    // monospaced preview of the terminal's recent output. Cached in the
+    // row's `preview` element after the first fetch so re-toggling is free.
+    overlay.querySelectorAll<HTMLButtonElement>('.quit-confirm-row').forEach(row => {
+      row.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const container = row.parentElement;
+        const previewEl = container?.querySelector<HTMLElement>('.quit-confirm-row-preview');
+        if (previewEl === null || previewEl === undefined) return;
+        const expanded = row.classList.toggle('is-expanded');
+        if (!expanded) {
+          previewEl.hidden = true;
+          return;
+        }
+        previewEl.hidden = false;
+        if (previewEl.dataset.state === 'loaded' || previewEl.dataset.state === 'loading') return;
+        previewEl.dataset.state = 'loading';
+        previewEl.textContent = 'Loading…';
+        const secret = row.dataset.secret ?? '';
+        const terminalId = row.dataset.terminalId ?? '';
+        void fetchScrollbackPreview(secret, terminalId).then((text) => {
+          previewEl.dataset.state = 'loaded';
+          previewEl.textContent = text === '' ? '(no output captured yet)' : text;
+        }).catch(() => {
+          previewEl.dataset.state = 'error';
+          previewEl.textContent = 'Failed to load preview.';
+        });
+      });
     });
     // Click backdrop = cancel.
     overlay.addEventListener('click', (e) => { if (e.target === overlay) finish('cancel'); });

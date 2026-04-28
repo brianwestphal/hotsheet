@@ -19,6 +19,7 @@ import {
   getLastSpinnerAtMs,
   getNotificationMessage,
   getTerminalPid,
+  getTerminalScrollbackPreview,
   getTerminalStatus,
   killTerminal,
   listProjectTerminalIds,
@@ -192,6 +193,24 @@ terminalRoutes.get('/status', (c) => {
   const terminalId = c.req.query('terminalId') ?? DEFAULT_TERMINAL_ID;
   const status = getTerminalStatus(secret, dataDir, terminalId);
   return c.json(status);
+});
+
+/**
+ * GET /api/terminal/scrollback-preview?terminalId=<id>&maxLines=<n> — HS-7969.
+ * Returns a plain-text preview of the last N rendered lines of the terminal's
+ * scrollback (ANSI-stripped) for the §37 quit-confirm dialog's expand-row
+ * preview. Empty string when the session is unknown or hasn't emitted any
+ * output yet. Capped at 200 lines so a malicious / chatty client can't
+ * exhaust the response payload.
+ */
+terminalRoutes.get('/scrollback-preview', (c) => {
+  const secret = c.get('projectSecret');
+  const terminalId = c.req.query('terminalId') ?? '';
+  if (terminalId === '') return c.json({ error: 'missing_terminal_id' }, 400);
+  const requested = parseInt(c.req.query('maxLines') ?? '30', 10);
+  const maxLines = Math.max(1, Math.min(200, Number.isFinite(requested) ? requested : 30));
+  const text = getTerminalScrollbackPreview(secret, terminalId, maxLines);
+  return c.json({ text, maxLines });
 });
 
 /**

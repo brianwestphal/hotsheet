@@ -38,6 +38,14 @@ import { tryAutoAllow } from './terminalPrompt/autoAllow.js';
 import { openTerminalPromptOverlay } from './terminalPromptOverlay.js';
 import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
 import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
+import {
+  initialTileState,
+  onDisposeTimerFired,
+  onTileEnter,
+  onTileExit,
+  type TileVirtualState,
+  VIRT_DEFAULT_DEBOUNCE_MS,
+} from './terminalTileVirtualization.js';
 
 /**
  * Shared tile-grid module (HS-7595) used by:
@@ -263,6 +271,21 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   let dedicated: DedicatedView | null = null;
   let pendingSingleClickTimer: number | null = null;
 
+  // HS-7968 — virtualization state. One IntersectionObserver per grid; per-
+  // tile state lives in `virtState`. Pure decisions in
+  // `terminalTileVirtualization.ts`; this section just wires the DOM/timer
+  // side-effects to the state machine.
+  const virtState = new Map<string, TileVirtualState>();
+  const virtTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const virtRootToId = new Map<Element, string>();
+  const virtObserver = typeof IntersectionObserver !== 'undefined'
+    ? new IntersectionObserver(handleIntersectionEntries, {
+        root: null,
+        rootMargin: '200px',
+        threshold: 0,
+      })
+    : null;
+
   const cssPrefix = opts.cssPrefix;
   const tileClass = `${cssPrefix}-tile`;
   const previewClass = `${cssPrefix}-tile-preview`;
@@ -355,9 +378,21 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     };
     tiles.set(entry.id, tile);
 
-    if (entry.state === 'alive') {
+    // HS-7968 — virtualized mount. Tile starts unmounted; the IntersectionObserver
+    // drives mount/dispose based on viewport visibility. Tiles in non-alive
+    // state never auto-mount (no PTY to attach to); spawn-and-enlarge still
+    // mounts eagerly via `spawnAndEnlarge` below. When the observer is
+    // unavailable (test envs without IO) we fall back to the eager-mount
+    // behaviour so tests don't have to install a polyfill.
+    virtState.set(entry.id, initialTileState());
+    if (virtObserver !== null) {
+      virtRootToId.set(root, entry.id);
+      virtObserver.observe(root);
+    } else if (entry.state === 'alive') {
       mountTileXterm(tile);
       connectTileSocket(tile);
+      const s = virtState.get(entry.id);
+      if (s !== undefined) virtState.set(entry.id, { ...s, mounted: true });
     }
 
     root.addEventListener('click', (e) => { onTileClick(tile, e); });
@@ -368,6 +403,101 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     }
 
     return root;
+  }
+
+  // --- HS-7968 virtualization wiring ---
+
+  function handleIntersectionEntries(entries: IntersectionObserverEntry[]): void {
+    const now = performance.now();
+    for (const entry of entries) {
+      const tileId = virtRootToId.get(entry.target);
+      if (tileId === undefined) continue;
+      const tile = tiles.get(tileId);
+      if (tile === undefined) continue;
+      const current = virtState.get(tileId) ?? initialTileState();
+      if (entry.isIntersecting) {
+        // Only mount-if-not-mounted when the tile is alive — exited /
+        // not_spawned tiles don't have PTYs to attach to. The placeholder
+        // visual already conveys their state.
+        const mountIfNotMounted = tile.state === 'alive';
+        const step = onTileEnter(current, { tileId, mountIfNotMounted });
+        virtState.set(tileId, step.next);
+        for (const action of step.actions) {
+          if (action.type === 'cancelDispose') {
+            const t = virtTimers.get(tileId);
+            if (t !== undefined) { clearTimeout(t); virtTimers.delete(tileId); }
+          } else if (action.type === 'mount') {
+            mountTileXterm(tile);
+            connectTileSocket(tile);
+          }
+        }
+      } else {
+        const step = onTileExit(current, { tileId, now, debounceMs: VIRT_DEFAULT_DEBOUNCE_MS });
+        virtState.set(tileId, step.next);
+        for (const action of step.actions) {
+          if (action.type === 'scheduleDispose') {
+            const timer = setTimeout(() => {
+              virtTimers.delete(tileId);
+              const after = virtState.get(tileId) ?? initialTileState();
+              const fired = onDisposeTimerFired(after, { tileId });
+              virtState.set(tileId, fired.next);
+              for (const innerAction of fired.actions) {
+                if (innerAction.type === 'dispose') {
+                  softDisposeTile(tile);
+                }
+              }
+            }, action.afterMs);
+            virtTimers.set(tileId, timer);
+          }
+        }
+      }
+    }
+  }
+
+  /** HS-7968 — recycle the tile's xterm renderer + WebSocket without
+   *  removing the tile from the registry. The PTY + scrollback stay alive
+   *  server-side; on re-enter we re-mount + replay scrollback via the
+   *  existing `mountTileXterm` + `connectTileSocket` path. */
+  function softDisposeTile(tile: InternalTile): void {
+    tile.screenObserver?.disconnect();
+    tile.screenObserver = null;
+    if (tile.ws !== null) {
+      try { tile.ws.close(); } catch { /* already closed */ }
+      tile.ws = null;
+    }
+    if (tile.term !== null) {
+      try { tile.term.dispose(); } catch { /* double-dispose is fine */ }
+      tile.term = null;
+    }
+    tile.xtermRoot = null;
+    // Restore the placeholder visual so the off-screen-then-back-on tile
+    // doesn't briefly show an empty white box during the re-mount window.
+    tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
+  }
+
+  /** HS-7968 — force-mount a tile and update the virtualization state.
+   *  Used by the click-before-IO defensive path in `centerTile` /
+   *  `enterDedicatedView`-via-tile-click so the user doesn't briefly see a
+   *  placeholder when the IntersectionObserver hadn't fired yet. */
+  function ensureTileMounted(tile: InternalTile): void {
+    if (tile.term !== null) return;
+    mountTileXterm(tile);
+    connectTileSocket(tile);
+    const v = virtState.get(tile.entry.id);
+    if (v !== undefined) virtState.set(tile.entry.id, { ...v, mounted: true });
+    // If a dispose timer was pending (rare race), cancel it.
+    const t = virtTimers.get(tile.entry.id);
+    if (t !== undefined) { clearTimeout(t); virtTimers.delete(tile.entry.id); }
+  }
+
+  /** HS-7968 — fully forget the tile from the virtualization registry.
+   *  Called from `disposeTile` on full teardown. */
+  function forgetVirtualization(tile: InternalTile): void {
+    if (virtObserver !== null) virtObserver.unobserve(tile.root);
+    virtRootToId.delete(tile.root);
+    const timer = virtTimers.get(tile.entry.id);
+    if (timer !== undefined) { clearTimeout(timer); virtTimers.delete(tile.entry.id); }
+    virtState.delete(tile.entry.id);
   }
 
   // --- xterm mount + WebSocket attach ---
@@ -655,6 +785,10 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       tile.root.classList.add(`${tileClass}-alive`);
       mountTileXterm(tile);
       connectTileSocket(tile);
+      // HS-7968 — flag the tile as mounted in the virtualization state so
+      // an immediate viewport-exit triggers the dispose-debounce flow.
+      const v = virtState.get(tile.entry.id);
+      if (v !== undefined) virtState.set(tile.entry.id, { ...v, mounted: true });
     } catch (err) {
       console.error('terminalTileGrid: spawn failed', err);
       tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
@@ -679,6 +813,13 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     centered = tile;
     clearTileBell(tile);
     if (opts.onTileEnlarge !== undefined) opts.onTileEnlarge(tile.entry, 'center');
+    // HS-7968 — defend against the click-before-IO race: if an alive tile
+    // hasn't been mounted yet (the IntersectionObserver callback hadn't run
+    // before the click landed), force-mount now so the centered tile shows
+    // the live terminal instead of an empty placeholder.
+    if (tile.state === 'alive' && tile.term === null) {
+      ensureTileMounted(tile);
+    }
 
     const origRect = tile.root.getBoundingClientRect();
     const placeholder = createSlotPlaceholder(origRect.width, origRect.height);
@@ -1069,6 +1210,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   // --- Tile teardown ---
 
   function disposeTile(tile: InternalTile): void {
+    forgetVirtualization(tile);
     tile.screenObserver?.disconnect();
     tile.screenObserver = null;
     if (tile.ws !== null) {
@@ -1098,6 +1240,15 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       window.clearTimeout(pendingSingleClickTimer);
       pendingSingleClickTimer = null;
     }
+    // HS-7968 — drop every pending dispose timer + disconnect the observer.
+    // `disposeTile` already cleared per-tile state via `forgetVirtualization`,
+    // but the observer instance + any orphaned timers (none expected, but
+    // defensive) need an explicit disconnect.
+    for (const t of virtTimers.values()) clearTimeout(t);
+    virtTimers.clear();
+    virtState.clear();
+    virtRootToId.clear();
+    if (virtObserver !== null) virtObserver.disconnect();
   }
 
   // --- Public handle ---

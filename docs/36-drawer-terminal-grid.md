@@ -165,6 +165,10 @@ Deliberately not in the first iteration — revisit if the feature lands and use
 - **Dashboard tile gear popover for appearance (HS-6307).** Tiles are preview-only; users change appearance from the terminal's own drawer tab or dedicated view.
 - **Zoom level picker / fit-to-drawer auto-sizer.** The manual slider is the sole sizing control (same decision as §25.4).
 
+## 36.10.5 Tile virtualization (HS-7968)
+
+Identical to §25.9.1 — the drawer-grid uses the same shared `terminalTileGrid.tsx` module and inherits its `IntersectionObserver`-driven lazy mount + 8 s-debounced dispose behaviour. At drawer-grid scales (typically 8–20 visible tiles per project) the perceived benefit is smaller than the dashboard's, but the code path is shared so there's no extra cost. See [25-terminal-dashboard.md §25.9.1](25-terminal-dashboard.md#2591-tile-virtualization-hs-7968) for the full design.
+
 ## 36.11 Manual test plan
 
 See [manual-test-plan.md §12](manual-test-plan.md#12-embedded-terminal) — add:

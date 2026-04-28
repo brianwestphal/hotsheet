@@ -75,6 +75,8 @@ A single in-app `confirmDialog` (NOT per-terminal — the user explicitly didn't
 - The "Don't ask again" checkbox flips every project's `confirm_quit` setting (see §37.5) to `'never'` for the lifetime of the user's setup. A more granular per-project version is possible via the explicit Settings UI (§37.5) but isn't in the prompt to keep it simple.
 - Cancel keeps the app running. Quit Anyway proceeds with the normal shutdown flow (every PTY teardown path already works — destroyAllTerminals in src/terminals/registry.ts).
 
+**Click-to-preview rows (HS-7969).** Each terminal row in the list is a clickable button that expands an inline read-only preview of the last ~30 lines of that terminal's scrollback. Lazy-fetched from `GET /api/terminal/scrollback-preview?terminalId=<id>&maxLines=<n>` (server-side helper `getTerminalScrollbackPreview` in `src/terminals/registry.ts` + pure ANSI-stripping helper `buildScrollbackPreview` in `src/terminals/scrollbackSnapshot.ts`). Cached per row after the first fetch — re-clicks just toggle visibility. Preview renders in a monospaced `<pre>` (`.quit-confirm-row-preview`) capped at 280px max-height with overflow scrolling. Lets the user decide whether the terminal is mid-build / mid-test / sitting idle without having to dismiss the dialog and switch contexts.
+
 The prompt does NOT give per-terminal "kill this one but keep the others" granularity — that's what the existing in-drawer Stop button + tab-close confirmation are for. The Quit prompt's job is "all-or-nothing."
 
 ## 37.5 Settings — per-project + global
