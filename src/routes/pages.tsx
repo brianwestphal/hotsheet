@@ -614,6 +614,17 @@ pageRoutes.get('/', (c) => {
                   </div>
                   <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
                   <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
+                  {/* HS-7984 — per-project toggle for the §53 streaming
+                      shell-output behaviour. When off, the server still
+                      buffers (cheap; no point in conditional buffering
+                      complexity) but the client gates rendering, so the
+                      sidebar preview stays hidden and the Commands Log
+                      entry stays at the pre-completion empty state until
+                      the final detail lands. Default true — see §53.8. */}
+                  <div className="settings-field settings-field-checkbox" style="margin-top:12px">
+                    <label><input type="checkbox" id="settings-shell-streaming-enabled" defaultChecked /> Stream shell command output as it arrives</label>
+                    <span className="settings-hint">When on, the sidebar shows the trailing 1–2 lines of output under a running custom shell command's button, and the Commands Log entry updates in place as chunks arrive. Turn off if the live trickle is distracting.</span>
+                  </div>
                 </div>
               </div>
             </div>

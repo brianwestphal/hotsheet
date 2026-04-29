@@ -54,6 +54,8 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     (document.getElementById('settings-hide-verified-column') as HTMLInputElement).checked = state.settings.hide_verified_column;
     (document.getElementById('settings-shell-integration-ui') as HTMLInputElement).checked = state.settings.shell_integration_ui;
     (document.getElementById('settings-terminal-prompt-detection') as HTMLInputElement).checked = state.settings.terminal_prompt_detection_enabled;
+    // HS-7984 — §53 Phase 4 streaming toggle.
+    (document.getElementById('settings-shell-streaming-enabled') as HTMLInputElement).checked = state.settings.shell_streaming_enabled;
     (document.getElementById('settings-notify-permission') as HTMLSelectElement).value = state.settings.notify_permission;
     (document.getElementById('settings-notify-completed') as HTMLSelectElement).value = state.settings.notify_completed;
     overlay.style.display = 'flex';
@@ -216,6 +218,18 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
     void api('/settings', { method: 'PATCH', body: { shell_integration_ui: String(shellIntegrationCheckbox.checked) } });
     document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
+  });
+
+  // HS-7984 — §53 Phase 4 streaming-output toggle. Per-project (DB-backed
+  // settings via `/settings`). When off, both client surfaces (sidebar
+  // row preview + Commands Log live `<pre>`) gate rendering on the flag
+  // — server still buffers so re-enabling mid-run picks up where we
+  // left off. The shell-partial-output event is still dispatched; the
+  // consumers decide whether to act on it.
+  const shellStreamingCheckbox = document.getElementById('settings-shell-streaming-enabled') as HTMLInputElement;
+  shellStreamingCheckbox.addEventListener('change', () => {
+    state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
+    void api('/settings', { method: 'PATCH', body: { shell_streaming_enabled: String(shellStreamingCheckbox.checked) } });
   });
 
   // HS-7992 — `Clear context on each /hotsheet` toggle. Per-project

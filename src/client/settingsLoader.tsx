@@ -44,6 +44,12 @@ export async function loadSettings() {
     if (settings.terminal_prompt_detection_enabled !== undefined && settings.terminal_prompt_detection_enabled !== '') {
       state.settings.terminal_prompt_detection_enabled = settings.terminal_prompt_detection_enabled !== 'false';
     }
+    // HS-7984 — §53 Phase 4 streaming toggle. Default true (recommended in
+    // §53.8 — change is small and reversible; default-on makes the
+    // feature discoverable via the first-use toast).
+    if (settings.shell_streaming_enabled !== undefined && settings.shell_streaming_enabled !== '') {
+      state.settings.shell_streaming_enabled = settings.shell_streaming_enabled !== 'false';
+    }
     if (settings.sort_by) state.sortBy = settings.sort_by;
     if (settings.sort_dir) state.sortDir = settings.sort_dir;
   } catch { /* use defaults */ }

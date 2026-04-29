@@ -60,7 +60,11 @@ List currently running shell process IDs and their accumulated partial output.
 
 - **Response**: `{ ids: number[]; outputs: Record<number, string> }`
   - `ids` — array of command_log entry IDs with active processes
-  - `outputs` — map of `id → partial output string` (HS-7982). The string is the complete chunk-stream accumulated so far for each running process, capped at 4 MB per command (head-truncated with a `[output truncated]\n` marker). The map is always present (`{}` when no processes are running) and the entry is dropped from the map as soon as the process emits `close`. Backward compatible — clients ignoring `outputs` continue to work as before. See [53-streaming-shell-output.md](53-streaming-shell-output.md) for the design.
+  - `outputs` — map of `id → partial output string` (HS-7982). The string is the complete chunk-stream accumulated so far for each running process, capped at 4 MB per command (head-truncated with a `[output truncated]\n` marker). The map is always present (`{}` when no processes are running) and the entry is dropped from the map as soon as the process emits `close`. Backward compatible — clients ignoring `outputs` continue to work as before. The client-side polling adapter in `commandSidebar.tsx::startShellPoll` reads this on every 2 s tick and dispatches `hotsheet:shell-partial-output` events that drive the sidebar row preview + Commands Log live render. See [53-streaming-shell-output.md](53-streaming-shell-output.md) for the design.
+
+### Streaming-output setting (HS-7984)
+
+The per-project `shell_streaming_enabled` setting (default `true`, surfaced in Settings → Experimental → Custom Commands) controls whether the client renders partial output as it arrives. When off, the server still buffers (so re-enabling mid-run picks up at the next chunk) but both consumers — the sidebar row preview and the Commands Log entry's live `<pre>` — gate rendering on the flag. A first-use toast fires once per browser when the user runs their first streaming command after upgrade, with a `localStorage` sentinel ensuring it appears at most once. See [53-streaming-shell-output.md](53-streaming-shell-output.md) §53.5 Phase 4.
 
 ## 15.5 Data Model
 

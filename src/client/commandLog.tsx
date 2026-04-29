@@ -1,8 +1,11 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
+import { type ShellPartialOutputEvent, SHELL_PARTIAL_OUTPUT_EVENT } from './commandSidebar.js';
 import { activeFilterTypes, ALL_FILTER_TYPES, dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
 import { toElement } from './dom.js';
 import { resolveDrawerTabForTauri } from './drawerTabGating.js';
+import { state } from './state.js';
+import { stripAnsi } from './stripAnsi.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 
 let runningShellIds: number[] = [];
@@ -38,6 +41,66 @@ const selectedLogIds = new Set<number>();
 let lastClickedId: number | null = null;
 let currentEntries: LogEntry[] = [];
 const expandedEntryIds = new Set<number>();
+
+/**
+ * HS-7983 — sticky-bottom auto-scroll threshold (px). When the scroll
+ * container is within this many px of the bottom, the partial-output
+ * listener counts the user as "pinned" and re-pins after appending the
+ * new chunk. Once the user scrolls up past the threshold we stop
+ * auto-following so a chatty command doesn't fight a manual review.
+ *
+ * Value chosen empirically: needs to be larger than typical sub-pixel
+ * rounding (1–2 px) but smaller than a single line of text (~16 px) so
+ * scrolling up by a single line definitively unpins. 8 px hits the
+ * middle of that range.
+ */
+const STICKY_BOTTOM_THRESHOLD_PX = 8;
+
+/** Pure: decide whether to auto-scroll the partial-output container to
+ *  the bottom after appending a chunk. Exported for unit tests so
+ *  happy-dom doesn't need to mount the whole drawer to verify the rule.
+ *  Inputs match `Element.scrollTop` / `clientHeight` / `scrollHeight`
+ *  semantics — caller pulls them off whatever scroller wraps the
+ *  partial-output `<pre>`. */
+export function shouldAutoScrollToBottom(
+  scrollTop: number,
+  clientHeight: number,
+  scrollHeight: number,
+  threshold: number = STICKY_BOTTOM_THRESHOLD_PX,
+): boolean {
+  return scrollTop + clientHeight >= scrollHeight - threshold;
+}
+
+/**
+ * HS-7983 — apply a single `hotsheet:shell-partial-output` event to the
+ * Commands Log entries DOM. Exported so happy-dom unit tests can drive
+ * the live-render path without bootstrapping `initCommandLog`'s full
+ * suite of side-effects. The actual `window.addEventListener` wiring is
+ * a one-liner inside `initCommandLog` that delegates here.
+ *
+ * Behaviour:
+ * - No `#command-log-entries` container or no matching
+ *   `data-shell-partial-id` `<pre>` → no-op (defensive; the entry might
+ *   not be rendered yet, e.g. if a chunk arrives before `loadEntries`).
+ * - Sticky-bottom auto-scroll: pinned-state is captured BEFORE the
+ *   textContent swap because the text change grows `scrollHeight`,
+ *   which would otherwise always make the post-write threshold look
+ *   bigger than pre-write.
+ */
+export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
+  // HS-7984 — gate Commands Log live-render on the §53 Phase 4 setting.
+  // Server still buffers + dispatches events; this consumer just
+  // no-ops. Re-enabling mid-run picks up at the next chunk because the
+  // server-side partial buffer survives the gate flip.
+  if (!state.settings.shell_streaming_enabled) return;
+  const container = document.getElementById('command-log-entries');
+  if (container === null) return;
+  const partialEl = container.querySelector<HTMLElement>(`pre.command-log-shell-partial[data-shell-partial-id="${detail.id}"]`);
+  if (partialEl === null) return;
+  const wasPinned = shouldAutoScrollToBottom(container.scrollTop, container.clientHeight, container.scrollHeight);
+  partialEl.textContent = stripAnsi(detail.partial);
+  if (wasPinned) container.scrollTop = container.scrollHeight;
+}
 
 // --- Relative time helper ---
 
@@ -210,6 +273,20 @@ function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
           {displayDetail !== '' ? <hr className="command-log-shell-divider" /> : null}
           {displayDetail !== '' ? <pre className="command-log-detail">{preview}{hasMore ? '\u2026' : ''}</pre> : null}
           {hasMore ? <pre className="command-log-detail-full" style="display:none">{displayDetail}</pre> : null}
+        </div>
+      ) : isRunningShell ? (
+        // HS-7983 \u2014 running shell entries don't carry the
+        // `---SHELL_OUTPUT---` separator yet (server only writes the final
+        // detail in `child.on('close')`), so `formatShellDetail` returned
+        // null. Render the command-as-shell-input + a dedicated live
+        // `<pre class="command-log-shell-partial" data-shell-partial-id>`
+        // that the module-level `hotsheet:shell-partial-output` listener
+        // targets. Visual mirrors the completed-shell-entry layout above
+        // so the swap on completion doesn't reflow alarmingly.
+        <div>
+          <pre className="command-log-detail command-log-shell-input">{entry.detail}</pre>
+          <hr className="command-log-shell-divider" />
+          <pre className="command-log-detail command-log-shell-partial" data-shell-partial-id={String(entry.id)}></pre>
         </div>
       ) : (
         <div>
@@ -703,6 +780,14 @@ async function clearLogEntries() {
 export function initCommandLog() {
   // Button click — toggles drawer open/closed
   document.getElementById('command-log-btn')?.addEventListener('click', togglePanel);
+
+  // HS-7983 — module-level subscription to the streaming-shell-output
+  // event. Delegated to `applyShellPartialEvent` (exported for tests) so
+  // the listener wire-up is one line and the DOM-mutation logic stays
+  // unit-testable in happy-dom without bootstrapping the full drawer.
+  window.addEventListener(SHELL_PARTIAL_OUTPUT_EVENT, (e: Event) => {
+    applyShellPartialEvent((e as CustomEvent<ShellPartialOutputEvent>).detail);
+  });
 
   // HS-6312: expand drawer to full height (hides ticket area).
   document.getElementById('drawer-expand-btn')?.addEventListener('click', toggleDrawerExpanded);

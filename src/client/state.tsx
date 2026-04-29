@@ -163,6 +163,14 @@ export interface AppSettings {
    *  greyed-out for review) but inert. Default true so the feature is on
    *  for everyone after upgrade. */
   terminal_prompt_detection_enabled: boolean;
+  /** HS-7984 (§53 Phase 4) — when false, the §53 streaming-shell-output
+   *  partial render is suppressed on both client surfaces (sidebar row
+   *  preview + Commands Log live `<pre>`). Server still buffers (cheap;
+   *  conditional buffering would add complexity for no payoff). Default
+   *  true so the behaviour is on for everyone after upgrade — the
+   *  first-use toast on the very first `hotsheet:shell-partial-output`
+   *  event makes the change discoverable. */
+  shell_streaming_enabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -178,6 +186,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hide_verified_column: false,
   shell_integration_ui: true,
   terminal_prompt_detection_enabled: true,
+  shell_streaming_enabled: true,
 };
 
 export interface AppState {
