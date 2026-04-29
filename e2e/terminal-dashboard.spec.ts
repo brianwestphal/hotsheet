@@ -197,11 +197,27 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await tile.click();
     await expect(tile).toHaveClass(/centered/);
     await expect(page.locator('.terminal-dashboard-center-backdrop')).toBeVisible();
-    // Centered tile has pointer-events enabled on xterm (so it can take focus).
-    const pe = await page.locator('.terminal-dashboard-tile.centered .terminal-dashboard-tile-xterm').evaluate(
-      el => window.getComputedStyle(el).pointerEvents,
+    // HS-8010 — selection is disabled in the scaled centered tile because
+    // xterm's cellWidth doesn't track CSS transforms. The xterm container is
+    // pointer-events:none so mouse events fall through to the tile-root click
+    // handler (uncenters); user-select:none keeps the OS selection rectangle
+    // from drawing alongside xterm's offset internal selection. Keyboard input
+    // still flows because term.focus() targets .xterm-helper-textarea
+    // programmatically and keyboard events ignore pointer-events.
+    const styles = await page.locator('.terminal-dashboard-tile.centered .terminal-dashboard-tile-xterm').evaluate(
+      el => {
+        const cs = window.getComputedStyle(el);
+        return { pointerEvents: cs.pointerEvents, userSelect: cs.userSelect };
+      },
     );
-    expect(pe).toBe('auto');
+    expect(styles.pointerEvents).toBe('none');
+    expect(styles.userSelect).toBe('none');
+    // HS-8010 — "Double-click to select text" hint chip is rendered via
+    // ::after on the preview. Verify it's present + non-empty content.
+    const chip = await page.locator('.terminal-dashboard-tile.centered .terminal-dashboard-tile-preview').evaluate(
+      el => window.getComputedStyle(el, '::after').content,
+    );
+    expect(chip).toContain('Double-click to select text');
   });
 
   test('clicking backdrop un-centers the tile without exiting the dashboard', async ({ page }) => {

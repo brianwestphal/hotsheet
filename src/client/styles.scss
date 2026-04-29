@@ -1264,9 +1264,35 @@ input, select, textarea {
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
   }
 
-  // Restore native pointer-events + textarea visibility so the xterm can
-  // actually receive keyboard focus.
-  .terminal-dashboard-tile-xterm { pointer-events: auto; user-select: text; }
+  // HS-8010 — keep mouse selection disabled in the centered tile. The tile is
+  // visually scaled with `transform: scale()` (see `applyTileScale` in
+  // `terminalTileGrid.tsx`) but xterm.js reads its `cellWidth` from the
+  // natural-pixel layout, so mouse coordinates arrive scaled and the painted
+  // selection lands offset from the cursor by `1 - 1/scale`. The dedicated
+  // view (double-click) mounts a fresh xterm sized to fit the pane, so its
+  // cellWidth matches the visual rendering and selection works there.
+  // Keystrokes still flow because `term.focus()` puts focus on
+  // `.xterm-helper-textarea` programmatically (keyboard events ignore
+  // `pointer-events`). Single-click on the centered xterm now falls through
+  // to the tile-root click handler, which uncenters — same behaviour as
+  // clicking the backdrop. The `::after` chip below tells the user to
+  // double-click into the dedicated view to copy text.
+  .terminal-dashboard-tile-xterm { pointer-events: none; user-select: none; }
+
+  .terminal-dashboard-tile-preview::after {
+    content: 'Double-click to select text';
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    pointer-events: none;
+    opacity: 0.75;
+    z-index: 1;
+  }
 }
 
 // HS-6867: the grey placeholder that holds the tile's grid slot while it
@@ -7875,7 +7901,26 @@ body.terminal-dashboard-active {
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
   }
 
-  .drawer-terminal-grid-tile-xterm { pointer-events: auto; user-select: text; }
+  // HS-8010 — see the matching block on `.terminal-dashboard-tile.centered`
+  // for the rationale. Mouse selection is disabled in the scaled centered
+  // view because xterm's cellWidth doesn't track CSS transforms; double-click
+  // into the dedicated view to copy text.
+  .drawer-terminal-grid-tile-xterm { pointer-events: none; user-select: none; }
+
+  .drawer-terminal-grid-tile-preview::after {
+    content: 'Double-click to select text';
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    pointer-events: none;
+    opacity: 0.75;
+    z-index: 1;
+  }
 }
 
 .drawer-terminal-grid-tile-slot {

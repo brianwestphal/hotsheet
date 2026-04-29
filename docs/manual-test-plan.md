@@ -265,7 +265,8 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Copy (Cmd/Ctrl+C with selection) puts text on clipboard
 - [ ] SIGINT (Cmd/Ctrl+C with no selection) interrupts running process
 - [ ] Paste (Cmd/Ctrl+V) works correctly
-- [ ] Click-and-drag across output in a drawer terminal paints a **clearly visible** accent-coloured selection highlight (HS-7330 regression check — previously invisible on the white theme). Repeat in a centered dashboard tile and in the dedicated dashboard view.
+- [ ] Click-and-drag across output in a drawer terminal paints a **clearly visible** accent-coloured selection highlight (HS-7330 regression check — previously invisible on the white theme). Repeat in the dedicated dashboard view (double-click a tile in the dashboard or the drawer-grid).
+- [ ] **HS-8010 — selection disabled in centered tile.** Open the dashboard, single-click a tile to enter centered mode (NOT double-click). A small "Double-click to select text" chip appears in the top-right of the centered preview. Click-drag across the xterm body — no selection paints, no offset highlight. Double-click → dedicated view → selection drag works there. Repeat the same flow with the drawer terminal grid (toolbar → grid view → single-click to center).
 - [ ] Move keyboard focus out of the terminal (click a ticket) — the selection stays visible but its fill drops to the lower-alpha inactive variant
 - [ ] With the drawer terminal focused, press **Cmd+K** (macOS) or **Ctrl+K** (Linux/Windows) — the viewport clears and scrollback drops; the current prompt stays at the top of the pane (HS-7329). Repeat in a centered dashboard tile and in the dedicated dashboard view.
 - [ ] Repeat the clear test while a TUI like `vim` or `nano` is running — the clear fires even though the TUI would normally consume the shortcut (matches Terminal.app / iTerm2)
