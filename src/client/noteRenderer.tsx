@@ -183,7 +183,10 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
       entry.addEventListener('click', () => {
         const textEl = entry.querySelector('.note-text') as HTMLElement;
         if (entry.querySelector('.note-edit-area')) return;
-        const textarea = toElement(<textarea className="note-edit-area" rows={3}></textarea>) as HTMLTextAreaElement;
+        // HS-7997 — explicit `spellcheck=true` so notes get system spell
+        // check across browsers + Tauri's WKWebView (some surfaces
+        // default the attribute off for textareas, off for text inputs).
+        const textarea = toElement(<textarea className="note-edit-area" rows={3} spellCheck="true"></textarea>) as HTMLTextAreaElement;
         textarea.value = note.text;
         textEl.style.display = 'none';
         entry.appendChild(textarea);

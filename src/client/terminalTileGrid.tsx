@@ -171,6 +171,15 @@ export interface TileGridOptions {
    *  dedicated view exits. Gives callsites a way to react (e.g. clearing
    *  per-tile state in their own maps). */
   onTileShrink?: (entry: TileEntry) => void;
+  /** HS-7943 — optional hook fired when the user clicks the project
+   *  badge prefix on a flow-mode tile (`{ProjectName} ›`). The grid calls
+   *  this with the tile's entry and stops the click from bubbling to the
+   *  tile-center handler so the dashboard can route the user to that
+   *  project's tab without ALSO centering the tile. Sectioned-mode
+   *  headings live outside the tile grid in the dashboard's own DOM, so
+   *  they wire their click handler directly — this hook only covers the
+   *  flow-mode case. */
+  onProjectBadgeClick?: (entry: TileEntry) => void;
 }
 
 export interface TileGridHandle {
@@ -346,7 +355,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
         </div>
         <div className={labelClass} title={fullLabelTitle}>
           {badge?.name !== undefined && badge.name !== ''
-            ? <span className={`${cssPrefix}-tile-project`}>{badge.name}{' › '}</span>
+            ? <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}>{badge.name}{' › '}</span>
             : null}
           <span className={`${cssPrefix}-tile-name`}>{entry.label}</span>
         </div>
@@ -355,6 +364,23 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
           : <div className={cwdClass} title={cwdRaw}>{cwdLabel}</div>}
       </div>
     );
+
+    // HS-7943 — project-badge click switches to that project's tab. The
+    // listener is wired only when the callsite passes a handler (sectioned
+    // mode never renders the badge prefix, so its tiles get no listener
+    // either — checking the callback at attach time keeps the hover
+    // affordance consistent with the actual behaviour). `stopPropagation`
+    // beats the tile-center click handler that sits on the tile root.
+    if (opts.onProjectBadgeClick !== undefined && badge?.name !== undefined && badge.name !== '') {
+      const projectEl = root.querySelector<HTMLElement>(`.${cssPrefix}-tile-project`);
+      const onProjectBadgeClick = opts.onProjectBadgeClick;
+      if (projectEl !== null) {
+        projectEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          onProjectBadgeClick(entry);
+        });
+      }
+    }
     const preview = root.querySelector<HTMLElement>(`.${previewClass}`);
     const labelEl = root.querySelector<HTMLElement>(`.${labelClass}`);
     if (preview === null || labelEl === null) return root;

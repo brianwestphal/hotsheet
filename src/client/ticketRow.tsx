@@ -6,7 +6,7 @@ import { syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import type { Ticket } from './state.js';
-import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, state, syncedTicketMap, VERIFIED_SVG } from './state.js';
+import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, shouldResetStatusOnUpNext, state, syncedTicketMap, VERIFIED_SVG } from './state.js';
 import {
   callFocusDraftInput, callLoadTickets, callRenderTicketList,
   callUpdateBatchToolbar, callUpdateSelectionClasses,
@@ -60,7 +60,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
       </button>
       {ticket.id in syncedTicketMap ? <span className="ticket-sync-icon" title={`Synced via ${syncedTicketMap[ticket.id].pluginId}`}>{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}
       {getIndicatorDotType(ticket) != null ? <span className={`ticket-unread-dot${getIndicatorDotType(ticket) === 'feedback' ? ' feedback' : ''}`} title={getIndicatorDotType(ticket) === 'feedback' ? 'Feedback needed' : 'Unread changes'}></span> : null}
-      <input type="text" className="ticket-title-input" value={ticket.title} />
+      <input type="text" className="ticket-title-input" value={ticket.title} spellCheck="true" />
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`} title={ticket.priority}>
         {raw(getPriorityIcon(ticket.priority))}
       </span>
@@ -382,8 +382,12 @@ export async function cycleStatus(ticket: Ticket) {
 }
 
 export async function toggleUpNext(ticket: Ticket) {
-  if (!ticket.up_next && (ticket.status === 'completed' || ticket.status === 'verified')) {
-    // Reopen done ticket and add to Up Next
+  // HS-7998 — adding a backlog / archive ticket to Up Next now also
+  // resets its status, just like completed / verified did pre-fix. The
+  // status set lives in `shouldResetStatusOnUpNext` so the three
+  // toggle-up-next callsites (this row handler, `bindDetailUpNext` in
+  // `app.tsx`, and `actions.ts`'s batch path) stay in sync.
+  if (!ticket.up_next && shouldResetStatusOnUpNext(ticket.status)) {
     await trackedPatch(ticket, { status: 'not_started', up_next: true }, 'Toggle up next');
   } else {
     await trackedPatch(ticket, { up_next: !ticket.up_next }, 'Toggle up next');

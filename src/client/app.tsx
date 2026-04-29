@@ -28,7 +28,7 @@ import { initShare } from './share.js';
 import { bindKeyboardShortcuts, getDetailSaveTimeout, setDetailSaveTimeout } from './shortcuts.js';
 import { bindSearchInput, bindSidebar, bindSortControls, syncSearchInputFromState, syncSidebarActiveState } from './sidebar.js';
 import type { AppSettings, Ticket } from './state.js';
-import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from './state.js';
+import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, shouldResetStatusOnUpNext, state, STATUS_ITEMS } from './state.js';
 import { bindDetailTagInput } from './tagAutocomplete.js'; // .tsx file, JSX enabled
 import { showTagsDialog } from './tagsDialog.js';
 import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
@@ -555,7 +555,10 @@ function bindDetailUpNext() {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
     if (ticket) {
-      if (!ticket.up_next && (ticket.status === 'completed' || ticket.status === 'verified')) {
+      // HS-7998 — see `shouldResetStatusOnUpNext` for the canonical
+      // status set; backlog / archive items now reset to `not_started`
+      // alongside completed / verified ones.
+      if (!ticket.up_next && shouldResetStatusOnUpNext(ticket.status)) {
         await trackedPatch(ticket, { status: 'not_started', up_next: true }, 'Toggle up next');
       } else {
         await trackedPatch(ticket, { up_next: !ticket.up_next }, 'Toggle up next');

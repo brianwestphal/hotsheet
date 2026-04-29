@@ -28,7 +28,7 @@ export function createDraftRow(): HTMLElement {
         {getCategoryLabel(draftCat)}
       </span>
       <span className="ticket-number draft-number"></span>
-      <input type="text" className="ticket-title-input draft-input" placeholder="New ticket..." value={draftTitle} />
+      <input type="text" className="ticket-title-input draft-input" placeholder="New ticket..." value={draftTitle} spellCheck="true" />
       <span className="ticket-priority-indicator draft-placeholder"></span>
       <span className="ticket-star draft-placeholder"></span>
     </div>

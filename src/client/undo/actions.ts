@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { refreshDetail, setSuppressAutoRead } from '../detail.js';
 import type { Ticket } from '../state.js';
-import { state } from '../state.js';
+import { shouldResetStatusOnUpNext, state } from '../state.js';
 import { loadTickets, renderTicketList } from '../ticketList.js';
 import { undoStack } from './stack.js';
 import type { TicketSnapshot, UndoEntry } from './types.js';
@@ -200,17 +200,21 @@ export function canRedo(): boolean {
 
 // --- Shared batch operations ---
 
-/** Toggle up-next for the given tickets, reopening completed/verified ones if setting up-next. */
+/** Toggle up-next for the given tickets. HS-7998: reopens
+ *  completed / verified / backlog / archive tickets to `not_started` when
+ *  setting up-next via the canonical `shouldResetStatusOnUpNext`
+ *  predicate (shared with the single-ticket toggle in `ticketRow.tsx`
+ *  and `app.tsx::bindDetailUpNext`). */
 export async function toggleUpNext(tickets: Ticket[]): Promise<void> {
   const allUpNext = tickets.every(t => t.up_next);
   const settingUpNext = !allUpNext;
   const ids = tickets.map(t => t.id);
 
   if (settingUpNext) {
-    const doneTickets = tickets.filter(t => t.status === 'completed' || t.status === 'verified');
-    if (doneTickets.length > 0) {
+    const ticketsToReset = tickets.filter(t => shouldResetStatusOnUpNext(t.status));
+    if (ticketsToReset.length > 0) {
       await trackedCompoundBatch(tickets, [
-        { ids: doneTickets.map(t => t.id), action: 'status', value: 'not_started' },
+        { ids: ticketsToReset.map(t => t.id), action: 'status', value: 'not_started' },
         { ids, action: 'up_next', value: true },
       ], 'Toggle up next');
       return;

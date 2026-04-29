@@ -377,7 +377,7 @@ function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTMLElemen
           </div>
           <div className="settings-field feedback-catchall">
             <label>{blocks.length === 0 ? 'Your response' : 'Or respond below (catch-all)'}</label>
-            <textarea id="feedback-catchall-text" className="settings-textarea" rows={4} placeholder="Type your response..." style="width:100%;resize:vertical"></textarea>
+            <textarea id="feedback-catchall-text" className="settings-textarea" rows={4} placeholder="Type your response..." style="width:100%;resize:vertical" spellCheck="true"></textarea>
           </div>
           <div className="settings-field" style="margin-top:12px">
             <label>Attachments</label>
@@ -401,7 +401,7 @@ function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTMLElemen
 function buildInlineResponse(): HTMLElement {
   const el = toElement(
     <div className="feedback-inline-response">
-      <textarea className="settings-textarea feedback-inline-textarea" rows={3} placeholder="Your response..."></textarea>
+      <textarea className="settings-textarea feedback-inline-textarea" rows={3} placeholder="Your response..." spellCheck="true"></textarea>
       <button className="feedback-inline-remove" type="button" title="Remove this response">{'×'}</button>
     </div>
   );

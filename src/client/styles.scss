@@ -283,6 +283,19 @@ input, select, textarea {
   margin-right: 2px;
 }
 
+// HS-7943 — flow-mode project badge becomes a clickable affordance that
+// routes to the project's tab. Hover state hints "this is a link"
+// without being so loud the user accidentally clicks it; the rest of
+// the tile-label inherits its parent's hover behaviour.
+.terminal-dashboard-tile-project.is-clickable,
+.drawer-terminal-grid-tile-project.is-clickable {
+  cursor: pointer;
+  &:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+}
+
 .terminal-dashboard-tile-name,
 .drawer-terminal-grid-tile-name {
   // Inherit color + font from the .label container — explicit rules would
@@ -1032,6 +1045,17 @@ input, select, textarea {
   color: var(--text);
   margin: 0;
   padding: 0;
+}
+
+// HS-7943 — sectioned-mode heading is now clickable and routes to the
+// project's tab. Same affordance shape as the flow-mode tile project
+// badge for consistency across the two layouts.
+.terminal-dashboard-heading.is-clickable {
+  cursor: pointer;
+  &:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
 }
 
 // HS-7064: outlined `+` button next to the project name. Clicking it creates

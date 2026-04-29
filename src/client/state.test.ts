@@ -12,6 +12,7 @@ import {
   setActiveProject,
   setProjectGridActive,
   setProjectGridSliderValue,
+  shouldResetStatusOnUpNext,
   state,
 } from './state.js';
 
@@ -86,6 +87,36 @@ describe('getStatusIcon', () => {
 
   it('returns default for unknown status', () => {
     expect(getStatusIcon('unknown')).toBe('○');
+  });
+});
+
+describe('shouldResetStatusOnUpNext (HS-7998)', () => {
+  it('returns true for completed (existing behaviour preserved)', () => {
+    expect(shouldResetStatusOnUpNext('completed')).toBe(true);
+  });
+
+  it('returns true for verified (existing behaviour preserved)', () => {
+    expect(shouldResetStatusOnUpNext('verified')).toBe(true);
+  });
+
+  it('returns true for backlog — the HS-7998 fix', () => {
+    expect(shouldResetStatusOnUpNext('backlog')).toBe(true);
+  });
+
+  it('returns true for archive — the HS-7998 fix', () => {
+    expect(shouldResetStatusOnUpNext('archive')).toBe(true);
+  });
+
+  it('returns false for not_started (already in active workflow)', () => {
+    expect(shouldResetStatusOnUpNext('not_started')).toBe(false);
+  });
+
+  it('returns false for started (already in active workflow)', () => {
+    expect(shouldResetStatusOnUpNext('started')).toBe(false);
+  });
+
+  it('returns false for an unknown status (defensive — treat as already in workflow)', () => {
+    expect(shouldResetStatusOnUpNext('weird-future-status')).toBe(false);
   });
 });
 

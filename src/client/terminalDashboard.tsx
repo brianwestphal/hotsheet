@@ -28,6 +28,7 @@ import {
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { mountTileGrid, type TileEntry, type TileGridHandle } from './terminalTileGrid.js';
+import { switchProject } from './projectTabs.js';
 
 /**
  * Terminal Dashboard — a second top-level client view that shows every
@@ -670,6 +671,18 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
     onTileShrink: () => {
       if (centeredHandle === handle && !handle.isCentered()) centeredHandle = null;
     },
+    // HS-7943 — flow-mode project-badge click → route to that project's
+    // tab. Mirrors the HS-6832 project-tab-while-in-dashboard pattern:
+    // `exitDashboard()` first so the dashboard chrome tears down, then
+    // `switchProject(project)` lands the user on the clicked project's
+    // normal ticket view. The tile-grid module stops propagation so the
+    // tile-center click handler doesn't ALSO fire.
+    onProjectBadgeClick: (entry) => {
+      const project = projectFor(entry);
+      if (project === null) return;
+      exitDashboard();
+      void switchProject(project);
+    },
     onDedicatedBarMount: (bar, entry, term) => {
       if (sizerContainer !== null) sizerContainer.style.display = 'none';
       if (layoutToggleButton !== null) layoutToggleButton.style.display = 'none';
@@ -772,7 +785,10 @@ function renderProjectSection(data: ProjectSectionData, visibleTerminals?: Termi
   const section = toElement(
     <section className="terminal-dashboard-section" data-secret={data.project.secret}>
       <div className="terminal-dashboard-heading-row">
-        <h2 className="terminal-dashboard-heading">{headingText}</h2>
+        {/* HS-7943 — heading is now clickable and routes to the project's
+            tab. Title attribute mirrors the per-tile project-badge tooltip
+            for affordance consistency. */}
+        <h2 className="terminal-dashboard-heading is-clickable" title={`Switch to ${data.project.name}`}>{headingText}</h2>
         <button
           className="terminal-dashboard-add-terminal-btn"
           title="Add terminal to this project"
@@ -791,6 +807,17 @@ function renderProjectSection(data: ProjectSectionData, visibleTerminals?: Termi
       )}
     </section>
   );
+
+  // HS-7943 — sectioned-mode heading click routes to the project's tab.
+  // Mirrors the flow-mode badge click + the HS-6832 project-tab-while-
+  // in-dashboard pattern: `exitDashboard()` first, then `switchProject`.
+  const headingEl = section.querySelector<HTMLElement>('.terminal-dashboard-heading');
+  if (headingEl !== null) {
+    headingEl.addEventListener('click', () => {
+      exitDashboard();
+      void switchProject(data.project);
+    });
+  }
 
   const grid = section.querySelector<HTMLElement>('.terminal-dashboard-grid');
   if (grid !== null) {

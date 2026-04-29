@@ -306,6 +306,25 @@ export function getStatusIcon(status: string): string {
   return STATUS_ICONS[status] || '\u25CB';
 }
 
+/**
+ * HS-7998 \u2014 true when toggling up-next on a ticket with this status
+ * should ALSO flip the status back to `not_started`. Out-of-active-
+ * workflow statuses \u2014 `completed`, `verified`, `backlog`, `archive` \u2014
+ * stay invisible from the default Up Next column unless the user
+ * explicitly puts them back in motion. Adding such a ticket to Up Next
+ * implies the user wants to work on it, so we reset the status as part
+ * of the same toggle. Pre-fix this only fired for `completed` /
+ * `verified`; backlog / archive items would star themselves but stay
+ * invisible from Up Next, which the user filed as a bug.
+ *
+ * Pure for unit-testability \u2014 the three `toggleUpNext` callsites
+ * (`ticketRow.tsx`, `app.tsx::bindDetailUpNext`, `actions.ts` batch)
+ * import this rather than each maintaining their own status set.
+ */
+export function shouldResetStatusOnUpNext(status: string): boolean {
+  return status === 'completed' || status === 'verified' || status === 'backlog' || status === 'archive';
+}
+
 // --- Canonical priority and status items (shared across batch, contextMenu, detail, ticketListState) ---
 
 export const PRIORITY_ITEMS: { key: string; value: string; label: string }[] = [

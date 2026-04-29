@@ -132,6 +132,21 @@ describe('jsx — attributes', () => {
     const result = jsx('div', { 'data-html': raw('<b>bold</b>') });
     expect(result.__html).toBe('<div data-html="<b>bold</b>"></div>');
   });
+
+  // HS-7997 — `spellCheck` is the JSX/React-style camelCase name for the
+  // HTML `spellcheck` attribute. The alias map at line 83 of
+  // `jsx-runtime.ts` translates the prop name; without it the attribute
+  // would render as `spellCheck="true"` (camelCase), which most browsers
+  // tolerate but is technically not the standard HTML attribute and
+  // breaks consistency. Lock the mapping with a test so a future alias
+  // refactor doesn't silently regress system spell check on the title /
+  // details / notes textareas.
+  it('maps spellCheck to spellcheck (HS-7997)', () => {
+    expect(jsx('input', { type: 'text', spellCheck: 'true' }).__html)
+      .toBe('<input type="text" spellcheck="true">');
+    expect(jsx('textarea', { spellCheck: 'true', rows: 3 }).__html)
+      .toBe('<textarea spellcheck="true" rows="3"></textarea>');
+  });
 });
 
 describe('jsx — void tags', () => {

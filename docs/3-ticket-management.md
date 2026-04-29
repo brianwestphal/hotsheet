@@ -63,7 +63,7 @@ Tickets progress through these statuses:
 ### 3.4 Up Next
 
 - Tickets flagged as `up_next` appear in the Up Next view and are exported to `worklist.md` for AI tool consumption.
-- Toggling up_next on a completed or verified ticket automatically reopens it (sets status to `not_started`).
+- Toggling up_next on a ticket whose status is `completed`, `verified`, `backlog`, or `archive` automatically resets the status to `not_started` so the ticket lands in the active workflow alongside the up_next flip. Pre-HS-7998 this only fired for completed / verified — backlog / archive items would star themselves but stay invisible from the Up Next column. Canonical predicate lives in `state.tsx::shouldResetStatusOnUpNext`, shared by the row toggle (`ticketRow.tsx`), the detail-panel star (`app.tsx::bindDetailUpNext`), and the multi-select batch toggle (`actions.ts`).
 - Moving a ticket to completed, verified, backlog, or archive automatically clears `up_next`.
 
 ### 3.5 Notes
