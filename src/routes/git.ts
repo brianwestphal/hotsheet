@@ -1,11 +1,10 @@
 import { Hono } from 'hono';
-
-import { readFileSettings } from '../file-settings.js';
 import { join } from 'path';
 
-import { getGitRoot } from '../gitignore.js';
+import { readFileSettings } from '../file-settings.js';
 import { getGitStatusFiles, runGitFetch } from '../git/status.js';
 import { dropGitStatusCache, ensureGitWatcher, getCachedGitStatus } from '../git/watcher.js';
+import { getGitRoot } from '../gitignore.js';
 import { openInFileManager } from '../open-in-file-manager.js';
 import type { AppEnv } from '../types.js';
 

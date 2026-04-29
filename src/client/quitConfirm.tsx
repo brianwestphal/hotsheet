@@ -1,5 +1,13 @@
 import { toElement } from './dom.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
+import {
+  clampFontSize,
+  DEFAULT_FONT_ID,
+  DEFAULT_FONT_SIZE,
+  getFontById,
+  loadGoogleFont,
+} from './terminalFonts.js';
+import { DEFAULT_THEME_ID, getThemeById } from './terminalThemes.js';
 
 /**
  * Quit-confirm prompt (HS-7596 / §37). Shown when the user attempts to quit
@@ -165,19 +173,57 @@ export async function runQuitConfirmFlow(): Promise<'proceed' | 'cancel'> {
 }
 
 /**
- * HS-7969 — fetch the §37 quit-confirm row's preview text. Routed through
- * the per-project `X-Hotsheet-Secret` header since the dialog spans every
- * project. Returns empty string on any non-2xx response.
+ * HS-7969 — fetch the §37 quit-confirm row's preview text + the terminal's
+ * resolved appearance (theme id, font id, font size). Routed through the
+ * per-project `X-Hotsheet-Secret` header since the dialog spans every
+ * project. Returns empty text + null appearance fields on any non-2xx
+ * response — the caller falls back to the FALLBACK_APPEARANCE for nulls.
  */
-async function fetchScrollbackPreview(secret: string, terminalId: string): Promise<string> {
-  if (secret === '' || terminalId === '') return '';
+interface ScrollbackPreviewResponse {
+  text: string;
+  theme: string | null;
+  fontFamily: string | null;
+  fontSize: number | null;
+}
+
+async function fetchScrollbackPreview(secret: string, terminalId: string): Promise<ScrollbackPreviewResponse> {
+  const empty: ScrollbackPreviewResponse = { text: '', theme: null, fontFamily: null, fontSize: null };
+  if (secret === '' || terminalId === '') return empty;
   const url = `/api/terminal/scrollback-preview?terminalId=${encodeURIComponent(terminalId)}&maxLines=30`;
   const res = await fetch(url, {
     headers: { 'X-Hotsheet-Secret': secret },
   });
-  if (!res.ok) return '';
-  const body = await res.json() as { text?: unknown };
-  return typeof body.text === 'string' ? body.text : '';
+  if (!res.ok) return empty;
+  const body = await res.json() as { text?: unknown; theme?: unknown; fontFamily?: unknown; fontSize?: unknown };
+  return {
+    text: typeof body.text === 'string' ? body.text : '',
+    theme: typeof body.theme === 'string' ? body.theme : null,
+    fontFamily: typeof body.fontFamily === 'string' ? body.fontFamily : null,
+    fontSize: typeof body.fontSize === 'number' && Number.isFinite(body.fontSize) ? body.fontSize : null,
+  };
+}
+
+/**
+ * HS-7969 follow-up — paint the master-detail preview pane with the
+ * terminal's resolved theme + font. Looks up the colour palette + font
+ * family by id; falls back to the default theme / font when the id is
+ * unknown (e.g. a config carrying a stale theme id from a removed
+ * theme). Sets `font-style: normal` to defeat the loading-state italic
+ * styling once real content arrives.
+ */
+async function applyAppearanceToPreview(pre: HTMLElement, response: ScrollbackPreviewResponse): Promise<void> {
+  const theme = getThemeById(response.theme ?? DEFAULT_THEME_ID) ?? getThemeById(DEFAULT_THEME_ID)!;
+  const fontId = response.fontFamily ?? DEFAULT_FONT_ID;
+  const font = getFontById(fontId) ?? getFontById(DEFAULT_FONT_ID)!;
+  const fontSize = clampFontSize(response.fontSize ?? DEFAULT_FONT_SIZE);
+  // Load the Google Font BEFORE applying so we don't flash a system glyph
+  // for a frame. Mirrors `applyAppearanceToTerm`'s ordering.
+  await loadGoogleFont(font).catch(() => { /* network blip — fall back to system stack */ });
+  pre.style.background = theme.background;
+  pre.style.color = theme.foreground;
+  pre.style.fontFamily = font.family;
+  pre.style.fontSize = `${fontSize}px`;
+  pre.style.fontStyle = 'normal';
 }
 
 interface QuitDialogChoice {
@@ -191,9 +237,20 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
     const intro = totalTerminals === 1
       ? 'A terminal is running an active process. Quitting will stop it.'
       : `${totalTerminals} terminals are running active processes. Quitting will stop all of them.`;
+
+    // HS-7969 follow-up — flatten the (project, entry) tree into a flat
+    // ordered list. Headings are still rendered between project blocks in
+    // the master pane; the flat array is the source of truth for the
+    // initial-selection + index-based row lookup paths.
+    interface FlatEntry { project: QuitSummaryProject; entry: QuitSummaryEntry }
+    const flat: FlatEntry[] = [];
+    for (const project of contributing) {
+      for (const entry of project.entries) flat.push({ project, entry });
+    }
+
     const overlay = toElement(
       <div className="quit-confirm-overlay" role="dialog" aria-modal="true" aria-label="Quit Hot Sheet?">
-        <div className="quit-confirm-dialog">
+        <div className="quit-confirm-dialog quit-confirm-dialog-master-detail">
           <div className="quit-confirm-header">
             <span className="quit-confirm-title">
               <span className="quit-confirm-icon" aria-hidden="true">
@@ -203,41 +260,45 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
             </span>
             <button className="quit-confirm-close" type="button" data-action="cancel" title="Cancel">{'×'}</button>
           </div>
-          <div className="quit-confirm-body">
-            <div className="quit-confirm-intro">{intro}</div>
-            <div className="quit-confirm-list" data-role="list">
+          <div className="quit-confirm-intro">{intro}</div>
+          {/* HS-7969 follow-up — master-detail: the row list lives on the
+              left, the read-only scrollback preview on the right. Selecting
+              a row swaps the preview's content + repaints it with that
+              terminal's theme + font. Replaces the click-to-expand
+              accordion the user found visually noisy. */}
+          <div className="quit-confirm-master-detail">
+            <div className="quit-confirm-master" data-role="master">
               {contributing.map(project => (
                 <div className="quit-confirm-project">
                   <div className="quit-confirm-project-heading">{project.name}</div>
                   {project.entries.map(entry => (
-                    <div className="quit-confirm-row-container">
-                      <button
-                        className="quit-confirm-row"
-                        type="button"
-                        data-secret={project.secret}
-                        data-terminal-id={entry.terminalId}
-                        title="Click to preview the terminal's recent output"
-                      >
-                        <span className="quit-confirm-row-chevron" aria-hidden="true">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-                        </span>
-                        <span className="quit-confirm-row-icon" aria-hidden="true">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
-                        </span>
-                        <span className="quit-confirm-row-label">{entry.label}</span>
-                        <span className="quit-confirm-row-cmd">{entry.foregroundCommand}</span>
-                      </button>
-                      <div className="quit-confirm-row-preview" data-state="collapsed" hidden></div>
-                    </div>
+                    <button
+                      className="quit-confirm-row"
+                      type="button"
+                      data-secret={project.secret}
+                      data-terminal-id={entry.terminalId}
+                      title="Click to preview the terminal's recent output"
+                    >
+                      <span className="quit-confirm-row-icon" aria-hidden="true">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+                      </span>
+                      <span className="quit-confirm-row-label">{entry.label}</span>
+                      <span className="quit-confirm-row-cmd">{entry.foregroundCommand}</span>
+                    </button>
                   ))}
                 </div>
               ))}
             </div>
-            <label className="quit-confirm-dont-ask">
-              <input type="checkbox" className="quit-confirm-dont-ask-cb" />
-              <span>{'Don’t ask again for any project'}</span>
-            </label>
+            <div className="quit-confirm-detail" data-role="detail">
+              <pre className="quit-confirm-detail-preview" data-state="empty">
+                Select a terminal to preview its recent output.
+              </pre>
+            </div>
           </div>
+          <label className="quit-confirm-dont-ask">
+            <input type="checkbox" className="quit-confirm-dont-ask-cb" />
+            <span>{'Don’t ask again for any project'}</span>
+          </label>
           <div className="quit-confirm-footer">
             <button type="button" className="quit-confirm-btn quit-confirm-btn-cancel" data-action="cancel">Cancel</button>
             <button type="button" className="quit-confirm-btn quit-confirm-btn-danger" data-action="proceed">Quit Anyway</button>
@@ -270,42 +331,82 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
       ev.stopPropagation();
       finish('proceed');
     });
-    // HS-7969 — click a terminal row to lazy-fetch + toggle a read-only
-    // monospaced preview of the terminal's recent output. Cached in the
-    // row's `preview` element after the first fetch so re-toggling is free.
-    overlay.querySelectorAll<HTMLButtonElement>('.quit-confirm-row').forEach(row => {
+
+    const previewEl = overlay.querySelector<HTMLElement>('.quit-confirm-detail-preview');
+    const rows = Array.from(overlay.querySelectorAll<HTMLButtonElement>('.quit-confirm-row'));
+    // HS-7969 follow-up — per-row cache so re-selecting a row doesn't
+    // re-fetch (matches the pre-fix accordion behaviour). Token-counter
+    // guards against out-of-order async resolutions when the user clicks
+    // through rows faster than the network responds — only the latest
+    // selection wins the preview pane.
+    const cache = new Map<string, ScrollbackPreviewResponse>();
+    let activeToken = 0;
+
+    function selectRow(row: HTMLButtonElement): void {
+      if (previewEl === null) return;
+      rows.forEach(r => r.classList.remove('is-selected'));
+      row.classList.add('is-selected');
+      const secret = row.dataset.secret ?? '';
+      const terminalId = row.dataset.terminalId ?? '';
+      const key = `${secret}::${terminalId}`;
+      const myToken = ++activeToken;
+
+      const cached = cache.get(key);
+      if (cached !== undefined) {
+        renderPreview(previewEl, cached);
+        return;
+      }
+
+      // Loading state. Reset background to the dialog default so a prior
+      // selection's theme doesn't bleed through during the fetch window.
+      previewEl.dataset.state = 'loading';
+      previewEl.style.background = '';
+      previewEl.style.color = '';
+      previewEl.style.fontFamily = '';
+      previewEl.style.fontSize = '';
+      previewEl.style.fontStyle = '';
+      previewEl.textContent = 'Loading…';
+
+      void fetchScrollbackPreview(secret, terminalId).then((response) => {
+        if (myToken !== activeToken) return; // a newer click is in flight
+        cache.set(key, response);
+        renderPreview(previewEl, response);
+      }).catch(() => {
+        if (myToken !== activeToken) return;
+        previewEl.dataset.state = 'error';
+        previewEl.textContent = 'Failed to load preview.';
+      });
+    }
+
+    function renderPreview(pre: HTMLElement, response: ScrollbackPreviewResponse): void {
+      pre.dataset.state = 'loaded';
+      pre.textContent = response.text === '' ? '(no output captured yet)' : response.text;
+      // Fire-and-forget — the font load can complete after the text lands;
+      // there's no flash to worry about since the colours we set already
+      // match the theme's intended palette.
+      void applyAppearanceToPreview(pre, response);
+    }
+
+    rows.forEach(row => {
       row.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        const container = row.parentElement;
-        const previewEl = container?.querySelector<HTMLElement>('.quit-confirm-row-preview');
-        if (previewEl === null || previewEl === undefined) return;
-        const expanded = row.classList.toggle('is-expanded');
-        if (!expanded) {
-          previewEl.hidden = true;
-          return;
-        }
-        previewEl.hidden = false;
-        if (previewEl.dataset.state === 'loaded' || previewEl.dataset.state === 'loading') return;
-        previewEl.dataset.state = 'loading';
-        previewEl.textContent = 'Loading…';
-        const secret = row.dataset.secret ?? '';
-        const terminalId = row.dataset.terminalId ?? '';
-        void fetchScrollbackPreview(secret, terminalId).then((text) => {
-          previewEl.dataset.state = 'loaded';
-          previewEl.textContent = text === '' ? '(no output captured yet)' : text;
-        }).catch(() => {
-          previewEl.dataset.state = 'error';
-          previewEl.textContent = 'Failed to load preview.';
-        });
+        selectRow(row);
       });
     });
     // Click backdrop = cancel.
     overlay.addEventListener('click', (e) => { if (e.target === overlay) finish('cancel'); });
 
     document.body.appendChild(overlay);
+    // HS-7969 follow-up — auto-select the first row so the preview pane
+    // shows useful content immediately. Otherwise a user looking at a
+    // single-row dialog would need an extra click to see anything.
+    if (rows.length > 0) selectRow(rows[0]);
     // Default-focus Cancel rather than Quit Anyway so a stray Enter doesn't
     // immediately destroy work — the user has to deliberately click /
     // Tab-then-Enter the Quit Anyway button.
     overlay.querySelector<HTMLButtonElement>('.quit-confirm-btn-cancel')?.focus();
+    // Reference the flat list so future patches can reach for it without
+    // re-walking the tree (e.g. keyboard arrow navigation between rows).
+    void flat;
   });
 }

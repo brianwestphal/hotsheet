@@ -112,8 +112,8 @@ describe('mountAppearancePopover (HS-7896)', () => {
     // onApply must fire AFTER onConfigOverrideChange so reapplyAppearance reads
     // the freshly-mutated inst.config.
     expect(onApply).toHaveBeenCalledTimes(1);
-    const configCallOrder = onConfigOverrideChange.mock.invocationCallOrder[0]!;
-    const applyCallOrder = onApply.mock.invocationCallOrder[0]!;
+    const configCallOrder = onConfigOverrideChange.mock.invocationCallOrder[0];
+    const applyCallOrder = onApply.mock.invocationCallOrder[0];
     expect(configCallOrder).toBeLessThan(applyCallOrder);
   });
 

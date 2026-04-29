@@ -26,6 +26,14 @@
 
 html, body {
   height: 100%;
+  // HS-8005 — clamp the document scroll. Internal scrollable surfaces
+  // (ticket list, columns, drawer, settings body, …) own their own
+  // overflow rules. Pre-fix, scrolling on a non-scrollable area
+  // (e.g. the gap below the cards in a column, or below the last
+  // ticket in list view) bubbled to `<body>` and the whole app
+  // contents drifted by a few pixels in both axes — there's no
+  // legitimate use for body-level scrolling.
+  overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -286,11 +294,15 @@ input, select, textarea {
 // HS-7943 — flow-mode project badge becomes a clickable affordance that
 // routes to the project's tab. Hover state hints "this is a link"
 // without being so loud the user accidentally clicks it; the rest of
-// the tile-label inherits its parent's hover behaviour.
+// the tile-label inherits its parent's hover behaviour. HS-7943
+// follow-up scoped the hover styling to the inner `.tile-project-name`
+// span only — the trailing ` › ` chevron is part of the same outer
+// span (so it shares the click hit-box) but stays muted on hover.
 .terminal-dashboard-tile-project.is-clickable,
 .drawer-terminal-grid-tile-project.is-clickable {
   cursor: pointer;
-  &:hover {
+  &:hover .terminal-dashboard-tile-project-name,
+  &:hover .drawer-terminal-grid-tile-project-name {
     color: var(--accent);
     text-decoration: underline;
   }
@@ -694,6 +706,17 @@ input, select, textarea {
   animation: quit-confirm-pop 180ms cubic-bezier(0.2, 0, 0, 1);
 }
 
+// HS-7969 follow-up — master-detail variant. Wider so the preview pane
+// has room to render xterm-style content without truncating mid-word.
+// Master pane (left) is fixed-width; detail pane (right) flexes to fill
+// the rest. The dialog's vertical chrome (header / intro / footer) sits
+// outside the master-detail row.
+.quit-confirm-dialog-master-detail {
+  width: 880px;
+  max-width: 92vw;
+  max-height: 80vh;
+}
+
 @keyframes quit-confirm-pop {
   from { transform: scale(0.96); opacity: 0; }
   to   { transform: scale(1);    opacity: 1; }
@@ -752,6 +775,70 @@ input, select, textarea {
   font-size: 13px;
   color: var(--text);
   line-height: 1.45;
+  // HS-7969 follow-up — intro now sits OUTSIDE the master-detail row so
+  // it spans the full dialog width above both panes.
+  padding: 14px 16px 8px;
+}
+
+// HS-7969 follow-up — master-detail layout. Replaces the per-row
+// click-to-expand accordion the user found visually noisy. Left = row
+// list, right = read-only scrollback preview that swaps when the user
+// picks a different row.
+.quit-confirm-master-detail {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 1px;
+  background: var(--border);
+  min-height: 0;
+}
+
+.quit-confirm-master {
+  background: var(--bg);
+  overflow-y: auto;
+  padding: 8px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.quit-confirm-detail {
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  // Padding so the preview pane breathes from the dialog edges.
+  padding: 8px 12px 12px;
+}
+
+// The terminal-style preview pane. Theme-derived `background` /
+// `color` / `font-family` / `font-size` are applied from JS in
+// `applyAppearanceToPreview`; the fallback styles below show before the
+// theme lookup runs (e.g. during the loading state) and when the theme
+// fetch fails.
+.quit-confirm-detail-preview {
+  flex: 1;
+  margin: 0;
+  padding: 10px 12px;
+  // Surface defaults — overwritten per-terminal by the theme apply.
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre;
+  overflow: auto;
+  min-height: 220px;
+
+  &[data-state="empty"],
+  &[data-state="loading"],
+  &[data-state="error"] {
+    color: var(--text-muted);
+    font-style: italic;
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+  }
 }
 
 .quit-confirm-list {
@@ -775,14 +862,6 @@ input, select, textarea {
   padding: 0 0 4px 2px;
 }
 
-// HS-7969 — wrap each row + its preview so the layout collapses cleanly
-// when the preview is hidden.
-.quit-confirm-row-container {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
 .quit-confirm-row {
   display: flex;
   align-items: center;
@@ -791,28 +870,27 @@ input, select, textarea {
   border-radius: var(--radius);
   background: var(--bg-secondary, color-mix(in srgb, var(--text) 4%, transparent));
   font-size: 13px;
-  // HS-7969 — row is now a `<button>`. Reset the default styling.
+  // HS-7969 — row is a `<button>`. Reset default styling.
   border: none;
   width: 100%;
   text-align: left;
   font: inherit;
   cursor: pointer;
   color: inherit;
+  // Compact vertical rhythm so the master pane fits ~6 rows without
+  // scrolling; users with more terminals get an internal scroll on
+  // `.quit-confirm-master`.
+  margin-bottom: 4px;
+
   &:hover {
     background: color-mix(in srgb, var(--text) 8%, transparent);
   }
 
-  .quit-confirm-row-chevron {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    width: 14px;
-    flex-shrink: 0;
-    transition: transform 120ms ease-out;
-  }
-  &.is-expanded .quit-confirm-row-chevron {
-    transform: rotate(90deg);
+  // HS-7969 follow-up — selected row is the master-detail link to the
+  // currently-rendered preview.
+  &.is-selected {
+    background: color-mix(in srgb, var(--accent, #3b82f6) 18%, transparent);
+    box-shadow: inset 2px 0 0 var(--accent, #3b82f6);
   }
 
   .quit-confirm-row-icon {
@@ -841,32 +919,10 @@ input, select, textarea {
     padding: 1px 6px;
     border-radius: 4px;
     flex-shrink: 0;
-    max-width: 160px;
+    max-width: 120px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-}
-
-// HS-7969 — read-only preview block shown when a row is clicked. Renders
-// the last ~30 lines of the terminal's scrollback as plain text.
-.quit-confirm-row-preview {
-  margin: 0 8px 4px 28px;
-  padding: 8px 10px;
-  background: color-mix(in srgb, var(--text) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
-  border-radius: 6px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--text);
-  white-space: pre;
-  overflow: auto;
-  max-height: 280px;
-  &[data-state="loading"],
-  &[data-state="error"] {
-    color: var(--text-muted);
-    font-style: italic;
   }
 }
 
@@ -878,7 +934,11 @@ input, select, textarea {
   color: var(--text-muted);
   cursor: pointer;
   user-select: none;
-  padding: 4px 2px;
+  // HS-7969 follow-up — dont-ask now sits OUTSIDE the master-detail row
+  // (the layout changed from a single body container to a stack of
+  // sections) so it needs side padding to align with the rest of the
+  // dialog chrome.
+  padding: 8px 16px 6px;
   margin-top: 2px;
 
   input[type="checkbox"] {
@@ -1816,32 +1876,6 @@ body.terminal-dashboard-active {
   svg { flex-shrink: 0; }
 
   &:hover { opacity: 0.85; }
-}
-
-// HS-7983 — partial-output preview rendered immediately under a running
-// custom shell command's button. Shows the trailing 1–2 lines of the
-// stripped partial buffer; truncated per-line by the layout. Faded /
-// italic so it reads as transient progress vs. the canonical button row
-// above. Removed by `runShellCommand`'s completion callback the moment
-// the run finishes.
-.channel-command-preview {
-  margin: -2px 0 4px 0;
-  padding: 2px 10px 4px;
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-  font-size: 10px;
-  line-height: 1.3;
-  color: var(--text-muted);
-  font-style: italic;
-  white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  // Cap to 2 lines visually — the JS already trims to `tailLines(..., 2)`,
-  // but we belt-and-braces with `max-height` + line-clamp so a single
-  // chunk with embedded newlines doesn't blow up the sidebar height.
-  max-height: 2.6em;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
 }
 
 #channel-commands-container {
@@ -3891,6 +3925,13 @@ body.terminal-dashboard-active {
   padding: 0 12px;
   gap: 2px;
   overflow-x: auto;
+  // HS-8004 — explicitly clamp the Y axis. `.settings-tab` uses
+  // `margin-bottom: -1px` so its active-state border overlaps the strip's
+  // own bottom border; per CSS spec, when one axis is `auto` the other
+  // (visible) axis is treated as `auto` too, which let the user scroll
+  // the strip up/down by exactly 1 px. `hidden` preserves the X-axis
+  // horizontal-overflow scroll without the spurious Y-axis bleed.
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
 
   &::-webkit-scrollbar {
@@ -8656,16 +8697,24 @@ label.detail-details-label {
 // =============================================================================
 
 .terminal-prompt-overlay {
-  position: absolute;
-  bottom: 12px;
-  left: 12px;
-  right: 12px;
-  max-width: 540px;
+  // HS-8012 — was anchored to the terminal pane (`position: absolute` +
+  // `bottom: 12px; left: 12px; right: 12px;`) so it visually lived inside
+  // the bottom drawer. Users want this popup to share the spatial
+  // convention of the channel-permission popup (`.permission-popup`):
+  // anchored below the active project tab. Mounted on `document.body`
+  // with `position: fixed`; explicit top/left applied from JS when the
+  // tab is found, otherwise this default top-center fallback shows.
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(640px, calc(100vw - 16px));
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
-  z-index: 30;
+  z-index: 3000;
   display: flex;
   flex-direction: column;
   font-size: 13px;

@@ -115,7 +115,9 @@ The registry is pluggable so a future ticket can add parsers (apt's `[Y/n/?]`, n
 
 ## 52.5 Overlay UI
 
-A new component `src/client/terminalPromptOverlay.tsx`. The overlay is **anchored to the terminal pane** the prompt was detected in — for the drawer it sits at the bottom-left of the active terminal canvas, for the dashboard's dedicated view it sits centered below the canvas. It is **non-modal** (matches §47 popup convention) so the user can keep working in other tabs.
+A new component `src/client/terminalPromptOverlay.tsx`. The overlay is mounted on `document.body` with `position: fixed` and **anchored below the active project tab** matching the terminal's project secret — same spatial convention as the channel-permission popup (`.permission-popup`). When the project tab isn't visible (dashboard mode hides project tabs) the overlay falls back to a top-center position. It is **non-modal** (matches §47 popup convention) so the user can keep working in other tabs.
+
+(Phase 1's original layout anchored the overlay inside the terminal pane via `position: absolute; bottom: 12px; left: 12px;` — the user found the in-drawer position visually confusing and wanted all "Hot Sheet wants you to answer something" popups to share one location. HS-8012 moved it to the project-tab anchor so this overlay and `.permission-popup` open in the same place.)
 
 Layout per shape:
 

@@ -15,6 +15,8 @@ import { closeDetail } from './detail.js';
 import { toElement } from './dom.js';
 import { showHideTerminalDialog } from './hideTerminalDialog.js';
 import { ICON_EYE_OFF, ICON_PENCIL, ICON_X } from './icons.js';
+import { switchProject } from './projectTabs.js';
+import { shouldEscapeBypassHotsheet } from './shortcuts.js';
 import type { ProjectInfo } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { subscribeToDefaultAppearanceChanges } from './terminalAppearance.js';
@@ -28,7 +30,6 @@ import {
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { mountTileGrid, type TileEntry, type TileGridHandle } from './terminalTileGrid.js';
-import { switchProject } from './projectTabs.js';
 
 /**
  * Terminal Dashboard — a second top-level client view that shows every
@@ -236,6 +237,9 @@ export function initTerminalDashboard(): void {
   document.addEventListener('keydown', (e) => {
     if (!active) return;
     if (e.key !== 'Escape') return;
+    // HS-8011 — when a terminal is focused, plain Esc must reach the
+    // running program; Opt+Esc still exits dedicated → centered → dashboard.
+    if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
     // HS-7661 — let the hide-terminal dialog consume Esc when open;
     // otherwise the dashboard handler exits dashboard mode before the
     // dialog has a chance to close.

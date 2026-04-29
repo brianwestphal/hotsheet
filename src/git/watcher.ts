@@ -2,7 +2,7 @@ import { existsSync, type FSWatcher, watch as fsWatch } from 'fs';
 import { join } from 'path';
 
 import { getGitRoot, isGitRepo } from '../gitignore.js';
-import { type GitStatus, getGitStatus } from './status.js';
+import { getGitStatus,type GitStatus } from './status.js';
 
 /**
  * HS-7954 — git status cache + filesystem watcher.

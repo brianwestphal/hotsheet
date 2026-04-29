@@ -5,12 +5,6 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const apiMock = vi.fn();
-
-vi.mock('../api.js', () => ({
-  api: (...args: unknown[]) => apiMock(...args),
-}));
-
 import {
   __resetAllowRulesCacheForTests,
   appendAllowRule,
@@ -19,6 +13,12 @@ import {
   removeAllowRule,
   subscribeToAllowRules,
 } from './allowRulesStore.js';
+
+const apiMock = vi.fn();
+
+vi.mock('../api.js', () => ({
+  api: (...args: unknown[]) => apiMock(...args),
+}));
 
 beforeEach(() => {
   apiMock.mockReset();

@@ -1,7 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { type ShellPartialOutputEvent, SHELL_PARTIAL_OUTPUT_EVENT } from './commandSidebar.js';
 import { activeFilterTypes, ALL_FILTER_TYPES, dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
+import { maybeFireShellStreamFirstUseToast, SHELL_PARTIAL_OUTPUT_EVENT,type ShellPartialOutputEvent } from './commandSidebar.js';
 import { toElement } from './dom.js';
 import { resolveDrawerTabForTauri } from './drawerTabGating.js';
 import { state } from './state.js';
@@ -97,6 +97,11 @@ export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
   if (container === null) return;
   const partialEl = container.querySelector<HTMLElement>(`pre.command-log-shell-partial[data-shell-partial-id="${detail.id}"]`);
   if (partialEl === null) return;
+  // HS-8015 — sole survivor of the previous dual-render path. The
+  // first-use discoverability toast used to fire from the (now-removed)
+  // sidebar preview; relocated here so users still get the one-time
+  // nudge that streaming exists, pointing them at the Commands Log.
+  maybeFireShellStreamFirstUseToast();
   const wasPinned = shouldAutoScrollToBottom(container.scrollTop, container.clientHeight, container.scrollHeight);
   partialEl.textContent = stripAnsi(detail.partial);
   if (wasPinned) container.scrollTop = container.scrollHeight;

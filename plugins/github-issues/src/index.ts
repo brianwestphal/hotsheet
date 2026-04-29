@@ -62,11 +62,20 @@ const DEFAULT_STATUS_LABEL_MAP: FieldMapPair = {
   },
 };
 
-// GitHub open/closed state mapping (used alongside labels)
+// GitHub open/closed state mapping (used alongside labels).
+//
+// HS-8002 — `completed` now keeps the issue OPEN. Pre-fix the plugin
+// closed the GitHub issue the moment the local ticket flipped to
+// `completed`, but the user uses Hot Sheet's verify step as the actual
+// "this is truly done, archive the GitHub issue" gate — closing on
+// `completed` was premature. Only `verified` flips the GitHub issue to
+// closed; the inbound side keeps mapping a closed-without-label issue
+// to `completed` (legacy / outside-Hot-Sheet manual close path) since
+// `verify` is a Hot-Sheet-only workflow concept.
 const GITHUB_STATE_FOR_STATUS: Record<string, 'open' | 'closed'> = {
   not_started: 'open',
   started: 'open',
-  completed: 'closed',
+  completed: 'open',
   verified: 'closed',
 };
 

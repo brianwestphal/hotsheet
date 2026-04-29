@@ -7,7 +7,7 @@
  * so the ordering invariants + idempotence guarantees from
  * `docs/45-pglite-robustness.md` §45.3 are pinned down.
  */
-import { Server as HttpServer } from 'http';
+import type { Server as HttpServer } from 'http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {

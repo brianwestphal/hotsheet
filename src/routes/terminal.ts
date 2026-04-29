@@ -210,8 +210,49 @@ terminalRoutes.get('/scrollback-preview', (c) => {
   const requested = parseInt(c.req.query('maxLines') ?? '30', 10);
   const maxLines = Math.max(1, Math.min(200, Number.isFinite(requested) ? requested : 30));
   const text = getTerminalScrollbackPreview(secret, terminalId, maxLines);
-  return c.json({ text, maxLines });
+  // HS-7969 follow-up — surface the resolved appearance fields (theme,
+  // fontFamily, fontSize) so the §37 quit-confirm preview pane can paint
+  // its read-only mirror in the same colours / font as the live terminal.
+  // The actual theme registry is client-side; we just hand back the IDs +
+  // size and let the client resolve background / foreground / cursor
+  // colours via `getThemeById(...)`. Resolution layers (terminal config →
+  // project default) match `resolveAppearance` in
+  // `src/client/terminalAppearance.ts`. Dynamic terminals that aren't in
+  // settings.json fall through to project default; non-existent /
+  // ill-formed configs return null fields so the client uses its
+  // FALLBACK_APPEARANCE (HS-6307).
+  const dataDir = c.get('dataDir');
+  const appearance = resolveAppearanceForResponse(dataDir, terminalId);
+  return c.json({ text, maxLines, ...appearance });
 });
+
+interface AppearanceResponseFields {
+  theme: string | null;
+  fontFamily: string | null;
+  fontSize: number | null;
+}
+
+function resolveAppearanceForResponse(dataDir: string, terminalId: string): AppearanceResponseFields {
+  const cfg = listTerminalConfigs(dataDir).find((c) => c.id === terminalId) ?? null;
+  const projectDefault = readProjectDefaultAppearance(dataDir);
+  return {
+    theme: cfg?.theme ?? projectDefault.theme ?? null,
+    fontFamily: cfg?.fontFamily ?? projectDefault.fontFamily ?? null,
+    fontSize: cfg?.fontSize ?? projectDefault.fontSize ?? null,
+  };
+}
+
+function readProjectDefaultAppearance(dataDir: string): { theme?: string; fontFamily?: string; fontSize?: number } {
+  const settings = readFileSettings(dataDir);
+  const raw = settings.terminal_default;
+  if (typeof raw !== 'object' || raw === null) return {};
+  const obj = raw as Record<string, unknown>;
+  const out: { theme?: string; fontFamily?: string; fontSize?: number } = {};
+  if (typeof obj.theme === 'string' && obj.theme !== '') out.theme = obj.theme;
+  if (typeof obj.fontFamily === 'string' && obj.fontFamily !== '') out.fontFamily = obj.fontFamily;
+  if (typeof obj.fontSize === 'number' && Number.isFinite(obj.fontSize)) out.fontSize = obj.fontSize;
+  return out;
+}
 
 /**
  * GET /api/terminal/foreground-process?terminalId=<id> — HS-7596 / §37.6.

@@ -1,8 +1,3 @@
-import { mkdirSync, writeFileSync } from 'fs';
-import { join } from 'path';
-
-import { readFileSettings } from '../file-settings.js';
-
 /**
  * HS-7964 / HS-7965 — per-(project, terminal-id) shell history scoping.
  *
@@ -38,8 +33,11 @@ import { readFileSettings } from '../file-settings.js';
  *
  * See docs/51-shell-history.md for the full spec.
  */
-
 import { createHash } from 'crypto';
+import { mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
+
+import { readFileSettings } from '../file-settings.js';
 
 export type ShellKind = 'bash' | 'zsh' | 'fish' | null;
 

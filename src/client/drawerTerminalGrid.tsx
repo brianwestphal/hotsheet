@@ -6,6 +6,7 @@ import {
   subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
 import { showHideTerminalDialog } from './hideTerminalDialog.js';
+import { shouldEscapeBypassHotsheet } from './shortcuts.js';
 import {
   getActiveProject,
   getProjectGridActive,
@@ -161,6 +162,9 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
     const project = getActiveProject();
     if (project === null || !getProjectGridActive(project.secret)) return;
     if (e.key !== 'Escape') return;
+    // HS-8011 — when a terminal is focused, plain Esc must reach the
+    // running program; Opt+Esc still walks dedicated → centered → exit.
+    if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
     // HS-7661 — when the hide-terminal dialog is open, let it consume the
     // Esc itself. Without this, the drawer-grid handler runs first (it's
     // registered earlier on the document) and would exit grid mode entirely

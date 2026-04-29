@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
-import type { MatchResult, NumberedMatch, YesNoMatch, GenericMatch } from './terminalPrompt/parsers.js';
+import type { GenericMatch,MatchResult, NumberedMatch, YesNoMatch } from './terminalPrompt/parsers.js';
 import {
   buildGenericCancelPayload,
   buildGenericPayload,
@@ -18,10 +18,20 @@ import {
  * buttons) and `generic` (monospaced reproduction + free-form textarea).
  * Always-allow is Phase 3.
  *
- * The overlay is anchored to the active terminal pane (caller passes the
- * pane element). It is non-modal — the rest of the app stays interactive
- * while the overlay sits on top of the terminal canvas. Three dismissal
- * paths:
+ * HS-8012 — the overlay used to mount inside the terminal pane (drawer
+ * `.terminal-body` / dashboard `.terminal-dashboard-dedicated-body`),
+ * which positioned it visually inside the bottom drawer. Users wanted
+ * the overlay to appear in the same location as the channel-permission
+ * popup (`.permission-popup`) — anchored below the active project tab —
+ * so all "Hot Sheet wants you to answer something" prompts share one
+ * spatial convention. Now the overlay mounts on `document.body` with
+ * `position: fixed` and is positioned below the project tab whose
+ * terminal triggered it (caller passes `projectSecret`); when the tab
+ * isn't visible (e.g. dashboard is up and project tabs are hidden) the
+ * overlay falls back to the SCSS-default top-center position.
+ *
+ * Still non-modal — the rest of the app stays interactive while the
+ * overlay sits on top. Three dismissal paths:
  *   - Click a choice → `onChoose(payload)` writes the keystroke string to
  *     the PTY via the caller's hook.
  *   - Click "Cancel" / press Escape → cancel-payload (`\x1b`) sent to PTY.
@@ -36,9 +46,12 @@ export interface OpenTerminalPromptOverlayOptions {
   /** The match the parser registry returned. Phase 1 only renders the
    *  `numbered` shape; other shapes are no-ops. */
   match: MatchResult;
-  /** Element to anchor the overlay to (the terminal pane). Overlay mounts
-   *  inside this element so it scrolls / hides with the pane. */
-  anchor: HTMLElement;
+  /** HS-8012 — secret of the project whose terminal raised the prompt.
+   *  Used to find that project's tab via `.project-tab[data-secret=...]`
+   *  and anchor the overlay below it (mirroring `permission-popup`).
+   *  Optional — when absent or the tab isn't in the DOM the overlay
+   *  falls back to its SCSS-default top-center position. */
+  projectSecret?: string;
   /**
    * Caller hook — writes the keystroke string to the PTY's WebSocket.
    * Phase 1 calls this with either the `buildNumberedPayload` result for a
@@ -68,9 +81,10 @@ export interface OpenTerminalPromptOverlayOptions {
  *  it programmatically (e.g. on terminal-pane teardown). Idempotent —
  *  calling twice in a row removes any prior overlay first. */
 export function openTerminalPromptOverlay(opts: OpenTerminalPromptOverlayOptions): HTMLElement | null {
-  // Drop any prior overlay anchored to this pane so a re-trigger doesn't
-  // stack two on top of each other.
-  opts.anchor.querySelectorAll('.terminal-prompt-overlay').forEach(el => el.remove());
+  // HS-8012 — drop any prior overlay across the whole document so a
+  // re-trigger doesn't stack two on top of each other (was scoped to the
+  // anchor element pre-fix).
+  document.querySelectorAll('.terminal-prompt-overlay').forEach(el => el.remove());
 
   switch (opts.match.shape) {
     case 'numbered':
@@ -80,6 +94,31 @@ export function openTerminalPromptOverlay(opts: OpenTerminalPromptOverlayOptions
     case 'generic':
       return openGenericOverlay(opts, opts.match);
   }
+}
+
+/**
+ * HS-8012 — mount `overlay` on `document.body` and position it directly
+ * below the active project tab matching `projectSecret`. Mirrors
+ * `permissionOverlay.tsx`'s positioning math so both popup classes share
+ * a spatial convention. When no tab is found (dashboard mode hides
+ * project tabs, or the secret doesn't match anything in the DOM) the
+ * overlay keeps the SCSS-default `top: 56px; left: 50%;
+ * transform: translateX(-50%)` fallback.
+ */
+function attachOverlayToBody(overlay: HTMLElement, projectSecret: string | undefined): void {
+  document.body.appendChild(overlay);
+  if (projectSecret === undefined) return;
+  const tab = document.querySelector<HTMLElement>(`.project-tab[data-secret="${CSS.escape(projectSecret)}"]`);
+  if (tab === null) return;
+  const tabRect = tab.getBoundingClientRect();
+  if (tabRect.width === 0 && tabRect.height === 0) return; // hidden in dashboard mode
+  const popupRect = overlay.getBoundingClientRect();
+  const maxLeft = Math.max(8, window.innerWidth - popupRect.width - 8);
+  overlay.style.top = `${tabRect.bottom + 4}px`;
+  overlay.style.left = `${Math.min(Math.max(8, tabRect.left), maxLeft)}px`;
+  // Disable the SCSS-default centering transform when an explicit left
+  // position is set so the popup actually lands at `tabRect.left`.
+  overlay.style.transform = 'none';
 }
 
 /**
@@ -208,7 +247,7 @@ function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: Numb
     });
   });
 
-  opts.anchor.appendChild(overlay);
+  attachOverlayToBody(overlay, opts.projectSecret);
   return overlay;
 }
 
@@ -254,7 +293,7 @@ function openYesNoOverlay(opts: OpenTerminalPromptOverlayOptions, match: YesNoMa
     });
   });
 
-  opts.anchor.appendChild(overlay);
+  attachOverlayToBody(overlay, opts.projectSecret);
   return overlay;
 }
 
@@ -304,7 +343,7 @@ function openGenericOverlay(opts: OpenTerminalPromptOverlayOptions, match: Gener
     }
   });
 
-  opts.anchor.appendChild(overlay);
+  attachOverlayToBody(overlay, opts.projectSecret);
   // Focus the textarea so the user can start typing immediately.
   queueMicrotask(() => { textarea?.focus(); });
   return overlay;

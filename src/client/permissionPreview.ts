@@ -97,7 +97,7 @@ export function formatEditDiff(toolName: string, raw: string): EditDiffShape | n
   if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return null;
 
   let parsed: unknown;
-  let truncated = false;
+  const truncated = false;
   try {
     parsed = JSON.parse(trimmed);
   } catch {

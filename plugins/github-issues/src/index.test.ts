@@ -344,7 +344,11 @@ describe('github-issues plugin — updateRemote', () => {
     expect(body.labels).toContain('status:not-started');
   });
 
-  it('sets state to closed when status changes to completed', async () => {
+  // HS-8002 — `completed` no longer closes the GitHub issue. The user
+  // uses `verified` as the actual "this is truly done" gate; closing on
+  // `completed` was premature and resulted in still-being-verified work
+  // disappearing from the open-issues view on GitHub.
+  it('keeps state OPEN and applies status:completed label when status changes to completed (HS-8002)', async () => {
     const existingIssue = {
       number: 10, title: 'x', body: '', state: 'open',
       labels: [{ name: 'category:issue' }, { name: 'status:not-started' }],
@@ -361,8 +365,29 @@ describe('github-issues plugin — updateRemote', () => {
     await backend.updateRemote('10', { status: 'completed' });
     const patchCall = fetchCalls.find(c => c.init?.method === 'PATCH');
     const body = JSON.parse(patchCall!.init!.body as string);
-    expect(body.state).toBe('closed');
+    expect(body.state).toBe('open');
     expect(body.labels).toContain('status:completed');
+  });
+
+  it('sets state to closed when status changes to verified (HS-8002)', async () => {
+    const existingIssue = {
+      number: 11, title: 'x', body: '', state: 'open',
+      labels: [{ name: 'category:issue' }, { name: 'status:completed' }],
+      milestone: null, updated_at: new Date().toISOString(),
+    };
+    const { backend } = await activateWith((url, init) => {
+      if (url.includes('/issues/11') && (!init?.method || init?.method === 'GET')) {
+        return makeResponse(200, existingIssue, okHeaders);
+      }
+      if (init?.method === 'PATCH') return makeResponse(200, {}, okHeaders);
+      return makeResponse(200, {}, okHeaders);
+    });
+
+    await backend.updateRemote('11', { status: 'verified' });
+    const patchCall = fetchCalls.find(c => c.init?.method === 'PATCH');
+    const body = JSON.parse(patchCall!.init!.body as string);
+    expect(body.state).toBe('closed');
+    expect(body.labels).toContain('status:verified');
   });
 
   it('clears milestone when tags have no milestone tag', async () => {

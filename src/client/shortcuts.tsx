@@ -61,6 +61,10 @@ export function bindKeyboardShortcuts() {
 
     // Close any open dialog on Escape
     if (e.key === 'Escape') {
+      // HS-8011 — let plain Esc fall through to the focused terminal so
+      // programs running there (claude code, vim, less, …) can interrupt /
+      // dismiss / cancel. Opt+Esc still routes to Hot Sheet.
+      if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
       for (const id of ['open-folder-overlay', 'settings-overlay']) {
         const dlg = document.getElementById(id);
         if (dlg && dlg.style.display !== 'none') {
@@ -156,6 +160,12 @@ export function bindKeyboardShortcuts() {
     }
 
     if (e.key === 'Escape') {
+      // HS-8011 — when a terminal owns keyboard focus, plain Esc must reach
+      // the program running inside it. Pre-fix this branch unconditionally
+      // blurred xterm's helper-textarea (which {@link isEditableTarget}
+      // matches) — claude code / vim / less never saw the keystroke. Opt+Esc
+      // still falls through to Hot Sheet's blur-and-deselect behaviour.
+      if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
       // HS-7393 — any focused INPUT / TEXTAREA should blur on Esc without
       // also clearing ticket selection or the input's value. Previously this
       // branch only covered detail-panel inputs, so Esc in the app search or
@@ -385,10 +395,31 @@ export function isEditableTarget(target: EventTarget | null): boolean {
  * surface as a TEXTAREA element, so we can't use the plain "isInput" test
  * to gate terminal-targeted shortcuts (HS-6472).
  */
-function isTerminalFocused(): boolean {
-  const active = document.activeElement;
-  if (!(active instanceof HTMLElement)) return false;
-  return active.closest('.drawer-terminal-pane, .xterm') !== null;
+export function isTerminalFocused(): boolean {
+  return isElementInTerminal(document.activeElement);
+}
+
+/**
+ * Pure variant of {@link isTerminalFocused} that takes the element under
+ * test directly. Exported so unit tests can drive the predicate without
+ * having to manipulate `document.activeElement`.
+ */
+export function isElementInTerminal(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.closest('.drawer-terminal-pane, .xterm') !== null;
+}
+
+/**
+ * HS-8011 — Plain Escape inside a focused terminal must reach the running
+ * program (claude code, vim, less, …) instead of being consumed by Hot
+ * Sheet's global handlers. Returns `true` when the global handler should
+ * bail out and let xterm see the keystroke. Opt/Alt+Esc still routes to
+ * Hot Sheet so the user can blur inputs / exit dashboard / etc. without
+ * having to click out of the terminal first.
+ */
+export function shouldEscapeBypassHotsheet(target: EventTarget | null, altKey: boolean): boolean {
+  if (altKey) return false;
+  return isElementInTerminal(target);
 }
 
 /**
@@ -466,7 +497,7 @@ export function pickNextDrawerTabId(
   const currentIdx = tabs.findIndex(t => t.active);
   const start = currentIdx === -1 ? 0 : currentIdx;
   const nextIdx = ((start + offset) % tabs.length + tabs.length) % tabs.length;
-  return tabs[nextIdx]!.tabId;
+  return tabs[nextIdx].tabId;
 }
 
 function switchTerminalTabByOffset(offset: number): void {

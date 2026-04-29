@@ -15,15 +15,18 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  writeFileSync,
-} from 'fs';
+utimesSync, 
+  writeFileSync} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gzipSync } from 'zlib';
 
 import {
   ATTACHMENT_MANIFEST_VERSION,
   attachmentBlobsDir,
+  type AttachmentManifest,
+  type AttachmentRowSource,
   buildAttachmentManifest,
   deleteManifestSibling,
   ensureBlobInStore,
@@ -34,11 +37,7 @@ import {
   restoreAttachmentsFromManifest,
   runAttachmentGc,
   writeManifestAtomically,
-  type AttachmentManifest,
-  type AttachmentRowSource,
 } from './attachmentBackup.js';
-import { gzipSync } from 'zlib';
-import { utimesSync } from 'fs';
 
 let backupRoot: string;
 let liveAttachmentsDir: string;
@@ -181,8 +180,8 @@ describe('buildAttachmentManifest (HS-7929)', () => {
     expect(m.entries[0]?.storedName).toBe('HS-1_a.png');
     expect(m.entries[1]?.sha).toBe(expectedSha(Buffer.from('payload-2')));
     const blobsDir = attachmentBlobsDir(backupRoot);
-    expect(existsSync(join(blobsDir, m.entries[0]!.sha))).toBe(true);
-    expect(existsSync(join(blobsDir, m.entries[1]!.sha))).toBe(true);
+    expect(existsSync(join(blobsDir, m.entries[0].sha))).toBe(true);
+    expect(existsSync(join(blobsDir, m.entries[1].sha))).toBe(true);
   });
 
   it('skips rows whose `stored_path` is missing on disk (logs warning)', async () => {
@@ -340,7 +339,7 @@ describe('restoreAttachmentsFromManifest (HS-7929)', () => {
     // The user's live file is preserved.
     expect(readFileSync(join(liveAttachmentsDir, 'HS-100_a.png')).equals(oldBuf)).toBe(true);
     // The backup blob landed under the suffix.
-    expect(readFileSync(join(liveAttachmentsDir, restored[0]!.finalStoredName)).equals(backupBuf)).toBe(true);
+    expect(readFileSync(join(liveAttachmentsDir, restored[0].finalStoredName)).equals(backupBuf)).toBe(true);
   });
 
   it('is a no-op for entries whose live file matches the manifest sha (idempotent restore)', async () => {
@@ -420,7 +419,7 @@ describe('reanalyzeMissingManifests (HS-7937)', () => {
 
     // The blob must also have been deposited into the centralised store.
     const blobsDir = attachmentBlobsDir(backupRoot);
-    expect(existsSync(join(blobsDir, manifest!.entries[0]!.sha))).toBe(true);
+    expect(existsSync(join(blobsDir, manifest!.entries[0].sha))).toBe(true);
   });
 
   it('skips tarballs younger than 24h (default) so we don\'t hash live attachments on every boot', async () => {

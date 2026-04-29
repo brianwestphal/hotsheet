@@ -1,8 +1,8 @@
 import { raw } from '../jsx-runtime.js';
+import { extractPrimaryValue } from '../permissionAllowRules.js';
 import { api } from './api.js';
 import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
 import { toElement } from './dom.js';
-import { extractPrimaryValue } from '../permissionAllowRules.js';
 import { renderEditDiffPreview } from './editDiffPreview.js';
 import { buildAlwaysAllowAffordance } from './permissionAllowListUI.js';
 import { formatEditDiff, formatInputPreview } from './permissionPreview.js';

@@ -1,15 +1,16 @@
 /**
- * HS-7983 — pure-helper tests for the client-side ANSI strip + tail
- * helpers used by the streaming-shell-output sidebar preview and the
- * Commands Log live render. Mirrors the server-side
+ * HS-7983 — pure-helper tests for the client-side ANSI strip helper used
+ * by the Commands Log streaming live render. Mirrors the server-side
  * `scrollbackSnapshot.test.ts` cases so the two implementations stay in
- * sync; if the regex set drifts between server and client a Phase 3
+ * sync; if the regex set drifts between server and client, a streaming
  * preview rendered locally would diverge from a server-side scrollback
- * snapshot rendered for the §37 quit-confirm preview.
+ * snapshot rendered for the §37 quit-confirm preview. (HS-8015 removed
+ * the sidebar partial-preview consumer alongside the `tailLines` helper
+ * it depended on.)
  */
 import { describe, expect, it } from 'vitest';
 
-import { stripAnsi, tailLines } from './stripAnsi.js';
+import { stripAnsi } from './stripAnsi.js';
 
 describe('stripAnsi (HS-7983)', () => {
   it('removes CSI sequences (clear, home)', () => {
@@ -42,28 +43,5 @@ describe('stripAnsi (HS-7983)', () => {
 
   it('passes plain text through unchanged', () => {
     expect(stripAnsi('plain output')).toBe('plain output');
-  });
-});
-
-describe('tailLines (HS-7983)', () => {
-  it('returns empty when maxLines <= 0', () => {
-    expect(tailLines('a\nb\nc', 0)).toBe('');
-    expect(tailLines('a\nb\nc', -1)).toBe('');
-  });
-
-  it('returns the full text when there are fewer lines than the cap', () => {
-    expect(tailLines('a\nb\nc', 5)).toBe('a\nb\nc');
-  });
-
-  it('returns the trailing N lines when the cap is exceeded', () => {
-    expect(tailLines('a\nb\nc\nd\ne', 2)).toBe('d\ne');
-  });
-
-  it('drops a single trailing empty line so we don\'t waste a slot', () => {
-    expect(tailLines('a\nb\nc\n', 2)).toBe('b\nc');
-  });
-
-  it('handles an empty input', () => {
-    expect(tailLines('', 5)).toBe('');
   });
 });

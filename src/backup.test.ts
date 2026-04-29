@@ -6,8 +6,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { gunzipSync } from 'zlib';
 
 import {
-  attachmentBlobsDir,
   ATTACHMENT_MANIFEST_VERSION,
+  attachmentBlobsDir,
   manifestSiblingFilename,
   readManifest,
 } from './attachmentBackup.js';

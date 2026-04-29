@@ -14,8 +14,8 @@ import { initDbRecoveryBanner } from './dbRecoveryBanner.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, openDetailAndFocusNote, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
-import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
+import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
 import { bindOpenFolder } from './openFolder.js';
 import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
@@ -33,11 +33,11 @@ import { bindDetailTagInput } from './tagAutocomplete.js'; // .tsx file, JSX ena
 import { showTagsDialog } from './tagsDialog.js';
 import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
 import { initTerminal } from './terminal.js';
-import { loadAllowRules } from './terminalPrompt/allowRulesStore.js';
 import { initTerminalDashboard } from './terminalDashboard.js';
-import { maybeShowUpgradeNudge } from './upgradeNudge.js';
+import { loadAllowRules } from './terminalPrompt/allowRulesStore.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';
+import { maybeShowUpgradeNudge } from './upgradeNudge.js';
 
 // Wire up the restoreTicketList callback used by settingsLoader's category buttons
 setRestoreTicketListCallback(restoreTicketList);

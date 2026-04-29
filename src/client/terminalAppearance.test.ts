@@ -19,8 +19,8 @@ import {
   subscribeToDefaultAppearanceChanges,
   type XtermLikeForAppearance,
 } from './terminalAppearance.js';
-import { getThemeById, TERMINAL_THEMES } from './terminalThemes.js';
 import { _resetFontCacheForTests } from './terminalFonts.js';
+import { getThemeById, TERMINAL_THEMES } from './terminalThemes.js';
 
 beforeEach(() => {
   _resetSessionOverridesForTests();

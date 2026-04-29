@@ -118,11 +118,11 @@ describe('maybeFireShellStreamFirstUseToast (HS-7984)', () => {
     document.querySelectorAll('.hs-toast').forEach(t => t.remove());
   });
 
-  it('shows the discoverability toast on the first call after enable', () => {
+  it('shows the discoverability toast on the first call after enable (HS-8015 wording points users at the Commands Log)', () => {
     maybeFireShellStreamFirstUseToast();
     const toast = document.querySelector('.hs-toast');
     expect(toast).not.toBeNull();
-    expect(toast?.textContent).toContain('streams as it arrives');
+    expect(toast?.textContent).toContain('Commands Log');
     // localStorage sentinel is set so subsequent calls skip.
     expect(window.localStorage.getItem(KEY)).not.toBeNull();
   });

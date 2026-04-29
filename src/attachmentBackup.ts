@@ -19,19 +19,18 @@ import { createHash } from 'crypto';
 import {
   closeSync,
   copyFileSync,
+createReadStream, 
   existsSync,
   fsyncSync,
   linkSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
-  writeSync,
-} from 'fs';
-import { createReadStream } from 'fs';
+  writeSync} from 'fs';
 import { join } from 'path';
 import { pipeline } from 'stream/promises';
 import { gunzipSync } from 'zlib';
@@ -462,10 +461,10 @@ function readJsonCosaveAttachmentRows(jsonCosavePath: string): JsonCosaveAttachm
     if (!Array.isArray(rows)) return null;
     return rows.filter((r): r is JsonCosaveAttachmentRow =>
       typeof r === 'object' && r !== null
-        && typeof (r as JsonCosaveAttachmentRow).id === 'number'
-        && typeof (r as JsonCosaveAttachmentRow).ticket_id === 'number'
-        && typeof (r as JsonCosaveAttachmentRow).original_filename === 'string'
-        && typeof (r as JsonCosaveAttachmentRow).stored_path === 'string',
+        && typeof (r).id === 'number'
+        && typeof (r).ticket_id === 'number'
+        && typeof (r).original_filename === 'string'
+        && typeof (r).stored_path === 'string',
     );
   } catch {
     return null;
@@ -547,7 +546,7 @@ async function rebuildManifestFromJsonCosave(
       ticketId: row.ticket_id,
       originalName: row.original_filename,
       storedName: storedName!,
-      sha: sha!,
+      sha: sha,
       size: size!,
     });
   }

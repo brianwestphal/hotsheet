@@ -67,7 +67,7 @@ export function payloadForAutoAllow(match: MatchResult, rule: TerminalPromptAllo
   if (match.shape === 'numbered') {
     if (rule.choice_index < 0) return null;
     if (rule.choice_index >= match.choices.length) return null;
-    return buildNumberedPayload(match.choices as ChoiceOption[], rule.choice_index);
+    return buildNumberedPayload(match.choices, rule.choice_index);
   }
   if (match.shape === 'yesno') {
     const choice: 'yes' | 'no' = rule.choice_index === 0 ? 'yes' : 'no';

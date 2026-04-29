@@ -10,6 +10,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { api } from './api.js';
 import {
   type AllowRule,
   buildAlwaysAllowAffordance,
@@ -124,8 +125,6 @@ describe('formatRuleMeta (HS-7953)', () => {
 vi.mock('./api.js', () => ({
   api: vi.fn(),
 }));
-
-import { api } from './api.js';
 
 describe('buildAlwaysAllowAffordance (HS-7976)', () => {
   beforeEach(() => {

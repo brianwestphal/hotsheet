@@ -12,9 +12,9 @@ import {
   maybeSnapSliderValue,
   SLIDER_MIN_TILE_WIDTH,
   SLIDER_SNAP_THRESHOLD,
+  tickLeftPx,
   TILE_ASPECT,
   TILE_GAP,
-  tickLeftPx,
   tileNativeGridFromCellMetrics,
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';

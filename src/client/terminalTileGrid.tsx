@@ -22,6 +22,9 @@ import {
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
 import { isTerminalViewToggleShortcut } from './terminalKeybindings.js';
+import { buildAllowRule } from './terminalPrompt/allowRules.js';
+import { appendAllowRule } from './terminalPrompt/allowRulesStore.js';
+import { tryAutoAllow } from './terminalPrompt/autoAllow.js';
 import {
   createDetector,
   type Detector,
@@ -32,9 +35,6 @@ import {
   notifyUserKeystroke,
   SCAN_ROW_COUNT,
 } from './terminalPrompt/detector.js';
-import { buildAllowRule } from './terminalPrompt/allowRules.js';
-import { appendAllowRule } from './terminalPrompt/allowRulesStore.js';
-import { tryAutoAllow } from './terminalPrompt/autoAllow.js';
 import { openTerminalPromptOverlay } from './terminalPromptOverlay.js';
 import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
 import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
@@ -355,7 +355,16 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
         </div>
         <div className={labelClass} title={fullLabelTitle}>
           {badge?.name !== undefined && badge.name !== ''
-            ? <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}>{badge.name}{' › '}</span>
+            // HS-7943 follow-up — only the project name itself should
+            // carry the link affordance (pointer cursor + accent underline
+            // on hover); the trailing ` › ` chevron stays as muted plain
+            // text. Pre-fix the whole `{name} › ` span was the click +
+            // hover target, so the chevron was underlined alongside the
+            // name. The click listener stays on the outer span so a click
+            // on the chevron still routes (matches the pre-fix click
+            // hitbox); SCSS scopes the hover affordance to the inner name
+            // span only.
+            ? <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}><span className={`${cssPrefix}-tile-project-name`}>{badge.name}</span>{' › '}</span>
             : null}
           <span className={`${cssPrefix}-tile-name`}>{entry.label}</span>
         </div>
@@ -1044,10 +1053,11 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     const bar = overlay.querySelector<HTMLElement>(`.${dedicatedBarClass}`);
     const dedicatedBody = overlay.querySelector<HTMLElement>(`.${dedicatedBodyClass}`);
     if (pane === null || backBtn === null || bar === null) return;
-    // HS-7985 — anchor for the prompt overlay. Captured here so the closure
-    // below sees a non-nullable HTMLElement after the null-guard above
-    // narrows `pane`.
-    const promptOverlayAnchor: HTMLElement = dedicatedBody ?? pane;
+    // HS-8012 — the prompt overlay used to capture `dedicatedBody ?? pane`
+    // here so it could mount inside the dedicated view. It now mounts on
+    // `document.body` and anchors below the project tab, so the closure
+    // no longer needs an in-pane anchor. `dedicatedBody` is still used
+    // below to apply the per-theme background colour.
     backBtn.addEventListener('click', () => { exitDedicatedView(); });
 
     const appearance = resolveTileAppearance(tile);
@@ -1182,7 +1192,9 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
             }
             openTerminalPromptOverlay({
               match,
-              anchor: promptOverlayAnchor,
+              // HS-8012 — anchor below this tile's project tab so the
+              // overlay shares spatial convention with `.permission-popup`.
+              projectSecret: tile.entry.secret,
               onSend: sendToPty,
               onClose() { markDetectorClosed(detector); },
               onDismissAsNonPrompt() { markDetectorSuppressed(detector); },

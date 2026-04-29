@@ -5,7 +5,14 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { isCommandsLogFocused, isEditableTarget, isNewTerminalShortcut, pickNextDrawerTabId } from './shortcuts.js';
+import {
+  isCommandsLogFocused,
+  isEditableTarget,
+  isElementInTerminal,
+  isNewTerminalShortcut,
+  pickNextDrawerTabId,
+  shouldEscapeBypassHotsheet,
+} from './shortcuts.js';
 
 describe('isNewTerminalShortcut (HS-7926)', () => {
   const base = { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, key: 't' };
@@ -131,7 +138,7 @@ describe('isCommandsLogFocused (HS-7927 follow-up)', () => {
     panel('<div id="drawer-panel-commands-log"></div>');
     // No element focused — activeElement === body. Pre-fix this returned
     // false and Cmd+Shift+Arrow fell through to project-tab cycling.
-    (document.body as HTMLElement).focus();
+    (document.body).focus();
     expect(isCommandsLogFocused()).toBe(true);
   });
 
@@ -215,5 +222,89 @@ describe('isEditableTarget (HS-7978)', () => {
 
   it('returns false for non-HTMLElement targets (e.g. window, document)', () => {
     expect(isEditableTarget(window as unknown as EventTarget)).toBe(false);
+  });
+});
+
+// HS-8011 — plain Esc inside a focused terminal must bypass Hot Sheet's
+// global Esc handlers so the running program (claude code, vim, less, …)
+// receives the keystroke. Opt+Esc still routes to Hot Sheet so the user
+// can blur / exit dashboard / etc. without first clicking out of xterm.
+describe('isElementInTerminal (HS-8011)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('returns true for a target inside a .xterm container', () => {
+    document.body.innerHTML = `
+      <div class="xterm">
+        <textarea id="helper"></textarea>
+      </div>
+    `;
+    const helper = document.getElementById('helper');
+    expect(isElementInTerminal(helper)).toBe(true);
+  });
+
+  it('returns true for a target inside .drawer-terminal-pane', () => {
+    document.body.innerHTML = `
+      <div class="drawer-terminal-pane">
+        <div id="inside"></div>
+      </div>
+    `;
+    expect(isElementInTerminal(document.getElementById('inside'))).toBe(true);
+  });
+
+  it('returns true when the target itself is .xterm', () => {
+    document.body.innerHTML = `<div class="xterm" id="root"></div>`;
+    expect(isElementInTerminal(document.getElementById('root'))).toBe(true);
+  });
+
+  it('returns false for a target outside any terminal container', () => {
+    document.body.innerHTML = `
+      <div class="some-other-pane">
+        <textarea id="t"></textarea>
+      </div>
+    `;
+    expect(isElementInTerminal(document.getElementById('t'))).toBe(false);
+  });
+
+  it('returns false for a non-HTMLElement target (e.g. document, window)', () => {
+    expect(isElementInTerminal(document as unknown as EventTarget)).toBe(false);
+    expect(isElementInTerminal(window as unknown as EventTarget)).toBe(false);
+  });
+
+  it('returns false for null target', () => {
+    expect(isElementInTerminal(null)).toBe(false);
+  });
+});
+
+describe('shouldEscapeBypassHotsheet (HS-8011)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function inTerminal(): EventTarget {
+    document.body.innerHTML = `<div class="xterm"><textarea id="t"></textarea></div>`;
+    return document.getElementById('t') as EventTarget;
+  }
+  function outsideTerminal(): EventTarget {
+    document.body.innerHTML = `<div class="ticket-list"><input id="search" /></div>`;
+    return document.getElementById('search') as EventTarget;
+  }
+
+  it('returns true when terminal is focused and Alt is NOT pressed (plain Esc → terminal)', () => {
+    expect(shouldEscapeBypassHotsheet(inTerminal(), false)).toBe(true);
+  });
+
+  it('returns false when terminal is focused but Alt IS pressed (Opt+Esc → Hot Sheet)', () => {
+    expect(shouldEscapeBypassHotsheet(inTerminal(), true)).toBe(false);
+  });
+
+  it('returns false when terminal is NOT focused, regardless of Alt (Hot Sheet handles)', () => {
+    expect(shouldEscapeBypassHotsheet(outsideTerminal(), false)).toBe(false);
+    expect(shouldEscapeBypassHotsheet(outsideTerminal(), true)).toBe(false);
+  });
+
+  it('returns false for a null target (defensive — no element to check)', () => {
+    expect(shouldEscapeBypassHotsheet(null, false)).toBe(false);
   });
 });

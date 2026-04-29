@@ -1,11 +1,16 @@
 /**
- * HS-7983 — pure ANSI-stripping helpers for the streaming-shell-output
- * client surfaces (sidebar partial-preview and Commands Log live render).
- * Mirrors `src/terminals/scrollbackSnapshot.ts`'s implementation; kept
- * client-local so the bundler doesn't pull in the server-side
- * `Buffer`-using `buildScrollbackPreview`. The `stripAnsi` regex set is
+ * HS-7983 — pure ANSI-stripping helper for the Commands Log streaming
+ * live render. Mirrors `src/terminals/scrollbackSnapshot.ts`'s
+ * implementation; kept client-local so the bundler doesn't pull in the
+ * server-side `Buffer`-using `buildScrollbackPreview`. The regex set is
  * conservative — it only collapses sequences we recognise; unknown
  * escapes stay in place rather than corrupting characters.
+ *
+ * (HS-8015 removed the sidebar partial-preview consumer; only the
+ * Commands Log live render remains. `tailLines` lived alongside this
+ * helper to truncate the sidebar preview to the trailing 1–2 lines and
+ * was deleted with that path — the Commands Log writes the full
+ * stripped buffer into a scrollable `<pre>`.)
  *
  * See `docs/53-streaming-shell-output.md` §53.5 Phase 3.
  */
@@ -30,17 +35,4 @@ export function stripAnsi(input: string): string {
     .replace(SIMPLE_ESC_RX, '')
     .replace(BACKSPACE_RX, '')
     .replace(CR_BUT_NOT_CRLF_RX, '\n');
-}
-
-/**
- * Pure: return the last `maxLines` lines of `text`. Lines split on `\n`.
- * A single trailing empty line (introduced by a final `\n`) is dropped so
- * we don't waste a slot on it. Returns an empty string when `maxLines <= 0`.
- */
-export function tailLines(text: string, maxLines: number): string {
-  if (maxLines <= 0) return '';
-  const lines = text.split('\n');
-  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-  if (lines.length <= maxLines) return lines.join('\n');
-  return lines.slice(lines.length - maxLines).join('\n');
 }

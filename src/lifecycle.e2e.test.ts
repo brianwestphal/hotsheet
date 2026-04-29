@@ -13,7 +13,7 @@
  *   3. Double-SIGINT escalation — assert exit code 1 on second signal.
  *   4. Concurrent SIGINT + /api/shutdown — assert idempotent single exit.
  */
-import { spawn, type ChildProcess } from 'child_process';
+import { type ChildProcess,spawn } from 'child_process';
 import { existsSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';

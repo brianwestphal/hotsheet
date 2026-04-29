@@ -29,11 +29,14 @@ import {
   subscribeToDefaultAppearanceChanges,
 } from './terminalAppearance.js';
 import { mountAppearancePopover } from './terminalAppearancePopover.js';
+import { hasOpenDedicatedTerminalView } from './terminalDedicatedState.js';
 import { DEFAULT_FONT_SIZE } from './terminalFonts.js';
 import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
-import { replayHistoryToTerm } from './terminalReplay.js';
+import { buildAllowRule } from './terminalPrompt/allowRules.js';
+import { appendAllowRule } from './terminalPrompt/allowRulesStore.js';
+import { tryAutoAllow } from './terminalPrompt/autoAllow.js';
 import {
   clearDetectorSuppression,
   createDetector,
@@ -46,10 +49,7 @@ import {
   SCAN_ROW_COUNT,
 } from './terminalPrompt/detector.js';
 import { openTerminalPromptOverlay } from './terminalPromptOverlay.js';
-import { hasOpenDedicatedTerminalView } from './terminalDedicatedState.js';
-import { appendAllowRule } from './terminalPrompt/allowRulesStore.js';
-import { buildAllowRule } from './terminalPrompt/allowRules.js';
-import { tryAutoAllow } from './terminalPrompt/autoAllow.js';
+import { replayHistoryToTerm } from './terminalReplay.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { configuredSubsetInStripOrder, reorderConfigsById, reorderIds } from './terminalTabReorder.js';
 import { pickNearestTerminalTabId } from './terminalTabSelection.js';
@@ -1783,7 +1783,10 @@ function kickPromptDetector(inst: TerminalInstance): void {
         }
         openTerminalPromptOverlay({
           match,
-          anchor: inst.body,
+          // HS-8012 — anchor the popup below this terminal's project tab
+          // so it shares spatial convention with `.permission-popup`.
+          // `wsSecret` is the project secret the live PTY is bound to.
+          projectSecret: inst.wsSecret ?? undefined,
           onSend: sendToPty,
           onClose() {
             markDetectorClosed(detector);
