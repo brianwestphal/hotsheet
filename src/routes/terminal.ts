@@ -20,6 +20,7 @@ import {
   getNotificationMessage,
   getTerminalPid,
   getTerminalScrollbackPreview,
+  getTerminalScrollbackPreviewWithAnsi,
   getTerminalStatus,
   killTerminal,
   listProjectTerminalIds,
@@ -210,6 +211,14 @@ terminalRoutes.get('/scrollback-preview', (c) => {
   const requested = parseInt(c.req.query('maxLines') ?? '30', 10);
   const maxLines = Math.max(1, Math.min(200, Number.isFinite(requested) ? requested : 30));
   const text = getTerminalScrollbackPreview(secret, terminalId, maxLines);
+  // HS-7969 follow-up #2 — also surface the ANSI-preserving variant so the
+  // §37 master-detail preview pane can paint coloured / bold / underlined
+  // spans. Pre-fix the dialog rendered plain stripped text and the user
+  // lost every visual cue from coloured prompts, error highlights, syntax
+  // colours, etc. The stripped `text` field stays for back-compat (e.g.
+  // search / copy of the preview surface) and as the fallback when the
+  // client decides not to render ANSI for any reason.
+  const textWithAnsi = getTerminalScrollbackPreviewWithAnsi(secret, terminalId, maxLines);
   // HS-7969 follow-up — surface the resolved appearance fields (theme,
   // fontFamily, fontSize) so the §37 quit-confirm preview pane can paint
   // its read-only mirror in the same colours / font as the live terminal.
@@ -223,7 +232,7 @@ terminalRoutes.get('/scrollback-preview', (c) => {
   // FALLBACK_APPEARANCE (HS-6307).
   const dataDir = c.get('dataDir');
   const appearance = resolveAppearanceForResponse(dataDir, terminalId);
-  return c.json({ text, maxLines, ...appearance });
+  return c.json({ text, textWithAnsi, maxLines, ...appearance });
 });
 
 interface AppearanceResponseFields {

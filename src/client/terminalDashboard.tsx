@@ -7,6 +7,7 @@ import {
   applyHideButtonBadge,
   countHiddenAcrossAllProjects,
   filterVisible as filterVisibleEntries,
+  pruneHiddenForProject,
   setTerminalHidden,
   subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
@@ -770,6 +771,14 @@ async function fetchProjectSections(): Promise<ProjectSectionData[]> {
         ...listed.dynamic.map(t => ({ ...t, dynamic: true })),
       ];
     } catch { /* project's terminal list unavailable */ }
+    // HS-8016 — reconcile this project's hidden state against the live list
+    // so the dashboard's `countHiddenAcrossAllProjects` badge stops counting
+    // terminals that no longer exist. Pre-fix the count drifted whenever the
+    // user closed a hidden terminal from a non-dashboard surface (drawer
+    // X-button, Settings → delete) — the dashboard's notify chain only
+    // re-paints when `subscribeToHiddenChanges` fires, and a plain destroy
+    // never touched the hidden state.
+    pruneHiddenForProject(project.secret, terminals.map(t => t.id));
     sections.push({ project, terminals });
   }
   return sections;

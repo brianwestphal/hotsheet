@@ -8744,85 +8744,91 @@ label.detail-details-label {
 .terminal-prompt-overlay {
   // HS-8012 — was anchored to the terminal pane (`position: absolute` +
   // `bottom: 12px; left: 12px; right: 12px;`) so it visually lived inside
-  // the bottom drawer. Users want this popup to share the spatial
-  // convention of the channel-permission popup (`.permission-popup`):
-  // anchored below the active project tab. Mounted on `document.body`
-  // with `position: fixed`; explicit top/left applied from JS when the
-  // tab is found, otherwise this default top-center fallback shows.
+  // the bottom drawer. Now mounted on `document.body` with `position:
+  // fixed`; explicit top/left applied from JS when the tab is found,
+  // otherwise this default top-center fallback shows.
+  //
+  // HS-8012 follow-up — every visual property below is matched to
+  // `.permission-popup` so both Hot-Sheet permission surfaces read as
+  // siblings (radius, shadow, font-size, background, border). Internal
+  // layout still differs because the prompt overlay is taller (header +
+  // context + choices + always-allow + footer) — but the section dividers
+  // / dark header bar / heavy drop shadow that the original spike used to
+  // mark it as a "terminal-coloured" thing are gone. All padding, gap,
+  // and typography sizes follow the permission-popup scale.
   position: fixed;
   top: 56px;
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
   max-width: min(640px, calc(100vw - 16px));
+  padding: 8px 10px;
+  gap: 6px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 3000;
   display: flex;
   flex-direction: column;
-  font-size: 13px;
-  color: var(--text);
+  font-size: 12px;
+  color: var(--text-primary);
 }
 
 .terminal-prompt-overlay-header {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  gap: 6px;
 }
 
 .terminal-prompt-overlay-title {
   font-weight: 600;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--text-primary);
+  word-break: break-word;
+  min-width: 0;
+  flex: 1;
 }
 
 .terminal-prompt-overlay-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: 4px;
   color: var(--text-muted);
   cursor: pointer;
+  flex-shrink: 0;
 
   &:hover {
     background: var(--bg-hover);
-    color: var(--text);
+    color: var(--text-primary);
   }
 }
 
 .terminal-prompt-overlay-context {
   margin: 0;
-  padding: 8px 12px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  padding: 6px 8px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
   font-size: 11px;
-  color: var(--text);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
   max-height: 240px;
   overflow-y: auto;
-  white-space: pre;
 }
 
 .terminal-prompt-overlay-choices {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 8px;
 }
 
 .terminal-prompt-overlay-choice {
@@ -8830,12 +8836,11 @@ label.detail-details-label {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 10px;
+  padding: 5px 8px;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  border-radius: 4px;
+  color: var(--text-primary);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
@@ -8855,7 +8860,8 @@ label.detail-details-label {
 .terminal-prompt-overlay-choice-num {
   flex-shrink: 0;
   color: var(--text-muted);
-  min-width: 22px;
+  min-width: 18px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
 }
 
 .terminal-prompt-overlay-choice-label {
@@ -8870,7 +8876,6 @@ label.detail-details-label {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 12px 10px;
   font-size: 11px;
 }
 
@@ -8885,7 +8890,7 @@ label.detail-details-label {
 
   &:hover {
     background: var(--bg-hover);
-    color: var(--text);
+    color: var(--text-primary);
   }
 }
 
@@ -8895,7 +8900,7 @@ label.detail-details-label {
   text-decoration: none;
 
   &:hover {
-    color: var(--text);
+    color: var(--text-primary);
     text-decoration: underline;
   }
 }
@@ -8903,7 +8908,7 @@ label.detail-details-label {
 .terminal-prompt-overlay-error {
   color: #991b1b;
   font-size: 11px;
-  margin: 0 12px 8px;
+  margin: 0;
 }
 
 // HS-7988 Phase 4 — Settings → Permissions sub-section divider + disabled-
@@ -8930,17 +8935,18 @@ label.detail-details-label {
 // + yesno shapes only; never generic). Sits between the choices and the
 // footer.
 .terminal-prompt-overlay-allow-rule-row {
+  // HS-8012 follow-up — match the rest of the overlay's flat layout.
+  // Outer padding lives on `.terminal-prompt-overlay`; this row only owns
+  // its inline gap.
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 12px 8px;
-  padding: 6px 8px;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: 11px;
+  color: var(--text-muted);
   cursor: pointer;
   user-select: none;
   &:hover {
-    color: var(--text);
+    color: var(--text-primary);
   }
   input[type="checkbox"] {
     margin: 0;
@@ -8981,14 +8987,16 @@ label.detail-details-label {
 }
 
 .terminal-prompt-overlay-generic-input {
-  margin: 0 12px 8px;
-  padding: 8px 10px;
+  // HS-8012 follow-up — outer padding lives on `.terminal-prompt-overlay`,
+  // so this control no longer carries a 12 px horizontal margin.
+  margin: 0;
+  padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--bg);
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
+  color: var(--text-primary);
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 11px;
   resize: vertical;
   min-height: 28px;
   &:focus {

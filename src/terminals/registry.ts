@@ -9,7 +9,7 @@ import { containsClaudeSpinner } from './claudeSpinner.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from './config.js';
 import { resolveTerminalCommand } from './resolveCommand.js';
 import { RingBuffer } from './ringBuffer.js';
-import { buildScrollbackPreview } from './scrollbackSnapshot.js';
+import { buildScrollbackPreview, buildScrollbackPreviewWithAnsi } from './scrollbackSnapshot.js';
 import { setupShellHistoryForSpawn } from './shellHistory.js';
 
 export type TerminalState = 'alive' | 'exited' | 'not_spawned';
@@ -308,6 +308,23 @@ export function getTerminalScrollbackPreview(
   const s = sessions.get(sessionKey(secret, terminalId));
   if (!s) return '';
   return buildScrollbackPreview(s.scrollback.snapshot(), maxLines);
+}
+
+/**
+ * HS-7969 follow-up #2 — ANSI-preserving variant for the §37 quit-confirm
+ * dialog's master-detail preview pane. Same shape + bounds as
+ * `getTerminalScrollbackPreview` but keeps CSI/SGR sequences so the
+ * client can render coloured / bold / underlined spans against the
+ * resolved theme palette.
+ */
+export function getTerminalScrollbackPreviewWithAnsi(
+  secret: string,
+  terminalId: string,
+  maxLines: number,
+): string {
+  const s = sessions.get(sessionKey(secret, terminalId));
+  if (!s) return '';
+  return buildScrollbackPreviewWithAnsi(s.scrollback.snapshot(), maxLines);
 }
 
 /**

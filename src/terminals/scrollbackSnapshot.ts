@@ -64,3 +64,22 @@ export function buildScrollbackPreview(buf: Buffer, maxLines: number): string {
   const stripped = stripAnsi(text);
   return tailLines(stripped, maxLines);
 }
+
+/**
+ * HS-7969 follow-up #2 — ANSI-preserving variant for the §37 quit-confirm
+ * master-detail preview pane's rich rendering. Keeps CSI/OSC/SIMPLE-ESC
+ * sequences in the output so a client-side ANSI-to-HTML parser can paint
+ * coloured / bold / underlined spans against the resolved theme palette.
+ *
+ * Still collapses bare CR (so line-counting + tail logic matches the
+ * stripped-text path) and still drops backspace bytes (no useful visual
+ * meaning in a static preview). Tail logic is identical to the stripped
+ * path because ANSI sequences never embed `\n` themselves.
+ */
+export function buildScrollbackPreviewWithAnsi(buf: Buffer, maxLines: number): string {
+  if (buf.length === 0) return '';
+  const text = buf.toString('utf-8')
+    .replace(BACKSPACE_RX, '')
+    .replace(CR_BUT_NOT_CRLF_RX, '\n');
+  return tailLines(text, maxLines);
+}

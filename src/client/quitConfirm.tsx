@@ -1,3 +1,4 @@
+import { type AnsiPalette, ansiToSafeHtml } from './ansiSpans.js';
 import { toElement } from './dom.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
 import {
@@ -7,7 +8,7 @@ import {
   getFontById,
   loadGoogleFont,
 } from './terminalFonts.js';
-import { DEFAULT_THEME_ID, getThemeById } from './terminalThemes.js';
+import { DEFAULT_THEME_ID, getThemeById, type TerminalTheme } from './terminalThemes.js';
 
 /**
  * Quit-confirm prompt (HS-7596 / §37). Shown when the user attempts to quit
@@ -181,25 +182,57 @@ export async function runQuitConfirmFlow(): Promise<'proceed' | 'cancel'> {
  */
 interface ScrollbackPreviewResponse {
   text: string;
+  /** HS-7969 follow-up #2 — ANSI-preserving variant for rich rendering.
+   *  Empty string when the server didn't supply it (older builds) — the
+   *  caller falls back to plain `text` in that case. */
+  textWithAnsi: string;
   theme: string | null;
   fontFamily: string | null;
   fontSize: number | null;
 }
 
 async function fetchScrollbackPreview(secret: string, terminalId: string): Promise<ScrollbackPreviewResponse> {
-  const empty: ScrollbackPreviewResponse = { text: '', theme: null, fontFamily: null, fontSize: null };
+  const empty: ScrollbackPreviewResponse = { text: '', textWithAnsi: '', theme: null, fontFamily: null, fontSize: null };
   if (secret === '' || terminalId === '') return empty;
   const url = `/api/terminal/scrollback-preview?terminalId=${encodeURIComponent(terminalId)}&maxLines=30`;
   const res = await fetch(url, {
     headers: { 'X-Hotsheet-Secret': secret },
   });
   if (!res.ok) return empty;
-  const body = await res.json() as { text?: unknown; theme?: unknown; fontFamily?: unknown; fontSize?: unknown };
+  const body = await res.json() as { text?: unknown; textWithAnsi?: unknown; theme?: unknown; fontFamily?: unknown; fontSize?: unknown };
   return {
     text: typeof body.text === 'string' ? body.text : '',
+    textWithAnsi: typeof body.textWithAnsi === 'string' ? body.textWithAnsi : '',
     theme: typeof body.theme === 'string' ? body.theme : null,
     fontFamily: typeof body.fontFamily === 'string' ? body.fontFamily : null,
     fontSize: typeof body.fontSize === 'number' && Number.isFinite(body.fontSize) ? body.fontSize : null,
+  };
+}
+
+/** HS-7969 follow-up #2 — derive the ANSI palette the master-detail
+ *  preview uses for rich rendering. Values come from the resolved
+ *  TerminalTheme so the preview's coloured spans match the live
+ *  terminal's appearance. */
+function paletteFromTheme(theme: TerminalTheme): AnsiPalette {
+  return {
+    black: theme.black,
+    red: theme.red,
+    green: theme.green,
+    yellow: theme.yellow,
+    blue: theme.blue,
+    magenta: theme.magenta,
+    cyan: theme.cyan,
+    white: theme.white,
+    brightBlack: theme.brightBlack,
+    brightRed: theme.brightRed,
+    brightGreen: theme.brightGreen,
+    brightYellow: theme.brightYellow,
+    brightBlue: theme.brightBlue,
+    brightMagenta: theme.brightMagenta,
+    brightCyan: theme.brightCyan,
+    brightWhite: theme.brightWhite,
+    defaultFg: theme.foreground,
+    defaultBg: theme.background,
   };
 }
 
@@ -224,6 +257,24 @@ async function applyAppearanceToPreview(pre: HTMLElement, response: ScrollbackPr
   pre.style.fontFamily = font.family;
   pre.style.fontSize = `${fontSize}px`;
   pre.style.fontStyle = 'normal';
+}
+
+/** HS-7969 follow-up #2 — paint the preview's text content using rich
+ *  ANSI-aware spans so coloured / bold / underlined output renders as
+ *  the user saw it in the live terminal. Falls back to escaped plain
+ *  text when the server didn't supply `textWithAnsi` (older build). */
+function paintPreviewContent(pre: HTMLElement, response: ScrollbackPreviewResponse): void {
+  const empty = response.text === '' && response.textWithAnsi === '';
+  if (empty) {
+    pre.textContent = '(no output captured yet)';
+    return;
+  }
+  const theme = getThemeById(response.theme ?? DEFAULT_THEME_ID) ?? getThemeById(DEFAULT_THEME_ID)!;
+  const palette = paletteFromTheme(theme);
+  const source = response.textWithAnsi !== '' ? response.textWithAnsi : response.text;
+  // ansiToSafeHtml escapes every text fragment internally, so assigning
+  // to innerHTML is safe — no untrusted markup can survive the escaper.
+  pre.innerHTML = ansiToSafeHtml(source, palette);
 }
 
 interface QuitDialogChoice {
@@ -380,7 +431,10 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
 
     function renderPreview(pre: HTMLElement, response: ScrollbackPreviewResponse): void {
       pre.dataset.state = 'loaded';
-      pre.textContent = response.text === '' ? '(no output captured yet)' : response.text;
+      // HS-7969 follow-up #2 — paint coloured / bold / underlined spans
+      // from the server-side `textWithAnsi` field. Plain `textContent`
+      // assignment is reserved for the empty-output sentinel.
+      paintPreviewContent(pre, response);
       // Fire-and-forget — the font load can complete after the text lands;
       // there's no flash to worry about since the colours we set already
       // match the theme's intended palette.

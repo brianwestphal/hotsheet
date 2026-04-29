@@ -294,7 +294,7 @@ The sync engine orchestrates bidirectional synchronization between the local dat
 | `GET` | `/api/plugins/:id/global-config/:key` | Get a global setting |
 | `POST` | `/api/plugins/:id/global-config` | Set a global setting |
 | `POST` | `/api/plugins/install` | Install from local path (symlink) |
-| `GET` | `/api/backends` | List active backends with icons |
+| `GET` | `/api/backends` | List active backends with icons. Filtered to per-project-enabled plugins whose required preferences are all populated (HS-8018) |
 | `GET` | `/api/sync/tickets` | Get synced ticket map (for UI indicators) |
 | `GET` | `/api/sync/conflicts` | List sync conflicts |
 | `POST` | `/api/sync/conflicts/:ticketId/resolve` | Resolve a conflict |
@@ -344,7 +344,7 @@ All 8 locations are wired up in the client: toolbar buttons render in the header
 - **List view**: Synced tickets show the plugin's icon (from manifest `icon` field) before the title, between the status button and title input.
 - **Column view**: Plugin icon appears inline with the title text in cards.
 - **Detail panel**: Sync info in the metadata section shows the plugin icon + "Plugin Name #remoteId" as a clickable link to the remote system. Only shown for plugins enabled on the current project.
-- **Context menu**: "Push to [PluginName]" option (with plugin icon) for unsynced tickets, fetched from `/api/backends`.
+- **Context menu**: "Push to [PluginName]" option (with plugin icon) for unsynced tickets, fetched from `/api/backends`. The endpoint hides plugins that are disabled for the current project or whose required preferences are not populated (HS-8018) — so a plugin in the "Needs Configuration" state won't surface a Push entry that would just bounce off the server-side `checkMissingRequiredPrefs` gate on `POST /api/plugins/:id/push-ticket/:ticketId`.
 
 ### 18.14 Feature Flag
 

@@ -389,18 +389,31 @@ pluginRoutes.post('/plugins/:id/sync/schedule', async (c) => {
   return c.json({ ok: true, scheduled: true, interval_minutes: body.interval_minutes });
 });
 
-/** List all active backends. */
-pluginRoutes.get('/backends', (c) => {
-  const backends = getAllBackends().map(b => {
+/** List all active backends — filtered to per-project-enabled plugins whose
+ *  required preferences are all populated. HS-8018: pre-fix, the context
+ *  menu's "Push to <plugin>" entries called this route and got every globally
+ *  loaded backend back, so a `Needs Configuration` GitHub plugin still showed
+ *  the menu item even though the click would just bounce off the
+ *  `checkMissingRequiredPrefs` gate on `/plugins/:id/push-ticket/:ticketId`.
+ *  Now matches the gating already used by `/plugins/ui` (per-project enabled)
+ *  and the push-ticket endpoint (required prefs present). */
+pluginRoutes.get('/backends', async (c) => {
+  const all = getAllBackends();
+  const result: { id: string; name: string; capabilities: unknown; icon: string | undefined }[] = [];
+  for (const b of all) {
+    if (!await isPluginEnabledForProject(b.id)) continue;
     const plugin = getPluginById(b.id);
-    return {
+    if (!plugin) continue;
+    const missing = await checkMissingRequiredPrefs(plugin);
+    if (missing.length > 0) continue;
+    result.push({
       id: b.id,
       name: b.name,
       capabilities: b.capabilities,
-      icon: plugin?.manifest.icon,
-    };
-  });
-  return c.json(backends);
+      icon: plugin.manifest.icon,
+    });
+  }
+  return c.json(result);
 });
 
 /** Get synced ticket IDs with plugin info (for list view indicators). Only shows enabled plugins. */

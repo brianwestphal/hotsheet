@@ -9,6 +9,7 @@ import { api } from './api.js';
 import { fireToastsForActiveProject, subscribeToBellState } from './bellPoll.js';
 import { isChannelAlive, triggerChannelAndMarkBusy } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
+import { pruneHiddenForProject } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
 import {
   type DrawerGridTileEntry,
@@ -320,6 +321,15 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   for (const id of [...instances.keys()]) {
     if (!wanted.has(id)) removeTerminalInstance(id);
   }
+
+  // HS-8016 — reconcile per-project hidden state against the live terminal
+  // list so the eye-icon count badge stops counting terminals that were
+  // closed (drawer X-button), destroyed, or deleted in Settings. Triggers
+  // the `subscribeToHiddenChanges` notify+persist chain when the diff is
+  // non-empty so the Default grouping's stale ids land in `hidden_terminals`
+  // and the per-grouping shape simultaneously.
+  const activeProject = getActiveProject();
+  if (activeProject !== null) pruneHiddenForProject(activeProject.secret, [...wanted.keys()]);
 
   // Ensure an instance + DOM exists for every wanted terminal, in order.
   tabStrip.innerHTML = '';

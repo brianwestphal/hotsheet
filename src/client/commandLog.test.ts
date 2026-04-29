@@ -8,7 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { applyShellPartialEvent, shouldAutoScrollToBottom } from './commandLog.js';
+import { applyShellPartialEvent, hydrateRenderedShellPartials, shouldAutoScrollToBottom } from './commandLog.js';
 import { state } from './state.js';
 
 describe('shouldAutoScrollToBottom (HS-7983)', () => {
@@ -159,6 +159,106 @@ describe('applyShellPartialEvent — shell_streaming_enabled gate (HS-7984)', ()
       expect(container.querySelector<HTMLElement>('pre[data-shell-partial-id="42"]')?.textContent).toBe('');
     } finally {
       container.remove();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HS-8015 — flicker-free re-render via cached partial repaint
+// ---------------------------------------------------------------------------
+
+describe('hydrateRenderedShellPartials (HS-8015)', () => {
+  beforeEach(() => {
+    state.settings.shell_streaming_enabled = true;
+  });
+
+  it('repaints the <pre> from the module cache (event populated, then re-render wiped textContent)', () => {
+    // Step 1: an event lands → cache + DOM populated.
+    const container1 = setupEntriesContainer([42]);
+    try {
+      applyShellPartialEvent({ id: 42, partial: 'first chunk' });
+      expect(container1.querySelector<HTMLElement>('pre[data-shell-partial-id="42"]')?.textContent).toBe('first chunk');
+    } finally {
+      container1.remove();
+    }
+
+    // Step 2: the periodic poll re-renders the entry (textContent wiped).
+    // Pre-fix this is when the user saw the flicker. Post-fix the cache
+    // outlives the re-render and `hydrateRenderedShellPartials` repaints.
+    const container2 = setupEntriesContainer([42]);
+    try {
+      const pre = container2.querySelector<HTMLElement>('pre[data-shell-partial-id="42"]')!;
+      expect(pre.textContent).toBe(''); // simulating the post-render wiped state
+
+      hydrateRenderedShellPartials();
+      expect(pre.textContent).toBe('first chunk');
+    } finally {
+      container2.remove();
+    }
+  });
+
+  it('strips ANSI before painting from the cache (matches applyShellPartialEvent behaviour)', () => {
+    const c1 = setupEntriesContainer([42]);
+    try {
+      applyShellPartialEvent({ id: 42, partial: '\x1b[31mFAIL\x1b[0m\n' });
+    } finally {
+      c1.remove();
+    }
+    const c2 = setupEntriesContainer([42]);
+    try {
+      hydrateRenderedShellPartials();
+      const pre = c2.querySelector<HTMLElement>('pre[data-shell-partial-id="42"]');
+      expect(pre?.textContent).toBe('FAIL\n');
+    } finally {
+      c2.remove();
+    }
+  });
+
+  it('skips the paint when the cache has no entry for an id (defensive)', () => {
+    // Use an id no other test has touched so the module-level cache stays
+    // miss for this id.
+    const c = setupEntriesContainer([8015]);
+    try {
+      hydrateRenderedShellPartials();
+      expect(c.querySelector<HTMLElement>('pre[data-shell-partial-id="8015"]')?.textContent).toBe('');
+    } finally {
+      c.remove();
+    }
+  });
+
+  it('only updates the matching id when multiple partial pres are mounted', () => {
+    const c1 = setupEntriesContainer([42, 43]);
+    try {
+      applyShellPartialEvent({ id: 42, partial: 'foo' });
+      applyShellPartialEvent({ id: 43, partial: 'bar' });
+    } finally {
+      c1.remove();
+    }
+    const c2 = setupEntriesContainer([42, 43]);
+    try {
+      hydrateRenderedShellPartials();
+      expect(c2.querySelector<HTMLElement>('pre[data-shell-partial-id="42"]')?.textContent).toBe('foo');
+      expect(c2.querySelector<HTMLElement>('pre[data-shell-partial-id="43"]')?.textContent).toBe('bar');
+    } finally {
+      c2.remove();
+    }
+  });
+
+  it('no-ops when the entries container is missing', () => {
+    expect(() => hydrateRenderedShellPartials()).not.toThrow();
+  });
+
+  it('no-ops when streaming is disabled (matches applyShellPartialEvent gate)', () => {
+    state.settings.shell_streaming_enabled = false;
+    const c = setupEntriesContainer([42]);
+    try {
+      // Pre populates an empty pre via setupEntriesContainer; even if the
+      // cache had data from a prior test, the gate must keep the pre empty.
+      hydrateRenderedShellPartials();
+      expect(c.querySelector<HTMLElement>('pre[data-shell-partial-id="42"]')?.textContent).toBe('');
+    } finally {
+      c.remove();
+      state.settings.shell_streaming_enabled = true;
     }
   });
 });

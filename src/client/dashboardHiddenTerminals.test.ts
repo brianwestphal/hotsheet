@@ -16,6 +16,7 @@ import {
   hydratePersistedHiddenForProject,
   isTerminalHidden,
   isTerminalHiddenInGrouping,
+  pruneHiddenForProject,
   setActiveGroupingForProject,
   setTerminalHidden,
   setTerminalHiddenInGrouping,
@@ -327,5 +328,73 @@ describe('hideNewTerminalInNonDefaultGroupings (HS-7949 follow-up)', () => {
     addGroupingForProjectWithId('s1', 'g-claude', 'Claude');
     hideNewTerminalInNonDefaultGroupings('s1', 'configured-id');
     expect(isTerminalHiddenInGrouping('s1', 'g-claude', 'configured-id')).toBe(true);
+  });
+});
+
+describe('pruneHiddenForProject (HS-8016)', () => {
+  it('drops ids that are not in the live list and decreases the count', () => {
+    setTerminalHidden('s1', 'a', true);
+    setTerminalHidden('s1', 'b', true);
+    setTerminalHidden('s1', 'c', true);
+    expect(countHiddenForProject('s1')).toBe(3);
+
+    // User closed `b` (drawer X-button); the next /terminal/list call has
+    // a + c but not b.
+    pruneHiddenForProject('s1', ['a', 'c']);
+    expect(countHiddenForProject('s1')).toBe(2);
+    expect(isTerminalHidden('s1', 'a')).toBe(true);
+    expect(isTerminalHidden('s1', 'b')).toBe(false);
+    expect(isTerminalHidden('s1', 'c')).toBe(true);
+  });
+
+  it('fires the change subscription exactly once per pruning pass', () => {
+    setTerminalHidden('s1', 'a', true);
+    setTerminalHidden('s1', 'b', true);
+    let fires = 0;
+    const unsub = subscribeToHiddenChanges(() => { fires++; });
+    pruneHiddenForProject('s1', []);
+    expect(fires).toBe(1);
+    unsub();
+  });
+
+  it('does not fire when nothing changed', () => {
+    setTerminalHidden('s1', 'a', true);
+    let fires = 0;
+    const unsub = subscribeToHiddenChanges(() => { fires++; });
+    pruneHiddenForProject('s1', ['a', 'b', 'c']);
+    expect(fires).toBe(0);
+    unsub();
+  });
+
+  it('is a no-op when the project state has not been seen yet', () => {
+    let fires = 0;
+    const unsub = subscribeToHiddenChanges(() => { fires++; });
+    pruneHiddenForProject('never-seen', ['a']);
+    expect(fires).toBe(0);
+    expect(countHiddenForProject('never-seen')).toBe(0);
+    unsub();
+  });
+
+  it('prunes from non-active groupings as well, not just the active one', () => {
+    addGroupingForProjectWithId('s1', 'g-server', 'Server');
+    setTerminalHiddenInGrouping('s1', 'default', 'a', true);
+    setTerminalHiddenInGrouping('s1', 'g-server', 'a', true);
+    setTerminalHiddenInGrouping('s1', 'g-server', 'b', true);
+
+    // `a` no longer exists in the live list.
+    pruneHiddenForProject('s1', ['b']);
+
+    expect(isTerminalHiddenInGrouping('s1', 'default', 'a')).toBe(false);
+    expect(isTerminalHiddenInGrouping('s1', 'g-server', 'a')).toBe(false);
+    expect(isTerminalHiddenInGrouping('s1', 'g-server', 'b')).toBe(true);
+  });
+
+  it('counts go to zero across-projects when every hidden id was closed', () => {
+    setTerminalHidden('s1', 'a', true);
+    setTerminalHidden('s2', 'b', true);
+    expect(countHiddenAcrossAllProjects()).toBe(2);
+    pruneHiddenForProject('s1', []);
+    pruneHiddenForProject('s2', []);
+    expect(countHiddenAcrossAllProjects()).toBe(0);
   });
 });

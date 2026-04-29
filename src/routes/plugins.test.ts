@@ -224,12 +224,83 @@ describe('plugin reactivate', () => {
 });
 
 describe('backends', () => {
-  it('GET /backends lists active backends', async () => {
+  // HS-8018: helper to satisfy the mock plugin's required prefs (token —
+  // global, owner — project). All `backends` tests opt in / out so the
+  // gating-by-required-prefs is exercised in both directions.
+  async function satisfyRequiredPrefs() {
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query("INSERT INTO settings (key, value) VALUES ('plugin:mock-plugin:owner', 'test') ON CONFLICT (key) DO UPDATE SET value = 'test'");
+    const { getGlobalPluginSetting } = await import('../plugins/loader.js');
+    vi.mocked(getGlobalPluginSetting).mockReturnValue('test-token');
+  }
+
+  async function clearRequiredPrefs() {
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query("DELETE FROM settings WHERE key = 'plugin:mock-plugin:owner'");
+    const { getGlobalPluginSetting } = await import('../plugins/loader.js');
+    vi.mocked(getGlobalPluginSetting).mockReturnValue(null);
+  }
+
+  async function setProjectEnabled(enabled: boolean) {
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query(
+      'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
+      ['plugin_enabled:mock-plugin', String(enabled)],
+    );
+  }
+
+  async function clearProjectEnabled() {
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query("DELETE FROM settings WHERE key = 'plugin_enabled:mock-plugin'");
+  }
+
+  it('GET /backends lists active backends when prefs are satisfied and project-enabled', async () => {
+    await satisfyRequiredPrefs();
+    await clearProjectEnabled();
     const res = await app.request('/api/backends');
     expect(res.status).toBe(200);
     const data = await res.json() as { id: string }[];
     expect(data.length).toBe(1);
     expect(data[0].id).toBe('mock-plugin');
+  });
+
+  it('GET /backends excludes plugin when a required project preference is missing (HS-8018)', async () => {
+    // Token (global) populated, but owner (project-scoped) absent — the
+    // GitHub-Issues "Needs Configuration" repro.
+    await clearRequiredPrefs();
+    const { getGlobalPluginSetting } = await import('../plugins/loader.js');
+    vi.mocked(getGlobalPluginSetting).mockReturnValue('test-token');
+    await clearProjectEnabled();
+    const res = await app.request('/api/backends');
+    expect(res.status).toBe(200);
+    const data = await res.json() as { id: string }[];
+    expect(data).toEqual([]);
+  });
+
+  it('GET /backends excludes plugin when a required global preference is missing (HS-8018)', async () => {
+    // Owner (project) populated, but token (global) absent.
+    await satisfyRequiredPrefs();
+    const { getGlobalPluginSetting } = await import('../plugins/loader.js');
+    vi.mocked(getGlobalPluginSetting).mockReturnValue(null);
+    await clearProjectEnabled();
+    const res = await app.request('/api/backends');
+    expect(res.status).toBe(200);
+    const data = await res.json() as { id: string }[];
+    expect(data).toEqual([]);
+  });
+
+  it('GET /backends excludes plugin when disabled for the current project (HS-8018)', async () => {
+    await satisfyRequiredPrefs();
+    await setProjectEnabled(false);
+    const res = await app.request('/api/backends');
+    expect(res.status).toBe(200);
+    const data = await res.json() as { id: string }[];
+    expect(data).toEqual([]);
+    await clearProjectEnabled();
   });
 });
 

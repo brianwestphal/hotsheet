@@ -10,6 +10,16 @@ import { getTauriInvoke } from './tauriIntegration.js';
 
 let runningShellIds: number[] = [];
 const cancelingShellIds = new Set<number>();
+/**
+ * HS-8015 — module-level cache of the most recent partial output for every
+ * running shell, keyed on the command_log entry id. Refilled from
+ * `/shell/running`'s `outputs` field on every `loadEntries` tick AND from
+ * `hotsheet:shell-partial-output` events between ticks. Read by
+ * `hydrateRenderedShellPartials` immediately after `renderEntries` so the
+ * live `<pre data-shell-partial-id>` survives the periodic re-render that
+ * pre-fix wiped its textContent every 5 s.
+ */
+const latestPartialOutputs = new Map<number, string>();
 
 interface LogEntry {
   id: number;
@@ -93,6 +103,13 @@ export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
   // no-ops. Re-enabling mid-run picks up at the next chunk because the
   // server-side partial buffer survives the gate flip.
   if (!state.settings.shell_streaming_enabled) return;
+  // HS-8015 — keep the latest partial in the module cache regardless of
+  // whether the entry is currently rendered. The 5 s loadEntries tick
+  // re-renders every entry from scratch (textContent goes back to ''),
+  // and `hydrateRenderedShellPartials` repaints from this cache after
+  // every render so the live preview no longer flickers empty between
+  // ticks.
+  latestPartialOutputs.set(detail.id, detail.partial);
   const container = document.getElementById('command-log-entries');
   if (container === null) return;
   const partialEl = container.querySelector<HTMLElement>(`pre.command-log-shell-partial[data-shell-partial-id="${detail.id}"]`);
@@ -105,6 +122,27 @@ export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
   const wasPinned = shouldAutoScrollToBottom(container.scrollTop, container.clientHeight, container.scrollHeight);
   partialEl.textContent = stripAnsi(detail.partial);
   if (wasPinned) container.scrollTop = container.scrollHeight;
+}
+
+/**
+ * HS-8015 — repopulate every rendered `<pre.command-log-shell-partial>`
+ * from `latestPartialOutputs`. Called immediately after `renderEntries`
+ * so the wholesale re-render that loadEntries triggers every 5 s no
+ * longer flickers the live preview empty between ticks. Exported for
+ * unit tests.
+ */
+export function hydrateRenderedShellPartials(): void {
+  if (!state.settings.shell_streaming_enabled) return;
+  const container = document.getElementById('command-log-entries');
+  if (container === null) return;
+  const pres = container.querySelectorAll<HTMLElement>('pre.command-log-shell-partial[data-shell-partial-id]');
+  for (const el of pres) {
+    const id = Number(el.dataset.shellPartialId);
+    if (!Number.isFinite(id)) continue;
+    const cached = latestPartialOutputs.get(id);
+    if (cached === undefined || cached === '') continue;
+    el.textContent = stripAnsi(cached);
+  }
 }
 
 // --- Relative time helper ---
@@ -417,6 +455,12 @@ function renderEntries(entries: LogEntry[]) {
       if (fullEl) fullEl.style.display = '';
     }
   }
+
+  // HS-8015 — repaint live shell-partial pres from the cache so the 5 s
+  // poll-driven re-render doesn't flicker the live preview empty between
+  // ticks. Runs AFTER the expanded-state restore so the data-shell-partial-id
+  // pres are in the live tree.
+  hydrateRenderedShellPartials();
 }
 
 // --- Load entries from API ---
@@ -431,10 +475,43 @@ async function loadEntries() {
     // Fetch entries and running shell processes in parallel
     const [fetchedEntries, running] = await Promise.all([
       api<LogEntry[]>(`/command-log?${params.toString()}`),
-      api<{ ids: number[] }>('/shell/running').catch(() => ({ ids: [] as number[] })),
+      api<{ ids: number[]; outputs?: Record<number, string> }>('/shell/running').catch(() => ({ ids: [] as number[], outputs: {} as Record<number, string> })),
     ]);
     entries = fetchedEntries;
     runningShellIds = running.ids;
+    // HS-8015 — keep the latest server-side partial buffer in a module
+    // cache so `renderEntries` can repaint the live `<pre>` immediately
+    // after every poll-driven re-render. Pre-fix the 5 s `loadEntries`
+    // tick wiped the partial pre's textContent (renderLogEntry rebuilds
+    // every entry from scratch) and the user saw the live preview flicker
+    // empty → fill → empty as the slower live event re-populated it on
+    // the next chunk. Server-side `partialOutputs` is the source of truth;
+    // both `applyShellPartialEvent` (sub-tick) and the post-render
+    // hydrate (post-tick) read from it.
+    //
+    // Drop cache entries for any id that's no longer running so the
+    // `<pre>` doesn't keep showing stale partial output after the shell
+    // finishes (the completed-shell branch in `renderLogEntry` takes
+    // over once the entry's detail string contains the SHELL_OUTPUT
+    // separator).
+    const runningSet = new Set(running.ids);
+    for (const id of [...latestPartialOutputs.keys()]) {
+      if (!runningSet.has(id)) latestPartialOutputs.delete(id);
+    }
+    if (running.outputs !== undefined) {
+      for (const idStr of Object.keys(running.outputs)) {
+        const idNum = Number(idStr);
+        if (!Number.isFinite(idNum)) continue;
+        const fromServer = running.outputs[idNum] ?? '';
+        // Use the longer of (cached, server) so a chunk that arrived via
+        // the live `applyShellPartialEvent` between this tick's request
+        // dispatch and its response doesn't get clobbered by the older
+        // poll snapshot. Partial buffers are monotonic on the server,
+        // so length is a safe proxy for "is newer".
+        const cached = latestPartialOutputs.get(idNum) ?? '';
+        latestPartialOutputs.set(idNum, fromServer.length >= cached.length ? fromServer : cached);
+      }
+    }
     // Clean up canceling state for processes that are no longer running
     for (const id of cancelingShellIds) {
       if (!running.ids.includes(id)) cancelingShellIds.delete(id);

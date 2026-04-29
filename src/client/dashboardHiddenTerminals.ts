@@ -369,6 +369,44 @@ export function unhideAllInGrouping(secret: string, groupingId: string): void {
 }
 
 /**
+ * HS-8016 — drop any id from every grouping's `hiddenIds` that's not in
+ * `knownIds`. Called whenever a fresh `/terminal/list` round-trip lands
+ * (project switch + post-close + post-destroy + post-settings-save) so the
+ * eye-icon count badge stops reflecting terminals that no longer exist.
+ *
+ * Pre-fix: a user who hid a terminal and then closed it (drawer X-button or
+ * Settings → delete) saw the badge keep counting the closed terminal —
+ * `hiddenIds` was never reconciled against the live set. The §38 persistence
+ * layer carried the stale id forward into `hidden_terminals`, so the count
+ * stayed wrong even after relaunch.
+ *
+ * No-op when `knownIds` covers every id in every grouping (the common case).
+ * Notifies subscribers exactly once per project when at least one grouping
+ * actually changed, so the badge re-paints immediately and persistence
+ * follows in the same notify pass.
+ *
+ * Dynamic ids (`dyn-*`) are still skipped — they're session-only and don't
+ * persist anyway, but they DO need pruning during the session because a
+ * recently-hidden dynamic that was then closed should drop out of the badge.
+ * Configured ids that simply don't appear in `knownIds` (because the user
+ * deleted them in Settings) are pruned the same way.
+ */
+export function pruneHiddenForProject(secret: string, knownIds: readonly string[]): void {
+  const state = projectStates.get(secret);
+  if (state === undefined) return;
+  const knownSet = new Set(knownIds);
+  let changed = false;
+  const groupings = state.groupings.map(g => {
+    const filtered = g.hiddenIds.filter(id => knownSet.has(id));
+    if (filtered.length === g.hiddenIds.length) return g;
+    changed = true;
+    return { ...g, hiddenIds: filtered };
+  });
+  if (!changed) return;
+  setProjectState(secret, { groupings, activeId: state.activeId });
+}
+
+/**
  * HS-7949 follow-up — mark a freshly-added terminal id as hidden in every
  * non-Default grouping for one project. Mirrors the server-side
  * `addNewTerminalsToNonDefaultGroupings` but operates on the in-memory
