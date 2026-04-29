@@ -5,7 +5,8 @@ import { readFileSettings } from './file-settings.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
 
-export const SKILL_VERSION = 8;
+// HS-8022 bump — main /hotsheet skill body lost the conditional `/clear` prefix.
+export const SKILL_VERSION = 9;
 
 let skillPort: number;
 let skillCategories: CategoryDef[] = DEFAULT_CATEGORIES;
@@ -95,15 +96,14 @@ function mainSkillBody(projectRoot: string): string {
   const dataDir = join(projectRoot, '.hotsheet');
   const worklistRel = relative(projectRoot, join(dataDir, 'worklist.md'));
   const settingsRel = relative(projectRoot, join(dataDir, 'settings.json'));
-  // HS-7992 — when the per-project `hotsheet_skill_clear_context` flag is on,
-  // prepend `/clear` as the first line of the body so Claude Code clears its
-  // context before processing the worklist. Off by default — opt-in only.
-  const settings = readFileSettings(dataDir);
-  const clearPrefix: string[] = settings.hotsheet_skill_clear_context === true
-    ? ['/clear', '']
-    : [];
+  // HS-8022 — the HS-7992 `hotsheet_skill_clear_context` toggle was removed.
+  // The `/clear` prefix it prepended was loaded as Skill tool output (not
+  // typed at the REPL prompt), so the Claude Code CLI never re-parsed it as
+  // a slash command and the model couldn't invoke `/clear` itself either —
+  // there is no first-class API for a skill or MCP server to clear context
+  // when it fires. Users who want a fresh context per /hotsheet should type
+  // `/clear` themselves before invoking the skill.
   return [
-    ...clearPrefix,
     `Base directory for this skill: ${join(projectRoot, '.claude', 'skills', 'hotsheet')}`,
     '',
     `Read \`${worklistRel}\` and work through the tickets in priority order.`,
@@ -125,10 +125,14 @@ function mainSkillBody(projectRoot: string): string {
  * HS-7992 — force-regenerate the main `/hotsheet` skill file for every
  * platform that has been seeded (Claude / Cursor / Copilot / Windsurf).
  * Bypasses the version-check guard in `updateFile` because the regen here
- * is triggered by an explicit user action (the General-tab "Clear context
- * on each /hotsheet" toggle), not an upgrade-time recreate. Only the MAIN
- * hotsheet skill is rewritten — the per-ticket-type skills don't depend
- * on the setting.
+ * was originally triggered by an explicit user action (the General-tab
+ * "Clear context on each /hotsheet" toggle), not an upgrade-time recreate.
+ *
+ * HS-8022 — the toggle was removed (the `/clear` prefix was a no-op when
+ * loaded as Skill tool output). The function is kept exported because it
+ * is still useful for any future regen-on-explicit-user-action flow, and
+ * the SKILL_VERSION bump on this commit means existing files re-author
+ * themselves through the normal `updateFile` upgrade path on next boot.
  */
 export function regenerateMainSkill(projectRoot: string): void {
   const body = mainSkillBody(projectRoot);

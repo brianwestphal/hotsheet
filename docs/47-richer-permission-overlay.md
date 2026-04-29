@@ -142,11 +142,14 @@ A small pill near the link displays existing matching-rule count if any: "2 rule
 ### 47.4.4 Management UI (Settings page)
 New section in **Settings → Permissions** (parallel to existing Settings tabs):
 
-- Table with columns: Tool, Pattern, Added, Source (overlay / settings), Actions (delete).
+- One row per rule: **Tool** (mono, bold) + **Pattern** (mono code chip, ellipsis-truncated with `title` tooltip showing the full text) + **pencil-edit button** + **trash-delete button**. Row layout matches the custom-command + terminal settings rows (`cmd-outline-row` shell) so the surfaces read as siblings.
 - Sort: most-recently-added first.
-- Empty state: "No allow rules. Add a rule by clicking 'Always allow' on a permission popup, or click + below."
-- "+ Add rule" opens a dialog with `tool` dropdown (populated from the union of historical command-log permission_request entries' tool names) and `pattern` text input with a live "would match: …" preview against recent permission requests.
-- Delete is a confirm-dialog with the rule body shown.
+- Empty state: "No allow rules yet. Click '+ Add rule' below or 'Always allow' on a permission popup to create one."
+- **Click the row** OR **click the pencil button** to open the modal rule editor (`openRuleEditor` in `permissionAllowListUI.tsx`). Reuses the `.cmd-editor-overlay` / `.cmd-editor-dialog` shell. Fields: tool select + pattern textarea (3 rows so long regexes wrap visibly) + inline validation against the same `^…$` anchoring the matcher uses. Cmd/Ctrl+Enter submits; Esc cancels; backdrop click cancels.
+- **+ Add rule** button at the bottom of the list opens the same editor in `add` mode (header reads "Add allow rule", Save button reads "Add rule"). Pre-HS-8026 the page had an inline form (select + input + button) directly under the list; replaced by a single button so the add + edit flows share one validation path and the page stays uncluttered.
+- Trash delete confirms (rule body shown) before PATCHing.
+
+**HS-8026 cleanups (2026-04-29):** dropped the `Date Added` column (noise for the typical user) and the `Source (overlay / settings)` column (the "overlay" / "settings" wording confused users — the value is preserved on the rule for audit but no longer surfaced). Long patterns are no longer irrecoverably truncated — the `title` tooltip + the editor dialog both expose the full text.
 
 ### 47.4.5 Test/dry-run mode
 A "Test pattern" affordance in the management UI:

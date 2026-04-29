@@ -2,10 +2,13 @@
  * HS-7953 — pure-helper tests for the allow-list management UI. The DOM-
  * mounting paths (table render, +Add form, overlay shortcut) are exercised
  * at e2e; these pin the pure regex-escape / pattern-validation / id-gen /
- * meta-formatting / parser logic.
+ * parser logic.
  *
  * HS-7976 — happy-dom tests for the overlay's "Always allow this" link +
- * customize gear flow. See bottom of file.
+ * customize gear flow.
+ *
+ * HS-8026 — happy-dom tests for the new modal rule editor (open / save /
+ * cancel / validation) and the row-renders-pencil-and-trash assertion.
  */
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,8 +17,9 @@ import { api } from './api.js';
 import {
   type AllowRule,
   buildAlwaysAllowAffordance,
-  formatRuleMeta,
+  loadAndRenderAllowList,
   newRuleId,
+  openRuleEditor,
   parseRules,
   regexEscape,
   validatePattern,
@@ -96,35 +100,216 @@ describe('parseRules (HS-7953)', () => {
   });
 });
 
-describe('formatRuleMeta (HS-7953)', () => {
-  function rule(o: Partial<AllowRule>): AllowRule {
-    return { id: 'r1', tool: 'Bash', pattern: '^x$', added_at: '', ...o };
-  }
-  it('returns empty string when neither added_by nor added_at is meaningful', () => {
-    expect(formatRuleMeta(rule({}))).toBe('');
+// ---------------------------------------------------------------------------
+// HS-8026 — DOM tests for the new row layout + modal editor
+// ---------------------------------------------------------------------------
+
+vi.mock('./api.js', () => ({
+  api: vi.fn(),
+}));
+
+vi.mock('./confirm.js', () => ({
+  confirmDialog: vi.fn(() => Promise.resolve(true)),
+}));
+
+describe('loadAndRenderAllowList row layout (HS-8026)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    document.body.innerHTML = '<div id="permission-allow-list"></div>';
   });
-  it('joins added_by + formatted-date with a bullet separator', () => {
-    const out = formatRuleMeta(rule({ added_by: 'overlay', added_at: '2026-04-28T00:00:00Z' }));
-    expect(out).toContain('overlay');
-    expect(out).toContain('·');
+  afterEach(() => {
+    document.querySelectorAll('.cmd-editor-overlay').forEach(el => el.remove());
+    document.body.innerHTML = '';
   });
-  it('returns just added_by when added_at is invalid', () => {
-    expect(formatRuleMeta(rule({ added_by: 'settings', added_at: 'not-a-date' }))).toBe('settings');
+
+  it('renders an empty-state hint and the Add button when no rules exist', async () => {
+    vi.mocked(api).mockResolvedValueOnce({ permission_allow_rules: [] } as never);
+    await loadAndRenderAllowList();
+    const list = document.getElementById('permission-allow-list')!;
+    expect(list.querySelector('.permission-allow-empty')).not.toBeNull();
+    expect(list.querySelector('#permission-allow-add-btn')).not.toBeNull();
   });
-  it('returns just the date when only added_at is set', () => {
-    const out = formatRuleMeta(rule({ added_at: '2026-04-28T00:00:00Z' }));
-    expect(out).not.toContain('·');
-    expect(out.length).toBeGreaterThan(0);
+
+  it('renders one row per rule with pencil + trash icon buttons (no date / no overlay column)', async () => {
+    const rules: AllowRule[] = [
+      { id: 'r1', tool: 'Bash', pattern: '^git status$', added_at: '2026-04-28T00:00:00Z', added_by: 'overlay' },
+      { id: 'r2', tool: 'Read', pattern: '^/etc/hosts$', added_at: '2026-04-29T00:00:00Z', added_by: 'settings' },
+    ];
+    vi.mocked(api).mockResolvedValueOnce({ permission_allow_rules: rules } as never);
+    await loadAndRenderAllowList();
+    const list = document.getElementById('permission-allow-list')!;
+    const rows = list.querySelectorAll('.permission-allow-rule-row');
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      expect(row.querySelector('.permission-allow-edit')).not.toBeNull();
+      expect(row.querySelector('.permission-allow-delete')).not.toBeNull();
+      // Drop date / overlay columns.
+      expect(row.querySelector('.permission-allow-meta')).toBeNull();
+    }
+  });
+
+  it('puts the full pattern in a `title` tooltip so long patterns stay discoverable when the cell ellipsis-truncates', async () => {
+    const longPattern = '^npx vitest run src/text-to-pattern/extremely/long/path/here$';
+    vi.mocked(api).mockResolvedValueOnce({
+      permission_allow_rules: [{ id: 'r1', tool: 'Bash', pattern: longPattern, added_at: 'now' }],
+    } as never);
+    await loadAndRenderAllowList();
+    const code = document.querySelector<HTMLElement>('.permission-allow-rule-pattern')!;
+    expect(code.getAttribute('title')).toBe(longPattern);
+    expect(code.textContent).toBe(longPattern);
+  });
+
+  it('clicking the row opens the editor in edit mode pre-filled with the rule', async () => {
+    vi.mocked(api).mockResolvedValueOnce({
+      permission_allow_rules: [{ id: 'r1', tool: 'Bash', pattern: '^git status$', added_at: 'now' }],
+    } as never);
+    await loadAndRenderAllowList();
+    const row = document.querySelector<HTMLElement>('.permission-allow-rule-row')!;
+    row.click();
+    const overlay = document.querySelector<HTMLElement>('.cmd-editor-overlay.permission-allow-editor')!;
+    expect(overlay).not.toBeNull();
+    expect(overlay.querySelector<HTMLElement>('.cmd-editor-dialog-header span')!.textContent).toBe('Edit allow rule');
+    const pattern = overlay.querySelector<HTMLTextAreaElement>('.permission-allow-edit-pattern')!;
+    expect(pattern.value).toBe('^git status$');
+    const tool = overlay.querySelector<HTMLSelectElement>('.permission-allow-edit-tool')!;
+    expect(tool.value).toBe('Bash');
+  });
+
+  it('clicking the pencil opens the editor (and stops propagation so the row click does not fire twice)', async () => {
+    vi.mocked(api).mockResolvedValueOnce({
+      permission_allow_rules: [{ id: 'r1', tool: 'Bash', pattern: '^x$', added_at: 'now' }],
+    } as never);
+    await loadAndRenderAllowList();
+    const editBtn = document.querySelector<HTMLButtonElement>('.permission-allow-edit')!;
+    editBtn.click();
+    const overlays = document.querySelectorAll('.cmd-editor-overlay.permission-allow-editor');
+    expect(overlays.length).toBe(1);
+  });
+
+  it('clicking the trash button confirms and PATCHes a rules list with the row removed', async () => {
+    const rules: AllowRule[] = [
+      { id: 'r1', tool: 'Bash', pattern: '^x$', added_at: 'now' },
+      { id: 'r2', tool: 'Read', pattern: '^y$', added_at: 'now' },
+    ];
+    // First call: initial fetch. Second call: re-fetch inside deleteRule.
+    // Third: PATCH (returns whatever).
+    vi.mocked(api)
+      .mockResolvedValueOnce({ permission_allow_rules: rules } as never)
+      .mockResolvedValueOnce({ permission_allow_rules: rules } as never)
+      .mockResolvedValueOnce(undefined as never);
+    await loadAndRenderAllowList();
+    const trashBtn = document.querySelector<HTMLButtonElement>('.permission-allow-rule-row[data-rule-id="r1"] .permission-allow-delete')!;
+    trashBtn.click();
+    // Wait for the confirm + delete + PATCH chain to settle.
+    await new Promise<void>(r => setTimeout(r, 0));
+    await new Promise<void>(r => setTimeout(r, 0));
+    await new Promise<void>(r => setTimeout(r, 0));
+
+    const patchCall = vi.mocked(api).mock.calls.find(c => c[1]?.method === 'PATCH');
+    expect(patchCall).toBeDefined();
+    const body = patchCall?.[1]?.body as { permission_allow_rules: AllowRule[] };
+    expect(body.permission_allow_rules.map(r => r.id)).toEqual(['r2']);
+  });
+});
+
+describe('openRuleEditor (HS-8026)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    document.body.innerHTML = '<div id="permission-allow-list"></div>';
+  });
+  afterEach(() => {
+    document.querySelectorAll('.cmd-editor-overlay').forEach(el => el.remove());
+    document.body.innerHTML = '';
+  });
+
+  it('add mode shows the "Add allow rule" header and an empty pattern', () => {
+    const overlay = openRuleEditor({ mode: 'add' });
+    expect(overlay.querySelector<HTMLElement>('.cmd-editor-dialog-header span')!.textContent).toBe('Add allow rule');
+    expect(overlay.querySelector<HTMLTextAreaElement>('.permission-allow-edit-pattern')!.value).toBe('');
+    expect(overlay.querySelector<HTMLButtonElement>('.permission-allow-edit-save')!.textContent).toBe('Add rule');
+  });
+
+  it('save with a blank pattern surfaces a validation error and does not PATCH', async () => {
+    openRuleEditor({ mode: 'add' });
+    const saveBtn = document.querySelector<HTMLButtonElement>('.permission-allow-edit-save')!;
+    saveBtn.click();
+    await new Promise<void>(r => setTimeout(r, 0));
+    const errorEl = document.querySelector<HTMLElement>('.permission-allow-edit-error')!;
+    expect(errorEl.style.display).toBe('');
+    expect(errorEl.textContent).toMatch(/Pattern is required/);
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it('save with a valid pattern PATCHes the existing list with the new rule appended (add mode)', async () => {
+    vi.mocked(api).mockImplementation((path: string, opts?: { method?: string }) => {
+      if (path === '/file-settings' && opts?.method !== 'PATCH') {
+        return Promise.resolve({ permission_allow_rules: [] } as never);
+      }
+      return Promise.resolve(undefined as never);
+    });
+    openRuleEditor({ mode: 'add' });
+    const pattern = document.querySelector<HTMLTextAreaElement>('.permission-allow-edit-pattern')!;
+    pattern.value = '^npm run test$';
+    document.querySelector<HTMLButtonElement>('.permission-allow-edit-save')!.click();
+    await new Promise<void>(r => setTimeout(r, 0));
+    await new Promise<void>(r => setTimeout(r, 0));
+    await new Promise<void>(r => setTimeout(r, 0));
+    const patchCall = vi.mocked(api).mock.calls.find(c => c[1]?.method === 'PATCH');
+    expect(patchCall).toBeDefined();
+    const body = patchCall?.[1]?.body as { permission_allow_rules: AllowRule[] };
+    expect(body.permission_allow_rules).toHaveLength(1);
+    expect(body.permission_allow_rules[0].pattern).toBe('^npm run test$');
+    expect(body.permission_allow_rules[0].added_by).toBe('settings');
+  });
+
+  it('save in edit mode replaces the existing rule in place (preserves id + added_at)', async () => {
+    const existing: AllowRule = { id: 'r1', tool: 'Bash', pattern: '^old$', added_at: '2026-01-01T00:00:00Z', added_by: 'overlay' };
+    vi.mocked(api).mockImplementation((path: string, opts?: { method?: string }) => {
+      if (path === '/file-settings' && opts?.method !== 'PATCH') {
+        return Promise.resolve({ permission_allow_rules: [existing] } as never);
+      }
+      return Promise.resolve(undefined as never);
+    });
+    openRuleEditor({ mode: 'edit', rule: existing });
+    const pattern = document.querySelector<HTMLTextAreaElement>('.permission-allow-edit-pattern')!;
+    pattern.value = '^new$';
+    document.querySelector<HTMLButtonElement>('.permission-allow-edit-save')!.click();
+    await new Promise<void>(r => setTimeout(r, 0));
+    await new Promise<void>(r => setTimeout(r, 0));
+    await new Promise<void>(r => setTimeout(r, 0));
+    const patchCall = vi.mocked(api).mock.calls.find(c => c[1]?.method === 'PATCH');
+    const body = patchCall?.[1]?.body as { permission_allow_rules: AllowRule[] };
+    expect(body.permission_allow_rules).toHaveLength(1);
+    expect(body.permission_allow_rules[0].id).toBe('r1');
+    expect(body.permission_allow_rules[0].pattern).toBe('^new$');
+    expect(body.permission_allow_rules[0].added_at).toBe('2026-01-01T00:00:00Z');
+    expect(body.permission_allow_rules[0].added_by).toBe('overlay');
+  });
+
+  it('Cancel closes the dialog without PATCHing', () => {
+    const overlay = openRuleEditor({ mode: 'add' });
+    overlay.querySelector<HTMLButtonElement>('.permission-allow-edit-cancel')!.click();
+    expect(document.querySelector('.cmd-editor-overlay')).toBeNull();
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it('clicking the backdrop closes the dialog', () => {
+    const overlay = openRuleEditor({ mode: 'add' });
+    // Direct backdrop click (e.target === overlay).
+    overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(document.querySelector('.cmd-editor-overlay')).toBeNull();
+  });
+
+  it('opening the editor twice replaces the prior overlay (no stacking)', () => {
+    openRuleEditor({ mode: 'add' });
+    openRuleEditor({ mode: 'add' });
+    expect(document.querySelectorAll('.cmd-editor-overlay.permission-allow-editor').length).toBe(1);
   });
 });
 
 // ---------------------------------------------------------------------------
 // HS-7976 — buildAlwaysAllowAffordance behavior
 // ---------------------------------------------------------------------------
-
-vi.mock('./api.js', () => ({
-  api: vi.fn(),
-}));
 
 describe('buildAlwaysAllowAffordance (HS-7976)', () => {
   beforeEach(() => {
@@ -170,9 +355,9 @@ describe('buildAlwaysAllowAffordance (HS-7976)', () => {
   });
 
   it('clicking the link saves the auto-generated pattern AND calls onCommit immediately (no second step)', async () => {
-    vi.mocked(api).mockImplementation(async (path: string) => {
-      if (path === '/file-settings' && typeof path === 'string') return { permission_allow_rules: [] } as never;
-      return undefined as never;
+    vi.mocked(api).mockImplementation((path: string) => {
+      if (path === '/file-settings' && typeof path === 'string') return Promise.resolve({ permission_allow_rules: [] } as never);
+      return Promise.resolve(undefined as never);
     });
     const onCommit = vi.fn();
     const { link, form } = mount(onCommit);
@@ -202,9 +387,9 @@ describe('buildAlwaysAllowAffordance (HS-7976)', () => {
   });
 
   it('the inline editor still saves with the user-edited pattern when Save & Allow is clicked', async () => {
-    vi.mocked(api).mockImplementation(async (path: string) => {
-      if (path === '/file-settings') return { permission_allow_rules: [] } as never;
-      return undefined as never;
+    vi.mocked(api).mockImplementation((path: string) => {
+      if (path === '/file-settings') return Promise.resolve({ permission_allow_rules: [] } as never);
+      return Promise.resolve(undefined as never);
     });
     const onCommit = vi.fn();
     const { gear, form, root } = mount(onCommit);

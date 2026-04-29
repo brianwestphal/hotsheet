@@ -1,3 +1,4 @@
+import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
@@ -5,6 +6,13 @@ import { toElement } from './dom.js';
 /**
  * HS-7953 — Settings → Permissions management page + the per-popup
  * "Always allow" overlay shortcut helper.
+ *
+ * HS-8026 — row layout rewritten to match the cmd-outline / terminal
+ * settings rows (pencil-edit / trash-delete buttons, click-row-to-edit),
+ * and the inline +Add form replaced by an "Add rule" button that opens the
+ * same modal dialog as the pencil-edit. Long patterns are no longer
+ * irrecoverably truncated — they ellipsis with a `title` tooltip in the
+ * row and show in full inside the editor dialog.
  *
  * Rules live in `<dataDir>/settings.json` under `permission_allow_rules`
  * (file-based, per-project for free; added to `JSON_VALUE_KEYS` in
@@ -27,6 +35,11 @@ export interface AllowRule {
 }
 
 const TOOLS_FOR_RULE: ReadonlyArray<string> = ['Bash', 'Read', 'NotebookRead', 'Glob', 'WebFetch', 'WebSearch'];
+
+/** HS-8026 — pencil + trash icons matched to the cmd-outline / terminal
+ *  settings rows so the surfaces read as siblings. */
+const PENCIL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+const TRASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
 
 /** Pure: ULID-ish id generator. Not a real ULID — just `ar_<base36 ts>_<random>`
  *  which is sortable + unique enough for per-project allow rules. Exported
@@ -60,12 +73,11 @@ export function validatePattern(pattern: string): string | null {
 // Settings → Permissions management page
 // ---------------------------------------------------------------------------
 
-/** Fetch the rules from `/file-settings`, render the table + bind the +Add
- *  form. Called when the Settings → Permissions tab is shown. */
+/** Fetch the rules from `/file-settings`, render the list + the "Add rule"
+ *  affordance. Called when the Settings → Permissions tab is shown. */
 export async function loadAndRenderAllowList(): Promise<void> {
   const rules = await fetchRules();
   renderRules(rules);
-  bindAddForm();
 }
 
 async function fetchRules(): Promise<AllowRule[]> {
@@ -111,37 +123,72 @@ function renderRules(rules: AllowRule[]): void {
     container.appendChild(toElement(
       <div className="permission-allow-empty">No allow rules yet. Click "+ Add rule" below or "Always allow" on a permission popup to create one.</div>
     ));
-    return;
+  } else {
+    // Most-recent first.
+    const sorted = [...rules].sort((a, b) => b.added_at.localeCompare(a.added_at));
+    for (const rule of sorted) {
+      container.appendChild(renderRow(rule));
+    }
   }
-  // Most-recent first.
-  const sorted = [...rules].sort((a, b) => (b.added_at ?? '').localeCompare(a.added_at ?? ''));
-  for (const rule of sorted) {
-    const row = toElement(
-      <div className="permission-allow-row" data-rule-id={rule.id}>
-        <span className="permission-allow-tool">{rule.tool}</span>
-        <code className="permission-allow-pattern">{rule.pattern}</code>
-        <span className="permission-allow-meta">{formatRuleMeta(rule)}</span>
-        <button className="permission-allow-delete btn btn-sm btn-danger" title="Delete rule" type="button">×</button>
-      </div>
-    );
-    row.querySelector<HTMLButtonElement>('.permission-allow-delete')!.addEventListener('click', () => {
-      void deleteRule(rule);
-    });
-    container.appendChild(row);
-  }
+  container.appendChild(renderAddButton());
 }
 
-/** Pure: format the meta column ("added overlay" / "added 4d ago" etc.).
- *  Empty when neither added_at nor added_by is meaningful. Exported for
- *  tests. */
-export function formatRuleMeta(rule: AllowRule): string {
-  const parts: string[] = [];
-  if (rule.added_by !== undefined) parts.push(rule.added_by);
-  if (rule.added_at !== '' && rule.added_at !== undefined) {
-    const date = new Date(rule.added_at);
-    if (!Number.isNaN(date.getTime())) parts.push(date.toLocaleDateString());
-  }
-  return parts.join(' · ');
+/** HS-8026 — single rule row. Mirrors `cmd-outline-row` shape (tool +
+ *  pattern + pencil + trash); the row itself is clickable so a wide click
+ *  target opens the editor. Pattern overflow is ellipsis with a `title`
+ *  tooltip so long values stay discoverable without the editor. */
+function renderRow(rule: AllowRule): HTMLElement {
+  // The row uses two class names on purpose: `cmd-outline-row` brings the
+  // shared visual scale that the custom-command + terminal settings rows
+  // already use (border, padding, hover); `permission-allow-rule-row` is
+  // the HS-8026 hook for the click-to-edit cursor + the focus ring + the
+  // flex constraints on the tool / pattern columns. The §52 terminal-prompt
+  // allow list (`terminalPromptAllowListUI.tsx`) still uses the legacy
+  // `.permission-allow-row` grid — see styles.scss for the comment.
+  const row = toElement(
+    <div className="cmd-outline-row permission-allow-rule-row" data-rule-id={rule.id} role="button" tabIndex={0}>
+      <span className="permission-allow-rule-tool">{rule.tool}</span>
+      <code className="permission-allow-rule-pattern" title={rule.pattern}>{rule.pattern}</code>
+      <button type="button" className="cmd-outline-edit-btn permission-allow-edit" title="Edit">{raw(PENCIL_ICON)}</button>
+      <button type="button" className="cmd-outline-delete-btn permission-allow-delete" title="Delete">{raw(TRASH_ICON)}</button>
+    </div>
+  );
+
+  const editBtn = row.querySelector<HTMLButtonElement>('.permission-allow-edit')!;
+  const deleteBtn = row.querySelector<HTMLButtonElement>('.permission-allow-delete')!;
+
+  editBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openRuleEditor({ mode: 'edit', rule });
+  });
+  deleteBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    void deleteRule(rule);
+  });
+
+  row.addEventListener('click', () => { openRuleEditor({ mode: 'edit', rule }); });
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openRuleEditor({ mode: 'edit', rule });
+    }
+  });
+
+  return row;
+}
+
+function renderAddButton(): HTMLElement {
+  const wrap = toElement(
+    <div className="permission-allow-add-row">
+      <button type="button" className="btn btn-sm" id="permission-allow-add-btn">+ Add rule</button>
+    </div>
+  );
+  wrap.querySelector<HTMLButtonElement>('#permission-allow-add-btn')!.addEventListener('click', () => {
+    openRuleEditor({ mode: 'add' });
+  });
+  return wrap;
 }
 
 async function deleteRule(rule: AllowRule): Promise<void> {
@@ -158,47 +205,118 @@ async function deleteRule(rule: AllowRule): Promise<void> {
   renderRules(next);
 }
 
-function bindAddForm(): void {
-  const btn = document.getElementById('permission-allow-add-btn') as HTMLButtonElement | null;
-  if (btn === null || btn.dataset.bound === '1') return;
-  btn.dataset.bound = '1';
-  btn.addEventListener('click', () => { void onAddClick(); });
-  const patternInput = document.getElementById('permission-allow-add-pattern') as HTMLInputElement | null;
-  if (patternInput !== null) {
-    patternInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { void onAddClick(); }
-    });
-  }
-}
+// ---------------------------------------------------------------------------
+// HS-8026 — modal rule editor (add / edit)
+// ---------------------------------------------------------------------------
 
-async function onAddClick(): Promise<void> {
-  const toolEl = document.getElementById('permission-allow-add-tool') as HTMLSelectElement | null;
-  const patternEl = document.getElementById('permission-allow-add-pattern') as HTMLInputElement | null;
-  const errEl = document.getElementById('permission-allow-add-error');
-  if (toolEl === null || patternEl === null) return;
-  const tool = toolEl.value;
-  const pattern = patternEl.value;
-  const validation = validatePattern(pattern);
-  if (validation !== null) {
-    if (errEl !== null) {
-      errEl.textContent = `Invalid pattern: ${validation}`;
-      errEl.style.display = '';
+type EditorOptions =
+  | { mode: 'add' }
+  | { mode: 'edit'; rule: AllowRule };
+
+/** Open the modal rule editor. Reuses the `.cmd-editor-overlay` /
+ *  `.cmd-editor-dialog` shell that the custom-command + terminal editors
+ *  already use, so the look is identical. Exported for tests. */
+export function openRuleEditor(options: EditorOptions): HTMLElement {
+  document.querySelectorAll('.cmd-editor-overlay.permission-allow-editor').forEach(el => el.remove());
+
+  const isEdit = options.mode === 'edit';
+  const initialTool = isEdit ? options.rule.tool : 'Bash';
+  const initialPattern = isEdit ? options.rule.pattern : '';
+  const headerText = isEdit ? 'Edit allow rule' : 'Add allow rule';
+  const saveLabel = isEdit ? 'Save' : 'Add rule';
+
+  const toolOptions = TOOLS_FOR_RULE
+    .map(t => `<option value="${t}"${t === initialTool ? ' selected' : ''}>${t}</option>`)
+    .join('');
+
+  const overlay = toElement(
+    <div className="cmd-editor-overlay permission-allow-editor">
+      <div className="cmd-editor-dialog">
+        <div className="cmd-editor-dialog-header">
+          <span>{headerText}</span>
+          <button className="cmd-editor-close-btn" title="Cancel" type="button">{'×'}</button>
+        </div>
+        <div className="cmd-editor-dialog-body">
+          <div className="settings-field">
+            <label>Tool</label>
+            {raw(`<select class="permission-allow-edit-tool">${toolOptions}</select>`)}
+          </div>
+          <div className="settings-field">
+            <label>Pattern</label>
+            <textarea className="permission-allow-edit-pattern" rows={3} spellcheck="false" placeholder="^git (status|diff)$">{initialPattern}</textarea>
+            <span className="settings-hint">JS regex, auto-anchored with <code>^…$</code> when matched. So <code>git status</code> matches exactly that, not <code>cd /tmp &amp;&amp; git status</code>.</span>
+          </div>
+          <p className="permission-allow-edit-error" style="display:none"></p>
+        </div>
+        <div className="cmd-editor-dialog-footer">
+          <button className="btn btn-sm permission-allow-edit-cancel" type="button">Cancel</button>
+          <button className="btn btn-sm permission-allow-edit-save" type="button">{saveLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const closeBtn = overlay.querySelector<HTMLButtonElement>('.cmd-editor-close-btn')!;
+  const cancelBtn = overlay.querySelector<HTMLButtonElement>('.permission-allow-edit-cancel')!;
+  const saveBtn = overlay.querySelector<HTMLButtonElement>('.permission-allow-edit-save')!;
+  const toolSel = overlay.querySelector<HTMLSelectElement>('.permission-allow-edit-tool')!;
+  const patternEl = overlay.querySelector<HTMLTextAreaElement>('.permission-allow-edit-pattern')!;
+  const errorEl = overlay.querySelector<HTMLElement>('.permission-allow-edit-error')!;
+
+  const close = () => { overlay.remove(); };
+  closeBtn.addEventListener('click', close);
+  cancelBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  const submit = async () => {
+    const tool = toolSel.value;
+    const pattern = patternEl.value;
+    const validation = validatePattern(pattern);
+    if (validation !== null) {
+      errorEl.textContent = `Invalid pattern: ${validation}`;
+      errorEl.style.display = '';
+      return;
     }
-    return;
-  }
-  if (errEl !== null) errEl.style.display = 'none';
-  const rule: AllowRule = {
-    id: newRuleId(),
-    tool,
-    pattern,
-    added_at: new Date().toISOString(),
-    added_by: 'settings',
+    errorEl.style.display = 'none';
+    saveBtn.disabled = true;
+    try {
+      const rules = await fetchRules();
+      let next: AllowRule[];
+      if (isEdit) {
+        next = rules.map(r => r.id === options.rule.id ? { ...r, tool, pattern } : r);
+      } else {
+        const rule: AllowRule = {
+          id: newRuleId(),
+          tool,
+          pattern,
+          added_at: new Date().toISOString(),
+          added_by: 'settings',
+        };
+        next = [...rules, rule];
+      }
+      await api('/file-settings', { method: 'PATCH', body: { permission_allow_rules: next } });
+      renderRules(next);
+      close();
+    } catch {
+      errorEl.textContent = 'Failed to save rule';
+      errorEl.style.display = '';
+      saveBtn.disabled = false;
+    }
   };
-  const rules = await fetchRules();
-  const next = [...rules, rule];
-  await api('/file-settings', { method: 'PATCH', body: { permission_allow_rules: next } });
-  patternEl.value = '';
-  renderRules(next);
+
+  saveBtn.addEventListener('click', () => { void submit(); });
+  patternEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      void submit();
+    }
+    if (e.key === 'Escape') { close(); }
+  });
+
+  document.body.appendChild(overlay);
+  patternEl.focus();
+  patternEl.select();
+  return overlay;
 }
 
 // ---------------------------------------------------------------------------

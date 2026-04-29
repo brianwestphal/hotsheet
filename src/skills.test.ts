@@ -187,20 +187,26 @@ describe('ensureClaudeSkills', () => {
   });
 
   // -------------------------------------------------------------------------
-  // HS-7992 — `hotsheet_skill_clear_context` toggle
+  // HS-8022 — `/clear` prefix permanently removed
   // -------------------------------------------------------------------------
+  // The HS-7992 `hotsheet_skill_clear_context` toggle was a dead switch:
+  // skill bodies are loaded as Skill tool output, not typed at the REPL
+  // prompt, so the Claude Code CLI never re-parsed `/clear` as a slash
+  // command and the model couldn't invoke it itself either. The toggle +
+  // prefix were removed in HS-8022. These regressions guard against a
+  // future contributor re-adding it without re-checking the underlying
+  // mechanism.
 
-  it('omits the /clear prefix from the main skill body when the setting is absent / false (HS-7992)', () => {
+  it('never includes a `/clear` line in the main skill body (HS-8022)', () => {
     ensureSkills();
     const skillPath = join(tempDir, '.claude', 'skills', 'hotsheet', 'SKILL.md');
     const content = readFileSync(skillPath, 'utf-8');
-    // The body should NOT start with `/clear` when the flag is missing.
-    const body = content.split('---').slice(2).join('---');
-    expect(body).not.toMatch(/^\s*<!-- hotsheet-skill-version: \d+ -->\s*\n\s*\/clear\b/);
     expect(content).not.toMatch(/^\/clear$/m);
   });
 
-  it('prepends `/clear` as the first body line when the setting is true (HS-7992)', () => {
+  it('ignores a stale `hotsheet_skill_clear_context: true` setting in settings.json (HS-8022)', () => {
+    // Some users may have flipped the toggle on in an older build. Confirm
+    // that the setting being present + true does NOT resurrect the prefix.
     writeFileSync(
       join(settingsDir, 'settings.json'),
       JSON.stringify({ secret: 'test-secret', port: 4174, hotsheet_skill_clear_context: true }),
@@ -208,37 +214,19 @@ describe('ensureClaudeSkills', () => {
     ensureSkills();
     const skillPath = join(tempDir, '.claude', 'skills', 'hotsheet', 'SKILL.md');
     const content = readFileSync(skillPath, 'utf-8');
-    // First non-frontmatter, non-version-header content line should be `/clear`.
-    const lines = content.split('\n');
-    const versionIdx = lines.findIndex(l => l.startsWith('<!-- hotsheet-skill-version:'));
-    expect(versionIdx).toBeGreaterThanOrEqual(0);
-    expect(lines[versionIdx + 1]).toBe('');
-    expect(lines[versionIdx + 2]).toBe('/clear');
+    expect(content).not.toMatch(/^\/clear$/m);
   });
 
-  it('regenerateMainSkill rewrites the main skill body even when the version is current (HS-7992)', () => {
-    // First pass — flag off, file gets the no-/clear body. Version stamp
-    // matches SKILL_VERSION so a normal `ensureSkills` would skip on a
-    // second call.
+  it('regenerateMainSkill never writes a `/clear` prefix even when the stale setting is true (HS-8022)', () => {
     ensureSkills();
-    const skillPath = join(tempDir, '.claude', 'skills', 'hotsheet', 'SKILL.md');
-    const before = readFileSync(skillPath, 'utf-8');
-    expect(before).not.toContain('\n/clear\n');
-
-    // Flip the flag and force-regenerate. The version-check guard would
-    // normally skip an in-place rewrite — `regenerateMainSkill` bypasses
-    // it for exactly this case.
     writeFileSync(
       join(settingsDir, 'settings.json'),
       JSON.stringify({ secret: 'test-secret', port: 4174, hotsheet_skill_clear_context: true }),
     );
     regenerateMainSkill(tempDir);
-    const after = readFileSync(skillPath, 'utf-8');
-    expect(after).toContain('\n/clear\n');
-    // Per-type ticket skills should be untouched (we only rewrite the main
-    // hotsheet skill).
-    const bugSkill = readFileSync(join(tempDir, '.claude', 'skills', 'hs-bug', 'SKILL.md'), 'utf-8');
-    expect(bugSkill).not.toContain('\n/clear\n');
+    const skillPath = join(tempDir, '.claude', 'skills', 'hotsheet', 'SKILL.md');
+    const content = readFileSync(skillPath, 'utf-8');
+    expect(content).not.toMatch(/^\/clear$/m);
   });
 });
 

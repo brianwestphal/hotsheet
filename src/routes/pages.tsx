@@ -470,13 +470,12 @@ pageRoutes.get('/', (c) => {
                 <label><input type="checkbox" id="settings-hide-verified-column" /> Hide Verified column in column view</label>
                 <span className="settings-hint">Hides the Verified column in column view. Verified tickets will appear in the Completed column instead.</span>
               </div>
-              {/* HS-7992 — when checked, the generated /hotsheet skill body is
-                  prefixed with `/clear` so Claude Code clears its context
-                  before reading the worklist. Per-project, default off. */}
-              <div className="settings-field settings-field-checkbox">
-                <label><input type="checkbox" id="settings-hotsheet-skill-clear-context" /> Clear context on each /hotsheet</label>
-                <span className="settings-hint">Adds <code>/clear</code> as the first line of the generated <code>/hotsheet</code> skill so Claude Code clears its context before processing the worklist. The skill file regenerates on save.</span>
-              </div>
+              {/* HS-8022 — removed the HS-7992 "Clear context on each
+                  /hotsheet" checkbox. Skill bodies are loaded as Skill tool
+                  output, not typed at the REPL prompt, so the `/clear`
+                  prefix it injected was a no-op. Users who want a fresh
+                  context per /hotsheet should type `/clear` themselves
+                  before invoking the skill. */}
               <div className="settings-field">
                 <label>When Claude needs permission</label>
                 <select id="settings-notify-permission">
@@ -570,20 +569,12 @@ pageRoutes.get('/', (c) => {
                 <h3>Auto-allow rules</h3>
               </div>
               <p className="settings-hint">Permission requests that match a rule below are auto-allowed without showing the popup. Patterns are JS regex anchored with <code>^…$</code> so <code>git status</code> matches <code>git status</code> exactly, not <code>cd /tmp &amp;&amp; git status</code>. Edit / Write requests are never allow-listable — file path alone doesn't capture diff intent.</p>
+              {/* HS-8026 — the inline +Add form was replaced by an
+                  "Add rule" button rendered inside the list (mirrors the
+                  custom-command + terminal settings rows). The button
+                  opens the same modal editor used by the per-row pencil
+                  affordance, so add / edit share one validation path. */}
               <div id="permission-allow-list" className="permission-allow-list">Loading rules…</div>
-              <div className="permission-allow-add">
-                <select id="permission-allow-add-tool" className="btn btn-sm">
-                  <option value="Bash">Bash</option>
-                  <option value="Read">Read</option>
-                  <option value="NotebookRead">NotebookRead</option>
-                  <option value="Glob">Glob</option>
-                  <option value="WebFetch">WebFetch</option>
-                  <option value="WebSearch">WebSearch</option>
-                </select>
-                <input type="text" id="permission-allow-add-pattern" placeholder="^git (status|diff)$" className="permission-allow-add-input" />
-                <button className="btn btn-sm" id="permission-allow-add-btn">+ Add rule</button>
-              </div>
-              <p className="settings-hint" id="permission-allow-add-error" style="display:none;color:#991b1b"></p>
 
               {/* HS-7988 — §52 Phase 4 — Terminal-prompt allow rules + master
                   toggle. Master toggle short-circuits the detector entirely

@@ -8718,6 +8718,11 @@ label.detail-details-label {
   border-radius: 6px;
 }
 
+// Legacy grid row — used by `terminalPromptAllowListUI.tsx` (§52 Phase 4
+// terminal-prompt allow rules). HS-8026 only restyled the §47.4 channel-
+// permission allow rules (which now use `.permission-allow-rule-row`
+// below); this row shape stays grid for parity with the existing TPAL UI
+// until that surface gets the same treatment in a follow-up.
 .permission-allow-row {
   display: grid;
   grid-template-columns: minmax(80px, auto) 1fr auto auto;
@@ -8759,23 +8764,71 @@ label.detail-details-label {
   line-height: 1;
 }
 
-// +Add row at the bottom of the table.
-.permission-allow-add {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
+// HS-8026 — channel-permission allow rule row. Combined with `cmd-outline-row`
+// so the visual scale + padding + hover + border match the custom-command +
+// terminal settings rows. The overrides below give the row a click-to-edit
+// cursor, fix the tool column to a sensible min-width so a long pattern
+// doesn't squeeze it to one character, and put the pattern in a code chip
+// with ellipsis truncation (full text always available via `title` tooltip
+// and inside the editor dialog).
+.permission-allow-rule-row {
+  cursor: pointer;
+  &:hover { background: var(--bg-hover); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 }
 
-.permission-allow-add-input {
-  flex: 1;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
+.permission-allow-rule-tool {
+  flex-shrink: 0;
+  min-width: 70px;
+  font-weight: 600;
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
+}
+
+.permission-allow-rule-pattern {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-secondary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// "Add rule" button row at the bottom of the list, mirrors the
+// `cmd-outline-btn-row` pattern used by the custom-command settings.
+.permission-allow-add-row {
+  display: flex;
+  margin-top: 8px;
+}
+
+// HS-8026 — modal editor reuses `.cmd-editor-overlay` / `.cmd-editor-dialog`
+// shell. The error paragraph + a small textarea-min-height tweak are the
+// only delta vs. the command editor.
+.permission-allow-editor {
+  .permission-allow-edit-tool {
+    width: 100%;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-secondary);
+    color: var(--text);
+    font-size: 12px;
+  }
+  .permission-allow-edit-pattern {
+    width: 100%;
+    min-height: 60px;
+  }
+  .permission-allow-edit-error {
+    color: #991b1b;
+    font-size: 11px;
+    margin: 4px 0 0;
+  }
 }
 
 // "Always allow this" affordance inside the permission popup.

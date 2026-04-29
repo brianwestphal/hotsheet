@@ -90,18 +90,11 @@ settingsRoutes.patch('/file-settings', async (c) => {
   const { listTerminalConfigs: listTerminalConfigsForDiff } = await import('../terminals/config.js');
   const previousConfiguredIds = new Set(listTerminalConfigsForDiff(dataDir).map(t => t.id));
   const updated = writeFileSettings(dataDir, parsed.data);
-  // HS-7992 — when the user flips `hotsheet_skill_clear_context`, force-
-  // regenerate the main `/hotsheet` skill file so the new prefix lands
-  // immediately rather than waiting for the next ticket-prefix-style version
-  // bump. The setting is per-project (lives in `<dataDir>/settings.json`)
-  // so we resolve the project root from `dataDir` (peeling the trailing
-  // `.hotsheet` segment) and ask `regenerateMainSkill` to overwrite each
-  // platform's main skill body.
-  if ('hotsheet_skill_clear_context' in parsed.data) {
-    const { regenerateMainSkill } = await import('../skills.js');
-    const projectRoot = dataDir.replace(/[\\/]\.hotsheet\/?$/, '');
-    regenerateMainSkill(projectRoot);
-  }
+  // HS-7992 added a `hotsheet_skill_clear_context` toggle that triggered a
+  // skill-body regen on flip; HS-8022 removed the toggle entirely (the
+  // `/clear` prefix was a no-op). The SKILL_VERSION bump on the same commit
+  // means existing files re-author themselves through the normal upgrade
+  // path on next boot, so no on-PATCH regen hook is needed any more.
   // Update project tab name when appName changes
   if ('appName' in parsed.data) {
     const project = getProjectByDataDir(dataDir);

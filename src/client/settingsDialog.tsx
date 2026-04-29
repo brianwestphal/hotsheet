@@ -66,8 +66,6 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       backupDir?: string;
       ticketPrefix?: string;
       terminal_scrollback_bytes?: string | number;
-      // HS-7992 — per-project skill-clear-context toggle.
-      hotsheet_skill_clear_context?: boolean;
     }>('/file-settings').then((fs) => {
       (document.getElementById('settings-app-name') as HTMLInputElement).value = fs.appName ?? '';
       (document.getElementById('settings-backup-dir') as HTMLInputElement).value = fs.backupDir ?? '';
@@ -75,8 +73,6 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       const scrollback = fs.terminal_scrollback_bytes;
       const scrollbackInput = document.getElementById('settings-terminal-scrollback') as HTMLInputElement;
       scrollbackInput.value = scrollback === undefined || scrollback === '' ? '' : String(scrollback);
-      // HS-7992
-      (document.getElementById('settings-hotsheet-skill-clear-context') as HTMLInputElement).checked = fs.hotsheet_skill_clear_context === true;
     });
     // Terminals outline list (HS-6271) — loads asynchronously.
     void import('./terminalsSettings.js').then(({ loadAndRenderTerminalsSettings }) => loadAndRenderTerminalsSettings());
@@ -230,16 +226,6 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   shellStreamingCheckbox.addEventListener('change', () => {
     state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
     void api('/settings', { method: 'PATCH', body: { shell_streaming_enabled: String(shellStreamingCheckbox.checked) } });
-  });
-
-  // HS-7992 — `Clear context on each /hotsheet` toggle. Per-project
-  // (`<dataDir>/settings.json` via `/file-settings`). The server-side
-  // PATCH handler regenerates the main `/hotsheet` skill file across every
-  // seeded platform so the change takes effect on the very next /hotsheet
-  // invocation without an app restart.
-  const skillClearCheckbox = document.getElementById('settings-hotsheet-skill-clear-context') as HTMLInputElement;
-  skillClearCheckbox.addEventListener('change', () => {
-    void api('/file-settings', { method: 'PATCH', body: { hotsheet_skill_clear_context: skillClearCheckbox.checked } });
   });
 
   // HS-7988 — §52 master toggle. When false, the prompt detector's
