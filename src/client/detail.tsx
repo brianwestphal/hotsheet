@@ -22,6 +22,81 @@ export { displayTag, extractBracketTags, hasTag, normalizeTag, parseTags, render
 let suppressAutoRead = false;
 export function setSuppressAutoRead(suppress: boolean) { suppressAutoRead = suppress; }
 
+/**
+ * HS-8020 — paint the rendered-markdown view of a ticket's Details
+ * field. Mirrors how notes already render — same `marked.parse` call,
+ * same `.note-markdown` class so the inline-markdown CSS (paragraph
+ * spacing, code blocks, lists, GFM tables, etc.) applies.
+ *
+ * Called every time the textarea value is (re-)set: after `loadDetail`,
+ * after `loadPreviewDetail`, after the click-to-edit blur path, and
+ * after the auto-save reload. Synchronous so the rendered view is in
+ * place by the time CSS shows it.
+ */
+export function renderDetailsMarkdown(text: string): void {
+  const rendered = document.getElementById('detail-details-rendered');
+  if (rendered === null) return;
+  rendered.innerHTML = marked.parse(text, { async: false });
+}
+
+/**
+ * HS-8020 — toggle whether the Details field is in edit mode. Adds the
+ * `is-editing` class to the wrap so CSS swaps which sibling is visible
+ * (rendered markdown ↔ raw textarea). When entering edit mode, focus
+ * the textarea and place the caret at the end so the user can keep
+ * typing. When leaving, re-render the markdown.
+ *
+ * Read-only mode (`setDetailReadOnly(true)` — backup preview) skips the
+ * swap entirely; the rendered view stays visible and the textarea
+ * stays hidden.
+ */
+function setDetailsEditing(editing: boolean): void {
+  const wrap = document.querySelector<HTMLElement>('.detail-details-wrap');
+  if (wrap === null) return;
+  // Read-only check: textarea.readOnly is the source of truth (set by
+  // setDetailReadOnly). Don't flip into edit mode in preview state.
+  const textarea = document.getElementById('detail-details') as HTMLTextAreaElement | null;
+  if (editing && textarea?.readOnly === true) return;
+  wrap.classList.toggle('is-editing', editing);
+  if (editing && textarea !== null) {
+    textarea.focus();
+    // Caret-at-end so a click-to-edit doesn't drop the caret at position 0.
+    const len = textarea.value.length;
+    textarea.setSelectionRange(len, len);
+  } else if (!editing && textarea !== null) {
+    renderDetailsMarkdown(textarea.value);
+  }
+}
+
+export function bindDetailDetailsRenderToggle(): void {
+  const rendered = document.getElementById('detail-details-rendered');
+  const textarea = document.getElementById('detail-details') as HTMLTextAreaElement | null;
+  if (rendered === null || textarea === null) return;
+  // Click anywhere in the rendered view → enter edit mode + focus the
+  // textarea. Anchor (links inside rendered markdown) clicks are still
+  // intercepted here, so we don't accidentally swallow target=_blank
+  // navigation — we only swap modes.
+  rendered.addEventListener('click', (e) => {
+    // Let internal links navigate normally.
+    const a = (e.target as HTMLElement).closest('a');
+    if (a !== null && a.getAttribute('href') !== null) return;
+    setDetailsEditing(true);
+  });
+  // Tab-focus also enters edit mode so keyboard users can edit.
+  rendered.addEventListener('focus', () => {
+    setDetailsEditing(true);
+  });
+  // Leaving the textarea drops back to rendered view. Suppressed when
+  // focus is moving to another element inside the same wrap (e.g. the
+  // reader-mode book button) so the user isn't bounced out unnecessarily.
+  textarea.addEventListener('blur', (e) => {
+    const next = (e as FocusEvent).relatedTarget as HTMLElement | null;
+    const wrap = textarea.closest('.detail-details-wrap');
+    if (next !== null && wrap !== null && wrap.contains(next)) return;
+    setDetailsEditing(false);
+  });
+}
+
 // --- Detail field button helpers ---
 
 export function updateDetailCategory(value: string) {
@@ -168,6 +243,10 @@ function loadPreviewDetail(id: number) {
   upnextBtn.textContent = ticket.up_next ? '\u2605' : '\u2606';
   upnextBtn.classList.toggle('active', ticket.up_next);
   (document.getElementById('detail-details') as HTMLTextAreaElement).value = ticket.details;
+  // HS-8020 — paint the markdown-rendered view alongside the textarea
+  // so the read-only preview shows formatted details (matches the live
+  // detail panel post-fix).
+  renderDetailsMarkdown(ticket.details);
   // HS-7957 — sync the Details reader-mode button after populating the
   // textarea so it disables itself for empty-Details tickets.
   syncDetailReaderButton();
@@ -261,6 +340,12 @@ async function loadDetail(id: number) {
   if (document.activeElement !== detailsArea) {
     detailsArea.value = ticket.details;
   }
+  // HS-8020 — paint the markdown-rendered view on every detail-load so
+  // the rendered view stays current with the source. Skip the swap to
+  // edit mode if the textarea is currently focused (HS-1454 cursor-
+  // disruption rule); but always re-render the rendered sibling because
+  // CSS keeps it hidden when `is-editing` is set.
+  renderDetailsMarkdown(detailsArea.value);
   // HS-7957 — keep the Details reader-mode book button's `disabled` state in
   // sync with the textarea's current emptiness on every detail-load. Without
   // this, opening a ticket with empty Details would show the button enabled

@@ -11,7 +11,7 @@ import { TIMERS } from './constants/timers.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
 import { initDbRecoveryBanner } from './dbRecoveryBanner.js';
-import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, openDetailAndFocusNote, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
+import { applyDetailPosition, applyDetailSize, bindDetailDetailsRenderToggle, closeDetail, initResize, openDetail, openDetailAndFocusNote, renderDetailsMarkdown, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
@@ -462,8 +462,13 @@ function bindDetailAutoSave() {
       // textarea is empty (nothing to read). Re-evaluated on every input
       // event AND on detail-panel load (see syncDetailReaderButton call in
       // detail.tsx). The button itself is wired in `bindDetailReaderButton`.
+      // HS-8020 — re-render the markdown sibling on every keystroke so a
+      // user who closes the details panel without blurring the textarea
+      // (e.g. via Esc, sidebar nav, project switch) returns to a current
+      // rendered view rather than a stale snapshot.
       if (fieldId === 'detail-details') {
         syncDetailReaderButton();
+        renderDetailsMarkdown(el.value);
       }
       const currentTimeout = getDetailSaveTimeout();
       if (currentTimeout) clearTimeout(currentTimeout);
@@ -737,6 +742,7 @@ function bindDetailPanel() {
 
   bindDetailAutoSave();
   bindDetailReaderButton();
+  bindDetailDetailsRenderToggle();
   bindDetailDropdowns();
   bindDetailUpNext();
   bindDetailNotes();

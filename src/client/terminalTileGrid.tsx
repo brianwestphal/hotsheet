@@ -30,7 +30,6 @@ import {
   type Detector,
   disposeDetector,
   markDetectorClosed,
-  markDetectorSuppressed,
   notifyChunk,
   notifyUserKeystroke,
   SCAN_ROW_COUNT,
@@ -1197,7 +1196,6 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
               projectSecret: tile.entry.secret,
               onSend: sendToPty,
               onClose() { markDetectorClosed(detector); },
-              onDismissAsNonPrompt() { markDetectorSuppressed(detector); },
               onAddAllowRule(choiceIndex, choiceLabel) {
                 try {
                   const rule = buildAllowRule(match, choiceIndex, choiceLabel);

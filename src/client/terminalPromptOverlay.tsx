@@ -63,10 +63,6 @@ export interface OpenTerminalPromptOverlayOptions {
   /** Called when the overlay closes (any reason). Lets the detector clear
    *  per-instance state. */
   onClose: () => void;
-  /** Called when the user clicks "Not a prompt — let me handle it". Tells
-   *  the detector to suppress further scans for this terminal until the
-   *  user keys into it again. */
-  onDismissAsNonPrompt: () => void;
   /**
    * HS-7987 — fired when the user submits a choice WITH the always-allow
    * checkbox ticked. Caller persists the rule (via `appendAllowRule`).
@@ -122,25 +118,33 @@ function attachOverlayToBody(overlay: HTMLElement, projectSecret: string | undef
 }
 
 /**
- * HS-7987 — render the "Always allow this answer" checkbox row. Only
+ * HS-7987 — render the "Always choose this" checkbox row. Only
  * shown for shapes that allow allow-rules (numbered + yesno) AND when the
  * caller provided an `onAddAllowRule` handler. Generic-fallback overlays
  * never get the checkbox — see docs/52 §52.1 for the rationale.
+ *
+ * HS-8024 — label was "Always allow this answer" originally; the wording
+ * read as confusing in user testing (allow what — the prompt? the
+ * answer? the underlying tool?). Renamed to "Always choose this" so
+ * the action and the saved scope are obvious: "the next time I see this
+ * prompt, choose the same option I'm picking now."
  */
 function renderAllowRuleCheckbox(opts: OpenTerminalPromptOverlayOptions) {
   if (opts.onAddAllowRule === undefined) return null;
   if (opts.match.shape === 'generic') return null;
   return (
-    <label className="terminal-prompt-overlay-allow-rule-row" title="Skip this prompt automatically next time and answer the same way">
+    <label className="terminal-prompt-overlay-allow-rule-row" title="Skip this prompt automatically next time and pick the same option">
       <input type="checkbox" className="terminal-prompt-overlay-allow-rule" />
-      <span>Always allow this answer</span>
+      <span>Always choose this</span>
     </label>
   );
 }
 
-/** Wire the shared header / X-button / Esc-to-cancel / "Not a prompt"
- *  affordances and return helpers the per-shape mounters use to actually
- *  send a payload + close the overlay. */
+/** Wire the shared header / X-button / Esc-to-cancel affordances and
+ *  return helpers the per-shape mounters use to actually send a payload
+ *  + close the overlay. HS-8025 removed the "Not a prompt — let me
+ *  handle it" link; the cancel button (sends a real cancel payload to
+ *  the PTY) covers the same use case more cleanly. */
 function wireSharedOverlay(
   overlay: HTMLElement,
   opts: OpenTerminalPromptOverlayOptions,
@@ -169,11 +173,6 @@ function wireSharedOverlay(
     send(cancelPayload);
   });
   overlay.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-close')?.addEventListener('click', () => {
-    close();
-  });
-  overlay.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-not-a-prompt')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    opts.onDismissAsNonPrompt();
     close();
   });
 
@@ -227,7 +226,6 @@ function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: Numb
       {renderAllowRuleCheckbox(opts)}
       <div className="terminal-prompt-overlay-footer">
         <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
-        <a href="#" className="terminal-prompt-overlay-not-a-prompt">Not a prompt — let me handle it</a>
       </div>
       <p className="terminal-prompt-overlay-error" style="display:none"></p>
     </div>
@@ -272,7 +270,6 @@ function openYesNoOverlay(opts: OpenTerminalPromptOverlayOptions, match: YesNoMa
       {renderAllowRuleCheckbox(opts)}
       <div className="terminal-prompt-overlay-footer">
         <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
-        <a href="#" className="terminal-prompt-overlay-not-a-prompt">Not a prompt — let me handle it</a>
       </div>
       <p className="terminal-prompt-overlay-error" style="display:none"></p>
     </div>
@@ -317,7 +314,6 @@ function openGenericOverlay(opts: OpenTerminalPromptOverlayOptions, match: Gener
       <div className="terminal-prompt-overlay-footer terminal-prompt-overlay-generic-footer">
         <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
         <button className="terminal-prompt-overlay-generic-submit" type="button">Send (Enter)</button>
-        <a href="#" className="terminal-prompt-overlay-not-a-prompt">Not a prompt — let me handle it</a>
       </div>
       <p className="terminal-prompt-overlay-error" style="display:none"></p>
     </div>

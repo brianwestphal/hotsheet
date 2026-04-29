@@ -2980,6 +2980,12 @@ body.terminal-dashboard-active {
 }
 
 .settings-textarea {
+  // HS-8023 — explicit block + width:100% so the textarea claims the
+  // full column. Pre-fix `<textarea>` defaulted to inline-block and
+  // sibling buttons (e.g. the quit-confirm reset) sat to its right
+  // instead of beneath it.
+  display: block;
+  width: 100%;
   font-family: inherit;
   font-size: 13px;
   padding: 8px;
@@ -2987,11 +2993,44 @@ body.terminal-dashboard-active {
   border-radius: var(--radius);
   background: var(--bg);
   color: var(--text);
+  box-sizing: border-box;
 
   &:focus {
     outline: none;
     border-color: var(--accent);
   }
+}
+
+// HS-8023 — text-link-style action button used for low-emphasis
+// settings actions (e.g. "Reset exempt list to defaults"). Visually
+// reads as a hyperlink rather than a primary control, matching the
+// user's request for a non-outlined secondary-text-coloured button.
+.settings-link-action {
+  display: inline-block;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+
+  &:hover:not(:disabled) {
+    color: var(--text);
+    text-decoration: underline;
+  }
+
+  &:disabled {
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+}
+
+// HS-8023 — wrapper that drops the reset link onto its own line below
+// the exempt-list textarea (block-level container with a small top
+// margin matches the user's "with a little bit of top margin" ask).
+.settings-quit-confirm-reset-row {
+  margin-top: 8px;
 }
 
 .detail-sync-info {
@@ -7357,20 +7396,30 @@ body.terminal-dashboard-active {
   margin: 4px 0;
 }
 
-// HS-7983 — live partial-output `<pre>` rendered for running shell
-// entries before the `---SHELL_OUTPUT---` separator lands. Mirrors the
-// completed-shell-entry detail look (same monospace inheritance) but
-// sits inside a max-height window so a chatty long-running command
-// doesn't push every other entry off-screen. The user can still scroll
-// the container; sticky-bottom logic in `initCommandLog` re-pins the
-// entries scroll to the bottom only when the user was already there.
+// HS-7983 / HS-8015 follow-up #2 — live partial-output `<pre>`s rendered
+// for running shell entries before the `---SHELL_OUTPUT---` separator
+// lands. Each running-shell entry now mounts TWO pres tagged with this
+// class (`.preview` + `.full`); the live writer fills both and the
+// row's `.expanded` class swaps which one is visible. Pre-fix the only
+// pre also carried `.command-log-detail` (which is declared LATER in
+// this file and so won 'display'/'overflow' over `.command-log-shell-partial`),
+// pinning the live preview to the FIRST 3 lines with no scroll —
+// chatty commands' most recent output was never visible.
 .command-log-shell-partial {
+  // Empty `<pre>` collapses to zero height — no flash-of-empty-state
+  // while we wait for the first chunk (applies to both preview + full).
+  &:empty { display: none; }
+}
+
+// Full pre (rendered + hidden until the user clicks to expand) needs a
+// max-height + scroll so a chatty long-running command doesn't push
+// every other entry off-screen. Lives on `.command-log-detail-full` so
+// it doesn't fight the `.command-log-detail`-based 3-line clamp on the
+// sibling preview pre.
+.command-log-detail-full.command-log-shell-partial-full {
   max-height: 240px;
   overflow-y: auto;
   white-space: pre-wrap;
-  // Empty `<pre>` collapses to zero height — no flash-of-empty-state
-  // while we wait for the first chunk.
-  &:empty { display: none; }
 }
 
 .command-log-context-menu {
@@ -8054,6 +8103,67 @@ label.detail-details-label {
 
   > span {
     flex: 1;
+  }
+}
+
+// HS-8020 — Details field shows a markdown-rendered view when not
+// editing, mirroring how notes already render. `.detail-details-wrap`
+// owns the swap: by default the rendered view is visible and the
+// textarea is hidden; clicking (or Tab-focusing) the rendered view adds
+// `.is-editing` to the wrap, which flips the visibility.
+//
+// Read-only mode (backup preview) sets `textarea[readonly]` and the JS
+// gate skips the swap, so the rendered view stays visible regardless.
+.detail-details-wrap {
+  position: relative;
+
+  .detail-details-rendered {
+    // Same paddings + border + background as `.detail-field textarea`
+    // so the swap doesn't visually jump. Min-height matches the
+    // `rows={6}` textarea so empty rendered views still occupy useful
+    // space the user can click into.
+    display: block;
+    min-height: 116px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    cursor: text;
+
+    &:hover {
+      border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+    }
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    // Empty rendered view falls through to the textarea's "Add details..."
+    // placeholder so a brand-new ticket still reads as click-to-edit.
+    &:empty::before {
+      content: 'Add details...';
+      color: var(--text-muted);
+      font-style: italic;
+    }
+  }
+
+  > textarea {
+    display: none;
+  }
+
+  &.is-editing {
+    > .detail-details-rendered {
+      display: none;
+    }
+
+    > textarea {
+      display: block;
+    }
   }
 }
 
@@ -8891,17 +9001,6 @@ label.detail-details-label {
   &:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
-  }
-}
-
-.terminal-prompt-overlay-not-a-prompt {
-  color: var(--text-muted);
-  font-size: 11px;
-  text-decoration: none;
-
-  &:hover {
-    color: var(--text-primary);
-    text-decoration: underline;
   }
 }
 

@@ -5,8 +5,28 @@ import { maybeFireShellStreamFirstUseToast, SHELL_PARTIAL_OUTPUT_EVENT,type Shel
 import { toElement } from './dom.js';
 import { resolveDrawerTabForTauri } from './drawerTabGating.js';
 import { state } from './state.js';
-import { stripAnsi } from './stripAnsi.js';
+import { stripAnsi, tailLines } from './stripAnsi.js';
 import { getTauriInvoke } from './tauriIntegration.js';
+
+/**
+ * HS-8015 follow-up #2 — number of trailing lines to render in the
+ * collapsed running-shell preview pre. Matches the
+ * `.command-log-detail`'s `-webkit-line-clamp: 3` rule visually so
+ * collapsed rows look identical to completed-shell rows.
+ */
+const RUNNING_SHELL_PREVIEW_LINES = 3;
+
+/** Pure: write the rendered partial into a single `<pre>` based on its
+ *  data-shell-partial-mode dataset attribute. Exported for unit tests
+ *  so happy-dom doesn't need the full live event listener wired up. */
+export function writePartialIntoPre(pre: HTMLElement, partial: string): void {
+  const stripped = stripAnsi(partial);
+  if (pre.dataset.shellPartialMode === 'preview') {
+    pre.textContent = tailLines(stripped, RUNNING_SHELL_PREVIEW_LINES);
+  } else {
+    pre.textContent = stripped;
+  }
+}
 
 let runningShellIds: number[] = [];
 const cancelingShellIds = new Set<number>();
@@ -112,15 +132,20 @@ export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
   latestPartialOutputs.set(detail.id, detail.partial);
   const container = document.getElementById('command-log-entries');
   if (container === null) return;
-  const partialEl = container.querySelector<HTMLElement>(`pre.command-log-shell-partial[data-shell-partial-id="${detail.id}"]`);
-  if (partialEl === null) return;
+  // HS-8015 follow-up #2 — running-shell rows now render twin pres
+  // (preview = trailing N lines / full = entire buffer) so the row is
+  // collapsible while running. Both pres carry the same
+  // `data-shell-partial-id` and we update both — the writer dispatches
+  // on the per-pre `data-shell-partial-mode` attribute.
+  const partialEls = container.querySelectorAll<HTMLElement>(`pre.command-log-shell-partial[data-shell-partial-id="${detail.id}"]`);
+  if (partialEls.length === 0) return;
   // HS-8015 — sole survivor of the previous dual-render path. The
   // first-use discoverability toast used to fire from the (now-removed)
   // sidebar preview; relocated here so users still get the one-time
   // nudge that streaming exists, pointing them at the Commands Log.
   maybeFireShellStreamFirstUseToast();
   const wasPinned = shouldAutoScrollToBottom(container.scrollTop, container.clientHeight, container.scrollHeight);
-  partialEl.textContent = stripAnsi(detail.partial);
+  for (const pre of partialEls) writePartialIntoPre(pre, detail.partial);
   if (wasPinned) container.scrollTop = container.scrollHeight;
 }
 
@@ -141,7 +166,7 @@ export function hydrateRenderedShellPartials(): void {
     if (!Number.isFinite(id)) continue;
     const cached = latestPartialOutputs.get(id);
     if (cached === undefined || cached === '') continue;
-    el.textContent = stripAnsi(cached);
+    writePartialIntoPre(el, cached);
   }
 }
 
@@ -321,15 +346,41 @@ function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
         // HS-7983 \u2014 running shell entries don't carry the
         // `---SHELL_OUTPUT---` separator yet (server only writes the final
         // detail in `child.on('close')`), so `formatShellDetail` returned
-        // null. Render the command-as-shell-input + a dedicated live
-        // `<pre class="command-log-shell-partial" data-shell-partial-id>`
-        // that the module-level `hotsheet:shell-partial-output` listener
-        // targets. Visual mirrors the completed-shell-entry layout above
-        // so the swap on completion doesn't reflow alarmingly.
+        // null. HS-8015 follow-up #2 mirrors the completed-shell layout
+        // above with a TWIN-pre design (preview + full) so the row is
+        // click-to-expand while running:
+        //
+        //   - Preview pre: `.command-log-detail` (3-line clamp via the
+        //     existing CSS rule). Live writer fills with the trailing
+        //     `RUNNING_SHELL_PREVIEW_LINES` lines so the user sees the
+        //     most recent output, not the first three lines of the
+        //     buffer.
+        //   - Full pre:    `.command-log-detail-full` (no clamp; gains a
+        //     max-height + scroll via `.command-log-shell-partial-full`
+        //     so a chatty long-running command doesn't push every other
+        //     entry off-screen). Hidden until the user clicks; the
+        //     existing display-swap logic in the click handler reveals
+        //     it (matches the completed-shell flow).
+        //
+        // Both pres share `data-shell-partial-id` so the live writer +
+        // hydrate find both; per-pre `data-shell-partial-mode` selects
+        // tail-vs-full content. The pre is empty until the first chunk
+        // arrives \u2014 `:empty { display: none }` collapses it so the
+        // divider above doesn't sit on dead space.
         <div>
           <pre className="command-log-detail command-log-shell-input">{entry.detail}</pre>
           <hr className="command-log-shell-divider" />
-          <pre className="command-log-detail command-log-shell-partial" data-shell-partial-id={String(entry.id)}></pre>
+          <pre
+            className="command-log-detail command-log-shell-partial command-log-shell-partial-preview"
+            data-shell-partial-id={String(entry.id)}
+            data-shell-partial-mode="preview"
+          ></pre>
+          <pre
+            className="command-log-detail-full command-log-shell-partial command-log-shell-partial-full"
+            data-shell-partial-id={String(entry.id)}
+            data-shell-partial-mode="full"
+            style="display:none"
+          ></pre>
         </div>
       ) : (
         <div>
@@ -386,7 +437,17 @@ function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
     lastClickedId = entry.id;
     updateSelectionClasses();
 
-    if (hasMore) {
+    // HS-8015 follow-up #2 — running-shell rows are always expandable
+    // even when the (still-being-written) command line itself is short.
+    // The running-shell render branch always emits a hidden full-pre
+    // alongside the line-clamped preview, and the live writer keeps
+    // both in sync, so the existing `.command-log-detail` ↔
+    // `.command-log-detail-full` display-swap reveals the full live
+    // buffer when the user clicks. Pre-fix `hasMore` (computed from the
+    // command line alone, typically <300 chars / 1 line) was false and
+    // the click did nothing for a running shell.
+    const isExpandable = hasMore || isRunningShell;
+    if (isExpandable) {
       const isExpanded = el.classList.toggle('expanded');
       if (isExpanded) expandedEntryIds.add(entry.id); else expandedEntryIds.delete(entry.id);
       const detailEls = el.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');

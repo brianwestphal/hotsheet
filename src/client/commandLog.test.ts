@@ -8,7 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { applyShellPartialEvent, hydrateRenderedShellPartials, shouldAutoScrollToBottom } from './commandLog.js';
+import { applyShellPartialEvent, hydrateRenderedShellPartials, shouldAutoScrollToBottom, writePartialIntoPre } from './commandLog.js';
 import { state } from './state.js';
 
 describe('shouldAutoScrollToBottom (HS-7983)', () => {
@@ -53,7 +53,18 @@ describe('shouldAutoScrollToBottom (HS-7983)', () => {
 // HS-7983 — applyShellPartialEvent (happy-dom integration)
 // ---------------------------------------------------------------------------
 
-function setupEntriesContainer(entryIds: number[]): HTMLElement {
+/**
+ * Mount the running-shell entry layout used in production. Each entry
+ * gets twin pres tagged with `data-shell-partial-id` (preview + full)
+ * matching the JSX in `renderLogEntry`'s running-shell branch.
+ *
+ * The first pre (preview) has no `data-shell-partial-mode` attribute by
+ * default — kept that way so the legacy `applyShellPartialEvent` tests
+ * (written before the twin-pre layout) still observe the same "writer
+ * paints the full buffer" behaviour. New tests opt into the twin-pre
+ * layout by passing `withFullPre: true`.
+ */
+function setupEntriesContainer(entryIds: number[], opts: { withFullPre?: boolean } = {}): HTMLElement {
   const container = document.createElement('div');
   container.id = 'command-log-entries';
   for (const id of entryIds) {
@@ -64,6 +75,16 @@ function setupEntriesContainer(entryIds: number[]): HTMLElement {
     pre.className = 'command-log-detail command-log-shell-partial';
     pre.dataset.shellPartialId = String(id);
     entry.appendChild(pre);
+    if (opts.withFullPre === true) {
+      pre.dataset.shellPartialMode = 'preview';
+      pre.classList.add('command-log-shell-partial-preview');
+      const full = document.createElement('pre');
+      full.className = 'command-log-detail-full command-log-shell-partial command-log-shell-partial-full';
+      full.dataset.shellPartialId = String(id);
+      full.dataset.shellPartialMode = 'full';
+      full.style.display = 'none';
+      entry.appendChild(full);
+    }
     container.appendChild(entry);
   }
   document.body.appendChild(container);
@@ -259,6 +280,117 @@ describe('hydrateRenderedShellPartials (HS-8015)', () => {
     } finally {
       c.remove();
       state.settings.shell_streaming_enabled = true;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HS-8015 follow-up #2 — twin-pre running-shell layout
+// ---------------------------------------------------------------------------
+//
+// Running-shell rows now mount BOTH a 3-line preview pre + a hidden full
+// pre. The live writer fills both: preview gets the trailing 3 lines so
+// the user sees the most recent output in the line-clamped row; full
+// gets the entire buffer so clicking-to-expand reveals everything. The
+// row is expandable while running because the click handler now treats
+// `isRunningShell` as expandable even when the command line is short.
+
+describe('writePartialIntoPre (HS-8015 follow-up #2)', () => {
+  it('writes the trailing 3 lines into a preview pre (data-shell-partial-mode="preview")', () => {
+    const pre = document.createElement('pre');
+    pre.dataset.shellPartialMode = 'preview';
+    writePartialIntoPre(pre, 'a\nb\nc\nd\ne\n');
+    expect(pre.textContent).toBe('c\nd\ne');
+  });
+
+  it('writes the full stripped buffer into a full pre (data-shell-partial-mode="full")', () => {
+    const pre = document.createElement('pre');
+    pre.dataset.shellPartialMode = 'full';
+    writePartialIntoPre(pre, '\x1b[31mline1\x1b[0m\nline2\nline3\nline4\nline5\n');
+    expect(pre.textContent).toBe('line1\nline2\nline3\nline4\nline5\n');
+  });
+
+  it('falls through to full-buffer when no mode attribute is set (back-compat)', () => {
+    // Keeps the legacy `setupEntriesContainer` (no mode attr) tests above
+    // observing the same "full buffer" behaviour they did pre-fix.
+    const pre = document.createElement('pre');
+    writePartialIntoPre(pre, 'a\nb\nc\nd\n');
+    expect(pre.textContent).toBe('a\nb\nc\nd\n');
+  });
+
+  it('strips ANSI from the buffer in both modes', () => {
+    const preview = document.createElement('pre');
+    preview.dataset.shellPartialMode = 'preview';
+    writePartialIntoPre(preview, '\x1b[31mfoo\x1b[0m\n\x1b[32mbar\x1b[0m\n');
+    expect(preview.textContent).toBe('foo\nbar');
+
+    const full = document.createElement('pre');
+    full.dataset.shellPartialMode = 'full';
+    writePartialIntoPre(full, '\x1b[31mfoo\x1b[0m\n\x1b[32mbar\x1b[0m\n');
+    expect(full.textContent).toBe('foo\nbar\n');
+  });
+});
+
+describe('applyShellPartialEvent — twin-pre wiring (HS-8015 follow-up #2)', () => {
+  beforeEach(() => {
+    state.settings.shell_streaming_enabled = true;
+  });
+
+  it('updates BOTH preview and full pres for a single event', () => {
+    const container = setupEntriesContainer([42], { withFullPre: true });
+    try {
+      const partial = 'a\nb\nc\nd\ne\nf\n';
+      applyShellPartialEvent({ id: 42, partial });
+      const preview = container.querySelector<HTMLElement>('pre[data-shell-partial-mode="preview"]');
+      const full = container.querySelector<HTMLElement>('pre[data-shell-partial-mode="full"]');
+      // Preview: trailing 3 lines (no trailing empty line since the buffer ends in \n).
+      expect(preview?.textContent).toBe('d\ne\nf');
+      // Full: entire stripped buffer including the trailing \n.
+      expect(full?.textContent).toBe(partial);
+    } finally {
+      container.remove();
+    }
+  });
+
+  it('twin pres stay in sync across multiple chunks', () => {
+    const container = setupEntriesContainer([42], { withFullPre: true });
+    try {
+      applyShellPartialEvent({ id: 42, partial: 'one\n' });
+      applyShellPartialEvent({ id: 42, partial: 'one\ntwo\n' });
+      applyShellPartialEvent({ id: 42, partial: 'one\ntwo\nthree\n' });
+      applyShellPartialEvent({ id: 42, partial: 'one\ntwo\nthree\nfour\n' });
+      const preview = container.querySelector<HTMLElement>('pre[data-shell-partial-mode="preview"]');
+      const full = container.querySelector<HTMLElement>('pre[data-shell-partial-mode="full"]');
+      expect(preview?.textContent).toBe('two\nthree\nfour');
+      expect(full?.textContent).toBe('one\ntwo\nthree\nfour\n');
+    } finally {
+      container.remove();
+    }
+  });
+});
+
+describe('hydrateRenderedShellPartials — twin-pre wiring (HS-8015 follow-up #2)', () => {
+  beforeEach(() => {
+    state.settings.shell_streaming_enabled = true;
+  });
+
+  it('repaints both preview and full pres after a wholesale re-render', () => {
+    const container1 = setupEntriesContainer([42], { withFullPre: true });
+    try {
+      applyShellPartialEvent({ id: 42, partial: 'a\nb\nc\nd\ne\n' });
+    } finally {
+      container1.remove();
+    }
+    // Simulate the 5 s loadEntries re-render — fresh DOM with empty pres.
+    const container2 = setupEntriesContainer([42], { withFullPre: true });
+    try {
+      hydrateRenderedShellPartials();
+      const preview = container2.querySelector<HTMLElement>('pre[data-shell-partial-mode="preview"]');
+      const full = container2.querySelector<HTMLElement>('pre[data-shell-partial-mode="full"]');
+      expect(preview?.textContent).toBe('c\nd\ne');
+      expect(full?.textContent).toBe('a\nb\nc\nd\ne\n');
+    } finally {
+      container2.remove();
     }
   });
 });

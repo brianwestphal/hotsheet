@@ -44,7 +44,6 @@ import {
   type Detector,
   disposeDetector,
   markDetectorClosed,
-  markDetectorSuppressed,
   notifyChunk,
   notifyUserKeystroke,
   SCAN_ROW_COUNT,
@@ -1800,12 +1799,6 @@ function kickPromptDetector(inst: TerminalInstance): void {
           onSend: sendToPty,
           onClose() {
             markDetectorClosed(detector);
-          },
-          onDismissAsNonPrompt() {
-            markDetectorSuppressed(detector);
-            // HS-7986 — surface the resume chip so the user has a one-click
-            // way to re-arm detection without typing into the terminal.
-            inst.promptResumeChip.style.display = '';
           },
           onAddAllowRule(choiceIndex, choiceLabel) {
             // HS-7987 — fire-and-forget rule persist. Errors are swallowed

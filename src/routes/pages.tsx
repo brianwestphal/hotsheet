@@ -267,7 +267,18 @@ pageRoutes.get('/', (c) => {
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 8h2"/><path d="M6 12h2"/></svg>
                     </button>
                   </label>
-                  <textarea id="detail-details" rows={6} placeholder="Add details..." spellCheck="true"></textarea>
+                  {/* HS-8020 — when the user isn't editing, show a markdown-
+                      rendered view of the details (mirrors how notes already
+                      render). The two siblings sit on top of each other in
+                      DOM order; CSS shows one based on the parent
+                      `.detail-details-wrap.is-editing` class, which the
+                      detail.tsx click+blur handlers toggle. Empty rendered
+                      view falls through to a `:empty::before` placeholder
+                      so a brand-new ticket still reads as click-to-edit. */}
+                  <div className="detail-details-wrap">
+                    <div id="detail-details-rendered" className="detail-details-rendered note-markdown" tabIndex={0}></div>
+                    <textarea id="detail-details" rows={6} placeholder="Add details..." spellCheck="true"></textarea>
+                  </div>
                 </div>
                 <div className="detail-field detail-field-full">
                   <label>Tags</label>
@@ -689,7 +700,15 @@ pageRoutes.get('/', (c) => {
                     <label><input type="radio" name="settings-quit-confirm-mode" value="with-non-exempt-processes" defaultChecked /> Only if there are processes other than the login shell and not in the exempt list:</label>
                   </div>
                   <textarea id="settings-quit-confirm-exempt" className="settings-textarea settings-quit-confirm-exempt" rows={6} placeholder={'screen\ntmux\nless\nmore\nview\nmandoc\ntail\nlog\ntop\nhtop'}></textarea>
-                  <button type="button" id="settings-quit-confirm-reset" className="btn btn-sm" style="margin-top:6px">Reset exempt list to defaults</button>
+                  {/* HS-8023 — text-link-styled reset that flows BELOW the textarea
+                      (was an outlined `btn btn-sm` floating to the right of the
+                      <textarea>'s natural inline-block layout). Wrapped in a
+                      block <div> so it always lands on its own line, and the
+                      `settings-link-action` class drops the border + uses the
+                      muted secondary text colour. */}
+                  <div className="settings-quit-confirm-reset-row">
+                    <button type="button" id="settings-quit-confirm-reset" className="settings-link-action">Reset exempt list to defaults</button>
+                  </div>
                 </div>
               </div>
             </div>

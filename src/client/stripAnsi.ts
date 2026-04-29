@@ -6,11 +6,11 @@
  * conservative — it only collapses sequences we recognise; unknown
  * escapes stay in place rather than corrupting characters.
  *
- * (HS-8015 removed the sidebar partial-preview consumer; only the
- * Commands Log live render remains. `tailLines` lived alongside this
- * helper to truncate the sidebar preview to the trailing 1–2 lines and
- * was deleted with that path — the Commands Log writes the full
- * stripped buffer into a scrollable `<pre>`.)
+ * `tailLines` was originally deleted with HS-8015's sidebar-preview
+ * removal, then restored by HS-8015 follow-up #2 when the running-shell
+ * Commands Log entry started rendering a 3-line live preview alongside
+ * the full pre — collapsed rows show only the most recent few lines,
+ * expanded rows show the full live buffer.
  *
  * See `docs/53-streaming-shell-output.md` §53.5 Phase 3.
  */
@@ -35,4 +35,18 @@ export function stripAnsi(input: string): string {
     .replace(SIMPLE_ESC_RX, '')
     .replace(BACKSPACE_RX, '')
     .replace(CR_BUT_NOT_CRLF_RX, '\n');
+}
+
+/**
+ * Return the trailing `maxLines` lines of `text`. A final empty line
+ * caused by a trailing newline is dropped first so a buffer ending in
+ * `\n` returns the visually-meaningful tail rather than `(N-1) lines + ''`.
+ *
+ * `maxLines <= 0` → empty string. Empty input → empty string.
+ */
+export function tailLines(text: string, maxLines: number): string {
+  if (maxLines <= 0 || text === '') return '';
+  const lines = text.split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  return lines.slice(-maxLines).join('\n');
 }
