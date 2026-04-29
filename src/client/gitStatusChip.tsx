@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { repositionGitStatusPopover, toggleGitStatusPopover } from './gitStatusPopover.js';
+import { getActiveProject } from './state.js';
 
 /**
  * HS-7954 — sidebar git status chip. Subscribes to (a) the existing
@@ -35,8 +36,30 @@ let chipEl: HTMLElement | null = null;
 let branchEl: HTMLElement | null = null;
 let countsEl: HTMLElement | null = null;
 let lastStatus: GitStatusJson | null = null;
-let inFlight = false;
-let inFlightPromise: Promise<void> | null = null;
+/**
+ * HS-7993 — secret of the project whose status is currently shown by the
+ * chip. Mismatched against `getActiveProject()?.secret` at the top of every
+ * refresh; when they differ the cached value for the new project (or null)
+ * is swapped in IMMEDIATELY before the API call so the user never sees the
+ * previous project's stale state during the in-flight gap.
+ */
+let lastStatusSecret: string | null = null;
+/**
+ * HS-7993 — per-project status cache so a project switch is instant for any
+ * project the user has visited at least once in the session. The active
+ * project's entry is freshened by every successful API call. Session-only
+ * (cleared on full reload) — fine because the worst case is one cold fetch
+ * per project at startup.
+ */
+const lastStatusBySecret = new Map<string, GitStatusJson | null>();
+/**
+ * HS-7993 — coalesce concurrent refreshes WITHIN the same project (e.g.
+ * window.focus + a poll-version-bump landing in the same tick). Cross-
+ * project refreshes get their own entry because `/git/status` is per-
+ * project; coalescing across projects would have the user staring at the
+ * old project's data while a stale request finishes.
+ */
+const inFlightByKey = new Map<string, Promise<void>>();
 
 /** Public — call once at app boot to wire the chip. */
 export function initGitStatusChip(): void {
@@ -69,26 +92,70 @@ export function refreshGitStatusChip(): void {
   void refresh();
 }
 
+/**
+ * Pure: pick the value to display when the active project just switched.
+ * Returns the cached status for `newSecret` (or null on first visit), so
+ * the chip can repaint synchronously before the async API refresh lands.
+ * Exported for testability — the rest of `refresh()` is DOM/network-bound.
+ *
+ * HS-7993 — see `docs/48-git-status-tracker.md` §48.6.
+ */
+export function pickDisplayStatusOnProjectSwitch(
+  newSecret: string | null,
+  cache: ReadonlyMap<string, GitStatusJson | null>,
+): GitStatusJson | null {
+  if (newSecret === null) return null;
+  return cache.has(newSecret) ? cache.get(newSecret) ?? null : null;
+}
+
 async function refresh(): Promise<void> {
   if (chipEl === null) return;
-  // Coalesce concurrent refresh requests (e.g. focus + poll-bump within
-  // the same tick) so we don't multi-spawn the API call.
-  if (inFlight && inFlightPromise !== null) return inFlightPromise;
-  inFlight = true;
-  inFlightPromise = (async () => {
+  const currentSecret = getActiveProject()?.secret ?? null;
+
+  // HS-7993 — instant project switch. When the active project changed since
+  // we last rendered, swap to the cached value for the new project (or
+  // null when first visit) before firing the API call. Without this, the
+  // chip would keep showing the previous project's branch + dirty count
+  // for the duration of the round-trip — exactly the "doesn't seem to
+  // update when switching projects" complaint.
+  if (currentSecret !== lastStatusSecret) {
+    lastStatusSecret = currentSecret;
+    lastStatus = pickDisplayStatusOnProjectSwitch(currentSecret, lastStatusBySecret);
+    render();
+  }
+
+  // Coalesce concurrent refreshes for the SAME project. A switch to a
+  // different project gets its own request because `/git/status` is
+  // per-project — sharing the in-flight promise would resolve the new
+  // request with the old project's response.
+  const flightKey = currentSecret ?? '__none__';
+  const existing = inFlightByKey.get(flightKey);
+  if (existing !== undefined) return existing;
+
+  const promise = (async () => {
     try {
       const data = await api<GitStatusJson | null>('/git/status');
-      lastStatus = data;
-      render();
+      // Stamp the per-project cache. `api()` captures the active project
+      // secret at URL-build time, so even if the user switched mid-flight
+      // the response still belongs to `currentSecret`.
+      if (currentSecret !== null) lastStatusBySecret.set(currentSecret, data);
+      // Only re-render when the chip is still on the same project — if
+      // the user already switched away we'd flicker the new project's
+      // chip with the old project's data.
+      const nowSecret = getActiveProject()?.secret ?? null;
+      if (nowSecret === currentSecret) {
+        lastStatus = data;
+        render();
+      }
     } catch {
       // Network error — don't tear down the existing chip; keep the last
       // good state and try again on the next trigger.
     } finally {
-      inFlight = false;
-      inFlightPromise = null;
+      inFlightByKey.delete(flightKey);
     }
   })();
-  return inFlightPromise;
+  inFlightByKey.set(flightKey, promise);
+  return promise;
 }
 
 /** Pure: compute the tint class for a status. Exported for tests. */

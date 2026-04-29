@@ -5833,6 +5833,14 @@ body.terminal-dashboard-active {
   border-radius: var(--radius);
   border-left: 3px solid var(--accent);
   cursor: pointer;
+  // HS-7994 — flex items default to `min-width: auto`, which lets the
+  // child stretch the container when its intrinsic width exceeds the flex
+  // line. Without this override, a wide GFM table inside the note would
+  // push `.note-entry` past the detail-panel bounds and the
+  // `.note-markdown table { overflow-x: auto }` rule had nothing to clip
+  // against. `min-width: 0` lets the flex item respect the column width
+  // so the table's overflow-x kicks in.
+  min-width: 0;
 
   &:hover { background: var(--bg-hover); }
 
@@ -6272,6 +6280,32 @@ body.terminal-dashboard-active {
   blockquote { border-left: 3px solid var(--border); padding-left: 12px; margin: 4px 0; color: var(--text-muted); }
   a { color: var(--accent); text-decoration: none; &:hover { text-decoration: underline; } }
   img { max-width: 100%; height: auto; border-radius: var(--radius); }
+
+  // HS-7994 — GFM tables in notes had no styling, so columns ran together
+  // with zero spacing and a wide table happily overflowed the detail-panel
+  // width (which is narrow on the right-hand surface). `display: block` +
+  // `overflow-x: auto` lets the table scroll horizontally inside its
+  // container instead of pushing past the bounds; cell padding + a
+  // 1 px border give the columns visible separation. Header row picks up
+  // `--bg-secondary` so it reads as a header without inventing a new
+  // colour token.
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    margin: 6px 0;
+  }
+  th, td {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: var(--bg-secondary);
+    font-weight: 600;
+  }
 }
 
 // --- Command Log Panel ---

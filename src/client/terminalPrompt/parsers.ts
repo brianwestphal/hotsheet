@@ -141,7 +141,15 @@ export function isClaudeNumberedFooter(line: string): boolean {
   return NUMBERED_FOOTERS.has(t);
 }
 
-const NUMBERED_OPTION_RX = /^(\s*)([>])?\s*(\d+)\.\s+(.+?)\s*$/;
+// HS-7995 — Recent Claude Code builds render the highlighted-row cursor as
+// `❯` (U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT) rather
+// than the older ASCII `>`. Other CLIs occasionally use the box-drawing
+// triangles `▶` / `►`. Accept any of these so we don't lose the
+// highlight signal — pre-fix the parser still matched the second
+// (non-highlighted) option line, but rejected the prompt because only one
+// of the two rows parsed and the registry requires ≥ 2 contiguous choices.
+const CURSOR_CHARS: ReadonlySet<string> = new Set(['>', '❯', '▶', '►']);
+const NUMBERED_OPTION_RX = /^(\s*)([>❯▶►])?\s*(\d+)\.\s+(.+?)\s*$/;
 
 export const claudeNumberedParser: PromptParser = {
   id: 'claude-numbered',
@@ -159,7 +167,11 @@ export const claudeNumberedParser: PromptParser = {
       const line = trimmed[i];
       const m = NUMBERED_OPTION_RX.exec(line);
       if (m !== null) {
-        const isHighlighted = m[2] === '>';
+        // RegExpExecArray indexes are typed as `string`, but optional
+        // capture groups are actually `undefined` at runtime when the
+        // group didn't match. Set.has() short-circuits the type / runtime
+        // mismatch without needing a non-null assertion.
+        const isHighlighted = CURSOR_CHARS.has(m[2]);
         const digit = parseInt(m[3], 10);
         const label = m[4];
         // Push at the head so final order is top-to-bottom.

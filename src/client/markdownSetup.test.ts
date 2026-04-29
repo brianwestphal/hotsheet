@@ -41,4 +41,22 @@ describe('markdownSetup (HS-7855 / HS-7857)', () => {
     const html = marked.parse('line one\nline two', { async: false });
     expect(html).toMatch(/<br\s*\/?>/);
   });
+
+  // HS-7994 — GFM tables render as a real <table> with <th>/<td>; if marked
+  // ever stops emitting these (or someone disables the gfm option) the
+  // `.note-markdown table` styles in styles.scss have nothing to attach to,
+  // so the spacing-and-overflow fix silently regresses. Lock the contract
+  // here so a future config change trips the test.
+  it('renders GFM tables as <table>/<th>/<td> so the .note-markdown table styles apply (HS-7994)', () => {
+    const md = [
+      '| keyword     | painted | resolved |',
+      '|-------------|---------|----------|',
+      '| serif       | 8.0     | Times    |',
+      '| sans-serif  | 8.91    | Helvetica|',
+    ].join('\n');
+    const html = marked.parse(md, { async: false });
+    expect(html).toMatch(/<table[^>]*>/);
+    expect(html).toMatch(/<thead[^>]*>[\s\S]*<th[^>]*>\s*keyword\s*<\/th>/);
+    expect(html).toMatch(/<tbody[^>]*>[\s\S]*<td[^>]*>\s*serif\s*<\/td>/);
+  });
 });

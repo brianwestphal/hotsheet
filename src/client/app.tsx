@@ -14,7 +14,7 @@ import { initDbRecoveryBanner } from './dbRecoveryBanner.js';
 import { applyDetailPosition, applyDetailSize, closeDetail, initResize, openDetail, openDetailAndFocusNote, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
-import { initGitStatusChip } from './gitStatusChip.js';
+import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { bindOpenFolder } from './openFolder.js';
 import { startLongPoll } from './poll.js';
@@ -127,6 +127,13 @@ async function reloadAppState() {
   void loadAppName();
   suppressAnimation();
   await loadTickets();
+  // HS-7993 — refresh the sidebar git chip on every project switch. Without
+  // this, the chip stayed showing the previous project's branch / dirty
+  // count until the next poll-version bump (which only fires when SOMETHING
+  // mutates server-side) or a window.focus event. The chip itself swaps to
+  // the cached value for the new project synchronously and uses this
+  // refresh to freshen the cache.
+  refreshGitStatusChip();
   // Refresh command log for the new project context
   refreshCommandLog();
   // Tear down the old project's terminals, rebuild for the new project, and

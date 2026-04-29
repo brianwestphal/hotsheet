@@ -228,8 +228,11 @@ describe('GET /shell/running', () => {
   it('returns empty ids when no processes running', async () => {
     const res = await app.request('/api/shell/running');
     expect(res.status).toBe(200);
-    const data = await res.json() as { ids: number[] };
+    const data = await res.json() as { ids: number[]; outputs?: Record<number, string> };
     expect(data.ids).toEqual([]);
+    // HS-7982 — `outputs` must always be present (even when empty) so
+    // clients can rely on its existence without optional chaining gymnastics.
+    expect(data.outputs).toEqual({});
   });
 
   it('returns IDs of all running processes', async () => {
@@ -242,5 +245,73 @@ describe('GET /shell/running', () => {
     const data = await res.json() as { ids: number[] };
     expect(data.ids).toContain(id1);
     expect(data.ids).toContain(id2);
+  });
+
+  // HS-7982 Phase 2 — partial-output buffer surfaced via /shell/running.
+  it('exposes the in-flight partial output via the `outputs` map', async () => {
+    const execRes = await app.request('/api/shell/exec', post({ command: 'sleep 30' }));
+    const { id } = await execRes.json() as { id: number };
+    // Emit a chunk WITHOUT closing — the process is still "running" from
+    // the route's perspective, so the buffer should be visible.
+    lastSpawnedChild.stdout.emit('data', Buffer.from('first chunk\n'));
+    lastSpawnedChild.stdout.emit('data', Buffer.from('second chunk\n'));
+    lastSpawnedChild.stderr.emit('data', Buffer.from('stderr line\n'));
+
+    const res = await app.request('/api/shell/running');
+    const data = await res.json() as { ids: number[]; outputs: Record<number, string> };
+    expect(data.ids).toContain(id);
+    expect(data.outputs[id]).toBe('first chunk\nsecond chunk\nstderr line\n');
+  });
+
+  it('drops the partial buffer entry once the process closes', async () => {
+    const execRes = await app.request('/api/shell/exec', post({ command: 'echo done' }));
+    const { id } = await execRes.json() as { id: number };
+    lastSpawnedChild.stdout.emit('data', Buffer.from('output text\n'));
+    // Mid-run partial is visible.
+    let res = await app.request('/api/shell/running');
+    let data = await res.json() as { ids: number[]; outputs: Record<number, string> };
+    expect(data.outputs[id]).toBe('output text\n');
+
+    lastSpawnedChild.emit('close', 0, null);
+    await new Promise(r => setTimeout(r, 50));
+
+    res = await app.request('/api/shell/running');
+    data = await res.json() as { ids: number[]; outputs: Record<number, string> };
+    expect(data.ids).not.toContain(id);
+    expect(data.outputs[id]).toBeUndefined();
+  });
+});
+
+describe('appendPartialOutput (HS-7982)', () => {
+  it('appends chunks below the cap verbatim', async () => {
+    const { appendPartialOutput } = await import('./shell.js');
+    expect(appendPartialOutput('', 'hello ')).toBe('hello ');
+    expect(appendPartialOutput('hello ', 'world')).toBe('hello world');
+  });
+
+  it('truncates the HEAD with the [output truncated] marker when the cap is exceeded', async () => {
+    const { appendPartialOutput } = await import('./shell.js');
+    // Build a 3 MB string then append a 2 MB chunk → 5 MB > 4 MB cap.
+    const big = 'A'.repeat(3 * 1024 * 1024);
+    const more = 'B'.repeat(2 * 1024 * 1024);
+    const result = appendPartialOutput(big, more);
+    // Result is exactly the cap.
+    expect(result.length).toBe(4 * 1024 * 1024);
+    expect(result.startsWith('[output truncated]\n')).toBe(true);
+    // The MOST RECENT bytes are preserved — the trailing portion of `more`
+    // is at the end.
+    expect(result.endsWith('B'.repeat(64))).toBe(true);
+    // Some `A` content is dropped from the head.
+    const truncatedAs = result.match(/A+/g)?.[0]?.length ?? 0;
+    expect(truncatedAs).toBeLessThan(3 * 1024 * 1024);
+  });
+
+  it('handles a single chunk that itself exceeds the cap', async () => {
+    const { appendPartialOutput } = await import('./shell.js');
+    const huge = 'C'.repeat(5 * 1024 * 1024);
+    const result = appendPartialOutput('', huge);
+    expect(result.length).toBe(4 * 1024 * 1024);
+    expect(result.startsWith('[output truncated]\n')).toBe(true);
+    expect(result.endsWith('C')).toBe(true);
   });
 });

@@ -8,6 +8,7 @@ import {
   ensureSkills,
   initSkills,
   parseVersionHeader,
+  regenerateMainSkill,
   setSkillCategories,
   SKILL_VERSION,
   updateFile,
@@ -183,6 +184,61 @@ describe('ensureClaudeSkills', () => {
     rmSync(join(tempDir, '.claude'), { recursive: true, force: true });
     const platforms = ensureSkills();
     expect(platforms).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // HS-7992 — `hotsheet_skill_clear_context` toggle
+  // -------------------------------------------------------------------------
+
+  it('omits the /clear prefix from the main skill body when the setting is absent / false (HS-7992)', () => {
+    ensureSkills();
+    const skillPath = join(tempDir, '.claude', 'skills', 'hotsheet', 'SKILL.md');
+    const content = readFileSync(skillPath, 'utf-8');
+    // The body should NOT start with `/clear` when the flag is missing.
+    const body = content.split('---').slice(2).join('---');
+    expect(body).not.toMatch(/^\s*<!-- hotsheet-skill-version: \d+ -->\s*\n\s*\/clear\b/);
+    expect(content).not.toMatch(/^\/clear$/m);
+  });
+
+  it('prepends `/clear` as the first body line when the setting is true (HS-7992)', () => {
+    writeFileSync(
+      join(settingsDir, 'settings.json'),
+      JSON.stringify({ secret: 'test-secret', port: 4174, hotsheet_skill_clear_context: true }),
+    );
+    ensureSkills();
+    const skillPath = join(tempDir, '.claude', 'skills', 'hotsheet', 'SKILL.md');
+    const content = readFileSync(skillPath, 'utf-8');
+    // First non-frontmatter, non-version-header content line should be `/clear`.
+    const lines = content.split('\n');
+    const versionIdx = lines.findIndex(l => l.startsWith('<!-- hotsheet-skill-version:'));
+    expect(versionIdx).toBeGreaterThanOrEqual(0);
+    expect(lines[versionIdx + 1]).toBe('');
+    expect(lines[versionIdx + 2]).toBe('/clear');
+  });
+
+  it('regenerateMainSkill rewrites the main skill body even when the version is current (HS-7992)', () => {
+    // First pass — flag off, file gets the no-/clear body. Version stamp
+    // matches SKILL_VERSION so a normal `ensureSkills` would skip on a
+    // second call.
+    ensureSkills();
+    const skillPath = join(tempDir, '.claude', 'skills', 'hotsheet', 'SKILL.md');
+    const before = readFileSync(skillPath, 'utf-8');
+    expect(before).not.toContain('\n/clear\n');
+
+    // Flip the flag and force-regenerate. The version-check guard would
+    // normally skip an in-place rewrite — `regenerateMainSkill` bypasses
+    // it for exactly this case.
+    writeFileSync(
+      join(settingsDir, 'settings.json'),
+      JSON.stringify({ secret: 'test-secret', port: 4174, hotsheet_skill_clear_context: true }),
+    );
+    regenerateMainSkill(tempDir);
+    const after = readFileSync(skillPath, 'utf-8');
+    expect(after).toContain('\n/clear\n');
+    // Per-type ticket skills should be untouched (we only rewrite the main
+    // hotsheet skill).
+    const bugSkill = readFileSync(join(tempDir, '.claude', 'skills', 'hs-bug', 'SKILL.md'), 'utf-8');
+    expect(bugSkill).not.toContain('\n/clear\n');
   });
 });
 

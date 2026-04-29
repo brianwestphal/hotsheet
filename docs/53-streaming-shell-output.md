@@ -1,6 +1,8 @@
 # 53. Streaming shell-command output (HS-7981 design)
 
-**Status: design only.** Investigation of whether/how to stream `child_process.spawn` output for custom shell commands so command rows in the sidebar (and the Commands Log entry) update incrementally instead of jumping from "running" to "done" with all output appearing at the end.
+**Status:** Phase 1 + 2 shipped (HS-7982). Phase 3 (client wiring — sidebar preview + Commands Log live render) and Phase 4 (`shell_streaming_enabled` setting + first-use toast) deferred to HS-7983 / HS-7984. The server-side partial-output buffer + extended `/api/shell/running` endpoint are in place; today's clients ignore the new `outputs` field and continue to work as before.
+
+Investigation of whether/how to stream `child_process.spawn` output for custom shell commands so command rows in the sidebar (and the Commands Log entry) update incrementally instead of jumping from "running" to "done" with all output appearing at the end.
 
 ## §53.1 Today's behaviour
 
@@ -73,16 +75,17 @@ Reasoning:
 
 ## §53.5 Concrete plan (when picked up)
 
-### Phase 1 — Server-side partial-output buffer
+### Phase 1 — Server-side partial-output buffer **[shipped HS-7982]**
 
-- `src/routes/shell.ts` — add `const partialOutputs = new Map<number, string>()` keyed on log id. The existing `child.stdout.on('data', d => output += d.toString())` chain also writes to `partialOutputs.set(id, output)`.
-- On `child.on('close')`, after the final `updateLogEntry` write, `partialOutputs.delete(id)`.
-- Bound buffer size: `if (partialOutputs.get(id).length > 4 * 1024 * 1024) { /* truncate head */ }`.
+- `src/routes/shell.ts` adds `const partialOutputs = new Map<number, string>()` keyed on log id. Both `child.stdout.on('data', ...)` and `child.stderr.on('data', ...)` chains call `recordPartialChunk(logId, chunk)` alongside the per-stream `stdout` / `stderr` accumulators.
+- `child.on('close')` deletes the entry after the final `updateLogEntry` write. `child.on('error')` also deletes so a failed-to-spawn command doesn't leak.
+- 4 MB cap enforced by the pure helper `appendPartialOutput(prev, chunk)`. When the post-append length would exceed `PARTIAL_OUTPUT_CAP` (4 MB) the result is truncated from the HEAD with a `[output truncated]\n` marker prepended — the most recent bytes are always preserved. Helper is exported for unit tests.
 
-### Phase 2 — Combined running + output endpoint
+### Phase 2 — Extended `/api/shell/running` endpoint **[shipped HS-7982]**
 
-- `GET /api/shell/running` already returns `{ ids: number[] }`. Extend to `{ ids, outputs: Record<number, string> }` where `outputs[id]` is the COMPLETE current partial buffer (client trims by offset). Backward-compatible: clients ignoring the new field still work.
-- Or, less expensive: `GET /api/shell/output?ids=1,2,3&offsets=100,0,500` returns `{ outputs: { '1': { partial: 'xyz', total_length: 150 }, ... } }`. Client tracks offsets and only fetches deltas. More complex but cheaper for big outputs.
+- Response shape changed from `{ ids: number[] }` to `{ ids: number[]; outputs: Record<number, string> }` where `outputs[id]` is the COMPLETE current partial buffer for each running id. The endpoint always emits `outputs` (`{}` when no processes are running) so consumers don't need optional-chaining.
+- Backwards compatible: clients ignoring the new field continue to work — verified by the existing `commandSidebar.tsx::startShellPoll` continuing to use only `ids`.
+- The delta-protocol alternative (`GET /api/shell/output?ids=...&offsets=...`) was rejected as a v1 over-spec; the 4 MB cap keeps the simple full-buffer approach affordable. Revisit if profiling shows the poll payload getting unwieldy.
 
 ### Phase 3 — Client wiring
 

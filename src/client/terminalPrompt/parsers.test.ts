@@ -97,6 +97,63 @@ describe('claudeNumberedParser (HS-7971) — happy paths', () => {
     expect(result.signature).toMatch(/^claude-numbered:[0-9a-f]{8}:0$/);
   });
 
+  // HS-7995 — Recent Claude Code builds render the highlighted-row cursor as
+  // `❯` (U+276F) rather than `>`. Pre-fix the parser still matched the
+  // non-highlighted option line, but the highlighted row failed the regex,
+  // leaving only one parsed choice → the prompt was silently rejected and
+  // no overlay surfaced. This is the EXACT byte-stream shape observed via
+  // `script(1)` capture of `claude --dangerously-load-development-channels`.
+  it('parses the production dev-channels prompt with `❯` cursor (HS-7995)', () => {
+    const rows = [
+      '  WARNING: Loading development channels',
+      '',
+      '  --dangerously-load-development-channels is for local channel development',
+      '  only. Do not use this option to run channels you have downloaded off the',
+      '  internet.',
+      '',
+      '  Please use --channels to run a list of approved channels.',
+      '',
+      '  Channels: server:test',
+      '',
+      '  ❯ 1. I am using this for local development',
+      '    2. Exit',
+      '',
+      '  Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    expect(result).not.toBeNull();
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.choices).toHaveLength(2);
+    expect(result.choices[0]).toEqual({
+      index: 0,
+      label: 'I am using this for local development',
+      highlighted: true,
+    });
+    expect(result.choices[1]).toEqual({
+      index: 1,
+      label: 'Exit',
+      highlighted: false,
+    });
+    expect(result.signature).toMatch(/^claude-numbered:[0-9a-f]{8}:0$/);
+  });
+
+  it('treats `▶` and `►` as cursor markers too (HS-7995 follow-up — robustness)', () => {
+    for (const cursor of ['▶', '►']) {
+      const rows = [
+        'Pick',
+        '',
+        `${cursor} 1. A`,
+        '  2. B',
+        '',
+        'Enter to confirm · Esc to cancel',
+      ];
+      const result = claudeNumberedParser.match(rows);
+      if (result?.shape !== 'numbered') throw new Error(`expected numbered for ${cursor}`);
+      expect(result.choices[0].highlighted).toBe(true);
+      expect(result.choices[1].highlighted).toBe(false);
+    }
+  });
+
   it('handles the second option being highlighted', () => {
     const rows = [
       'Pick one',

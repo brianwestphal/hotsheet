@@ -56,9 +56,11 @@ Kill a running shell process.
 
 ### GET /api/shell/running
 
-List currently running shell process IDs.
+List currently running shell process IDs and their accumulated partial output.
 
-- **Response**: `{ ids: number[] }` — array of command_log entry IDs with active processes
+- **Response**: `{ ids: number[]; outputs: Record<number, string> }`
+  - `ids` — array of command_log entry IDs with active processes
+  - `outputs` — map of `id → partial output string` (HS-7982). The string is the complete chunk-stream accumulated so far for each running process, capped at 4 MB per command (head-truncated with a `[output truncated]\n` marker). The map is always present (`{}` when no processes are running) and the entry is dropped from the map as soon as the process emits `close`. Backward compatible — clients ignoring `outputs` continue to work as before. See [53-streaming-shell-output.md](53-streaming-shell-output.md) for the design.
 
 ## 15.5 Data Model
 

@@ -139,6 +139,8 @@ The chip subscribes to the existing `/api/poll` long-poll's version stream. When
 
 On tab focus (`window.addEventListener('focus', …)`) the client also refetches once, since the user often alt-tabs from a terminal back to Hot Sheet immediately after running `git commit` and expects to see the change.
 
+**Project switch (HS-7993).** `app.tsx::reloadAppState` calls `refreshGitStatusChip()` on every project switch — pre-fix the chip kept showing the previous project's branch + dirty count until the next poll-version bump or `window.focus`, which the user reported as "doesn't seem to update when switching projects". To make the swap feel instant rather than wait on the round-trip, the chip keeps a per-project `Map<projectSecret, GitStatusJson | null>` cache: on every refresh the secret is compared against `lastStatusSecret`, and on mismatch the cached value for the new project (or null on first visit) is rendered synchronously before the fetch lands. The `pure pickDisplayStatusOnProjectSwitch(newSecret, cache)` helper (exported for tests) encapsulates the cache-vs-null decision. In-flight requests are coalesced per-project (`inFlightByKey: Map<key, Promise>`) — sharing a promise across projects would resolve the new request with the old project's response. The mid-flight project-switch race is handled by stamping the cache with the secret captured at request-fire time and only re-rendering when the fetch completes for what's still the active project.
+
 ### 48.4.4 Tauri-safe interactions
 
 - The chip is rendered server-side in `pages.tsx`; the click handler lives in client code.

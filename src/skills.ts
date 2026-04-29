@@ -95,7 +95,15 @@ function mainSkillBody(projectRoot: string): string {
   const dataDir = join(projectRoot, '.hotsheet');
   const worklistRel = relative(projectRoot, join(dataDir, 'worklist.md'));
   const settingsRel = relative(projectRoot, join(dataDir, 'settings.json'));
+  // HS-7992 — when the per-project `hotsheet_skill_clear_context` flag is on,
+  // prepend `/clear` as the first line of the body so Claude Code clears its
+  // context before processing the worklist. Off by default — opt-in only.
+  const settings = readFileSettings(dataDir);
+  const clearPrefix: string[] = settings.hotsheet_skill_clear_context === true
+    ? ['/clear', '']
+    : [];
   return [
+    ...clearPrefix,
     `Base directory for this skill: ${join(projectRoot, '.claude', 'skills', 'hotsheet')}`,
     '',
     `Read \`${worklistRel}\` and work through the tickets in priority order.`,
@@ -111,6 +119,54 @@ function mainSkillBody(projectRoot: string): string {
     '',
     `If API calls fail (connection refused or 403), re-read \`${settingsRel}\` for the current \`port\` and \`secret\` values — you may be connecting to the wrong Hot Sheet instance.`,
   ].join('\n');
+}
+
+/**
+ * HS-7992 — force-regenerate the main `/hotsheet` skill file for every
+ * platform that has been seeded (Claude / Cursor / Copilot / Windsurf).
+ * Bypasses the version-check guard in `updateFile` because the regen here
+ * is triggered by an explicit user action (the General-tab "Clear context
+ * on each /hotsheet" toggle), not an upgrade-time recreate. Only the MAIN
+ * hotsheet skill is rewritten — the per-ticket-type skills don't depend
+ * on the setting.
+ */
+export function regenerateMainSkill(projectRoot: string): void {
+  const body = mainSkillBody(projectRoot);
+  const targets: { path: string; frontmatter: string[] }[] = [
+    {
+      path: join(projectRoot, '.claude', 'skills', 'hotsheet', 'SKILL.md'),
+      frontmatter: [
+        'name: hotsheet',
+        'description: Read the Hot Sheet worklist and work through the current priority items',
+        'allowed-tools: Read, Grep, Glob, Edit, Write, Bash',
+      ],
+    },
+    {
+      path: join(projectRoot, '.cursor', 'rules', 'hotsheet.mdc'),
+      frontmatter: [
+        'description: Read the Hot Sheet worklist and work through the current priority items',
+        'alwaysApply: false',
+      ],
+    },
+    {
+      path: join(projectRoot, '.github', 'prompts', 'hotsheet.prompt.md'),
+      frontmatter: [
+        'description: Read the Hot Sheet worklist and work through the current priority items',
+      ],
+    },
+    {
+      path: join(projectRoot, '.windsurf', 'rules', 'hotsheet.md'),
+      frontmatter: [
+        'trigger: manual',
+        'description: Read the Hot Sheet worklist and work through the current priority items',
+      ],
+    },
+  ];
+  for (const target of targets) {
+    if (!existsSync(target.path)) continue;
+    const content = ['---', ...target.frontmatter, '---', versionHeader(), '', body, ''].join('\n');
+    writeFileSync(target.path, content, 'utf-8');
+  }
 }
 
 // --- Claude Code permissions (.claude/settings.json) ---

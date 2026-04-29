@@ -103,8 +103,8 @@ Bundled v1 parsers, in registry order:
 
 1. **`claude-numbered`** — last 10 rows contain
    - `Enter to confirm · Esc to cancel` on the trailing non-empty row
-   - One or more `^(\s*[>]?\s+)\d+\.\s+(.+)$` rows above it
-   - The first `^>` marks the highlighted option.
+   - One or more `^(\s*[>❯▶►]?\s*)\d+\.\s+(.+)$` rows above it
+   - The leading cursor (any of `>`, `❯`, `▶`, `►`) marks the highlighted option. Modern Claude Code builds render the cursor as `❯` (U+276F); pre-HS-7995 the parser only recognised the legacy ASCII `>` and silently dropped the highlighted row, so prompts with two options never met the ≥ 2 contiguous-choice threshold and the overlay never surfaced.
    `payloadFor({index})` emits `(\x1b[B){index − highlightedIndex}\r` for forward / `(\x1b[A){...}\r` for backward, then `\r`. The Esc fallback writes `\x1b`.
 
 2. **`yesno`** — last visible row matches `/[\(\[][YyNn]\/[YyNn][\)\]]\s*$/`. Emits `y\r` or `n\r` matching the surface case (preserves `Y` vs `y`).
@@ -119,7 +119,7 @@ A new component `src/client/terminalPromptOverlay.tsx`. The overlay is **anchore
 
 Layout per shape:
 
-- **Numbered.** Question (one line, monospace). Vertical list of clickable rows — the highlighted option carries a tinted background to mirror the `>` cursor. Pressing the row sends the payload + closes the overlay. Footer: "Always allow this answer" checkbox + "Cancel" link (writes `\x1b` to the PTY).
+- **Numbered.** Question (one line, monospace). Vertical list of clickable rows — the highlighted option carries a tinted background to mirror the `❯` / `>` cursor. Pressing the row sends the payload + closes the overlay. Footer: "Always allow this answer" checkbox + "Cancel" link (writes `\x1b` to the PTY).
 - **Yes/no.** Question. Two big buttons (Yes = green, No = red, accent-checked colours from existing `permission-popup-allow` / `-deny`). Same footer.
 - **Generic.** Monospaced `<pre>` reproducing `rawText` (max-height 240 px, scrollable). Single-line `<input type="text">` with placeholder "Type your response, then press Enter". Submit button. **Always-allow checkbox is hidden** — generic responses don't have a stable signature.
 

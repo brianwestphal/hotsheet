@@ -459,6 +459,13 @@ pageRoutes.get('/', (c) => {
                 <label><input type="checkbox" id="settings-hide-verified-column" /> Hide Verified column in column view</label>
                 <span className="settings-hint">Hides the Verified column in column view. Verified tickets will appear in the Completed column instead.</span>
               </div>
+              {/* HS-7992 — when checked, the generated /hotsheet skill body is
+                  prefixed with `/clear` so Claude Code clears its context
+                  before reading the worklist. Per-project, default off. */}
+              <div className="settings-field settings-field-checkbox">
+                <label><input type="checkbox" id="settings-hotsheet-skill-clear-context" /> Clear context on each /hotsheet</label>
+                <span className="settings-hint">Adds <code>/clear</code> as the first line of the generated <code>/hotsheet</code> skill so Claude Code clears its context before processing the worklist. The skill file regenerates on save.</span>
+              </div>
               <div className="settings-field">
                 <label>When Claude needs permission</label>
                 <select id="settings-notify-permission">

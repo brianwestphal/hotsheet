@@ -19,6 +19,38 @@ const runningProcesses = new Map<number, ChildProcess>();
  *  Modified by: /shell/kill (add), child.on('close') (remove). */
 const killedProcesses = new Set<number>();
 
+/**
+ * HS-7982 — partial-output buffer keyed on log id. Mirrors the same chunks
+ * the per-stream `stdout` / `stderr` accumulators receive, but interleaved
+ * in event order so a polling client sees output in roughly the same
+ * sequence the user would see it in a real terminal. Cleared on
+ * `child.on('close')` / `child.on('error')`.
+ *
+ * Capped at `PARTIAL_OUTPUT_CAP` bytes per command — when a chatty command
+ * exceeds the cap we drop the HEAD (oldest) bytes and prepend a one-line
+ * `[output truncated]\n` marker so the most recent output is always
+ * readable. Without the cap a single `yes` invocation could OOM the
+ * server.
+ *
+ * See `docs/53-streaming-shell-output.md` §53.5 Phase 1.
+ */
+const partialOutputs = new Map<number, string>();
+const PARTIAL_OUTPUT_CAP = 4 * 1024 * 1024;
+const PARTIAL_TRUNCATION_MARKER = '[output truncated]\n';
+
+/** Pure helper — append a chunk to the existing partial, applying the
+ *  head-truncation cap. Exported for testability. */
+export function appendPartialOutput(prev: string, chunk: string): string {
+  const next = prev + chunk;
+  if (next.length <= PARTIAL_OUTPUT_CAP) return next;
+  const keep = PARTIAL_OUTPUT_CAP - PARTIAL_TRUNCATION_MARKER.length;
+  return PARTIAL_TRUNCATION_MARKER + next.slice(next.length - keep);
+}
+
+function recordPartialChunk(id: number, chunk: string): void {
+  partialOutputs.set(id, appendPartialOutput(partialOutputs.get(id) ?? '', chunk));
+}
+
 shellRoutes.post('/shell/exec', async (c) => {
   const { spawn } = await import('child_process');
   const dataDir = c.get('dataDir');
@@ -44,17 +76,26 @@ shellRoutes.post('/shell/exec', async (c) => {
   let stderr = '';
 
   child.stdout.on('data', (data: Buffer) => {
-    stdout += data.toString();
+    const chunk = data.toString();
+    stdout += chunk;
+    // HS-7982 — keep the partial buffer in sync with the per-stream
+    // accumulator so polling clients see chunks as they arrive.
+    recordPartialChunk(logId, chunk);
   });
 
   child.stderr.on('data', (data: Buffer) => {
-    stderr += data.toString();
+    const chunk = data.toString();
+    stderr += chunk;
+    recordPartialChunk(logId, chunk);
   });
 
   child.on('close', (code, signal) => {
     runningProcesses.delete(logId);
     const wasCanceled = killedProcesses.has(logId);
     killedProcesses.delete(logId);
+    // HS-7982 — final detail is written to the log entry below; drop the
+    // streaming buffer so a long-finished command doesn't keep memory.
+    partialOutputs.delete(logId);
     const output = (stdout + (stderr ? '\n--- stderr ---\n' + stderr : '')).trim();
     const exitSummary = wasCanceled ? 'Canceled'
       : code === 0 ? 'Completed (exit 0)'
@@ -74,6 +115,10 @@ shellRoutes.post('/shell/exec', async (c) => {
 
   child.on('error', (err) => {
     runningProcesses.delete(logId);
+    // HS-7982 — drop the partial buffer on spawn-error too; without this
+    // a failed-to-spawn command would leak its (empty / partial) buffer
+    // entry forever.
+    partialOutputs.delete(logId);
     const combinedDetail = command + '\n---SHELL_OUTPUT---\n' + (err.stack ?? err.message);
     if (logId > 0) {
       updateLogEntry(logId, { summary: `${command.slice(0, 100)} — Error: ${err.message}`, detail: combinedDetail }).catch(() => {});
@@ -107,5 +152,15 @@ shellRoutes.post('/shell/kill', async (c) => {
 
 shellRoutes.get('/shell/running', (c) => {
   const ids = Array.from(runningProcesses.keys());
-  return c.json({ ids });
+  // HS-7982 Phase 2 — extend the response with the per-id partial buffer
+  // so a polling client (today, the existing 2 s `setInterval` poll in
+  // `commandSidebar.tsx::startShellPoll`) gets the latest accumulated
+  // output without a separate request. Backwards-compatible — clients
+  // that ignore `outputs` continue to work.
+  const outputs: Record<number, string> = {};
+  for (const id of ids) {
+    const partial = partialOutputs.get(id);
+    if (partial !== undefined) outputs[id] = partial;
+  }
+  return c.json({ ids, outputs });
 });

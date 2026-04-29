@@ -90,6 +90,7 @@ Skill installation is checked proactively at multiple points:
 
 - Generated skill files include a version comment (e.g., `<!-- hotsheet-skill-version: 2 -->`).
 - Files are only regenerated when the embedded skill version is higher than the existing file's version.
+- **HS-7992 — `hotsheet_skill_clear_context` toggle.** A per-project setting in `<dataDir>/settings.json`, surfaced in Settings → General as **Clear context on each /hotsheet** (default off). When checked, the generated main `/hotsheet` skill body is prefixed with `/clear` (followed by a blank line) on every supported platform so Claude Code clears its context before processing the worklist. Toggling the checkbox triggers `regenerateMainSkill(projectRoot)` from the `/file-settings` PATCH handler — the regen path bypasses the version-check guard in `updateFile` so the new prefix lands immediately rather than waiting for the next `SKILL_VERSION` bump. Per-ticket-type skills (hs-bug etc.) are unaffected.
 
 ### 6.9 API Secret & Port Recovery
 
