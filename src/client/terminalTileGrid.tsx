@@ -432,6 +432,12 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       if (tile === undefined) continue;
       const current = virtState.get(tileId) ?? initialTileState();
       if (entry.isIntersecting) {
+        // HS-8046 — track viewport membership so the auto-clear-bell
+        // logic knows which tiles the user is actually looking at, and
+        // immediately clear any bell that was already on this tile when
+        // it scrolled in.
+        visibleTileIds.add(tileId);
+        maybeAutoClearTileBell(tile);
         // Only mount-if-not-mounted when the tile is alive — exited /
         // not_spawned tiles don't have PTYs to attach to. The placeholder
         // visual already conveys their state.
@@ -448,6 +454,9 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
           }
         }
       } else {
+        // HS-8046 — tile scrolled out of viewport; user can no longer see
+        // it, so subsequent bells must surface as the indicator.
+        visibleTileIds.delete(tileId);
         const step = onTileExit(current, { tileId, now, debounceMs: VIRT_DEFAULT_DEBOUNCE_MS });
         virtState.set(tileId, step.next);
         for (const action of step.actions) {
@@ -514,6 +523,9 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     const timer = virtTimers.get(tile.entry.id);
     if (timer !== undefined) { clearTimeout(timer); virtTimers.delete(tile.entry.id); }
     virtState.delete(tile.entry.id);
+    // HS-8046 — drop the viewport-membership flag too so a re-rendered
+    // tile with the same id starts from a clean slate.
+    visibleTileIds.delete(tile.entry.id);
   }
 
   // --- xterm mount + WebSocket attach ---
@@ -598,7 +610,17 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
         tile.ws.send(encoder.encode(data));
       }
     });
-    term.onBell(() => { tile.root.classList.add('has-bell'); });
+    term.onBell(() => {
+      // HS-8046 — skip the indicator entirely when the user is already
+      // viewing this tile in the unoccluded grid surface. Drop the
+      // server-side bellPending flag too so other surfaces (project-tab
+      // glyph, drawer tab) don't redundantly mark it.
+      if (isGridSurfaceUnoccluded() && visibleTileIds.has(tile.entry.id)) {
+        postClearBell(tile);
+        return;
+      }
+      tile.root.classList.add('has-bell');
+    });
 
     tile.term = term;
     tile.xtermRoot = xtermRoot;
@@ -960,6 +982,10 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       placeholder.remove();
     }
     tile.slotPlaceholder = null;
+    // HS-8046 — uncentering returns the user to the unoccluded grid view;
+    // bells that piled up behind the centered overlay are now visible and
+    // should auto-clear (the user IS looking at them).
+    clearBellsForVisibleTiles();
   }
 
   function createSlotPlaceholder(width: number, height: number): HTMLElement {
@@ -993,10 +1019,54 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   function clearTileBell(tile: InternalTile): void {
     if (!tile.root.classList.contains('has-bell')) return;
     tile.root.classList.remove('has-bell');
+    postClearBell(tile);
+  }
+
+  /** HS-8046 — POST `/clear-bell` for a tile WITHOUT first checking the
+   *  class. Used by the auto-clear path: when a bell tries to land on a
+   *  tile the user is already looking at, we want to drop the server's
+   *  `bellPending` flag without ever rendering the indicator locally. */
+  function postClearBell(tile: InternalTile): void {
     void apiWithSecret('/terminal/clear-bell', tile.entry.secret, {
       method: 'POST',
       body: { terminalId: tile.entry.id },
     }).catch(() => { /* server restart / network blip — long-poll resyncs */ });
+  }
+
+  /** HS-8046 — true when nothing is occluding the grid layout, so a tile
+   *  in the viewport really IS the surface the user is looking at. While
+   *  a centered overlay or dedicated view is up, the rest of the grid is
+   *  visually behind / hidden, so bells for those tiles should NOT
+   *  auto-clear (the user can't actually see them). */
+  function isGridSurfaceUnoccluded(): boolean {
+    return centered === null && dedicated === null;
+  }
+
+  /** HS-8046 — set of tileIds whose root is currently inside the
+   *  IntersectionObserver's viewport. Updated by `handleIntersectionEntries`
+   *  on every enter / exit transition. Used to gate the auto-clear path. */
+  const visibleTileIds = new Set<string>();
+
+  /** HS-8046 — clear the bell for `tile` when (a) the grid surface is
+   *  unoccluded (no centered overlay / dedicated view) AND (b) the tile
+   *  root is currently in the viewport. The user is actively looking at
+   *  this terminal — no reason to keep the bell indicator. */
+  function maybeAutoClearTileBell(tile: InternalTile): void {
+    if (!isGridSurfaceUnoccluded()) return;
+    if (!visibleTileIds.has(tile.entry.id)) return;
+    clearTileBell(tile);
+  }
+
+  /** HS-8046 — sweep every currently-visible tile for `has-bell`, called
+   *  whenever the grid surface becomes unoccluded again (centered or
+   *  dedicated view dismissed). Bells that accumulated WHILE the
+   *  occluding view was up are now visible to the user; auto-clear them. */
+  function clearBellsForVisibleTiles(): void {
+    for (const id of visibleTileIds) {
+      const t = tiles.get(id);
+      if (t === undefined) continue;
+      clearTileBell(t);
+    }
   }
 
   // --- Dedicated full-pane view (§25.8 / §36.5 / HS-7063 / HS-7098) ---
@@ -1150,7 +1220,14 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     }
 
     applySizing();
-    if (view.priorCenteredTile !== null) centerTile(view.priorCenteredTile);
+    if (view.priorCenteredTile !== null) {
+      centerTile(view.priorCenteredTile);
+    } else {
+      // HS-8046 — exiting dedicated view (with no centered fallback)
+      // returns the user to the unoccluded grid; sweep visible tiles for
+      // bells that piled up while the dedicated view was up.
+      clearBellsForVisibleTiles();
+    }
   }
 
   // --- Tile teardown ---
@@ -1194,6 +1271,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     virtTimers.clear();
     virtState.clear();
     virtRootToId.clear();
+    visibleTileIds.clear();
     if (virtObserver !== null) virtObserver.disconnect();
   }
 
@@ -1216,8 +1294,18 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       for (const tile of tiles.values()) {
         const want = pendingIds.has(tile.entry.id);
         const has = tile.root.classList.contains('has-bell');
-        if (want && !has) tile.root.classList.add('has-bell');
-        else if (!want && has) tile.root.classList.remove('has-bell');
+        if (want && !has) {
+          // HS-8046 — server-pushed bellPending lands on a tile the user
+          // is already looking at. Drop the server flag instead of
+          // rendering the indicator.
+          if (isGridSurfaceUnoccluded() && visibleTileIds.has(tile.entry.id)) {
+            postClearBell(tile);
+          } else {
+            tile.root.classList.add('has-bell');
+          }
+        } else if (!want && has) {
+          tile.root.classList.remove('has-bell');
+        }
       }
     },
     focusDedicatedTerm() {

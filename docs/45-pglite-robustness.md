@@ -2,7 +2,11 @@
 
 HS-7902. Audit + design for making the PGLite cluster more robust against the failure classes that drove the HS-7888..7894 incident chain.
 
-> **Status:** §45.3 graceful-close pipeline **shipped** (HS-7931). §45.5 fsync gap **mitigated by wrapping our application boundaries** with explicit `fs.fsyncSync` (HS-7935) — upstream PGLite still no-ops `fsync` per the HS-7932 spike. §45.6 checkpoint-timeout benchmark **infeasible** until PGLite exposes a config-passing API (HS-7933 spike + HS-7936 upstream ask). §45.9 e2e harness **shipped** (HS-7934) covering 3 of 4 scenarios; the double-signal escalation case is covered by a focused unit test (HS-7939 follow-up for the e2e variant). The design below is preserved verbatim.
+> **Status:** §45.3 graceful-close pipeline **shipped** (HS-7931). §45.5 fsync gap **mitigated by wrapping our application boundaries** with explicit `fs.fsyncSync` (HS-7935) — upstream PGLite still no-ops `fsync` per the HS-7932 spike. §45.6 checkpoint-timeout benchmark **infeasible** until PGLite exposes a config-passing API (HS-7933 spike + HS-7936 upstream ask). §45.9 e2e harness **shipped** (HS-7934) covering 3 of 4 scenarios; the double-signal escalation case is covered by a focused unit test (HS-7939 follow-up for the e2e variant).
+>
+> **HS-8040 (2026-04-30) — kill button-launched shell commands.** The pipeline gained a `killShellCommands()` step between `closeHttpServer()` and `destroyTerminals()` that lazy-imports `routes/shell.ts::killAllRunningShellCommands()`, sends SIGTERM to every entry in the module-private `runningProcesses` map (also adding each id to `killedProcesses` so the close-handler logs "Canceled" instead of "Killed by SIGTERM"), waits a 1 s grace period for them to exit cleanly, then SIGKILLs anything still alive. Pre-fix shell-target custom-command buttons (`target: 'shell'` in `settings.json::custom_commands`) outlived Hot Sheet's exit because no shutdown path ever walked the running-processes map — a long-running `npm run dev` fired from a button kept running in the background indefinitely. The grace-period bound means the pipeline never blocks more than ~1 s on misbehaving children; 5 new unit tests in `src/routes/shell.test.ts` (no-ops on empty map / SIGTERM count / Canceled summary / SIGKILL escalation / unblockable-child timeout bound) plus an updated ordering test + a new error-resilience test in `src/lifecycle.test.ts` (35 / 35 green).
+>
+> The design below is preserved verbatim.
 
 ## 45.1 Why this ticket exists
 

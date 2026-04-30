@@ -35,12 +35,23 @@ vi.mock('./terminals/registry.js', () => ({
   destroyAllTerminals: () => { destroyAllTerminalsMock(); },
 }));
 
+// HS-8040 — shell-routes module is dynamically imported by the pipeline
+// to kill button-launched commands before terminals close. Mocked here so
+// the test default doesn't pull in the real spawn-based module + so the
+// 1000 ms default grace period doesn't slow each test.
+const killAllRunningShellCommandsMock = vi.fn((): Promise<{ killed: number }> => Promise.resolve({ killed: 0 }));
+vi.mock('./routes/shell.js', () => ({
+  killAllRunningShellCommands: () => killAllRunningShellCommandsMock(),
+}));
+
 beforeEach(() => {
   _resetLifecycleForTests();
   removeInstanceMock.mockReset();
   closeAllDatabasesMock.mockReset();
   closeAllDatabasesMock.mockImplementation(async () => Promise.resolve());
   destroyAllTerminalsMock.mockReset();
+  killAllRunningShellCommandsMock.mockReset();
+  killAllRunningShellCommandsMock.mockImplementation(() => Promise.resolve({ killed: 0 }));
 });
 
 afterEach(() => {
@@ -61,19 +72,40 @@ function makeFakeServer(closeBehavior: 'immediate' | 'delayed' | 'error' = 'imme
 }
 
 describe('gracefulShutdown (HS-7931)', () => {
-  it('runs every cleanup step in order: http close → terminals → databases → lockfile', async () => {
+  it('runs every cleanup step in order: http close → shells → terminals → databases → lockfile (HS-8040)', async () => {
     const order: string[] = [];
     const server = {
       close: vi.fn((cb?: (err?: Error) => void) => { order.push('http'); cb?.(); }),
     } as unknown as HttpServer;
+    killAllRunningShellCommandsMock.mockImplementation(() => {
+      order.push('shells');
+      return Promise.resolve({ killed: 0 });
+    });
     destroyAllTerminalsMock.mockImplementation(() => { order.push('terminals'); });
-    closeAllDatabasesMock.mockImplementation(async () => { order.push('databases'); });
+    closeAllDatabasesMock.mockImplementation(() => { order.push('databases'); return Promise.resolve(); });
     removeInstanceMock.mockImplementation(() => { order.push('lockfile'); });
 
     registerHttpServerForShutdown(server);
     await gracefulShutdown('test');
 
-    expect(order).toEqual(['http', 'terminals', 'databases', 'lockfile']);
+    // HS-8040 — shells must come AFTER http close (no new spawn-exec
+    // requests can arrive while we're killing) and BEFORE terminals
+    // (we kill button-launched processes; terminals are PTY-backed and
+    // a separate shutdown path).
+    expect(order).toEqual(['http', 'shells', 'terminals', 'databases', 'lockfile']);
+  });
+
+  // HS-8040 — pipeline doesn't wedge if the shell-kill step throws.
+  it('does not fail the pipeline if `killAllRunningShellCommands` throws (HS-8040)', async () => {
+    killAllRunningShellCommandsMock.mockImplementation(() => Promise.reject(new Error('synthetic shell kill')));
+    registerHttpServerForShutdown(makeFakeServer());
+
+    await gracefulShutdown('test');
+
+    // Subsequent steps still run.
+    expect(destroyAllTerminalsMock).toHaveBeenCalledTimes(1);
+    expect(closeAllDatabasesMock).toHaveBeenCalledTimes(1);
+    expect(removeInstanceMock).toHaveBeenCalledTimes(1);
   });
 
   it('is idempotent — concurrent callers share the same underlying promise', async () => {

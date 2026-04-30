@@ -74,6 +74,7 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   console.log(`[lifecycle] gracefulShutdown(${reason}) — starting`);
 
   await closeHttpServer();
+  await killShellCommands();
   await destroyTerminals();
   await disposeGitWatchers();
   await closeDatabases();
@@ -81,6 +82,26 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   removeLockfile();
 
   console.log(`[lifecycle] gracefulShutdown(${reason}) — done`);
+}
+
+/** HS-8040 — kill every shell-command process spawned via custom-command
+ *  buttons (`target: 'shell'`). Pre-fix these survived Hot Sheet exit
+ *  because the shell-routes module's `runningProcesses` map was never
+ *  walked from any shutdown path; a long-running `npm run dev` fired from
+ *  a button kept running in the background indefinitely.  Runs after
+ *  `closeHttpServer` (so no new shell-exec requests can spawn during the
+ *  pipeline) and before `destroyTerminals` (so the children's `'close'`
+ *  handlers can still write to the command log + the DB stays open). */
+async function killShellCommands(): Promise<void> {
+  try {
+    const { killAllRunningShellCommands } = await import('./routes/shell.js');
+    const { killed } = await killAllRunningShellCommands();
+    if (killed > 0) {
+      console.log(`[lifecycle] killShellCommands — terminated ${killed} running shell-command process(es)`);
+    }
+  } catch (err) {
+    console.error('[lifecycle] killShellCommands error:', err);
+  }
 }
 
 /** HS-7954 — close every `fs.watch` handle held by the git status watcher.

@@ -150,6 +150,57 @@ shellRoutes.post('/shell/kill', async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * HS-8040 — kill every shell-command process currently tracked in
+ * `runningProcesses`. Called from `gracefulShutdown` so custom-command
+ * buttons (`target: 'shell'`) don't leave orphaned children running after
+ * Hot Sheet exits — pre-fix a long-running `npm run dev` / `tail -f log`
+ * fired from a shell-target command button kept running in the background
+ * indefinitely after the user quit Hot Sheet, with no way to stop it
+ * other than `pkill` or rebooting.
+ *
+ * Sends SIGTERM to everything, waits up to `gracePeriodMs` for the
+ * children to exit cleanly (their `'close'` handlers fire and remove
+ * themselves from `runningProcesses` + write the final log entry), then
+ * SIGKILLs anything still alive. Resolves after the grace period whether
+ * or not every child has actually exited — the shutdown pipeline can't
+ * block on a misbehaving process.
+ *
+ * Adds each killed id to `killedProcesses` so the `'close'` handler
+ * surfaces "Canceled" in the command log instead of "Killed by SIGTERM".
+ */
+export async function killAllRunningShellCommands(
+  opts: { gracePeriodMs?: number } = {},
+): Promise<{ killed: number }> {
+  const gracePeriodMs = opts.gracePeriodMs ?? 1000;
+  const ids = Array.from(runningProcesses.keys());
+  if (ids.length === 0) return { killed: 0 };
+
+  for (const id of ids) {
+    const child = runningProcesses.get(id);
+    if (child === undefined) continue;
+    killedProcesses.add(id);
+    try { child.kill('SIGTERM'); } catch { /* already dead */ }
+  }
+
+  await new Promise<void>(resolve => setTimeout(resolve, gracePeriodMs));
+
+  for (const id of ids) {
+    const child = runningProcesses.get(id);
+    if (child === undefined) continue;
+    try { child.kill('SIGKILL'); } catch { /* already dead */ }
+  }
+
+  return { killed: ids.length };
+}
+
+/** HS-8040 — test-only inspection of the running-processes count. The
+ *  map itself stays module-private so tests can't accidentally mutate it.
+ */
+export function _runningShellCommandCountForTesting(): number {
+  return runningProcesses.size;
+}
+
 shellRoutes.get('/shell/running', (c) => {
   const ids = Array.from(runningProcesses.keys());
   // HS-7982 Phase 2 — extend the response with the per-id partial buffer

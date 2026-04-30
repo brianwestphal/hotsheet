@@ -400,45 +400,14 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     expect(rect.height).toBeGreaterThan(0);
   });
 
-  // HS-6837: a pending bell on a tile's project/terminal surfaces via
-  // subscribeToBellState (the cross-project long-poll in §24). Clicking the
-  // tile (zoom) clears the outline and fires POST /api/terminal/clear-bell.
-  test('tile gains .has-bell when bellPoll reports a pending bell on its terminal', async ({ page, request }) => {
-    // Grab the active project's secret up front so we can inject a bellState
-    // that matches the real project.
-    const projRes = await request.get('/api/projects');
-    const projects = await projRes.json() as { secret: string }[];
-    const secret = projects[0]?.secret ?? '';
-
-    await page.route('**/api/terminal/list*', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
-          dynamic: [],
-        }),
-      });
-    });
-    await page.route('**/api/projects/bell-state*', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          bells: { [secret]: { anyTerminalPending: true, terminalIds: ['live'] } },
-          v: 1,
-        }),
-      });
-    });
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await page.locator('#terminal-dashboard-toggle').click();
-
-    const tile = page.locator('.terminal-dashboard-tile[data-terminal-id="live"]');
-    await expect(tile).toHaveClass(/has-bell/, { timeout: 5000 });
-  });
-
-  test('centering a has-bell tile clears the outline and fires clear-bell', async ({ page, request }) => {
+  // HS-6837 + HS-8046: a pending bell on a tile's project/terminal arrives
+  // via subscribeToBellState (the cross-project long-poll in §24). Pre-
+  // HS-8046 the tile gained `.has-bell` and a click was needed to clear
+  // it. HS-8046 changed the contract: when the user is already viewing
+  // the dashboard with the tile in viewport, the bell auto-clears
+  // (`postClearBell` fires immediately) and the indicator never renders
+  // — there's no point flagging a terminal the user is staring at.
+  test('tile auto-clears the bell instead of rendering .has-bell when bellPoll arrives while viewing the dashboard (HS-8046)', async ({ page, request }) => {
     const projRes = await request.get('/api/projects');
     const projects = await projRes.json() as { secret: string }[];
     const secret = projects[0]?.secret ?? '';
@@ -455,8 +424,8 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     });
 
     let clearBellHit = false;
-    // Mirror the real server: before clear-bell POST fires the bell is pending;
-    // after it fires the next long-poll returns no pending bells.
+    // Mirror the real server: before clear-bell POST fires the bell is
+    // pending; after it fires the next long-poll returns no pending bells.
     await page.route('**/api/projects/bell-state*', async route => {
       const pending = !clearBellHit;
       await route.fulfill({
@@ -482,10 +451,12 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await page.locator('#terminal-dashboard-toggle').click();
 
     const tile = page.locator('.terminal-dashboard-tile[data-terminal-id="live"]');
-    await expect(tile).toHaveClass(/has-bell/, { timeout: 5000 });
+    // Wait for the tile to render at all (dashboard mounted).
+    await expect(tile).toBeVisible({ timeout: 5000 });
 
-    await tile.click();
-    await expect.poll(() => clearBellHit).toBe(true);
+    // HS-8046 — auto-clear: the long-poll's pending bell triggers a
+    // POST /clear-bell instead of adding the indicator class.
+    await expect.poll(() => clearBellHit, { timeout: 5000 }).toBe(true);
     await expect(tile).not.toHaveClass(/has-bell/);
   });
 

@@ -254,6 +254,14 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Bell fires in a lazy terminal that has never been spawned: no indicator anywhere (a lazy terminal without a session cannot run, so cannot bell)
 - [ ] Restart the Hot Sheet server while bells are pending — all indicators clear on restart (bellPending is in-memory only by design)
 
+#### Auto-clear bell when viewing in dashboard / drawer-grid (HS-8046)
+- [ ] Open the global terminal dashboard (per §25). With at least one terminal tile in the viewport, run `printf '\007'` (or `tput bel`) inside that terminal. The tile does NOT gain a `.has-bell` glyph — the user is already looking at it. The project-tab bell glyph also does NOT light up (server-side `bellPending` is cleared synchronously)
+- [ ] Same dashboard, scroll a tile OUT of the viewport, fire `\007`, then scroll the tile back in. The tile briefly shows the bell glyph while off-viewport; on scroll-back-in the glyph clears immediately
+- [ ] In the dashboard, single-click a tile to enter centered mode. While centered, fire `\007` in any OTHER (non-centered) terminal. That terminal's tile DOES gain `.has-bell` (it's behind the centered overlay — user can't see it). Dismiss the centered overlay — the bell on that tile clears immediately (occlusion lifted)
+- [ ] In the dashboard, double-click a tile to enter dedicated view. While dedicated, fire `\007` in any OTHER terminal. Exit the dedicated view — that tile's bell clears immediately
+- [ ] Repeat the first three checks in the per-project drawer terminal grid (§36 toolbar toggle) — same auto-clear behaviour
+- [ ] **Hidden terminals are NOT affected.** With Show / Hide Terminals (§38 / §39) hiding a terminal that's currently bell-pending, the project-tab bell glyph stays lit (the user CAN'T see the terminal — its bell must remain). When the user un-hides it and the tile becomes visible, the bell auto-clears as above
+
 ### Rendering and input (§22.6)
 - [ ] No black strip appears below the last rendered row (xterm viewport background matches the app theme even when container is taller than rows × cellHeight)
 - [ ] Click into a terminal — focus ring (2 px accent border) appears on all four edges of the terminal pane, including the **bottom** (HS-6635 regression check). Click outside — ring disappears.

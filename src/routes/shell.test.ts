@@ -315,3 +315,89 @@ describe('appendPartialOutput (HS-7982)', () => {
     expect(result.endsWith('C')).toBe(true);
   });
 });
+
+// HS-8040 — graceful-shutdown path needs to terminate every running shell-
+// command process so a long-running button-launched command (e.g. `npm run
+// dev` fired from a custom-command shell-target button) doesn't survive
+// Hot Sheet's exit. Pre-fix the `runningProcesses` map was never walked
+// from any shutdown path; children outlived the parent indefinitely.
+describe('killAllRunningShellCommands (HS-8040)', () => {
+  it('returns {killed: 0} when no processes are running', async () => {
+    const { killAllRunningShellCommands, _runningShellCommandCountForTesting } = await import('./shell.js');
+    expect(_runningShellCommandCountForTesting()).toBe(0);
+    const result = await killAllRunningShellCommands({ gracePeriodMs: 10 });
+    expect(result.killed).toBe(0);
+  });
+
+  it('SIGTERMs every running process and counts them', async () => {
+    const { killAllRunningShellCommands } = await import('./shell.js');
+    await app.request('/api/shell/exec', post({ command: 'sleep 60' }));
+    const childA = lastSpawnedChild;
+    await app.request('/api/shell/exec', post({ command: 'sleep 60' }));
+    const childB = lastSpawnedChild;
+
+    const result = await killAllRunningShellCommands({ gracePeriodMs: 20 });
+
+    expect(result.killed).toBe(2);
+    expect(childA.killed).toBe(true);
+    expect(childB.killed).toBe(true);
+  });
+
+  it('marks each killed process as canceled in the command log', async () => {
+    const { killAllRunningShellCommands } = await import('./shell.js');
+    const execRes = await app.request('/api/shell/exec', post({ command: 'sleep 60', name: 'long-running button' }));
+    const { id } = await execRes.json() as { id: number };
+
+    const child = lastSpawnedChild;
+    // Override `kill` so neither SIGTERM nor SIGKILL auto-emits 'close'
+    // through the mock's default behaviour — we want to drive the close
+    // manually below, simulating the real OS flow where SIGTERM is what
+    // settles the child (not the SIGKILL grace-period escalation).
+    child.kill = () => { /* swallow */ };
+
+    await killAllRunningShellCommands({ gracePeriodMs: 10 });
+
+    // Real children fire 'close' once the kernel reaps them after
+    // SIGTERM. `killedProcesses` was populated by the kill helper, so
+    // the close handler should see wasCanceled=true and write "Canceled"
+    // into the log summary.
+    child.emit('close', null, 'SIGTERM');
+    await new Promise(r => setTimeout(r, 50));
+
+    const entries = await getLogEntries();
+    const entry = entries.find(e => e.id === id);
+    expect(entry).toBeDefined();
+    expect(entry!.summary).toContain('Canceled');
+  });
+
+  it('falls back to SIGKILL when SIGTERM did not unwedge the child within the grace period', async () => {
+    const { killAllRunningShellCommands } = await import('./shell.js');
+    await app.request('/api/shell/exec', post({ command: 'sleep 60' }));
+    const child = lastSpawnedChild;
+
+    // Make `kill` capture the signal sequence WITHOUT auto-emitting close
+    // (the default mock auto-closes on SIGKILL — disable that for this
+    // test so we can assert the SIGKILL escalation path actually fires).
+    const signals: string[] = [];
+    child.kill = (sig?: string) => { signals.push(sig ?? 'SIGTERM'); };
+
+    await killAllRunningShellCommands({ gracePeriodMs: 30 });
+
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+  });
+
+  it('resolves promptly even when a child never exits — does NOT block shutdown', async () => {
+    const { killAllRunningShellCommands } = await import('./shell.js');
+    await app.request('/api/shell/exec', post({ command: 'sleep 60' }));
+    // Simulate a fully unkillable child — `kill()` is a no-op.
+    lastSpawnedChild.kill = () => { /* never dies */ };
+
+    const t0 = Date.now();
+    await killAllRunningShellCommands({ gracePeriodMs: 20 });
+    const elapsed = Date.now() - t0;
+
+    // Must resolve roughly within the grace period — caller (shutdown
+    // pipeline) cannot block forever on a misbehaving process.
+    expect(elapsed).toBeLessThan(200);
+  });
+});
