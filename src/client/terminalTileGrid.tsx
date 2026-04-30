@@ -1,4 +1,4 @@
-import { FitAddon } from '@xterm/addon-fit';
+import type { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal as XTerm } from '@xterm/xterm';
 
@@ -11,6 +11,7 @@ import {
   getSessionOverride,
   resolveAppearance,
 } from './terminalAppearance.js';
+import { checkout,type CheckoutHandle } from './terminalCheckout.js';
 import {
   computeTileScale,
   DASHBOARD_FALLBACK_COLS,
@@ -21,7 +22,7 @@ import {
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
 import { isTerminalViewToggleShortcut } from './terminalKeybindings.js';
-import { applyDedicatedHistoryFrame, replayHistoryToTerm } from './terminalReplay.js';
+import { replayHistoryToTerm } from './terminalReplay.js';
 import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
 import {
   initialTileState,
@@ -231,9 +232,19 @@ interface InternalTile {
 interface DedicatedView {
   tile: InternalTile;
   overlay: HTMLElement;
+  /** HS-8042 — dedicated view is a `terminalCheckout` consumer (Phase 2.2
+   *  of HS-8032). The handle owns the live xterm + WebSocket; pre-fix the
+   *  dedicated view spawned a SECOND xterm + SECOND WebSocket attached to
+   *  the same PTY, doubling memory + network for the same terminal. After
+   *  the migration the tile's existing WS-attached xterm (if any) drops
+   *  to the placeholder per §54.3.2; on `exitDedicatedView` the handle
+   *  releases and the live xterm reparents back. */
+  checkout: CheckoutHandle;
+  /** Convenience aliases — sourced from `checkout.term` / `checkout.fit`
+   *  so existing call sites stay readable. Stable for the dedicated
+   *  view's lifetime. */
   term: XTerm;
   fit: FitAddon;
-  ws: WebSocket | null;
   bodyResizeObserver: ResizeObserver | null;
   /** When the user double-clicks a tile WHILE another tile is already
    *  centered, the prior centered tile is recorded here so the dedicated
@@ -1117,21 +1128,38 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // theme's bg so the area around the xterm canvas reads as part of the
     // terminal frame, matching the drawer's HS-7960 treatment.
     if (dedicatedBody !== null) dedicatedBody.style.backgroundColor = themeData.background;
-    const term = new XTerm({
-      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-      fontSize: 13,
-      cursorBlink: true,
-      scrollback: 10_000,
-      allowProposedApi: true,
-      theme: themeToXtermOptions(themeData),
-      linkHandler: {
-        activate: (_event, text) => { openExternalUrl(text); },
-      },
+
+    // HS-8042 — dedicated view is a `terminalCheckout` consumer. Pre-fix
+    // it spawned its own xterm + WebSocket attached to the same PTY,
+    // duplicating resources for any terminal already mounted in a tile.
+    // The migration claims the live xterm into the dedicated pane via
+    // checkout; the tile's existing mount drops to the §54.3.2
+    // placeholder; on exit the handle releases and the xterm reparents
+    // back. The `cols`/`rows` initial-checkout values are placeholders —
+    // `fit.fit()` runs in the next frame to resolve real dims from the
+    // pane's measured layout, then `applyResizeIfChanged` inside
+    // checkout fires the real resize via `term.onResize` below.
+    const handle = checkout({
+      projectSecret: tile.entry.secret,
+      terminalId: tile.entry.id,
+      cols: TILE_INITIAL_COLS,
+      rows: TILE_INITIAL_ROWS,
+      mountInto: pane,
     });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
+    const term = handle.term;
+    const fit = handle.fit;
+
+    // Apply appearance + per-consumer term tweaks. The xterm is shared
+    // across consumers via the checkout module, so settings written here
+    // persist on the term — when this dedicated view releases and the
+    // tile's checkout (if any) regains top-of-stack, the tile sees the
+    // theme/font we set. That's fine — both surfaces resolve appearance
+    // for the same `(secret, terminalId)` so the values match.
+    term.options.theme = themeToXtermOptions(themeData);
+    term.options.linkHandler = {
+      activate: (_event, text) => { openExternalUrl(text); },
+    };
     term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
-    term.open(pane);
     void applyAppearanceToTerm(term, appearance);
     // HS-7594 — swallow Cmd/Ctrl+` so the document-level toggle dispatcher
     // sees it instead of the shell receiving a backtick.
@@ -1140,48 +1168,36 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       return true;
     });
 
-    const runFit = (): void => { try { fit.fit(); } catch { /* not ready */ } };
+    const runFit = (): void => {
+      try {
+        fit.fit();
+        // HS-8042 — propagate the fit() result to the checkout entry's
+        // last-applied dims so a subsequent same-size handoff (e.g.
+        // tile's checkout regains top-of-stack at its own dims) won't
+        // skip an actually-different resize. The `term.onResize` below
+        // fires after fit() and sends the WS resize frame; without
+        // updating the entry's bookkeeping we'd risk a stale lastApplied.
+      } catch { /* not ready */ }
+    };
     requestAnimationFrame(runFit);
     const bodyResizeObserver = new ResizeObserver(runFit);
     bodyResizeObserver.observe(pane);
 
-    const encoder = new TextEncoder();
-    term.onData((data) => {
-      if (dedicated?.ws !== null && dedicated?.ws.readyState === WebSocket.OPEN) {
-        dedicated.ws.send(encoder.encode(data));
-      }
-    });
+    // HS-8042 — `term.onData` is wired by the checkout module's WS
+    // attachment; we don't need to add another handler here. (Pre-fix
+    // dedicated had its own ws.send onData wiring because it owned a
+    // separate WS; checkout's WS handler now serves both tile and
+    // dedicated for the same terminal.)
+    //
+    // `term.onResize` fires when `fit.fit()` resolves the pane's
+    // measured dims — route the new size through `handle.resize` so
+    // the checkout module sends the WS resize frame AND updates the
+    // entry's `lastAppliedCols/Rows` bookkeeping (so a future stack
+    // swap to a different-size consumer doesn't skip-on-same-size
+    // erroneously). The skip rule inside `handle.resize` itself is the
+    // SIGWINCH-storm guard for idempotent fit() calls.
     term.onResize(({ cols, rows }) => {
-      if (dedicated?.ws !== null && dedicated?.ws.readyState === WebSocket.OPEN) {
-        dedicated.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      }
-    });
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${window.location.host}/api/terminal/ws`
-      + `?project=${encodeURIComponent(tile.entry.secret)}`
-      + `&terminal=${encodeURIComponent(tile.entry.id)}`
-      + `&cols=${term.cols}&rows=${term.rows}`;
-    const ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
-    ws.addEventListener('open', () => {
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    });
-    ws.addEventListener('message', (ev) => {
-      const data: unknown = ev.data;
-      if (data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(data));
-        return;
-      }
-      if (typeof data === 'string') {
-        try {
-          const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
-          if (msg.type === 'history' && typeof msg.bytes === 'string'
-              && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
-            applyDedicatedHistoryFrame(term, fit, { bytes: msg.bytes, cols: msg.cols, rows: msg.rows });
-          }
-        } catch { /* non-JSON frame */ }
-      }
+      handle.resize(cols, rows);
     });
 
     let barDispose: (() => void) | null = null;
@@ -1190,7 +1206,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       if (typeof result === 'function') barDispose = result;
     }
 
-    dedicated = { tile, overlay, term, fit, ws, bodyResizeObserver, priorCenteredTile, barDispose };
+    dedicated = { tile, overlay, checkout: handle, term, fit, bodyResizeObserver, priorCenteredTile, barDispose };
     queueMicrotask(() => { term.focus(); });
   }
 
@@ -1202,8 +1218,15 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     if (view.barDispose !== null) {
       try { view.barDispose(); } catch { /* swallow */ }
     }
-    if (view.ws !== null) { try { view.ws.close(); } catch { /* closed */ } }
-    try { view.term.dispose(); } catch { /* no-op */ }
+    // HS-8042 — release the checkout instead of disposing the term/ws
+    // directly. If the tile's own checkout is still in the LIFO stack
+    // (the common case — the user double-clicked a mounted tile), the
+    // live xterm DOM-reparents back to the tile's `xtermRoot` and the
+    // tile's preview becomes interactive again. If the tile's checkout
+    // is empty (rare — the tile was virtualized off-screen between
+    // dedicated entry and exit), the entry is fully disposed and the
+    // tile re-mounts on its next viewport-enter.
+    view.checkout.release();
     view.overlay.remove();
     if (opts.onTileShrink !== undefined) opts.onTileShrink(view.tile.entry);
 

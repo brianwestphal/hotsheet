@@ -431,3 +431,57 @@ describe('checkout — _inspectStackForTesting helper', () => {
     handleA.release();
   });
 });
+
+/**
+ * HS-8042 — Phase 2.2 of HS-8032 surfaced two new requirements that the
+ * Phase-1 checkout module didn't satisfy:
+ *
+ * 1. `CheckoutHandle.fit` exposure — dedicated views run `fit.fit()` on
+ *    every body resize and need direct access to the FitAddon already
+ *    loaded by checkout's entry construction.
+ * 2. `CheckoutHandle.resize(cols, rows)` — when `term.onResize` echoes
+ *    fit-driven dim changes, the consumer must update the entry's
+ *    `lastApplied` bookkeeping AND send a WS resize frame, without going
+ *    through a stack swap. Same skip-on-same-size rule as the swap-time
+ *    resize so TUI programs don't see SIGWINCH on idempotent fits.
+ */
+describe('checkout — HS-8042 handle.fit + handle.resize additions', () => {
+  it('exposes the entry FitAddon on the handle', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    expect(h.fit).toBeDefined();
+    // The same FitAddon is shared across consumers of the same entry —
+    // a second checkout for the same key should expose the SAME instance.
+    const m2 = makeMount('m2');
+    const h2 = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m2 });
+    expect(h2.fit).toBe(h.fit);
+    h2.release();
+    h.release();
+  });
+
+  it('handle.resize updates the entry lastApplied dims and skips on same-size', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    const termResize = vi.spyOn(h.term, 'resize');
+
+    // Same-size — must NOT call term.resize (skip-on-same-size guard).
+    h.resize(80, 24);
+    expect(termResize).not.toHaveBeenCalled();
+    expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(80);
+    expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(24);
+
+    // Different size — fires term.resize and updates lastApplied.
+    h.resize(120, 40);
+    expect(termResize).toHaveBeenCalledWith(120, 40);
+    expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(120);
+    expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(40);
+
+    // Re-call with the new size — still skips because lastApplied
+    // already matches.
+    termResize.mockClear();
+    h.resize(120, 40);
+    expect(termResize).not.toHaveBeenCalled();
+
+    h.release();
+  });
+});

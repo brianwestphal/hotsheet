@@ -110,6 +110,21 @@ export interface CheckoutHandle {
    *  Consumers that want to fire xterm APIs (search, focus, etc.) check
    *  `isTopOfStack()` first. */
   term: XTerm;
+  /** HS-8042 — exposed FitAddon for consumers that want to fill their
+   *  `mountInto` with the xterm's native cell-fit dims (e.g. dedicated
+   *  views that run `fit.fit()` on every body resize). The addon is
+   *  loaded once on entry construction, before `term.open()`, so it's
+   *  ready to use as soon as the consumer's `mountInto` has measurable
+   *  layout dims. */
+  fit: FitAddon;
+  /** HS-8042 — apply a new `(cols, rows)` shape mid-checkout (without
+   *  going through a stack swap). Calls `term.resize` AND sends the WS
+   *  resize frame, then updates the entry's `lastAppliedCols/Rows`
+   *  bookkeeping. Used by consumers that respond to live layout changes
+   *  (e.g. dedicated view's `fit.fit()` echoes via `term.onResize` and
+   *  the consumer routes that here). Same skip-on-same-size rule as
+   *  the swap-time resize. */
+  resize(cols: number, rows: number): void;
   /** True iff this handle is the current top of the stack — i.e. the live
    *  xterm is currently DOM-mounted in this consumer's `mountInto`. */
   isTopOfStack(): boolean;
@@ -229,13 +244,30 @@ function openCheckoutWebSocket(secret: string, terminalId: string, cols: number,
     }
     if (typeof data === 'string') {
       try {
-        const msg = JSON.parse(data) as { type?: string; bytes?: string };
+        const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
         if (msg.type === 'history' && typeof msg.bytes === 'string') {
           // Server-side scrollback replay (HS-8031 §54.3.3 — the server's
           // attach() returns `history` and the WebSocket handler emits a
           // `history` control message before live data). The bytes are
           // base64-encoded by the server.
+          //
+          // HS-8042 — when the message also carries the dims at which
+          // the history was captured (`cols` + `rows`), resize the term
+          // FIRST and write the bytes SECOND so the historical content
+          // reflows correctly (otherwise xterm would word-wrap at the
+          // current term dims, mangling box-drawing TUI output that was
+          // captured at different dims). Mirrors what
+          // `terminalReplay.ts::replayHistoryToTerm` did for the per-
+          // tile WS handler before the migration. We don't update the
+          // entry's `lastApplied` bookkeeping here — the consumer's own
+          // resize path (e.g. dedicated's `fit.fit()` echo via
+          // `term.onResize` → `handle.resize`) restores the consumer's
+          // intended dims after the bytes land.
           try {
+            if (typeof msg.cols === 'number' && typeof msg.rows === 'number'
+                && msg.cols > 0 && msg.rows > 0) {
+              try { term.resize(msg.cols, msg.rows); } catch { /* term disposed */ }
+            }
             const binary = atob(msg.bytes);
             const buf = new Uint8Array(binary.length);
             for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
@@ -321,9 +353,15 @@ export function checkout(opts: CheckoutOptions): CheckoutHandle {
   const stableEntry = entry;
   const handle: InternalCheckoutHandle = {
     term: entry.term,
+    fit: entry.fit,
     isTopOfStack(): boolean {
       const top = stableEntry.stack[stableEntry.stack.length - 1];
       return top === handle;
+    },
+    resize(cols: number, rows: number): void {
+      // HS-8042 — same skip-on-same-size rule as swap-time resize so
+      // TUI programs don't see SIGWINCH on idempotent fit() calls.
+      applyResizeIfChanged(stableEntry, cols, rows);
     },
     release(): void {
       releaseInternal(handle);
