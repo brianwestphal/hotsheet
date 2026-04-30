@@ -96,6 +96,17 @@ export interface CheckoutOptions {
    *  the newer owner released. The live xterm has reparented back into
    *  `mountInto` and the placeholder is gone by the time this fires. */
   onRestoredToTop?: () => void;
+  /** HS-8044 — every JSON control message that arrives on the
+   *  per-entry WebSocket is dispatched to every consumer's
+   *  `onControlMessage` callback, including the `history` frame whose
+   *  bytes the module also replays internally (consumers may want the
+   *  message's metadata: `alive`, `exitCode`, `command`, etc.). The
+   *  module fires this for ALL stack consumers, not just the top —
+   *  bumped-down consumers (e.g. the drawer pane while a dashboard
+   *  dedicated view is up) still want to track exit / status. Throws
+   *  inside the callback are swallowed so a misbehaving consumer can't
+   *  break sibling consumers' delivery. */
+  onControlMessage?: (msg: { type: string; [k: string]: unknown }) => void;
 }
 
 export interface CheckoutHandle {
@@ -151,6 +162,12 @@ interface StackEntry {
   /** LIFO stack — the LAST element is the current top (the consumer
    *  rendering the live xterm). */
   stack: InternalCheckoutHandle[];
+  /** HS-8044 — set true by `disposeEntry` immediately before
+   *  `entry.ws.close()` so the close-event listener inside
+   *  `openCheckoutWebSocket` can skip the auto-reconnect path. Without
+   *  this guard, an explicit final-release would race the reconnect
+   *  loop and re-spawn a WS we just intentionally tore down. */
+  intentionallyClosing: boolean;
 }
 
 const entries = new Map<string, StackEntry>();
@@ -196,72 +213,98 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
   // `mountInto.appendChild(term.element)` in the caller.
   term.open(getOrCreateParkingSink());
 
-  const ws = openCheckoutWebSocket(secret, terminalId, cols, rows, term);
-
-  return {
+  const entry: StackEntry = {
     secret,
     terminalId,
     term,
     fit,
-    ws,
+    ws: null,
     lastAppliedCols: cols,
     lastAppliedRows: rows,
     stack: [],
+    intentionallyClosing: false,
   };
+
+  // HS-8048 — wire `term.onData` ONCE at term construction. The handler
+  // looks up `entry.ws` dynamically so a reconnect-on-close swap-out
+  // (HS-8044) keeps keystroke-send working transparently — the closure
+  // doesn't capture the original WS reference.
+  const encoder = new TextEncoder();
+  term.onData((data) => {
+    const ws = entry.ws;
+    if (ws !== null && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(encoder.encode(data)); } catch { /* socket may have closed mid-send */ }
+    }
+  });
+
+  attachWebSocketToEntry(entry);
+
+  return entry;
 }
 
-/** Open the per-checkout WebSocket subscriber. Mirrors
- *  `src/client/terminal.tsx::connect()` — sends the initial resize frame
- *  on open, writes binary chunks to xterm, applies scrollback replay
- *  from the server's `history` control message. Reconnect-on-close is
- *  intentionally NOT wired in Phase 1 — checkout entries are torn down
- *  on empty stack, so a fresh checkout already gets a fresh WebSocket. */
-function openCheckoutWebSocket(secret: string, terminalId: string, cols: number, rows: number, term: XTerm): WebSocket | null {
+/**
+ * HS-8044 — open a WebSocket for `entry` and wire its lifecycle. Called
+ * once at `createEntry` time and again from the close-event reconnect
+ * path. Module-private because consumers route everything through
+ * `checkout()` / `release()` / `handle.resize()`.
+ *
+ * The reconnect contract: when the WS closes AND the entry's stack is
+ * non-empty (live consumers exist) AND `entry.intentionallyClosing` is
+ * false (the user didn't release it), call `attachWebSocketToEntry`
+ * to spin up a fresh socket. The server-side scrollback replay
+ * (`'history'` control message on attach) re-paints whatever was on
+ * screen so transient network blips don't lose state. Pre-HS-8044 each
+ * consumer of `terminalCheckout` would have had to wire its own
+ * reconnect — making the module the natural home centralises the
+ * concern AND lets the drawer pane (HS-8044 / §22) drop its own
+ * reconnect-on-close path entirely.
+ */
+function attachWebSocketToEntry(entry: StackEntry): void {
   // happy-dom in unit tests doesn't have WebSocket — bail with null so the
   // module is testable without a real socket.
-  if (typeof WebSocket === 'undefined') return null;
+  if (typeof WebSocket === 'undefined') {
+    entry.ws = null;
+    return;
+  }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(secret)}&terminal=${encodeURIComponent(terminalId)}&cols=${cols}&rows=${rows}`;
+  const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(entry.secret)}&terminal=${encodeURIComponent(entry.terminalId)}&cols=${entry.lastAppliedCols}&rows=${entry.lastAppliedRows}`;
 
   let ws: WebSocket;
   try {
     ws = new WebSocket(url);
   } catch {
-    return null;
+    entry.ws = null;
+    return;
   }
   ws.binaryType = 'arraybuffer';
+  entry.ws = ws;
 
   ws.addEventListener('open', () => {
-    try { ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch { /* socket may have closed already */ }
-  });
-
-  // HS-8048 — route the term's keystrokes (`term.onData` fires for every
-  // typed character + paste) to the WebSocket. Checkout owns the WS so
-  // every consumer of the shared xterm gets keystroke-send for free —
-  // pre-HS-8048 each consumer wired its own `term.onData(ws.send)` against
-  // its own WS, but with shared xterm there's only one WS and one
-  // canonical send path. This also retroactively closes a regression
-  // landed in HS-8042 where the dedicated-view's keystrokes silently
-  // didn't reach the server (pre-fix dedicated owned its WS + onData
-  // wiring; the HS-8042 migration removed both on the wrong assumption
-  // that checkout was already doing it).
-  const encoder = new TextEncoder();
-  term.onData((data) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      try { ws.send(encoder.encode(data)); } catch { /* socket may have closed mid-send */ }
-    }
+    try { ws.send(JSON.stringify({ type: 'resize', cols: entry.lastAppliedCols, rows: entry.lastAppliedRows })); } catch { /* socket may have closed already */ }
   });
 
   ws.addEventListener('message', (ev) => {
     const data: unknown = ev.data;
     if (data instanceof ArrayBuffer) {
-      try { term.write(new Uint8Array(data)); } catch { /* term disposed mid-message */ }
+      try { entry.term.write(new Uint8Array(data)); } catch { /* term disposed mid-message */ }
       return;
     }
     if (typeof data === 'string') {
       try {
         const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
+        // HS-8044 — fan out the parsed control message to every stack
+        // consumer's `onControlMessage` callback BEFORE the module's
+        // own history-bytes replay runs. Consumers that need the
+        // history frame's metadata (alive, exitCode, command — the
+        // drawer pane in §22) read those fields here; the module's
+        // history-replay logic below is independent.
+        if (typeof msg.type === 'string') {
+          const dispatchMsg = msg as { type: string; [k: string]: unknown };
+          for (const handle of entry.stack) {
+            try { handle._options.onControlMessage?.(dispatchMsg); } catch { /* swallow */ }
+          }
+        }
         if (msg.type === 'history' && typeof msg.bytes === 'string') {
           // Server-side scrollback replay (HS-8031 §54.3.3 — the server's
           // attach() returns `history` and the WebSocket handler emits a
@@ -283,19 +326,38 @@ function openCheckoutWebSocket(secret: string, terminalId: string, cols: number,
           try {
             if (typeof msg.cols === 'number' && typeof msg.rows === 'number'
                 && msg.cols > 0 && msg.rows > 0) {
-              try { term.resize(msg.cols, msg.rows); } catch { /* term disposed */ }
+              try { entry.term.resize(msg.cols, msg.rows); } catch { /* term disposed */ }
             }
             const binary = atob(msg.bytes);
             const buf = new Uint8Array(binary.length);
             for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
-            term.write(buf);
+            entry.term.write(buf);
           } catch { /* malformed history — drop */ }
         }
       } catch { /* malformed JSON — ignore */ }
     }
   });
 
-  return ws;
+  ws.addEventListener('close', () => {
+    // HS-8044 — module-driven reconnect. Skip when (a) the user
+    // explicitly released the entry (the dispose path flips the flag
+    // before close) or (b) the stack is empty (no consumer needs the
+    // socket). Otherwise re-spawn — the server-side `'history'` replay
+    // on the new WS re-paints scrollback so the user perceives the
+    // socket flap as a brief output gap, not as a lost terminal.
+    if (entry.intentionallyClosing) return;
+    if (entry.stack.length === 0) return;
+    if (entry.ws !== ws) return; // a newer reconnect already kicked in
+    entry.ws = null;
+    // Schedule the reconnect on a microtask so the close-event handler
+    // returns first; avoids re-entrancy on hot socket-flap loops.
+    queueMicrotask(() => {
+      // Re-check guards — the entry may have been disposed in the gap.
+      if (entry.intentionallyClosing) return;
+      if (entry.stack.length === 0) return;
+      attachWebSocketToEntry(entry);
+    });
+  });
 }
 
 /** If `(cols, rows)` differs from the entry's last-applied dims, fire
@@ -323,6 +385,12 @@ function reparentXtermInto(entry: StackEntry, mountInto: HTMLElement): void {
 
 /** Tear down an entry that has no remaining consumers. */
 function disposeEntry(entry: StackEntry): void {
+  // HS-8044 — flag intentional close BEFORE `entry.ws.close()` fires so
+  // the WS close-event listener inside `attachWebSocketToEntry` sees the
+  // flag and skips its reconnect path. Without this, the dispose-when-
+  // empty path would race against the auto-reconnect and re-spawn a
+  // socket we just intentionally tore down.
+  entry.intentionallyClosing = true;
   // Park the xterm element back in the sink before dispose so the user's
   // `mountInto` (which the consumer is about to release) doesn't end up
   // with an orphaned xterm node. The sink is hidden + offscreen, so the

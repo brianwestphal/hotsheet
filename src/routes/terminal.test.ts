@@ -29,8 +29,6 @@ vi.mock('../terminals/registry.js', () => ({
   getLastSpinnerAtMs: vi.fn(),
   getNotificationMessage: vi.fn(),
   getTerminalPid: vi.fn(),
-  getTerminalScrollbackPreview: vi.fn(),
-  getTerminalScrollbackPreviewWithAnsi: vi.fn(),
   getTerminalStatus: vi.fn(),
   killTerminal: vi.fn(),
   listProjectTerminalIds: vi.fn(),

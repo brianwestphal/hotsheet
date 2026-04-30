@@ -1,15 +1,6 @@
-import { type AnsiPalette, ansiToSafeHtml } from './ansiSpans.js';
 import { toElement } from './dom.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
 import { checkout,type CheckoutHandle } from './terminalCheckout.js';
-import {
-  clampFontSize,
-  DEFAULT_FONT_ID,
-  DEFAULT_FONT_SIZE,
-  getFontById,
-  loadGoogleFont,
-} from './terminalFonts.js';
-import { DEFAULT_THEME_ID, getThemeById, type TerminalTheme } from './terminalThemes.js';
 
 /**
  * Quit-confirm prompt (HS-7596 / §37). Shown when the user attempts to quit
@@ -174,117 +165,16 @@ export async function runQuitConfirmFlow(): Promise<'proceed' | 'cancel'> {
   return choice.outcome;
 }
 
-/**
- * HS-7969 — fetch the §37 quit-confirm row's preview text + the terminal's
- * resolved appearance (theme id, font id, font size). Routed through the
- * per-project `X-Hotsheet-Secret` header since the dialog spans every
- * project. Returns empty text + null appearance fields on any non-2xx
- * response — the caller falls back to the FALLBACK_APPEARANCE for nulls.
- */
-interface ScrollbackPreviewResponse {
-  text: string;
-  /** HS-7969 follow-up #2 — ANSI-preserving variant for rich rendering.
-   *  Empty string when the server didn't supply it (older builds) — the
-   *  caller falls back to plain `text` in that case. */
-  textWithAnsi: string;
-  theme: string | null;
-  fontFamily: string | null;
-  fontSize: number | null;
-}
-
-async function fetchScrollbackPreview(secret: string, terminalId: string): Promise<ScrollbackPreviewResponse> {
-  const empty: ScrollbackPreviewResponse = { text: '', textWithAnsi: '', theme: null, fontFamily: null, fontSize: null };
-  if (secret === '' || terminalId === '') return empty;
-  const url = `/api/terminal/scrollback-preview?terminalId=${encodeURIComponent(terminalId)}&maxLines=30`;
-  const res = await fetch(url, {
-    headers: { 'X-Hotsheet-Secret': secret },
-  });
-  if (!res.ok) return empty;
-  const body = await res.json() as { text?: unknown; textWithAnsi?: unknown; theme?: unknown; fontFamily?: unknown; fontSize?: unknown };
-  return {
-    text: typeof body.text === 'string' ? body.text : '',
-    textWithAnsi: typeof body.textWithAnsi === 'string' ? body.textWithAnsi : '',
-    theme: typeof body.theme === 'string' ? body.theme : null,
-    fontFamily: typeof body.fontFamily === 'string' ? body.fontFamily : null,
-    fontSize: typeof body.fontSize === 'number' && Number.isFinite(body.fontSize) ? body.fontSize : null,
-  };
-}
-
-/** HS-7969 follow-up #2 — derive the ANSI palette the master-detail
- *  preview uses for rich rendering. Values come from the resolved
- *  TerminalTheme so the preview's coloured spans match the live
- *  terminal's appearance. */
-function paletteFromTheme(theme: TerminalTheme): AnsiPalette {
-  return {
-    black: theme.black,
-    red: theme.red,
-    green: theme.green,
-    yellow: theme.yellow,
-    blue: theme.blue,
-    magenta: theme.magenta,
-    cyan: theme.cyan,
-    white: theme.white,
-    brightBlack: theme.brightBlack,
-    brightRed: theme.brightRed,
-    brightGreen: theme.brightGreen,
-    brightYellow: theme.brightYellow,
-    brightBlue: theme.brightBlue,
-    brightMagenta: theme.brightMagenta,
-    brightCyan: theme.brightCyan,
-    brightWhite: theme.brightWhite,
-    defaultFg: theme.foreground,
-    defaultBg: theme.background,
-  };
-}
-
-/**
- * HS-7969 follow-up — paint the master-detail preview pane with the
- * terminal's resolved theme + font. Looks up the colour palette + font
- * family by id; falls back to the default theme / font when the id is
- * unknown (e.g. a config carrying a stale theme id from a removed
- * theme). Sets `font-style: normal` to defeat the loading-state italic
- * styling once real content arrives.
- */
-async function applyAppearanceToPreview(pre: HTMLElement, response: ScrollbackPreviewResponse): Promise<void> {
-  const theme = getThemeById(response.theme ?? DEFAULT_THEME_ID) ?? getThemeById(DEFAULT_THEME_ID)!;
-  const fontId = response.fontFamily ?? DEFAULT_FONT_ID;
-  const font = getFontById(fontId) ?? getFontById(DEFAULT_FONT_ID)!;
-  const fontSize = clampFontSize(response.fontSize ?? DEFAULT_FONT_SIZE);
-  // Load the Google Font BEFORE applying so we don't flash a system glyph
-  // for a frame. Mirrors `applyAppearanceToTerm`'s ordering.
-  await loadGoogleFont(font).catch(() => { /* network blip — fall back to system stack */ });
-  pre.style.background = theme.background;
-  pre.style.color = theme.foreground;
-  pre.style.fontFamily = font.family;
-  pre.style.fontSize = `${fontSize}px`;
-  pre.style.fontStyle = 'normal';
-}
-
-/** HS-7969 follow-up #2 — paint the preview's text content using rich
- *  ANSI-aware spans so coloured / bold / underlined output renders as
- *  the user saw it in the live terminal. Falls back to escaped plain
- *  text when the server didn't supply `textWithAnsi` (older build).
- *
- *  HS-8041 — no longer called from this file. The quit-confirm preview
- *  pane migrated to `terminalCheckout` (real xterm canvas instead of
- *  the ANSI-spans approximation HS-7969 originally complained about).
- *  The helper is kept until the cleanup sub-ticket #5 (HS-8032 plan)
- *  removes it alongside `ansiSpans.ts` + the `/scrollback-preview`
- *  route. Until then it sits idle so the bulk-delete cleanup is a
- *  single coherent change. */
-function paintPreviewContent(pre: HTMLElement, response: ScrollbackPreviewResponse): void {
-  const empty = response.text === '' && response.textWithAnsi === '';
-  if (empty) {
-    pre.textContent = '(no output captured yet)';
-    return;
-  }
-  const theme = getThemeById(response.theme ?? DEFAULT_THEME_ID) ?? getThemeById(DEFAULT_THEME_ID)!;
-  const palette = paletteFromTheme(theme);
-  const source = response.textWithAnsi !== '' ? response.textWithAnsi : response.text;
-  // ansiToSafeHtml escapes every text fragment internally, so assigning
-  // to innerHTML is safe — no untrusted markup can survive the escaper.
-  pre.innerHTML = ansiToSafeHtml(source, palette);
-}
+// HS-8045 — `ScrollbackPreviewResponse` interface, `fetchScrollbackPreview`,
+// `paletteFromTheme`, `applyAppearanceToPreview`, `paintPreviewContent`
+// helpers all deleted. The §37 ANSI-spans preview path that depended on
+// them is fully obsolete now that every consumer of the quit-confirm /
+// dashboard / drawer-grid / drawer surfaces routes through
+// `terminalCheckout` for real xterm canvas previews. The matching server
+// route (`GET /api/terminal/scrollback-preview`), registry helper
+// (`getTerminalScrollbackPreviewWithAnsi` + the stripped variant), and
+// `buildScrollbackPreviewWithAnsi` / `buildScrollbackPreview` snapshot
+// helpers are deleted in the same change.
 
 interface QuitDialogChoice {
   outcome: 'proceed' | 'cancel';
@@ -495,14 +385,3 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
   });
 }
 
-// HS-8041 — `paintPreviewContent`, `applyAppearanceToPreview`, and
-// `fetchScrollbackPreview` are kept (per the ticket's explicit "LEAVE the
-// helpers themselves until cleanup ticket #5" instruction) so the §37
-// ANSI-spans preview path can be removed in a single coherent change once
-// every Phase 2 sub-ticket has migrated. These references defeat the
-// `@typescript-eslint/no-unused-vars` rule without an inline disable —
-// matches the existing `void flat;` pattern at the bottom of
-// `showQuitConfirmDialog`.
-void fetchScrollbackPreview;
-void applyAppearanceToPreview;
-void paintPreviewContent;

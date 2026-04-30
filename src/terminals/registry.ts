@@ -18,7 +18,6 @@ import { DEFAULT_TERMINAL_ID, type TerminalConfig } from './config.js';
 import { createPromptScanner, type PromptScanner } from './promptScanner.js';
 import { resolveTerminalCommand } from './resolveCommand.js';
 import { RingBuffer } from './ringBuffer.js';
-import { buildScrollbackPreview, buildScrollbackPreviewWithAnsi } from './scrollbackSnapshot.js';
 import { setupShellHistoryForSpawn } from './shellHistory.js';
 
 export type TerminalState = 'alive' | 'exited' | 'not_spawned';
@@ -322,39 +321,13 @@ export function getTerminalStatus(
   };
 }
 
-/**
- * HS-7969 — return a plain-text preview of the last `maxLines` lines of a
- * terminal's scrollback, ANSI-stripped. Returns the empty string when the
- * session is unknown or the buffer is empty. Used by the §37 quit-confirm
- * dialog's expand-row preview so the user can decide whether the terminal
- * is safe to kill.
- */
-export function getTerminalScrollbackPreview(
-  secret: string,
-  terminalId: string,
-  maxLines: number,
-): string {
-  const s = sessions.get(sessionKey(secret, terminalId));
-  if (!s) return '';
-  return buildScrollbackPreview(s.scrollback.snapshot(), maxLines);
-}
-
-/**
- * HS-7969 follow-up #2 — ANSI-preserving variant for the §37 quit-confirm
- * dialog's master-detail preview pane. Same shape + bounds as
- * `getTerminalScrollbackPreview` but keeps CSI/SGR sequences so the
- * client can render coloured / bold / underlined spans against the
- * resolved theme palette.
- */
-export function getTerminalScrollbackPreviewWithAnsi(
-  secret: string,
-  terminalId: string,
-  maxLines: number,
-): string {
-  const s = sessions.get(sessionKey(secret, terminalId));
-  if (!s) return '';
-  return buildScrollbackPreviewWithAnsi(s.scrollback.snapshot(), maxLines);
-}
+// HS-8045 — `getTerminalScrollbackPreview` + `getTerminalScrollbackPreviewWithAnsi`
+// deleted. The §37 quit-confirm preview pane (HS-7969 / HS-8041) now
+// uses the real `terminalCheckout` xterm canvas instead of the
+// ANSI-spans-rendered text snapshot, so neither helper has remaining
+// callers. The matching `/api/terminal/scrollback-preview` route + the
+// `buildScrollbackPreview` / `buildScrollbackPreviewWithAnsi` snapshot
+// helpers in `scrollbackSnapshot.ts` are deleted in the same change.
 
 /**
  * Ensure a PTY exists for `(secret, terminalId)` without attaching a subscriber.

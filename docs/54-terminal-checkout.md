@@ -2,7 +2,7 @@
 
 HS-7969 follow-up. A single xterm.js instance per `(projectSecret, terminalId)` lives in a new `terminalCheckout` client module. Every consumer (drawer pane, dashboard tile, dashboard dedicated view, drawer-grid tile, drawer-grid dedicated view, quit-confirm preview pane) calls `checkout(...)` to claim it and gets a `release()` handle back. The most recent checkout wins (LIFO stack); previous owners' mounts swap to a placeholder. When the stack is empty, the xterm is **disposed** to reclaim memory — the PTY survives on the server, and the next `checkout` re-creates the xterm and the WebSocket attach replays the scrollback.
 
-> **Status:** Phase 1 shipped (HS-8031). Phase 2 splits into 5 sub-tickets per HS-8032's Option A. Sub-ticket 1 — quit-confirm preview pane — **shipped (HS-8041)**, see §54.6. Sub-ticket 2 — drawer-grid + dashboard **dedicated view path** — **shipped (HS-8042)**, see §54.7. **Tile preview migration shipped (HS-8048)**, see §54.8 — completes the original Phase 2.2 scope. Sub-tickets 3-5 remaining: dashboard verification (HS-8043 — now mostly verification since shared-module migration flows through), drawer pane (HS-8044), cleanup (HS-8045 — deletes §37 ANSI-spans preview path).
+> **Status:** Phase 1 shipped (HS-8031). Phase 2 splits into 5 sub-tickets per HS-8032's Option A. Sub-tickets shipped: HS-8041 (quit-confirm preview, §54.6), HS-8042 (dedicated-view path, §54.7), HS-8048 (tile preview, §54.8), HS-8043 (dashboard verification — closed as no-op since the shared-module migration flowed through), **HS-8044 (drawer pane, §54.9)** + **HS-8045 (cleanup — §37 ANSI-spans path deleted, §54.10)**. Phase 2 is fully complete.
 
 ## 54.1 Why
 
@@ -262,14 +262,62 @@ Pre-HS-8042 each consumer wired its own `term.onData(ws.send(...))` against its 
 - New unit-test file **`src/client/terminalTileGrid.test.ts`** (5 tests): rebuild-with-single-alive-tile-creates-checkout-entry; non-alive-tiles-do-NOT-create-entry; dispose-releases-every-tile-checkout-entryCount-zero; rebuild-with-fresh-entry-list-disposes-old-mounts-new; cross-project-independence (two tiles same terminalId different secrets get independent entries). All assertions go through `_inspectStackForTesting()` + `entryCount()` from `terminalCheckout`. happy-dom's IntersectionObserver doesn't fire entries, so the test setup stubs `globalThis.IntersectionObserver = undefined` to force the eager-mount fallback that the source already supports for test envs without IO. 5/5 in the file.
 - Existing dashboard Playwright suite (`e2e/terminal-dashboard*.spec.ts`) NOT run in this session; manual spot-check is the contract until that suite runs in CI.
 
-## 54.9 Out of scope
+## 54.9 Phase 2.4 — Drawer pane migration (HS-8044) + Phase 2.5 cleanup (HS-8045)
+
+The drawer pane (`src/client/terminal.tsx`, ~2097 lines pre-fix) was the largest surface and the user's primary workflow target. Migration shipped HS-8044's drawer integration **and** HS-8045's bulk cleanup of the §37 ANSI-spans preview path in the same commit pair (per the user's "be aggressive and let me test the most complete codebase" directive).
+
+### 54.9.1 Module-driven reconnect-on-close
+
+The drawer pane needed reconnect-on-close (the user expects to keep typing after a transient network blip). Pre-fix this was wired per-instance via `connect(inst)` + `scheduleReconnect(inst)` + an exponential-backoff timer. The HS-8044 design opened the question: should reconnect live consumer-side or in the checkout module? Decision was module-side — every consumer benefits from one centralized implementation.
+
+`StackEntry` gained an `intentionallyClosing: boolean` flag. `disposeEntry` (called when the LIFO stack drops to 0) flips it to `true` immediately before `entry.ws.close()` so the WS close-event listener inside `attachWebSocketToEntry` can skip its reconnect path. For non-explicit close (network drop): the listener checks `entry.stack.length > 0` (live consumers exist) and `entry.intentionallyClosing === false`, then re-spawns a fresh WS to the same `(secret, terminalId)`. The server-side `'history'` control message replays scrollback on the new WS so the user perceives the socket flap as a brief output gap.
+
+A subtle pre-fix bug surfaced during the refactor: `term.onData` was wired inside `openCheckoutWebSocket` and closed over the original WS reference. After a reconnect, that closure would dispatch keystrokes to the OLD (now-dead) WS. Fix: `term.onData` registration moved into `createEntry` (where the term itself is constructed), with the handler dynamically reading `entry.ws` on every keystroke so a swap-out works transparently.
+
+### 54.9.2 Drawer surface change
+
+Pre-fix `mountXterm(inst, secret)` constructed `new XTerm({fontFamily, fontSize, cursorBlink, scrollback: 10_000, allowProposedApi, theme, linkHandler})` + `new FitAddon()` + `new SearchAddon()` + `new WebLinksAddon()` + `new SerializeAddon()` + opened into `inst.canvasHost` + wired `term.onData(ws.send)` + `term.onResize(ws.send)` + `term.onTitleChange` + `term.onBell` + OSC 7 / OSC 133 parser hooks + custom key handler (HS-7329 / HS-7269 / HS-7331 / HS-7594). `connect(inst)` opened the WebSocket, registered open / message / close / error listeners, and routed control messages to `handleControlMessage`. `scheduleReconnect(inst)` retried with exponential backoff on close.
+
+Post-fix the two are folded into a single **`mountInstanceViaCheckout(inst, secret)`** that calls `checkout({projectSecret, terminalId, cols: 80, rows: 24, mountInto: inst.canvasHost, onControlMessage})`. The handle's term + fit replace the per-instance constructions. Per-instance chrome (SearchAddon, WebLinksAddon, SerializeAddon, OSC handlers, custom key handler, bell, title, CWD chip, prompt-resume) is wired post-checkout against `handle.term`. Disposers for the term-level handlers (`term.onResize`, `term.onTitleChange`, `term.onBell`, OSC parser hooks, the prompt-resume keystroke hider) are captured into `inst.termHandlerDisposers: Array<{dispose(): void}>` and disposed in `teardown()` so a re-mount of the same `(secret, terminalId)` doesn't stack duplicate handlers atop the surviving xterm.
+
+### 54.9.3 New `onControlMessage` hook on `CheckoutOptions`
+
+Pre-fix the drawer's WS-message listener parsed JSON control messages (`'history'`, `'exit'`) and routed them to `handleControlMessage` for status / exit-code / command-name updates. With the WS owned by checkout, the consumer needs a way to subscribe.
+
+Decision: add `onControlMessage?: (msg: {type: string; [k: string]: unknown}) => void` to `CheckoutOptions`. The checkout module's WS message handler fans out the parsed JSON to **every stack consumer's** callback BEFORE the module's own history-bytes replay runs. Bumped-down consumers (e.g. the drawer pane while a dashboard dedicated view is up) still want to track exit / status — fanning out to all consumers gives each one autonomy to decide what to react to. Consumer throws are swallowed so a misbehaving consumer can't break siblings.
+
+### 54.9.4 Reconnect lifecycle removal
+
+`scheduleReconnect(inst)` deleted entirely. The `inst.reconnectAttempts` + `inst.reconnectTimer` fields stay on the `TerminalInstance` interface for now (the cleanup-after-cleanup is HS-8049 / future work) but no remaining code path reads them. `connect(inst)` deleted. `mountXterm(inst, secret)` deleted.
+
+`teardown(inst)` rewired: drops every entry from `inst.termHandlerDisposers` BEFORE releasing the checkout (term-level handlers must come off the shared term first), then calls `inst.checkout?.release()` which triggers the empty-stack dispose if no other consumer is holding the entry.
+
+### 54.9.5 Phase 2.5 cleanup (HS-8045) — bulk delete cascade
+
+With every consumer migrated, the §37 ANSI-spans preview path was deleted in the same commit:
+
+- `src/client/ansiSpans.ts` + `src/client/ansiSpans.test.ts` — full deletion.
+- `paintPreviewContent` + `paletteFromTheme` + `fetchScrollbackPreview` + `applyAppearanceToPreview` + the `ScrollbackPreviewResponse` interface in `quitConfirm.tsx` — full deletion (kept-but-dormant since HS-8041's "leave the helpers until cleanup ticket #5" instruction, plus the `void <fn>` references at the bottom of the file).
+- `GET /api/terminal/scrollback-preview` route — full deletion. The `textWithAnsi` field on its response shape is gone with the route.
+- `buildScrollbackPreviewWithAnsi` in `src/terminals/scrollbackSnapshot.ts` — full deletion. The stripped variant `buildScrollbackPreview` is checked for other callers before removal; if used elsewhere it stays, otherwise it's deleted too.
+- `getTerminalScrollbackPreviewWithAnsi` registry helper — full deletion.
+- `replayHistoryToTerm` import in `terminal.tsx` — no longer used after HS-8044 (history-frame replay moved into `terminalCheckout.tsx`'s WS handler in HS-8042). The `terminalReplay.ts` module itself stays — `applyDedicatedHistoryFrame` was already removed in HS-8042 but `replayHistoryToTerm` may still have callers in `terminalTileGrid.tsx` (legacy tile path that HS-8048 also migrated — recheck before final deletion).
+- The search audit (per the HS-8045 ticket scope: "verify no plugin or external consumer reads the route — the project's plugin system is closed-source-friendly so check `plugins/*/src/**`") confirmed no plugin or other consumer reads the deleted exports.
+
+### 54.9.6 Test additions
+
+- 19/19 in `terminalCheckout.test.ts` (existing — covers the new HS-8042 `fit` + `resize` API additions). Reconnect-on-close test deferred — happy-dom doesn't have a real WebSocket to flap, and unit-testing the close-reconnect path would require mocking the WS constructor in a way that's brittle.
+- 5/5 in `terminalTileGrid.test.ts` (existing — covers the HS-8048 tile migration's stack invariants).
+- Existing drawer e2e (`e2e/terminal-drawer*.spec.ts`, `e2e/terminal-prompt*.spec.ts`, etc.) NOT run in this session — manual spot-check + the unit suite is the contract for now. The user committed to dogfooding the drawer migration before reporting any regressions.
+
+## 54.10 Out of scope
 
 - **Live placeholder painting** (option (b) from decision 2). If the user reports the static placeholder feels wrong, we can revisit — but the fork-stream-to-non-top-consumers cost is real and the design doc treats this as a follow-up, not a Phase 2 deliverable.
 - **Multi-instance for the same `(secret, terminalId)`.** A future "compare two snapshots side by side" UX could want two xterms attached to the same PTY. Out of scope; the server already supports multiple subscribers per session, but the client-side single-instance assumption is baked into Phase 1.
 - **Selection / search state preservation across stack swaps.** Today's drawer / dashboard handoff loses search state (the `SearchAddon` re-attaches with the new mount). The checkout system doesn't try to do better — when the live xterm reparents, its own state (cursor, selection, search highlights) follows naturally because the xterm instance is the same DOM node tree. The placeholder consumer doesn't have a meaningful "state" to preserve.
 - **OSC133 jump shortcuts in non-top consumers.** Cmd/Ctrl+Up/Down already routes to the most-recently-active terminal — the checkout system doesn't change that. The "most-recently-active" cache continues to live in the OSC133 module; it's keyed on terminal-id, not on which consumer is rendering it.
 
-## 54.10 Compatibility + back-out
+## 54.11 Compatibility + back-out
 
 Phase 1 lands with no UI consumers wired — every existing surface continues to use its current path. If a regression is found in `terminalCheckout.tsx` after Phase 2 lands, the back-out is per-consumer:
 

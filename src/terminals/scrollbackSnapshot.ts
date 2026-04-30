@@ -53,33 +53,11 @@ export function tailLines(text: string, maxLines: number): string {
   return lines.slice(lines.length - maxLines).join('\n');
 }
 
-/**
- * Pure: produce the user-visible preview from raw scrollback bytes.
- * Returns a string with up to `maxLines` lines, ANSI-stripped. Empty
- * string if the buffer is empty.
- */
-export function buildScrollbackPreview(buf: Buffer, maxLines: number): string {
-  if (buf.length === 0) return '';
-  const text = buf.toString('utf-8');
-  const stripped = stripAnsi(text);
-  return tailLines(stripped, maxLines);
-}
-
-/**
- * HS-7969 follow-up #2 — ANSI-preserving variant for the §37 quit-confirm
- * master-detail preview pane's rich rendering. Keeps CSI/OSC/SIMPLE-ESC
- * sequences in the output so a client-side ANSI-to-HTML parser can paint
- * coloured / bold / underlined spans against the resolved theme palette.
- *
- * Still collapses bare CR (so line-counting + tail logic matches the
- * stripped-text path) and still drops backspace bytes (no useful visual
- * meaning in a static preview). Tail logic is identical to the stripped
- * path because ANSI sequences never embed `\n` themselves.
- */
-export function buildScrollbackPreviewWithAnsi(buf: Buffer, maxLines: number): string {
-  if (buf.length === 0) return '';
-  const text = buf.toString('utf-8')
-    .replace(BACKSPACE_RX, '')
-    .replace(CR_BUT_NOT_CRLF_RX, '\n');
-  return tailLines(text, maxLines);
-}
+// HS-8045 — `buildScrollbackPreview` + `buildScrollbackPreviewWithAnsi`
+// deleted. Both were exclusively consumed by the deleted
+// `/api/terminal/scrollback-preview` route + its registry helpers, all
+// of which were removed along with the §37 ANSI-spans preview path now
+// that every consumer routes through `terminalCheckout` for real xterm
+// canvas previews. `stripAnsi` + `tailLines` stay as-is — they're pure
+// utility functions with existing unit-test coverage that may be useful
+// for future paths.

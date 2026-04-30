@@ -1,8 +1,8 @@
-import { FitAddon } from '@xterm/addon-fit';
+import type { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { type IDecoration, type IMarker, Terminal as XTerm } from '@xterm/xterm';
+import type { IDecoration, IMarker, Terminal as XTerm } from '@xterm/xterm';
 
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
@@ -30,11 +30,10 @@ import {
   subscribeToDefaultAppearanceChanges,
 } from './terminalAppearance.js';
 import { mountAppearancePopover } from './terminalAppearancePopover.js';
-import { DEFAULT_FONT_SIZE } from './terminalFonts.js';
+import { checkout,type CheckoutHandle } from './terminalCheckout.js';
 import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
-import { replayHistoryToTerm } from './terminalReplay.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { configuredSubsetInStripOrder, reorderConfigsById, reorderIds } from './terminalTabReorder.js';
 import { pickNearestTerminalTabId } from './terminalTabSelection.js';
@@ -81,6 +80,23 @@ export interface TerminalTabConfig {
 interface TerminalInstance {
   id: string;
   config: TerminalTabConfig;
+  /** HS-8044 — the drawer pane is a `terminalCheckout` consumer (Phase
+   *  2.4 of HS-8032). The handle owns the live xterm + WebSocket + the
+   *  per-entry FitAddon. `term`, `fit`, `search`, `searchHandle` are
+   *  cleared when the consumer is disposed (tab closed, project
+   *  switched away, drawer terminated). The handle is `null` until the
+   *  tab is first activated (lazy mount, matches pre-fix behaviour). */
+  checkout: CheckoutHandle | null;
+  /** HS-8044 — disposers for `term.onResize`, `term.onTitleChange`,
+   *  `term.onBell`, OSC 7 / OSC 133 parser hooks. Captured so a tab
+   *  close / dispose drops the handlers from the shared term — without
+   *  this, a re-mount of the same `(secret, terminalId)` would stack
+   *  duplicate handlers atop the surviving xterm. */
+  termHandlerDisposers: Array<{ dispose(): void }>;
+  /** Convenience aliases sourced from `checkout.term` / `checkout.fit`
+   *  + the per-tab SearchAddon for backward compat with the many
+   *  `inst.term?.X(...)` callsites scattered across the file. Updated
+   *  in `mountInstanceViaCheckout`; null when checkout is null. */
   term: XTerm | null;
   fit: FitAddon | null;
   search: SearchAddon | null;
@@ -95,6 +111,12 @@ interface TerminalInstance {
   statusDot: HTMLElement;
   pane: HTMLElement;
   tabBtn: HTMLElement;
+  /** HS-8044 — WebSocket lifecycle now lives in `terminalCheckout`. The
+   *  drawer no longer owns or reconnects to a WS directly. Kept as a
+   *  permanently-null field so the few remaining read sites (status
+   *  checks during shutdown, etc.) don't need to be rewritten — the
+   *  checkout module's reconnect-on-close path replaces the drawer's
+   *  prior `scheduleReconnect` flow entirely. */
   ws: WebSocket | null;
   wsSecret: string | null;
   reconnectAttempts: number;
@@ -437,21 +459,20 @@ export function activateTerminal(id: string): void {
   if (!active) return;
 
   if (!inst.mounted) {
-    mountXterm(inst, active.secret);
-    // HS-6799: fit the xterm to its pane BEFORE opening the WebSocket so the
-    // `?cols=&rows=` query reflects the real pane geometry. The server uses
-    // those dims to spawn (or resize) the PTY so its startup output is
-    // generated at the right width — avoiding the stray-glyph artifacts that
-    // appeared when history was replayed from a DEFAULT 80×24 buffer.
+    mountInstanceViaCheckout(inst, active.secret);
+    // HS-6799: fit the xterm to its pane BEFORE the first frame so the
+    // checkout's `cols`/`rows` reflect the real pane geometry. Pre-
+    // HS-8044 this was sequenced ahead of the manual `connect()` so the
+    // server's spawn-resize matched; post-HS-8044 the checkout's WS
+    // open + first resize frame echo the same dims via fit() output
+    // through `term.onResize → handle.resize`.
     doFit(inst);
-    connect(inst);
     inst.mounted = true;
   } else if (inst.wsSecret !== active.secret) {
     // Project switched — rebuild from scratch.
     teardown(inst);
-    mountXterm(inst, active.secret);
+    mountInstanceViaCheckout(inst, active.secret);
     doFit(inst);
-    connect(inst);
   }
 
   requestAnimationFrame(() => {
@@ -487,13 +508,16 @@ export function resyncActiveTerminalPtySize(): void {
   if (activeTerminalId === null) return;
   const inst = instances.get(activeTerminalId);
   if (inst === undefined) return;
-  if (inst.term === null || inst.ws === null || inst.ws.readyState !== WebSocket.OPEN) return;
+  if (inst.checkout === null) return;
   // First refit so the xterm reflects the drawer's CURRENT pane size, then
-  // unconditionally push those dims to the PTY. Using the raw xterm cols /
-  // rows (rather than recomputing) keeps the message in sync with what the
-  // xterm is actually rendering at.
+  // unconditionally push those dims to the PTY via the checkout's resize
+  // path. HS-8044 — pre-fix this sent the resize frame directly via
+  // `inst.ws.send(...)`; post-fix `handle.resize` updates the entry's
+  // `lastApplied` bookkeeping AND sends the WS frame in one call (and
+  // skips on same-size to avoid SIGWINCH storms).
   doFit(inst);
-  inst.ws.send(JSON.stringify({ type: 'resize', cols: inst.term.cols, rows: inst.term.rows }));
+  const term = inst.checkout.term;
+  inst.checkout.resize(term.cols, term.rows);
 }
 
 /** Is the given instance the currently-active drawer tab? */
@@ -610,6 +634,8 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
   const inst: TerminalInstance = {
     id: config.id,
     config,
+    checkout: null,
+    termHandlerDisposers: [],
     term: null,
     fit: null,
     search: null,
@@ -910,37 +936,47 @@ async function reapplyAppearance(inst: TerminalInstance): Promise<void> {
   await applyAppearanceToTerm(inst.term, appearance);
 }
 
-function mountXterm(inst: TerminalInstance, secret: string): void {
-  const term = new XTerm({
-    // HS-6307 — fontFamily / fontSize / theme are overwritten by
-    // `applyAppearanceToTerm` immediately after construction. The initial
-    // values below are the hard-coded fallback so the first canvas paint is
-    // correct if appearance resolution races.
-    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-    fontSize: DEFAULT_FONT_SIZE,
-    cursorBlink: true,
-    scrollback: 10_000,
-    allowProposedApi: true,
-    theme: resolveAppearanceThemeForInit(inst),
-    // HS-7263 — OSC 8 hyperlink activation. Modern CLI tools (`gh`, `delta`,
-    // `eza`, `rg --hyperlink-format`, `ls --hyperlink=auto`, git log piped
-    // through delta) emit `\x1b]8;;URL\x07TEXT\x1b]8;;\x07` so the visible
-    // text differs from the underlying URL — the plain-regex WebLinksAddon
-    // misses these entirely since it scans rendered glyphs. xterm.js v5+
-    // parses OSC 8 natively and calls our `linkHandler.activate` on click;
-    // we route through the Tauri-safe openExternalUrl helper so the click
-    // actually opens something (window.open is a silent no-op in WKWebView).
-    linkHandler: {
-      activate: (_event, text) => { openExternalUrl(text); },
+/**
+ * HS-8044 — mount the drawer pane via `terminalCheckout` instead of
+ * constructing per-instance `XTerm` + `WebSocket`. The checkout module
+ * owns the live xterm + WS + scrollback replay + reconnect-on-close
+ * (per HS-8044's module-driven reconnect addition); this function wires
+ * the drawer's per-instance chrome (SearchAddon, OSC handlers, theme,
+ * custom key bindings, bell, title, CWD chip, prompt-resume) onto the
+ * shared term that checkout returns.
+ *
+ * Replaces pre-fix `mountXterm(inst, secret)` + `connect(inst)` (which
+ * each constructed their own xterm + WebSocket and managed the per-
+ * instance reconnect-on-close loop). The checkout module's
+ * `attachWebSocketToEntry` now centralises the WS lifecycle including
+ * reconnect on transient close, so the drawer's old `scheduleReconnect`
+ * path is gone.
+ */
+function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void {
+  const handle = checkout({
+    projectSecret: secret,
+    terminalId: inst.id,
+    cols: 80,
+    rows: 24,
+    mountInto: inst.canvasHost,
+    onControlMessage(msg) {
+      handleControlMessage(inst, msg);
     },
   });
-  const fit = new FitAddon();
-  term.loadAddon(fit);
-  // HS-7263 — pass an explicit click handler so plain-URL activation also
-  // routes through Tauri's `open_url` instead of WebLinksAddon's default
-  // `window.open`, which silently no-ops in WKWebView.
+  const term = handle.term;
+  const fit = handle.fit;
+
+  // HS-8044 — apply per-consumer xterm options. The xterm is shared
+  // across consumers (drawer pane + dashboard tile + dedicated etc.)
+  // for the same `(secret, terminalId)`; option overrides applied here
+  // win for the drawer's lifetime as long as it stays at top-of-stack.
+  term.options.theme = resolveAppearanceThemeForInit(inst);
+  term.options.linkHandler = {
+    activate: (_event, text) => { openExternalUrl(text); },
+  };
   term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
   term.loadAddon(new SerializeAddon());
+
   // HS-7331 — xterm's SearchAddon powers the toolbar Find widget. Mount the
   // UI into the `.terminal-search-slot` placeholder carved out of the
   // header markup; the handle is disposed on PTY restart + re-created on
@@ -953,11 +989,6 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
     searchHandle = mountTerminalSearch(term, search);
     searchSlot.replaceChildren(searchHandle.root);
   }
-  // HS-7959 — mount the xterm inside the inner padding-less canvas host so
-  // FitAddon's `parent.height - elementPadding` math reflects the real
-  // available area. Mounting on `inst.body` directly meant FitAddon read the
-  // padded body's border-box height and over-counted rows.
-  term.open(inst.canvasHost);
 
   // HS-7960 — paint the body's gutter to match the theme background BEFORE
   // the async appearance load runs (which is fire-and-forget below). Without
@@ -966,7 +997,7 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
   inst.body.style.backgroundColor = resolveAppearanceBackground(resolveInstanceAppearance(inst));
 
   // HS-6307 — apply full appearance (font family + size; theme is already set
-  // synchronously on XTerm construction via resolveAppearanceThemeForInit).
+  // synchronously on XTerm options via resolveAppearanceThemeForInit).
   // Fire-and-forget — the font stylesheet loads async, and xterm falls back to
   // the System stack via CSS cascade while the webfont resolves.
   void reapplyAppearance(inst);
@@ -976,34 +1007,17 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
   // pre-HS-7959 click-to-focus reach.
   inst.body.addEventListener('click', () => { term.focus(); });
 
-  // HS-7329 — Cmd/Ctrl+K clears the terminal (see `isClearTerminalShortcut`).
-  // HS-7269 — Cmd/Ctrl+Up / Cmd/Ctrl+Down jump the viewport to the prev / next
-  // OSC 133 promptStart marker. Returning `false` from the handler suppresses
-  // xterm's default handling for the event (xterm would otherwise send
-  // `\e[1;5A` escape sequences which most shells don't bind — safe to swallow).
-  // HS-7331 — Cmd/Ctrl+F must not be forwarded to the shell either; the
-  // document-level `shortcuts.tsx` listener still catches the bubbling event
-  // and routes focus to the terminal search widget (returning `false` here
-  // only stops xterm's internal processing, not DOM propagation).
-  // HS-7460 — find / jump shortcuts are platform-specific via the helpers in
-  // `terminalKeybindings.ts`: only Cmd+F / Cmd+Up/Down match on macOS, only
-  // Ctrl+F / Ctrl+Up/Down match on Linux/Windows. The wrong-platform modifier
-  // passes through so e.g. macOS Ctrl+F still reaches readline's `forward-char`.
+  // Custom key handler — see comments on the original mountXterm for
+  // the per-shortcut rationale (HS-7329 / HS-7269 / HS-7331 / HS-7594).
   term.attachCustomKeyEventHandler((e) => {
     if (isClearTerminalShortcut(e)) {
-      inst.term?.clear();
+      inst.checkout?.term.clear();
       return false;
     }
-
     if (isFindShortcut(e)) {
       return false;
     }
-
-    // HS-7594 — swallow Cmd/Ctrl+` (and Opt+Cmd+`) so xterm doesn't forward
-    // a backtick to the shell. The document-level handler in shortcuts.tsx
-    // still receives the bubbling event and dispatches the toggle.
     if (isTerminalViewToggleShortcut(e) !== null) return false;
-
     if (!shellIntegrationUiEnabled()) return true;
     if (!inst.shellIntegration.enabled) return true;
     const direction = isJumpShortcut(e);
@@ -1014,76 +1028,57 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
     return true;
   });
 
-  const encoder = new TextEncoder();
-  term.onData((data) => {
-    if (inst.ws !== null && inst.ws.readyState === WebSocket.OPEN) {
-      inst.ws.send(encoder.encode(data));
-    }
-    // HS-8035 — hide the resume chip on any real keystroke. The server's
-    // scanner clears its own suppression on a PTY-byte arrival (see
-    // registry.ts::notifyUserKeystroke), so the chip can vanish here without
-    // a separate POST. The next bell-state poll will re-show it if the
-    // scanner is still suppressed (e.g. user only clicked, didn't type).
+  // HS-8044 — keystroke-send (`term.onData`) is wired centrally inside
+  // checkout's WS handler, so the drawer no longer needs its own
+  // `term.onData → ws.send` route. We DO still want the prompt-resume
+  // chip auto-hide on keystroke (HS-8035), so register a separate
+  // handler that just touches DOM state — checkout's keystroke-send
+  // continues to fire alongside.
+  inst.termHandlerDisposers.push(term.onData(() => {
     if (inst.promptResumeChip.style.display !== 'none') {
       inst.promptResumeChip.style.display = 'none';
     }
-  });
-  term.onResize(({ cols, rows }) => {
-    if (inst.ws !== null && inst.ws.readyState === WebSocket.OPEN) {
-      inst.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-    }
-  });
+  }));
 
-  // OSC 0 / OSC 2 title-change escapes (HS-6473). xterm.js parses
-  // `\x1b]0;TITLE\x07` and `\x1b]2;TITLE\x07` for us; we just store the
-  // value and re-render the tab label. Empty string clears the runtime
-  // title and restores the config-derived name.
-  term.onTitleChange((newTitle) => {
+  // HS-8044 — `term.onResize` echoes fit-driven dim changes through the
+  // checkout's `handle.resize` so the WS resize frame is sent and the
+  // entry's `lastApplied` bookkeeping stays current.
+  inst.termHandlerDisposers.push(term.onResize(({ cols, rows }) => {
+    handle.resize(cols, rows);
+  }));
+
+  // OSC 0 / OSC 2 title-change escapes (HS-6473).
+  inst.termHandlerDisposers.push(term.onTitleChange((newTitle) => {
     inst.runtimeTitle = typeof newTitle === 'string' ? newTitle : '';
     updateTabLabel(inst);
-  });
+  }));
 
-  // OSC 7 — shell-pushed CWD (HS-7262). Payload is `file://host/path` with
-  // URL-encoded path bytes. xterm.js does NOT handle OSC 7 natively — we
-  // register a parser hook on the number directly and return `true` to mark
-  // the sequence consumed. Starship / zsh chpwd / fish-shell / bash with
-  // Apple's or VS Code's integration all emit this on every prompt.
-  term.parser.registerOscHandler(7, (payload) => {
+  // OSC 7 — shell-pushed CWD (HS-7262). xterm.js does NOT handle OSC 7
+  // natively — register a parser hook on the number directly.
+  inst.termHandlerDisposers.push(term.parser.registerOscHandler(7, (payload) => {
     const parsed = parseOsc7Payload(payload);
     if (parsed !== null) {
       inst.runtimeCwd = parsed;
       updateCwdChip(inst);
     }
     return true;
-  });
+  }));
 
-  // OSC 133 — FinalTerm / iTerm2 / VS Code shell integration (HS-7267,
-  // docs/26-shell-integration-osc133.md). Four marks form a prompt cycle:
-  //   A = prompt start           B = command start (user input begins)
-  //   C = output start           D;<exit> = command end
-  // Tracked here so the gutter renders an exit-code glyph per command and
-  // future Phase 1b / 2 / 3 can wire "copy last output" / jump-shortcuts /
-  // Ask-Claude-about-this on top of the same records.
-  //
-  // Registered BEFORE the first replayHistoryToTerm call (mountXterm runs
-  // before connect()), so replayed A/B/C/D escapes rebuild the record list
-  // on re-attach for free.
-  term.parser.registerOscHandler(133, (payload) => {
+  // OSC 133 — FinalTerm / iTerm2 / VS Code shell integration (HS-7267).
+  inst.termHandlerDisposers.push(term.parser.registerOscHandler(133, (payload) => {
     handleOsc133(inst, term, payload);
     return true;
-  });
+  }));
 
-  // Bell character `\x07` (HS-6473). Show a bell indicator on the tab when
-  // the bell rings while the terminal is NOT the active drawer tab — the
-  // user is looking elsewhere and would otherwise miss it. The bellStyle
-  // option defaults to 'none' so xterm itself won't beep.
-  term.onBell(() => {
+  // Bell character `\x07` (HS-6473).
+  inst.termHandlerDisposers.push(term.onBell(() => {
     if (!isTerminalTabActive(inst)) {
       inst.hasBell = true;
       updateTabLabel(inst);
     }
-  });
+  }));
 
+  inst.checkout = handle;
   inst.term = term;
   inst.fit = fit;
   inst.search = search;
@@ -1091,49 +1086,17 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
   inst.wsSecret = secret;
 }
 
-function connect(inst: TerminalInstance): void {
-  if (inst.wsSecret === null) return;
-  setStatus(inst, 'connecting');
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  // HS-6799: include post-fit xterm dims so the server can spawn / resize the
-  // PTY to match BEFORE sending the history frame. Without this the PTY ran
-  // at DEFAULT 80×24 and its startup output leaked through as stray chars at
-  // the top of the pane. Omits dims only if xterm hasn't been created yet
-  // (shouldn't happen — `connect()` is always called after `mountXterm`).
-  const dims = inst.term !== null && Number.isFinite(inst.term.cols) && Number.isFinite(inst.term.rows)
-    ? `&cols=${inst.term.cols}&rows=${inst.term.rows}`
-    : '';
-  const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(inst.wsSecret)}&terminal=${encodeURIComponent(inst.id)}${dims}`;
-  const ws = new WebSocket(url);
-  ws.binaryType = 'arraybuffer';
-  inst.ws = ws;
-
-  ws.addEventListener('open', () => {
-    inst.reconnectAttempts = 0;
-    if (inst.term) ws.send(JSON.stringify({ type: 'resize', cols: inst.term.cols, rows: inst.term.rows }));
-  });
-  ws.addEventListener('message', (ev) => {
-    const data: unknown = ev.data;
-    if (data instanceof ArrayBuffer) {
-      inst.term?.write(new Uint8Array(data));
-      return;
-    }
-    if (typeof data === 'string') {
-      try {
-        const msg = JSON.parse(data) as { type: string; [k: string]: unknown };
-        handleControlMessage(inst, msg);
-      } catch { /* ignore malformed */ }
-    }
-  });
-  ws.addEventListener('close', () => {
-    inst.ws = null;
-    if (inst.status === 'alive') {
-      setStatus(inst, 'not-connected');
-      scheduleReconnect(inst);
-    }
-  });
-  ws.addEventListener('error', () => { /* close handles cleanup */ });
-}
+// HS-8044 — pre-fix `connect(inst)` opened a per-instance WebSocket
+// here, wired open / message / close / error listeners, and
+// `scheduleReconnect(inst)` retried with backoff on close. Post-fix the
+// checkout module owns all of that: `mountInstanceViaCheckout` delegates
+// to `checkout(...)` which opens the WS internally, and the module's
+// own close-event listener auto-reconnects when the entry's stack is
+// non-empty (the drawer remains a consumer until the tab closes /
+// project switches away). The drawer's `onControlMessage` callback
+// passed into `checkout()` receives the parsed JSON control messages
+// and routes them through `handleControlMessage(inst, msg)` for
+// 'history' / 'exit' handling.
 
 interface HistoryMessage { type: 'history'; bytes: string; alive: boolean; exitCode: number | null; cols: number; rows: number; command: string }
 interface ExitMessage { type: 'exit'; code: number }
@@ -1141,7 +1104,10 @@ interface ExitMessage { type: 'exit'; code: number }
 function handleControlMessage(inst: TerminalInstance, msg: { type: string; [k: string]: unknown }): void {
   if (msg.type === 'history') {
     const h = msg as unknown as HistoryMessage;
-    if (inst.term !== null) replayHistoryToTerm(inst.term, h);
+    // HS-8044 — bytes-replay (resize first, write second) is now done
+    // inside the checkout module's WS handler. The drawer just extracts
+    // the metadata fields (alive, exitCode, command) for tab-status /
+    // tab-label updates.
     inst.exitCode = h.exitCode;
     setStatus(inst, h.alive ? 'alive' : 'exited');
     if (typeof h.command === 'string' && h.command !== '') {
@@ -1623,15 +1589,13 @@ function shortCommandName(command: string): string {
   return command.split(/\s+/)[0] ?? 'terminal';
 }
 
-function scheduleReconnect(inst: TerminalInstance): void {
-  if (inst.reconnectTimer !== null) return;
-  const delayMs = Math.min(1000 * 2 ** inst.reconnectAttempts, 15_000);
-  inst.reconnectAttempts += 1;
-  inst.reconnectTimer = setTimeout(() => {
-    inst.reconnectTimer = null;
-    connect(inst);
-  }, delayMs);
-}
+// HS-8044 — `scheduleReconnect(inst)` removed. The checkout module's
+// `attachWebSocketToEntry` now handles WS-close → reconnect for any
+// entry with a non-empty consumer stack, which includes the drawer's
+// instance until its tab is closed / project switched away. The
+// `inst.reconnectAttempts` + `inst.reconnectTimer` fields are kept on
+// the interface for back-compat (read by no remaining code path) and
+// could be dropped in HS-8045 cleanup if confirmed unused there.
 
 function setStatus(inst: TerminalInstance, status: Status): void {
   inst.status = status;
@@ -1706,14 +1670,31 @@ async function onPowerClick(inst: TerminalInstance): Promise<void> {
 function teardown(inst: TerminalInstance): void {
   if (inst.reconnectTimer !== null) clearTimeout(inst.reconnectTimer);
   inst.reconnectTimer = null;
-  if (inst.ws) { try { inst.ws.close(); } catch { /* ignore */ } }
-  inst.ws = null;
+  // HS-8044 — drop term-level handlers (OSC 7 / OSC 133 parser hooks,
+  // onResize / onTitleChange / onBell, the prompt-resume keystroke
+  // hider) BEFORE releasing the checkout. These were registered on the
+  // shared term — leaving them attached after release would leak state
+  // into a future re-checkout.
+  for (const d of inst.termHandlerDisposers) {
+    try { d.dispose(); } catch { /* already disposed */ }
+  }
+  inst.termHandlerDisposers = [];
   inst.searchHandle?.dispose();
   inst.searchHandle = null;
   inst.search = null;
-  inst.term?.dispose();
+  // HS-8044 — release the checkout instead of disposing the term + ws
+  // directly. The empty-stack dispose path inside the checkout module
+  // closes the WS + disposes the xterm; if a sibling consumer (e.g. a
+  // dashboard tile or quit-confirm preview for the same terminal) is
+  // still on the stack, the live xterm reparents to that consumer's
+  // mount and the dispose is skipped.
+  if (inst.checkout !== null) {
+    try { inst.checkout.release(); } catch { /* already released */ }
+    inst.checkout = null;
+  }
   inst.term = null;
   inst.fit = null;
+  inst.ws = null;
   inst.mounted = false;
   inst.status = 'not-connected';
 }

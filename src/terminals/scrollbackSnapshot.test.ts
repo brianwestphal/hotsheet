@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { buildScrollbackPreview, buildScrollbackPreviewWithAnsi, stripAnsi, tailLines } from './scrollbackSnapshot.js';
+import { stripAnsi, tailLines } from './scrollbackSnapshot.js';
 
 describe('stripAnsi (HS-7969)', () => {
   it('removes a CSI cursor-position sequence', () => {
@@ -61,46 +61,9 @@ describe('tailLines (HS-7969)', () => {
   });
 });
 
-describe('buildScrollbackPreview (HS-7969)', () => {
-  it('returns empty string for an empty buffer', () => {
-    expect(buildScrollbackPreview(Buffer.alloc(0), 30)).toBe('');
-  });
-
-  it('strips ANSI and tails to maxLines', () => {
-    const raw = '\x1b[31mline1\x1b[0m\nline2\nline3\nline4';
-    expect(buildScrollbackPreview(Buffer.from(raw), 2)).toBe('line3\nline4');
-  });
-
-  it('preserves multi-byte UTF-8 chars (e.g. spinner glyphs)', () => {
-    const raw = '✻ Compiling…\nDone';
-    expect(buildScrollbackPreview(Buffer.from(raw, 'utf-8'), 10)).toBe('✻ Compiling…\nDone');
-  });
-});
-
-describe('buildScrollbackPreviewWithAnsi (HS-7969 follow-up #2)', () => {
-  it('returns empty string for an empty buffer', () => {
-    expect(buildScrollbackPreviewWithAnsi(Buffer.alloc(0), 30)).toBe('');
-  });
-
-  it('preserves SGR sequences and tails to maxLines', () => {
-    const raw = '\x1b[31mline1\x1b[0m\nline2\nline3\nline4';
-    expect(buildScrollbackPreviewWithAnsi(Buffer.from(raw), 2)).toBe('line3\nline4');
-  });
-
-  it('keeps coloured prompt formatting in the output', () => {
-    const raw = '\x1b[1;32mok\x1b[0m: done\nplain';
-    expect(buildScrollbackPreviewWithAnsi(Buffer.from(raw), 5)).toBe('\x1b[1;32mok\x1b[0m: done\nplain');
-  });
-
-  it('still drops backspace and bare-CR', () => {
-    // CR alone collapses to LF (matches the stripped-text path), backspace
-    // is dropped — both are noise for a static preview.
-    const raw = 'a\bb\rc';
-    expect(buildScrollbackPreviewWithAnsi(Buffer.from(raw), 5)).toBe('ab\nc');
-  });
-
-  it('preserves multi-byte UTF-8 chars', () => {
-    const raw = '\x1b[36m✻\x1b[0m Compiling…';
-    expect(buildScrollbackPreviewWithAnsi(Buffer.from(raw, 'utf-8'), 5)).toBe('\x1b[36m✻\x1b[0m Compiling…');
-  });
-});
+// HS-8045 — `buildScrollbackPreview` + `buildScrollbackPreviewWithAnsi`
+// describe blocks deleted alongside the helpers themselves. The §37
+// quit-confirm preview pane (HS-7969 / HS-8041) now renders the real
+// `terminalCheckout` xterm canvas instead of an ANSI-spans-rendered
+// snapshot, so neither helper has remaining callers. `stripAnsi` and
+// `tailLines` remain exported with their existing test coverage.
