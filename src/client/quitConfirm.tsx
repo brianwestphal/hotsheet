@@ -182,10 +182,14 @@ interface QuitDialogChoice {
 }
 
 /** HS-8041 — preview pane mounts a real `terminalCheckout` xterm instead
- *  of the ANSI-spans approximation. The cols/rows are statically wired to
- *  the §54.4 canonical 80x30 — the dialog is a fixed-width modal and
- *  the preview pane doesn't track viewport changes (file a follow-up if
- *  real-use shows the hardcode is wrong). */
+ *  of the ANSI-spans approximation. The cols / rows are an initial seed
+ *  used by `checkout()` for the very first attach; immediately after,
+ *  HS-7969 follow-up calls `fit.fit()` against the preview pane so the
+ *  xterm canvas fills the dialog's right pane regardless of the user's
+ *  font size / theme / dialog width. The seed kicks in only when no
+ *  earlier consumer has set the entry's dims yet — once the entry is
+ *  alive, `applyResizeIfChanged` skips on same-size and the fit's
+ *  follow-up `handle.resize()` is what actually moves the PTY. */
 const QUIT_PREVIEW_COLS = 80;
 const QUIT_PREVIEW_ROWS = 30;
 
@@ -358,6 +362,29 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
         cols: QUIT_PREVIEW_COLS,
         rows: QUIT_PREVIEW_ROWS,
         mountInto: previewEl,
+      });
+
+      // HS-7969 follow-up — size the xterm to fill the preview pane.
+      // Pre-fix the static 80×30 cols×rows produced a canvas whose pixel
+      // dimensions didn't match the pane's, leaving a band of empty
+      // background on the right + bottom of the pane. `fit.fit()` reads
+      // the mount element's pixel size and resizes the term to whatever
+      // cols × rows actually fit; we forward the resulting dims to the
+      // PTY via `handle.resize` so output wraps correctly at the new
+      // width.
+      //
+      // Defer to rAF: at this point the dialog is in the DOM but the
+      // browser hasn't necessarily run the layout pass yet, so
+      // `previewEl.offsetWidth` could still be 0. One rAF is enough for
+      // layout to settle on every browser we ship to (Chromium /
+      // WKWebView / GTK WebKit).
+      const handle = currentCheckout;
+      requestAnimationFrame(() => {
+        if (handle !== currentCheckout) return; // stale — user picked another row
+        try {
+          handle.fit.fit();
+          handle.resize(handle.term.cols, handle.term.rows);
+        } catch { /* fit can throw if the pane is detached mid-frame */ }
       });
     }
 

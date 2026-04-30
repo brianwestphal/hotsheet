@@ -4,6 +4,7 @@ import type { Terminal as XTerm } from '@xterm/xterm';
 
 import { apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
+import { type NavRect, pickGridNeighbourIndex } from './gridNavGeometry.js';
 import { openExternalUrl } from './tauriIntegration.js';
 import {
   applyAppearanceToTerm,
@@ -1166,51 +1167,28 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     magnifiedNavListener = null;
   }
 
-  /** HS-8028 — find the closest tile in the indicated direction from
-   *  `from` using bounding-rect centroids. The cone metric weights
-   *  perpendicular distance 3× higher than parallel distance so a
-   *  tile in the same row beats a diagonal tile when both are equidistant
-   *  by raw Euclidean. Skips non-alive tiles (placeholders shouldn't be
-   *  navigation targets — the user expects to land on a live terminal)
-   *  and zero-size tiles (hidden / not laid out). */
+  /** HS-8028 — find the immediate-neighbour tile in the indicated grid
+   *  direction. Per the user's HS-8028 follow-up: arrows must follow the
+   *  natural visual layout — left lands on the tile immediately to the
+   *  left in the SAME ROW (no row-jumping), and similarly for the other
+   *  three directions. If no tile shares the row / column AND lies in the
+   *  indicated direction, returns null (no-op).
+   *
+   *  Pre-fix used a perpendicular-weighted cone metric that would jump to
+   *  a tile in a different row when no same-row neighbour existed, which
+   *  felt unintuitive. Same-row / same-column is determined by positive
+   *  bounding-rect overlap on the perpendicular axis. */
   function findNextTileInDirection(from: InternalTile, direction: GridNavDirection): InternalTile | null {
-    const fromRect = from.root.getBoundingClientRect();
-    const fx = fromRect.left + fromRect.width / 2;
-    const fy = fromRect.top + fromRect.height / 2;
-    let best: InternalTile | null = null;
-    let bestDist = Infinity;
+    const eligible: InternalTile[] = [];
+    const rects: NavRect[] = [];
     for (const candidate of tiles.values()) {
       if (candidate === from) continue;
       if (candidate.state !== 'alive') continue;
-      const r = candidate.root.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) continue;
-      // HS-8028 — skip the centered tile's own slot placeholder element.
-      // While a tile is centered the underlying grid still contains a
-      // `.terminal-dashboard-tile-slot` (or drawer-grid equivalent) at
-      // its old position; the centered tile root itself is positioned
-      // absolutely against the viewport. Use the slot placeholder's
-      // rect for the centered tile so direction math reflects the
-      // grid topology, not the centered overlay's location.
-      const cx = r.left + r.width / 2;
-      const cy = r.top + r.height / 2;
-      const dx = cx - fx;
-      const dy = cy - fy;
-      // Direction filter — must lie in the indicated half-plane.
-      if (direction === 'right' && dx <= 0) continue;
-      if (direction === 'left' && dx >= 0) continue;
-      if (direction === 'down' && dy <= 0) continue;
-      if (direction === 'up' && dy >= 0) continue;
-      // Cone metric: weight perpendicular distance high so a same-row /
-      // same-column neighbour wins over a diagonal one.
-      const dist = (direction === 'right' || direction === 'left')
-        ? Math.abs(dx) + Math.abs(dy) * 3
-        : Math.abs(dy) + Math.abs(dx) * 3;
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = candidate;
-      }
+      eligible.push(candidate);
+      rects.push(candidate.root.getBoundingClientRect());
     }
-    return best;
+    const idx = pickGridNeighbourIndex(from.root.getBoundingClientRect(), rects, direction);
+    return idx === -1 ? null : eligible[idx];
   }
 
   /** HS-8028 — switch the magnified view from the current tile to `next`,

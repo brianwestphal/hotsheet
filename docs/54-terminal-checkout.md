@@ -166,7 +166,7 @@ The preview pane is now a `<div class="quit-confirm-detail-preview">` (was `<pre
 
 ### 54.6.2 cols / rows hardcoding
 
-Statically wired to **80 × 30** via the new `QUIT_PREVIEW_COLS` / `QUIT_PREVIEW_ROWS` module-level constants. Dialog is fixed-width and the preview pane doesn't track viewport changes — recomputing from the live `.quit-confirm-detail-preview` cell metrics on dialog resize was considered and deferred (file a follow-up if real-use shows the hardcode mismatches the natural pane size).
+Initially seeded with **80 × 30** via the `QUIT_PREVIEW_COLS` / `QUIT_PREVIEW_ROWS` module-level constants — used as the entry's first attach dims when no earlier consumer has registered the terminal yet. **HS-7969 follow-up (2026-04-30):** immediately after `checkout()` returns, the dialog runs `handle.fit.fit()` (deferred one rAF for layout settle) and forwards the result to `handle.resize(handle.term.cols, handle.term.rows)` so the canvas fills the preview pane regardless of the user's font size / theme / dialog width. Pre-fix the static 80 × 30 produced a canvas whose pixel dimensions didn't match the pane's, leaving a band of empty background on the right + bottom of the pane. Dialog window-resize-during-open is still not tracked (no ResizeObserver) — file a follow-up if real-use shows that's a problem.
 
 ### 54.6.3 Cancel-then-checkout ordering
 
