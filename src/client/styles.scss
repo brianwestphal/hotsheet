@@ -9200,3 +9200,37 @@ label.detail-details-label {
 .terminal-prompt-resume-label {
   line-height: 1;
 }
+
+// HS-8031 Phase 1 — `terminalCheckout.tsx` placeholder. Painted into a
+// consumer's `mountInto` when a newer checkout pushes them down. Plain
+// text + Lucide `terminal-square` icon — no live updates, no animation,
+// no click affordance (locked decision 2 in §54.2).
+.terminal-checkout-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  min-height: 80px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  user-select: none;
+  pointer-events: none;
+}
+
+.terminal-checkout-placeholder-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  opacity: 0.7;
+}
+
+.terminal-checkout-placeholder-text {
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.3;
+}

@@ -2,7 +2,7 @@
 
 HS-7969 follow-up. A single xterm.js instance per `(projectSecret, terminalId)` lives in a new `terminalCheckout` client module. Every consumer (drawer pane, dashboard tile, dashboard dedicated view, drawer-grid tile, drawer-grid dedicated view, quit-confirm preview pane) calls `checkout(...)` to claim it and gets a `release()` handle back. The most recent checkout wins (LIFO stack); previous owners' mounts swap to a placeholder. When the stack is empty, the xterm is **disposed** to reclaim memory — the PTY survives on the server, and the next `checkout` re-creates the xterm and the WebSocket attach replays the scrollback.
 
-> **Status:** Design only. Implementation phased — HS-8031 (Phase 1, infrastructure + tests) and HS-8032 (Phase 2, UI hookup).
+> **Status:** Phase 1 shipped (HS-8031). Phase 2 (HS-8032) deferred — wires the existing drawer / dashboard / drawer-grid / quit-confirm surfaces to the new module + deletes the §37 ANSI-spans preview path.
 
 ## 54.1 Why
 
@@ -131,23 +131,18 @@ Once Phase 2 lands, the following can be deleted:
 
 ## 54.5 Tests
 
-### 54.5.1 Phase 1 (infrastructure)
+### 54.5.1 Phase 1 (infrastructure) — **shipped**
 
-Unit tests in `src/client/terminalCheckout.test.ts`:
+17 unit tests in `src/client/terminalCheckout.test.ts` (happy-dom — the module detects `typeof WebSocket === 'undefined'` and bails to ws=null so the stack semantics are testable without a real socket):
 
-- `checkout()` creates the xterm + opens the WebSocket + writes scrollback history + writes live chunks.
-- A second `checkout()` for the same key pushes the previous handle down — its `mountInto` gets the placeholder, the new caller's `mountInto` gets the live xterm.
-- `release()` on the top handle restores the previous consumer (`onRestoredToTop` fires + xterm reparents back).
-- `release()` on a non-top handle just removes it from the stack — no DOM swap.
-- `release()` of the only handle disposes the xterm, closes the WebSocket, removes the entry.
-- Resize policy: same-size checkout swap doesn't fire `term.resize` or send the WS resize frame; different-size swap fires both exactly once.
-- Cross-project: two different `secret` values for the same `terminalId` get independent xterms.
-- Cross-project lifetime: project switch doesn't dispose entries that still have consumers.
+- **Single consumer**: creates an entry on first checkout / mounts the live xterm element into mountInto / disposes the entry when the only consumer releases / `release()` is idempotent.
+- **LIFO stack**: pushes a second checkout — placeholder writes into the previous mountInto + live xterm reparents into the new caller's mountInto + `onBumpedDown` fires once / `release()` of the top restores the previous consumer + `onRestoredToTop` fires / `release()` of a non-top handle leaves the live xterm where it is / disposes the entry only when the LAST consumer releases.
+- **Resize policy** (decision 1): updates `lastApplied` dims when the new top requests a different size / **skips** `term.resize` when same-size (verified via `vi.spyOn(term, 'resize')`) / fires `term.resize(cols, rows)` when different-size / restoring a previous consumer applies their dims even if intermediate top was different.
+- **Cross-project independence**: two different secrets for the same terminalId get independent entries + independent xterms / releasing one project doesn't affect the other.
+- **Re-checkout after empty-stack dispose** (decision 6 / §54.3.3): a fresh checkout after the entry was disposed creates a brand-new xterm instance.
+- **`_inspectStackForTesting`** helper: empty case + reports key / secret / terminalId / dims / depth / topMountInto.
 
-Playwright in `e2e/terminal-checkout.spec.ts`:
-
-- Open the drawer, attach to a terminal, run a command. Switch to the dashboard — the same terminal renders the same scrollback in the dashboard tile (verify a known sentinel string lives in both renders' visible buffer). Switch back — drawer renders the live terminal again.
-- Open the quit-confirm dialog from a project with a running terminal, click the row, verify the preview pane shows the live terminal (the row's terminal pane elsewhere in the page now shows the placeholder string). Dismiss — the original mount restores.
+Playwright e2e for Phase 1 was **deferred to Phase 2** — Phase 1 has no UI consumer, so the e2e would need a stub HTML surface. Phase 2 (HS-8032) migrates real consumers and the existing per-surface e2es become integration coverage for the checkout module for free.
 
 ### 54.5.2 Phase 2 (UI hookup)
 
