@@ -73,9 +73,11 @@ vi.mock('./notify.js', () => ({
 
 const mockBellPending = new Map<string, Array<{ terminalId: string; message: string | null }>>();
 const mockAliveTerminals: Array<{ secret: string; terminalId: string; rootPid: number }> = [];
+const mockPendingPrompts = new Map<string, Array<{ terminalId: string; match: unknown }>>();
 vi.mock('../terminals/registry.js', () => ({
   listBellPendingForProject: vi.fn((secret: string) => mockBellPending.get(secret) ?? []),
   listAliveTerminalsAcrossProjects: vi.fn(() => mockAliveTerminals),
+  listPendingPromptsForProject: vi.fn((secret: string) => mockPendingPrompts.get(secret) ?? []),
 }));
 
 const mockConfiguredTerminals = new Map<string, Array<{ id: string; name?: string; command: string }>>();
@@ -297,6 +299,7 @@ describe('POST /projects/reorder', () => {
 describe('GET /projects/bell-state', () => {
   beforeEach(() => {
     mockBellPending.clear();
+    mockPendingPrompts.clear();
   });
 
   it('returns an aggregate map keyed by project secret, each with anyTerminalPending + terminalIds + notifications (HS-7264)', async () => {
@@ -326,6 +329,38 @@ describe('GET /projects/bell-state', () => {
     expect(body.bells['test-secret-456'].terminalIds).toEqual([]);
     expect(body.bells['test-secret-456'].notifications).toEqual({});
     expect(typeof body.v).toBe('number');
+  });
+
+  // HS-8034 Phase 2 — server-side scanner matches surface as the new
+  // `pendingPrompts: { [terminalId]: MatchResult }` map per project. Empty
+  // object when no prompts pending.
+  it('includes pendingPrompts populated from listPendingPromptsForProject (HS-8034)', async () => {
+    const numberedMatch = {
+      parserId: 'claude-numbered',
+      shape: 'numbered',
+      question: 'Loading dev channels — security risk',
+      questionLines: ['Loading dev channels — security risk'],
+      choices: [
+        { index: 0, label: 'I am using this for local development', highlighted: true },
+        { index: 1, label: 'Exit', highlighted: false },
+      ],
+      signature: 'claude-numbered:abcd1234:0',
+    };
+    mockPendingPrompts.set('test-secret-123', [
+      { terminalId: 'default', match: numberedMatch },
+    ]);
+    mockPendingPrompts.set('test-secret-456', []);
+
+    const { getBellVersion } = await import('./notify.js');
+    (getBellVersion as ReturnType<typeof vi.fn>).mockReturnValue(0);
+
+    const res = await app.request('/api/projects/bell-state?v=0');
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      bells: Record<string, { pendingPrompts: Record<string, unknown> }>;
+    };
+    expect(body.bells['test-secret-123'].pendingPrompts).toEqual({ default: numberedMatch });
+    expect(body.bells['test-secret-456'].pendingPrompts).toEqual({});
   });
 
   it('returns immediately on the fast path when server bellVersion is ahead of the client cursor', async () => {

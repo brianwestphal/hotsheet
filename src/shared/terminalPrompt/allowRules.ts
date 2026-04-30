@@ -10,7 +10,7 @@
  * docs/52-terminal-prompt-overlay.md §52.1 for the rationale (free-text
  * replies are too high-risk to auto-respond).
  */
-import type { MatchResult } from '../../shared/terminalPrompt/parsers.js';
+import { buildNumberedPayload, buildYesNoPayload, type MatchResult } from './parsers.js';
 
 export interface TerminalPromptAllowRule {
   /** Stable id (caller-generated, e.g. ULID). */
@@ -133,4 +133,31 @@ function newRuleId(): string {
   const ts = Date.now().toString(36);
   const rand = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
   return `tp_${ts}_${rand}`;
+}
+
+/**
+ * Pure: derive the keystroke payload to send for an auto-allowed rule.
+ * Returns null when the rule's choice index is out of range (e.g. the
+ * Claude prompt now has fewer choices than when the rule was created — the
+ * caller should fall back to surfacing the overlay so the user can see
+ * what's going on). Generic-shape matches never auto-allow.
+ *
+ * Moved from `src/client/terminalPrompt/autoAllow.ts` to shared/ in
+ * HS-8034 Phase 2 so the server-side scanner gate (`registry.ts`) and the
+ * client-side path (until Phase 2 finishes deleting it) share one
+ * canonical source. Identical behaviour to the prior client-only
+ * implementation.
+ */
+export function payloadForAutoAllow(match: MatchResult, rule: TerminalPromptAllowRule): string | null {
+  if (match.shape === 'numbered') {
+    if (rule.choice_index < 0) return null;
+    if (rule.choice_index >= match.choices.length) return null;
+    return buildNumberedPayload(match.choices, rule.choice_index);
+  }
+  if (match.shape === 'yesno') {
+    const choice: 'yes' | 'no' = rule.choice_index === 0 ? 'yes' : 'no';
+    return buildYesNoPayload(match, choice);
+  }
+  // generic shape never auto-allows.
+  return null;
 }

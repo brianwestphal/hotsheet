@@ -22,7 +22,7 @@ import {
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
 import { isTerminalViewToggleShortcut } from './terminalKeybindings.js';
-import { buildAllowRule } from './terminalPrompt/allowRules.js';
+import { buildAllowRule } from '../shared/terminalPrompt/allowRules.js';
 import { appendAllowRule } from './terminalPrompt/allowRulesStore.js';
 import { tryAutoAllow } from './terminalPrompt/autoAllow.js';
 import {

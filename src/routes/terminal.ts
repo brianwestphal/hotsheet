@@ -11,6 +11,7 @@ import {
 } from '../terminals/processInspect.js';
 import {
   clearBellPending,
+  clearPendingPrompt,
   destroyTerminal,
   ensureSpawned,
   getBellPending,
@@ -25,7 +26,9 @@ import {
   killTerminal,
   listProjectTerminalIds,
   restartTerminal,
+  setScannerSuppressed,
   type TerminalState,
+  writePtyInput,
 } from '../terminals/registry.js';
 import type { AppEnv } from '../types.js';
 import { notifyBellWaiters } from './notify.js';
@@ -154,6 +157,69 @@ terminalRoutes.post('/clear-bell', async (c) => {
   const terminalId = await readTerminalId(c);
   const flipped = clearBellPending(secret, terminalId);
   if (flipped) notifyBellWaiters();
+  return c.json({ ok: true });
+});
+
+/**
+ * POST /api/terminal-prompt/respond — HS-8034 Phase 2. Apply a user
+ * response to a server-side prompt match. Body: `{ terminalId: string;
+ * payload: string }` where `payload` is the keystroke sequence to write
+ * verbatim to the PTY (e.g. `"y\r"` for a yes/no, `"\x1b[B\r"` for the
+ * second numbered choice). The secret comes from the X-Hotsheet-Secret
+ * auth header — clients responding to a cross-project prompt set the
+ * header to the affected project's secret (the bell-state long-poll
+ * surfaces each project's secret so the client knows which to use).
+ *
+ * Always clears `pendingPrompt` (so the overlay doesn't re-surface on
+ * the next long-poll tick) and notifies bell-state waiters so other
+ * connected clients see the cleared state immediately. Returns 404 when
+ * the session doesn't exist or the PTY is dead.
+ */
+terminalRoutes.post('/prompt-respond', async (c) => {
+  const secret = c.get('projectSecret');
+  const body = await c.req.json<{ terminalId?: unknown; payload?: unknown } | undefined>().catch(() => undefined);
+  const terminalId = typeof body?.terminalId === 'string' && body.terminalId !== '' ? body.terminalId : null;
+  const payload = typeof body?.payload === 'string' ? body.payload : null;
+  if (terminalId === null) return c.json({ error: 'missing_terminalId' }, 400);
+  if (payload === null) return c.json({ error: 'missing_payload' }, 400);
+  const wrote = writePtyInput(secret, terminalId, payload);
+  if (!wrote) return c.json({ error: 'pty_dead_or_missing' }, 404);
+  clearPendingPrompt(secret, terminalId);
+  notifyBellWaiters();
+  return c.json({ ok: true });
+});
+
+/**
+ * POST /api/terminal-prompt/dismiss — HS-8034 Phase 2. The user closed
+ * the overlay without responding (Cancel button or X close).
+ * Body: `{ terminalId: string; suppress?: boolean }`. When `suppress` is
+ * true, also flips the scanner into the "Not a prompt — let me handle
+ * it" suppression state until the next user keystroke into the PTY (or
+ * an explicit /prompt-resume call).
+ */
+terminalRoutes.post('/prompt-dismiss', async (c) => {
+  const secret = c.get('projectSecret');
+  const body = await c.req.json<{ terminalId?: unknown; suppress?: unknown } | undefined>().catch(() => undefined);
+  const terminalId = typeof body?.terminalId === 'string' && body.terminalId !== '' ? body.terminalId : null;
+  const suppress = body?.suppress === true;
+  if (terminalId === null) return c.json({ error: 'missing_terminalId' }, 400);
+  const cleared = clearPendingPrompt(secret, terminalId);
+  if (suppress) setScannerSuppressed(secret, terminalId, true);
+  if (cleared || suppress) notifyBellWaiters();
+  return c.json({ ok: true });
+});
+
+/**
+ * POST /api/terminal-prompt/resume — HS-8034 Phase 2. The user clicked
+ * the Resume chip on the terminal toolbar to re-arm prompt detection
+ * after a prior dismiss-with-suppress. Body: `{ terminalId: string }`.
+ */
+terminalRoutes.post('/prompt-resume', async (c) => {
+  const secret = c.get('projectSecret');
+  const body = await c.req.json<{ terminalId?: unknown } | undefined>().catch(() => undefined);
+  const terminalId = typeof body?.terminalId === 'string' && body.terminalId !== '' ? body.terminalId : null;
+  if (terminalId === null) return c.json({ error: 'missing_terminalId' }, 400);
+  setScannerSuppressed(secret, terminalId, false);
   return c.json({ ok: true });
 });
 

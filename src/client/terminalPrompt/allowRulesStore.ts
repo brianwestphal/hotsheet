@@ -10,7 +10,7 @@
  * `subscribeToAllowRules` to re-render when the rule list changes.
  */
 import { api } from '../api.js';
-import { parseAllowRules, type TerminalPromptAllowRule } from './allowRules.js';
+import { parseAllowRules, type TerminalPromptAllowRule } from '../../shared/terminalPrompt/allowRules.js';
 
 let cachedRules: TerminalPromptAllowRule[] = [];
 let hydrated = false;

@@ -180,13 +180,35 @@ projectRoutes.get('/permissions', async (c) => {
 // /api/projects/permissions. Response shape is `{ bells: { [secret]: { anyTerminalPending, terminalIds } }, v }`.
 projectRoutes.get('/bell-state', async (c) => {
   const { addBellWaiter, getBellVersion } = await import('./notify.js');
-  const { listBellPendingForProject } = await import('../terminals/registry.js');
+  const { listBellPendingForProject, listPendingPromptsForProject } = await import('../terminals/registry.js');
 
   const clientVersion = parseInt(c.req.query('v') ?? '0', 10) || 0;
 
-  function snapshot(): Record<string, { anyTerminalPending: boolean; terminalIds: string[]; notifications: Record<string, string> }> {
+  // HS-8034 Phase 2 — `pendingPrompts: { [terminalId]: MatchResult }` is
+  // the server-side scanner's match-list per project. Only populated when
+  // the auto-allow gate did NOT short-circuit (auto-allow leaves
+  // pendingPrompt null so no overlay surfaces). The MatchResult shape is
+  // JSON-serializable as-is, so we hand it through verbatim and let the
+  // client decide how to render it (numbered / yesno / generic).
+  function snapshot(): Record<
+    string,
+    {
+      anyTerminalPending: boolean;
+      terminalIds: string[];
+      notifications: Record<string, string>;
+      pendingPrompts: Record<string, unknown>;
+    }
+  > {
     const projects = getAllProjects();
-    const result: Record<string, { anyTerminalPending: boolean; terminalIds: string[]; notifications: Record<string, string> }> = {};
+    const result: Record<
+      string,
+      {
+        anyTerminalPending: boolean;
+        terminalIds: string[];
+        notifications: Record<string, string>;
+        pendingPrompts: Record<string, unknown>;
+      }
+    > = {};
     for (const p of projects) {
       const entries = listBellPendingForProject(p.secret);
       const terminalIds = entries.map(e => e.terminalId);
@@ -199,7 +221,19 @@ projectRoutes.get('/bell-state', async (c) => {
       for (const e of entries) {
         if (e.message !== null) notifications[e.terminalId] = e.message;
       }
-      result[p.secret] = { anyTerminalPending: terminalIds.length > 0, terminalIds, notifications };
+      // HS-8034 — every pending terminal-prompt match for this project,
+      // keyed by terminalId so a multi-terminal project can surface all of
+      // them. Empty object when no prompts pending.
+      const pendingPrompts: Record<string, unknown> = {};
+      for (const entry of listPendingPromptsForProject(p.secret)) {
+        pendingPrompts[entry.terminalId] = entry.match;
+      }
+      result[p.secret] = {
+        anyTerminalPending: terminalIds.length > 0,
+        terminalIds,
+        notifications,
+        pendingPrompts,
+      };
     }
     return result;
   }

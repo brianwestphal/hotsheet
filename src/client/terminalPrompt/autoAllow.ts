@@ -11,15 +11,14 @@
  * Audit POSTs are fire-and-forget — a network blip during the audit
  * shouldn't block the actual response (which is the point of the gate).
  */
-import { api } from '../api.js';
-import { findMatchingAllowRule, type TerminalPromptAllowRule } from './allowRules.js';
-import { getAllowRules } from './allowRulesStore.js';
 import {
-  buildNumberedPayload,
-  buildYesNoPayload,
-  type ChoiceOption,
-  type MatchResult,
-} from '../../shared/terminalPrompt/parsers.js';
+  findMatchingAllowRule,
+  payloadForAutoAllow,
+  type TerminalPromptAllowRule,
+} from '../../shared/terminalPrompt/allowRules.js';
+import type { MatchResult } from '../../shared/terminalPrompt/parsers.js';
+import { api } from '../api.js';
+import { getAllowRules } from './allowRulesStore.js';
 
 export interface AutoAllowResult {
   /** True when a rule matched and the payload was sent. Caller should NOT
@@ -55,26 +54,6 @@ export function tryAutoAllow(opts: TryAutoAllowOptions): AutoAllowResult {
   // expected behaviour either way.
   void postAuditEntry(opts.match, rule);
   return { applied: true };
-}
-
-/**
- * Pure: derive the keystroke payload to send for an auto-allowed rule.
- * Returns null when the rule's choice index is out of range (e.g. the
- * Claude prompt now has fewer choices than when the rule was created —
- * skip the gate and let the user see the overlay).
- */
-export function payloadForAutoAllow(match: MatchResult, rule: TerminalPromptAllowRule): string | null {
-  if (match.shape === 'numbered') {
-    if (rule.choice_index < 0) return null;
-    if (rule.choice_index >= match.choices.length) return null;
-    return buildNumberedPayload(match.choices, rule.choice_index);
-  }
-  if (match.shape === 'yesno') {
-    const choice: 'yes' | 'no' = rule.choice_index === 0 ? 'yes' : 'no';
-    return buildYesNoPayload(match, choice);
-  }
-  // generic shape never auto-allows.
-  return null;
 }
 
 /** POST the audit entry. Swallows errors — the audit is best-effort. */

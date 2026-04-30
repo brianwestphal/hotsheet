@@ -4,7 +4,14 @@ import type { IPty } from 'node-pty';
 import { spawn as spawnPty } from 'node-pty';
 import { dirname, join } from 'path';
 
+import { addLogEntry } from '../db/queries.js';
 import { readFileSettings } from '../file-settings.js';
+import {
+  findMatchingAllowRule,
+  parseAllowRules,
+  payloadForAutoAllow,
+  type TerminalPromptAllowRule,
+} from '../shared/terminalPrompt/allowRules.js';
 import type { MatchResult } from '../shared/terminalPrompt/parsers.js';
 import { containsClaudeSpinner } from './claudeSpinner.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from './config.js';
@@ -182,7 +189,7 @@ export function attach(
   const key = sessionKey(secret, terminalId);
   let session = sessions.get(key);
   if (!session) {
-    session = createSession(dataDir, terminalId, opts.configOverride ?? null, opts.cols, opts.rows);
+    session = createSession(secret, dataDir, terminalId, opts.configOverride ?? null, opts.cols, opts.rows);
     sessions.set(key, session);
     spawnIntoSession(session, dataDir);
   } else if (session.pty === null && session.exitCode === null) {
@@ -364,7 +371,7 @@ export function ensureSpawned(
   const key = sessionKey(secret, terminalId);
   let session = sessions.get(key);
   if (!session) {
-    session = createSession(dataDir, terminalId, configOverride);
+    session = createSession(secret, dataDir, terminalId, configOverride);
     sessions.set(key, session);
     spawnIntoSession(session, dataDir);
     return;
@@ -398,7 +405,7 @@ export function restartTerminal(
   let session = sessions.get(key);
   let bellFlipped = false;
   if (!session) {
-    session = createSession(dataDir, terminalId, null);
+    session = createSession(secret, dataDir, terminalId, null);
     sessions.set(key, session);
   } else {
     teardownPty(session);
@@ -417,11 +424,13 @@ export function restartTerminal(
     // HS-8029 Phase 1 — drop any pending prompt match from the prior PTY
     // and dispose + recreate the headless xterm scanner so its internal
     // buffer doesn't leak previous-process state into the new one.
+    // HS-8034 Phase 2 — the recreated scanner uses the same auto-allow
+    // gate as the initial createSession path.
     const restartedSession: SessionState = session;
     restartedSession.pendingPrompt = null;
     restartedSession.promptScanner.dispose();
     restartedSession.promptScanner = createPromptScanner({
-      onMatch(match) { restartedSession.pendingPrompt = match; },
+      onMatch(match) { handleScannerMatch(restartedSession, secret, dataDir, match); },
     });
   }
   spawnIntoSession(session, dataDir);
@@ -584,6 +593,58 @@ export function listBellPendingForProject(secret: string): Array<{ terminalId: s
   return out;
 }
 
+/** HS-8034 Phase 2 — return every session's `pendingPrompt` for a single
+ *  project so the bell-state long-poll can surface them cross-project. The
+ *  `MatchResult` shape is JSON-serializable as-is. Sessions whose
+ *  `pendingPrompt` is null are skipped. */
+export function listPendingPromptsForProject(secret: string): Array<{ terminalId: string; match: MatchResult }> {
+  const prefix = `${secret}::`;
+  const out: Array<{ terminalId: string; match: MatchResult }> = [];
+  for (const [key, session] of sessions.entries()) {
+    if (!key.startsWith(prefix)) continue;
+    if (session.pendingPrompt !== null) {
+      out.push({ terminalId: key.slice(prefix.length), match: session.pendingPrompt });
+    }
+  }
+  return out;
+}
+
+/** HS-8034 Phase 2 — clear `pendingPrompt` for a single session. Called
+ *  from `/api/terminal-prompt/respond` after the response payload has
+ *  been written, and from `/api/terminal-prompt/dismiss` when the user
+ *  closes the overlay without responding. */
+export function clearPendingPrompt(secret: string, terminalId: string): boolean {
+  const session = sessions.get(sessionKey(secret, terminalId));
+  if (!session) return false;
+  if (session.pendingPrompt === null) return false;
+  session.pendingPrompt = null;
+  return true;
+}
+
+/** HS-8034 Phase 2 — write a server-built response payload into the
+ *  matching PTY. Returns false when the PTY is dead so the caller can
+ *  surface a useful error to the client. */
+export function writePtyInput(secret: string, terminalId: string, payload: string): boolean {
+  const session = sessions.get(sessionKey(secret, terminalId));
+  if (!session || !session.pty) return false;
+  try {
+    session.pty.write(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** HS-8034 Phase 2 — toggle the scanner's "Not a prompt" suppression
+ *  flag. Returns false when the session doesn't exist. */
+export function setScannerSuppressed(secret: string, terminalId: string, suppressed: boolean): boolean {
+  const session = sessions.get(sessionKey(secret, terminalId));
+  if (!session) return false;
+  session.promptScanner.setSuppressed(suppressed);
+  if (suppressed) session.pendingPrompt = null;
+  return true;
+}
+
 /** Kill every live PTY. For server SIGTERM/SIGINT. */
 export function destroyAllTerminals(): void {
   for (const key of [...sessions.keys()]) {
@@ -600,6 +661,7 @@ export function destroyAllTerminals(): void {
 // --- Internals ---
 
 function createSession(
+  secret: string,
   dataDir: string,
   terminalId: string,
   configOverride: TerminalConfig | null,
@@ -635,9 +697,75 @@ function createSession(
     pendingPrompt: null,
   };
   state.promptScanner = createPromptScanner({
-    onMatch(match) { state.pendingPrompt = match; },
+    onMatch(match) { handleScannerMatch(state, secret, dataDir, match); },
   });
   return state;
+}
+
+/**
+ * HS-8034 Phase 2 — server-side auto-allow gate. Called from the scanner's
+ * `onMatch` closure for every fresh match. If the project has a
+ * `terminal_prompt_allow_rules` entry that matches the prompt's
+ * `(parser_id, question_hash)` pair, the response payload is sent
+ * directly to the PTY and an audit-log entry is appended; `pendingPrompt`
+ * stays null so no overlay surfaces. Otherwise the match is stashed on
+ * `state.pendingPrompt` for the long-poll surface to pick up + the
+ * registered prompt-waiters fire so any client waiting in `/api/projects/
+ * bell-state` sees the new prompt without waiting for the long-poll
+ * timeout. Generic-shape matches and rule-of-out-of-range cases (e.g. the
+ * Claude prompt now has fewer choices than when the rule was created)
+ * fall through to the `pendingPrompt` path so the user sees the overlay.
+ */
+function handleScannerMatch(state: SessionState, secret: string, dataDir: string, match: MatchResult): void {
+  const rule = findMatchingRuleForProject(dataDir, match);
+  if (rule !== null && state.pty !== null) {
+    const payload = payloadForAutoAllow(match, rule);
+    if (payload !== null) {
+      try { state.pty.write(payload); } catch { /* PTY died mid-match */ }
+      // Fire-and-forget audit log — best-effort, mirrors HS-7987's client
+      // behaviour. The DB write happens off-event-loop.
+      void appendAutoAllowAuditEntry(match, rule).catch(() => { /* ignore */ });
+      // Auto-allow handled — leave pendingPrompt null so no overlay surfaces.
+      return;
+    }
+  }
+  state.pendingPrompt = match;
+  notifyPromptWaiters(secret, state.terminalId);
+}
+
+function findMatchingRuleForProject(dataDir: string, match: MatchResult): TerminalPromptAllowRule | null {
+  try {
+    const settings = readFileSettings(dataDir);
+    const raw = settings.terminal_prompt_allow_rules;
+    if (raw === undefined || raw === null) return null;
+    const rules = parseAllowRules(raw);
+    if (rules.length === 0) return null;
+    return findMatchingAllowRule(match, rules);
+  } catch {
+    return null;
+  }
+}
+
+async function appendAutoAllowAuditEntry(match: MatchResult, rule: TerminalPromptAllowRule): Promise<void> {
+  const choiceLabel = rule.choice_label ?? `choice_index=${rule.choice_index}`;
+  const summary = `Terminal prompt: ${match.parserId} → ${choiceLabel.slice(0, 80)} — Auto-allowed (rule ${rule.id})`.slice(0, 200);
+  const detail = `Question: ${match.question}\nChoice: ${choiceLabel}\nParser: ${match.parserId}\nRule: ${rule.id}`.slice(0, 4000);
+  await addLogEntry('terminal_prompt_auto_allow', 'incoming', summary, detail);
+}
+
+/**
+ * HS-8034 Phase 2 — long-pollers waiting on `/api/projects/bell-state`
+ * subscribe via `notifyBellWaiters` from `routes/notify.ts`. Prompt
+ * matches share the same wake mechanism so a fresh `pendingPrompt` is
+ * surfaced immediately instead of waiting for the long-poll timeout.
+ *
+ * Lazy dynamic import keeps registry → routes/notify out of the import
+ * cycle (mirrors the existing bell-state notify path).
+ */
+function notifyPromptWaiters(_secret: string, _terminalId: string): void {
+  void import('../routes/notify.js')
+    .then(m => m.notifyBellWaiters())
+    .catch(() => { /* no waiters / module load issue — survive */ });
 }
 
 /** Cap on the OSC accumulator so a malformed or adversarial stream can't pin

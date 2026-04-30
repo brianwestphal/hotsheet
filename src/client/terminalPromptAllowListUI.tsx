@@ -7,9 +7,9 @@
  * Mirrors the pattern in `permissionAllowListUI.tsx` (§47.4).
  */
 import { raw } from '../jsx-runtime.js';
+import type { TerminalPromptAllowRule } from '../shared/terminalPrompt/allowRules.js';
 import { toElement } from './dom.js';
 import { state } from './state.js';
-import type { TerminalPromptAllowRule } from './terminalPrompt/allowRules.js';
 import {
   loadAllowRules,
   removeAllowRule,

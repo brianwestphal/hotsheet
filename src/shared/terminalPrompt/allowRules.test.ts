@@ -7,9 +7,10 @@ import {
   buildAllowRule,
   findMatchingAllowRule,
   parseAllowRules,
+  payloadForAutoAllow,
   type TerminalPromptAllowRule,
 } from './allowRules.js';
-import type { GenericMatch, MatchResult, NumberedMatch, YesNoMatch } from '../../shared/terminalPrompt/parsers.js';
+import type { GenericMatch, MatchResult, NumberedMatch, YesNoMatch } from './parsers.js';
 
 const numberedMatch: NumberedMatch = {
   parserId: 'claude-numbered',
@@ -174,5 +175,52 @@ describe('buildAllowRule (HS-7987)', () => {
     };
     const r = buildAllowRule(longMatch, 0, 'A');
     expect(r.question_preview!.length).toBe(120);
+  });
+});
+
+// HS-8034 Phase 2 — `payloadForAutoAllow` was moved from
+// `src/client/terminalPrompt/autoAllow.ts` so the server-side scanner gate
+// in `registry.ts` can call it. Behaviour is identical to the prior
+// client-only implementation; tests pin the same edge cases the client
+// path already relied on.
+describe('payloadForAutoAllow (HS-8034)', () => {
+  const baseRule: TerminalPromptAllowRule = {
+    id: 'tp_xxx',
+    parser_id: 'claude-numbered',
+    question_hash: 'abcd1234',
+    choice_index: 0,
+    choice_label: 'I am using this for local development',
+    created_at: '2026-04-30T07:00:00Z',
+  };
+
+  it('builds a numbered payload at the rule choice', () => {
+    const payload = payloadForAutoAllow(numberedMatch, baseRule);
+    expect(payload).toBe('\r');
+  });
+
+  it('builds a yesno payload — yes when choice_index === 0', () => {
+    const yesRule: TerminalPromptAllowRule = { ...baseRule, parser_id: 'yesno', choice_index: 0 };
+    const payload = payloadForAutoAllow(yesNoMatch, yesRule);
+    expect(payload).toBe('y\r');
+  });
+
+  it('builds a yesno payload — no when choice_index === 1', () => {
+    const noRule: TerminalPromptAllowRule = { ...baseRule, parser_id: 'yesno', choice_index: 1 };
+    const payload = payloadForAutoAllow(yesNoMatch, noRule);
+    expect(payload).toBe('n\r');
+  });
+
+  it('returns null for a generic match', () => {
+    expect(payloadForAutoAllow(genericMatch, baseRule)).toBe(null);
+  });
+
+  it('returns null when the rule choice_index is out of range (live prompt has fewer choices)', () => {
+    const overflowRule: TerminalPromptAllowRule = { ...baseRule, choice_index: 99 };
+    expect(payloadForAutoAllow(numberedMatch, overflowRule)).toBe(null);
+  });
+
+  it('returns null when the rule choice_index is negative', () => {
+    const negativeRule: TerminalPromptAllowRule = { ...baseRule, choice_index: -1 };
+    expect(payloadForAutoAllow(numberedMatch, negativeRule)).toBe(null);
   });
 });

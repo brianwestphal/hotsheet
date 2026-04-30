@@ -16,10 +16,14 @@
  *     this to keep the in-drawer per-terminal indicator in sync when bells
  *     arrive while the user is inside the same project.
  */
-import { api } from './api.js';
+import { buildAllowRule } from '../shared/terminalPrompt/allowRules.js';
+import type { MatchResult } from '../shared/terminalPrompt/parsers.js';
+import { api, apiWithSecret } from './api.js';
 import { updateProjectBellIndicators } from './projectTabs.js';
 import { getActiveProject } from './state.js';
 import { fireNativeNotification, isAppBackgrounded } from './tauriIntegration.js';
+import { appendAllowRule } from './terminalPrompt/allowRulesStore.js';
+import { openTerminalPromptOverlay } from './terminalPromptOverlay.js';
 import { showToast } from './toast.js';
 
 export interface BellStateEntry {
@@ -30,6 +34,12 @@ export interface BellStateEntry {
    *  bell-only entries (plain `\x07`) are absent from this map even though
    *  their id is in `terminalIds`. */
   notifications?: Record<string, string>;
+  /** HS-8034 Phase 2 — map of terminalId → MatchResult for terminals whose
+   *  server-side scanner matched a prompt that wasn't auto-allowed. Empty
+   *  object when no prompts pending. The client surfaces these via
+   *  `dispatchPendingPrompts` (cross-project — opens the overlay anchored
+   *  to the affected project's tab). */
+  pendingPrompts?: Record<string, MatchResult>;
 }
 
 export type BellStateMap = Map<string, BellStateEntry>;
@@ -80,6 +90,10 @@ async function loop(): Promise<void> {
       version = data.v;
       currentState = toMap(data.bells);
       dispatchOsc9Toasts(currentState);
+      // HS-8034 Phase 2 — surface server-side scanner matches as overlays
+      // anchored to the affected project's tab. Cross-project: a prompt
+      // can fire from a non-active project and the overlay still appears.
+      dispatchPendingPrompts(currentState);
       updateProjectBellIndicators(currentState);
       for (const cb of subscribers) {
         try { cb(currentState); } catch { /* subscriber errors shouldn't kill the loop */ }
@@ -176,4 +190,94 @@ function toMap(obj: Record<string, BellStateEntry>): BellStateMap {
     m.set(secret, entry);
   }
   return m;
+}
+
+/**
+ * HS-8034 Phase 2 — dispatch a `terminalPromptOverlay` for every fresh
+ * server-side prompt match the long-poll surfaces. "Fresh" means the
+ * `(secret, terminalId, signature)` triple wasn't dispatched by the
+ * previous tick — repeated ticks of the same unanswered prompt don't
+ * re-mount the overlay.
+ *
+ * The dispatcher runs cross-project: a prompt fired from a non-active
+ * project still surfaces the overlay anchored below that project's tab
+ * (HS-8012's `projectSecret` parameter routes the anchor). The user can
+ * answer without first switching projects.
+ *
+ * Generic-shape matches don't auto-overlay (low confidence — would
+ * interrupt other-project work for a possible false positive); they're
+ * left in `pendingPrompts` for future per-project surfacing logic to
+ * decide on (out of scope for v1; see HS-8034 docs).
+ */
+const lastDispatchedPromptSignatures = new Map<string, string>();
+
+function dispatchPendingPrompts(state: BellStateMap): void {
+  // Walk every project's pendingPrompts. Build the set of currently-live
+  // (secret, terminalId) keys so we can prune entries from
+  // `lastDispatchedPromptSignatures` for prompts the server cleared
+  // (auto-allowed, responded to from another client, terminal restarted).
+  const liveKeys = new Set<string>();
+  for (const [secret, entry] of state.entries()) {
+    const prompts = entry.pendingPrompts ?? {};
+    for (const [terminalId, match] of Object.entries(prompts)) {
+      const key = `${secret}::${terminalId}`;
+      liveKeys.add(key);
+      const sig = match.signature;
+      if (lastDispatchedPromptSignatures.get(key) === sig) continue;
+      // Generic-fallback matches NEVER auto-surface an overlay — too high
+      // a false-positive risk to interrupt cross-project work with. The
+      // user gets the prompt the next time they switch into that project
+      // (a future tick will re-fire when the active-project gate matches).
+      if (match.shape === 'generic') continue;
+      lastDispatchedPromptSignatures.set(key, sig);
+      openCrossProjectOverlay(secret, terminalId, match);
+    }
+  }
+  // Prune dispatched signatures whose pendingPrompt was cleared on the
+  // server — so a fresh prompt with the same signature later (rare but
+  // possible after a /restart) re-fires.
+  for (const key of [...lastDispatchedPromptSignatures.keys()]) {
+    if (!liveKeys.has(key)) lastDispatchedPromptSignatures.delete(key);
+  }
+}
+
+/** HS-8034 Phase 2 — open the overlay for one (secret, terminalId, match)
+ *  triple. Wires onSend → POST /terminal/prompt-respond, onClose → POST
+ *  /terminal/prompt-dismiss, onAddAllowRule → appendAllowRule (writes to
+ *  the affected project's settings.json so the next match auto-allows
+ *  server-side). The auth header on each POST carries the affected
+ *  project's secret via `apiWithSecret`. */
+function openCrossProjectOverlay(secret: string, terminalId: string, match: MatchResult): void {
+  openTerminalPromptOverlay({
+    match,
+    projectSecret: secret,
+    onSend(payload) {
+      void apiWithSecret('/terminal/prompt-respond', secret, {
+        method: 'POST',
+        body: { terminalId, payload },
+      }).catch(() => { /* network blip — overlay stays open via the false return */ });
+      // We optimistically return true so the overlay closes immediately;
+      // any real failure surfaces as a follow-up no-response. This
+      // matches the prior client-detector behaviour (`onSend` was wired to
+      // `ws.send()` which doesn't error-report either). The next long-
+      // poll tick will re-surface the overlay if the server didn't
+      // actually clear pendingPrompt.
+      return true;
+    },
+    onClose() {
+      // Drop the dispatched-signature so a follow-up identical prompt
+      // (e.g. user dismissed and the program re-asks) re-surfaces.
+      lastDispatchedPromptSignatures.delete(`${secret}::${terminalId}`);
+      void apiWithSecret('/terminal/prompt-dismiss', secret, {
+        method: 'POST',
+        body: { terminalId },
+      }).catch(() => { /* swallow — overlay UI already closed */ });
+    },
+    onAddAllowRule(choiceIndex, choiceLabel) {
+      try {
+        const rule = buildAllowRule(match, choiceIndex, choiceLabel);
+        void appendAllowRule(rule);
+      } catch { /* generic shape would throw; we never pass the cb for generic */ }
+    },
+  });
 }

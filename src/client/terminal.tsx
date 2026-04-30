@@ -35,7 +35,7 @@ import { DEFAULT_FONT_SIZE } from './terminalFonts.js';
 import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
-import { buildAllowRule } from './terminalPrompt/allowRules.js';
+import { buildAllowRule } from '../shared/terminalPrompt/allowRules.js';
 import { appendAllowRule } from './terminalPrompt/allowRulesStore.js';
 import { tryAutoAllow } from './terminalPrompt/autoAllow.js';
 import {
