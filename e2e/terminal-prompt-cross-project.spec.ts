@@ -94,8 +94,12 @@ test.describe('Cross-project terminal-prompt overlay (HS-8035)', () => {
     });
 
     // Stub /prompt-dismiss too so a stray onClose POST during teardown
-    // doesn't 404 in the test log.
+    // doesn't 404 in the test log. Flip `phase` to 'cleared' here as well
+    // so the next bell-poll tick after the dispatcher's own onClose POST
+    // (fired right after the overlay's close path runs) doesn't re-mount
+    // the overlay before the prompt-respond stub has a chance to flip it.
     await page.route('**/api/terminal/prompt-dismiss*', async route => {
+      phase = 'cleared';
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
     });
 

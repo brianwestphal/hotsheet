@@ -1,5 +1,4 @@
 import { raw } from '../jsx-runtime.js';
-import { toElement } from './dom.js';
 import type { GenericMatch,MatchResult, NumberedMatch, YesNoMatch } from '../shared/terminalPrompt/parsers.js';
 import {
   buildGenericCancelPayload,
@@ -8,7 +7,9 @@ import {
   buildNumberedPayload,
   buildYesNoCancelPayload,
   buildYesNoPayload,
+  isDecorativeLine,
 } from '../shared/terminalPrompt/parsers.js';
+import { toElement } from './dom.js';
 
 /**
  * HS-7971 Phase 1 + Phase 2 (HS-7986) — terminal-prompt overlay UI.
@@ -118,6 +119,31 @@ function attachOverlayToBody(overlay: HTMLElement, projectSecret: string | undef
 }
 
 /**
+ * HS-8037 — strip the title-line (already shown in the overlay header) and
+ * any pure-decoration rows (box-drawing borders / horizontal rules from
+ * Claude's TUI frame) out of `questionLines` before they're joined into
+ * the framed `<pre>` context block. Pre-fix the same content rendered
+ * twice — once joined into the title and once verbatim in the context —
+ * which the user explicitly flagged as "redundantly shows … with a bunch
+ * of horizontal lines before it" on HS-8037. Also strips leading +
+ * trailing blank lines that fall out once the title / decoration is
+ * gone, so the framed block doesn't render with empty whitespace at the
+ * top or bottom.
+ */
+function stripContextLines(lines: readonly string[], title: string): string[] {
+  const out: string[] = [];
+  for (const line of lines) {
+    const t = line.trim();
+    if (t === title) continue;
+    if (isDecorativeLine(line)) continue;
+    out.push(line);
+  }
+  while (out.length > 0 && out[0].trim() === '') out.shift();
+  while (out.length > 0 && out[out.length - 1].trim() === '') out.pop();
+  return out;
+}
+
+/**
  * HS-7987 — render the "Always choose this" checkbox row. Only
  * shown for shapes that allow allow-rules (numbered + yesno) AND when the
  * caller provided an `onAddAllowRule` handler. Generic-fallback overlays
@@ -196,9 +222,20 @@ function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: Numb
   // pre block. Claude's Edit-tool prompts render an inline diff above the
   // numbered choices; collapsing the diff into a single line throws away
   // the structure the user needs to make a decision.
-  const hasMultilineContext = questionLines.length > 1
-    || (questionLines.length === 1 && questionLines[0].includes('\n'));
-  const contextText = questionLines.join('\n');
+  // HS-8037 — but DON'T include the line that the parser already promoted
+  // into the title bar (`question`), and skip pure-decoration rows (box-
+  // drawing borders / horizontal rules captured from Claude's TUI frame).
+  // Pre-fix the title and the framed context redundantly carried the same
+  // content — the user saw the same warning paragraph twice.
+  const contextLines = stripContextLines(questionLines, question);
+  // HS-8037 — render the framed `<pre>` block whenever there's ANY body
+  // content left after stripping the title + pure-decoration rows.
+  // Pre-HS-8037 the gate was `length > 1` (matching the old "is the
+  // question multi-line?" test), but that conflated raw line count with
+  // meaningful content — a heading + one body line collapsed to a single
+  // post-strip line and was silently dropped from the overlay.
+  const hasMultilineContext = contextLines.length > 0;
+  const contextText = contextLines.join('\n');
   const overlay = toElement(
     <div className="terminal-prompt-overlay" role="dialog" aria-modal="false" aria-label={`Terminal prompt: ${question}`}>
       <div className="terminal-prompt-overlay-header">

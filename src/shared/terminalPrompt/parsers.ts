@@ -103,6 +103,50 @@ export function trimRows(rows: readonly string[]): string[] {
   return rows.slice(0, end).map(r => r.replace(/\s+$/, ''));
 }
 
+/**
+ * HS-8037 — recognise lines that are *only* decoration (box-drawing
+ * borders, horizontal rules) so the title-bar pick + the overlay's framed
+ * `<pre>` context block don't echo them. Blank lines are NOT decorative —
+ * they carry visual paragraph structure. Returns true only when the line
+ * is non-empty AND every non-whitespace character is one of the listed
+ * box-drawing / rule-style characters.
+ */
+export function isDecorativeLine(line: string): boolean {
+  const t = line.trim();
+  if (t === '') return false;
+  return /^[─━═│┃┄┅┆┇┈┉┊┋╌╍╎╏┌┍┎┏┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟┠┡┢┣┤┥┦┧┨┩┪┫┬┭┮┯┰┱┲┳┴┵┶┷┸┹┺┻┼┽┾┿╀╁╂╃╄╅╆╇╈╉╊╋╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬╭╮╯╰─\-=_*~ ]+$/.test(t);
+}
+
+/**
+ * HS-8037 — pick a single useful title line out of the multi-line question
+ * region. Pre-fix the title was every line joined with spaces, which read
+ * as a wall of text whenever the prompt's question region was more than
+ * one line — and the framed context block below repeated the same content
+ * verbatim, so the user saw the same paragraph twice. Heuristic:
+ *
+ * 1. Last line ending in `?` wins — that's literally the question (covers
+ *    HS-7980 Edit-tool diff prompts where the question lives below the
+ *    diff).
+ * 2. Otherwise first non-blank, non-decorative line wins — that's the
+ *    heading (covers Claude's `--dangerously-load-development-channels`
+ *    warning where the heading lives above the body).
+ *
+ * Returns `''` when no usable line is found; caller falls back to
+ * `(unlabelled prompt)` rendering.
+ */
+export function pickTitleLine(lines: readonly string[]): string {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const t = lines[i].trim();
+    if (t.length > 1 && t.endsWith('?') && !isDecorativeLine(t)) return t;
+  }
+  for (const l of lines) {
+    const t = l.trim();
+    if (t === '' || isDecorativeLine(t)) continue;
+    return t;
+  }
+  return '';
+}
+
 // ---------------------------------------------------------------------------
 // Parser: claude-numbered
 // ---------------------------------------------------------------------------
@@ -217,13 +261,14 @@ export const claudeNumberedParser: PromptParser = {
       if (sorted[i].index !== i) return null;
     }
 
-    // Single-line summary — used in the overlay's title bar (chrome is
-    // narrow, so multi-line diffs would overflow). Long lines truncated by
-    // CSS via `overflow: hidden; text-overflow: ellipsis`.
-    const summary = questionLines.length > 0
-      ? questionLines.map(l => l.trim()).filter(l => l.length > 0).join(' ').trim()
-      : '';
-    const question = summary !== '' ? summary : '(unlabelled prompt)';
+    // HS-8037 — single-line title used in the overlay's title bar. Pre-fix
+    // this joined every line in `questionLines` with spaces, which (a) read
+    // as a wall of text in the title and (b) duplicated the same content
+    // already rendered verbatim in the framed `<pre>` context block below.
+    // `pickTitleLine` picks one useful line — the trailing `?` line for
+    // diff-shape prompts, otherwise the first non-decorative heading.
+    const title = pickTitleLine(questionLines);
+    const question = title !== '' ? title : '(unlabelled prompt)';
     // Use the highlighted index as the canonical "default" choice; if no row
     // is highlighted, fall back to index 0.
     const defaultIdx = highlightedIndex >= 0 ? highlightedIndex : 0;

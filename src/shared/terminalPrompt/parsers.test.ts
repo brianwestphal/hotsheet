@@ -17,6 +17,8 @@ import {
   genericParser,
   hashQuestion,
   isClaudeNumberedFooter,
+  isDecorativeLine,
+  pickTitleLine,
   runParserRegistry,
   trimRows,
   yesNoParser,
@@ -213,7 +215,14 @@ describe('claudeNumberedParser (HS-7971) — happy paths', () => {
     expect(result.question).toBe('(unlabelled prompt)');
   });
 
-  it('preserves multi-line question text by joining with spaces', () => {
+  // HS-8037 — pre-fix the title joined every non-empty line with spaces,
+  // which read as a wall of text in the title bar AND duplicated the same
+  // content already visible in the framed `<pre>` context block below.
+  // Now the title is the single most useful line: the trailing `?` line
+  // for diff-shape prompts (covered by the next test), or the first non-
+  // decorative heading line for warning-shape prompts (this case). The
+  // remaining lines stay in `questionLines` for the framed context block.
+  it('uses the first non-decorative line as the title for prose-shape multi-line questions (HS-8037)', () => {
     const rows = [
       'Loading development channels',
       'can pose a security risk',
@@ -225,7 +234,10 @@ describe('claudeNumberedParser (HS-7971) — happy paths', () => {
     ];
     const result = claudeNumberedParser.match(rows);
     if (result?.shape !== 'numbered') throw new Error('expected numbered');
-    expect(result.question).toBe('Loading development channels can pose a security risk');
+    expect(result.question).toBe('Loading development channels');
+    // The body lives in questionLines — the framed context block consumes it.
+    expect(result.questionLines).toContain('Loading development channels');
+    expect(result.questionLines).toContain('can pose a security risk');
   });
 
   // HS-7980 — Claude renders an inline diff above the choices for an Edit-tool
@@ -257,8 +269,129 @@ describe('claudeNumberedParser (HS-7971) — happy paths', () => {
     expect(result.questionLines).toContain('-  return false;');
     expect(result.questionLines).toContain('+  return true;');
     expect(result.questionLines).toContain('Do you want to overwrite authMfa.ts?');
-    // Single-line summary collapses to one string.
-    expect(result.question).toContain('Do you want to overwrite authMfa.ts?');
+    // HS-8037 — title now picks the trailing `?` line (the literal
+    // question) rather than joining the diff lines into a wall of text.
+    expect(result.question).toBe('Do you want to overwrite authMfa.ts?');
+  });
+
+  // HS-8037 — production `--dangerously-load-development-channels` warning
+  // shape. Pre-fix the title bar collapsed all eight question lines into a
+  // single string ("WARNING: Loading development channels --dangerously-…
+  // server:hotsheet-channel"), and that same content was repeated verbatim
+  // in the framed `<pre>` context block right below — the user explicitly
+  // flagged this as "redundantly shows … with a bunch of horizontal lines
+  // before it" on HS-8037. Title now picks the heading; the body stays in
+  // questionLines for the context block.
+  it('uses the WARNING heading as the title for the dev-channels safety prompt (HS-8037)', () => {
+    const rows = [
+      '  WARNING: Loading development channels',
+      '',
+      '  --dangerously-load-development-channels is for local channel development',
+      '  only. Do not use this option to run channels you have downloaded off the',
+      '  internet.',
+      '',
+      '  Please use --channels to run a list of approved channels.',
+      '',
+      '  Channels: server:hotsheet-channel',
+      '',
+      '  ❯ 1. I am using this for local development',
+      '    2. Exit',
+      '',
+      '  Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.question).toBe('WARNING: Loading development channels');
+    // questionLines still carries the full body so the overlay's framed
+    // context block can reproduce the structure (paragraphs separated by
+    // blank rows, channels-line at the end).
+    expect(result.questionLines.some(l => l.includes('--dangerously-load-development-channels'))).toBe(true);
+    expect(result.questionLines.some(l => l.includes('Channels: server:hotsheet-channel'))).toBe(true);
+  });
+
+  // HS-8037 — pure-decoration rows (e.g. Claude's TUI box-drawing borders
+  // around a warning) must not be picked as the title. The title should
+  // skip past them to the first row carrying real content.
+  it('skips decorative box-drawing borders when picking the title (HS-8037)', () => {
+    const rows = [
+      '────────────────────────────────────────',
+      'Choose your channel',
+      '────────────────────────────────────────',
+      '',
+      '> 1. Local',
+      '  2. Remote',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.question).toBe('Choose your channel');
+  });
+});
+
+// HS-8037 — direct unit tests for the helpers.
+describe('isDecorativeLine (HS-8037)', () => {
+  it('returns true for box-drawing horizontal rules', () => {
+    expect(isDecorativeLine('────────────────────────')).toBe(true);
+    expect(isDecorativeLine('━━━━━━━━━━')).toBe(true);
+    expect(isDecorativeLine('═════════════════')).toBe(true);
+  });
+
+  it('returns true for ASCII horizontal rules', () => {
+    expect(isDecorativeLine('--------')).toBe(true);
+    expect(isDecorativeLine('========')).toBe(true);
+    expect(isDecorativeLine('________')).toBe(true);
+  });
+
+  it('returns false for empty / whitespace-only lines (those carry paragraph structure)', () => {
+    expect(isDecorativeLine('')).toBe(false);
+    expect(isDecorativeLine('   ')).toBe(false);
+  });
+
+  it('returns false for lines containing real content', () => {
+    expect(isDecorativeLine('WARNING: Loading channels')).toBe(false);
+    expect(isDecorativeLine('--dangerously-load')).toBe(false); // `d` is not in the decoration set
+    expect(isDecorativeLine('1. Yes')).toBe(false);
+  });
+});
+
+describe('pickTitleLine (HS-8037)', () => {
+  it('returns empty string for an empty list', () => {
+    expect(pickTitleLine([])).toBe('');
+  });
+
+  it('returns empty string when every line is blank or decorative', () => {
+    expect(pickTitleLine(['', '   ', '────'])).toBe('');
+  });
+
+  it('prefers the trailing `?` line over earlier headings (diff-shape prompts)', () => {
+    const lines = [
+      '@@ -1,3 +1,4 @@',
+      '+  return true;',
+      '',
+      'Do you want to overwrite foo.ts?',
+    ];
+    expect(pickTitleLine(lines)).toBe('Do you want to overwrite foo.ts?');
+  });
+
+  it('falls back to the first non-decorative line when there is no `?` line', () => {
+    const lines = [
+      '────────',
+      'WARNING: Loading channels',
+      '',
+      'long body paragraph',
+    ];
+    expect(pickTitleLine(lines)).toBe('WARNING: Loading channels');
+  });
+
+  it('ignores a single trailing `?` character (length-1 token, not a real question)', () => {
+    const lines = ['Heading', '?'];
+    expect(pickTitleLine(lines)).toBe('Heading');
+  });
+
+  it('picks the LATEST `?` line when several are present', () => {
+    const lines = ['First?', 'Middle line', 'Last?'];
+    expect(pickTitleLine(lines)).toBe('Last?');
   });
 });
 
