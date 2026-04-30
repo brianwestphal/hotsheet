@@ -15,6 +15,13 @@ import { createServer } from 'http';
 import { join } from 'path';
 import { z } from 'zod';
 
+import {
+  clearAllPermissions,
+  completePermission,
+  enqueuePermission,
+  peekPending,
+} from './channelPermissions.js';
+
 export const CHANNEL_VERSION = 3;
 
 // Parse --data-dir argument
@@ -51,15 +58,12 @@ const mcp = new Server(
   },
 );
 
-// Track pending permission requests
-interface PendingPermission {
-  request_id: string;
-  tool_name: string;
-  description: string;
-  input_preview: string;
-  timestamp: number;
-}
-let pendingPermission: PendingPermission | null = null;
+// HS-8047 — pending permissions live in `channelPermissions.ts` as a queue
+// instead of a single nullable slot. Pre-fix a follow-up `permission_request`
+// silently overwrote the prior one, vanishing the popup the user was
+// looking at and stranding the first request unanswerable from the UI.
+// The wire shape on `/permission` is unchanged (returns the head only),
+// so no client / main-server changes are needed.
 
 // Connect to Claude Code over stdio
 await mcp.connect(new StdioServerTransport());
@@ -77,13 +81,13 @@ const PermissionRequestSchema = z.object({
 
 mcp.setNotificationHandler(PermissionRequestSchema, ({ params }) => {
   const t0 = Date.now();
-  pendingPermission = {
+  enqueuePermission({
     request_id: params.request_id,
     tool_name: params.tool_name,
     description: params.description,
     input_preview: params.input_preview,
     timestamp: t0,
-  };
+  });
   process.stderr.write(`[perm ${t0}] received: ${params.tool_name} — ${params.description}\n`);
   // Notify main server so the permission long-poll wakes immediately.
   // notifyChange() also wakes permission waiters via notifyPermission().
@@ -111,11 +115,10 @@ const httpServer = createServer(async (req, res) => {
 
   if (req.method === 'GET' && req.url === '/permission') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    // Auto-expire after 120 seconds
-    if (pendingPermission && Date.now() - pendingPermission.timestamp > 120000) {
-      pendingPermission = null;
-    }
-    res.end(JSON.stringify({ pending: pendingPermission }));
+    // HS-8047 — `peekPending` auto-expires entries older than the TTL.
+    // Wire shape stays `{ pending: head | null }` so client + main
+    // server are oblivious to the queue beneath.
+    res.end(JSON.stringify({ pending: peekPending() }));
     return;
   }
 
@@ -133,9 +136,9 @@ const httpServer = createServer(async (req, res) => {
         method: 'notifications/claude/channel/permission',
         params: { request_id, behavior },
       });
-      if (pendingPermission?.request_id === request_id) {
-        pendingPermission = null;
-      }
+      // HS-8047 — remove this specific request from the queue. The next
+      // `peekPending` will surface whichever entry is now at the head.
+      completePermission(request_id);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
@@ -146,7 +149,7 @@ const httpServer = createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/permission/dismiss') {
-    pendingPermission = null;
+    clearAllPermissions();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
     return;

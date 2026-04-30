@@ -179,7 +179,7 @@ When Claude needs approval to run a tool (Bash, Write, Edit, etc.), the channel 
 
 1. The channel server declares `claude/channel/permission` capability
 2. When Claude calls a tool that needs approval, Claude Code sends `notifications/claude/channel/permission_request` to the channel server
-3. The channel server stores the pending request and exposes it via `GET /permission`
+3. The channel server enqueues the pending request into a FIFO queue (`src/channelPermissions.ts`) and exposes the queue **head** via `GET /permission`. Pre-HS-8047 the channel server held a single `pendingPermission` slot — a follow-up `permission_request` silently overwrote the prior one, the popup the user was looking at vanished, and the first request could never be responded to from the UI. The queue preserves every concurrently-pending request in arrival order; once the user responds to (or dismisses) the head, the next 100 ms client poll surfaces the next queued request. Wire shape on `/permission` stays single-slot (`{ pending: head | null }`), so client + main-server are oblivious to the queue beneath
 4. Hot Sheet long-polls `GET /api/channel/permission` — the server holds the connection up to 3 seconds, returning immediately when a permission arrives (the channel server notifies via `POST /api/channel/permission/notify`)
 5. When a pending permission is detected, the popup described below appears anchored to the owning project's tab
 

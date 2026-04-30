@@ -213,6 +213,13 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] **Non-shell base command** — terminal command is `claude` directly (not `zsh -c claude`). PTY root is claude. ⌘Q. Prompt fires listing `claude (claude)`.
 - [ ] **Stale-instance cleanup bypasses** — start Hot Sheet, then start a SECOND Hot Sheet with `--replace`. The first one is killed by the stale-instance flow. NO prompt is shown (the user is already quitting through the new window).
 
+#### Quit-confirm preview pane = real xterm (HS-8041, §54.6)
+- [ ] **Live xterm preview** — start `claude` (or `htop`, `vim` — anything with rich TUI rendering) in a drawer terminal. ⌘Q with the prompt firing. Click any row in the dialog list. The preview pane on the right shows the **actual rendered xterm canvas** for that terminal (alignment / colour / box drawing all match the live drawer view). HS-7969 originally complained that the previous ANSI-spans preview "doesn't really match what the real terminals look like fully" — that gap is gone.
+- [ ] **Cross-project preview** — open two projects, one with `claude` running. ⌘Q from either project. Click the row for the other project's `claude` terminal. The preview shows that terminal's live xterm even though it's never been mounted in this page session.
+- [ ] **Drawer mount restored on dismiss** — open the drawer with a live `claude` terminal in view. ⌘Q (prompt fires, auto-selects first row → preview pane takes the live xterm). Cancel. The drawer's terminal pane is back to showing the live xterm immediately, with no flash of the "Terminal in use elsewhere" placeholder.
+- [ ] **Rapid row clicking** — open the dialog with 3+ terminals listed. Click row A, row B, row C as fast as possible. The preview pane lands on C's xterm; no flicker, no error, no orphaned xterm element. Open the browser dev console — no warnings about unhandled WebSocket / xterm errors.
+- [ ] **Rendering size** — preview pane is fixed 80 cols × 30 rows. A wide-format `htop` may wrap or be cropped at column 80; that's expected for now.
+
 ### PTY size resync after Terminal Dashboard exit (HS-7592, §22 / §25)
 - [ ] Open the drawer with a configured terminal active (e.g. `claude` or a shell) — confirm the prompt fits the drawer width.
 - [ ] Run something that writes to the full screen width (e.g. `printf '%s\n' "$(printf '%-200s' '=')"` to print a 200-char banner, or `htop`).

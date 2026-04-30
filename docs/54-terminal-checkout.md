@@ -2,7 +2,7 @@
 
 HS-7969 follow-up. A single xterm.js instance per `(projectSecret, terminalId)` lives in a new `terminalCheckout` client module. Every consumer (drawer pane, dashboard tile, dashboard dedicated view, drawer-grid tile, drawer-grid dedicated view, quit-confirm preview pane) calls `checkout(...)` to claim it and gets a `release()` handle back. The most recent checkout wins (LIFO stack); previous owners' mounts swap to a placeholder. When the stack is empty, the xterm is **disposed** to reclaim memory — the PTY survives on the server, and the next `checkout` re-creates the xterm and the WebSocket attach replays the scrollback.
 
-> **Status:** Phase 1 shipped (HS-8031). Phase 2 (HS-8032) deferred — wires the existing drawer / dashboard / drawer-grid / quit-confirm surfaces to the new module + deletes the §37 ANSI-spans preview path.
+> **Status:** Phase 1 shipped (HS-8031). Phase 2 splits into 5 sub-tickets per HS-8032's Option A. Sub-ticket 1 — quit-confirm preview pane — **shipped (HS-8041)**, see §54.6. Sub-tickets 2-5 deferred (drawer-grid, dashboard, drawer pane, cleanup); the §37 ANSI-spans preview path stays alive until the cleanup ticket.
 
 ## 54.1 Why
 
@@ -152,14 +152,48 @@ Existing tests for each migrated surface stay green. New regression tests:
 - Dashboard ↔ drawer race: open the dashboard, dedicated-view a tile, close the dashboard. The drawer pane regains the live terminal without a flash of placeholder.
 - Quit-confirm dismiss-while-loading: open the dialog, click row A, click row B before A's checkout settles. Verify the cancel order is correct (A's `release()` fires before B's `checkout()` settles, so we don't briefly wedge the stack).
 
-## 54.6 Out of scope
+## 54.6 Phase 2.1 — Quit-confirm migration (HS-8041)
+
+Phase 2.1 ships the smallest of the five Option-A surfaces. `src/client/quitConfirm.tsx`'s preview pane is the only `terminalCheckout` consumer wired up; the drawer pane, dashboard tile + dedicated, and drawer-grid tile + dedicated continue to use their pre-existing per-surface xterm management until §54.7 / §54.8 / §54.9 ship in HS-8042 / HS-8043 / HS-8044. The §37 ANSI-spans path keeps serving the (still-not-migrated) other surfaces until the cleanup ticket (HS-8045 — sub-ticket 5 of HS-8032) lands.
+
+### 54.6.1 Surface change
+
+Pre-fix: row-select fetched `/api/terminal/scrollback-preview` (returns `text` + `textWithAnsi` + theme/font ids), painted the `<pre class="quit-confirm-detail-preview">` with `paintPreviewContent` (calls `ansiToSafeHtml` over `textWithAnsi`), and applied the resolved theme + font as inline styles via `applyAppearanceToPreview`. Static snapshot — no live updates, palette approximation that the user (HS-7969) flagged as "still not great — doesn't really match what the real terminals look like fully."
+
+Post-fix: row-select calls `checkout({ projectSecret, terminalId, cols: 80, rows: 30, mountInto: previewEl })` for the clicked row's terminal. The live xterm DOM-reparents into the dialog's preview pane; whichever consumer was previously rendering it (drawer pane / dashboard tile / drawer-grid tile / etc.) drops to the placeholder per §54.3.2. On dialog dismiss / row swap the handle is `release()`d — if the only consumer, the entry is disposed and the previous mount disposes too (§54.3.3); if a previous consumer is still in the LIFO stack (e.g. the user opened the dialog from the drawer with the same terminal already mounted there), the live xterm reparents back and that consumer's `onRestoredToTop` fires.
+
+The preview pane is now a `<div class="quit-confirm-detail-preview">` (was `<pre>`) — xterm requires a regular block container for its mount.
+
+### 54.6.2 cols / rows hardcoding
+
+Statically wired to **80 × 30** via the new `QUIT_PREVIEW_COLS` / `QUIT_PREVIEW_ROWS` module-level constants. Dialog is fixed-width and the preview pane doesn't track viewport changes — recomputing from the live `.quit-confirm-detail-preview` cell metrics on dialog resize was considered and deferred (file a follow-up if real-use shows the hardcode mismatches the natural pane size).
+
+### 54.6.3 Cancel-then-checkout ordering
+
+Critical contract for the row-swap path: `release()` on the prior handle **must** happen before `checkout()` for the new row. Reverse order would briefly leave the LIFO stack holding `[prior, new]` both pointing at the same `mountInto` element (`previewEl`). The intermediate swap step would write the placeholder into `previewEl`, then immediately reparent the new xterm OVER it — visible flash, plus the prior handle's release path would have to walk an unexpected stack shape (`indexOf(handle) === 0` while `stack.length === 2`) on cleanup. The contract is pinned by 5 unit tests in `src/client/quitConfirm.test.ts` (the `quit-confirm preview pane checkout (HS-8041 §54.5.2)` describe block) using `_inspectStackForTesting()` + `entryCount()` to assert single-entry / single-depth invariants throughout a row-click burst.
+
+### 54.6.4 Dormant helpers
+
+Per the HS-8041 ticket scope, `paintPreviewContent` + `paletteFromTheme` (and the now-orphaned `fetchScrollbackPreview` + `applyAppearanceToPreview`) are kept inside `quitConfirm.tsx` until the HS-8045 cleanup sub-ticket. Three `void fetchScrollbackPreview; void applyAppearanceToPreview; void paintPreviewContent;` references at the bottom of the file defeat `@typescript-eslint/no-unused-vars` without an inline disable, mirroring the existing `void flat;` pattern at the bottom of `showQuitConfirmDialog`. Once every Phase 2 sub-ticket has migrated, the cleanup deletes:
+
+- `src/client/ansiSpans.ts` + `ansiSpans.test.ts`
+- `GET /api/terminal/scrollback-preview` route + `textWithAnsi` field + `getTerminalScrollbackPreviewWithAnsi` registry helper
+- `src/terminals/scrollbackSnapshot.ts::buildScrollbackPreviewWithAnsi`
+- `paletteFromTheme`, `paintPreviewContent`, `fetchScrollbackPreview`, `applyAppearanceToPreview` in `quitConfirm.tsx` (and the `void` references)
+- The `ScrollbackPreviewResponse` interface
+
+### 54.6.5 Test-only export
+
+`showQuitConfirmDialog` was previously module-private; it's now exported so the dismiss-while-loading race regression can drive the dialog's mount + row-click choreography directly. Production callers continue to enter via `runQuitConfirmFlow()`. Marking this with the same convention as `terminalCheckout.tsx::_inspectStackForTesting` (underscore prefix) was considered and rejected — `showQuitConfirmDialog` is already a clear API surface, not a debug introspection helper.
+
+## 54.7 Out of scope
 
 - **Live placeholder painting** (option (b) from decision 2). If the user reports the static placeholder feels wrong, we can revisit — but the fork-stream-to-non-top-consumers cost is real and the design doc treats this as a follow-up, not a Phase 2 deliverable.
 - **Multi-instance for the same `(secret, terminalId)`.** A future "compare two snapshots side by side" UX could want two xterms attached to the same PTY. Out of scope; the server already supports multiple subscribers per session, but the client-side single-instance assumption is baked into Phase 1.
 - **Selection / search state preservation across stack swaps.** Today's drawer / dashboard handoff loses search state (the `SearchAddon` re-attaches with the new mount). The checkout system doesn't try to do better — when the live xterm reparents, its own state (cursor, selection, search highlights) follows naturally because the xterm instance is the same DOM node tree. The placeholder consumer doesn't have a meaningful "state" to preserve.
 - **OSC133 jump shortcuts in non-top consumers.** Cmd/Ctrl+Up/Down already routes to the most-recently-active terminal — the checkout system doesn't change that. The "most-recently-active" cache continues to live in the OSC133 module; it's keyed on terminal-id, not on which consumer is rendering it.
 
-## 54.7 Compatibility + back-out
+## 54.8 Compatibility + back-out
 
 Phase 1 lands with no UI consumers wired — every existing surface continues to use its current path. If a regression is found in `terminalCheckout.tsx` after Phase 2 lands, the back-out is per-consumer:
 

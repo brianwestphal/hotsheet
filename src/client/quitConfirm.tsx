@@ -1,6 +1,7 @@
 import { type AnsiPalette, ansiToSafeHtml } from './ansiSpans.js';
 import { toElement } from './dom.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
+import { checkout,type CheckoutHandle } from './terminalCheckout.js';
 import {
   clampFontSize,
   DEFAULT_FONT_ID,
@@ -262,7 +263,15 @@ async function applyAppearanceToPreview(pre: HTMLElement, response: ScrollbackPr
 /** HS-7969 follow-up #2 — paint the preview's text content using rich
  *  ANSI-aware spans so coloured / bold / underlined output renders as
  *  the user saw it in the live terminal. Falls back to escaped plain
- *  text when the server didn't supply `textWithAnsi` (older build). */
+ *  text when the server didn't supply `textWithAnsi` (older build).
+ *
+ *  HS-8041 — no longer called from this file. The quit-confirm preview
+ *  pane migrated to `terminalCheckout` (real xterm canvas instead of
+ *  the ANSI-spans approximation HS-7969 originally complained about).
+ *  The helper is kept until the cleanup sub-ticket #5 (HS-8032 plan)
+ *  removes it alongside `ansiSpans.ts` + the `/scrollback-preview`
+ *  route. Until then it sits idle so the bulk-delete cleanup is a
+ *  single coherent change. */
 function paintPreviewContent(pre: HTMLElement, response: ScrollbackPreviewResponse): void {
   const empty = response.text === '' && response.textWithAnsi === '';
   if (empty) {
@@ -282,7 +291,18 @@ interface QuitDialogChoice {
   dontAskAgain: boolean;
 }
 
-function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<QuitDialogChoice> {
+/** HS-8041 — preview pane mounts a real `terminalCheckout` xterm instead
+ *  of the ANSI-spans approximation. The cols/rows are statically wired to
+ *  the §54.4 canonical 80x30 — the dialog is a fixed-width modal and
+ *  the preview pane doesn't track viewport changes (file a follow-up if
+ *  real-use shows the hardcode is wrong). */
+const QUIT_PREVIEW_COLS = 80;
+const QUIT_PREVIEW_ROWS = 30;
+
+/** Exported for the HS-8041 dismiss-while-loading race regression in
+ *  `quitConfirm.test.ts`. Production callers continue to enter via
+ *  `runQuitConfirmFlow()`. */
+export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<QuitDialogChoice> {
   return new Promise<QuitDialogChoice>((resolve) => {
     const totalTerminals = contributing.reduce((acc, p) => acc + p.entries.length, 0);
     const intro = totalTerminals === 1
@@ -341,9 +361,14 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
               ))}
             </div>
             <div className="quit-confirm-detail" data-role="detail">
-              <pre className="quit-confirm-detail-preview" data-state="empty">
+              {/* HS-8041 — was a `<pre>` painted by `paintPreviewContent`.
+                  Migrated to a div hosting a real `terminalCheckout` xterm
+                  (Phase 2.1 of HS-8032). The first checkout reparents
+                  the live xterm element into this container, replacing
+                  the placeholder text below. */}
+              <div className="quit-confirm-detail-preview" data-state="empty">
                 Select a terminal to preview its recent output.
-              </pre>
+              </div>
             </div>
           </div>
           <label className="quit-confirm-dont-ask">
@@ -365,6 +390,16 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
       const cb = overlay.querySelector<HTMLInputElement>('.quit-confirm-dont-ask-cb');
       const dontAskAgain = cb?.checked === true;
       document.removeEventListener('keydown', onKey, true);
+      // HS-8041 — release the live xterm checkout BEFORE removing the
+      // overlay DOM. Order matters: `release()` reparents the live xterm
+      // back to the previous mount (or disposes the entry on empty
+      // stack); if we removed the overlay first, the xterm element would
+      // briefly become orphaned and any cleanup that walks
+      // `term.element.parentElement` would see null.
+      if (currentCheckout !== null) {
+        try { currentCheckout.release(); } catch { /* swallow — overlay tear-down is the user's stronger signal */ }
+        currentCheckout = null;
+      }
       overlay.remove();
       resolve({ outcome, dontAskAgain });
     };
@@ -385,13 +420,15 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
 
     const previewEl = overlay.querySelector<HTMLElement>('.quit-confirm-detail-preview');
     const rows = Array.from(overlay.querySelectorAll<HTMLButtonElement>('.quit-confirm-row'));
-    // HS-7969 follow-up — per-row cache so re-selecting a row doesn't
-    // re-fetch (matches the pre-fix accordion behaviour). Token-counter
-    // guards against out-of-order async resolutions when the user clicks
-    // through rows faster than the network responds — only the latest
-    // selection wins the preview pane.
-    const cache = new Map<string, ScrollbackPreviewResponse>();
-    let activeToken = 0;
+
+    // HS-8041 — preview pane is a `terminalCheckout` consumer (Phase 2.1
+    // of HS-8032). Each row-select releases the prior checkout and pushes
+    // a new one for the clicked row's `(secret, terminalId)`. Cancel-
+    // then-checkout ordering is critical: `release()` MUST happen before
+    // `checkout()` so the stack never briefly holds two handles for the
+    // same `mountInto`. The race regression in `quitConfirm.test.ts`
+    // pins this contract via `_inspectStackForTesting()`.
+    let currentCheckout: CheckoutHandle | null = null;
 
     function selectRow(row: HTMLButtonElement): void {
       if (previewEl === null) return;
@@ -399,46 +436,39 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
       row.classList.add('is-selected');
       const secret = row.dataset.secret ?? '';
       const terminalId = row.dataset.terminalId ?? '';
-      const key = `${secret}::${terminalId}`;
-      const myToken = ++activeToken;
+      if (secret === '' || terminalId === '') return;
 
-      const cached = cache.get(key);
-      if (cached !== undefined) {
-        renderPreview(previewEl, cached);
-        return;
+      // Release the prior checkout BEFORE starting the new one (HS-8041
+      // §54.5.2 — dismiss-while-loading race). If we did it the other
+      // way the stack would briefly hold [prior, new] both pointing at
+      // `previewEl`, terminalCheckout would write a placeholder INTO
+      // previewEl on the swap, then immediately reparent the new
+      // xterm OVER it — visible flash, and the prior handle's release
+      // path would have to walk an unexpected stack shape on cleanup.
+      if (currentCheckout !== null) {
+        currentCheckout.release();
+        currentCheckout = null;
       }
 
-      // Loading state. Reset background to the dialog default so a prior
-      // selection's theme doesn't bleed through during the fetch window.
-      previewEl.dataset.state = 'loading';
+      // Reset any stale paint state that previous code paths may have
+      // left behind (legacy `paintPreviewContent` set background, font,
+      // etc. as inline styles). The xterm renderer will own the
+      // surface from here on, but defensive resets keep the pre-mount
+      // window from flashing inherited styles.
+      previewEl.dataset.state = 'live';
       previewEl.style.background = '';
       previewEl.style.color = '';
       previewEl.style.fontFamily = '';
       previewEl.style.fontSize = '';
       previewEl.style.fontStyle = '';
-      previewEl.textContent = 'Loading…';
 
-      void fetchScrollbackPreview(secret, terminalId).then((response) => {
-        if (myToken !== activeToken) return; // a newer click is in flight
-        cache.set(key, response);
-        renderPreview(previewEl, response);
-      }).catch(() => {
-        if (myToken !== activeToken) return;
-        previewEl.dataset.state = 'error';
-        previewEl.textContent = 'Failed to load preview.';
+      currentCheckout = checkout({
+        projectSecret: secret,
+        terminalId,
+        cols: QUIT_PREVIEW_COLS,
+        rows: QUIT_PREVIEW_ROWS,
+        mountInto: previewEl,
       });
-    }
-
-    function renderPreview(pre: HTMLElement, response: ScrollbackPreviewResponse): void {
-      pre.dataset.state = 'loaded';
-      // HS-7969 follow-up #2 — paint coloured / bold / underlined spans
-      // from the server-side `textWithAnsi` field. Plain `textContent`
-      // assignment is reserved for the empty-output sentinel.
-      paintPreviewContent(pre, response);
-      // Fire-and-forget — the font load can complete after the text lands;
-      // there's no flash to worry about since the colours we set already
-      // match the theme's intended palette.
-      void applyAppearanceToPreview(pre, response);
     }
 
     rows.forEach(row => {
@@ -464,3 +494,15 @@ function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promise<Quit
     void flat;
   });
 }
+
+// HS-8041 — `paintPreviewContent`, `applyAppearanceToPreview`, and
+// `fetchScrollbackPreview` are kept (per the ticket's explicit "LEAVE the
+// helpers themselves until cleanup ticket #5" instruction) so the §37
+// ANSI-spans preview path can be removed in a single coherent change once
+// every Phase 2 sub-ticket has migrated. These references defeat the
+// `@typescript-eslint/no-unused-vars` rule without an inline disable —
+// matches the existing `void flat;` pattern at the bottom of
+// `showQuitConfirmDialog`.
+void fetchScrollbackPreview;
+void applyAppearanceToPreview;
+void paintPreviewContent;
