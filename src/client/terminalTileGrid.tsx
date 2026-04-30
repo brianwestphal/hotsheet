@@ -629,15 +629,12 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
         // likely a dedicated view at fit-driven dims, so the term is
         // at those dims now). The screen ResizeObserver re-attaches
         // here too so subsequent renders pick up cell-metric changes.
+        // HS-8051 follow-up — `attachScreenObserver` now kicks the
+        // chained-rAF `scheduleResyncRetry` internally, so we don't
+        // need a separate one-shot rAF resync here.
         tile.checkout?.resize(TILE_INITIAL_COLS, TILE_INITIAL_ROWS);
         reapplyTileScaleFromPreview(tile);
         attachScreenObserver(tile);
-        // Defensive: requestAnimationFrame to give xterm a paint cycle
-        // for `.xterm-screen` before deriving cell metrics.
-        requestAnimationFrame(() => {
-          resyncTilePtyFromCellMetrics(tile);
-          reapplyTileScaleFromPreview(tile);
-        });
       },
     });
 
@@ -670,11 +667,9 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // tile is currently sized to. The check is idempotent: once the term is
     // at native dims, subsequent observer fires recompute the same native and
     // skip the resize.
+    // HS-8051 follow-up — `attachScreenObserver` internally kicks the
+    // chained-rAF `scheduleResyncRetry`, so a single call here is enough.
     attachScreenObserver(tile);
-    requestAnimationFrame(() => {
-      resyncTilePtyFromCellMetrics(tile);
-      reapplyTileScaleFromPreview(tile);
-    });
 
     // HS-8048 — `term.onData` (keystroke-send) is wired by the checkout
     // module's WS attachment so every consumer of the shared xterm gets
@@ -702,18 +697,112 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
    *  with possibly different cell metrics). The observer fires every
    *  time xterm commits a render; the callback re-derives tile-native
    *  dims via cell metrics and routes through the checkout's
-   *  `handle.resize` path. */
-  function attachScreenObserver(tile: InternalTile): void {
+   *  `handle.resize` path.
+   *
+   *  HS-8051 (2026-05-01) — `.xterm-screen` is created lazily by xterm
+   *  on its first render. If `attachScreenObserver` runs before that
+   *  render (typical right after `term.open()`), the querySelector
+   *  returns null and no observer is attached. The rAF after
+   *  `mountTileViaCheckout` would also fire before the first render in
+   *  some race orderings, leaving the tile permanently stuck at
+   *  whatever cols × rows the initial `checkout({cols:80, rows:60})`
+   *  set — visible as a non-4:3 natural aspect / horizontally
+   *  letterboxed tile. The user reported this on HS-8051: 2 of 5
+   *  dashboard tiles ended up at `screenW: 1282, screenH: 1200`
+   *  (aspect ~1.07) instead of the 4:3 target while the other 3 sat
+   *  at `1282 × 960`. The fix: when `.xterm-screen` isn't there yet,
+   *  retry on the next rAF (up to a small budget so we don't spin
+   *  forever on a tile whose checkout was disposed mid-flight).
+   *  Once the screen exists we attach the observer AND kick a chained
+   *  rAF resync (`scheduleResyncRetry`) so the tile reaches its target
+   *  dims even when `screen.offsetWidth` is briefly 0 (xterm just
+   *  parented the screen DOM but hasn't laid out cells), or when the
+   *  tile's checkout is momentarily not top-of-stack (a quit-confirm
+   *  preview claimed it). */
+  function attachScreenObserver(tile: InternalTile, retriesRemaining: number = 30): void {
     if (tile.xtermRoot === null) return;
+    if (tile.checkout === null) return; // tile was disposed mid-retry
     tile.screenObserver?.disconnect();
     const screen = tile.xtermRoot.querySelector<HTMLElement>('.xterm-screen');
-    if (screen === null) return;
+    if (screen === null) {
+      if (retriesRemaining > 0) {
+        requestAnimationFrame(() => { attachScreenObserver(tile, retriesRemaining - 1); });
+      }
+      return;
+    }
     const observer = new ResizeObserver(() => {
       reapplyTileScaleFromPreview(tile);
       resyncTilePtyFromCellMetrics(tile);
     });
     observer.observe(screen);
     tile.screenObserver = observer;
+    // HS-8051 follow-up — kick a chained rAF resync. The ResizeObserver
+    // fires on subsequent size changes only, so a tile whose first
+    // render completed BEFORE the observer attached needs an immediate
+    // resync trigger. AND a single immediate resync is fragile: it
+    // bails when `screen.offsetWidth` is 0 (xterm just attached the DOM
+    // but hasn't measured cells yet) or `tile.checkout.isTopOfStack()`
+    // is momentarily false. The user reported one of five tiles
+    // staying stuck at `cellW=21.15` (probably a project with a larger
+    // font) where the algorithm SHOULD have produced 4:3 dims but never
+    // got the chance — chaining the resync across rAFs until the term
+    // actually reaches native dims (or a small budget exhausts) closes
+    // the remaining race.
+    scheduleResyncRetry(tile);
+  }
+
+  /** HS-8051 follow-up — chained-rAF resync that runs until the term
+   *  reaches its cell-metric-derived native cols × rows OR the retry
+   *  budget runs out. The single one-shot resync inside
+   *  `attachScreenObserver` was insufficient for one of the user's tiles
+   *  (Domotion → Claude, larger font giving cellW≈21.15) — even with the
+   *  ResizeObserver attached, the term stayed at the initial 80×60 from
+   *  `checkout({cols:80, rows:60})` and never converged to the algorithm's
+   *  intended ≈61×48 (4:3). The exact race is hard to pin without a live
+   *  repro, but the failure shape is consistent with one of:
+   *   1. `screen.offsetWidth` was 0 when the immediate resync ran, so
+   *      `tileNativeDimsFromXterm` returned null and the resync bailed.
+   *      The ResizeObserver should fire when the screen later lays out
+   *      cells, but in some browsers a from-0 transition doesn't trigger
+   *      a callback if the consumer was bumped down briefly between
+   *      observe() and layout-commit.
+   *   2. `tile.checkout.isTopOfStack()` was momentarily false (e.g. a
+   *      quit-confirm preview claimed the checkout for a few frames) at
+   *      the moment the observer fired. Resync bails. After release the
+   *      tile is restored, but no further size change triggers the
+   *      observer — the screen is already at the bumped consumer's dims.
+   *  Chaining rAF resyncs until convergence sidesteps both: each tick we
+   *  re-attempt; if the term has actually reached its native dims (and
+   *  `targetCols/Rows` agree), we stop. Otherwise schedule another rAF.
+   *  Budget caps at 30 ticks (~500 ms) so a permanently-bumped tile
+   *  doesn't spin forever. */
+  function scheduleResyncRetry(tile: InternalTile, budget: number = 30): void {
+    if (tile.checkout === null || tile.xtermRoot === null) return;
+    // Defensive: if the tile is bumped down (another consumer holds the
+    // live xterm), abort. `onRestoredToTop` will re-trigger the chain
+    // when the consumer comes back to top.
+    if (!tile.checkout.isTopOfStack()) return;
+    const term = tile.checkout.term;
+    const native = tileNativeDimsFromXterm(term, tile.xtermRoot);
+    if (native !== null) {
+      const termAtNative = term.cols === native.cols && term.rows === native.rows;
+      const targetAtNative = tile.targetCols === native.cols && tile.targetRows === native.rows;
+      if (termAtNative && targetAtNative) {
+        // Converged — make sure the CSS scale reflects the final natural
+        // dims, then stop retrying.
+        reapplyTileScaleFromPreview(tile);
+        return;
+      }
+      // Not converged yet — apply the resize and re-scale. The next
+      // iteration verifies the term actually reached the new dims.
+      tile.targetCols = native.cols;
+      tile.targetRows = native.rows;
+      tile.checkout.resize(native.cols, native.rows);
+      reapplyTileScaleFromPreview(tile);
+    }
+    if (budget > 0) {
+      requestAnimationFrame(() => { scheduleResyncRetry(tile, budget - 1); });
+    }
   }
 
   function tileNativeDimsFromXterm(term: XTerm, xtermRoot: HTMLElement): { cols: number; rows: number } | null {

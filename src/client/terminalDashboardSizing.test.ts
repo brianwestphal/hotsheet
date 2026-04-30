@@ -354,6 +354,47 @@ describe('tileNativeGridFromCellMetrics (HS-7097 follow-up)', () => {
     expect(tileNativeGridFromCellMetrics(0, 16)).toEqual(fallback);
     expect(tileNativeGridFromCellMetrics(8, 0)).toEqual(fallback);
   });
+
+  // HS-8051 follow-up regression — the user's stuck Domotion tile was
+  // rendering at screenW=1692, screenH=1200, consistent with term.cols=80,
+  // term.rows=60, cellW=21.15, cellH=20 (a project with a noticeably larger
+  // font than the four good tiles, which were at cellW≈8, cellH=16). The
+  // algorithm must produce a 4:3 result for these cell metrics so the chained-
+  // rAF retry in terminalTileGrid.tsx::scheduleResyncRetry has somewhere
+  // to converge to. Pre-fix the resync seemed to never run for this tile —
+  // the chained retry is the actual fix, but locking the algorithm output
+  // here makes sure a future tweak to computeTileGridDims doesn't quietly
+  // break the convergence target.
+  it('produces a 4:3-natural grid for the user-reported large-font cell metrics (cellW=21.15, cellH=20)', () => {
+    const { cols, rows } = tileNativeGridFromCellMetrics(21.15, 20);
+    // 1280 / 21.15 ≈ 60.52 → 61. 960 / 20 = 48.
+    expect(cols).toBe(61);
+    expect(rows).toBe(48);
+    const naturalAspect = (cols * 21.15) / (rows * 20);
+    // Within 1% of 4:3 — rounding errors at the cell-count level can't push
+    // the aspect off enough to leave visible letterbox in the tile frame.
+    expect(Math.abs(naturalAspect - TILE_ASPECT)).toBeLessThan(0.02);
+  });
+
+  it('produces a 4:3-natural grid for a range of plausible larger-font cell metrics', () => {
+    // Sweep cell metrics around the user's reported value to confirm the
+    // algorithm is robust to font / DPI variation. Each (cellW, cellH) pair
+    // models a font-size config that produces those measured cell dims at
+    // the tile's xterm-screen.
+    const sweep: Array<[number, number]> = [
+      [10, 20],     // mono at ~17 pt
+      [12, 24],     // mono at ~20 pt
+      [14.1, 20],   // condensed-tall mono
+      [16, 16],     // square cells
+      [21.15, 20],  // user-reported Domotion
+      [25, 30],     // very large font
+    ];
+    for (const [cellW, cellH] of sweep) {
+      const { cols, rows } = tileNativeGridFromCellMetrics(cellW, cellH);
+      const naturalAspect = (cols * cellW) / (rows * cellH);
+      expect(Math.abs(naturalAspect - TILE_ASPECT)).toBeLessThan(0.05);
+    }
+  });
 });
 
 describe('computeSliderSnapPoints (HS-7271)', () => {

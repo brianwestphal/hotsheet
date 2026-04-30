@@ -185,6 +185,16 @@ export function isClaudeNumberedFooter(line: string): boolean {
   return NUMBERED_FOOTERS.has(t);
 }
 
+/**
+ * HS-8050 — hard cap on the number of rows we'll capture as the prompt's
+ * "question region" above the numbered options. Longer captures almost
+ * always pull in unrelated claude code TUI decorations / status lines
+ * because the headless scanner's viewport overlaps with the prompt's
+ * surrounding rendered TUI. Inline diff prompts (HS-7980) cap at ~12
+ * rows; this gives us margin while still rejecting runaway captures.
+ */
+export const MAX_QUESTION_CONTEXT_ROWS = 15;
+
 // HS-7995 — Recent Claude Code builds render the highlighted-row cursor as
 // `❯` (U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT) rather
 // than the older ASCII `>`. Other CLIs occasionally use the box-drawing
@@ -233,21 +243,41 @@ export const claudeNumberedParser: PromptParser = {
     }
 
     if (questionStartIdx >= 0) {
-      // HS-7980 — Walk upward gathering ALL rows from `questionStartIdx`
-      // back to the top of the scan window. We preserve blank-row
-      // separators so the overlay's monospaced context block keeps the
-      // structure of an inline diff (which Claude renders separated from
-      // the actual question line by a blank). Pre-fix the loop stopped at
-      // the first blank, so a diff above the question vanished.
+      // HS-7980 — preserve blank-row separators so the overlay's monospaced
+      // context block keeps the structure of an inline diff (which Claude
+      // renders separated from the actual question line by a blank).
+      //
+      // HS-8050 (2026-05-01) — but DON'T walk all the way to the top of the
+      // visible window. The user's claude code session can render its TUI
+      // decorations (status bars, "Listening for channel messages..." /
+      // "Experimental: ..." pre-amble lines, the `?` for shortcuts help
+      // line, etc.) in the same buffer that contains the prompt; pulling
+      // every row back to row 0 captured all of that as framed context and
+      // made the popup body show "everything after the prompt header is
+      // just the claude code prompt decorations and input" (user's own
+      // words). Two stopping conditions:
+      //   1. A run of 2+ consecutive blank rows — that's almost always a
+      //      visual section break separating unrelated content above from
+      //      the prompt's own body. Inline diffs inside a single prompt
+      //      use exactly one blank as a separator (HS-7980 fixture), so
+      //      requiring two-in-a-row keeps that case working.
+      //   2. A hard cap of `MAX_QUESTION_CONTEXT_ROWS` rows (defensive —
+      //      a legitimate prompt body shouldn't exceed this; longer
+      //      captures are almost always pulling unrelated TUI noise).
       let j = questionStartIdx;
       // Skip trailing blank rows immediately before the numbered block —
       // they aren't useful context.
       while (j >= 0 && trimmed[j].trim() === '') j--;
-      // Snapshot all rows from here back to the top, dropping leading
-      // blanks (rows whose ONLY content is whitespace at the start of the
-      // scan window).
       const accumulated: string[] = [];
-      for (let k = j; k >= 0; k--) {
+      let consecutiveBlanks = 0;
+      for (let k = j; k >= 0 && accumulated.length < MAX_QUESTION_CONTEXT_ROWS; k--) {
+        const isBlank = trimmed[k].trim() === '';
+        if (isBlank) {
+          consecutiveBlanks++;
+          if (consecutiveBlanks >= 2) break;
+        } else {
+          consecutiveBlanks = 0;
+        }
         accumulated.unshift(trimmed[k]);
       }
       while (accumulated.length > 0 && accumulated[0].trim() === '') accumulated.shift();

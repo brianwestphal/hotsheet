@@ -208,29 +208,48 @@ function toMap(obj: Record<string, BellStateEntry>): BellStateMap {
  * interrupt other-project work for a possible false positive); they're
  * left in `pendingPrompts` for future per-project surfacing logic to
  * decide on (out of scope for v1; see HS-8034 docs).
+ *
+ * HS-8047 follow-up — overlays now serialize through `activeOverlayKey`.
+ * Pre-fix, when multiple projects had pending prompts on the same tick
+ * (e.g. on app launch with several `claude` instances all parked at the
+ * same WARNING prompt), the dispatcher called `openTerminalPromptOverlay`
+ * once per project in the same iteration. That helper REMOVES every
+ * `.terminal-prompt-overlay` from the document before mounting the new
+ * one (intentional — it uses the same DOM class for every overlay), so
+ * each subsequent project's overlay obliterated the previous project's
+ * overlay without going through `onClose`. The user saw popups flash by
+ * one after another and only the final project's overlay survived; the
+ * earlier overlays' signatures stayed in `lastDispatchedPromptSignatures`,
+ * so they never re-surfaced in subsequent ticks. Cross-project
+ * `permission-popup` handles this by holding `activePopupRequestId` and
+ * skipping replacement until the active popup closes — we mirror that
+ * pattern here.
  */
 const lastDispatchedPromptSignatures = new Map<string, string>();
+let activeOverlayKey: string | null = null;
 
 function dispatchPendingPrompts(state: BellStateMap): void {
   // Walk every project's pendingPrompts. Build the set of currently-live
   // (secret, terminalId) keys so we can prune entries from
   // `lastDispatchedPromptSignatures` for prompts the server cleared
-  // (auto-allowed, responded to from another client, terminal restarted).
+  // (auto-allowed, responded to from another client, terminal restarted),
+  // and collect the candidates that haven't been dispatched yet (or whose
+  // signature changed since the last dispatch).
   const liveKeys = new Set<string>();
+  const candidates: Array<{ secret: string; terminalId: string; match: MatchResult; key: string; sig: string }> = [];
   for (const [secret, entry] of state.entries()) {
     const prompts = entry.pendingPrompts ?? {};
     for (const [terminalId, match] of Object.entries(prompts)) {
       const key = `${secret}::${terminalId}`;
       liveKeys.add(key);
-      const sig = match.signature;
-      if (lastDispatchedPromptSignatures.get(key) === sig) continue;
       // Generic-fallback matches NEVER auto-surface an overlay — too high
       // a false-positive risk to interrupt cross-project work with. The
       // user gets the prompt the next time they switch into that project
       // (a future tick will re-fire when the active-project gate matches).
       if (match.shape === 'generic') continue;
-      lastDispatchedPromptSignatures.set(key, sig);
-      openCrossProjectOverlay(secret, terminalId, match);
+      const sig = match.signature;
+      if (lastDispatchedPromptSignatures.get(key) === sig) continue;
+      candidates.push({ secret, terminalId, match, key, sig });
     }
   }
   // Prune dispatched signatures whose pendingPrompt was cleared on the
@@ -239,6 +258,42 @@ function dispatchPendingPrompts(state: BellStateMap): void {
   for (const key of [...lastDispatchedPromptSignatures.keys()]) {
     if (!liveKeys.has(key)) lastDispatchedPromptSignatures.delete(key);
   }
+  // If the active overlay's underlying server-side prompt was cleared
+  // (user responded via the terminal directly, another client answered,
+  // server auto-allowed), tear down the now-stale overlay so the next
+  // pending prompt can take its place. Tearing the DOM element doesn't
+  // route through `onClose`, so we also clear `activeOverlayKey` here.
+  if (activeOverlayKey !== null && !liveKeys.has(activeOverlayKey)) {
+    document.querySelectorAll('.terminal-prompt-overlay').forEach(el => el.remove());
+    activeOverlayKey = null;
+  }
+  // Serialize: at most one overlay visible at a time. The next tick after
+  // the active overlay closes (via send / cancel / dismiss / server clear)
+  // picks up the next candidate. Sort by key so the surfacing order is
+  // deterministic instead of hash-table-walk order.
+  if (activeOverlayKey !== null) return;
+  if (candidates.length === 0) return;
+  candidates.sort((a, b) => a.key.localeCompare(b.key));
+  const next = candidates[0];
+  lastDispatchedPromptSignatures.set(next.key, next.sig);
+  activeOverlayKey = next.key;
+  openCrossProjectOverlay(next.secret, next.terminalId, next.match);
+}
+
+/** Test-only: reset all dispatcher state between cases. */
+export function _resetDispatchStateForTesting(): void {
+  lastDispatchedPromptSignatures.clear();
+  activeOverlayKey = null;
+}
+
+/** Test-only: peek the current `activeOverlayKey`. */
+export function _activeOverlayKeyForTesting(): string | null {
+  return activeOverlayKey;
+}
+
+/** Test-only: invoke the dispatcher directly without spinning up the loop. */
+export function _dispatchPendingPromptsForTesting(state: BellStateMap): void {
+  dispatchPendingPrompts(state);
 }
 
 /** HS-8034 Phase 2 — open the overlay for one (secret, terminalId, match)
@@ -248,6 +303,7 @@ function dispatchPendingPrompts(state: BellStateMap): void {
  *  server-side). The auth header on each POST carries the affected
  *  project's secret via `apiWithSecret`. */
 function openCrossProjectOverlay(secret: string, terminalId: string, match: MatchResult): void {
+  const key = `${secret}::${terminalId}`;
   openTerminalPromptOverlay({
     match,
     projectSecret: secret,
@@ -267,7 +323,10 @@ function openCrossProjectOverlay(secret: string, terminalId: string, match: Matc
     onClose() {
       // Drop the dispatched-signature so a follow-up identical prompt
       // (e.g. user dismissed and the program re-asks) re-surfaces.
-      lastDispatchedPromptSignatures.delete(`${secret}::${terminalId}`);
+      lastDispatchedPromptSignatures.delete(key);
+      // HS-8047 follow-up — clear the serialization gate so the next
+      // tick can surface the next queued cross-project prompt.
+      if (activeOverlayKey === key) activeOverlayKey = null;
       void apiWithSecret('/terminal/prompt-dismiss', secret, {
         method: 'POST',
         body: { terminalId },

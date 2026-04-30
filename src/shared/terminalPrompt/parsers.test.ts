@@ -395,6 +395,99 @@ describe('pickTitleLine (HS-8037)', () => {
   });
 });
 
+describe('claudeNumberedParser (HS-8050) — questionLines context capping', () => {
+  // User flagged on HS-8050: popup body included a chunk of post-prompt
+  // claude TUI decorations ("? for shortcuts", "high - /effort", the
+  // "Listening for channel messages..." pre-amble, etc.) because the
+  // upward walk pulled every row back to row 0. The fix caps at
+  // MAX_QUESTION_CONTEXT_ROWS rows AND stops at any run of 2+
+  // consecutive blank rows (visual section break).
+  it('stops the upward walk at a run of 2+ blank rows (section break)', () => {
+    const rows = [
+      'old TUI line A',
+      'old TUI line B',
+      '',
+      '',                            // 2 blanks → section break
+      'Loading development channels can pose a security risk',
+      '',
+      '> 1. I am using this for local development',
+      '  2. Exit',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    // questionLines should NOT contain the pre-section-break TUI lines.
+    expect(result.questionLines.some(l => l.includes('old TUI line'))).toBe(false);
+    // It SHOULD contain the actual question.
+    expect(result.questionLines.some(l => l.includes('Loading development channels'))).toBe(true);
+    // Title is the question, not the TUI noise.
+    expect(result.question).toBe('Loading development channels can pose a security risk');
+  });
+
+  it('preserves single-blank diff structure inside the question region (HS-7980 still works)', () => {
+    const rows = [
+      '  -  const old = 1',
+      '  +  const new = 2',
+      '',                            // single blank — diff context separator
+      'Apply this edit?',
+      '',
+      '> 1. Yes',
+      '  2. No',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    // Diff rows + the single-blank separator + question line all preserved.
+    expect(result.questionLines).toContain('  -  const old = 1');
+    expect(result.questionLines).toContain('  +  const new = 2');
+    expect(result.questionLines).toContain('Apply this edit?');
+    expect(result.question).toBe('Apply this edit?');
+  });
+
+  it('caps the question region at MAX_QUESTION_CONTEXT_ROWS rows', () => {
+    // Build 25 non-blank rows above the numbered block — no blank-run
+    // section break to stop the walk early. The cap should still
+    // truncate to ≤ 15 rows.
+    const tuiNoise: string[] = [];
+    for (let i = 0; i < 25; i++) tuiNoise.push(`noise line ${i}`);
+    const rows = [
+      ...tuiNoise,
+      '> 1. A',
+      '  2. B',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.questionLines.length).toBeLessThanOrEqual(15);
+    // Most-recent rows above the prompt are the ones we keep — earliest
+    // noise lines should have been dropped.
+    expect(result.questionLines.some(l => l === 'noise line 0')).toBe(false);
+    expect(result.questionLines.some(l => l === 'noise line 24')).toBe(true);
+  });
+
+  it('the original dev-channels fixture still matches with the cap in place', () => {
+    // Regression guard: the canonical fixture from the HS-7971 happy-path
+    // test still produces the same choices and title after the HS-8050 cap.
+    const rows = [
+      'Loading development channels can pose a security risk',
+      '',
+      '> 1. I am using this for local development',
+      '  2. Exit',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.choices).toHaveLength(2);
+    expect(result.choices[0].label).toBe('I am using this for local development');
+    expect(result.choices[1].label).toBe('Exit');
+    expect(result.question).toBe('Loading development channels can pose a security risk');
+  });
+});
+
 describe('claudeNumberedParser (HS-7971) — negative cases', () => {
   it('returns null when the footer is missing', () => {
     const rows = [
