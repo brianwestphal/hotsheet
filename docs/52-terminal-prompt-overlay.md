@@ -74,7 +74,9 @@ False-positive mitigation:
 
 ## 52.4 Parser registry
 
-A new module `src/client/terminalPrompt/parsers.ts` (subdirectory because parsers + types + matcher form a small family of files):
+> **HS-8029 Phase 1 (2026-04-30):** the parser registry **moved** from `src/client/terminalPrompt/parsers.ts` to `src/shared/terminalPrompt/parsers.ts` so the new server-side scanner (`src/terminals/promptScanner.ts`) can import it. The shape, the 32 unit tests, and every `parsers.*` import site are unchanged — only the path moved. Tracking the full server-side detection move in HS-8029 + its Phase 2 follow-up.
+
+A new module `src/shared/terminalPrompt/parsers.ts` (subdirectory because parsers + types + matcher form a small family of files):
 
 ```ts
 interface PromptParser {

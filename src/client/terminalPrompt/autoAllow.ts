@@ -19,7 +19,7 @@ import {
   buildYesNoPayload,
   type ChoiceOption,
   type MatchResult,
-} from './parsers.js';
+} from '../../shared/terminalPrompt/parsers.js';
 
 export interface AutoAllowResult {
   /** True when a rule matched and the payload was sent. Caller should NOT

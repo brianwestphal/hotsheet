@@ -9,7 +9,7 @@ import {
   parseAllowRules,
   type TerminalPromptAllowRule,
 } from './allowRules.js';
-import type { GenericMatch, MatchResult, NumberedMatch, YesNoMatch } from './parsers.js';
+import type { GenericMatch, MatchResult, NumberedMatch, YesNoMatch } from '../../shared/terminalPrompt/parsers.js';
 
 const numberedMatch: NumberedMatch = {
   parserId: 'claude-numbered',

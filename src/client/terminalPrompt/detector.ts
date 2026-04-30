@@ -13,8 +13,8 @@
  * unit tests can drive the detector with synthetic row arrays.
  */
 
-import type { MatchResult } from './parsers.js';
-import { runParserRegistry } from './parsers.js';
+import type { MatchResult } from '../../shared/terminalPrompt/parsers.js';
+import { runParserRegistry } from '../../shared/terminalPrompt/parsers.js';
 
 /** Debounce window — see §52.3.2. 100 ms is the design target. */
 export const SCAN_DEBOUNCE_MS = 100;

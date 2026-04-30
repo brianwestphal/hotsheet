@@ -10,7 +10,7 @@
  * docs/52-terminal-prompt-overlay.md §52.1 for the rationale (free-text
  * replies are too high-risk to auto-respond).
  */
-import type { MatchResult } from './parsers.js';
+import type { MatchResult } from '../../shared/terminalPrompt/parsers.js';
 
 export interface TerminalPromptAllowRule {
   /** Stable id (caller-generated, e.g. ULID). */

@@ -5,8 +5,10 @@ import { spawn as spawnPty } from 'node-pty';
 import { dirname, join } from 'path';
 
 import { readFileSettings } from '../file-settings.js';
+import type { MatchResult } from '../shared/terminalPrompt/parsers.js';
 import { containsClaudeSpinner } from './claudeSpinner.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from './config.js';
+import { createPromptScanner, type PromptScanner } from './promptScanner.js';
 import { resolveTerminalCommand } from './resolveCommand.js';
 import { RingBuffer } from './ringBuffer.js';
 import { buildScrollbackPreview, buildScrollbackPreviewWithAnsi } from './scrollbackSnapshot.js';
@@ -135,6 +137,18 @@ interface SessionState {
    *  5000` (i.e. Claude looks idle even though the channel hook says busy).
    *  Reset to null on PTY restart. HS-6702. */
   lastSpinnerAtMs: number | null;
+  /** HS-8029 Phase 1 — server-side terminal prompt scanner. One per session,
+   *  survives PTY restarts (clears its own state on resize). Owns a small
+   *  `@xterm/headless` instance and runs the shared parser registry on a
+   *  100 ms debounce after every PTY chunk. Phase 1 only emits matches
+   *  into `pendingPrompt`; Phase 2 (HS-8029 follow-up) wires those into the
+   *  bell-state long-poll for cross-project surfacing. */
+  promptScanner: PromptScanner;
+  /** HS-8029 Phase 1 — most recent unhandled match. Cleared on user
+   *  keystroke (PTY input from a client) so dismissal in the live terminal
+   *  also clears the server-side flag. Phase 2 surfaces this through the
+   *  bell-state long-poll. */
+  pendingPrompt: MatchResult | null;
 }
 
 const sessions = new Map<string, SessionState>();
@@ -249,6 +263,14 @@ export function writeInput(
 ): void {
   const s = sessions.get(sessionKey(secret, terminalId));
   if (s?.pty) s.pty.write(data);
+  // HS-8029 Phase 1 — user typing into the terminal clears any "Not a
+  // prompt" suppression on the scanner AND drops the stashed pendingPrompt
+  // (the user is interacting with the terminal directly, so the overlay's
+  // job is done). Mirrors the client detector's `notifyUserKeystroke`.
+  if (s !== undefined) {
+    s.promptScanner.notifyUserKeystroke();
+    s.pendingPrompt = null;
+  }
 }
 
 export function resizeTerminal(
@@ -392,6 +414,15 @@ export function restartTerminal(
     // process as "still busy".
     session.lastOutputAtMs = null;
     session.lastSpinnerAtMs = null;
+    // HS-8029 Phase 1 — drop any pending prompt match from the prior PTY
+    // and dispose + recreate the headless xterm scanner so its internal
+    // buffer doesn't leak previous-process state into the new one.
+    const restartedSession: SessionState = session;
+    restartedSession.pendingPrompt = null;
+    restartedSession.promptScanner.dispose();
+    restartedSession.promptScanner = createPromptScanner({
+      onMatch(match) { restartedSession.pendingPrompt = match; },
+    });
   }
   spawnIntoSession(session, dataDir);
   if (bellFlipped) {
@@ -409,6 +440,8 @@ export function destroyTerminal(
   if (!session) return;
   teardownPty(session);
   session.subscribers.clear();
+  // HS-8029 Phase 1 — release the scanner's headless xterm + pending timer.
+  session.promptScanner.dispose();
   sessions.delete(key);
 }
 
@@ -416,7 +449,12 @@ export function destroyTerminal(
 export function destroyProjectTerminals(secret: string): void {
   const prefix = `${secret}::`;
   for (const key of [...sessions.keys()]) {
-    if (key.startsWith(prefix)) sessions.delete(key);
+    if (key.startsWith(prefix)) {
+      const session = sessions.get(key);
+      // HS-8029 Phase 1 — release the per-session prompt scanner.
+      if (session) session.promptScanner.dispose();
+      sessions.delete(key);
+    }
   }
 }
 
@@ -553,6 +591,8 @@ export function destroyAllTerminals(): void {
     if (!session) continue;
     teardownPty(session);
     session.subscribers.clear();
+    // HS-8029 Phase 1 — release the per-session prompt scanner.
+    session.promptScanner.dispose();
     sessions.delete(key);
   }
 }
@@ -566,7 +606,10 @@ function createSession(
   cols?: number,
   rows?: number,
 ): SessionState {
-  return {
+  // HS-8029 Phase 1 — circular ref via closure: the scanner's `onMatch`
+  // captures `state` so it can stash the match into `state.pendingPrompt`.
+  // Constructed in two steps so the closure can refer to the final object.
+  const state: SessionState = {
     pty: null,
     ptyDisposables: [],
     startedAt: null,
@@ -587,7 +630,14 @@ function createSession(
     hasBeenAttached: false,
     lastOutputAtMs: null,
     lastSpinnerAtMs: null,
+    // Placeholder — replaced immediately below once `state` exists.
+    promptScanner: null as unknown as PromptScanner,
+    pendingPrompt: null,
   };
+  state.promptScanner = createPromptScanner({
+    onMatch(match) { state.pendingPrompt = match; },
+  });
+  return state;
 }
 
 /** Cap on the OSC accumulator so a malformed or adversarial stream can't pin
@@ -771,6 +821,11 @@ function spawnIntoSession(session: SessionState, dataDir: string): void {
   const dData = pty.onData((str) => {
     const chunk = Buffer.from(str, 'utf8');
     session.scrollback.push(chunk);
+    // HS-8029 Phase 1 — feed every PTY chunk into the per-session prompt
+    // scanner. The scanner debounces internally and runs the parser registry
+    // off the main hot path, so this is cheap (`term.write` queues bytes
+    // synchronously; the scan itself happens 100 ms after the last write).
+    session.promptScanner.ingest(chunk);
     // HS-6702 — PTY-activity timestamp + Claude spinner detection.
     // `lastOutputAtMs` ticks on every chunk so the client can spot
     // long-silent terminals; `lastSpinnerAtMs` only updates when the

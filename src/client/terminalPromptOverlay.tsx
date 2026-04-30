@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
-import type { GenericMatch,MatchResult, NumberedMatch, YesNoMatch } from './terminalPrompt/parsers.js';
+import type { GenericMatch,MatchResult, NumberedMatch, YesNoMatch } from '../shared/terminalPrompt/parsers.js';
 import {
   buildGenericCancelPayload,
   buildGenericPayload,
@@ -8,7 +8,7 @@ import {
   buildNumberedPayload,
   buildYesNoCancelPayload,
   buildYesNoPayload,
-} from './terminalPrompt/parsers.js';
+} from '../shared/terminalPrompt/parsers.js';
 
 /**
  * HS-7971 Phase 1 + Phase 2 (HS-7986) — terminal-prompt overlay UI.
