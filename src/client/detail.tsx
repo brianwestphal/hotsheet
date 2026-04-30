@@ -13,6 +13,7 @@ import type { Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { parseTags, renderDetailTags } from './tags.js';
 import { callRenderTicketList } from './ticketListState.js';
+import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 
 // Re-export extracted modules for consumers that import from detail.js
 export type { NoteEntry } from './noteRenderer.js';
@@ -36,7 +37,15 @@ export function setSuppressAutoRead(suppress: boolean) { suppressAutoRead = supp
 export function renderDetailsMarkdown(text: string): void {
   const rendered = document.getElementById('detail-details-rendered');
   if (rendered === null) return;
-  rendered.innerHTML = marked.parse(text, { async: false });
+  const html = marked.parse(text, { async: false });
+  // HS-8036 — wrap ticket-number references in clickable anchors after
+  // markdown renders. Self-references (the current ticket's own number
+  // appearing in its own details) are skipped via the cached
+  // `state.activeTicketId` lookup.
+  const currentTicketNumber = state.activeTicketId === null
+    ? undefined
+    : state.tickets.find(t => t.id === state.activeTicketId)?.ticket_number;
+  rendered.innerHTML = linkifyWithCachedPrefixes(html, currentTicketNumber);
 }
 
 /**
@@ -90,7 +99,7 @@ export function bindDetailDetailsRenderToggle(): void {
   // focus is moving to another element inside the same wrap (e.g. the
   // reader-mode book button) so the user isn't bounced out unnecessarily.
   textarea.addEventListener('blur', (e) => {
-    const next = (e as FocusEvent).relatedTarget as HTMLElement | null;
+    const next = (e).relatedTarget as HTMLElement | null;
     const wrap = textarea.closest('.detail-details-wrap');
     if (next !== null && wrap !== null && wrap.contains(next)) return;
     setDetailsEditing(false);

@@ -15,6 +15,29 @@ export async function nextTicketNumber(prefix = 'HS'): Promise<string> {
   return `${prefix}-${result.rows[0].nextval}`;
 }
 
+/**
+ * HS-8036 — return every distinct prefix that's appeared in `ticket_number`
+ * across the project's tickets. Used by the client-side ticket-reference
+ * link detector so old prefixes (e.g. a project that was once `BUG-` and
+ * is now `HS-`) still resolve when their ticket numbers appear in notes.
+ *
+ * The regex `^([A-Z][A-Z0-9_]*)-\d+$` requires the prefix to start with
+ * a letter and contain only letters / digits / underscores — typical
+ * project prefix shape. Tickets with non-standard numbers (legacy
+ * imports etc.) are silently skipped.
+ */
+export async function listKnownTicketPrefixes(): Promise<string[]> {
+  const db = await getDb();
+  const result = await db.query<{ ticket_number: string }>('SELECT DISTINCT ticket_number FROM tickets');
+  const prefixes = new Set<string>();
+  const re = /^([A-Z][A-Z0-9_]*)-\d+$/;
+  for (const row of result.rows) {
+    const match = re.exec(row.ticket_number);
+    if (match !== null) prefixes.add(match[1]);
+  }
+  return [...prefixes].sort();
+}
+
 // --- Ticket CRUD ---
 
 export async function createTicket(title: string, defaults?: Partial<{

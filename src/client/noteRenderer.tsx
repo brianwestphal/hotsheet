@@ -11,6 +11,7 @@ import { ICON_TRASH } from './icons.js';
 import { appendImageDownloadLinks, proxyGitHubImages } from './imageProxy.js';
 import { buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
 import { state } from './state.js';
+import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 import { pushNotesUndo } from './undo/actions.js';
 
 /** HS-7957 — Lucide `book-open-text` glyph. Inline SVG (not a sprite ref)
@@ -93,6 +94,11 @@ function syncNotesToState(ticketId: number, notes: NoteEntry[]) {
 export function renderNotes(ticketId: number, notes: NoteEntry[]) {
   const container = document.getElementById('detail-notes');
   if (!container) return;
+  // HS-8036 — look up the current ticket so we can skip self-references
+  // when linkifying ticket numbers in note bodies (a ticket viewing
+  // itself with `HS-1234` in its own notes shouldn't render that as a
+  // link).
+  const currentTicketNumber = state.tickets.find(t => t.id === ticketId)?.ticket_number;
   container.innerHTML = '';
 
   if (notes.length === 0) {
@@ -102,7 +108,14 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
 
   for (const note of notes) {
     const isEmpty = note.text.trim() === '';
-    const renderedText = isEmpty ? '' : marked.parse(note.text, { async: false });
+    // HS-8036 — wrap any ticket-number references (e.g. `HS-1234`) in
+    // clickable anchors after `marked` produces the HTML. The
+    // `linkifyWithCachedPrefixes` helper no-ops when the prefix cache
+    // hasn't loaded yet (app boot race) — it'll re-render correctly
+    // once the user mutates a note or re-opens the detail panel.
+    const renderedText = isEmpty
+      ? ''
+      : linkifyWithCachedPrefixes(marked.parse(note.text, { async: false }), currentTicketNumber);
     // HS-7601 — show the megaphone button when (a) this note isn't a
     // FEEDBACK NEEDED prompt (those are Claude → user, not user → Claude),
     // (b) the channel feature is enabled, and (c) the note has actual text

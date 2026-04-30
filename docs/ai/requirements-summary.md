@@ -686,6 +686,44 @@ HS-7969 follow-up. New client module `src/client/terminalCheckout.tsx` owns one 
 
 ---
 
+## 56. Magnified terminal-grid navigation (`56-magnified-grid-nav.md`)
+
+HS-8028. While a terminal tile is centered (single-click overlay) or dedicated (double-click full-pane) in the §25 dashboard or §36 drawer-grid, **Shift+Cmd+Arrow** (macOS) / **Shift+Ctrl+Arrow** (Linux/Windows) switches the magnified target to the next tile in the indicated direction.
+
+**Direction algorithm.** For each candidate tile, compute centroid offset `(dx, dy)` from the source tile, filter by direction half-plane, pick the lowest distance under the perpendicular-weighted cone metric (`|parallel| + |perpendicular| * 3`) so a same-row neighbour beats a diagonal one when both are equidistant by raw Euclidean. Skip non-alive tiles (placeholders shouldn't be navigation targets) and zero-size tiles.
+
+**Modes.** Centered AND dedicated. Bare grid (no magnification) doesn't bind the listener — there's no "current magnified tile" to navigate from. Dedicated path forces `priorCenteredTile = null` before exit so the swap doesn't flash through a stale centered state.
+
+**Chord shape.** Shift layered on top of the platform primary modifier (Cmd on macOS, Ctrl on Linux/Windows). Stays out of the way of `isJumpShortcut` (Cmd/Ctrl+Up/Down for OSC 133 prompt-marker jumps within a single terminal — HS-7269). Wrong-platform modifier passes through unchanged.
+
+**Capture phase + xterm interaction.** Document-level keydown listener uses capture phase + `preventDefault` + `stopPropagation` so xterm doesn't translate the chord into shell escape sequences (xterm's default for Cmd/Shift+Arrow is `\e[1;9X`-style sequences).
+
+**Status:** Shipped. New `isMagnifiedNavShortcut` in `terminalKeybindings.ts` + new helpers in `terminalTileGrid.tsx` (`bindMagnifiedNavHandler`, `unbindMagnifiedNavHandler`, `findNextTileInDirection`, `magnifyTile`). Wired into `centerTile` / `uncenterTile` / `enterDedicatedView` / `exitDedicatedView` / `teardownAll`. 13 new unit tests in `terminalKeybindings.test.ts` covering the four directions × both platforms + Shift / Cmd / Alt / non-arrow / non-keydown rejections + the no-Shift Cmd+Arrow preservation case for OSC 133.
+
+**Out of scope.** Wraparound at grid edges (past-the-edge is a no-op — could be added if real-use shows the no-op feels wrong). Plain grid navigation (no magnified target — out-of-scope per ticket framing). Drawer pane keyboard (single-terminal surface, no grid concept).
+
+**Cross-refs.** §25 (terminal dashboard), §36 (drawer-grid), §54 (terminal checkout — `magnifyTile` interacts with the migrated `enterDedicatedView` / `exitDedicatedView`), HS-7269 / `isJumpShortcut` (companion shortcut, intentionally distinct so the two coexist).
+
+---
+
+## 55. Ticket cross-references (`55-ticket-cross-references.md`)
+
+HS-8036. Ticket-number references inside markdown-rendered text (`HS-1234`, `BUG-42`, etc.) become clickable links that open a stacking modal showing the referenced ticket. Each click on a reference inside an open dialog pushes a new dialog onto the stack (visual offset 30 px in both axes); backdrop click + Escape pop the top one; "Open in detail panel" CTA closes the entire stack and switches the main detail view via `openDetail()`. **Read-only in v1** — editable inline deferred to a follow-up (requires refactoring `detail.tsx` ~30 `getElementById` callsites into a parameterizable component).
+
+**Prefix detection.** Server scans `tickets.ticket_number` for distinct prefixes via `^([A-Z][A-Z0-9_]*)-\d+$`, combines with the project's configured `ticketPrefix` (`settings.json`) and the `HS` fallback. Client fetches once at app init via `GET /api/tickets/prefixes` and caches.
+
+**Wired surfaces.** `noteRenderer.tsx::renderNotes`, `detail.tsx::renderDetailsMarkdown`, `readerOverlay.tsx::openReaderOverlay`, and the stacking dialog itself — every place markdown is rendered. Self-references (the current ticket's own number in its own notes / details) are NOT linkified per the locked decision. Stale references (`HS-9999` doesn't exist) show a transient toast via `showToast`.
+
+**New endpoints.** `GET /api/tickets/prefixes` (returns `{prefixes: string[]}`), `GET /api/tickets/by-number/:number` (returns the matching ticket row, 404 if not found).
+
+**Status:** Shipped. 13 unit tests in `src/client/ticketRefs.test.ts` covering regex builder + linkify edge cases (word boundaries, attribute-value safety, self-reference skip, empty-prefix fallback, link-inside-code-blocks per the user's "anywhere is fine" answer). Stacking dialog DOM tests deferred — happy-dom can render but visual-stack-offset assertions don't add unit-test value beyond manual spot-check; e2e is the right home and not implemented in v1.
+
+**Out of scope.** Editable inline (deferred). Title linkification in ticket-list rows (would conflict with row-click → open-detail). Markdown-sync to `.hotsheet/worklist.md` / `open-tickets.md` (those AI-tool-facing files emit raw markdown). Cross-project lookups (server query is scoped to active project's data dir; toast on stale).
+
+**Cross-refs:** §3 (ticket model), §4 (UI surfaces), §49 (reader-mode overlay — gets linkify too).
+
+---
+
 ## 26. Shell integration via OSC 133 (`26-shell-integration-osc133.md`)
 
 Design spike (HS-7265) — **no code yet**. Proposes handling the four-mark FinalTerm/iTerm2/VS Code shell-integration protocol: `\e]133;A\a` (prompt start), `;B\a` (command start), `;C\a` (output start), `;D;<exit>\a` (command end). Unlocks gutter exit-code glyphs, "copy last output", jump-to-prev/next-command, and an Ask-Claude-about-this channel trigger (the Hot-Sheet-specific wedge vs. VS Code). Data model: per-terminal `shellIntegration.commands` bounded-ring (500 records) of `CommandRecord { promptStart, commandStart, outputStart, commandEnd, exitCode, commandText, decorations }` keyed to `term.registerMarker` IMarkers (survive scrollback trim via xterm's own line-follow semantics). Rehydrates automatically on reattach because replay bytes go through xterm's parser. Phased: **Phase 1a** (HS-7267) foundation + gutter glyphs; **Phase 1b** (HS-7268) copy-last-output toolbar button; **Phase 2** (HS-7269) jump shortcuts + hover popover with Copy / Rerun; **Phase 3** (HS-7270) Ask-Claude-about-this channel integration. Shell rc fragments intentionally NOT shipped — users opt in via Starship / VS Code's published rc / a 15-line snippet we document. OSC 633 (VS Code's superset) and iTerm2 OSC 1337 explicitly out of scope for v1.

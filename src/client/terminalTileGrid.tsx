@@ -21,7 +21,7 @@ import {
   tileNativeGridFromCellMetrics,
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
-import { isTerminalViewToggleShortcut } from './terminalKeybindings.js';
+import { type GridNavDirection, isMagnifiedNavShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
 import {
   initialTileState,
@@ -911,6 +911,10 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     centered = tile;
     clearTileBell(tile);
     if (opts.onTileEnlarge !== undefined) opts.onTileEnlarge(tile.entry, 'center');
+    // HS-8028 — install the magnified-nav keyboard listener (Shift+Cmd+
+    // Arrow on macOS / Shift+Ctrl+Arrow elsewhere). Idempotent — the
+    // helper only attaches once even on rapid re-centers.
+    bindMagnifiedNavHandler();
     // HS-7968 — defend against the click-before-IO race: if an alive tile
     // hasn't been mounted yet (the IntersectionObserver callback hadn't run
     // before the click landed), force-mount now so the centered tile shows
@@ -988,6 +992,13 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     const placeholder = tile.slotPlaceholder;
     centered = null;
     removeCenterBackdrop();
+    // HS-8028 — uncentering returns the user to the bare grid; the
+    // magnified-nav handler is no longer relevant (no magnified target
+    // to navigate from). Only unbind when no dedicated view is up
+    // either — `enterDedicatedView` may have called `uncenterTile`
+    // internally on an open centered tile, in which case the nav
+    // handler must stay armed for the dedicated path.
+    if (dedicated === null) unbindMagnifiedNavHandler();
     if (opts.onTileShrink !== undefined) opts.onTileShrink(tile.entry);
 
     if (placeholder === null) { finishUncenterTile(tile, null); return; }
@@ -1122,12 +1133,135 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     }
   }
 
+  // --- HS-8028 magnified-nav (Shift+Cmd+Arrow) ---
+
+  /** Capture-phase document keydown listener that fires while a tile is
+   *  centered or dedicated. Captures BEFORE xterm's customKeyEventHandler
+   *  so the chord doesn't get translated into shell escape sequences,
+   *  and uses `preventDefault` + `stopPropagation` to ensure xterm sees
+   *  no event at all. Bound idempotently by `bindMagnifiedNavHandler`,
+   *  unbound on the last-magnified-state exit by
+   *  `unbindMagnifiedNavHandler`. */
+  let magnifiedNavListener: ((e: KeyboardEvent) => void) | null = null;
+
+  function bindMagnifiedNavHandler(): void {
+    if (magnifiedNavListener !== null) return;
+    magnifiedNavListener = (e: KeyboardEvent): void => {
+      const direction = isMagnifiedNavShortcut(e);
+      if (direction === null) return;
+      const fromTile = dedicated !== null ? dedicated.tile : centered;
+      if (fromTile === null) return;
+      const next = findNextTileInDirection(fromTile, direction);
+      if (next === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      magnifyTile(next, dedicated !== null ? 'dedicated' : 'center');
+    };
+    document.addEventListener('keydown', magnifiedNavListener, true);
+  }
+
+  function unbindMagnifiedNavHandler(): void {
+    if (magnifiedNavListener === null) return;
+    document.removeEventListener('keydown', magnifiedNavListener, true);
+    magnifiedNavListener = null;
+  }
+
+  /** HS-8028 — find the closest tile in the indicated direction from
+   *  `from` using bounding-rect centroids. The cone metric weights
+   *  perpendicular distance 3× higher than parallel distance so a
+   *  tile in the same row beats a diagonal tile when both are equidistant
+   *  by raw Euclidean. Skips non-alive tiles (placeholders shouldn't be
+   *  navigation targets — the user expects to land on a live terminal)
+   *  and zero-size tiles (hidden / not laid out). */
+  function findNextTileInDirection(from: InternalTile, direction: GridNavDirection): InternalTile | null {
+    const fromRect = from.root.getBoundingClientRect();
+    const fx = fromRect.left + fromRect.width / 2;
+    const fy = fromRect.top + fromRect.height / 2;
+    let best: InternalTile | null = null;
+    let bestDist = Infinity;
+    for (const candidate of tiles.values()) {
+      if (candidate === from) continue;
+      if (candidate.state !== 'alive') continue;
+      const r = candidate.root.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      // HS-8028 — skip the centered tile's own slot placeholder element.
+      // While a tile is centered the underlying grid still contains a
+      // `.terminal-dashboard-tile-slot` (or drawer-grid equivalent) at
+      // its old position; the centered tile root itself is positioned
+      // absolutely against the viewport. Use the slot placeholder's
+      // rect for the centered tile so direction math reflects the
+      // grid topology, not the centered overlay's location.
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const dx = cx - fx;
+      const dy = cy - fy;
+      // Direction filter — must lie in the indicated half-plane.
+      if (direction === 'right' && dx <= 0) continue;
+      if (direction === 'left' && dx >= 0) continue;
+      if (direction === 'down' && dy <= 0) continue;
+      if (direction === 'up' && dy >= 0) continue;
+      // Cone metric: weight perpendicular distance high so a same-row /
+      // same-column neighbour wins over a diagonal one.
+      const dist = (direction === 'right' || direction === 'left')
+        ? Math.abs(dx) + Math.abs(dy) * 3
+        : Math.abs(dy) + Math.abs(dx) * 3;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = candidate;
+      }
+    }
+    return best;
+  }
+
+  /** HS-8028 — switch the magnified view from the current tile to `next`,
+   *  preserving the user's current magnification mode. `mode === 'center'`
+   *  uncenters the current and centers the next; `mode === 'dedicated'`
+   *  exits dedicated and re-enters dedicated for the next tile (with
+   *  no priorCenteredTile so the exit returns to the bare grid, not
+   *  back through a stale centered state). */
+  function magnifyTile(next: InternalTile, mode: 'center' | 'dedicated'): void {
+    if (mode === 'center') {
+      // Uncentering the prior runs through `uncenterTile` which would
+      // unbind the nav handler (no centered + no dedicated). The
+      // immediately-following `centerTile(next)` re-binds, but to avoid
+      // the unbind-rebind churn we just swap centered tiles directly.
+      // Pre-fix the visible flicker would have been minimal but the
+      // listener add/remove dance is wasteful when the user rapidly
+      // navigates with Shift+Cmd+Arrow.
+      if (centered !== null) {
+        // Synchronously uncenter without animation — the new center will
+        // animate from its grid position to the centered position right
+        // after, which feels like a single composite transition.
+        const prev = centered;
+        const placeholder = prev.slotPlaceholder;
+        centered = null;
+        removeCenterBackdrop();
+        if (opts.onTileShrink !== undefined) opts.onTileShrink(prev.entry);
+        finishUncenterTile(prev, placeholder);
+      }
+      centerTile(next);
+    } else {
+      // Dedicated → swap. Force-clear `priorCenteredTile` so exit
+      // doesn't animate through a stale centered state on the way out
+      // (we're about to enter dedicated for `next` immediately).
+      // Without this, exit would briefly call `centerTile(prior)` and
+      // the new `enterDedicatedView` would have to tear that down.
+      if (dedicated !== null) dedicated.priorCenteredTile = null;
+      exitDedicatedView();
+      enterDedicatedView(next, null);
+    }
+  }
+
   // --- Dedicated full-pane view (§25.8 / §36.5 / HS-7063 / HS-7098) ---
 
   function enterDedicatedView(tile: InternalTile, priorCenteredTile: InternalTile | null): void {
     if (dedicated !== null) exitDedicatedView();
     clearTileBell(tile);
     if (opts.onTileEnlarge !== undefined) opts.onTileEnlarge(tile.entry, 'dedicated');
+    // HS-8028 — magnified-nav listener (Shift+Cmd+Arrow on macOS /
+    // Shift+Ctrl+Arrow elsewhere). Idempotent — already wired if the
+    // user dedicated-viewed an already-centered tile.
+    bindMagnifiedNavHandler();
 
     const overlay = toElement(
       <div className={dedicatedClass} data-secret={tile.entry.secret} data-terminal-id={tile.entry.id}>
@@ -1256,6 +1390,11 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     if (dedicated === null) return;
     const view = dedicated;
     dedicated = null;
+    // HS-8028 — exit dedicated; if the user is returning to centered
+    // (priorCenteredTile non-null) keep the nav handler armed since
+    // `centerTile` would re-bind anyway. Otherwise unbind — the bare
+    // grid has no magnified target.
+    if (view.priorCenteredTile === null) unbindMagnifiedNavHandler();
     view.bodyResizeObserver?.disconnect();
     if (view.barDispose !== null) {
       try { view.barDispose(); } catch { /* swallow */ }
@@ -1324,6 +1463,11 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       centered.root.style.transform = '';
       centered = null;
     }
+    // HS-8028 — defensive: nothing's magnified after teardown so the
+    // nav handler must come off too. `exitDedicatedView` /
+    // `uncenterTile` may have already unbound; the helper is
+    // idempotent.
+    unbindMagnifiedNavHandler();
     removeCenterBackdrop();
     for (const tile of tiles.values()) disposeTile(tile);
     tiles.clear();

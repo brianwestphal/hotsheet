@@ -9234,3 +9234,188 @@ label.detail-details-label {
   text-align: center;
   line-height: 1.3;
 }
+
+// HS-8036 — ticket-reference auto-link + stacking dialog. Inline anchors
+// inside any rendered markdown (notes, details, reader-mode body, the
+// stacking dialog itself) get the `.ticket-ref` class via the post-
+// processing pass in `ticketRefs.ts::linkifyTicketRefs`. Click is
+// intercepted by the global handler in `ticketRefDialog.tsx` and
+// dispatched to `openTicketRefDialog(ticketNumber)`.
+
+.ticket-ref {
+  // Subtle distinction from regular markdown links — same accent colour
+  // but a thinner underline so a paragraph full of cross-references
+  // doesn't read as visually noisy.
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  background: transparent;
+  // Pixel-thin chip-ish padding so the link reads as a token, not
+  // arbitrary inline text.
+  padding: 0 2px;
+  border-radius: 3px;
+  transition: background-color 0.1s ease;
+}
+
+.ticket-ref:hover {
+  background: var(--accent-bg, rgba(58, 123, 213, 0.12));
+  text-decoration-thickness: 2px;
+}
+
+// Stacking ticket-reference dialog. Each open dialog mounts its own
+// `.ticket-ref-dialog-overlay` + nested `.ticket-ref-dialog-backdrop`
+// + `.ticket-ref-dialog`. The overlay and backdrop share the same
+// z-index per stack level (incrementing by 2 per push); the dialog
+// itself is one above so a click on the dialog body doesn't bubble
+// to the backdrop's dismiss handler.
+.ticket-ref-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none; // pass-through so the backdrop owns click
+}
+
+.ticket-ref-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+.ticket-ref-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 80vw;
+  max-width: 720px;
+  max-height: 80vh;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  pointer-events: auto;
+  // The stack offset (translate(Npx, Npx)) is applied as an inline
+  // style by the dialog code itself per stack level.
+}
+
+.ticket-ref-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.ticket-ref-dialog-number {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ticket-ref-dialog-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.ticket-ref-dialog-open,
+.ticket-ref-dialog-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.1s ease, color 0.1s ease;
+}
+
+.ticket-ref-dialog-open:hover,
+.ticket-ref-dialog-close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+.ticket-ref-dialog-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.ticket-ref-dialog-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.ticket-ref-dialog-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.ticket-ref-dialog-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.ticket-ref-dialog-section-body {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ticket-ref-dialog-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 12px;
+}
+
+.ticket-ref-dialog-note {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ticket-ref-dialog-note:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.ticket-ref-dialog-note-ts {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}

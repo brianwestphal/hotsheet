@@ -30,6 +30,7 @@ export interface KeyLikeEvent {
 }
 
 export type JumpDirection = 'prev' | 'next';
+export type GridNavDirection = 'up' | 'down' | 'left' | 'right';
 
 function detectIsMac(): boolean {
   if (typeof navigator === 'undefined') return false;
@@ -67,6 +68,38 @@ export function isJumpShortcut(e: KeyLikeEvent, isMac: boolean = detectIsMac()):
   if (!hasPlatformPrimaryModifier(e, isMac)) return null;
   if (e.key === 'ArrowUp') return 'prev';
   if (e.key === 'ArrowDown') return 'next';
+  return null;
+}
+
+/**
+ * HS-8028 — Shift+Cmd+Arrow on macOS / Shift+Ctrl+Arrow on Linux/Windows
+ * navigates between magnified terminal tiles in the §25 dashboard or §36
+ * drawer-grid. While a tile is centered (single-click overlay) OR
+ * dedicated (double-click full-pane), the chord switches to the next
+ * tile in the direction of the arrow — up / down / left / right —
+ * computed from each tile's bounding rect (closest tile in the indicated
+ * cone, with perpendicular distance weighted higher than parallel so a
+ * same-row neighbour beats a diagonal one).
+ *
+ * The chord layers Shift on top of the platform primary modifier, so it
+ * doesn't collide with `isJumpShortcut` (Cmd/Ctrl + Up/Down for OSC 133
+ * jumps within a single terminal). The wrong-platform modifier passes
+ * through unchanged so e.g. macOS Shift+Ctrl+Arrow still reaches xterm /
+ * the shell.
+ */
+export function isMagnifiedNavShortcut(e: KeyLikeEvent, isMac: boolean = detectIsMac()): GridNavDirection | null {
+  if (e.type !== 'keydown') return null;
+  if (!e.shiftKey) return null;
+  if (e.altKey) return null;
+  if (isMac) {
+    if (!e.metaKey || e.ctrlKey) return null;
+  } else {
+    if (!e.ctrlKey || e.metaKey) return null;
+  }
+  if (e.key === 'ArrowUp') return 'up';
+  if (e.key === 'ArrowDown') return 'down';
+  if (e.key === 'ArrowLeft') return 'left';
+  if (e.key === 'ArrowRight') return 'right';
   return null;
 }
 

@@ -4,6 +4,7 @@ import { marked } from 'marked';
 
 import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
+import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 
 /**
  * HS-7957 / HS-7961 — almost-full-viewport read-only markdown overlay used
@@ -45,9 +46,13 @@ export function openReaderOverlay(options: OpenReaderOverlayOptions): void {
 
   const { title, markdown } = options;
   const trimmed = markdown.trim();
+  // HS-8036 — wrap ticket-number references in clickable anchors after
+  // markdown renders so a `HS-1234` inside reader-mode body opens the
+  // stacking ticket-reference dialog (the document-level click handler
+  // intercepts `.ticket-ref` clicks regardless of mount surface).
   const renderedHtml = trimmed === ''
     ? '<p class="reader-mode-empty"><em>(empty)</em></p>'
-    : marked.parse(markdown, { async: false });
+    : linkifyWithCachedPrefixes(marked.parse(markdown, { async: false }));
 
   const overlay = toElement(
     <div className="reader-mode-overlay" role="dialog" aria-modal="true" aria-label={title}>

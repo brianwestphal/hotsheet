@@ -36,6 +36,8 @@ import { initTerminal } from './terminal.js';
 import { initTerminalDashboard } from './terminalDashboard.js';
 import { loadAllowRules } from './terminalPrompt/allowRulesStore.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
+import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
+import { loadTicketPrefixes } from './ticketRefs.js';
 import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';
 import { maybeShowUpgradeNudge } from './upgradeNudge.js';
 
@@ -184,6 +186,17 @@ async function init() {
   // immediately; subsequent refetches are driven by `/api/poll` version
   // bumps (see `poll.tsx::refreshGitStatusChip`) and `window.focus`.
   initGitStatusChip();
+
+  // HS-8036 — load the project's known ticket-number prefixes (DB-scanned
+  // distinct prefixes + the project's configured `ticketPrefix` from
+  // settings.json) so the linkify pass can match references in
+  // rendered notes / details / reader-mode body. Fire-and-forget — the
+  // first pass through any rendered HTML returns the input unchanged
+  // until the cache populates; the next mutation re-renders correctly.
+  // Also wire the global click handler that intercepts `.ticket-ref`
+  // anchor clicks and dispatches to the stacking dialog.
+  void loadTicketPrefixes();
+  bindTicketRefGlobalClickHandler();
 
   // HS-7962 — non-Tauri only: throttled (≤ once / 30 days) overlay nudging
   // the user toward the installable build's embedded-terminal feature. Skips

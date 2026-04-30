@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
+import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isMagnifiedNavShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 
 type AnyHelper = typeof isClearTerminalShortcut | typeof isFindShortcut | typeof isJumpShortcut;
 
@@ -301,6 +301,64 @@ describe('isTerminalViewToggleShortcut (HS-7594)', () => {
     it('rejects no-modifier backtick (would otherwise prevent typing it into the shell)', () => {
       expect(isTerminalViewToggleShortcut(evt({ key: '`' }), true)).toBeNull();
       expect(isTerminalViewToggleShortcut(evt({ key: '`' }), false)).toBeNull();
+    });
+  });
+});
+
+describe('isMagnifiedNavShortcut (HS-8028)', () => {
+  describe('on macOS (isMac=true)', () => {
+    const mac = true;
+    it('returns "right" for Shift+Cmd+ArrowRight', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, metaKey: true, key: 'ArrowRight' }), mac)).toBe('right');
+    });
+    it('returns "left" for Shift+Cmd+ArrowLeft', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, metaKey: true, key: 'ArrowLeft' }), mac)).toBe('left');
+    });
+    it('returns "up" for Shift+Cmd+ArrowUp', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, metaKey: true, key: 'ArrowUp' }), mac)).toBe('up');
+    });
+    it('returns "down" for Shift+Cmd+ArrowDown', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, metaKey: true, key: 'ArrowDown' }), mac)).toBe('down');
+    });
+
+    it('does NOT match plain Cmd+Arrow (no Shift) — preserved for OSC 133 jumps', () => {
+      expect(isMagnifiedNavShortcut(evt({ metaKey: true, key: 'ArrowUp' }), mac)).toBeNull();
+      expect(isMagnifiedNavShortcut(evt({ metaKey: true, key: 'ArrowDown' }), mac)).toBeNull();
+    });
+
+    it('does NOT match Shift+Arrow alone (no Cmd)', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, key: 'ArrowRight' }), mac)).toBeNull();
+    });
+
+    it('does NOT match Shift+Ctrl+Arrow on macOS — wrong-platform modifier passes through', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, ctrlKey: true, key: 'ArrowUp' }), mac)).toBeNull();
+    });
+
+    it('does NOT match Shift+Cmd+Alt+Arrow — alt held disqualifies', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, metaKey: true, altKey: true, key: 'ArrowUp' }), mac)).toBeNull();
+    });
+
+    it('does NOT match for non-arrow keys', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, metaKey: true, key: 'a' }), mac)).toBeNull();
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, metaKey: true, key: 'Tab' }), mac)).toBeNull();
+    });
+  });
+
+  describe('on Linux/Windows (isMac=false)', () => {
+    const nonMac = false;
+    it('returns "right" for Shift+Ctrl+ArrowRight', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, ctrlKey: true, key: 'ArrowRight' }), nonMac)).toBe('right');
+    });
+
+    it('does NOT match Shift+Cmd+Arrow on Linux/Windows — wrong-platform modifier passes through', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, metaKey: true, key: 'ArrowRight' }), nonMac)).toBeNull();
+    });
+  });
+
+  describe('shared invariants', () => {
+    it('ignores non-keydown events on both platforms', () => {
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, metaKey: true, key: 'ArrowUp', type: 'keyup' }), true)).toBeNull();
+      expect(isMagnifiedNavShortcut(evt({ shiftKey: true, ctrlKey: true, key: 'ArrowUp', type: 'keypress' }), false)).toBeNull();
     });
   });
 });

@@ -24,7 +24,7 @@ import {
 } from '../db/queries.js';
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
-import type { AppEnv, TicketFilters, TicketStatus } from '../types.js';
+import type { AppEnv, Ticket, TicketFilters, TicketStatus } from '../types.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 import { isPluginEnabledForProject } from './plugins.js';
@@ -111,6 +111,33 @@ ticketRoutes.get('/tickets/search-counts', async (c) => {
   return c.json(counts);
 });
 
+/**
+ * HS-8036 — `GET /api/tickets/prefixes` returns every distinct
+ * ticket-number prefix that's appeared in this project's tickets, plus
+ * the project's currently-configured `ticketPrefix` from
+ * `settings.json` (always included, even if no tickets with that
+ * prefix exist yet — which happens right after a user changes the
+ * prefix and before they create the first ticket under the new one).
+ * Used by the client-side ticket-reference link detector to build a
+ * regex matching every legitimate ticket-number shape — so legacy
+ * prefixes (a project that used to be `BUG-` and is now `HS-`) still
+ * resolve when their ticket numbers appear in notes.
+ */
+ticketRoutes.get('/tickets/prefixes', async (c) => {
+  const { listKnownTicketPrefixes } = await import('../db/tickets.js');
+  const { readFileSettings } = await import('../file-settings.js');
+  const fileSettings = readFileSettings(c.get('dataDir'));
+  const seenInDb = await listKnownTicketPrefixes();
+  const prefixes = new Set<string>(seenInDb);
+  if (fileSettings.ticketPrefix !== undefined && fileSettings.ticketPrefix !== '') {
+    prefixes.add(fileSettings.ticketPrefix);
+  }
+  // Default `HS` is always added so a project with a freshly-flipped
+  // custom prefix and no historical tickets still has a sane fallback.
+  prefixes.add('HS');
+  return c.json({ prefixes: [...prefixes].sort() });
+});
+
 ticketRoutes.post('/tickets', async (c) => {
   const raw: unknown = await c.req.json();
   const parsed = parseBody(CreateTicketSchema, raw);
@@ -149,6 +176,30 @@ ticketRoutes.post('/tickets', async (c) => {
   notifyMutation(c.get('dataDir'));
   void onTicketCreated(ticket.id).catch(() => {});
   return c.json(ticket, 201);
+});
+
+/**
+ * HS-8036 — `GET /api/tickets/by-number/:number` — look up a ticket
+ * by its `ticket_number` (e.g. `HS-1234`) instead of its numeric id.
+ * Used by the stacking ticket-reference dialog (`ticketRefDialog.tsx`)
+ * which has the human-readable number from the link's
+ * `data-ticket-number` attribute but no quick access to the numeric
+ * id without scanning the in-memory cache.
+ *
+ * Returns the same shape as `GET /tickets/:id` (ticket fields only —
+ * the dialog doesn't need attachments / notes / sync metadata since
+ * it's read-only per HS-8036's v1 scope). 404 when the number doesn't
+ * exist; the dialog shows a toast on that.
+ */
+ticketRoutes.get('/tickets/by-number/:number', async (c) => {
+  const number = c.req.param('number');
+  const { getDb } = await import('../db/connection.js');
+  const db = await getDb();
+  const result = await db.query<Ticket>(
+    'SELECT * FROM tickets WHERE ticket_number = $1 LIMIT 1', [number],
+  );
+  if (result.rows.length === 0) return c.json({ error: 'Not found' }, 404);
+  return c.json(result.rows[0]);
 });
 
 ticketRoutes.get('/tickets/:id', async (c) => {
