@@ -1,6 +1,6 @@
 import type { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { Terminal as XTerm } from '@xterm/xterm';
+import type { Terminal as XTerm } from '@xterm/xterm';
 
 import { apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
@@ -22,7 +22,6 @@ import {
   tileWidthFromSlider,
 } from './terminalDashboardSizing.js';
 import { isTerminalViewToggleShortcut } from './terminalKeybindings.js';
-import { replayHistoryToTerm } from './terminalReplay.js';
 import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
 import {
   initialTileState,
@@ -215,9 +214,17 @@ interface InternalTile {
   root: HTMLElement;
   preview: HTMLElement;
   labelEl: HTMLElement;
-  term: XTerm | null;
+  /** HS-8048 — tile's `terminalCheckout` handle. Null when the tile is
+   *  unmounted (lazy / virtualized / not yet rendered). The handle's
+   *  `term` field is the live xterm; `xtermRoot` (the DOM container we
+   *  pass as `mountInto`) holds the xterm element when the tile is at
+   *  the top of the LIFO stack, or a "Terminal in use elsewhere"
+   *  placeholder when bumped down by another consumer (dedicated view,
+   *  quit-confirm, etc.). On `release()` an empty stack disposes the
+   *  entry; otherwise the next-most-recent consumer regains the live
+   *  xterm. */
+  checkout: CheckoutHandle | null;
   xtermRoot: HTMLElement | null;
-  ws: WebSocket | null;
   gridPreviewWidth: number;
   gridPreviewHeight: number;
   /** Tile-native cols × rows the WebSocket history handler resized the PTY
@@ -227,6 +234,14 @@ interface InternalTile {
   targetRows: number;
   slotPlaceholder: HTMLElement | null;
   screenObserver: ResizeObserver | null;
+  /** HS-8048 — disposers for term-level event handlers we set up during
+   *  `mountTileViaCheckout` (`term.onBell`). Pre-fix these handlers were
+   *  on the tile's own xterm so they died when the tile's xterm was
+   *  disposed. With shared xterm via checkout, they survive across
+   *  consumers — we MUST dispose them on release / softDispose otherwise
+   *  a re-mount of the tile would stack a second `onBell` on top of the
+   *  first. */
+  termHandlerDisposers: Array<{ dispose(): void }>;
 }
 
 interface DedicatedView {
@@ -393,15 +408,15 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       root,
       preview,
       labelEl,
-      term: null,
+      checkout: null,
       xtermRoot: null,
-      ws: null,
       gridPreviewWidth: 0,
       gridPreviewHeight: 0,
       targetCols: TILE_INITIAL_COLS,
       targetRows: TILE_INITIAL_ROWS,
       slotPlaceholder: null,
       screenObserver: null,
+      termHandlerDisposers: [],
     };
     tiles.set(entry.id, tile);
 
@@ -416,8 +431,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       virtRootToId.set(root, entry.id);
       virtObserver.observe(root);
     } else if (entry.state === 'alive') {
-      mountTileXterm(tile);
-      connectTileSocket(tile);
+      mountTileViaCheckout(tile);
       const s = virtState.get(entry.id);
       if (s !== undefined) virtState.set(entry.id, { ...s, mounted: true });
     }
@@ -460,8 +474,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
             const t = virtTimers.get(tileId);
             if (t !== undefined) { clearTimeout(t); virtTimers.delete(tileId); }
           } else if (action.type === 'mount') {
-            mountTileXterm(tile);
-            connectTileSocket(tile);
+            mountTileViaCheckout(tile);
           }
         }
       } else {
@@ -490,20 +503,28 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     }
   }
 
-  /** HS-7968 — recycle the tile's xterm renderer + WebSocket without
+  /** HS-7968 + HS-8048 — release the tile's checkout handle without
    *  removing the tile from the registry. The PTY + scrollback stay alive
-   *  server-side; on re-enter we re-mount + replay scrollback via the
-   *  existing `mountTileXterm` + `connectTileSocket` path. */
+   *  server-side; on re-enter we re-mount via `mountTileViaCheckout` (a
+   *  fresh `checkout()` call creates a new entry if none exists, or
+   *  pushes onto an existing one if another consumer like the dedicated
+   *  view kept the entry alive). HS-8048 — pre-fix this disposed the
+   *  tile's own xterm + ws directly; post-fix `release()` either disposes
+   *  the entry on empty stack (matches pre-fix shape) or hands the live
+   *  xterm back to the next consumer (which would only happen if a
+   *  dedicated/quit-confirm view is up for the same terminal-id, in
+   *  which case the tile being virtualized off-screen leaving the
+   *  dedicated as the sole consumer is exactly the right outcome). */
   function softDisposeTile(tile: InternalTile): void {
     tile.screenObserver?.disconnect();
     tile.screenObserver = null;
-    if (tile.ws !== null) {
-      try { tile.ws.close(); } catch { /* already closed */ }
-      tile.ws = null;
+    for (const d of tile.termHandlerDisposers) {
+      try { d.dispose(); } catch { /* already disposed */ }
     }
-    if (tile.term !== null) {
-      try { tile.term.dispose(); } catch { /* double-dispose is fine */ }
-      tile.term = null;
+    tile.termHandlerDisposers = [];
+    if (tile.checkout !== null) {
+      try { tile.checkout.release(); } catch { /* already released */ }
+      tile.checkout = null;
     }
     tile.xtermRoot = null;
     // Restore the placeholder visual so the off-screen-then-back-on tile
@@ -511,14 +532,13 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
   }
 
-  /** HS-7968 — force-mount a tile and update the virtualization state.
-   *  Used by the click-before-IO defensive path in `centerTile` /
-   *  `enterDedicatedView`-via-tile-click so the user doesn't briefly see a
-   *  placeholder when the IntersectionObserver hadn't fired yet. */
+  /** HS-7968 + HS-8048 — force-mount a tile and update the virtualization
+   *  state. Used by the click-before-IO defensive path in `centerTile` /
+   *  `enterDedicatedView`-via-tile-click so the user doesn't briefly see
+   *  a placeholder when the IntersectionObserver hadn't fired yet. */
   function ensureTileMounted(tile: InternalTile): void {
-    if (tile.term !== null) return;
-    mountTileXterm(tile);
-    connectTileSocket(tile);
+    if (tile.checkout !== null) return;
+    mountTileViaCheckout(tile);
     const v = virtState.get(tile.entry.id);
     if (v !== undefined) virtState.set(tile.entry.id, { ...v, mounted: true });
     // If a dispose timer was pending (rare race), cancel it.
@@ -553,7 +573,30 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     });
   }
 
-  function mountTileXterm(tile: InternalTile): void {
+  /**
+   * HS-8048 — mount the tile via the `terminalCheckout` LIFO stack
+   * instead of constructing a per-tile `XTerm` + `WebSocket`. The
+   * checkout module owns the live xterm + WS for this terminal and
+   * shares them across consumers (this tile, plus any dedicated-view
+   * or quit-confirm-preview also looking at the same terminal). The
+   * `mountInto` argument is the per-tile `xtermRoot` div — when this
+   * tile is the LIFO top, the live xterm element is reparented into
+   * that div; when bumped down, a "Terminal in use elsewhere"
+   * placeholder is written into it instead.
+   *
+   * Replaces pre-fix `mountTileXterm` (per-tile `new XTerm({...})` +
+   * `term.open(xtermRoot)` + appearance + `term.onData(ws.send)` +
+   * `term.onBell`) AND `connectTileSocket` (per-tile `new WebSocket` +
+   * `'message'` listener with history-frame handling). Pre-fix
+   * cursorBlink=false + scrollback=1000 (HS-7990) — post-fix unified to
+   * checkout's shared defaults (`cursorBlink: true, scrollback: 10_000`)
+   * since per-consumer xterm option overrides on every stack swap is
+   * fragile (scrollback reduction at runtime can lose history). The
+   * 10× scrollback bump for tiles is fine — xterm allocates lazily and
+   * the HS-7968 virtualization disposes off-screen tiles via release()
+   * so only the on-screen subset pays for the buffer.
+   */
+  function mountTileViaCheckout(tile: InternalTile): void {
     const xtermRoot = document.createElement('div');
     xtermRoot.className = xtermClass;
     tile.preview.replaceChildren(xtermRoot);
@@ -561,29 +604,54 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     const appearance = resolveTileAppearance(tile);
     const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
 
-    const term = new XTerm({
-      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-      fontSize: 13,
-      cursorBlink: false,
-      // HS-7990 — was `scrollback: 0`. Bumping to 1000 lines lets the user
-      // mouse-wheel through the back-buffer when a tile is centered /
-      // magnified (the ticket's request — only the dedicated view supported
-      // scrolling before). xterm allocates the scrollback ring lazily so a
-      // quiet tile pays nearly zero; a chatty tile caps at ~5 MB at 160 cols
-      // × 1000 lines × 32 bytes/cell. The HS-7968 virtualization disposes
-      // off-screen tiles, so only the on-screen subset holds scrollback.
-      scrollback: 1000,
-      allowProposedApi: true,
+    const handle = checkout({
+      projectSecret: tile.entry.secret,
+      terminalId: tile.entry.id,
       cols: TILE_INITIAL_COLS,
       rows: TILE_INITIAL_ROWS,
-      theme: themeToXtermOptions(themeData),
-      linkHandler: {
-        activate: (_event, text) => { openExternalUrl(text); },
+      mountInto: xtermRoot,
+      onBumpedDown() {
+        // HS-8048 — another consumer (dedicated view, quit-confirm
+        // preview, etc.) just took the live xterm. Disconnect the
+        // tile's screen ResizeObserver so its callback doesn't fire
+        // on the placeholder content (the placeholder div doesn't
+        // contain a `.xterm-screen` anyway, but the observer would
+        // still need to be re-attached on restore).
+        tile.screenObserver?.disconnect();
+        tile.screenObserver = null;
+      },
+      onRestoredToTop() {
+        // HS-8048 — live xterm reparented back into our `xtermRoot`.
+        // Re-apply CSS scale (the previous consumer's mount may have
+        // cleared transform/position styles) and re-resize back to
+        // tile-native cell-metric dims (the previous consumer was
+        // likely a dedicated view at fit-driven dims, so the term is
+        // at those dims now). The screen ResizeObserver re-attaches
+        // here too so subsequent renders pick up cell-metric changes.
+        tile.checkout?.resize(TILE_INITIAL_COLS, TILE_INITIAL_ROWS);
+        reapplyTileScaleFromPreview(tile);
+        attachScreenObserver(tile);
+        // Defensive: requestAnimationFrame to give xterm a paint cycle
+        // for `.xterm-screen` before deriving cell metrics.
+        requestAnimationFrame(() => {
+          resyncTilePtyFromCellMetrics(tile);
+          reapplyTileScaleFromPreview(tile);
+        });
       },
     });
-    term.open(xtermRoot);
+
+    const term = handle.term;
+    // HS-8048 — apply tile-flavoured term tweaks. These persist on the
+    // shared term across consumers, but they're idempotent: a follow-up
+    // dedicated-view checkout will overwrite them with its own values.
+    term.options.theme = themeToXtermOptions(themeData);
+    term.options.linkHandler = {
+      activate: (_event, text) => { openExternalUrl(text); },
+    };
     void applyAppearanceToTerm(term, appearance);
 
+    tile.checkout = handle;
+    tile.xtermRoot = xtermRoot;
     tile.targetCols = term.cols;
     tile.targetRows = term.rows;
 
@@ -601,27 +669,19 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // tile is currently sized to. The check is idempotent: once the term is
     // at native dims, subsequent observer fires recompute the same native and
     // skip the resize.
-    const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
-    if (screen !== null) {
-      const observer = new ResizeObserver(() => {
-        reapplyTileScaleFromPreview(tile);
-        resyncTilePtyFromCellMetrics(tile);
-      });
-      observer.observe(screen);
-      tile.screenObserver = observer;
-    }
+    attachScreenObserver(tile);
     requestAnimationFrame(() => {
       resyncTilePtyFromCellMetrics(tile);
       reapplyTileScaleFromPreview(tile);
     });
 
-    const encoder = new TextEncoder();
-    term.onData((data) => {
-      if (tile.ws !== null && tile.ws.readyState === WebSocket.OPEN) {
-        tile.ws.send(encoder.encode(data));
-      }
-    });
-    term.onBell(() => {
+    // HS-8048 — `term.onData` (keystroke-send) is wired by the checkout
+    // module's WS attachment so every consumer of the shared xterm gets
+    // it for free. Just register `term.onBell` for the per-tile
+    // indicator + auto-clear logic from HS-8046, and capture the
+    // disposer so a soft-dispose / release of this tile doesn't leave a
+    // stale handler attached to the shared term.
+    const bellDispose = term.onBell(() => {
       // HS-8046 — skip the indicator entirely when the user is already
       // viewing this tile in the unoccluded grid surface. Drop the
       // server-side bellPending flag too so other surfaces (project-tab
@@ -632,49 +692,27 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       }
       tile.root.classList.add('has-bell');
     });
-
-    tile.term = term;
-    tile.xtermRoot = xtermRoot;
+    tile.termHandlerDisposers.push(bellDispose);
   }
 
-  function connectTileSocket(tile: InternalTile): void {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Omit cols/rows so the server skips the first-attach cleanup (HS-6799).
-    const url = `${protocol}//${window.location.host}/api/terminal/ws`
-      + `?project=${encodeURIComponent(tile.entry.secret)}`
-      + `&terminal=${encodeURIComponent(tile.entry.id)}`;
-    const ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
-    tile.ws = ws;
-
-    ws.addEventListener('message', (ev) => {
-      if (tile.term === null) return;
-      const data: unknown = ev.data;
-      if (data instanceof ArrayBuffer) {
-        tile.term.write(new Uint8Array(data));
-        return;
-      }
-      if (typeof data === 'string') {
-        try {
-          const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
-          if (msg.type === 'history' && typeof msg.bytes === 'string'
-              && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
-            replayHistoryToTerm(tile.term, { bytes: msg.bytes, cols: msg.cols, rows: msg.rows });
-            // HS-7097 follow-up: resize local xterm + the server-side PTY to
-            // tile-native 4:3 so a running TUI redraws to fill the tile.
-            // HS-7603: routed through `resyncTilePtyFromCellMetrics` so a
-            // miss here (e.g. xterm hasn't committed its first paint to
-            // `.xterm-screen` yet — common for tiles initially scrolled
-            // offscreen) is recovered later by the `.xterm-screen`
-            // ResizeObserver running the same pass once cell metrics
-            // become authoritative.
-            resyncTilePtyFromCellMetrics(tile);
-          }
-        } catch { /* non-JSON frame */ }
-      }
+  /** HS-8048 — wire (or rewire) the tile's `.xterm-screen` ResizeObserver.
+   *  Factored out of `mountTileViaCheckout` so it can also re-run on
+   *  `onRestoredToTop` (the live xterm comes back from another consumer
+   *  with possibly different cell metrics). The observer fires every
+   *  time xterm commits a render; the callback re-derives tile-native
+   *  dims via cell metrics and routes through the checkout's
+   *  `handle.resize` path. */
+  function attachScreenObserver(tile: InternalTile): void {
+    if (tile.xtermRoot === null) return;
+    tile.screenObserver?.disconnect();
+    const screen = tile.xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+    if (screen === null) return;
+    const observer = new ResizeObserver(() => {
+      reapplyTileScaleFromPreview(tile);
+      resyncTilePtyFromCellMetrics(tile);
     });
-    ws.addEventListener('close', () => { tile.ws = null; });
-    ws.addEventListener('error', () => { tile.ws = null; });
+    observer.observe(screen);
+    tile.screenObserver = observer;
   }
 
   function tileNativeDimsFromXterm(term: XTerm, xtermRoot: HTMLElement): { cols: number; rows: number } | null {
@@ -704,22 +742,27 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
    *  the PTY at whatever size another subscriber set it to. Both conditions
    *  must be satisfied to skip. */
   function resyncTilePtyFromCellMetrics(tile: InternalTile): void {
-    if (tile.term === null || tile.xtermRoot === null) return;
-    const native = tileNativeDimsFromXterm(tile.term, tile.xtermRoot);
+    // HS-8048 — gated on the checkout being top-of-stack. When another
+    // consumer (dedicated, quit-confirm) holds the live xterm, the tile's
+    // `xtermRoot` has the placeholder div and `tileNativeDimsFromXterm`
+    // would compute against a non-existent `.xterm-screen` (returning
+    // null below). Defensive bail when not top so we don't accidentally
+    // resize the live xterm out from under the active consumer.
+    if (tile.checkout === null || tile.xtermRoot === null) return;
+    if (!tile.checkout.isTopOfStack()) return;
+    const term = tile.checkout.term;
+    const native = tileNativeDimsFromXterm(term, tile.xtermRoot);
     if (native === null) return;
-    const termAlreadyNative = tile.term.cols === native.cols && tile.term.rows === native.rows;
+    const termAlreadyNative = term.cols === native.cols && term.rows === native.rows;
     const targetAlreadyNative = tile.targetCols === native.cols && tile.targetRows === native.rows;
     if (termAlreadyNative && targetAlreadyNative) return;
-    if (!termAlreadyNative) {
-      try { tile.term.resize(native.cols, native.rows); } catch { /* disposed */ }
-    }
     tile.targetCols = native.cols;
     tile.targetRows = native.rows;
-    if (tile.ws !== null && tile.ws.readyState === WebSocket.OPEN) {
-      try {
-        tile.ws.send(JSON.stringify({ type: 'resize', cols: native.cols, rows: native.rows }));
-      } catch { /* ws closed */ }
-    }
+    // HS-8048 — `handle.resize` calls `term.resize` AND sends the WS
+    // resize frame AND updates the entry's `lastApplied` bookkeeping in
+    // one call. Pre-fix the local `term.resize` + `ws.send` were two
+    // separate operations against tile-owned objects.
+    tile.checkout.resize(native.cols, native.rows);
   }
 
   // --- Tile sizing ---
@@ -839,8 +882,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       tile.exitCode = null;
       tile.root.classList.remove(`${tileClass}-not_spawned`, `${tileClass}-exited`);
       tile.root.classList.add(`${tileClass}-alive`);
-      mountTileXterm(tile);
-      connectTileSocket(tile);
+      mountTileViaCheckout(tile);
       // HS-7968 — flag the tile as mounted in the virtualization state so
       // an immediate viewport-exit triggers the dispose-debounce flow.
       const v = virtState.get(tile.entry.id);
@@ -873,7 +915,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // hasn't been mounted yet (the IntersectionObserver callback hadn't run
     // before the click landed), force-mount now so the centered tile shows
     // the live terminal instead of an empty placeholder.
-    if (tile.state === 'alive' && tile.term === null) {
+    if (tile.state === 'alive' && tile.checkout === null) {
       ensureTileMounted(tile);
     }
 
@@ -914,7 +956,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       tile.root.style.transform = '';
     }
 
-    queueMicrotask(() => { tile.term?.focus(); });
+    queueMicrotask(() => { tile.checkout?.term.focus(); });
   }
 
   function recenterTile(): void {
@@ -1230,16 +1272,13 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     view.overlay.remove();
     if (opts.onTileShrink !== undefined) opts.onTileShrink(view.tile.entry);
 
-    // HS-7097: re-claim the tile PTY at tile-native dims.
-    if (view.tile.ws !== null && view.tile.ws.readyState === WebSocket.OPEN
+    // HS-7097 + HS-8048: re-claim the tile PTY at tile-native dims via
+    // the tile's checkout (the live xterm just reparented back into the
+    // tile via `view.checkout.release()` above; resize routes through
+    // the same shared WS that the dedicated view was using).
+    if (view.tile.checkout !== null
         && view.tile.targetCols > 0 && view.tile.targetRows > 0) {
-      try {
-        view.tile.ws.send(JSON.stringify({
-          type: 'resize',
-          cols: view.tile.targetCols,
-          rows: view.tile.targetRows,
-        }));
-      } catch { /* ws closed */ }
+      view.tile.checkout.resize(view.tile.targetCols, view.tile.targetRows);
     }
 
     applySizing();
@@ -1259,13 +1298,19 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     forgetVirtualization(tile);
     tile.screenObserver?.disconnect();
     tile.screenObserver = null;
-    if (tile.ws !== null) {
-      try { tile.ws.close(); } catch { /* already closed */ }
-      tile.ws = null;
+    // HS-8048 — dispose the tile's term-level handlers (`term.onBell`)
+    // BEFORE releasing the checkout. The handlers live on the shared
+    // term — leaving them attached after release would leak state into
+    // a hypothetical re-checkout (the term would be disposed before
+    // re-creation since we're the only consumer in the dispose path,
+    // but the cleanup is symmetric and cheap).
+    for (const d of tile.termHandlerDisposers) {
+      try { d.dispose(); } catch { /* already disposed */ }
     }
-    if (tile.term !== null) {
-      try { tile.term.dispose(); } catch { /* double-dispose is fine */ }
-      tile.term = null;
+    tile.termHandlerDisposers = [];
+    if (tile.checkout !== null) {
+      try { tile.checkout.release(); } catch { /* already released */ }
+      tile.checkout = null;
     }
     tile.xtermRoot = null;
   }

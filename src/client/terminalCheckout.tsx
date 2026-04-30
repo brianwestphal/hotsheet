@@ -236,6 +236,23 @@ function openCheckoutWebSocket(secret: string, terminalId: string, cols: number,
     try { ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch { /* socket may have closed already */ }
   });
 
+  // HS-8048 — route the term's keystrokes (`term.onData` fires for every
+  // typed character + paste) to the WebSocket. Checkout owns the WS so
+  // every consumer of the shared xterm gets keystroke-send for free —
+  // pre-HS-8048 each consumer wired its own `term.onData(ws.send)` against
+  // its own WS, but with shared xterm there's only one WS and one
+  // canonical send path. This also retroactively closes a regression
+  // landed in HS-8042 where the dedicated-view's keystrokes silently
+  // didn't reach the server (pre-fix dedicated owned its WS + onData
+  // wiring; the HS-8042 migration removed both on the wrong assumption
+  // that checkout was already doing it).
+  const encoder = new TextEncoder();
+  term.onData((data) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try { ws.send(encoder.encode(data)); } catch { /* socket may have closed mid-send */ }
+    }
+  });
+
   ws.addEventListener('message', (ev) => {
     const data: unknown = ev.data;
     if (data instanceof ArrayBuffer) {

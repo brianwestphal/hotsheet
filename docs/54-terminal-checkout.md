@@ -2,7 +2,7 @@
 
 HS-7969 follow-up. A single xterm.js instance per `(projectSecret, terminalId)` lives in a new `terminalCheckout` client module. Every consumer (drawer pane, dashboard tile, dashboard dedicated view, drawer-grid tile, drawer-grid dedicated view, quit-confirm preview pane) calls `checkout(...)` to claim it and gets a `release()` handle back. The most recent checkout wins (LIFO stack); previous owners' mounts swap to a placeholder. When the stack is empty, the xterm is **disposed** to reclaim memory — the PTY survives on the server, and the next `checkout` re-creates the xterm and the WebSocket attach replays the scrollback.
 
-> **Status:** Phase 1 shipped (HS-8031). Phase 2 splits into 5 sub-tickets per HS-8032's Option A. Sub-ticket 1 — quit-confirm preview pane — **shipped (HS-8041)**, see §54.6. Sub-ticket 2 — drawer-grid + dashboard **dedicated view path only** — **shipped (HS-8042)**, see §54.7. Tile preview migration deferred to **HS-8048** (filed as follow-up); sub-tickets 3-5 still deferred (dashboard verification, drawer pane, cleanup); the §37 ANSI-spans preview path stays alive until the cleanup ticket.
+> **Status:** Phase 1 shipped (HS-8031). Phase 2 splits into 5 sub-tickets per HS-8032's Option A. Sub-ticket 1 — quit-confirm preview pane — **shipped (HS-8041)**, see §54.6. Sub-ticket 2 — drawer-grid + dashboard **dedicated view path** — **shipped (HS-8042)**, see §54.7. **Tile preview migration shipped (HS-8048)**, see §54.8 — completes the original Phase 2.2 scope. Sub-tickets 3-5 remaining: dashboard verification (HS-8043 — now mostly verification since shared-module migration flows through), drawer pane (HS-8044), cleanup (HS-8045 — deletes §37 ANSI-spans preview path).
 
 ## 54.1 Why
 
@@ -223,14 +223,53 @@ Result for users: **before HS-8048, opening a dedicated view temporarily creates
 - `terminalCheckout.test.ts` — 2 new tests covering `handle.fit` exposure (same instance shared across consumers) and `handle.resize` semantics (skip-on-same-size guard, `lastApplied` updates, idempotent re-call). 19/19 in the file (was 17).
 - No new tile-grid unit tests — the module has no existing unit-test surface (Playwright-only). E2E coverage for the dedicated migration relies on the existing `terminal-dashboard*.spec.ts` suite + manual spot-check.
 
-## 54.8 Out of scope
+## 54.8 Phase 2.2b — Tile preview migration (HS-8048)
+
+Phase 2.2 split into HS-8042 (dedicated view, shipped at §54.7) and HS-8048 (tile preview, this section). HS-8048 completes the original Phase 2.2 scope by migrating the per-tile xterm + WebSocket management to `terminalCheckout`. With both paths migrated, opening a dedicated view for a terminal that already has a tile checkout pushes the tile down via the LIFO stack and reuses the **same** xterm — no longer creates a second xterm + second WebSocket attached to the same PTY. Memory savings scale with `(projects × terminals × dedicated-time)`.
+
+### 54.8.1 Surface change
+
+Pre-fix `mountTileXterm` constructed `new XTerm({fontFamily, fontSize: 13, cursorBlink: false, scrollback: 1000, allowProposedApi: true, cols: TILE_INITIAL_COLS, rows: TILE_INITIAL_ROWS, theme, linkHandler})` + `term.open(xtermRoot)` + `applyAppearanceToTerm` + `term.onData(ws.send(...))` + `term.onBell(...)` and `connectTileSocket` constructed `new WebSocket(url + secret + terminalId)` + `'message'` listener doing `term.write(data)` for binary chunks + `replayHistoryToTerm` for history frames + `resyncTilePtyFromCellMetrics` after history.
+
+Post-fix the two are folded into a single **`mountTileViaCheckout(tile)`** that calls `checkout({projectSecret, terminalId, cols: TILE_INITIAL_COLS, rows: TILE_INITIAL_ROWS, mountInto: xtermRoot, onBumpedDown, onRestoredToTop})`. The checkout module owns the live xterm and the WS — keystroke-send (`term.onData`) is wired centrally inside checkout so every consumer of the shared xterm gets it for free. The tile registers a `term.onBell` handler that respects the HS-8046 auto-clear logic (skip the indicator when the tile is unoccluded + visible; mark `.has-bell` otherwise) and captures the disposer into `tile.termHandlerDisposers` so `softDispose` / full dispose drops the handler — without that, a re-mount of the tile would stack a second `onBell` on top of the first since the term is shared.
+
+### 54.8.2 Per-consumer xterm config — unified
+
+Pre-fix tile used `cursorBlink: false` + `scrollback: 1000` (HS-7990); dedicated used `cursorBlink: true` + `scrollback: 10_000`. With shared xterm via checkout, runtime overrides via `term.options =` on every stack swap is fragile — `scrollback` reduction at runtime can lose history. Decision (per the HS-8048 ticket scope): **unify to checkout's defaults (`cursorBlink: true, scrollback: 10_000`)**. The 10× scrollback bump for tile previews is fine — xterm allocates the ring lazily and the HS-7968 virtualization disposes off-screen tiles via `release()` so only the on-screen subset pays for the buffer.
+
+### 54.8.3 CSS scaling across stack swaps
+
+Tile previews use `applyTileScale(xtermRoot, tileWidth, tileHeight)` to CSS-transform the live xterm element down to fit the tile's preview area. Pre-fix the styles applied to a div that *contained* the xterm; post-fix they apply to the xterm element directly (since checkout's `mountInto.replaceChildren(term.element)` makes the xterm element a direct child of `xtermRoot`). The `applyTileScale` math is unchanged — it reads `.xterm-screen.offsetWidth/Height` to compute the scale ratio.
+
+When the tile is bumped down by a dedicated view: the dedicated's `fit.fit()` clears the term element's CSS scale (its mount sets bare dims). When the tile is restored to top: `onRestoredToTop` calls `tile.checkout?.resize(TILE_INITIAL_COLS, TILE_INITIAL_ROWS)` to reset cols/rows, then `reapplyTileScaleFromPreview(tile)` to re-apply the tile-shape transform, then re-attaches the screen `ResizeObserver` (factored into a new `attachScreenObserver(tile)` helper since both initial mount and restore-to-top use it), then a final rAF to re-derive cell-metric dims via `resyncTilePtyFromCellMetrics`.
+
+### 54.8.4 Virtualization integration
+
+The HS-7968 IntersectionObserver-driven mount/dispose path is preserved verbatim — `softDisposeTile` now calls `tile.checkout?.release()` instead of disposing the local term/ws. The empty-stack dispose-the-entry path in checkout (§54.3.3) means a virtualized-off-screen tile that's the only consumer fully disposes the xterm + closes the WS, matching pre-fix behaviour. If a dedicated view is up while the tile virtualizes off-screen, the dedicated's checkout keeps the entry alive — the tile's `release()` just decrements the stack count.
+
+`ensureTileMounted(tile)` (the click-before-IO defensive force-mount path used by `centerTile` / `enterDedicatedView` when the IO hadn't fired yet) routes through the same `mountTileViaCheckout` so behaviour is consistent across the cold-mount paths.
+
+### 54.8.5 `resyncTilePtyFromCellMetrics` migration + top-of-stack guard
+
+Pre-fix the function did `tile.term.resize(native.cols, native.rows)` + `tile.ws.send(JSON.stringify({type: 'resize', ...}))` separately. Post-fix it routes through `tile.checkout.resize(native.cols, native.rows)` which does both atomically AND updates the entry's `lastApplied` bookkeeping (added in HS-8042). New defensive guard: bail when `!tile.checkout.isTopOfStack()` — when another consumer (dedicated, quit-confirm) holds the live xterm, the tile's `xtermRoot` has the placeholder div (no `.xterm-screen` element) and `tileNativeDimsFromXterm` would compute against nothing. The guard prevents the screen ResizeObserver (which fires during the placeholder-painting transition) from accidentally resizing the live xterm out from under the active consumer.
+
+### 54.8.6 `term.onData` keystroke wiring — hidden HS-8042 regression closed
+
+Pre-HS-8042 each consumer wired its own `term.onData(ws.send(...))` against its own WebSocket. HS-8042 removed the dedicated view's wiring on the (incorrect) assumption that checkout was already doing it — it wasn't. The dedicated-view typing was silently broken in main between HS-8042 and HS-8048. HS-8048 closed it for everyone by wiring `term.onData` inside `terminalCheckout.tsx::openCheckoutWebSocket` — the checkout module's WS handler now calls `ws.send(encoder.encode(data))` for every keystroke, transparently to every consumer.
+
+### 54.8.7 Test additions
+
+- New unit-test file **`src/client/terminalTileGrid.test.ts`** (5 tests): rebuild-with-single-alive-tile-creates-checkout-entry; non-alive-tiles-do-NOT-create-entry; dispose-releases-every-tile-checkout-entryCount-zero; rebuild-with-fresh-entry-list-disposes-old-mounts-new; cross-project-independence (two tiles same terminalId different secrets get independent entries). All assertions go through `_inspectStackForTesting()` + `entryCount()` from `terminalCheckout`. happy-dom's IntersectionObserver doesn't fire entries, so the test setup stubs `globalThis.IntersectionObserver = undefined` to force the eager-mount fallback that the source already supports for test envs without IO. 5/5 in the file.
+- Existing dashboard Playwright suite (`e2e/terminal-dashboard*.spec.ts`) NOT run in this session; manual spot-check is the contract until that suite runs in CI.
+
+## 54.9 Out of scope
 
 - **Live placeholder painting** (option (b) from decision 2). If the user reports the static placeholder feels wrong, we can revisit — but the fork-stream-to-non-top-consumers cost is real and the design doc treats this as a follow-up, not a Phase 2 deliverable.
 - **Multi-instance for the same `(secret, terminalId)`.** A future "compare two snapshots side by side" UX could want two xterms attached to the same PTY. Out of scope; the server already supports multiple subscribers per session, but the client-side single-instance assumption is baked into Phase 1.
 - **Selection / search state preservation across stack swaps.** Today's drawer / dashboard handoff loses search state (the `SearchAddon` re-attaches with the new mount). The checkout system doesn't try to do better — when the live xterm reparents, its own state (cursor, selection, search highlights) follows naturally because the xterm instance is the same DOM node tree. The placeholder consumer doesn't have a meaningful "state" to preserve.
 - **OSC133 jump shortcuts in non-top consumers.** Cmd/Ctrl+Up/Down already routes to the most-recently-active terminal — the checkout system doesn't change that. The "most-recently-active" cache continues to live in the OSC133 module; it's keyed on terminal-id, not on which consumer is rendering it.
 
-## 54.9 Compatibility + back-out
+## 54.10 Compatibility + back-out
 
 Phase 1 lands with no UI consumers wired — every existing surface continues to use its current path. If a regression is found in `terminalCheckout.tsx` after Phase 2 lands, the back-out is per-consumer:
 
