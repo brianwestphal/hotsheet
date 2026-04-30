@@ -147,6 +147,8 @@ Each built-in view has an icon to the left of the label:
 | Cmd/Ctrl+Alt+C | Force ticket copy even when in a text field |
 | Escape | Close settings dialog, or deselect all tickets |
 
+**HS-8033 — modal dialogs are first-class for keyboard input.** When any modal overlay is mounted + visible (settings, open-folder, confirm dialog, feedback dialog, hide-terminal, custom-view editor, command-editor, grouping-prompt, print, quit-confirm, reader-mode, tags, quicklook), every global shortcut in the table above bails out — including Cmd/Ctrl+A. Pre-fix, Cmd+A while the settings dialog was open silently selected every ticket behind the backdrop, and a fast Cmd+A → Backspace deleted them. Modal-internal shortcuts (e.g. Cmd+Enter to save in a textarea) are wired on the input element directly so they fire before this document-level bail and continue to work. Non-modal popups (`.terminal-prompt-overlay`, `.permission-popup`, context menus, dropdowns) are deliberately excluded from the bail because they don't take focus from the underlying surface — their own keyboard handlers (Esc, arrows, Enter) coexist with global shortcuts. The selector registry is `MODAL_OVERLAY_SELECTORS` exported from `src/client/shortcuts.tsx`; add new modal classes to that list when introducing a new dialog surface.
+
 ### 4.12 Clipboard Copy, Cut & Paste
 
 - **Cmd/Ctrl+C** copies selected tickets as formatted plain text to the system clipboard AND stores full structured ticket data in an internal clipboard for cross-project paste.

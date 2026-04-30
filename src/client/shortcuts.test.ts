@@ -6,11 +6,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  findVisibleModalOverlay,
   isCommandsLogFocused,
   isEditableTarget,
   isElementInTerminal,
   isNewTerminalShortcut,
+  MODAL_OVERLAY_SELECTORS,
   pickNextDrawerTabId,
+  shouldBailForActiveModal,
   shouldEscapeBypassHotsheet,
 } from './shortcuts.js';
 
@@ -306,5 +309,131 @@ describe('shouldEscapeBypassHotsheet (HS-8011)', () => {
 
   it('returns false for a null target (defensive — no element to check)', () => {
     expect(shouldEscapeBypassHotsheet(null, false)).toBe(false);
+  });
+});
+
+// HS-8033 — when a modal dialog is open, Cmd+A (and friends) used to fall
+// through to the global "select all tickets" handler because the isInput
+// gate only checked for input/textarea/select/contenteditable. Focus
+// outside a modal's text input — for example clicking a Save button in a
+// confirm dialog — left the document.activeElement on the dialog backdrop
+// instead, so isEditableTarget returned false and Cmd+A grabbed every
+// ticket behind the modal. The fix: bail every global shortcut when ANY
+// modal overlay is mounted + visible.
+describe('findVisibleModalOverlay (HS-8033)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('returns null when no modal overlay is mounted', () => {
+    document.body.innerHTML = '<div class="ticket-list"></div>';
+    expect(findVisibleModalOverlay(document)).toBe(null);
+  });
+
+  it('finds the settings overlay by id', () => {
+    document.body.innerHTML = '<div id="settings-overlay" style="display:block"></div>';
+    const found = findVisibleModalOverlay(document);
+    expect(found?.id).toBe('settings-overlay');
+  });
+
+  it('finds the open-folder overlay by id', () => {
+    document.body.innerHTML = '<div id="open-folder-overlay" style="display:flex"></div>';
+    const found = findVisibleModalOverlay(document);
+    expect(found?.id).toBe('open-folder-overlay');
+  });
+
+  it('skips an overlay whose inline display is "none"', () => {
+    document.body.innerHTML = '<div id="settings-overlay" style="display:none"></div>';
+    expect(findVisibleModalOverlay(document)).toBe(null);
+  });
+
+  it('finds class-based dialog backdrops (confirm-dialog-overlay)', () => {
+    document.body.innerHTML = '<div class="confirm-dialog-overlay"></div>';
+    const found = findVisibleModalOverlay(document);
+    expect(found?.classList.contains('confirm-dialog-overlay')).toBe(true);
+  });
+
+  it('finds class-based dialog backdrops (feedback-dialog-overlay)', () => {
+    document.body.innerHTML = '<div class="feedback-dialog-overlay"></div>';
+    const found = findVisibleModalOverlay(document);
+    expect(found?.classList.contains('feedback-dialog-overlay')).toBe(true);
+  });
+
+  it('finds class-based dialog backdrops (quit-confirm-overlay)', () => {
+    document.body.innerHTML = '<div class="quit-confirm-overlay"></div>';
+    const found = findVisibleModalOverlay(document);
+    expect(found?.classList.contains('quit-confirm-overlay')).toBe(true);
+  });
+
+  it('skips a hidden element via the `hidden` attribute', () => {
+    document.body.innerHTML = '<div class="confirm-dialog-overlay" hidden></div>';
+    expect(findVisibleModalOverlay(document)).toBe(null);
+  });
+
+  it('does NOT match popups that are intentionally non-modal', () => {
+    // Terminal-prompt overlay, permission popup, context menu — all
+    // popups, not modals. They should NOT trigger the bail because they
+    // don't take focus from the underlying surface.
+    document.body.innerHTML = `
+      <div class="terminal-prompt-overlay"></div>
+      <div class="permission-popup"></div>
+      <div class="context-menu"></div>
+    `;
+    expect(findVisibleModalOverlay(document)).toBe(null);
+  });
+
+  it('exposes a non-empty selectors registry', () => {
+    expect(MODAL_OVERLAY_SELECTORS.length).toBeGreaterThanOrEqual(10);
+    // At minimum we need the two server-rendered overlays + confirm + feedback.
+    expect(MODAL_OVERLAY_SELECTORS).toContain('#settings-overlay');
+    expect(MODAL_OVERLAY_SELECTORS).toContain('#open-folder-overlay');
+    expect(MODAL_OVERLAY_SELECTORS).toContain('.confirm-dialog-overlay');
+    expect(MODAL_OVERLAY_SELECTORS).toContain('.feedback-dialog-overlay');
+  });
+});
+
+describe('shouldBailForActiveModal (HS-8033)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('returns false when no modal is open', () => {
+    document.body.innerHTML = '<div class="ticket-list"><div id="ticket-row"></div></div>';
+    expect(shouldBailForActiveModal(document.getElementById('ticket-row'))).toBe(false);
+  });
+
+  it('returns true when a modal is open and the target is OUTSIDE it', () => {
+    document.body.innerHTML = `
+      <div class="ticket-list"><div id="ticket-row"></div></div>
+      <div class="confirm-dialog-overlay"><button>OK</button></div>
+    `;
+    expect(shouldBailForActiveModal(document.getElementById('ticket-row'))).toBe(true);
+  });
+
+  it('returns true when a modal is open and the target is INSIDE it', () => {
+    document.body.innerHTML = `
+      <div class="confirm-dialog-overlay"><input id="cancel-input" /></div>
+    `;
+    // Bail either way — focus inside the modal still wants the modal's
+    // own per-element handlers to win, not the global ones.
+    expect(shouldBailForActiveModal(document.getElementById('cancel-input'))).toBe(true);
+  });
+
+  it('returns false for a null target with no modal open', () => {
+    document.body.innerHTML = '';
+    expect(shouldBailForActiveModal(null)).toBe(false);
+  });
+
+  it('returns true for a null target when a modal IS open (defensive bail)', () => {
+    document.body.innerHTML = '<div class="confirm-dialog-overlay"></div>';
+    expect(shouldBailForActiveModal(null)).toBe(true);
+  });
+
+  it('does NOT bail for a non-modal popup like .terminal-prompt-overlay', () => {
+    document.body.innerHTML = `
+      <div class="ticket-list"><div id="ticket-row"></div></div>
+      <div class="terminal-prompt-overlay"><button>Allow</button></div>
+    `;
+    expect(shouldBailForActiveModal(document.getElementById('ticket-row'))).toBe(false);
   });
 });

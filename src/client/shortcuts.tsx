@@ -45,6 +45,10 @@ export function bindKeyboardShortcuts() {
   // Keyboard fallback for browser mode (non-Tauri) — capture phase
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      // HS-8033 — bail when any modal is open so Cmd+Z reaches the native
+      // input-level undo inside the dialog instead of undoing a ticket
+      // operation behind the modal.
+      if (shouldBailForActiveModal(e.target)) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.shiftKey) {
@@ -73,6 +77,17 @@ export function bindKeyboardShortcuts() {
         }
       }
     }
+
+    // HS-8033 — when any modal dialog is mounted + visible, bail out of
+    // every global shortcut. Pre-fix Cmd+A while the settings / feedback /
+    // confirm dialog was open silently selected every ticket behind the
+    // backdrop, and a fast Cmd+A → Backspace deleted them. Modals own the
+    // keyboard until they're dismissed (Esc above still works because we
+    // bail AFTER the Esc handler so the user can always close the modal).
+    // Modal-internal shortcuts (e.g. Cmd+Enter to submit) are wired on the
+    // input elements directly, so they fire before this document-level
+    // listener and aren't affected by the bail.
+    if (shouldBailForActiveModal(e.target)) return;
 
     // Tab switching: Cmd+Shift+[/] (works even in inputs) or Cmd+Shift+Left/Right (not in text fields)
     // HS-6472: when a terminal is focused, Cmd+Shift+Left/Right switches terminal
@@ -387,6 +402,93 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
   if (target.isContentEditable) return true;
   return false;
+}
+
+/**
+ * HS-8033 — selectors that identify the *backdrop* element of a modal
+ * dialog. When any of these is mounted + visible, global keyboard
+ * shortcuts (Cmd+A, Delete, Cmd+C/V/X, Tab cycling, etc.) MUST NOT fire
+ * unless the keystroke originated inside that modal — otherwise typing
+ * Cmd+A while the settings dialog is open silently selects every ticket
+ * in the background, and a fast Cmd+A → Backspace deletes them. The
+ * user's HS-8033 ask: "treat dialogs as if they're first-class citizens".
+ *
+ * The list covers every modal overlay surface in `src/client/`:
+ * - Server-rendered overlays (IDs): `open-folder-overlay`, `settings-overlay`.
+ * - Client-mounted dialog backdrops (classes): the `*-overlay` half of
+ *   each dialog component. Non-modal popups (`.terminal-prompt-overlay`,
+ *   `.permission-popup`, `.context-menu`, etc.) are deliberately
+ *   excluded — they don't take focus from the underlying surface so
+ *   global shortcuts should still work alongside them.
+ *
+ * Exported so unit tests can verify the registry directly.
+ */
+export const MODAL_OVERLAY_SELECTORS: readonly string[] = [
+  '#open-folder-overlay',
+  '#settings-overlay',
+  '.confirm-dialog-overlay',
+  '.cmd-editor-overlay',
+  '.custom-view-editor-overlay',
+  '.feedback-dialog-overlay',
+  '.grouping-prompt-overlay',
+  '.hide-terminal-dialog-overlay',
+  '.print-dialog-overlay',
+  '.quit-confirm-overlay',
+  '.reader-mode-overlay',
+  '.tags-dialog-overlay',
+  '.quicklook-overlay',
+];
+
+/** True when an element is rendered + visible (not display:none / hidden). */
+function isElementVisible(el: HTMLElement): boolean {
+  if (el.hidden) return false;
+  // The server-rendered overlays toggle `style.display` directly; cheap
+  // inline check first so we don't pay for a getComputedStyle round-trip
+  // on every keystroke when nothing is open.
+  if (el.style.display === 'none') return false;
+  if (!el.isConnected) return false;
+  const computed = el.ownerDocument.defaultView?.getComputedStyle(el);
+  if (computed === undefined) return true;
+  return computed.display !== 'none' && computed.visibility !== 'hidden';
+}
+
+/**
+ * HS-8033 — locate the topmost visible modal-overlay element, or null
+ * when no modal is currently mounted. Walks `MODAL_OVERLAY_SELECTORS` in
+ * order and returns the first visible match. Exported so unit tests can
+ * drive the predicate.
+ */
+export function findVisibleModalOverlay(root: ParentNode = document): HTMLElement | null {
+  for (const selector of MODAL_OVERLAY_SELECTORS) {
+    const matches = root.querySelectorAll<HTMLElement>(selector);
+    for (const el of matches) {
+      if (isElementVisible(el)) return el;
+    }
+  }
+  return null;
+}
+
+/**
+ * HS-8033 — true when a modal dialog is open AND the keyboard event did
+ * NOT originate inside it. Global shortcuts bail in this state so they
+ * can't reach the underlying ticket list / project tabs / drawer. When
+ * focus is *inside* the modal, the modal's own input handlers run first
+ * (target-element listeners fire before this document-level handler);
+ * the global handler then bails so Cmd+A inside an `<input>` only selects
+ * the input's text rather than every ticket behind the modal.
+ */
+export function shouldBailForActiveModal(target: EventTarget | null): boolean {
+  const modal = findVisibleModalOverlay();
+  if (modal === null) return false;
+  if (target instanceof Node && modal.contains(target)) {
+    // Focus is inside the modal — let the modal's own keyboard handlers
+    // (which are wired on the input elements directly) own the keystroke;
+    // bail out of every global shortcut so we don't double-handle.
+    return true;
+  }
+  // Focus is outside the modal — the modal is still capturing user
+  // attention, so global shortcuts shouldn't fire either.
+  return true;
 }
 
 /**
