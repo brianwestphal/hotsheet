@@ -30,25 +30,10 @@ import {
   subscribeToDefaultAppearanceChanges,
 } from './terminalAppearance.js';
 import { mountAppearancePopover } from './terminalAppearancePopover.js';
-import { hasOpenDedicatedTerminalView } from './terminalDedicatedState.js';
 import { DEFAULT_FONT_SIZE } from './terminalFonts.js';
 import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 import { buildAskClaudePrompt, computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
-import { buildAllowRule } from '../shared/terminalPrompt/allowRules.js';
-import { appendAllowRule } from './terminalPrompt/allowRulesStore.js';
-import { tryAutoAllow } from './terminalPrompt/autoAllow.js';
-import {
-  clearDetectorSuppression,
-  createDetector,
-  type Detector,
-  disposeDetector,
-  markDetectorClosed,
-  notifyChunk,
-  notifyUserKeystroke,
-  SCAN_ROW_COUNT,
-} from './terminalPrompt/detector.js';
-import { openTerminalPromptOverlay } from './terminalPromptOverlay.js';
 import { replayHistoryToTerm } from './terminalReplay.js';
 import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { configuredSubsetInStripOrder, reorderConfigsById, reorderIds } from './terminalTabReorder.js';
@@ -138,12 +123,9 @@ interface TerminalInstance {
    *  see no layout change. `commands` is a bounded ring (500) of per-prompt
    *  records; `current` is the in-flight record between A and D. */
   shellIntegration: ShellIntegrationState;
-  /** HS-7971 Phase 1 — terminal-prompt detector. Lazily created on the first
-   *  PTY chunk because the detector needs the xterm Terminal handle, which
-   *  is mounted later (`createInstance` returns before xterm activation). */
-  promptDetector: Detector | null;
-  /** HS-7986 Phase 2 — terminal-header chip surfaced when the user has
-   *  clicked "Not a prompt" on the §52 overlay. Click resumes detection. */
+  /** HS-7986 / HS-8035 — terminal-header chip the user clicks to clear a
+   *  server-side scanner suppression. Hidden until the server reports a
+   *  suppressed scanner; click POSTs `/api/terminal/prompt-resume`. */
   promptResumeChip: HTMLButtonElement;
 }
 
@@ -651,16 +633,18 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     runtimeCwd: null,
     hasBell: false,
     shellIntegration: { enabled: false, commands: [], current: null, nextId: 1 },
-    promptDetector: null,
     promptResumeChip,
   };
 
-  // HS-7986 — chip click resumes detection (clears suppressed flag) and hides
-  // the chip. The detector might still be `null` if the user has never had a
-  // prompt fire — guard accordingly.
+  // HS-7986 / HS-8035 — chip click POSTs `/api/terminal/prompt-resume` so the
+  // server-side scanner re-arms after a prior dismiss-with-suppress. Network
+  // errors are swallowed: the chip hides immediately for responsiveness, and
+  // the next bell-state poll will re-show it if the server still reports the
+  // scanner as suppressed.
   promptResumeChip.addEventListener('click', () => {
-    if (inst.promptDetector !== null) clearDetectorSuppression(inst.promptDetector);
     promptResumeChip.style.display = 'none';
+    void api('/terminal/prompt-resume', { method: 'POST', body: { terminalId: inst.id } })
+      .catch(() => { /* swallow */ });
   });
 
   powerBtn.addEventListener('click', () => { void onPowerClick(inst); });
@@ -1035,10 +1019,11 @@ function mountXterm(inst: TerminalInstance, secret: string): void {
     if (inst.ws !== null && inst.ws.readyState === WebSocket.OPEN) {
       inst.ws.send(encoder.encode(data));
     }
-    // HS-7971 Phase 1 — a real user keystroke clears the per-instance
-    // "Not a prompt" suppression so a subsequent prompt re-arms detection.
-    // HS-7986 Phase 2 — also hide the resume chip since suppression cleared.
-    if (inst.promptDetector !== null) notifyUserKeystroke(inst.promptDetector);
+    // HS-8035 — hide the resume chip on any real keystroke. The server's
+    // scanner clears its own suppression on a PTY-byte arrival (see
+    // registry.ts::notifyUserKeystroke), so the chip can vanish here without
+    // a separate POST. The next bell-state poll will re-show it if the
+    // scanner is still suppressed (e.g. user only clicked, didn't type).
     if (inst.promptResumeChip.style.display !== 'none') {
       inst.promptResumeChip.style.display = 'none';
     }
@@ -1131,11 +1116,6 @@ function connect(inst: TerminalInstance): void {
     const data: unknown = ev.data;
     if (data instanceof ArrayBuffer) {
       inst.term?.write(new Uint8Array(data));
-      // HS-7971 Phase 1 — schedule a debounced parser scan after every PTY
-      // chunk lands in the xterm buffer. The detector handles its own
-      // debouncing + suppression; we just notify it that fresh bytes
-      // arrived.
-      kickPromptDetector(inst);
       return;
     }
     if (typeof data === 'string') {
@@ -1731,94 +1711,12 @@ function teardown(inst: TerminalInstance): void {
   inst.searchHandle?.dispose();
   inst.searchHandle = null;
   inst.search = null;
-  if (inst.promptDetector !== null) {
-    disposeDetector(inst.promptDetector);
-    inst.promptDetector = null;
-  }
   inst.term?.dispose();
   inst.term = null;
   inst.fit = null;
   inst.mounted = false;
   inst.status = 'not-connected';
 }
-
-/**
- * HS-7971 Phase 1 — kick the per-instance prompt detector. Lazy-init the
- * detector on first use because `inst.term` isn't mounted at the time
- * `createInstance` runs. Also re-uses an existing detector across PTY
- * reconnects.
- */
-function kickPromptDetector(inst: TerminalInstance): void {
-  if (inst.term === null) return;
-  if (inst.promptDetector === null) {
-    const term = inst.term;
-    inst.promptDetector = createDetector({
-      readRows(rowCount) {
-        const buf = term.buffer.active;
-        const baseY = buf.viewportY;
-        const visibleRows = term.rows;
-        const out: string[] = [];
-        const start = Math.max(0, visibleRows - rowCount);
-        for (let i = start; i < visibleRows; i++) {
-          const line = buf.getLine(baseY + i);
-          out.push(line === undefined ? '' : line.translateToString(true));
-        }
-        return out;
-      },
-      isActive() {
-        // HS-7988 — master toggle. When the user has disabled terminal-
-        // prompt detection in Settings → Permissions, never fire.
-        if (!state.settings.terminal_prompt_detection_enabled) return false;
-        // HS-7985 — when a dedicated view (dashboard or drawer-grid) is open,
-        // its own xterm + detector handle prompts there. Drawer surface stays
-        // silent so the user doesn't get two overlays for the same prompt.
-        return isTerminalTabActive(inst) && !hasOpenDedicatedTerminalView();
-      },
-      onMatch(match) {
-        const detector = inst.promptDetector;
-        if (detector === null) return;
-        const sendToPty = (payload: string): boolean => {
-          if (inst.ws === null || inst.ws.readyState !== WebSocket.OPEN) return false;
-          inst.ws.send(new TextEncoder().encode(payload));
-          return true;
-        };
-        // HS-7987 — auto-allow gate runs BEFORE we mount the overlay. On
-        // match it writes the rule's payload directly + posts the audit
-        // entry, and we keep the overlay closed so the user never sees it.
-        const auto = tryAutoAllow({ match, send: sendToPty });
-        if (auto.applied) {
-          markDetectorClosed(detector);
-          return;
-        }
-        openTerminalPromptOverlay({
-          match,
-          // HS-8012 — anchor the popup below this terminal's project tab
-          // so it shares spatial convention with `.permission-popup`.
-          // `wsSecret` is the project secret the live PTY is bound to.
-          projectSecret: inst.wsSecret ?? undefined,
-          onSend: sendToPty,
-          onClose() {
-            markDetectorClosed(detector);
-          },
-          onAddAllowRule(choiceIndex, choiceLabel) {
-            // HS-7987 — fire-and-forget rule persist. Errors are swallowed
-            // by the store; the user's response still lands via onSend
-            // even if the PATCH fails.
-            try {
-              const rule = buildAllowRule(match, choiceIndex, choiceLabel);
-              void appendAllowRule(rule);
-            } catch { /* generic shape would throw; we never pass the cb for generic anyway */ }
-          },
-        });
-      },
-    });
-  }
-  notifyChunk(inst.promptDetector);
-}
-
-// Reference SCAN_ROW_COUNT so the import is used (TypeScript noUnusedLocals
-// would flag it otherwise — keeps the constant import-stable for follow-ups).
-void SCAN_ROW_COUNT;
 
 function removeTerminalInstance(id: string): void {
   const inst = instances.get(id);
@@ -1864,7 +1762,7 @@ async function createDynamicTerminal(): Promise<void> {
     // a `dyn-*` id pops into every named grouping the user has built —
     // exactly the regression the user reported.
     const active = getActiveProject();
-    if (active !== null && active !== undefined) {
+    if (active !== null) {
       const { hideNewTerminalInNonDefaultGroupings } = await import('./dashboardHiddenTerminals.js');
       hideNewTerminalInNonDefaultGroupings(active.secret, config.id);
     }
