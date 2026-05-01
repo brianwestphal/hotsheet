@@ -294,6 +294,11 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
         try { currentCheckout.release(); } catch { /* swallow — overlay tear-down is the user's stronger signal */ }
         currentCheckout = null;
       }
+      // HS-7969 follow-up #2 — drop the pane ResizeObserver before
+      // removing the overlay so we don't leak observers across multiple
+      // open-and-close cycles of the dialog.
+      previewResizeObserver?.disconnect();
+      previewResizeObserver = null;
       overlay.remove();
       resolve({ outcome, dontAskAgain });
     };
@@ -323,6 +328,33 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
     // same `mountInto`. The race regression in `quitConfirm.test.ts`
     // pins this contract via `_inspectStackForTesting()`.
     let currentCheckout: CheckoutHandle | null = null;
+    // HS-7969 follow-up #2 — re-fit when the preview pane resizes. The
+    // single-shot rAF fit from the previous fix worked for the initial
+    // dialog layout but the user reported tiles still ending up the wrong
+    // size in real use (latest screenshot — xterm extends past the pane).
+    // Most-likely cause: the dialog goes through one layout pass at mount
+    // (when `previewEl.offsetWidth` is final) but a SECOND pass when the
+    // master-list flexbox children settle their intrinsic widths. The
+    // pane's final pixel size only stabilises after that second pass —
+    // the rAF-after-checkout fit catches the FIRST pass but misses the
+    // second, leaving the term sized for the wrong pane dims. The
+    // ResizeObserver pattern from `enterDedicatedView` (§54.7) re-fits
+    // on every pane size change, which closes the gap regardless of
+    // when layout stabilises. We track the most-recent checkout in
+    // `currentCheckout` (set in `selectRow`) so the observer's callback
+    // always operates on the live consumer.
+    let previewResizeObserver: ResizeObserver | null = null;
+    if (previewEl !== null) {
+      previewResizeObserver = new ResizeObserver(() => {
+        if (currentCheckout === null) return;
+        const handle = currentCheckout;
+        try {
+          handle.fit.fit();
+          handle.resize(handle.term.cols, handle.term.rows);
+        } catch { /* fit can throw if the pane is detached mid-frame */ }
+      });
+      previewResizeObserver.observe(previewEl);
+    }
 
     function selectRow(row: HTMLButtonElement): void {
       if (previewEl === null) return;

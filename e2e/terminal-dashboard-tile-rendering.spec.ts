@@ -453,4 +453,173 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
       expect.soft(e.rows, `tile ${e.id} (visible=${e.visible}) rows`).toBeGreaterThanOrEqual(50);
     }
   });
+
+  /**
+   * HS-8028 follow-up #2 — Shift+Cmd+Arrow / Shift+Ctrl+Arrow magnified-grid
+   * navigation must work from a centered tile. User reported (5/1/2026)
+   * that the shortcut "doesn't seem to work at all anymore" after the
+   * strict same-row / same-column algorithm landed (commit 03730a8).
+   *
+   * Root cause: `findNextTileInDirection` used `tile.root.getBoundingClientRect()`
+   * for the `from` reference, but a centered tile's root has been moved
+   * to a floating overlay position (huge rect spanning ~80 % of viewport).
+   * Comparing other grid-position tiles against that rect makes every
+   * candidate fail the strict-half-plane gate. Fix: use the slot
+   * placeholder's rect (which sits in the original grid cell) when one
+   * exists.
+   *
+   * This test mirrors the user's flow: configure 2+ terminals so the
+   * dashboard has multiple tiles, single-click the leftmost tile to
+   * center it, press the magnified-nav chord, assert the centered target
+   * has changed.
+   */
+  test('Shift+Cmd+Right (magnified-nav) from centered tile moves to next tile (HS-8028 follow-up #2)', async ({ page, browserName }) => {
+    await page.setViewportSize({ width: 1900, height: 1000 });
+    await openDrawerAndWaitForDraw(page);
+
+    // Add a second terminal so the dashboard has at least two tiles.
+    await page.request.patch('/api/file-settings', {
+      headers,
+      data: {
+        terminals: [
+          { id: 'draw', name: 'Draw', command: `/usr/bin/env python3 ${DRAW_SCRIPT}`, lazy: false },
+          { id: 'second', name: 'Second', command: `/usr/bin/env python3 ${DRAW_SCRIPT}`, lazy: false },
+        ],
+      },
+    });
+    try { await page.request.post('/api/terminal/restart', { headers, data: { terminalId: 'second' } }); }
+    catch { /* not yet spawned */ }
+
+    await page.locator('#terminal-dashboard-toggle').click();
+    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
+    const drawTile = page.locator('.terminal-dashboard-tile[data-terminal-id="draw"]');
+    const secondTile = page.locator('.terminal-dashboard-tile[data-terminal-id="second"]');
+    await expect(drawTile).toHaveClass(/terminal-dashboard-tile-alive/, { timeout: 5000 });
+    await expect(secondTile).toHaveClass(/terminal-dashboard-tile-alive/, { timeout: 5000 });
+
+    // Center the leftmost tile (single-click). The pendingSingleClickTimer
+    // delays center by ~250 ms so we wait through the timeout before
+    // pressing the chord.
+    await drawTile.click();
+    await page.waitForTimeout(350);
+    await expect(drawTile).toHaveClass(/centered/);
+
+    // Press Shift+Cmd+Right (macOS) / Shift+Ctrl+Right (other). Playwright
+    // uses 'Meta' for the macOS Cmd key. The handler in terminalTileGrid
+    // checks platform and accepts whichever modifier matches the running
+    // OS, so we send both — the wrong-platform one passes through harmlessly.
+    const modifier = browserName === 'webkit' ? 'Meta' : 'Control';
+    await page.keyboard.press(`Shift+${modifier}+ArrowRight`);
+    await page.waitForTimeout(150);
+
+    // The centered class should have moved to the second tile, and the
+    // leftmost tile should no longer be centered.
+    await expect(secondTile).toHaveClass(/centered/, { timeout: 2000 });
+    await expect(drawTile).not.toHaveClass(/centered/);
+  });
+
+  /**
+   * HS-8051 follow-up #2 — every dashboard tile must converge to the 4:3
+   * native aspect target (≈1.333) regardless of per-terminal font size.
+   *
+   * The user reported (third "Not working" comment on HS-8051) that ONE of
+   * five tiles ended up at `screenW: 841, screenH: 1200` — natural aspect
+   * 0.7, far from 4:3. The bad tile belonged to a project with a noticeably
+   * larger terminal `fontSize` than the others (cellW ≈ 21.15 vs ≈ 8 on the
+   * good tiles). The earlier chained-rAF resync fix (commit 03730a8)
+   * oscillated because it re-derived `cellW = screen.offsetWidth /
+   * term.cols` on every rAF, but `term.cols` updates synchronously on
+   * `term.resize` while screen dims only update on the next paint. Between
+   * paints the ratio gives a wrong cellW, the algorithm produces a wrong
+   * target, the next resize uses that wrong target, and the loop bounces
+   * around without ever landing on the correct (≈61, 48) for cellW=21.15.
+   *
+   * The fix routes convergence through `term.onRender`, which fires AFTER
+   * xterm commits the paint to DOM — so `term.cols` and `screen.offsetWidth`
+   * are guaranteed consistent at that moment. This test pins the fix:
+   * configure five terminals with one explicitly running at a larger
+   * `fontSize` (mirrors the user's Domotion case), open the dashboard, and
+   * assert every tile's `.xterm-screen` has natural aspect within 5 % of
+   * 4:3. A regression in the convergence path (returning to the chained-rAF
+   * shape, removing the `term.onRender` listener, breaking the cellW
+   * caching, etc.) shows up here as the larger-font tile staying at its
+   * initial 80×60 cols × rows or oscillating to a non-4:3 stable point.
+   */
+  test('every tile converges to ≈4:3 natural aspect even with mixed per-terminal font sizes (HS-8051 follow-up #2)', async ({ page }) => {
+    // Wide viewport so all five tiles render in a single row visible from
+    // the start — we don't want the offscreen virtualization path here,
+    // we want every tile mounting promptly so we can observe the
+    // larger-font convergence.
+    await page.setViewportSize({ width: 1900, height: 1000 });
+    await openDrawerAndWaitForDraw(page);
+
+    // Reconfigure terminals: 4 default-font terminals plus one with an
+    // explicitly larger `fontSize`. The user's Domotion repro had cellW ≈
+    // 21.15 (font ~22 px); we use 22 here to land in the same regime.
+    await page.request.patch('/api/file-settings', {
+      headers,
+      data: {
+        terminals: [
+          { id: 'draw', name: 'Draw', command: `/usr/bin/env python3 ${DRAW_SCRIPT}`, lazy: false },
+          { id: 'a', name: 'A', command: `/usr/bin/env python3 ${DRAW_SCRIPT}`, lazy: false },
+          { id: 'b', name: 'B', command: `/usr/bin/env python3 ${DRAW_SCRIPT}`, lazy: false },
+          { id: 'c', name: 'C', command: `/usr/bin/env python3 ${DRAW_SCRIPT}`, lazy: false },
+          { id: 'big', name: 'Big', command: `/usr/bin/env python3 ${DRAW_SCRIPT}`, lazy: false, fontSize: 22 },
+        ],
+      },
+    });
+    // Force a fresh PTY for each new id so they all mount alive.
+    for (const id of ['a', 'b', 'c', 'big']) {
+      try { await page.request.post('/api/terminal/restart', { headers, data: { terminalId: id } }); }
+      catch { /* not yet spawned */ }
+    }
+
+    // Open the dashboard and wait for every tile to attach. The slow one is
+    // typically the larger-font tile — its xterm has more pixels per cell to
+    // measure and its first render races the dashboard's tile-mount path.
+    await page.locator('#terminal-dashboard-toggle').click();
+    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
+    for (const id of ['draw', 'a', 'b', 'c', 'big']) {
+      await expect(page.locator(`.terminal-dashboard-tile[data-terminal-id="${id}"]`))
+        .toHaveClass(/terminal-dashboard-tile-alive/, { timeout: 8000 });
+    }
+
+    // The convergence path runs across two `term.onRender` cycles: the
+    // first measures cellW and issues `checkout.resize(native)`, the
+    // second confirms term.cols already at native and stops. Each render
+    // is ~16 ms; allow generous headroom for slow CI machines.
+    await page.waitForTimeout(800);
+
+    const tileNaturals = await page.evaluate(() => {
+      const tiles = Array.from(document.querySelectorAll<HTMLElement>('.terminal-dashboard-tile'));
+      return tiles.map((tile) => {
+        const id = tile.dataset.terminalId ?? '';
+        const screen = tile.querySelector<HTMLElement>('.xterm-screen');
+        if (screen === null) return { id, screenW: null, screenH: null, naturalAspect: null };
+        const screenW = screen.offsetWidth;
+        const screenH = screen.offsetHeight;
+        const naturalAspect = screenW > 0 && screenH > 0 ? screenW / screenH : null;
+        return { id, screenW, screenH, naturalAspect };
+      });
+    });
+
+    // Expected aspect = 1280/960 = 1.333 (the dashboard's 4:3 natural
+    // target). Allow ±5 % for cell-rounding variance — the algorithm
+    // rounds `cols = round(1280 / cellW)` so worst-case error is one cell
+    // wide. For typical cellW ≈ 8 that's 1 / 160 ≈ 0.6 %; for cellW ≈ 22
+    // that's 1 / 58 ≈ 1.7 %. 5 % gives plenty of margin without hiding a
+    // real regression.
+    const TARGET_ASPECT = 1280 / 960;
+    const TOLERANCE = 0.05;
+
+    for (const t of tileNaturals) {
+      expect.soft(t.naturalAspect, `tile ${t.id} natural aspect (screenW=${t.screenW}, screenH=${t.screenH})`)
+        .not.toBeNull();
+      if (t.naturalAspect !== null) {
+        const drift = Math.abs(t.naturalAspect - TARGET_ASPECT) / TARGET_ASPECT;
+        expect.soft(drift, `tile ${t.id} drift from 4:3 (got aspect ${t.naturalAspect?.toFixed(3)})`)
+          .toBeLessThan(TOLERANCE);
+      }
+    }
+  });
 });

@@ -233,6 +233,22 @@ interface InternalTile {
    *  tile's geometry rather than the dedicated pane's. */
   targetCols: number;
   targetRows: number;
+  /** HS-8051 follow-up #2 — cell metrics measured from `.xterm-screen`
+   *  on the FIRST `term.onRender` after mount, when `term.cols/rows` and
+   *  `screen.offsetWidth/Height` are guaranteed consistent (onRender
+   *  fires AFTER xterm commits the paint to DOM). Pre-fix the chained-
+   *  rAF resync re-derived `cellW = screen.offsetWidth / term.cols` on
+   *  every tick — but `term.cols` updates synchronously on `term.resize`
+   *  while screen dims only update on the next paint. Between paints the
+   *  ratio gives a wrong cellW, the algorithm produces a wrong target,
+   *  the next resize uses that wrong target, and the loop oscillates
+   *  (user's HS-8051 second log: bad tile bounced from 1692×1200 to
+   *  841×1200 — 80→61→46→… or similar non-converging chain). Caching
+   *  cellW once at a stable state and reusing it eliminates the race —
+   *  cellW depends on font, not cols, so it's stable across resizes
+   *  unless the font itself changes. */
+  cachedCellW: number | null;
+  cachedCellH: number | null;
   slotPlaceholder: HTMLElement | null;
   screenObserver: ResizeObserver | null;
   /** HS-8048 — disposers for term-level event handlers we set up during
@@ -415,6 +431,8 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       gridPreviewHeight: 0,
       targetCols: TILE_INITIAL_COLS,
       targetRows: TILE_INITIAL_ROWS,
+      cachedCellW: null,
+      cachedCellH: null,
       slotPlaceholder: null,
       screenObserver: null,
       termHandlerDisposers: [],
@@ -528,6 +546,8 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       tile.checkout = null;
     }
     tile.xtermRoot = null;
+    tile.cachedCellW = null;
+    tile.cachedCellH = null;
     // Restore the placeholder visual so the off-screen-then-back-on tile
     // doesn't briefly show an empty white box during the re-mount window.
     tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
@@ -624,14 +644,19 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       onRestoredToTop() {
         // HS-8048 — live xterm reparented back into our `xtermRoot`.
         // Re-apply CSS scale (the previous consumer's mount may have
-        // cleared transform/position styles) and re-resize back to
-        // tile-native cell-metric dims (the previous consumer was
-        // likely a dedicated view at fit-driven dims, so the term is
-        // at those dims now). The screen ResizeObserver re-attaches
-        // here too so subsequent renders pick up cell-metric changes.
-        // HS-8051 follow-up — `attachScreenObserver` now kicks the
-        // chained-rAF `scheduleResyncRetry` internally, so we don't
-        // need a separate one-shot rAF resync here.
+        // cleared transform/position styles). The screen ResizeObserver
+        // re-attaches here too so subsequent renders fire the visual
+        // scale recompute. HS-8051 follow-up #2 — convergence on tile-
+        // native cols × rows is driven by `term.onRender` →
+        // `handleTileRender` (which we wired once at mount time and is
+        // still alive across the bump-and-restore round-trip since the
+        // shared term itself survives). The next render after the
+        // restore — triggered by either xterm's dirty repaint or the
+        // first incoming output byte — will re-converge the term to
+        // tile-native via `handleTileRender`'s cell-metric path. We
+        // also kick a `checkout.resize(TILE_INITIAL_*)` here as the
+        // explicit signal so the convergence happens promptly even
+        // without external output.
         tile.checkout?.resize(TILE_INITIAL_COLS, TILE_INITIAL_ROWS);
         reapplyTileScaleFromPreview(tile);
         attachScreenObserver(tile);
@@ -653,22 +678,11 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     tile.targetCols = term.cols;
     tile.targetRows = term.rows;
 
-    // HS-7097: observe `.xterm-screen` so every xterm render commits scaling.
-    // HS-7603 follow-up: also re-run the cell-metrics → term/PTY resize logic
-    // here. Tiles that mount while scrolled offscreen (or any tile where the
-    // initial rAF / first history-frame fired before xterm had committed its
-    // first paint to `.xterm-screen`) get `screen.offsetWidth === 0` and
-    // `tileNativeDimsFromXterm` returns the fallback 80×60. Without this hook
-    // the term + PTY stay locked to the fallback even after the user scrolls
-    // the tile into view and xterm finally renders. The observer fires every
-    // time `.xterm-screen` gets a new size, which is exactly the moment cell
-    // metrics become authoritative — so we re-derive native dims and resize
-    // the term + PTY whenever the computed native shape differs from what the
-    // tile is currently sized to. The check is idempotent: once the term is
-    // at native dims, subsequent observer fires recompute the same native and
-    // skip the resize.
-    // HS-8051 follow-up — `attachScreenObserver` internally kicks the
-    // chained-rAF `scheduleResyncRetry`, so a single call here is enough.
+    // HS-7097 → HS-8051 follow-up #2 — observe `.xterm-screen` so a
+    // change in natural xterm dims (font / theme swap; consumer
+    // hand-off) re-applies the CSS scale. Convergence on tile-native
+    // cols × rows is driven by `term.onRender` (wired below) — the
+    // observer is just a safety net for the visual scale.
     attachScreenObserver(tile);
 
     // HS-8048 — `term.onData` (keystroke-send) is wired by the checkout
@@ -689,39 +703,100 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       tile.root.classList.add('has-bell');
     });
     tile.termHandlerDisposers.push(bellDispose);
+
+    // HS-8051 follow-up #2 — the convergence path that drives the tile to
+    // its 4:3 native cols × rows. `term.onRender` fires AFTER xterm
+    // commits a paint to DOM, so `term.cols/rows` and
+    // `screen.offsetWidth/Height` are guaranteed consistent at this
+    // moment — every other timing (rAF, ResizeObserver, history-frame
+    // handler) can race a pending paint and read stale dims. The
+    // sequence in steady state:
+    //   1. First render after mount → cellW/cellH measured + cached →
+    //      compute target dims → `checkout.resize(native)` if not
+    //      already there.
+    //   2. Second render (caused by step 1's resize) → `term.cols` is
+    //      now at native, target also at native → no-op return.
+    //   3. Subsequent renders (output, scrolling) → no-op return.
+    // Pre-fix the chained-rAF retry oscillated because it re-derived
+    // `cellW = screen.offsetWidth / term.cols` between paint frames
+    // where `term.cols` had updated but the screen hadn't. User's HS-8051
+    // second log: bad tile bounced from 1692×1200 (cols=80) to 841×1200
+    // (cols=40) — non-converging because cellW was being re-computed
+    // from a wrong ratio every iteration.
+    const renderDispose = term.onRender(() => {
+      handleTileRender(tile);
+    });
+    tile.termHandlerDisposers.push(renderDispose);
   }
 
-  /** HS-8048 — wire (or rewire) the tile's `.xterm-screen` ResizeObserver.
-   *  Factored out of `mountTileViaCheckout` so it can also re-run on
-   *  `onRestoredToTop` (the live xterm comes back from another consumer
-   *  with possibly different cell metrics). The observer fires every
-   *  time xterm commits a render; the callback re-derives tile-native
-   *  dims via cell metrics and routes through the checkout's
-   *  `handle.resize` path.
+  /** HS-8051 follow-up #2 — runs on every `term.onRender` for a tile.
+   *  Caches cell metrics on the first render where they're measurable,
+   *  re-applies CSS scale, and (when top-of-stack) issues at most one
+   *  resize per render to converge on the cell-metric-derived 4:3
+   *  native cols × rows. */
+  function handleTileRender(tile: InternalTile): void {
+    if (tile.checkout === null || tile.xtermRoot === null) return;
+    const term = tile.checkout.term;
+    const screen = tile.xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+    if (screen === null) return;
+    if (term.cols <= 0 || term.rows <= 0) return;
+    if (screen.offsetWidth <= 0 || screen.offsetHeight <= 0) return;
+
+    // Re-measure cellW/cellH on EVERY render — this is safe because
+    // onRender fires after the paint committed, so screen dims and
+    // `term.cols` are always consistent here. Cell metrics are stable
+    // unless the font / theme changes, in which case re-measurement
+    // automatically picks up the new values without any explicit
+    // invalidation path.
+    const cellW = screen.offsetWidth / term.cols;
+    const cellH = screen.offsetHeight / term.rows;
+    if (!Number.isFinite(cellW) || !Number.isFinite(cellH) || cellW <= 0 || cellH <= 0) return;
+    tile.cachedCellW = cellW;
+    tile.cachedCellH = cellH;
+
+    // Always re-apply the visual CSS scale so the natural xterm box fills
+    // the tile slot uniformly.
+    reapplyTileScaleFromPreview(tile);
+
+    // Resize the term + PTY toward the 4:3 native target only when WE
+    // own the live xterm. When another consumer (dedicated view, quit-
+    // confirm preview) is on top of the LIFO stack, the screen dims
+    // we measured here belong to THAT consumer's mount — we still
+    // refresh `cachedCellW/H` (cellW is font-driven, not consumer-driven)
+    // but skip the resize so we don't fight the active consumer.
+    if (!tile.checkout.isTopOfStack()) return;
+    const native = tileNativeGridFromCellMetrics(cellW, cellH);
+    if (term.cols === native.cols && term.rows === native.rows) {
+      // Already at native — sync the bookkeeping so a future
+      // `release()` → `restore()` round-trip's safe-stop also recognises
+      // convergence.
+      tile.targetCols = native.cols;
+      tile.targetRows = native.rows;
+      return;
+    }
+    tile.targetCols = native.cols;
+    tile.targetRows = native.rows;
+    tile.checkout.resize(native.cols, native.rows);
+  }
+
+  /** HS-8048 → HS-8051 follow-up #2 — wire (or rewire) the tile's
+   *  `.xterm-screen` ResizeObserver. Now ONLY drives the CSS-scale re-fit
+   *  when natural xterm dims change (font/theme swap; consumer hand-off);
+   *  the cell-metric → native-cols/rows convergence path lives in
+   *  `handleTileRender` (driven by `term.onRender`), which is the only
+   *  signal that fires after a paint commits with consistent
+   *  `term.cols/rows` ↔ `screen.offsetWidth/Height` state.
    *
-   *  HS-8051 (2026-05-01) — `.xterm-screen` is created lazily by xterm
-   *  on its first render. If `attachScreenObserver` runs before that
-   *  render (typical right after `term.open()`), the querySelector
-   *  returns null and no observer is attached. The rAF after
-   *  `mountTileViaCheckout` would also fire before the first render in
-   *  some race orderings, leaving the tile permanently stuck at
-   *  whatever cols × rows the initial `checkout({cols:80, rows:60})`
-   *  set — visible as a non-4:3 natural aspect / horizontally
-   *  letterboxed tile. The user reported this on HS-8051: 2 of 5
-   *  dashboard tiles ended up at `screenW: 1282, screenH: 1200`
-   *  (aspect ~1.07) instead of the 4:3 target while the other 3 sat
-   *  at `1282 × 960`. The fix: when `.xterm-screen` isn't there yet,
-   *  retry on the next rAF (up to a small budget so we don't spin
-   *  forever on a tile whose checkout was disposed mid-flight).
-   *  Once the screen exists we attach the observer AND kick a chained
-   *  rAF resync (`scheduleResyncRetry`) so the tile reaches its target
-   *  dims even when `screen.offsetWidth` is briefly 0 (xterm just
-   *  parented the screen DOM but hasn't laid out cells), or when the
-   *  tile's checkout is momentarily not top-of-stack (a quit-confirm
-   *  preview claimed it). */
+   *  Idempotent — safe to call from `onRestoredToTop` (the live xterm
+   *  came back with its own `.xterm-screen` element) without doubling
+   *  observer fires. `.xterm-screen` is created lazily by xterm on its
+   *  first render; if it isn't there yet we retry on the next rAF up to
+   *  a small budget. The first `term.onRender` will fire by then anyway
+   *  (and that's what drives convergence), so this is just a safety net
+   *  for the visual scale. */
   function attachScreenObserver(tile: InternalTile, retriesRemaining: number = 30): void {
     if (tile.xtermRoot === null) return;
-    if (tile.checkout === null) return; // tile was disposed mid-retry
+    if (tile.checkout === null) return;
     tile.screenObserver?.disconnect();
     const screen = tile.xtermRoot.querySelector<HTMLElement>('.xterm-screen');
     if (screen === null) {
@@ -732,127 +807,9 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     }
     const observer = new ResizeObserver(() => {
       reapplyTileScaleFromPreview(tile);
-      resyncTilePtyFromCellMetrics(tile);
     });
     observer.observe(screen);
     tile.screenObserver = observer;
-    // HS-8051 follow-up — kick a chained rAF resync. The ResizeObserver
-    // fires on subsequent size changes only, so a tile whose first
-    // render completed BEFORE the observer attached needs an immediate
-    // resync trigger. AND a single immediate resync is fragile: it
-    // bails when `screen.offsetWidth` is 0 (xterm just attached the DOM
-    // but hasn't measured cells yet) or `tile.checkout.isTopOfStack()`
-    // is momentarily false. The user reported one of five tiles
-    // staying stuck at `cellW=21.15` (probably a project with a larger
-    // font) where the algorithm SHOULD have produced 4:3 dims but never
-    // got the chance — chaining the resync across rAFs until the term
-    // actually reaches native dims (or a small budget exhausts) closes
-    // the remaining race.
-    scheduleResyncRetry(tile);
-  }
-
-  /** HS-8051 follow-up — chained-rAF resync that runs until the term
-   *  reaches its cell-metric-derived native cols × rows OR the retry
-   *  budget runs out. The single one-shot resync inside
-   *  `attachScreenObserver` was insufficient for one of the user's tiles
-   *  (Domotion → Claude, larger font giving cellW≈21.15) — even with the
-   *  ResizeObserver attached, the term stayed at the initial 80×60 from
-   *  `checkout({cols:80, rows:60})` and never converged to the algorithm's
-   *  intended ≈61×48 (4:3). The exact race is hard to pin without a live
-   *  repro, but the failure shape is consistent with one of:
-   *   1. `screen.offsetWidth` was 0 when the immediate resync ran, so
-   *      `tileNativeDimsFromXterm` returned null and the resync bailed.
-   *      The ResizeObserver should fire when the screen later lays out
-   *      cells, but in some browsers a from-0 transition doesn't trigger
-   *      a callback if the consumer was bumped down briefly between
-   *      observe() and layout-commit.
-   *   2. `tile.checkout.isTopOfStack()` was momentarily false (e.g. a
-   *      quit-confirm preview claimed the checkout for a few frames) at
-   *      the moment the observer fired. Resync bails. After release the
-   *      tile is restored, but no further size change triggers the
-   *      observer — the screen is already at the bumped consumer's dims.
-   *  Chaining rAF resyncs until convergence sidesteps both: each tick we
-   *  re-attempt; if the term has actually reached its native dims (and
-   *  `targetCols/Rows` agree), we stop. Otherwise schedule another rAF.
-   *  Budget caps at 30 ticks (~500 ms) so a permanently-bumped tile
-   *  doesn't spin forever. */
-  function scheduleResyncRetry(tile: InternalTile, budget: number = 30): void {
-    if (tile.checkout === null || tile.xtermRoot === null) return;
-    // Defensive: if the tile is bumped down (another consumer holds the
-    // live xterm), abort. `onRestoredToTop` will re-trigger the chain
-    // when the consumer comes back to top.
-    if (!tile.checkout.isTopOfStack()) return;
-    const term = tile.checkout.term;
-    const native = tileNativeDimsFromXterm(term, tile.xtermRoot);
-    if (native !== null) {
-      const termAtNative = term.cols === native.cols && term.rows === native.rows;
-      const targetAtNative = tile.targetCols === native.cols && tile.targetRows === native.rows;
-      if (termAtNative && targetAtNative) {
-        // Converged — make sure the CSS scale reflects the final natural
-        // dims, then stop retrying.
-        reapplyTileScaleFromPreview(tile);
-        return;
-      }
-      // Not converged yet — apply the resize and re-scale. The next
-      // iteration verifies the term actually reached the new dims.
-      tile.targetCols = native.cols;
-      tile.targetRows = native.rows;
-      tile.checkout.resize(native.cols, native.rows);
-      reapplyTileScaleFromPreview(tile);
-    }
-    if (budget > 0) {
-      requestAnimationFrame(() => { scheduleResyncRetry(tile, budget - 1); });
-    }
-  }
-
-  function tileNativeDimsFromXterm(term: XTerm, xtermRoot: HTMLElement): { cols: number; rows: number } | null {
-    const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
-    if (screen === null) return null;
-    if (term.cols <= 0 || term.rows <= 0) return null;
-    const cellW = screen.offsetWidth / term.cols;
-    const cellH = screen.offsetHeight / term.rows;
-    if (!Number.isFinite(cellW) || !Number.isFinite(cellH) || cellW <= 0 || cellH <= 0) return null;
-    return tileNativeGridFromCellMetrics(cellW, cellH);
-  }
-
-  /** HS-7603: re-derive the tile's native cols × rows from the latest
-   *  `.xterm-screen` cell metrics and, if they differ from the term's current
-   *  shape, resize the term + send a `'resize'` message to the server PTY.
-   *  Idempotent — safe to call from rAF, the `.xterm-screen` ResizeObserver,
-   *  and the history-frame handler without redundant resizes.
-   *
-   *  Skip-condition gates on BOTH the term's current `cols/rows` AND
-   *  `tile.targetCols/Rows` (the last value we sent the server). `term.cols`
-   *  on its own can lag the server: `replayHistoryToTerm` resizes the term
-   *  down to the history frame's geometry (typically the drawer's narrower
-   *  shape) and we need to push it back to native afterwards even though
-   *  `tile.targetCols/Rows` is already at native from an earlier rAF pass.
-   *  `tile.targetCols/Rows` on its own can lag the term: after a successful
-   *  resize the term IS at native but skipping the server send would leave
-   *  the PTY at whatever size another subscriber set it to. Both conditions
-   *  must be satisfied to skip. */
-  function resyncTilePtyFromCellMetrics(tile: InternalTile): void {
-    // HS-8048 — gated on the checkout being top-of-stack. When another
-    // consumer (dedicated, quit-confirm) holds the live xterm, the tile's
-    // `xtermRoot` has the placeholder div and `tileNativeDimsFromXterm`
-    // would compute against a non-existent `.xterm-screen` (returning
-    // null below). Defensive bail when not top so we don't accidentally
-    // resize the live xterm out from under the active consumer.
-    if (tile.checkout === null || tile.xtermRoot === null) return;
-    if (!tile.checkout.isTopOfStack()) return;
-    const term = tile.checkout.term;
-    const native = tileNativeDimsFromXterm(term, tile.xtermRoot);
-    if (native === null) return;
-    const termAlreadyNative = term.cols === native.cols && term.rows === native.rows;
-    const targetAlreadyNative = tile.targetCols === native.cols && tile.targetRows === native.rows;
-    if (termAlreadyNative && targetAlreadyNative) return;
-    tile.targetCols = native.cols;
-    tile.targetRows = native.rows;
-    // HS-8048 — `handle.resize` calls `term.resize` AND sends the WS
-    // resize frame AND updates the entry's `lastApplied` bookkeeping in
-    // one call. Pre-fix the local `term.resize` + `ws.send` were two
-    // separate operations against tile-owned objects.
-    tile.checkout.resize(native.cols, native.rows);
   }
 
   // --- Tile sizing ---
@@ -1268,15 +1225,43 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
    *  felt unintuitive. Same-row / same-column is determined by positive
    *  bounding-rect overlap on the perpendicular axis. */
   function findNextTileInDirection(from: InternalTile, direction: GridNavDirection): InternalTile | null {
+    // HS-8028 follow-up #2 — the `from` tile's grid position is what we
+    // want to navigate FROM, not its centered/dedicated mount position.
+    // When a tile is centered (single-click), its `tile.root` is at
+    // `position: absolute` floating in the middle of the viewport (a
+    // big rect spanning ~50–80 % of the screen). Comparing other tiles'
+    // grid-position rects against THAT rect blows up the same-row /
+    // same-column overlap test — every grid tile fails the "strict
+    // half-plane" gate because the centered overlay's edges sit far
+    // outside any single grid cell. Result: every Shift+Cmd+Arrow
+    // chord falls through to no-op, matching the user's "doesn't seem
+    // to work at all anymore" report (5/1/2026).
+    //
+    // Fix: when a slot placeholder exists (centered mode), use its
+    // bounding rect as the `from` reference — the placeholder is a
+    // ghost div the size of the original grid cell sitting in the
+    // tile's natural grid position. For dedicated mode, the tile's own
+    // root stays in the grid (the dedicated view is a separate
+    // overlay that doesn't reparent the tile root), so its
+    // getBoundingClientRect() still reflects the grid position.
+    const fromRect = from.slotPlaceholder !== null
+      ? from.slotPlaceholder.getBoundingClientRect()
+      : from.root.getBoundingClientRect();
     const eligible: InternalTile[] = [];
     const rects: NavRect[] = [];
     for (const candidate of tiles.values()) {
       if (candidate === from) continue;
       if (candidate.state !== 'alive') continue;
       eligible.push(candidate);
-      rects.push(candidate.root.getBoundingClientRect());
+      // Mirror the same trick for candidates: a candidate that itself
+      // is centered (rare — only one tile can be centered at a time,
+      // but defensive) should be navigated to via its grid position.
+      const candRect = candidate.slotPlaceholder !== null
+        ? candidate.slotPlaceholder.getBoundingClientRect()
+        : candidate.root.getBoundingClientRect();
+      rects.push(candRect);
     }
-    const idx = pickGridNeighbourIndex(from.root.getBoundingClientRect(), rects, direction);
+    const idx = pickGridNeighbourIndex(fromRect, rects, direction);
     return idx === -1 ? null : eligible[idx];
   }
 
@@ -1519,6 +1504,8 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       tile.checkout = null;
     }
     tile.xtermRoot = null;
+    tile.cachedCellW = null;
+    tile.cachedCellH = null;
   }
 
   function teardownAll(): void {
