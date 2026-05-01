@@ -2,7 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
-import { getTauriInvoke } from './tauriIntegration.js';
+import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 
 /** Rewrite <img> src attributes that point to GitHub domains to go through
  *  the /api/plugins/github-issues/image-proxy endpoint. Includes the project
@@ -85,7 +85,11 @@ async function downloadImage(src: string, name: string) {
     a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, TIMERS.IMAGE_DOWNLOAD_CLEANUP_MS);
   } catch {
-    // Last resort: navigate directly
-    window.open(src, '_blank');
+    // HS-8094 — last-resort fallback. CLAUDE.md bans bare `window.open`
+    // in client code (silently no-ops in Tauri WKWebView while passing
+    // in Playwright/Chromium); route through `openExternalUrl` which
+    // tries `invoke('open_url', ...)` first and only falls back to
+    // `window.open` when not running under Tauri.
+    openExternalUrl(src);
   }
 }

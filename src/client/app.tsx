@@ -16,6 +16,7 @@ import { toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
+import { parseJsonArrayOr } from './json.js';
 import { initLongTaskObserver } from './longTaskObserver.js';
 import { bindOpenFolder } from './openFolder.js';
 import { startLongPoll } from './poll.js';
@@ -627,11 +628,12 @@ function bindDetailNotes() {
     //   2. start it empty (no default text)
     const beforeNotes = ticket.notes;
     type NoteEntry = { id: string; text: string; created_at: string };
-    let parsed: NoteEntry[] = [];
-    try {
-      const raw: unknown = JSON.parse(beforeNotes || '[]');
-      if (Array.isArray(raw)) parsed = raw as NoteEntry[];
-    } catch { /* legacy raw text — ignore */ }
+    // HS-8090 — `parseJsonArrayOr` collapses the try/catch + Array.isArray
+    // dance. Per-element shape stays this caller's responsibility, but
+    // the surrounding code only ever pushes new entries onto the array
+    // (never reads existing entries here) so element validation isn't
+    // needed at this point.
+    const parsed = parseJsonArrayOr(beforeNotes, []) as NoteEntry[];
     const newNoteId = `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const newNotes: NoteEntry[] = [...parsed, { id: newNoteId, text: '', created_at: new Date().toISOString() }];
     const newNotesJson = JSON.stringify(newNotes);

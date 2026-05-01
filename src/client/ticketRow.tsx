@@ -5,6 +5,7 @@ import { showTicketContextMenu } from './contextMenu.js';
 import { syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
+import { parseJsonArrayOr } from './json.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, shouldResetStatusOnUpNext, state, syncedTicketMap, VERIFIED_SVG } from './state.js';
 import {
@@ -20,14 +21,16 @@ import { recordTextChange, trackedDelete, trackedPatch, trackedRestore } from '.
 /** Check if a ticket has pending feedback (last note is a FEEDBACK NEEDED prefix). */
 export function hasPendingFeedback(ticket: Ticket): boolean {
   if (ticket.notes === '' || ticket.notes === '[]') return false;
-  try {
-    const notes = JSON.parse(ticket.notes) as { text: string }[];
-    if (notes.length > 0) {
-      const last = notes[notes.length - 1].text.trim();
-      return last.startsWith('FEEDBACK NEEDED:') || last.startsWith('IMMEDIATE FEEDBACK NEEDED:');
-    }
-  } catch { /* ignore */ }
-  return false;
+  // HS-8090 — `parseJsonArrayOr` consolidates the try/catch + Array.isArray
+  // dance. Per-element shape stays our responsibility: if a parsed entry
+  // doesn't have `.text`, the optional-chain below resolves to undefined
+  // and the function returns false (no crash).
+  const notes = parseJsonArrayOr(ticket.notes, []) as { text?: unknown }[];
+  if (notes.length === 0) return false;
+  const lastText = notes[notes.length - 1].text;
+  if (typeof lastText !== 'string') return false;
+  const trimmed = lastText.trim();
+  return trimmed.startsWith('FEEDBACK NEEDED:') || trimmed.startsWith('IMMEDIATE FEEDBACK NEEDED:');
 }
 
 /** Returns the indicator dot type: 'feedback' (purple, highest priority), 'unread' (blue), or null. */

@@ -2,6 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
+import { parseJsonArrayOr } from './json.js';
 import type { TerminalTabConfig } from './terminal.js';
 import { getProjectDefault } from './terminalAppearance.js';
 import { clampFontSize, DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, TERMINAL_FONTS } from './terminalFonts.js';
@@ -99,13 +100,14 @@ export async function loadAndRenderTerminalsSettings(): Promise<void> {
 
 function parseTerminals(raw: string | unknown[] | undefined): EditableTerminalConfig[] {
   if (raw === undefined || raw === '') return [];
-  let parsed: unknown[];
-  if (typeof raw === 'string') {
-    try { parsed = JSON.parse(raw) as unknown[]; } catch { return []; }
-  } else {
-    parsed = raw;
-  }
-  if (!Array.isArray(parsed) || parsed.length === 0) return [];
+  // HS-8090 — `parseJsonArrayOr` for the string path. The non-string
+  // path (`raw` is already an array — set when settings are populated
+  // from the live in-memory state) skips parsing and validates
+  // element-by-element below.
+  const parsed = typeof raw === 'string'
+    ? parseJsonArrayOr(raw, []) as unknown[]
+    : raw;
+  if (parsed.length === 0) return [];
   return parsed
     .map((item, index) => normalizeEntry(item, index))
     .filter((c): c is EditableTerminalConfig => c !== null);

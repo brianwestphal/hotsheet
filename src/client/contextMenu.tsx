@@ -5,6 +5,7 @@ import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_ST
 import { getPluginContextMenuItems } from './pluginUI.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS, syncedTicketMap, VERIFIED_SVG } from './state.js';
+import { openExternalUrl } from './tauriIntegration.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
 import { toggleReadState, trackedBatch, trackedDelete, trackedPatch } from './undo/actions.js';
 
@@ -135,7 +136,10 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
             const result = await api<{ ok: boolean; remoteId: string; remoteUrl: string | null }>(
               `/plugins/${b.id}/push-ticket/${ticket.id}`, { method: 'POST' },
             );
-            if (result.remoteUrl != null && result.remoteUrl !== '') window.open(result.remoteUrl, '_blank');
+            // HS-8094 — route through `openExternalUrl` so the link works
+            // under Tauri's WKWebView (where bare `window.open` silently
+            // no-ops while still passing Playwright/Chromium tests).
+            if (result.remoteUrl != null && result.remoteUrl !== '') openExternalUrl(result.remoteUrl);
             void loadTickets();
           } catch (e) {
             console.error('Failed to push ticket:', e);
