@@ -58,10 +58,11 @@ describe('openPermissionDialogShell — body slot (HS-8066)', () => {
     expect(document.getElementById('my-body')?.textContent).toBe('preview content');
   });
 
-  it('mounts pre-rendered bodyHtml when bodyElement is omitted', () => {
+  it('mounts pre-rendered bodyHtml when bodyElement is omitted', async () => {
+    const { raw } = await import('../jsx-runtime.js');
     openPermissionDialogShell({
       rootClassName: 'test-shell', ariaLabel: 'T', title: 't',
-      bodyHtml: '<pre class="my-preview">cmd output</pre>' as unknown as ReturnType<typeof String>,
+      bodyHtml: raw('<pre class="my-preview">cmd output</pre>'),
     });
     expect(document.querySelector('.my-preview')).not.toBeNull();
     expect(document.querySelector('.my-preview')?.textContent).toBe('cmd output');

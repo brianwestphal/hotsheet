@@ -136,7 +136,7 @@ describe('dispatchPendingPrompts serialization (HS-8047 follow-up)', () => {
     // signature for that key.
     const overlay = document.querySelector<HTMLElement>('.terminal-prompt-overlay');
     expect(overlay).not.toBeNull();
-    overlay?.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-close')?.click();
+    overlay?.querySelector<HTMLButtonElement>('.dialog-shell-close')?.click();
 
     // The active overlay's DOM element is gone and `activeOverlayKey` is
     // cleared — but the user-visible state for sec-b is unchanged on the
@@ -208,7 +208,7 @@ describe('dispatchPendingPrompts serialization (HS-8047 follow-up)', () => {
     expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
 
     // User dismisses.
-    document.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-close')?.click();
+    document.querySelector<HTMLButtonElement>('.dialog-shell-close')?.click();
     expect(_activeOverlayKeyForTesting()).toBeNull();
 
     // Server now reports a NEW prompt signature on the same terminal —
@@ -315,7 +315,7 @@ describe('Minimize / No-response-needed dispatcher state (HS-8067)', () => {
 
     const overlay = document.querySelector<HTMLElement>('.terminal-prompt-overlay');
     expect(overlay).not.toBeNull();
-    const link = overlay!.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-minimize-link');
+    const link = overlay!.querySelector<HTMLAnchorElement>('.dialog-shell-minimize-link');
     expect(link).not.toBeNull();
     link!.click();
 
@@ -339,7 +339,7 @@ describe('Minimize / No-response-needed dispatcher state (HS-8067)', () => {
       { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
     ]);
     _dispatchPendingPromptsForTesting(state);
-    document.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-minimize-link')!.click();
+    document.querySelector<HTMLAnchorElement>('.dialog-shell-minimize-link')!.click();
     expect(document.querySelector('.terminal-prompt-overlay')).toBeNull();
     expect(_minimizedTerminalPromptsForTesting().size).toBe(1);
 
@@ -361,7 +361,7 @@ describe('Minimize / No-response-needed dispatcher state (HS-8067)', () => {
     ]);
     _dispatchPendingPromptsForTesting(state);
     const overlay = document.querySelector<HTMLElement>('.terminal-prompt-overlay');
-    const link = overlay!.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-dismiss-link');
+    const link = overlay!.querySelector<HTMLAnchorElement>('.dialog-shell-dismiss-link');
     expect(link).not.toBeNull();
     link!.click();
 
@@ -384,7 +384,7 @@ describe('Minimize / No-response-needed dispatcher state (HS-8067)', () => {
       { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
     ]);
     _dispatchPendingPromptsForTesting(state);
-    document.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-dismiss-link')!.click();
+    document.querySelector<HTMLAnchorElement>('.dialog-shell-dismiss-link')!.click();
     expect(_dismissedTerminalPromptKeysForTesting().has('sec-a::tA')).toBe(true);
 
     // Server clears the pending entry — empty bell-state map.
@@ -401,7 +401,7 @@ describe('Minimize / No-response-needed dispatcher state (HS-8067)', () => {
       { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
     ]);
     _dispatchPendingPromptsForTesting(state);
-    document.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-minimize-link')!.click();
+    document.querySelector<HTMLAnchorElement>('.dialog-shell-minimize-link')!.click();
     expect(_minimizedTerminalPromptsForTesting().size).toBe(1);
 
     _dispatchPendingPromptsForTesting(new Map());

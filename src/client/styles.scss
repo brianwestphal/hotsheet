@@ -3771,25 +3771,11 @@ body.terminal-dashboard-active {
   flex: 1;
 }
 
-.permission-popup-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.permission-popup-tool {
-  font-weight: 600;
-  white-space: nowrap;
-  color: var(--text-primary);
-}
-
-.permission-popup-desc {
-  color: var(--text-muted);
-  word-break: break-word;
-  min-width: 0;
-  flex: 1;
-}
+// HS-8069 — `.permission-popup-header` / `.permission-popup-tool` /
+// `.permission-popup-desc` / `.permission-popup-links` /
+// `-links-sep` / `-minimize-link` / `-dismiss-link` chrome blocks
+// removed in the consumer migration to `permissionDialogShell`. Their
+// `.dialog-shell-*` replacements live below.
 
 .permission-popup-preview {
   margin: 0;
@@ -3900,35 +3886,6 @@ body.terminal-dashboard-active {
   text-align: center;
   border-top: 1px solid var(--border);
   background: var(--bg-secondary, rgba(0, 0, 0, 0.04));
-}
-
-// HS-6637 / HS-7266: bottom-left text links. "Minimize" drops the popup into
-// the owning tab's pulsating dot for later; "No response needed" dismisses
-// outright (user will respond via Claude directly).
-.permission-popup-links {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-.permission-popup-links-sep {
-  color: var(--text-muted);
-  font-size: 11px;
-  opacity: 0.6;
-}
-
-.permission-popup-minimize-link,
-.permission-popup-dismiss-link {
-  align-self: flex-start;
-  font-size: 11px;
-  color: var(--text-muted);
-  text-decoration: none;
-
-  &:hover {
-    text-decoration: underline;
-    color: var(--text-primary);
-  }
 }
 
 .permission-popup-actions {
@@ -9041,22 +8998,11 @@ label.detail-details-label {
   color: var(--text-primary);
 }
 
-.terminal-prompt-overlay-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
-}
-
-// HS-8068 — source-name chip mirroring `.permission-popup-tool`'s
-// treatment so §47's permission popup and §52's terminal-prompt overlay
-// read with the same header rhythm. `Claude` for Claude-Ink numbered
-// prompts, `Shell` for shell yes/no, hidden for generic fallbacks.
-.terminal-prompt-overlay-tool {
-  font-weight: 600;
-  white-space: nowrap;
-  color: var(--text-primary);
-}
+// HS-8069 — `.terminal-prompt-overlay-header` / `-tool` / `-title` /
+// `-close` / `-links` / `-links-sep` / `-minimize-link` / `-dismiss-link`
+// chrome blocks removed in the consumer migration to
+// `permissionDialogShell`. Their `.dialog-shell-*` replacements live
+// below.
 
 // HS-8066 — shared `permissionDialogShell.tsx` chrome. Both §47 (permission
 // popup) and §52 (terminal-prompt overlay) consumers mount their inner
@@ -9140,67 +9086,6 @@ label.detail-details-label {
 
   &:hover {
     text-decoration: underline;
-    color: var(--text-primary);
-  }
-}
-
-// HS-8067 — Minimize / "No response needed" link row in the overlay
-// footer. Mirrors `.permission-popup-links` from §47 so both overlays
-// read with the same footer rhythm. Only rendered when at least one of
-// `onMinimize` / `onNoResponseNeeded` callbacks is provided by the
-// caller (bare overlays without dispatcher integration hide the row).
-.terminal-prompt-overlay-links {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-.terminal-prompt-overlay-links-sep {
-  color: var(--text-muted);
-  font-size: 11px;
-  opacity: 0.6;
-}
-
-.terminal-prompt-overlay-minimize-link,
-.terminal-prompt-overlay-dismiss-link {
-  align-self: flex-start;
-  font-size: 11px;
-  color: var(--text-muted);
-  text-decoration: none;
-
-  &:hover {
-    text-decoration: underline;
-    color: var(--text-primary);
-  }
-}
-
-.terminal-prompt-overlay-title {
-  // HS-8068 — title is no longer the boldest text in the row; the
-  // source-name chip carries that weight. Drop bold + ease the colour
-  // to match the description-line treatment in `.permission-popup-desc`.
-  color: var(--text-muted);
-  word-break: break-word;
-  min-width: 0;
-  flex: 1;
-}
-
-.terminal-prompt-overlay-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  color: var(--text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-
-  &:hover {
-    background: var(--bg-hover);
     color: var(--text-primary);
   }
 }

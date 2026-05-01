@@ -5,6 +5,7 @@ import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markP
 import { toElement } from './dom.js';
 import { renderEditDiffPreview } from './editDiffPreview.js';
 import { buildAlwaysAllowAffordance } from './permissionAllowListUI.js';
+import { openPermissionDialogShell } from './permissionDialogShell.js';
 import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
 import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
@@ -185,9 +186,9 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   }
   if (!isChannelBusy()) setChannelBusy(true);
 
-  // Find the tab element to position near and highlight. The active tab has
-  // the same `.project-tab[data-secret=...]` selector — the popup renders
-  // the same way regardless of which tab is active (HS-6536).
+  // Find the tab element to highlight. Anchor positioning happens inside
+  // the shared shell (HS-8066 / HS-8069); we still toggle the tab's
+  // `.permission-highlight` class for the existing visual cue.
   const tab = document.querySelector<HTMLElement>(`.project-tab[data-secret="${secret}"]`);
   if (tab) tab.classList.add('permission-highlight');
 
@@ -208,58 +209,42 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     ? formatInputPreview(perm.tool_name, perm.input_preview)
     : '';
   const hasStringPreview = previewText !== '';
-  const popup = toElement(
-    <div className="permission-popup">
-      <div className="permission-popup-body">
-        <div className="permission-popup-header">
-          <span className="permission-popup-tool">{perm.tool_name}</span>
-          <span className="permission-popup-desc">{perm.description}</span>
-        </div>
-        {editDiff !== null
-          ? <div className="permission-popup-diff-slot"></div>
-          : (hasStringPreview ? <pre className="permission-popup-preview">{previewText}</pre> : '')}
-        <div className="permission-popup-links">
-          <a className="permission-popup-minimize-link" href="#">Minimize</a>
-          <span className="permission-popup-links-sep">·</span>
-          <a className="permission-popup-dismiss-link" href="#">No response needed</a>
-        </div>
-      </div>
-      <div className="permission-popup-actions">
-        <button className="permission-popup-allow" title="Allow">{raw(checkIcon)}</button>
-        <button className="permission-popup-deny" title="Deny">{raw(xIcon)}</button>
-      </div>
+
+  // HS-8069 — body slot: either the diff DOM (HS-7951) OR the flat-JSON
+  // pre-tag preview, OR nothing (when neither is available). Build the
+  // element first so we can pass it to the shell as a slot.
+  let bodyElement: HTMLElement | undefined;
+  if (editDiff !== null) {
+    bodyElement = renderEditDiffPreview(editDiff);
+  } else if (hasStringPreview) {
+    bodyElement = toElement(<pre className="permission-popup-preview">{previewText}</pre>);
+  }
+
+  // HS-8069 — actions slot: Allow / Deny icon buttons.
+  const actions = toElement(
+    <div className="permission-popup-actions">
+      <button className="permission-popup-allow" title="Allow">{raw(checkIcon)}</button>
+      <button className="permission-popup-deny" title="Deny">{raw(xIcon)}</button>
     </div>
   );
 
-  // Mount the diff preview into its slot (after the popup has been built so
-  // the slot exists). renderEditDiffPreview returns a fully-built DOM tree
-  // that we drop into place.
-  if (editDiff !== null) {
-    const slot = popup.querySelector<HTMLElement>('.permission-popup-diff-slot');
-    if (slot !== null) slot.replaceWith(renderEditDiffPreview(editDiff));
-  }
-
-  // HS-7953 — "Always allow this" affordance below the links row. Skipped
-  // for non-allow-listable tools (Edit / Write / unknown) and when the
+  // HS-7953 / HS-8069 — "Always allow this" affordance. Skipped for
+  // non-allow-listable tools (Edit / Write / unknown) and when the
   // primary-field value is empty. Confirming a new rule writes to
   // settings.json then immediately invokes the allow-current-request path.
   const primaryValue = perm.input_preview !== undefined
     ? extractPrimaryValue(perm.tool_name, perm.input_preview)
     : null;
+  let alwaysAffordance: HTMLElement | null = null;
   if (primaryValue !== null) {
-    const affordance = buildAlwaysAllowAffordance({
+    alwaysAffordance = buildAlwaysAllowAffordance({
       toolName: perm.tool_name,
       primaryValue,
       onCommit: () => { respondToPermission('allow'); },
     });
-    if (affordance !== null) {
-      const linksRow = popup.querySelector('.permission-popup-links');
-      linksRow?.parentElement?.insertBefore(affordance, linksRow.nextSibling);
-    }
   }
 
   function clearPopupOnly() {
-    popup.remove();
     activePopupRequestId = null;
     if (tab) tab.classList.remove('permission-highlight');
   }
@@ -305,41 +290,37 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     const rec = minimizedRequests.get(perm.request_id);
     if (rec) { clearTimeout(rec.timeoutId); minimizedRequests.delete(perm.request_id); syncMinimizedDots(); }
     clearPopupOnly();
+    handle.tearDownDom();
   }
 
-  popup.querySelector('.permission-popup-allow')!.addEventListener('click', (e) => {
+  // HS-8069 — chrome (header / anchor / footer-link row / close X) is now
+  // owned by `permissionDialogShell.tsx`. Body / actions / always-affordance
+  // slots carry the consumer-specific content. The shell's close button maps
+  // to "No response needed" semantics (the existing §47 popup didn't have a
+  // close X — adding the shell adds one, and the cleanest mapping is "user
+  // dismissed without responding").
+  const handle = openPermissionDialogShell({
+    rootClassName: 'permission-popup',
+    ariaLabel: `Permission request: ${perm.tool_name} — ${perm.description}`,
+    toolChip: perm.tool_name,
+    title: perm.description,
+    bodyElement,
+    actions,
+    alwaysAffordance,
+    onClose: () => { cleanupAndDismiss(); },
+    onMinimize: () => { cleanupAndMinimize(); },
+    onNoResponseNeeded: () => { cleanupAndDismiss(); },
+    projectSecret: secret,
+  });
+
+  handle.overlay.querySelector('.permission-popup-allow')!.addEventListener('click', (e) => {
     e.stopPropagation();
     respondToPermission('allow');
   });
-
-  popup.querySelector('.permission-popup-deny')!.addEventListener('click', (e) => {
+  handle.overlay.querySelector('.permission-popup-deny')!.addEventListener('click', (e) => {
     e.stopPropagation();
     respondToPermission('deny');
   });
-
-  popup.querySelector('.permission-popup-minimize-link')!.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    cleanupAndMinimize();
-  });
-
-  popup.querySelector('.permission-popup-dismiss-link')!.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    cleanupAndDismiss();
-  });
-
-  document.body.appendChild(popup);
-
-  // Position below the tab (or at top-center if no tab found). After layout
-  // the full popup width is known — clamp horizontally so it never overflows.
-  if (tab) {
-    const tabRect = tab.getBoundingClientRect();
-    const popupRect = popup.getBoundingClientRect();
-    const maxLeft = Math.max(8, window.innerWidth - popupRect.width - 8);
-    popup.style.top = `${tabRect.bottom + 4}px`;
-    popup.style.left = `${Math.min(Math.max(8, tabRect.left), maxLeft)}px`;
-  }
 
   // Notify via Tauri attention.
   if (state.settings.notify_permission !== 'none') {
@@ -347,5 +328,5 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   }
 
   // HS-7266: no outside-click handler. The popup is non-modal and only
-  // closes via Allow / Deny / Minimize / No-response-needed.
+  // closes via Allow / Deny / Minimize / No-response-needed / X.
 }

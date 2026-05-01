@@ -57,7 +57,7 @@ describe('terminal-prompt overlay context strip (HS-8037)', () => {
     const overlay = document.querySelector('.terminal-prompt-overlay');
     expect(overlay).not.toBeNull();
 
-    const title = overlay?.querySelector('.terminal-prompt-overlay-title')?.textContent;
+    const title = overlay?.querySelector('.dialog-shell-title')?.textContent;
     expect(title).toBe('WARNING: Loading development channels');
 
     const context = overlay?.querySelector('.terminal-prompt-overlay-context')?.textContent ?? '';
@@ -133,7 +133,7 @@ describe('terminal-prompt overlay context strip (HS-8037)', () => {
     });
 
     const overlay = document.querySelector('.terminal-prompt-overlay');
-    expect(overlay?.querySelector('.terminal-prompt-overlay-title')?.textContent).toBe('Do you want to overwrite authMfa.ts?');
+    expect(overlay?.querySelector('.dialog-shell-title')?.textContent).toBe('Do you want to overwrite authMfa.ts?');
 
     const context = overlay?.querySelector('.terminal-prompt-overlay-context')?.textContent ?? '';
     // Diff lines preserved.
@@ -161,7 +161,7 @@ describe('terminal-prompt overlay tool-name chip (HS-8068)', () => {
       onClose: () => { /* no-op */ },
     });
     const overlay = document.querySelector('.terminal-prompt-overlay');
-    const chip = overlay?.querySelector('.terminal-prompt-overlay-tool');
+    const chip = overlay?.querySelector('.dialog-shell-tool');
     expect(chip).not.toBeNull();
     expect(chip?.textContent).toBe('Claude');
   });
@@ -182,8 +182,11 @@ describe('terminal-prompt overlay tool-name chip (HS-8068)', () => {
       onSend: () => true,
       onClose: () => { /* no-op */ },
     });
-    const overlay = document.querySelector('.terminal-prompt-overlay-yesno');
-    const chip = overlay?.querySelector('.terminal-prompt-overlay-tool');
+    // HS-8069 — `.terminal-prompt-overlay-yesno` moved to the inner
+    // `.terminal-prompt-overlay-actions` div post-shell-migration; the
+    // chip lives in the outer overlay's shell-rendered header.
+    const overlay = document.querySelector('.terminal-prompt-overlay');
+    const chip = overlay?.querySelector('.dialog-shell-tool');
     expect(chip).not.toBeNull();
     expect(chip?.textContent).toBe('Shell');
   });
@@ -203,8 +206,10 @@ describe('terminal-prompt overlay tool-name chip (HS-8068)', () => {
       onSend: () => true,
       onClose: () => { /* no-op */ },
     });
-    const overlay = document.querySelector('.terminal-prompt-overlay-generic');
-    expect(overlay?.querySelector('.terminal-prompt-overlay-tool')).toBeNull();
+    // HS-8069 — outer overlay is `.terminal-prompt-overlay`; the
+    // generic-specific class moved to the inner actions container.
+    const overlay = document.querySelector('.terminal-prompt-overlay');
+    expect(overlay?.querySelector('.dialog-shell-tool')).toBeNull();
   });
 
   it('falls back to the raw parserId for unknown parser registrations (defensive)', () => {
@@ -247,10 +252,10 @@ describe('terminal-prompt overlay Minimize / No-response-needed footer (HS-8067)
       onNoResponseNeeded: () => { /* no-op */ },
     });
     const overlay = document.querySelector('.terminal-prompt-overlay');
-    expect(overlay?.querySelector('.terminal-prompt-overlay-minimize-link')).not.toBeNull();
-    expect(overlay?.querySelector('.terminal-prompt-overlay-dismiss-link')).not.toBeNull();
+    expect(overlay?.querySelector('.dialog-shell-minimize-link')).not.toBeNull();
+    expect(overlay?.querySelector('.dialog-shell-dismiss-link')).not.toBeNull();
     // Separator only shows when BOTH links are present.
-    expect(overlay?.querySelector('.terminal-prompt-overlay-links-sep')).not.toBeNull();
+    expect(overlay?.querySelector('.dialog-shell-links-sep')).not.toBeNull();
   });
 
   it('omits the separator when only one of the two links is rendered', () => {
@@ -261,9 +266,9 @@ describe('terminal-prompt overlay Minimize / No-response-needed footer (HS-8067)
       onMinimize: () => { /* no-op */ },
     });
     const overlay = document.querySelector('.terminal-prompt-overlay');
-    expect(overlay?.querySelector('.terminal-prompt-overlay-minimize-link')).not.toBeNull();
-    expect(overlay?.querySelector('.terminal-prompt-overlay-dismiss-link')).toBeNull();
-    expect(overlay?.querySelector('.terminal-prompt-overlay-links-sep')).toBeNull();
+    expect(overlay?.querySelector('.dialog-shell-minimize-link')).not.toBeNull();
+    expect(overlay?.querySelector('.dialog-shell-dismiss-link')).toBeNull();
+    expect(overlay?.querySelector('.dialog-shell-links-sep')).toBeNull();
   });
 
   it('Minimize link click fires onMinimize and tears down DOM, NOT onClose', () => {
@@ -275,7 +280,7 @@ describe('terminal-prompt overlay Minimize / No-response-needed footer (HS-8067)
       onClose: () => { onCloseCalls += 1; },
       onMinimize: () => { onMinimizeCalls += 1; },
     });
-    const link = document.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-minimize-link');
+    const link = document.querySelector<HTMLAnchorElement>('.dialog-shell-minimize-link');
     expect(link).not.toBeNull();
     link?.click();
     expect(onMinimizeCalls).toBe(1);
@@ -294,7 +299,7 @@ describe('terminal-prompt overlay Minimize / No-response-needed footer (HS-8067)
       onClose: () => { onCloseCalls += 1; },
       onNoResponseNeeded: () => { onDismissCalls += 1; },
     });
-    const link = document.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-dismiss-link');
+    const link = document.querySelector<HTMLAnchorElement>('.dialog-shell-dismiss-link');
     expect(link).not.toBeNull();
     link?.click();
     expect(onDismissCalls).toBe(1);

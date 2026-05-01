@@ -128,7 +128,7 @@ test.describe('Cross-project terminal-prompt overlay (HS-8035)', () => {
     await expect(overlay).toBeVisible({ timeout: 10000 });
 
     // Title bar shows the question (truncated to one line in the title row).
-    await expect(overlay.locator('.terminal-prompt-overlay-title')).toContainText('Edit /tmp/foo.ts?');
+    await expect(overlay.locator('.dialog-shell-title')).toContainText('Edit /tmp/foo.ts?');
 
     // The three numbered choices render as buttons.
     const choices = overlay.locator('.terminal-prompt-overlay-choice');
