@@ -16,6 +16,7 @@ import { toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
+import { initLongTaskObserver } from './longTaskObserver.js';
 import { bindOpenFolder } from './openFolder.js';
 import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
@@ -151,6 +152,13 @@ async function reloadAppState() {
 
 async function init() {
   try {
+  // HS-8054 — start the longtask observer as early as possible so any
+  // hangs during init itself get logged. Idempotent + inert when the
+  // browser doesn't support `longtask` entries. Console output prefix:
+  // `[hotsheet longtask]`. The user can grab the in-memory buffer via
+  // `window.__hotsheetGetLongTasks()` from DevTools.
+  initLongTaskObserver();
+
   // Determine the active project before any API calls
   await initProjectTabs();
   setProjectReloadCallback(async () => {

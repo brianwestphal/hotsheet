@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { toElement } from './dom.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_FOLDER, ICON_X } from './icons.js';
+import { recordInteraction } from './longTaskObserver.js';
 import { getMinimizedPermissionSecrets, reopenMinimizedForSecret } from './permissionOverlay.js';
 import { computeProjectTabsFingerprint } from './projectTabsFingerprint.js';
 import type { ProjectInfo } from './state.js';
@@ -72,6 +73,10 @@ export async function initProjectTabs(): Promise<void> {
 /** Switch to a different project. */
 export async function switchProject(project: ProjectInfo): Promise<void> {
   if (getActiveProject()?.secret === project.secret) return;
+  // HS-8054 — record the interaction so any subsequent main-thread
+  // longtask observation includes the project switch in its context
+  // line.
+  recordInteraction(`project-switch:${project.name}`);
   setActiveProject(project);
   renderTabs();
   void api('/ensure-skills', { method: 'POST' });

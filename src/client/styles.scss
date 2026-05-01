@@ -807,6 +807,19 @@ input, select, textarea {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  // HS-8055 follow-up — the surrounding `.quit-confirm-master-detail`
+  // grid track is `1fr` with implicit `min-width: auto`. Without an
+  // explicit `min-width: 0` here, an oversized child (xterm's
+  // absolutely-positioned `.xterm-screen` whose width is `cols *
+  // cellWidth`) would expand the grid track to fit its min-content,
+  // pushing the dialog and the preview pane wider — `proposeDimensions()`
+  // then returned a larger cols on the next ResizeObserver tick and
+  // we'd loop the previous fix's gate (cols never settled). `min-width:
+  // 0` + `overflow: hidden` cap the track at the 1fr allocation so the
+  // pane width is the source of truth, and `proposeDimensions` returns
+  // the same cols every tick.
+  min-width: 0;
+  overflow: hidden;
   // Padding so the preview pane breathes from the dialog edges.
   padding: 8px 12px 12px;
 }
@@ -836,6 +849,11 @@ input, select, textarea {
   // the ResizeObserver feedback loop the HS-8055 fix in `quitConfirm.tsx`
   // already breaks at the JS layer. Belt-and-braces.
   overflow: hidden;
+  // HS-8055 follow-up — same min-width: 0 belt-and-braces as the parent
+  // `.quit-confirm-detail`. With `flex: 1` and a wide-content child, the
+  // implicit `min-width: auto` would otherwise let `.xterm-screen` push
+  // the pane wider than its flex-basis allocation.
+  min-width: 0;
   min-height: 220px;
 
   &[data-state="empty"],

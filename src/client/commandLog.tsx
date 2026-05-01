@@ -4,6 +4,7 @@ import { activeFilterTypes, ALL_FILTER_TYPES, dismissFilterDropdown, showFilterD
 import { maybeFireShellStreamFirstUseToast, SHELL_PARTIAL_OUTPUT_EVENT,type ShellPartialOutputEvent } from './commandSidebar.js';
 import { toElement } from './dom.js';
 import { resolveDrawerTabForTauri } from './drawerTabGating.js';
+import { recordInteraction } from './longTaskObserver.js';
 import { state } from './state.js';
 import { stripAnsi, tailLines } from './stripAnsi.js';
 import { getTauriInvoke } from './tauriIntegration.js';
@@ -602,6 +603,8 @@ function updateToggleIcon(isOpen: boolean) {
  *  tab id is `commands-log` or `terminal:<terminalId>`. */
 export function switchDrawerTab(tab: string) {
   tab = resolveDrawerTabForTauri(tab, getTauriInvoke() !== null);
+  // HS-8054 — context for the longtask observer.
+  recordInteraction(`drawer-tab:${tab}`);
   const changed = tab !== activeTab;
   activeTab = tab;
   // HS-6311 — clicking a drawer tab while in grid mode exits grid mode first

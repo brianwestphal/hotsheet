@@ -18,6 +18,7 @@ import {
   onTerminalListUpdated,
 } from './drawerTerminalGrid.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_PENCIL, ICON_X } from './icons.js';
+import { recordInteraction } from './longTaskObserver.js';
 import { getActiveProject, state } from './state.js';
 import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 import {
@@ -432,6 +433,10 @@ function ensureBellSubscription(): void {
 export function activateTerminal(id: string): void {
   const inst = instances.get(id);
   if (!inst) return;
+  // HS-8054 — context for the longtask observer. The label includes
+  // `mount` vs `reuse` so the log differentiates first-mount cost
+  // (heavy: xterm + addons + WS) from steady-state activation (cheap).
+  recordInteraction(`activate-terminal:${id}:${inst.mounted ? 'reuse' : 'mount'}`);
   // HS-6311 — clicking a terminal tab while the drawer is in grid mode exits
   // grid mode first (mirrors §25.3 rule 3: tab click auto-exits the dashboard
   // and activates that tab's normal view). Delegate to the grid module so

@@ -6,6 +6,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
 import { getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog } from './feedbackDialog.js';
+import { recordInteraction } from './longTaskObserver.js';
 import { type FeedbackDraft, parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
 import { syncDetailReaderButton } from './readerOverlay.js';
@@ -140,6 +141,8 @@ export function updateDetailStatus(value: string) {
 // --- Detail panel ---
 
 export function openDetail(id: number) {
+  // HS-8054 — context for the longtask observer.
+  recordInteraction(`open-detail:${id}`);
   suppressAutoRead = false; // Reset when switching tickets
   state.activeTicketId = id;
   void loadDetail(id);
@@ -147,6 +150,8 @@ export function openDetail(id: number) {
 
 /** Open detail and, after notes render, scroll to and focus a specific note. */
 export function openDetailAndFocusNote(id: number, noteId: string) {
+  // HS-8054 — context for the longtask observer.
+  recordInteraction(`open-detail:${id}:focus-note`);
   setPendingFocusNoteId(noteId);
   state.activeTicketId = id;
   void loadDetail(id);
