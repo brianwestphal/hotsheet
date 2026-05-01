@@ -16,7 +16,13 @@ import { closeAllDatabases } from './db/connection.js';
 import { removeInstanceFile } from './instance.js';
 import { releaseAllLocks } from './lock.js';
 
-export type ShutdownReason = 'http' | 'SIGINT' | 'SIGTERM' | 'test' | string;
+/** HS-8093 — was `'http' | 'SIGINT' | 'SIGTERM' | 'test' | string`, but
+ *  union-with-`string` collapses to just `string` (lint
+ *  `no-redundant-type-constituents`). The literal alternatives were
+ *  documentation rather than constraint — `gracefulShutdown(reason)`
+ *  accepts any string the caller wants to log. Kept the union as a
+ *  comment so the documented vocabulary survives. */
+export type ShutdownReason = string;
 
 let httpServer: HttpServer | null = null;
 let shutdownPromise: Promise<void> | null = null;
@@ -122,7 +128,7 @@ async function closeHttpServer(): Promise<void> {
   if (httpServer === null) return;
   await new Promise<void>((resolve) => {
     httpServer!.close((err) => {
-      if (err !== undefined && err !== null) {
+      if (err !== undefined) {
         console.error('[lifecycle] http server close error:', err);
       }
       resolve();

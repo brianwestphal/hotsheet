@@ -15,11 +15,17 @@
  * See `docs/53-streaming-shell-output.md` §53.5 Phase 3.
  */
 
+// HS-8093 — these regexes are intentionally matching control characters
+// (ANSI escape `\x1b`, BEL `\x07`, BS `\x08`); the `no-control-regex`
+// rule's default-on stance is for the common case where a control char
+// in a regex is a typo. Here it's the literal contract.
+/* eslint-disable no-control-regex */
 const CSI_RX = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const OSC_RX = /\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g;
 const SIMPLE_ESC_RX = /\x1b[=>78NMPDEFGHc]/g;
 const CR_BUT_NOT_CRLF_RX = /\r(?!\n)/g;
 const BACKSPACE_RX = /\x08/g;
+/* eslint-enable no-control-regex */
 
 /**
  * Pure: strip the most common terminal escape sequences from a UTF-8

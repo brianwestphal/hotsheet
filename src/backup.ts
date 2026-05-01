@@ -417,7 +417,7 @@ export function initBackupScheduler(dataDir: string): void {
       if (stats.rebuilt > 0 || stats.failed > 0) {
         console.log(`[attachmentBackup] reanalyze: rebuilt=${stats.rebuilt} skipped=${stats.skipped} failed=${stats.failed}`);
       }
-    }).catch(err => {
+    }).catch((err: unknown) => {
       console.error('[attachmentBackup] reanalyze startup run failed:', err);
     });
   }, 25_000);
@@ -432,7 +432,7 @@ export function initBackupScheduler(dataDir: string): void {
       if (stats.deleted > 0) {
         console.log(`[attachmentBackup] GC: reclaimed ${stats.deleted} blob(s), ${(stats.bytesReclaimed / 1024 / 1024).toFixed(2)} MB`);
       }
-    }).catch(err => {
+    }).catch((err: unknown) => {
       console.error('[attachmentBackup] GC startup run failed:', err);
     });
   }, 30_000);
@@ -441,7 +441,7 @@ export function initBackupScheduler(dataDir: string): void {
       if (stats.deleted > 0) {
         console.log(`[attachmentBackup] GC: reclaimed ${stats.deleted} blob(s), ${(stats.bytesReclaimed / 1024 / 1024).toFixed(2)} MB`);
       }
-    }).catch(err => {
+    }).catch((err: unknown) => {
       console.error('[attachmentBackup] GC daily run failed:', err);
     });
   }, 24 * 60 * 60 * 1000);

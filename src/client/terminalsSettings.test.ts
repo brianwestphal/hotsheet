@@ -80,16 +80,16 @@ describe('addTerminalEntry — HS-7958 deferred-create + X-cancels-creation', ()
     document.body.appendChild(list);
     // Stub fetch so loadCommandSuggestions / scheduleSave don't blow up
     // when wired downstream of the open / commit paths.
-    const fetchSpy = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+    const fetchSpy = vi.fn((input: RequestInfo | URL): Promise<Response> => {
       const url = typeof input === 'string' ? input : (input instanceof URL ? input.toString() : input.url);
       if (url.includes('/terminal/command-suggestions')) {
-        return new Response(JSON.stringify({ suggestions: ['{{claudeCommand}}', '/bin/zsh'] }), {
+        return Promise.resolve(new Response(JSON.stringify({ suggestions: ['{{claudeCommand}}', '/bin/zsh'] }), {
           status: 200, headers: { 'Content-Type': 'application/json' },
-        });
+        }));
       }
       // /file-settings PATCH — return the empty merged shape so scheduleSave
       // resolves cleanly. Also covers the GET path used by other helpers.
-      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
     });
     vi.stubGlobal('fetch', fetchSpy);
   });

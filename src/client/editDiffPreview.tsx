@@ -116,7 +116,11 @@ export function buildHunks(ops: DiffOp[], contextLines: number = 2): DiffHunk[] 
   for (const r of changeRanges) {
     const start = Math.max(0, r.start - contextLines);
     const end = Math.min(ops.length - 1, r.end + contextLines);
-    const last = merged[merged.length - 1];
+    // HS-8093 — `Array.prototype.at(-1)` returns `T | undefined` in TS so
+    // the defensive `last !== undefined` check is meaningful to lint
+    // (whereas `merged[merged.length - 1]` is typed `Range` because the
+    // project doesn't enable `noUncheckedIndexedAccess`).
+    const last = merged.at(-1);
     if (last !== undefined && start <= last.end + 1) {
       last.end = Math.max(last.end, end);
     } else {

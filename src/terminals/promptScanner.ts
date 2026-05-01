@@ -27,10 +27,11 @@
 // as the default export. TypeScript's `esModuleInterop` makes the syntax
 // work for both compile-time + runtime.
 import xtermHeadless from '@xterm/headless';
-const { Terminal } = xtermHeadless;
 
 import type { MatchResult } from '../shared/terminalPrompt/parsers.js';
 import { runParserRegistry } from '../shared/terminalPrompt/parsers.js';
+
+const { Terminal } = xtermHeadless;
 
 /** Debounce window — match the client detector (`src/client/terminalPrompt/detector.ts::SCAN_DEBOUNCE_MS`). */
 export const SCAN_DEBOUNCE_MS = 100;

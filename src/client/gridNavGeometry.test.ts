@@ -20,7 +20,11 @@ describe('pickGridNeighbourIndex (HS-8028 follow-up — strict grid neighbour)',
   const D = rect(0, 60, 100, 60);
   const E = rect(100, 60, 100, 60);
   const F = rect(200, 60, 100, 60);
-  const grid = [A, B, C, D, E, F];
+  // The 6-tile fixture is documented here for readers — each test passes
+  // its own subset of [B,C,D,E,F] so the `_grid` reference doesn't need
+  // to escape the closure. Underscore-prefixed per HS-8093's
+  // `argsIgnorePattern`.
+  const _grid = [A, B, C, D, E, F]; void _grid;
 
   it('right from A picks B (immediate same-row neighbour)', () => {
     expect(pickGridNeighbourIndex(A, [B, C, D, E, F], 'right')).toBe(0); // index 0 → B

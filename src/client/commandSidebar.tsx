@@ -282,8 +282,13 @@ export function decideShellPartialEvents(
   const nextCache = new Map<number, number>();
   const outputs = response.outputs ?? {};
   for (const id of response.ids) {
-    const partial = outputs[id];
-    if (partial === undefined) {
+    // HS-8093 — TS sees `outputs[id]` as `string` (project doesn't enable
+    // `noUncheckedIndexedAccess`) so a direct `outputs[id] === undefined`
+    // check trips lint's `no-unnecessary-condition`. `Object.hasOwn` is a
+    // cleaner runtime presence check that doesn't depend on the indexed
+    // access type — and matches what the comment-block actually meant
+    // ("no output yet for this id").
+    if (!Object.hasOwn(outputs, id)) {
       // No output yet for this id — preserve any prior length so a
       // resumed-mid-flight client doesn't re-emit the whole buffer when
       // the next chunk arrives.
@@ -291,6 +296,7 @@ export function decideShellPartialEvents(
       if (prev !== undefined) nextCache.set(id, prev);
       continue;
     }
+    const partial = outputs[id];
     const lastLen = cache.get(id) ?? 0;
     if (partial.length > lastLen) {
       events.push({ id, partial });

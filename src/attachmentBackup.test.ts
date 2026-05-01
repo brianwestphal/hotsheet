@@ -61,6 +61,7 @@ function expectedSha(buf: Buffer): string {
 
 function makeStubDb(rows: Array<{ id: number; ticket_id: number; original_filename: string; stored_path: string }>): AttachmentRowSource {
   return {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- mirrors the shape from `AttachmentRowSource.query`; the stub satisfies the same contract.
     query: async <T>() => Promise.resolve({ rows: rows as unknown as T[] }),
   };
 }

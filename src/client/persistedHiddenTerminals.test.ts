@@ -82,10 +82,10 @@ describe('initPersistedHiddenTerminals + writeNow URLs (HS-7947)', () => {
 
   beforeEach(() => {
     observedUrls = [];
-    fetchSpy = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+    fetchSpy = vi.fn((input: RequestInfo | URL): Promise<Response> => {
       const url = typeof input === 'string' ? input : (input instanceof URL ? input.toString() : input.url);
       observedUrls.push(url);
-      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
     });
     vi.stubGlobal('fetch', fetchSpy);
     _resetForTests();

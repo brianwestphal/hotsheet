@@ -41,13 +41,18 @@ export async function loadSettings() {
     // HS-7988 — §52 Phase 4 master toggle. Default true so the detector is
     // on for everyone after upgrade; flipping false short-circuits the
     // detector before the parser registry runs.
-    if (settings.terminal_prompt_detection_enabled !== undefined && settings.terminal_prompt_detection_enabled !== '') {
+    // HS-8093 — `!== undefined` half of the check was redundant with TS's
+    // `Record<string, string>` typing of `settings`; matched the
+    // surrounding `!== ''`-only pattern for boolean toggles. Behaviour
+    // is unchanged: an absent key falls through to the `state.settings`
+    // default the module already initialises.
+    if (settings.terminal_prompt_detection_enabled !== '') {
       state.settings.terminal_prompt_detection_enabled = settings.terminal_prompt_detection_enabled !== 'false';
     }
     // HS-7984 — §53 Phase 4 streaming toggle. Default true (recommended in
     // §53.8 — change is small and reversible; default-on makes the
     // feature discoverable via the first-use toast).
-    if (settings.shell_streaming_enabled !== undefined && settings.shell_streaming_enabled !== '') {
+    if (settings.shell_streaming_enabled !== '') {
       state.settings.shell_streaming_enabled = settings.shell_streaming_enabled !== 'false';
     }
     if (settings.sort_by) state.sortBy = settings.sort_by;

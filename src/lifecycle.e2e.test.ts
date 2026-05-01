@@ -14,12 +14,12 @@
  *   4. Concurrent SIGINT + /api/shutdown — assert idempotent single exit.
  */
 import { type ChildProcess,spawn } from 'child_process';
-import { existsSync, mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-const REPO_ROOT = join(import.meta.dirname ?? __dirname, '..');
+const REPO_ROOT = join(import.meta.dirname, '..');
 const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
 
 interface SpawnedHotSheet {
@@ -39,7 +39,7 @@ beforeEach(() => {
   activeChildren = [];
 });
 
-afterEach(async () => {
+afterEach(() => {
   // Defensive cleanup: kill any still-running children + remove their temp
   // dirs. Each test that wants to assert a clean exit should do so before
   // afterEach fires.
@@ -95,8 +95,8 @@ function spawnHotSheet(): SpawnedHotSheet {
     }
     if (process.env.HS_E2E_DEBUG !== undefined) process.stderr.write(`[child:${port}] ${text}`);
   };
-  proc.stdout?.on('data', onChunk);
-  proc.stderr?.on('data', onChunk);
+  proc.stdout.on('data', onChunk);
+  proc.stderr.on('data', onChunk);
   proc.on('error', (err) => { console.error(`[child:${port}] spawn error:`, err); });
   const waitForOutput = (marker: string, timeoutMs: number): Promise<void> => {
     if (buffered.includes(marker)) return Promise.resolve();

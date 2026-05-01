@@ -207,9 +207,9 @@ describe('closeAllDatabases (HS-7931)', () => {
       // is what's being asserted).
       const original = db.close.bind(db);
       let firstCallThrew = false;
-      (db as unknown as { close: () => Promise<void> }).close = async () => {
+      (db as unknown as { close: () => Promise<void> }).close = () => {
         firstCallThrew = true;
-        throw new Error('synthetic close failure');
+        return Promise.reject(new Error('synthetic close failure'));
       };
       await expect(closeAllDatabases()).resolves.toBeUndefined();
       expect(firstCallThrew).toBe(true);

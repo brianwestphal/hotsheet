@@ -62,6 +62,7 @@ export interface AttachmentManifest {
 /** Minimal DB surface — kept loose so tests can inject a stub without
  *  pulling in PGLite. */
 export interface AttachmentRowSource {
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- `T` is the contract: callers pass the row shape they want and `query<T>(sql)` threads it through to the returned `rows: T[]`. Not a one-shot internal narrowing — drives the public return type.
   query: <T>(sql: string) => Promise<{ rows: T[] }>;
 }
 
@@ -128,7 +129,13 @@ export function attachmentBlobsDir(backupRoot: string): string {
  * a half-written blob in the addressable namespace.
  *
  * Returns `true` if a new blob was written, `false` if it already existed.
+ *
+ * HS-8093 — `async` is kept (despite no `await` body today) because the
+ * function is part of an evolving backup pipeline where worker-thread or
+ * stream-based variants are likely to land; making it sync now would
+ * force every caller to flip back to `await` once that happens.
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function ensureBlobInStore(
   blobsDir: string,
   srcPath: string,
@@ -290,7 +297,11 @@ function basename(path: string): string {
  *
  * Aborts (no deletions) if any manifest fails to parse — operating on a
  * partial reference set could orphan live data.
+ *
+ * HS-8093 — see `ensureBlobInStore` for the `async`-without-await
+ * rationale; the same evolving-pipeline argument applies here.
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function runAttachmentGc(backupRoot: string): Promise<{
   deleted: number;
   bytesReclaimed: number;
@@ -442,7 +453,12 @@ interface JsonCosaveAttachmentRow {
 interface JsonCosave {
   schemaVersion?: number;
   exportedAt?: string;
-  tables?: { attachments?: JsonCosaveAttachmentRow[] };
+  // HS-8093 — typed as `unknown[]` (not `JsonCosaveAttachmentRow[]`)
+  // because the JSON co-save is parsed from disk and could be
+  // malformed (truncated write, hand-edited, version drift). The
+  // per-row predicate in `readJsonCosaveAttachmentRows` is the trust
+  // boundary that narrows individual entries to the structured shape.
+  tables?: { attachments?: unknown[] };
 }
 
 /**
@@ -459,13 +475,14 @@ function readJsonCosaveAttachmentRows(jsonCosavePath: string): JsonCosaveAttachm
     const raw = JSON.parse(json) as JsonCosave;
     const rows = raw.tables?.attachments;
     if (!Array.isArray(rows)) return null;
-    return rows.filter((r): r is JsonCosaveAttachmentRow =>
-      typeof r === 'object' && r !== null
-        && typeof (r).id === 'number'
-        && typeof (r).ticket_id === 'number'
-        && typeof (r).original_filename === 'string'
-        && typeof (r).stored_path === 'string',
-    );
+    return rows.filter((r): r is JsonCosaveAttachmentRow => {
+      if (typeof r !== 'object' || r === null) return false;
+      const o = r as Record<string, unknown>;
+      return typeof o.id === 'number'
+        && typeof o.ticket_id === 'number'
+        && typeof o.original_filename === 'string'
+        && typeof o.stored_path === 'string';
+    });
   } catch {
     return null;
   }

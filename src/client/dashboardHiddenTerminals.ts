@@ -424,14 +424,17 @@ export function pruneHiddenForProject(secret: string, knownIds: readonly string[
   const state = projectStates.get(secret);
   if (state === undefined) return;
   const knownSet = new Set(knownIds);
-  let changed = false;
   const groupings = state.groupings.map(g => {
     const filtered = g.hiddenIds.filter(id => knownSet.has(id));
     if (filtered.length === g.hiddenIds.length) return g;
-    changed = true;
     return { ...g, hiddenIds: filtered };
   });
-  if (!changed) return;
+  // HS-8093 — `.map` returns the same reference when no change happened
+  // (we early-returned `g`), so identity comparison across the array is
+  // a clean "did anything actually move" gate without a separate
+  // `changed` flag (which TS can't track through the callback).
+  const anyChanged = groupings.some((g, i) => g !== state.groupings[i]);
+  if (!anyChanged) return;
   setProjectState(secret, { groupings, activeId: state.activeId });
 }
 
@@ -452,13 +455,13 @@ export function pruneHiddenForProject(secret: string, knownIds: readonly string[
 export function hideNewTerminalInNonDefaultGroupings(secret: string, terminalId: string): void {
   const state = projectStates.get(secret);
   if (state === undefined) return;
-  let changed = false;
   const groupings = state.groupings.map(g => {
     if (g.id === 'default') return g;
     if (g.hiddenIds.includes(terminalId)) return g;
-    changed = true;
     return { ...g, hiddenIds: [...g.hiddenIds, terminalId] };
   });
-  if (!changed) return;
+  // HS-8093 — same identity-comparison pattern as `pruneHiddenForProject`.
+  const anyChanged = groupings.some((g, i) => g !== state.groupings[i]);
+  if (!anyChanged) return;
   setProjectState(secret, { groupings, activeId: state.activeId });
 }

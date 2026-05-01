@@ -12,6 +12,11 @@
  * the goal is "human-readable last output", not "exact xterm render."
  */
 
+// HS-8093 — these regexes are intentionally matching control characters
+// (ANSI escape `\x1b`, BEL `\x07`, BS `\x08`); the `no-control-regex`
+// rule's default-on stance is for the common case where a control char
+// in a regex is a typo. Here it's the literal contract.
+/* eslint-disable no-control-regex */
 /** Match CSI sequences: `\x1b[` + intermediate/parameter bytes + final byte. */
 const CSI_RX = /\x1b\[[0-9;?]*[A-Za-z]/g;
 /** Match OSC sequences: `\x1b]` ... `\x07` (BEL) OR `\x1b\` (ST). */
@@ -23,6 +28,7 @@ const CR_BUT_NOT_CRLF_RX = /\r(?!\n)/g;
 /** Backspace (`\x08`) — strip the previous char visually, but for the
  *  preview we just drop the BS itself. Approximation; good enough. */
 const BACKSPACE_RX = /\x08/g;
+/* eslint-enable no-control-regex */
 
 /**
  * Strip the most common terminal escape sequences from a UTF-8 string so
