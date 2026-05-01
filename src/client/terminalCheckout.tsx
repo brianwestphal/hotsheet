@@ -360,14 +360,39 @@ function attachWebSocketToEntry(entry: StackEntry): void {
   });
 }
 
-/** If `(cols, rows)` differs from the entry's last-applied dims, fire
- *  `term.resize` AND send the WS resize frame; update the entry's
- *  bookkeeping. Skip both when the dims match (decision 1, §54.3.1) so
- *  TUI programs don't see SIGWINCH on every same-size handoff. */
+/** If `(cols, rows)` differs from the term's actual current dims, fire
+ *  `term.resize` and send the WS resize frame. Skip the work when the
+ *  dims match (decision 1, §54.3.1) so TUI programs don't see SIGWINCH
+ *  on every same-size handoff.
+ *
+ *  HS-8051 (2026-05-01) — the source of truth is `entry.term.cols/rows`,
+ *  NOT the bookkeeping `entry.lastAppliedCols/Rows`. The history-frame
+ *  handler in `attachWebSocketToEntry` calls `entry.term.resize(...)`
+ *  directly and explicitly DOES NOT update `lastApplied` (so consumers'
+ *  resize calls aren't spuriously skipped after replay). Pre-fix this
+ *  function compared `cols === lastApplied`, which created a backwards
+ *  bug: when a tile's render loop converged to native dims (lastApplied
+ *  = (61, 48)) and the history-frame handler then mutated term to its
+ *  capture-time dims (term.cols = 80) without touching lastApplied, the
+ *  next `handle.resize(61, 48)` call saw lastApplied = (61, 48) and
+ *  bailed — leaving term stuck at (80, 60) instead of converging back
+ *  to (61, 48). User's HS-8051 logs (4 attempts) showed a larger-font
+ *  Domotion tile with `screenW: 841, screenH: 1200` (≈ cols=40, rows=60
+ *  with cellW=21.025) — non-converging because every onRender-driven
+ *  `resize(61, 48)` was being skipped. The fix compares against the
+ *  term's ACTUAL dims so external mutations don't fool the skip.
+ *
+ *  WS frame is also gated on `lastApplied` (not term) since it tracks
+ *  what the server PTY thinks its size is — sending an idempotent WS
+ *  resize is wasteful. */
 function applyResizeIfChanged(entry: StackEntry, cols: number, rows: number): void {
-  if (cols === entry.lastAppliedCols && rows === entry.lastAppliedRows) return;
-  try { entry.term.resize(cols, rows); } catch { /* term disposed */ }
-  if (entry.ws !== null && entry.ws.readyState === WebSocket.OPEN) {
+  const termAtTarget = entry.term.cols === cols && entry.term.rows === rows;
+  const ptyAtTarget = entry.lastAppliedCols === cols && entry.lastAppliedRows === rows;
+  if (termAtTarget && ptyAtTarget) return;
+  if (!termAtTarget) {
+    try { entry.term.resize(cols, rows); } catch { /* term disposed */ }
+  }
+  if (!ptyAtTarget && entry.ws !== null && entry.ws.readyState === WebSocket.OPEN) {
     try { entry.ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch { /* swallow */ }
   }
   entry.lastAppliedCols = cols;

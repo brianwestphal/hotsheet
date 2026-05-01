@@ -829,7 +829,13 @@ input, select, textarea {
   font-size: 12px;
   line-height: 1.4;
   white-space: pre;
-  overflow: auto;
+  // HS-8055 — `overflow: hidden` (was `auto`) so the host xterm element
+  // never triggers a scrollbar on this container. The xterm has its own
+  // `.xterm-viewport` scrollback scrolling; an outer scrollbar here was
+  // a no-value fallback that toggled on sub-pixel layout shifts and fed
+  // the ResizeObserver feedback loop the HS-8055 fix in `quitConfirm.tsx`
+  // already breaks at the JS layer. Belt-and-braces.
+  overflow: hidden;
   min-height: 220px;
 
   &[data-state="empty"],

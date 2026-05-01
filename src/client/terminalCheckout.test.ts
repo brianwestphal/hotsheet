@@ -476,11 +476,87 @@ describe('checkout — HS-8042 handle.fit + handle.resize additions', () => {
     expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(120);
     expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(40);
 
-    // Re-call with the new size — still skips because lastApplied
-    // already matches.
+    // Re-call with the new size — still skips because both term AND
+    // lastApplied already match the target.
     termResize.mockClear();
     h.resize(120, 40);
     expect(termResize).not.toHaveBeenCalled();
+
+    h.release();
+  });
+
+  /**
+   * HS-8051 (2026-05-01) — `applyResizeIfChanged` must use `term.cols/rows`
+   * as the source of truth, not `lastAppliedCols/Rows`. The history-frame
+   * handler in `attachWebSocketToEntry` calls `entry.term.resize(...)`
+   * directly without updating `lastApplied` (by design — it's bringing
+   * term to match server-captured replay dims). If a consumer later asks
+   * for a resize back to the dims `lastApplied` happens to hold, the
+   * pre-fix skip would erroneously bail because `lastApplied === target`,
+   * leaving term stuck at the history-frame's dims. This test pins the
+   * fix by simulating the divergence directly.
+   */
+  it('handle.resize re-applies when term diverged from lastApplied (HS-8051)', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+
+    // Drive the entry to the post-convergence state: lastApplied = (61, 48),
+    // term = (61, 48). This mirrors the tile's `handleTileRender` first
+    // converging to native cell-metric dims.
+    h.resize(61, 48);
+    expect(h.term.cols).toBe(61);
+    expect(h.term.rows).toBe(48);
+    expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(61);
+    expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(48);
+
+    // Now simulate the history-frame path: it calls `term.resize` directly
+    // and explicitly does NOT touch `lastApplied`. Term diverges.
+    h.term.resize(80, 60);
+    expect(h.term.cols).toBe(80);
+    expect(h.term.rows).toBe(60);
+    expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(61); // bookkeeping unchanged
+    expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(48);
+
+    // The next consumer-driven resize asks for the converged dims again.
+    // Pre-fix this would skip because lastApplied (61, 48) === target,
+    // leaving term stuck at (80, 60). Post-fix it must re-apply because
+    // term doesn't match target.
+    const termResize = vi.spyOn(h.term, 'resize');
+    h.resize(61, 48);
+    expect(termResize).toHaveBeenCalledWith(61, 48);
+    expect(h.term.cols).toBe(61);
+    expect(h.term.rows).toBe(48);
+
+    h.release();
+  });
+
+  /**
+   * HS-8051 — same scenario as the divergence test above, but verifies
+   * the WS-frame side of the gate. When term is already at target but
+   * lastApplied isn't (the consumer's prior call mutated term silently
+   * via the history-frame path), `applyResizeIfChanged` should still
+   * send a WS frame to bring the server PTY in sync — but NOT call
+   * `term.resize` again (term is already where we want it). This is
+   * the asymmetric-skip case the new gate handles.
+   */
+  it('handle.resize syncs server PTY without re-resizing term when only lastApplied diverged (HS-8051)', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+
+    // Mutate term directly (mirrors history-frame path) to (61, 48).
+    h.term.resize(61, 48);
+    // lastApplied is still 80, 24.
+    expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(80);
+    expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(24);
+
+    // Now consumer asks for (61, 48). Term already matches → no
+    // term.resize. lastApplied differs → server PTY needs the WS frame
+    // (and lastApplied bookkeeping needs updating).
+    const termResize = vi.spyOn(h.term, 'resize');
+    h.resize(61, 48);
+    expect(termResize).not.toHaveBeenCalled();
+    expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(61);
+    expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(48);
 
     h.release();
   });
