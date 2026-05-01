@@ -209,7 +209,7 @@ export interface AppState {
     tier: string;
     filename: string;
   } | null;
-  /** HS-7756 — when the user clicks the "Include {N} backlog items" row
+  /** HS-7756 — when the user clicks the "Include `{N}` backlog items" row
    *  under the multi-select toolbar, mix backlog rows into the search
    *  result set. Cleared on every fresh `state.search` change. */
   includeBacklogInSearch: boolean;
@@ -221,7 +221,7 @@ export interface AppState {
    *  pending. */
   viewModeBeforeSearchInclude: 'list' | 'columns' | null;
   /** HS-7756 — last-fetched per-bucket search counts. Drives the
-   *  visibility of the "Include {N} ..." rows. Both default to 0 when
+   *  visibility of the "Include `{N}` ..." rows. Both default to 0 when
    *  no search is active or no matches exist outside the active set. */
   searchExtraCounts: { backlog: number; archive: number };
 }
@@ -295,7 +295,7 @@ export function getCategoryLabel(cat: string): string {
 }
 
 export function getPriorityIcon(pri: string): string {
-  return PRIORITY_ICONS[pri] || '\u2014';
+  return PRIORITY_ICONS[pri] || '—';
 }
 
 export function getPriorityColor(pri: string): string {
@@ -307,9 +307,9 @@ export function getStatusIcon(status: string): string {
 }
 
 /**
- * HS-7998 \u2014 true when toggling up-next on a ticket with this status
+ * HS-7998 — true when toggling up-next on a ticket with this status
  * should ALSO flip the status back to `not_started`. Out-of-active-
- * workflow statuses \u2014 `completed`, `verified`, `backlog`, `archive` \u2014
+ * workflow statuses — `completed`, `verified`, `backlog`, `archive` —
  * stay invisible from the default Up Next column unless the user
  * explicitly puts them back in motion. Adding such a ticket to Up Next
  * implies the user wants to work on it, so we reset the status as part
@@ -317,7 +317,7 @@ export function getStatusIcon(status: string): string {
  * `verified`; backlog / archive items would star themselves but stay
  * invisible from Up Next, which the user filed as a bug.
  *
- * Pure for unit-testability \u2014 the three `toggleUpNext` callsites
+ * Pure for unit-testability — the three `toggleUpNext` callsites
  * (`ticketRow.tsx`, `app.tsx::bindDetailUpNext`, `actions.ts` batch)
  * import this rather than each maintaining their own status set.
  */

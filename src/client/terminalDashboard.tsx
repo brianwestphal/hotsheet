@@ -1010,9 +1010,9 @@ function refreshSnapPointIndicators(): void {
 
   let ticksEl = sizerContainer.querySelector<HTMLElement>('.terminal-dashboard-sizer-ticks');
   if (ticksEl === null) {
-    ticksEl = document.createElement('div');
-    ticksEl.className = 'terminal-dashboard-sizer-ticks';
-    ticksEl.setAttribute('aria-hidden', 'true');
+    ticksEl = toElement(
+      <div className="terminal-dashboard-sizer-ticks" aria-hidden="true"></div>
+    );
     sizerContainer.appendChild(ticksEl);
   }
   const sliderRect = sizeSlider.getBoundingClientRect();
@@ -1027,11 +1027,11 @@ function refreshSnapPointIndicators(): void {
   // if the variable is missing — defensive against a CSS regression.
   const thumbWidthPx = parseFloat(getComputedStyle(sizeSlider).getPropertyValue('--range-thumb-w')) || 16;
   for (const pt of currentSnapPoints) {
-    const tick = document.createElement('span');
-    tick.className = 'terminal-dashboard-sizer-tick';
-    tick.style.left = `${tickLeftPx(pt.sliderValue, sliderRect.width, thumbWidthPx)}px`;
-    tick.title = `${pt.perRow} per row`;
-    ticksEl.appendChild(tick);
+    ticksEl.appendChild(toElement(
+      <span className="terminal-dashboard-sizer-tick"
+            style={`left:${tickLeftPx(pt.sliderValue, sliderRect.width, thumbWidthPx)}px;`}
+            title={`${pt.perRow} per row`}></span>
+    ));
   }
 }
 

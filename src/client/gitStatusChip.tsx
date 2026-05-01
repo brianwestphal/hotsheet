@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { toElement } from './dom.js';
 import { repositionGitStatusPopover, toggleGitStatusPopover } from './gitStatusPopover.js';
 import { getActiveProject } from './state.js';
 
@@ -12,7 +13,7 @@ import { getActiveProject } from './state.js';
  *
  * Phase 1 fields displayed: branch, total uncommitted count (sum of
  * staged / unstaged / untracked / conflicted). Tints (left-to-right
- * precedence): conflicted > dirty > clean. The remote-tracking
+ * precedence): conflicted \> dirty \> clean. The remote-tracking
  * (ahead / behind) glyphs + amber/blue tints are HS-7955 territory and
  * silently no-op here.
  *
@@ -237,8 +238,7 @@ function render(): void {
   // existing markup doesn't need a rebuild.
   let aheadBehindEl = chipEl.querySelector<HTMLElement>('.sidebar-git-aheadbehind');
   if (aheadBehindEl === null && countsEl !== null) {
-    aheadBehindEl = document.createElement('span');
-    aheadBehindEl.className = 'sidebar-git-aheadbehind';
+    aheadBehindEl = toElement(<span className="sidebar-git-aheadbehind"></span>);
     countsEl.parentElement?.insertBefore(aheadBehindEl, countsEl);
   }
   if (aheadBehindEl !== null) {

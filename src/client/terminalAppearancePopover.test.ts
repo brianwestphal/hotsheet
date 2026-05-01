@@ -1,6 +1,5 @@
+// @vitest-environment happy-dom
 /**
- * @vitest-environment happy-dom
- *
  * HS-7896 regression coverage for the per-terminal appearance popover.
  *
  * Pre-fix the popover (a) ignored the configured override entirely when

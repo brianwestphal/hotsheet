@@ -85,8 +85,8 @@ export function normalizeComm(raw: string): string {
 }
 
 /**
- * Parse the output of `ps -o pid,ppid,comm -A` into a list of {pid, ppid,
- * comm} rows. Skips the header line + any malformed rows. macOS `ps -o comm`
+ * Parse the output of `ps -o pid,ppid,comm -A` into a list of `{pid, ppid, comm}`
+ * rows. Skips the header line + any malformed rows. macOS `ps -o comm`
  * emits the executable's full path while Linux emits the basename; the row's
  * `comm` is normalized to a plain basename via `normalizeComm` so downstream
  * shell / exempt-list checks compare apples to apples regardless of platform.
@@ -164,7 +164,7 @@ export function descendantChain(rows: PsRow[], rootPid: number): string[] {
  * - If the chain is empty (root not found in ps output) → safe-default-prompt.
  * - If the chain has length 1 AND the root is a shell → idle login shell, no
  *   prompt needed (`isShell: true, isExempt: true`).
- * - If the chain has length >1 AND the root is a shell → use the deepest
+ * - If the chain has length \>1 AND the root is a shell → use the deepest
  *   non-shell descendant (or the chain's tail if every descendant is a shell)
  *   as the foreground process and check the exempt list.
  * - If the root is NOT a shell → use the chain's tail directly.
@@ -215,8 +215,7 @@ export function pickForegroundProcess(
  * quit-confirm decision.
  *
  * Lookup failures (process exited / ps unavailable / Windows unsupported in
- * v1) return the safe-default-prompt info `{ command: '?', isShell: false,
- * isExempt: false }`.
+ * v1) return the safe-default-prompt info `{command: '?', isShell: false, isExempt: false}`.
  */
 export async function inspectForegroundProcess(
   rootPid: number,

@@ -100,8 +100,8 @@ ticketRoutes.get('/tickets', async (c) => {
  * HS-7756 — `GET /api/tickets/search-counts?search=<q>` — returns per-bucket
  * match counts for the supplied search query, restricted to the buckets the
  * main "active" view excludes (`backlog` + `archive`). Used by the client
- * to decide whether to render the "Include {N} backlog items" /
- * "Include {N} archive items" rows under the multi-select toolbar. Empty
+ * to decide whether to render the "Include `{N}` backlog items" /
+ * "Include `{N}` archive items" rows under the multi-select toolbar. Empty
  * query returns zeroes; missing query returns zeroes.
  */
 ticketRoutes.get('/tickets/search-counts', async (c) => {

@@ -289,8 +289,8 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
 /**
  * HS-7756 — return per-status match counts for a search query, scoped to
  * the buckets (`backlog` + `archive`) that the main "active" view hides.
- * The client uses these counts to render the "Include {N} backlog items"
- * + "Include {N} archive items" rows under the multi-select toolbar.
+ * The client uses these counts to render the "Include `{N}` backlog items"
+ * + "Include `{N}` archive items" rows under the multi-select toolbar.
  *
  * Search semantics match `getTickets`'s WHERE clause exactly so the
  * counts and the on-toggle-include results stay in sync.

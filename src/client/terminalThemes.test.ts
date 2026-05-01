@@ -1,6 +1,5 @@
+// @vitest-environment happy-dom
 /**
- * @vitest-environment happy-dom
- *
  * Unit tests for the HS-6307 terminal theme registry (see
  * docs/35-terminal-themes.md §35.2).
  */

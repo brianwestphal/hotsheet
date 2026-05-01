@@ -2,13 +2,13 @@
  * HS-7968 — pure state-machine for IntersectionObserver-driven tile
  * virtualization. The xterm + WebSocket per tile in the dashboard / drawer-
  * grid is heavy (each xterm allocates canvas + WebGL, each WS holds an open
- * fd server-side). At dashboard sizes >50 tiles the eager-mount cost
+ * fd server-side). At dashboard sizes \>50 tiles the eager-mount cost
  * compounds. This module decides "should I mount / dispose this tile right
  * now?" based on visibility events + a debounce window so quick scrolls
  * don't churn.
  *
- * Pure (no DOM, no IntersectionObserver instance) — drives a `Map<id,
- * TileVirtualState>`, takes input events, returns the actions a caller
+ * Pure (no DOM, no IntersectionObserver instance) — drives a
+ * `Map<id, TileVirtualState>`, takes input events, returns the actions a caller
  * (terminalTileGrid.tsx) should run. Unit-testable with synthetic time.
  */
 

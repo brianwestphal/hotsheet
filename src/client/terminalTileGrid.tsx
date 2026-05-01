@@ -622,8 +622,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
    * so only the on-screen subset pays for the buffer.
    */
   function mountTileViaCheckout(tile: InternalTile): void {
-    const xtermRoot = document.createElement('div');
-    xtermRoot.className = xtermClass;
+    const xtermRoot = toElement(<div className={xtermClass}></div>);
     tile.preview.replaceChildren(xtermRoot);
 
     const appearance = resolveTileAppearance(tile);
@@ -1117,17 +1116,14 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   }
 
   function createSlotPlaceholder(width: number, height: number): HTMLElement {
-    const el = document.createElement('div');
-    el.className = slotClass;
-    el.style.width = `${width}px`;
-    el.style.height = `${height}px`;
-    return el;
+    return toElement(
+      <div className={slotClass} style={`width:${width}px;height:${height}px;`}></div>
+    );
   }
 
   function mountCenterBackdrop(): void {
     if (centerBackdrop !== null) return;
-    const backdrop = document.createElement('div');
-    backdrop.className = backdropClass;
+    const backdrop = toElement(<div className={backdropClass}></div>);
     backdrop.addEventListener('click', () => { uncenterTile(); });
     if (opts.centerScope === 'viewport') {
       document.body.appendChild(backdrop);

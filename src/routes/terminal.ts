@@ -160,8 +160,8 @@ terminalRoutes.post('/clear-bell', async (c) => {
 
 /**
  * POST /api/terminal-prompt/respond — HS-8034 Phase 2. Apply a user
- * response to a server-side prompt match. Body: `{ terminalId: string;
- * payload: string }` where `payload` is the keystroke sequence to write
+ * response to a server-side prompt match. Body: `{terminalId: string; payload: string}`
+ * where `payload` is the keystroke sequence to write
  * verbatim to the PTY (e.g. `"y\r"` for a yes/no, `"\x1b[B\r"` for the
  * second numbered choice). The secret comes from the X-Hotsheet-Secret
  * auth header — clients responding to a cross-project prompt set the
@@ -277,8 +277,8 @@ terminalRoutes.get('/status', (c) => {
  * Walks the OS process tree from the PTY's pid and returns the foreground
  * child basename + isShell + isExempt flags. Used by the §37 quit-confirm
  * flow to decide whether the prompt should fire for this terminal. Falls
- * back to the safe-default-prompt info `{ command: '?', isShell: false,
- * isExempt: false }` on any lookup error so the prompt fires conservatively.
+ * back to the safe-default-prompt info `{command: '?', isShell: false, isExempt: false}`
+ * on any lookup error so the prompt fires conservatively.
  */
 terminalRoutes.get('/foreground-process', async (c) => {
   const dataDir = c.get('dataDir');

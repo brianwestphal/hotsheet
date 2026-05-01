@@ -5,6 +5,7 @@ import {
   filterVisible as filterVisibleEntries,
   subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
+import { toElement } from './dom.js';
 import { showHideTerminalDialog } from './hideTerminalDialog.js';
 import { shouldEscapeBypassHotsheet } from './shortcuts.js';
 import {
@@ -242,9 +243,9 @@ function rebuildVisibleTiles(): void {
     allHiddenPlaceholder = null;
   }
   if (visible.length === 0 && lastKnownEntries.length > 0) {
-    allHiddenPlaceholder = document.createElement('div');
-    allHiddenPlaceholder.className = 'drawer-terminal-grid-all-hidden';
-    allHiddenPlaceholder.textContent = 'All Terminals Hidden';
+    allHiddenPlaceholder = toElement(
+      <div className="drawer-terminal-grid-all-hidden">All Terminals Hidden</div>
+    );
     gridEl.appendChild(allHiddenPlaceholder);
   }
 }
@@ -575,9 +576,9 @@ function refreshSnapPointIndicators(): void {
 
   let ticksEl = sizerContainer.querySelector<HTMLElement>('.drawer-grid-sizer-ticks');
   if (ticksEl === null) {
-    ticksEl = document.createElement('div');
-    ticksEl.className = 'drawer-grid-sizer-ticks';
-    ticksEl.setAttribute('aria-hidden', 'true');
+    ticksEl = toElement(
+      <div className="drawer-grid-sizer-ticks" aria-hidden="true"></div>
+    );
     sizerContainer.appendChild(ticksEl);
   }
   const sliderRect = sizeSlider.getBoundingClientRect();
@@ -590,10 +591,10 @@ function refreshSnapPointIndicators(): void {
   // the thumb at every snap value.
   const thumbWidthPx = parseFloat(getComputedStyle(sizeSlider).getPropertyValue('--range-thumb-w')) || 16;
   for (const pt of currentSnapPoints) {
-    const tick = document.createElement('span');
-    tick.className = 'drawer-grid-sizer-tick';
-    tick.style.left = `${tickLeftPx(pt.sliderValue, sliderRect.width, thumbWidthPx)}px`;
-    tick.title = `${pt.perRow} per row`;
-    ticksEl.appendChild(tick);
+    ticksEl.appendChild(toElement(
+      <span className="drawer-grid-sizer-tick"
+            style={`left:${tickLeftPx(pt.sliderValue, sliderRect.width, thumbWidthPx)}px;`}
+            title={`${pt.perRow} per row`}></span>
+    ));
   }
 }

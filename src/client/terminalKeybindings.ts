@@ -117,7 +117,7 @@ export function isMagnifiedNavShortcut(e: KeyLikeEvent, isMac: boolean = detectI
  * leaving the terminal first.
  *
  * The shortcut deliberately uses backtick (matches VS Code's "View: Toggle
- * Terminal" Cmd+`). xterm normally forwards backtick to the shell, so every
+ * Terminal" Cmd+backtick). xterm normally forwards backtick to the shell, so every
  * xterm mount site (drawer terminal, dashboard tile, dashboard dedicated
  * view, drawer-grid tile, drawer-grid dedicated view) uses
  * `isTerminalViewToggleShortcut` in its `attachCustomKeyEventHandler` and
@@ -126,8 +126,9 @@ export function isMagnifiedNavShortcut(e: KeyLikeEvent, isMac: boolean = detectI
  * actual toggle.
  *
  * Detection uses `e.code === 'Backquote'` first (layout-stable), falling
- * back to `e.key === '`'` for engines that don't expose `.code` reliably.
- * Returns null when the chord doesn't match; otherwise `{ alt: true|false }`
+ * back to comparing `e.key` against the literal backtick character for engines
+ * that don't expose `.code` reliably.
+ * Returns null when the chord doesn't match; otherwise `{alt: true|false}`
  * so the caller can branch on the alt variant.
  */
 export function isTerminalViewToggleShortcut(e: KeyLikeEvent, isMac: boolean = detectIsMac()): { alt: boolean } | null {

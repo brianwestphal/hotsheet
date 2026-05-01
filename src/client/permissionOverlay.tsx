@@ -383,8 +383,7 @@ async function runSnapshotIntoBody(
   if (!overlay.isConnected) return; // belt-and-braces — overlay torn down
   const bodySlot = overlay.querySelector<HTMLElement>('[data-role="body"]');
   if (bodySlot === null) return;
-  const mirrorContainer = document.createElement('div');
-  mirrorContainer.className = 'permission-popup-mirror-xterm';
+  const mirrorContainer = toElement(<div className="permission-popup-mirror-xterm"></div>);
   bodySlot.replaceChildren(mirrorContainer);
   mountMirrorXterm(mirrorContainer, result.stream, result.cols, result.rows);
 }

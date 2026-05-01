@@ -10,6 +10,7 @@
  * See docs/35-terminal-themes.md §35.6.
  */
 import { api } from './api.js';
+import { toElement } from './dom.js';
 import {
   getProjectDefault,
   loadProjectDefaultAppearance,
@@ -53,20 +54,22 @@ function render(): void {
   // freshly-added theme / font shows up without a page reload.
   themeSel.innerHTML = '';
   for (const theme of TERMINAL_THEMES) {
-    const opt = document.createElement('option');
-    opt.value = theme.id;
-    opt.textContent = theme.name;
-    if (theme.id === (current.theme ?? DEFAULT_THEME_ID)) opt.selected = true;
-    themeSel.appendChild(opt);
+    const isSelected = theme.id === (current.theme ?? DEFAULT_THEME_ID);
+    themeSel.appendChild(toElement(
+      isSelected
+        ? <option value={theme.id} selected="selected">{theme.name}</option>
+        : <option value={theme.id}>{theme.name}</option>
+    ));
   }
 
   fontSel.innerHTML = '';
   for (const font of TERMINAL_FONTS) {
-    const opt = document.createElement('option');
-    opt.value = font.id;
-    opt.textContent = font.name;
-    if (font.id === (current.fontFamily ?? DEFAULT_FONT_ID)) opt.selected = true;
-    fontSel.appendChild(opt);
+    const isSelected = font.id === (current.fontFamily ?? DEFAULT_FONT_ID);
+    fontSel.appendChild(toElement(
+      isSelected
+        ? <option value={font.id} selected="selected">{font.name}</option>
+        : <option value={font.id}>{font.name}</option>
+    ));
   }
 
   sizeInput.value = String(current.fontSize ?? DEFAULT_FONT_SIZE);

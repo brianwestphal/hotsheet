@@ -58,6 +58,12 @@ let xtermParkingSink: HTMLDivElement | null = null;
 
 function getOrCreateParkingSink(): HTMLDivElement {
   if (xtermParkingSink !== null) return xtermParkingSink;
+  // HS-8098 — direct `document.createElement` is intentional here: the
+  // sink is a pure capture target xterm uses for its required first
+  // `term.open()` call before the consumer reparents the term element
+  // into the visible mountInto. Routing through `toElement(<jsx />)`
+  // would build an element that's then never read as JSX content,
+  // adding ceremony with no benefit.
   const sink = document.createElement('div');
   sink.id = 'terminal-checkout-parking-sink';
   sink.style.position = 'absolute';

@@ -41,7 +41,7 @@ export interface TerminalTheme {
   brightWhite: string;
 }
 
-/** xterm's ITheme subset we populate — matches @xterm/xterm's ITheme. */
+/** xterm's ITheme subset we populate — matches `@xterm/xterm`'s ITheme. */
 export interface XtermThemeOptions {
   foreground: string;
   background: string;

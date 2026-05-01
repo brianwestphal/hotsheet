@@ -111,6 +111,9 @@ export function loadGoogleFont(font: TerminalFont): Promise<void> {
     // HMR / partial reloads can wipe the cache while leaving the DOM intact.
     const existingLink = document.querySelector<HTMLLinkElement>(`link[data-terminal-font-id="${font.id}"]`);
     if (existingLink === null) {
+      // HS-8098 — file is `.ts` (no JSX). The `<link rel="stylesheet">`
+      // injection is also borderline-pure-side-effect (it triggers Google
+      // Fonts download); JSX would be ceremony for one append.
       const link = document.createElement('link');
       link.rel = 'stylesheet';
       link.href = buildGoogleFontsUrl(font.googleFontsName!);

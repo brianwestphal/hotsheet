@@ -54,7 +54,7 @@ export interface TicketFilters {
   sort_dir?: 'asc' | 'desc';
   /** HS-7756 — when true, also include `backlog` rows in the result set
    *  (in addition to whatever the `status` filter normally returns). The
-   *  client toggles this from the "Include {N} backlog items" row that
+   *  client toggles this from the "Include `{N}` backlog items" row that
    *  appears under the multi-select toolbar when a search has matches in
    *  the backlog bucket. */
   include_backlog?: boolean;

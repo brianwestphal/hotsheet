@@ -168,7 +168,6 @@ export function initLongTaskObserver(): void {
   // when the user reported "no log messages" we couldn't tell whether
   // the observer was actually wired or not). Uses console.error so the
   // line stands out against console.log noise during page init.
-  // eslint-disable-next-line no-console
   console.error(`[hotsheet longtask] init — observer:${observerSupported ? 'on' : 'off'} heartbeat:${heartbeatTimer !== null ? 'on' : 'off'} threshold:${LONG_TASK_THRESHOLD_MS}ms`);
 }
 
@@ -202,7 +201,6 @@ function recordLongTask(durationMs: number, source: LongTaskSource): void {
     : recentInteractions
         .map(i => `${i.label} @${formatRelativeMs(i.ts - ts)}`)
         .join(', ');
-  // eslint-disable-next-line no-console
   console.error(`[hotsheet longtask] ${wallClock} — ${durationMs.toFixed(0)}ms [${source}] (recent: ${interactionStr})`);
 
   // HS-8054 follow-up — toast on each ≥ 500 ms block so the user notices

@@ -41,7 +41,7 @@ export function splitLines(text: string): string[] {
  * Pure LCS-based line diff producing a flat sequence of `add` / `del` /
  * `ctx` ops in source order. Standard Myers-style backtrack over a DP table.
  * O(m*n) time + space — fine for our inputs (Edit's `input_preview` capped
- * at ~2000 chars / typically < 50 lines).
+ * at ~2000 chars / typically \< 50 lines).
  */
 export function computeDiffOps(oldStr: string, newStr: string): DiffOp[] {
   const oldLines = splitLines(oldStr);

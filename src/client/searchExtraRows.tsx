@@ -1,5 +1,5 @@
 /**
- * HS-7756 — render the "Include {N} backlog items" / "Include {N} archive
+ * HS-7756 — render the "Include `{N}` backlog items" / "Include `{N}` archive
  * items" rows under the multi-select toolbar when a search is active and
  * the buckets the active view normally hides have matches.
  *

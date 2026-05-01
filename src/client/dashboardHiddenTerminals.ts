@@ -165,6 +165,10 @@ export function applyHideButtonBadge(button: HTMLElement | null, count: number):
     return;
   }
   if (badge === null) {
+    // HS-8098 — file is `.ts` (no JSX); a single-element creation that needs
+    // string-class assignment is the one CLAUDE.md exception that doesn't
+    // get to use `toElement(<jsx />)` because pulling in the JSX runtime
+    // would require renaming the whole module to `.tsx`.
     badge = document.createElement('span');
     badge.className = 'hide-btn-badge';
     button.appendChild(badge);

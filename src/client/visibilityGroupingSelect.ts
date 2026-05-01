@@ -59,6 +59,9 @@ export function refreshGroupingSelect(opts: GroupingSelectOptions): { count: num
   opts.selectEl.replaceChildren();
   const activeId = getActiveGroupingId(secret);
   for (const g of groupings) {
+    // HS-8098 — file is `.ts` (no JSX); see `dashboardHiddenTerminals.ts`
+    // for the same exception. Renaming to `.tsx` solely for this single
+    // append would touch the existing test file's import path.
     const opt = document.createElement('option');
     opt.value = g.id;
     opt.textContent = g.name;

@@ -893,11 +893,9 @@ function updateTabLabel(inst: TerminalInstance): void {
   let bellEl = inst.tabBtn.querySelector<HTMLElement>('.drawer-tab-bell');
   if (inst.hasBell) {
     if (bellEl === null) {
-      bellEl = document.createElement('span');
-      bellEl.className = 'drawer-tab-bell';
-      bellEl.setAttribute('title', 'Bell');
-      bellEl.setAttribute('aria-label', 'Terminal bell');
-      bellEl.innerHTML = BELL_ICON;
+      bellEl = toElement(
+        <span className="drawer-tab-bell" title="Bell" aria-label="Terminal bell">{raw(BELL_ICON)}</span>
+      );
       // Insert immediately after the label so the order is [label][bell][close?].
       labelEl?.insertAdjacentElement('afterend', bellEl);
     }

@@ -2,9 +2,9 @@
  * HS-6307 — resolve + apply per-terminal appearance (theme + font + size).
  *
  * Three layers, field-wise (see docs/35-terminal-themes.md §35.4):
- *   session override > configured override > project default > hard-coded fallback
+ *   session override \> configured override \> project default \> hard-coded fallback
  *
- * Each field of {theme, fontFamily, fontSize} is resolved independently — a
+ * Each field of `{theme, fontFamily, fontSize}` is resolved independently — a
  * configured terminal with `{ theme: 'dracula' }` but no font override
  * inherits the project default's fontFamily.
  */
@@ -112,7 +112,7 @@ export function _resetSessionOverridesForTests(): void {
 }
 
 /** Minimal xterm surface the apply helper needs. Typed loosely so the helper
- *  works against both the real @xterm/xterm Terminal and test doubles. */
+ *  works against both the real `@xterm/xterm` Terminal and test doubles. */
 export interface XtermLikeForAppearance {
   options: {
     theme?: unknown;

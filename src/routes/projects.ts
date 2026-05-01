@@ -282,8 +282,8 @@ projectRoutes.post('/reorder', async (c) => {
  * GET /api/projects/quit-summary — HS-7596 / §37 quit-confirm aggregator.
  * Walks every registered project's alive PTYs in parallel, inspects each
  * one's foreground process via `ps`, and returns a list of entries grouped
- * by project. Each entry carries `{terminalId, label, foregroundCommand,
- * isShell, isExempt}` plus the project's `confirmMode` (`'always'` /
+ * by project. Each entry carries `{terminalId, label, foregroundCommand, isShell, isExempt}`
+ * plus the project's `confirmMode` (`'always'` /
  * `'never'` / `'with-non-exempt-processes'`) so the client can apply
  * §37.5's per-project + cross-project decision logic and build the
  * confirmation dialog. The route does NOT decide whether to prompt; the

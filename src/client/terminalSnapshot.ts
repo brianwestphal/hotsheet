@@ -18,8 +18,8 @@ import {
  *   1. **Freeze** — `pauseEntryWrites` diverts incoming WS-binary
  *      bytes into an entry-side buffer. The live term keeps its
  *      pre-snapshot display unchanged for the duration of the swap.
- *   2. **Resize PTY up** — `sendPtyResize` sends a `{type:'resize',
- *      cols:200, rows:80}` frame so Claude's TUI redraws at the wider
+ *   2. **Resize PTY up** — `sendPtyResize` sends a `{type:'resize', cols:200, rows:80}`
+ *      frame so Claude's TUI redraws at the wider
  *      geometry. Bytes accumulate in the paused buffer.
  *   3. **Serialize** — `takePausedBytes` drains the accumulated bytes,
  *      writes them into an OFFSCREEN `XTerm` at the wider geometry
@@ -183,6 +183,13 @@ function serializeOffscreen(bytes: Uint8Array, cols: number, rows: number): stri
 let offscreenSink: HTMLElement | null = null;
 function getOrCreateOffscreenSink(): HTMLElement {
   if (offscreenSink !== null && offscreenSink.isConnected) return offscreenSink;
+  // HS-8098 — direct `document.createElement` is intentional here: the
+  // sink is a capture target for the offscreen serialiser xterm and
+  // never serves as JSX content. Same exception rationale as
+  // `terminalCheckout.tsx::getOrCreateParkingSink`. (File is `.ts`,
+  // not `.tsx`, so even if we wanted to use `toElement(<jsx/>)` here
+  // the JSX runtime isn't enabled for this module — separately
+  // tracked for future migration.)
   const sink = document.createElement('div');
   sink.id = 'terminal-snapshot-offscreen-sink';
   sink.style.cssText = 'position:absolute;left:-99999px;top:-99999px;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none';

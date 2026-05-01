@@ -139,8 +139,8 @@ interface SessionState {
   lastOutputAtMs: number | null;
   /** Wall-clock ms timestamp of the last PTY chunk that contained a Claude
    *  busy-spinner glyph (`· ✢ ✳ ✶ ✻ ✽`). The channel-UI degraded-busy
-   *  state fires when channel-busy is true AND `nowMs - lastSpinnerAtMs >
-   *  5000` (i.e. Claude looks idle even though the channel hook says busy).
+   *  state fires when channel-busy is true AND `nowMs - lastSpinnerAtMs \> 5000`
+   *  (i.e. Claude looks idle even though the channel hook says busy).
    *  Reset to null on PTY restart. HS-6702. */
   lastSpinnerAtMs: number | null;
   /** HS-8029 Phase 1 — server-side terminal prompt scanner. One per session,
@@ -536,8 +536,8 @@ export function getTerminalPid(
   return s.pty.pid;
 }
 
-/** HS-7596 — list every project's alive terminals as `{secret, terminalId,
- *  rootPid}` triples. Used by the /api/terminals/quit-summary route to
+/** HS-7596 — list every project's alive terminals as `{secret, terminalId, rootPid}` triples.
+ *  Used by the /api/terminals/quit-summary route to
  *  enumerate what's running across all known projects in a single pass. */
 export function listAliveTerminalsAcrossProjects(): Array<{ secret: string; terminalId: string; rootPid: number }> {
   const result: Array<{ secret: string; terminalId: string; rootPid: number }> = [];
@@ -683,8 +683,8 @@ function createSession(
  * directly to the PTY and an audit-log entry is appended; `pendingPrompt`
  * stays null so no overlay surfaces. Otherwise the match is stashed on
  * `state.pendingPrompt` for the long-poll surface to pick up + the
- * registered prompt-waiters fire so any client waiting in `/api/projects/
- * bell-state` sees the new prompt without waiting for the long-poll
+ * registered prompt-waiters fire so any client waiting in
+ * `/api/projects/bell-state` sees the new prompt without waiting for the long-poll
  * timeout. Generic-shape matches and rule-of-out-of-range cases (e.g. the
  * Claude prompt now has fewer choices than when the rule was created)
  * fall through to the `pendingPrompt` path so the user sees the overlay.

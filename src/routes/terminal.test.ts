@@ -10,11 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppEnv } from '../types.js';
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const writePtyInput = vi.fn((_secret: string, _terminalId: string, _payload: string): boolean => true);
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const clearPendingPrompt = vi.fn((_secret: string, _terminalId: string): boolean => true);
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const setScannerSuppressed = vi.fn((_secret: string, _terminalId: string, _v: boolean): boolean => true);
 const notifyBellWaiters = vi.fn();
 
