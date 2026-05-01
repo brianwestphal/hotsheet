@@ -38,7 +38,7 @@ import { initTerminalDashboard } from './terminalDashboard.js';
 import { loadAllowRules } from './terminalPrompt/allowRulesStore.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
-import { loadTicketPrefixes } from './ticketRefs.js';
+import { loadTicketPrefixes, reloadTicketPrefixes } from './ticketRefs.js';
 import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';
 import { maybeShowUpgradeNudge } from './upgradeNudge.js';
 
@@ -108,6 +108,12 @@ async function reloadAppState() {
   // the §52 detector's auto-allow gate has the latest rules when the next
   // chunk arrives. Failure leaves the cache empty (default-deny).
   void loadAllowRules();
+  // HS-8053 — drop the ticket-prefix cache and re-fetch for the new
+  // project. Pre-fix `loadTicketPrefixes()` was only called at app init,
+  // so a project with a non-`HS` prefix (e.g. Domotion's `DM`) never
+  // got its prefixes picked up — `DM-123` references never linkified
+  // when the user switched to Domotion mid-session.
+  void reloadTicketPrefixes();
   // Sync toggle button UI to the new project's saved settings
   updateLayoutToggle();
   updateDetailPositionToggle();

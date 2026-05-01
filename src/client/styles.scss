@@ -1205,12 +1205,14 @@ input, select, textarea {
 }
 
 .terminal-dashboard-tile-preview {
-  // HS-6866: match the drawer terminal's backdrop (.terminal-body uses --bg)
-  // so a live-tile's aspect-ratio gap (the dashboard tile is 4:3 but xterm's
-  // 80×60 cells render taller-than-wide) fills with the same color xterm's
-  // theme background paints, and light/dark parity with the drawer is kept.
-  // Cold / starting placeholders still override this with --bg-secondary so
-  // they read as "card" states against the grid.
+  // HS-6866 / HS-8059: pre-paint fallback for the millisecond before
+  // `mountTileViaCheckout` writes `tile.preview.style.backgroundColor` to
+  // the live theme bg. The inline JS-set bg paints whenever a tile is
+  // mounted with a live xterm so the sub-cell slop around `.xterm-screen`
+  // reads as part of the terminal frame; this `--bg` fallback only paints
+  // before the inline write lands. Cold / starting placeholders use their
+  // own `--bg-secondary` (the inline bg is cleared on the placeholder
+  // transitions in `softDisposeTile` / `spawnAndEnlarge`).
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -7911,6 +7913,11 @@ body.terminal-dashboard-active {
 }
 
 .drawer-terminal-grid-tile-preview {
+  // HS-8059: pre-paint fallback — `mountTileViaCheckout` overwrites this
+  // inline with the live theme bg so the gutter around `.xterm-screen`
+  // matches the terminal frame. See the comment on
+  // `.terminal-dashboard-tile-preview`; both use the same shared
+  // `terminalTileGrid` mount path.
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);

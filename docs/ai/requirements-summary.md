@@ -686,6 +686,16 @@ HS-7969 follow-up. New client module `src/client/terminalCheckout.tsx` owns one 
 
 ---
 
+## 57. Shell custom-command-button spinner & stop (`57-shell-command-button-spinner.md`)
+
+HS-8056. Spec only — Phase 1 implementation tracked in a separate follow-up ticket. When a §15 Shell-target custom-command button is running, the button itself surfaces an absolute-positioned spinner + stop icon at the right edge (background: inherit so it visually punches the button colour, no reflow against the label). Clicking the running button opens a `confirmDialog` → `POST /api/shell/kill`. Multiple commands can run simultaneously; per-button state lives in a module-private `runningButtons: Map<commandKey, logId>` synced by the existing `/api/shell/running` poll. The existing global "Shell running" toolbar indicator stays as an aggregate signal (reads `runningButtons.size > 0` instead of a single boolean).
+
+**Status:** Design only.
+
+**Cross-refs.** §15 (shell-commands base flow + the existing `/api/shell/exec`+`/api/shell/kill`+`/api/shell/running` endpoints), §53 (streaming output — orthogonal; the spinner doesn't subscribe to the partial-output stream).
+
+---
+
 ## 56. Magnified terminal-grid navigation (`56-magnified-grid-nav.md`)
 
 HS-8028. While a terminal tile is centered (single-click overlay) or dedicated (double-click full-pane) in the §25 dashboard or §36 drawer-grid, **Shift+Cmd+Arrow** (macOS) / **Shift+Ctrl+Arrow** (Linux/Windows) switches the magnified target to the next tile in the indicated direction.

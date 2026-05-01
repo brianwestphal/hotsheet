@@ -1,13 +1,25 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _resetPrefixesForTesting,
   buildTicketRefRegex,
   linkifyTicketRefs,
+  linkifyWithCachedPrefixes,
+  loadTicketPrefixes,
+  reloadTicketPrefixes,
 } from './ticketRefs.js';
+
+const { apiMock } = vi.hoisted(() => ({
+  apiMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+}));
+
+vi.mock('./api.js', () => ({
+  api: (...args: unknown[]) => apiMock(...args),
+}));
 
 afterEach(() => {
   _resetPrefixesForTesting();
+  apiMock.mockReset();
 });
 
 describe('buildTicketRefRegex (HS-8036)', () => {
@@ -105,5 +117,83 @@ describe('linkifyTicketRefs (HS-8036)', () => {
     const html = '<pre><code>npm test HS-42</code></pre>';
     const out = linkifyTicketRefs(html, ['HS']);
     expect(out).toContain('data-ticket-number="HS-42"');
+  });
+});
+
+/**
+ * HS-8053 — `cachedPrefixes` is a module-private cache populated once by
+ * `loadTicketPrefixes()`. Pre-fix the cache was never invalidated on
+ * project switch, so a project with a non-`HS` prefix (e.g. Domotion's
+ * `DM`) never had its prefixes picked up — `DM-123` references in
+ * Domotion tickets stayed plain text. Fix: `reloadTicketPrefixes()`
+ * drops the cache + re-runs the fetch.
+ */
+describe('reloadTicketPrefixes (HS-8053)', () => {
+  beforeEach(() => {
+    apiMock.mockReset();
+    _resetPrefixesForTesting();
+  });
+
+  it('re-fetches prefixes when called even if the cache is already populated', async () => {
+    // Seed the cache with the previous project's prefixes (HS only).
+    _resetPrefixesForTesting(['HS']);
+    expect(linkifyWithCachedPrefixes('See DM-1', undefined)).toBe('See DM-1');
+    // Project switched. New project has DM. The cache is stale; the
+    // first render returns input unchanged. After reload it picks up.
+    apiMock.mockResolvedValueOnce({ prefixes: ['DM', 'HS'] });
+    const out = await reloadTicketPrefixes();
+    expect(out).toEqual(['DM', 'HS']);
+    expect(linkifyWithCachedPrefixes('See DM-1', undefined))
+      .toContain('data-ticket-number="DM-1"');
+  });
+
+  it('clears the cache synchronously so concurrent renders see null between clear and resolve', async () => {
+    _resetPrefixesForTesting(['HS']);
+    apiMock.mockReturnValueOnce(new Promise(resolve => {
+      // Delay the resolve by a microtask so the synchronous
+      // assertion below runs while the fetch is still in flight.
+      void Promise.resolve().then(() => resolve({ prefixes: ['DM', 'HS'] }));
+    }));
+    const reloadPromise = reloadTicketPrefixes();
+    // Mid-flight: cache is null, so `linkifyWithCachedPrefixes` should
+    // be a no-op — pre-fix this would have linked against the STALE
+    // ['HS'] cache.
+    expect(linkifyWithCachedPrefixes('DM-9', undefined)).toBe('DM-9');
+    await reloadPromise;
+    // After resolve: linkify works for the new prefix.
+    expect(linkifyWithCachedPrefixes('DM-9', undefined))
+      .toContain('data-ticket-number="DM-9"');
+  });
+
+  it('falls back to ["HS"] when the network fails (matches loadTicketPrefixes back-compat)', async () => {
+    _resetPrefixesForTesting(['HS', 'BUG']);
+    apiMock.mockRejectedValueOnce(new Error('network down'));
+    const out = await reloadTicketPrefixes();
+    expect(out).toEqual(['HS']);
+  });
+
+  it('subsequent reload picks up another change (Domotion → SmallTale → Hot Sheet round-trip)', async () => {
+    _resetPrefixesForTesting(['HS']);
+    apiMock.mockResolvedValueOnce({ prefixes: ['DM', 'HS'] });
+    await reloadTicketPrefixes();
+    expect(linkifyWithCachedPrefixes('DM-1', undefined))
+      .toContain('data-ticket-number="DM-1"');
+
+    // User clicks back to Hot Sheet — DM should drop out.
+    apiMock.mockResolvedValueOnce({ prefixes: ['HS'] });
+    await reloadTicketPrefixes();
+    expect(linkifyWithCachedPrefixes('DM-1', undefined)).toBe('DM-1');
+    expect(linkifyWithCachedPrefixes('HS-99', undefined))
+      .toContain('data-ticket-number="HS-99"');
+  });
+
+  // Sanity-check that `loadTicketPrefixes` itself still respects the
+  // cache (it must — `reloadTicketPrefixes` is the bypass; the cached
+  // path is what the per-render hot path uses).
+  it('loadTicketPrefixes returns the cached value without re-fetching', async () => {
+    _resetPrefixesForTesting(['HS', 'BUG']);
+    const out = await loadTicketPrefixes();
+    expect(out).toEqual(['HS', 'BUG']);
+    expect(apiMock).not.toHaveBeenCalled();
   });
 });

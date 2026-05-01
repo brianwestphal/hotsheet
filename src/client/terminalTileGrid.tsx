@@ -548,6 +548,10 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     tile.xtermRoot = null;
     tile.cachedCellW = null;
     tile.cachedCellH = null;
+    // HS-8059 — drop the inline theme-bg so the placeholder's own bg
+    // (`--bg-secondary` for cold/exited; the cold-card bg) paints instead
+    // of the previous live xterm's theme.
+    tile.preview.style.backgroundColor = '';
     // Restore the placeholder visual so the off-screen-then-back-on tile
     // doesn't briefly show an empty white box during the re-mount window.
     tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
@@ -624,6 +628,15 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
 
     const appearance = resolveTileAppearance(tile);
     const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
+    // HS-8059 — paint the tile preview's frame with the live theme bg so the
+    // sub-cell slop on the right + bottom of `.xterm-screen` (xterm sizes the
+    // canvas at exactly cols × cellW × rows × cellH, ≤ the preview's content
+    // area) reads as part of the terminal frame rather than a contrasting
+    // app-bg gutter. Mirrors the §22 drawer treatment (`terminal-body` HS-7960)
+    // and the §37 quit-confirm preview (HS-8058). Cleared in `softDisposeTile`
+    // + the `Starting…` placeholder branches so the placeholder's own
+    // `--bg-secondary` still shows through.
+    tile.preview.style.backgroundColor = themeData.background;
 
     const handle = checkout({
       projectSecret: tile.entry.secret,
@@ -913,6 +926,10 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
 
   async function spawnAndEnlarge(tile: InternalTile, target: 'center' | 'dedicated'): Promise<void> {
     const wasExited = tile.state === 'exited';
+    // HS-8059 — clear the inline theme-bg so the `Starting…` card uses its
+    // own `--bg-secondary` instead of being painted with the previous mount's
+    // theme bg.
+    tile.preview.style.backgroundColor = '';
     tile.preview.replaceChildren(toElement(
       <div className={`${placeholderClass} ${placeholderStartingClass}`}>
         <span>Starting…</span>

@@ -9,8 +9,8 @@
  * Subscribers (Phase 4 Settings UI) can register a callback via
  * `subscribeToAllowRules` to re-render when the rule list changes.
  */
-import { api } from '../api.js';
 import { parseAllowRules, type TerminalPromptAllowRule } from '../../shared/terminalPrompt/allowRules.js';
+import { api, apiWithSecret } from '../api.js';
 
 let cachedRules: TerminalPromptAllowRule[] = [];
 let hydrated = false;
@@ -49,14 +49,36 @@ export function getAllowRules(): readonly TerminalPromptAllowRule[] {
 
 /** Append a rule to settings.json + the in-memory cache. Notifies
  *  subscribers. Resolves on success; throws on PATCH failure (caller can
- *  surface the error inline in the overlay). */
-export async function appendAllowRule(rule: TerminalPromptAllowRule): Promise<void> {
+ *  surface the error inline in the overlay).
+ *
+ *  HS-8057: when `secret` is provided the write targets THAT project's
+ *  settings.json (cross-project allow-list flow from `bellPoll.tsx` —
+ *  the user clicked "Always choose this" on a prompt surfaced from a
+ *  project other than the active one, so the rule must persist into the
+ *  originating project's settings, not the active project's). The global
+ *  in-memory cache + subscribers only track the active project's rules,
+ *  so the secret-targeted path skips the cache update entirely; the
+ *  Settings UI for the originating project re-hydrates on next open. */
+export async function appendAllowRule(
+  rule: TerminalPromptAllowRule,
+  secret?: string,
+): Promise<void> {
   // Read current rules to avoid clobbering a concurrent write from another
   // tab. `/file-settings` PATCH replaces the whole `terminal_prompt_allow_rules`
   // value, so we have to merge.
-  const fs = await api<FileSettingsShape>('/file-settings');
+  const get = secret !== undefined
+    ? apiWithSecret<FileSettingsShape>('/file-settings', secret)
+    : api<FileSettingsShape>('/file-settings');
+  const fs = await get;
   const existing = parseAllowRules(fs.terminal_prompt_allow_rules);
   const next = [...existing, rule];
+  if (secret !== undefined) {
+    await apiWithSecret('/file-settings', secret, {
+      method: 'PATCH',
+      body: { terminal_prompt_allow_rules: next },
+    });
+    return;
+  }
   await api('/file-settings', {
     method: 'PATCH',
     body: { terminal_prompt_allow_rules: next },
@@ -66,11 +88,26 @@ export async function appendAllowRule(rule: TerminalPromptAllowRule): Promise<vo
   notifySubscribers();
 }
 
-/** Remove a rule by id. Used by the Phase 4 Settings UI's delete button. */
-export async function removeAllowRule(id: string): Promise<void> {
-  const fs = await api<FileSettingsShape>('/file-settings');
+/** Remove a rule by id. Used by the Phase 4 Settings UI's delete button.
+ *
+ *  HS-8057: same secret-routing semantics as `appendAllowRule` so a
+ *  hypothetical cross-project removal flow targets the right settings
+ *  file. Settings UI today only deletes rules in the active project so
+ *  the parameter is unused in tree but kept for symmetry. */
+export async function removeAllowRule(id: string, secret?: string): Promise<void> {
+  const get = secret !== undefined
+    ? apiWithSecret<FileSettingsShape>('/file-settings', secret)
+    : api<FileSettingsShape>('/file-settings');
+  const fs = await get;
   const existing = parseAllowRules(fs.terminal_prompt_allow_rules);
   const next = existing.filter(r => r.id !== id);
+  if (secret !== undefined) {
+    await apiWithSecret('/file-settings', secret, {
+      method: 'PATCH',
+      body: { terminal_prompt_allow_rules: next },
+    });
+    return;
+  }
   await api('/file-settings', {
     method: 'PATCH',
     body: { terminal_prompt_allow_rules: next },

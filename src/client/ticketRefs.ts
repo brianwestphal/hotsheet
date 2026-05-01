@@ -41,6 +41,27 @@ export async function loadTicketPrefixes(): Promise<string[]> {
   return cachedPrefixesPromise;
 }
 
+/**
+ * HS-8053 — drop the cache and re-fetch from `/api/tickets/prefixes`.
+ * Called on every project switch so a project with a non-`HS` prefix
+ * (e.g. Domotion's `DM`) gets its own prefix set picked up. Pre-fix
+ * `cachedPrefixes` was populated once at app init from whichever project
+ * the user landed on, and never invalidated — so `DM-123` references in
+ * a Domotion ticket never linkified.
+ *
+ * Same shape as `loadTicketPrefixes` (resolves with the new list, falls
+ * back to `['HS']` on network failure) so callers can drop in either
+ * function. The cache is cleared synchronously before the fetch starts,
+ * so any concurrent `linkifyWithCachedPrefixes(...)` call between the
+ * clear and the resolve safely sees `null` and returns the input
+ * unchanged — the next render after the resolve picks up the new set.
+ */
+export async function reloadTicketPrefixes(): Promise<string[]> {
+  cachedPrefixes = null;
+  cachedPrefixesPromise = null;
+  return loadTicketPrefixes();
+}
+
 /** Test-only — drop the cached prefix set so beforeEach can rebuild. */
 export function _resetPrefixesForTesting(prefixes?: string[]): void {
   cachedPrefixes = prefixes ?? null;

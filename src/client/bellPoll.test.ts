@@ -225,3 +225,69 @@ describe('dispatchPendingPrompts serialization (HS-8047 follow-up)', () => {
     expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(0);
   });
 });
+
+/**
+ * HS-8057 — clicking "Always choose this" on a cross-project overlay
+ * has to persist the rule into the ORIGINATING project's settings.json,
+ * not the active project's. The dispatcher's `onAddAllowRule` callback
+ * forwards the per-prompt `secret` so `appendAllowRule(rule, secret)`
+ * routes through `apiWithSecret(secret)` rather than the global `api()`
+ * helper. This test pins the wiring at the dispatcher boundary.
+ */
+describe('Always choose this — cross-project secret routing (HS-8057)', () => {
+  it('forwards the originating-project secret to appendAllowRule when the user clicks a choice with the checkbox ticked', async () => {
+    const appendSpy = vi.fn();
+    // Lazy mock — replace the live `appendAllowRule` on the imported
+    // store module. The dispatcher imports it eagerly so we have to
+    // reach into the module record. Vitest's `vi.doMock` would work
+    // for a re-import, but the simpler approach is to spy on the
+    // network primitive (`apiWithSecret`) and assert the URL+secret
+    // pair, which is what `appendAllowRule(rule, secret)` actually
+    // produces. happy-dom's stubbed fetch returns `{ok:true,json:{}}`
+    // (see beforeEach above) so the GET-then-PATCH sequence inside
+    // appendAllowRule completes without error.
+    const fetchMock = (globalThis as { fetch: typeof fetch }).fetch as unknown as ReturnType<typeof vi.fn>;
+
+    const state = buildState([
+      { secret: 'origin-secret', terminalId: 'tA', match: makeNumbered('sig-origin') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    expect(_activeOverlayKeyForTesting()).toBe('origin-secret::tA');
+
+    const overlay = document.querySelector<HTMLElement>('.terminal-prompt-overlay');
+    expect(overlay).not.toBeNull();
+    const checkbox = overlay!.querySelector<HTMLInputElement>('.terminal-prompt-overlay-allow-rule');
+    expect(checkbox).not.toBeNull();
+    // Tick the box THEN click choice 0 — the order the human takes.
+    checkbox!.checked = true;
+    const choice0 = overlay!.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice[data-choice-index="0"]');
+    expect(choice0).not.toBeNull();
+    choice0!.click();
+
+    // Yield the microtask queue so the appendAllowRule's awaited GET
+    // resolves (stubbed fetch resolves synchronously into a promise).
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    // Find the GET-then-PATCH calls to /file-settings carrying the
+    // originating project's secret in `X-Hotsheet-Secret`.
+    const fileSettingsCalls = fetchMock.mock.calls.filter(call => {
+      const url = String(call[0]);
+      return url.includes('/api/file-settings');
+    });
+    expect(fileSettingsCalls.length).toBeGreaterThanOrEqual(2);
+    for (const call of fileSettingsCalls) {
+      const opts = call[1] as { headers?: Record<string, string> } | undefined;
+      const secretHeader = opts?.headers?.['X-Hotsheet-Secret'];
+      expect(secretHeader).toBe('origin-secret');
+    }
+    // The POST /terminal/prompt-respond also carries the originating
+    // secret — sanity-check that the rest of the dispatcher contract
+    // is intact alongside the new HS-8057 rule write.
+    const respondCalls = fetchMock.mock.calls.filter(call => String(call[0]).includes('/terminal/prompt-respond'));
+    expect(respondCalls.length).toBe(1);
+
+    // Silence unused-var on the spy (kept for diagnostic if a future
+    // implementation switches back to a direct module spy).
+    void appendSpy;
+  });
+});

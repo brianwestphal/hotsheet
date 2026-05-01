@@ -145,3 +145,82 @@ describe('terminalTileGrid — tile mounted via terminalCheckout (HS-8048)', () 
     grid.dispose();
   });
 });
+
+/**
+ * HS-8059 — `mountTileViaCheckout` writes the active theme bg onto the
+ * tile preview's inline `style.backgroundColor` so the gutter around the
+ * `.xterm-screen` canvas reads as part of the terminal frame instead of
+ * the contrasting app `--bg`. Mirrors the §22 drawer treatment and the
+ * §37 quit-confirm preview (HS-8058).
+ */
+describe('terminalTileGrid — preview bg cascade (HS-8059)', () => {
+  function mountWithEntry(entry: TileEntry): TileGridHandle {
+    const handle = mountTileGrid({
+      container: makeContainer(),
+      cssPrefix: 'terminal-dashboard',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getSliderValue: () => 50,
+    });
+    handle.rebuild([entry]);
+    return handle;
+  }
+
+  it('paints the preview frame with the theme bg when an alive tile mounts', () => {
+    // Dracula's bg is `#282a36`. happy-dom keeps the inline value as-written
+    // (real browsers normalise to `rgb(40, 42, 54)`); both forms are
+    // semantically equivalent so we assert against the source hex.
+    const entry: TileEntry = { ...makeEntry('s', 't1'), theme: 'dracula' };
+    const grid = mountWithEntry(entry);
+    const preview = document.querySelector<HTMLElement>('.terminal-dashboard-tile-preview');
+    expect(preview).not.toBeNull();
+    expect(preview!.style.backgroundColor.toLowerCase()).toBe('#282a36');
+    grid.dispose();
+  });
+
+  it('uses different theme bgs for tiles with different theme overrides', () => {
+    const grid = mountTileGrid({
+      container: makeContainer(),
+      cssPrefix: 'terminal-dashboard',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getSliderValue: () => 50,
+    });
+    grid.rebuild([
+      { ...makeEntry('s', 't-dracula'), theme: 'dracula' },
+      { ...makeEntry('s', 't-solar'), theme: 'solarized-dark' },
+    ]);
+    const previews = document.querySelectorAll<HTMLElement>('.terminal-dashboard-tile-preview');
+    expect(previews.length).toBe(2);
+    // Dracula `#282a36`, solarized-dark `#002b36`.
+    expect(previews[0].style.backgroundColor.toLowerCase()).toBe('#282a36');
+    expect(previews[1].style.backgroundColor.toLowerCase()).toBe('#002b36');
+    grid.dispose();
+  });
+
+  it('inline bg falls back to empty (CSS --bg wins) for non-alive placeholder tiles', () => {
+    const grid = mountWithEntry({ ...makeEntry('s', 'cold-1', 'not_spawned'), theme: 'dracula' });
+    const preview = document.querySelector<HTMLElement>('.terminal-dashboard-tile-preview');
+    expect(preview).not.toBeNull();
+    // Cold tile didn't go through `mountTileViaCheckout` — the inline bg
+    // never gets written so the SCSS `--bg` fallback paints the placeholder
+    // frame.
+    expect(preview!.style.backgroundColor).toBe('');
+    grid.dispose();
+  });
+
+  it('drawer-grid tiles get the same theme-bg treatment via the shared mount path', () => {
+    const handle = mountTileGrid({
+      container: makeContainer(),
+      cssPrefix: 'drawer-terminal-grid',
+      centerSizeFrac: 0.9,
+      centerScope: 'container',
+      getSliderValue: () => 50,
+    });
+    handle.rebuild([{ ...makeEntry('s', 't1'), theme: 'dracula' }]);
+    const preview = document.querySelector<HTMLElement>('.drawer-terminal-grid-tile-preview');
+    expect(preview).not.toBeNull();
+    expect(preview!.style.backgroundColor.toLowerCase()).toBe('#282a36');
+    handle.dispose();
+  });
+});

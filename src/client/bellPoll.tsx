@@ -335,7 +335,16 @@ function openCrossProjectOverlay(secret: string, terminalId: string, match: Matc
     onAddAllowRule(choiceIndex, choiceLabel) {
       try {
         const rule = buildAllowRule(match, choiceIndex, choiceLabel);
-        void appendAllowRule(rule);
+        // HS-8057: the prompt is from `secret` (which may not be the
+        // active project — cross-project surfacing). The rule has to
+        // persist into THAT project's settings.json so the server-side
+        // scanner gate (`registry.ts::findMatchingRuleForProject`) finds
+        // it on the next match. Pre-fix `appendAllowRule(rule)` routed
+        // through `api()` which reads the active project's secret from
+        // the global store; the rule was written to the wrong project's
+        // settings and the next prompt re-surfaced. Pass `secret`
+        // explicitly so the write hits the originating project.
+        void appendAllowRule(rule, secret);
       } catch { /* generic shape would throw; we never pass the cb for generic */ }
     },
   });
