@@ -56,7 +56,7 @@ The dialog gains a **tab bar** at the top, between the header and the body:
 - **Right-click on a tab** → context menu with **Rename…** and **Delete** entries. Rename opens the same name prompt with the current name pre-selected; Delete confirms via the in-app `confirmDialog`. Delete is disabled (greyed) on the Default tab.
 - **Drag tabs to reorder.** HTML5 drag-and-drop with `.dragging` (0.4 opacity on the dragged tab) + `.drag-over` (leading-edge accent inset) feedback. Default can be moved away from index 0 — its identity is the id, not its position.
 
-Switching tabs flips `state.activeId` for the project, fires the change subscription, and re-renders the body to reflect the new grouping's `hiddenIds`. Toggling a row in the body writes against the active grouping's `hiddenIds`, NOT the legacy flat shape. The "Show all in this grouping" footer button (renamed from "Show all" in HS-7661) clears the *active* grouping only — other groupings are untouched.
+Switching tabs flips `state.activeId` for the project, fires the change subscription, and re-renders the body to reflect the new grouping's `hiddenIds`. Toggling a row in the body writes against the active grouping's `hiddenIds`, NOT the legacy flat shape. The footer carries paired bulk-toggle buttons: **Show All** (renamed from "Show all" in HS-7661, then "Show all in this grouping" in HS-7826, shortened in HS-8063 — full intent in the `title` attribute) clears every hidden id in the *active* grouping; **Hide All** (HS-8063) is the symmetric counterpart that hides every terminal currently rendered in the dialog body. Both operate only on the active grouping; other groupings are untouched.
 
 ## 39.5 Grouping selector dropdown
 
@@ -89,7 +89,8 @@ The dialog now treats grouping CRUD operations as cross-project fan-out and rout
 - **Rename / delete / reorder grouping** — fanned out across every scope so the per-project tab order, names, and grouping list stay aligned.
 - **Activate grouping** (tab click + dropdown change) — fanned out across every scope. The dashboard's `<select>` wiring uses the new `getAdditionalSecrets` callback in `GroupingSelectOptions` to pick up every other section's project.
 - **Toggle visibility row** — uses `group.secret` (the terminal's own project) instead of `dialogScope`, so the toggle lands in the correct per-project grouping.
-- **Show all in this grouping** — fanned out, so the footer button empties the active grouping in every project (consistent with the dashboard's cross-project view).
+- **Show All** — fanned out, so the footer button empties the active grouping in every project (consistent with the dashboard's cross-project view).
+- **Hide All** (HS-8063) — per-group, NOT fanned across projects: each rendered group's terminals are hidden in their OWN project's active grouping. (`hideAllInGrouping(secret, activeId, ids)` per group, where `activeId` comes from `getActiveGroupingId(dialogSecret(opts))`.) Every project's grouping ids stay aligned via the existing `dialogScopes` fan-out, so this works out symmetrically with Show All — both end up writing to the same logical grouping in every scope.
 
 The persistence layer is unchanged — each project still serialises its own `visibility_groupings` + `active_visibility_grouping_id` keys. The fan-out happens in the in-memory state layer and the dialog logic, not in the file shape. New tests in `dashboardHiddenTerminals.test.ts` (`generateGroupingIdAcrossProjects`, `addGroupingForProjectWithId` idempotence, the cross-project "active id stays aligned" + "toggle on terminal's own project" cases) plus the `addGroupingWithId` cases in `visibilityGroupings.test.ts` lock down the regression.
 

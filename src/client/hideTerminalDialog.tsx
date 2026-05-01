@@ -7,6 +7,7 @@ import {
   generateGroupingIdAcrossProjects,
   getActiveGroupingId,
   getGroupings,
+  hideAllInGrouping,
   isTerminalHiddenInGrouping,
   renameGroupingForProject,
   reorderGroupingsForProject,
@@ -122,7 +123,12 @@ function buildOverlay(opts: ShowDialogOptions): HTMLElement {
         <div className="hide-terminal-dialog-tabs" data-role="tabs"></div>
         <div className="hide-terminal-dialog-body" data-role="body"></div>
         <div className="hide-terminal-dialog-footer">
-          <button type="button" className="hide-terminal-show-all" data-action="show-all">Show all in this grouping</button>
+          {/* HS-8063 — paired Show All / Hide All buttons. Labels shortened
+              from the original "Show all in this grouping" so two buttons
+              fit comfortably side-by-side; the `title` attribute carries
+              the full intent for hover. */}
+          <button type="button" className="hide-terminal-show-all" data-action="show-all" title="Show all terminals in this grouping">Show All</button>
+          <button type="button" className="hide-terminal-hide-all" data-action="hide-all" title="Hide all terminals in this grouping">Hide All</button>
         </div>
       </div>
     </div>
@@ -139,6 +145,20 @@ function buildOverlay(opts: ShowDialogOptions): HTMLElement {
     if (scopes.length === 0) return;
     const activeId = getActiveGroupingId(scopes[0]);
     for (const s of scopes) unhideAllInGrouping(s, activeId);
+    rerenderBody(overlay, opts);
+    if (opts.onChange) opts.onChange();
+  });
+  overlay.querySelector('[data-action="hide-all"]')?.addEventListener('click', () => {
+    // HS-8063 — mirror of "Show All". Hide every terminal currently
+    // rendered in the dialog body in the active grouping. Per-group
+    // (per-project) so cross-project dialogs route each terminal id to
+    // its own project's state. The body is rebuilt afterwards so every
+    // row immediately reflects the new hidden state.
+    const activeId = getActiveGroupingId(dialogSecret(opts));
+    for (const group of opts.groups) {
+      if (group.terminals.length === 0) continue;
+      hideAllInGrouping(group.secret, activeId, group.terminals.map(t => t.id));
+    }
     rerenderBody(overlay, opts);
     if (opts.onChange) opts.onChange();
   });

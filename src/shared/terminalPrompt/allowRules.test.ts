@@ -98,6 +98,37 @@ describe('parseAllowRules (HS-7987)', () => {
     }];
     expect(parseAllowRules(arr)).toEqual([]);
   });
+
+  // HS-8061 — duplicate `(parser_id, question_hash, choice_index)` triples
+  // collapse to the first occurrence so historical bloat (multiple
+  // "Always allow" clicks on the same prompt before the dedupe gate
+  // landed) reads back as a single rule.
+  it('collapses duplicate (parser_id, question_hash, choice_index) entries to the first occurrence (HS-8061)', () => {
+    const arr = [
+      { id: 'r-first',  parser_id: 'claude-numbered', question_hash: 'h1', choice_index: 0, created_at: '2026-04-01T00:00:00Z', question_preview: 'first' },
+      { id: 'r-dup-1',  parser_id: 'claude-numbered', question_hash: 'h1', choice_index: 0, created_at: '2026-04-02T00:00:00Z', question_preview: 'dup' },
+      { id: 'r-dup-2',  parser_id: 'claude-numbered', question_hash: 'h1', choice_index: 0, created_at: '2026-04-03T00:00:00Z' },
+      { id: 'r-other',  parser_id: 'yesno',           question_hash: 'h1', choice_index: 0, created_at: '' }, // different parser → kept
+      { id: 'r-other2', parser_id: 'claude-numbered', question_hash: 'h2', choice_index: 0, created_at: '' }, // different hash → kept
+      { id: 'r-other3', parser_id: 'claude-numbered', question_hash: 'h1', choice_index: 1, created_at: '' }, // different choice → kept
+    ];
+    const out = parseAllowRules(arr);
+    expect(out.map(r => r.id)).toEqual(['r-first', 'r-other', 'r-other2', 'r-other3']);
+    // The kept rule's optional metadata (question_preview) is the
+    // original's, NOT a later duplicate's — pinning the first-wins rule.
+    expect(out[0].question_preview).toBe('first');
+  });
+
+  it('does not dedupe when only the rule id differs (id is not part of the match key)', () => {
+    // Same `(parser_id, question_hash, choice_index)` → still a dup.
+    // The rule id field is local-only metadata so it should not affect
+    // dedupe.
+    const arr = [
+      { id: 'r-A', parser_id: 'yesno', question_hash: 'h', choice_index: 0, created_at: '' },
+      { id: 'r-B', parser_id: 'yesno', question_hash: 'h', choice_index: 0, created_at: '' },
+    ];
+    expect(parseAllowRules(arr)).toHaveLength(1);
+  });
 });
 
 describe('findMatchingAllowRule (HS-7987)', () => {

@@ -597,7 +597,11 @@ input, select, textarea {
   border-top: 1px solid var(--border);
 }
 
-.hide-terminal-show-all {
+// HS-8063 — `.hide-terminal-show-all` + `.hide-terminal-hide-all` paired
+// in the dialog footer. Same visual treatment so neither reads as the
+// "primary" action — both are bulk-toggle utilities.
+.hide-terminal-show-all,
+.hide-terminal-hide-all {
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius);

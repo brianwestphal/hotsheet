@@ -368,6 +368,35 @@ export function unhideAllInGrouping(secret: string, groupingId: string): void {
   setProjectState(secret, next);
 }
 
+/** HS-8063 — hide every supplied terminal id in a SPECIFIC grouping
+ *  (mirror of `unhideAllInGrouping`). Used by the dialog's "Hide All"
+ *  button. The dialog passes the union of every terminal id rendered
+ *  in the body for `secret`, so the result is a fully-hidden grouping
+ *  for that project. Idempotent — duplicates and already-hidden ids
+ *  collapse via the underlying `toggleHiddenInGrouping` helper.
+ *
+ *  Note: a naive `g.hiddenIds = [...new Set([...g.hiddenIds, ...ids])]`
+ *  would lose ordering across the existing `toggleHiddenInGrouping`
+ *  contract, so we route every add through it. The helper short-
+ *  circuits when the next array is reference-equal to the current
+ *  one, so an all-already-hidden call is a no-op (no notify storm). */
+export function hideAllInGrouping(
+  secret: string,
+  groupingId: string,
+  terminalIds: readonly string[],
+): void {
+  if (terminalIds.length === 0) return;
+  const state = getOrInit(secret);
+  const next = updateGroupingById(state, groupingId, g => {
+    let updated = g;
+    for (const id of terminalIds) {
+      updated = toggleHiddenInGrouping(updated, id, true);
+    }
+    return updated;
+  });
+  setProjectState(secret, next);
+}
+
 /**
  * HS-8016 — drop any id from every grouping's `hiddenIds` that's not in
  * `knownIds`. Called whenever a fresh `/terminal/list` round-trip lands

@@ -149,6 +149,90 @@ describe('appendAllowRule cross-project secret routing (HS-8057)', () => {
   });
 });
 
+/**
+ * HS-8061 — clicking "Always allow" multiple times on the same prompt
+ * (e.g. several Claude instances hit the same WARNING on launch and the
+ * server-side scanner gate hadn't propagated the rule yet) appended a
+ * fresh rule per click, leaving the Settings → Terminal-prompts list
+ * with N identical rows. The fix dedupes on
+ * `(parser_id, question_hash, choice_index)` and rewrites the on-disk
+ * list with the cleaned (deduped) shape so historical bloat collapses
+ * on the next "Always allow" click.
+ */
+describe('appendAllowRule dedupe (HS-8061)', () => {
+  it('does NOT add a second entry when an equivalent rule already exists', async () => {
+    apiMock.mockResolvedValueOnce({
+      terminal_prompt_allow_rules: [{
+        id: 'r-original', parser_id: 'claude-numbered', question_hash: 'h1',
+        choice_index: 0, created_at: '2026-04-01T00:00:00Z',
+      }],
+    });
+    apiMock.mockResolvedValueOnce({});
+    await appendAllowRule({
+      id: 'r-duplicate', parser_id: 'claude-numbered', question_hash: 'h1',
+      choice_index: 0, created_at: '2026-05-01T00:00:00Z',
+    });
+    const patchBody = (apiMock.mock.calls[1][1] as { method: string; body: { terminal_prompt_allow_rules: unknown[] } }).body;
+    expect(patchBody.terminal_prompt_allow_rules).toHaveLength(1);
+    // The kept rule is the original (insertion-order preserved by parseAllowRules).
+    expect((patchBody.terminal_prompt_allow_rules[0] as { id: string }).id).toBe('r-original');
+    expect(getAllowRules()).toHaveLength(1);
+  });
+
+  it('writes the deduped existing list back when historical bloat is present', async () => {
+    // Simulates the user's settings.json shape from HS-8061's screenshot:
+    // 11 identical rules. The next "Always allow" click should write
+    // back a single-element list.
+    const eleven = Array.from({ length: 11 }, (_, i) => ({
+      id: `r${i}`, parser_id: 'claude-numbered', question_hash: '03018162',
+      choice_index: 0, created_at: `2026-05-01T02:0${i}:00Z`,
+      question_preview: 'WARNING',
+      choice_label: 'I am using this for local development',
+    }));
+    apiMock.mockResolvedValueOnce({ terminal_prompt_allow_rules: eleven });
+    apiMock.mockResolvedValueOnce({});
+    await appendAllowRule({
+      id: 'r-twelfth', parser_id: 'claude-numbered', question_hash: '03018162',
+      choice_index: 0, created_at: '2026-05-01T03:00:00Z',
+    });
+    const patchBody = (apiMock.mock.calls[1][1] as { method: string; body: { terminal_prompt_allow_rules: unknown[] } }).body;
+    expect(patchBody.terminal_prompt_allow_rules).toHaveLength(1);
+    expect((patchBody.terminal_prompt_allow_rules[0] as { id: string }).id).toBe('r0');
+  });
+
+  it('still appends when only choice_index differs (different choice on same question is a separate rule)', async () => {
+    apiMock.mockResolvedValueOnce({
+      terminal_prompt_allow_rules: [{
+        id: 'r-yes', parser_id: 'yesno', question_hash: 'h1',
+        choice_index: 0, created_at: '',
+      }],
+    });
+    apiMock.mockResolvedValueOnce({});
+    await appendAllowRule({
+      id: 'r-no', parser_id: 'yesno', question_hash: 'h1',
+      choice_index: 1, created_at: '',
+    });
+    const patchBody = (apiMock.mock.calls[1][1] as { method: string; body: { terminal_prompt_allow_rules: unknown[] } }).body;
+    expect(patchBody.terminal_prompt_allow_rules).toHaveLength(2);
+  });
+
+  it('still appends when only parser_id differs', async () => {
+    apiMock.mockResolvedValueOnce({
+      terminal_prompt_allow_rules: [{
+        id: 'r-numbered', parser_id: 'claude-numbered', question_hash: 'h1',
+        choice_index: 0, created_at: '',
+      }],
+    });
+    apiMock.mockResolvedValueOnce({});
+    await appendAllowRule({
+      id: 'r-yesno', parser_id: 'yesno', question_hash: 'h1',
+      choice_index: 0, created_at: '',
+    });
+    const patchBody = (apiMock.mock.calls[1][1] as { method: string; body: { terminal_prompt_allow_rules: unknown[] } }).body;
+    expect(patchBody.terminal_prompt_allow_rules).toHaveLength(2);
+  });
+});
+
 describe('removeAllowRule (HS-7988)', () => {
   it('PATCHes the trimmed list back', async () => {
     apiMock.mockResolvedValueOnce({

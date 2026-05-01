@@ -1,5 +1,6 @@
 import { toElement } from './dom.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
+import { resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
 import { checkout,type CheckoutHandle } from './terminalCheckout.js';
 
 /**
@@ -23,6 +24,14 @@ export interface QuitSummaryEntry {
   foregroundCommand: string;
   isShell: boolean;
   isExempt: boolean;
+  /** HS-8059 follow-up — per-terminal appearance override from the
+   *  project's settings.json. Used by the preview-pane gutter cascade so
+   *  the bg matches the live xterm theme without depending on
+   *  `term.options.theme` having been applied by another consumer
+   *  asynchronously. */
+  theme?: string;
+  fontFamily?: string;
+  fontSize?: number;
 }
 
 export interface QuitSummaryProject {
@@ -30,6 +39,10 @@ export interface QuitSummaryProject {
   name: string;
   confirmMode: 'always' | 'never' | 'with-non-exempt-processes';
   entries: QuitSummaryEntry[];
+  /** HS-8059 follow-up — project's `terminal_default` from
+   *  settings.json. Layered UNDER the per-entry appearance override
+   *  when resolving the preview-pane bg. */
+  terminalDefault?: { theme?: string; fontFamily?: string; fontSize?: number };
 }
 
 export interface QuitSummary {
@@ -320,6 +333,33 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
     const previewEl = overlay.querySelector<HTMLElement>('.quit-confirm-detail-preview');
     const rows = Array.from(overlay.querySelectorAll<HTMLButtonElement>('.quit-confirm-row'));
 
+    // HS-8059 follow-up — pre-resolve the bg colour for every (secret,
+    // terminalId) shown in the dialog, keyed `${secret}::${terminalId}`,
+    // BEFORE the user clicks a row. This way `selectRow` paints the
+    // gutter synchronously from a known-good value rather than reading
+    // `term.options.theme` after `checkout()` returns — which is the
+    // race the user reported (5/1, 12:59): when the drawer-pane consumer
+    // hadn't already mounted this terminal, `applyAppearanceToTerm`
+    // never ran (or was still mid-font-load), so `term.options.theme`
+    // was undefined and the bg fell back to the SCSS gray default.
+    //
+    // `resolveAppearance` layers project-default UNDER per-entry
+    // override; no session-override layer here (quit-confirm doesn't
+    // have one — the per-instance session overrides live keyed by
+    // terminal id in the active project's state, not cross-project).
+    const bgByRowKey = new Map<string, string>();
+    for (const project of contributing) {
+      const projectDefault = project.terminalDefault ?? {};
+      for (const entry of project.entries) {
+        const configOverride: { theme?: string; fontFamily?: string; fontSize?: number } = {};
+        if (entry.theme !== undefined) configOverride.theme = entry.theme;
+        if (entry.fontFamily !== undefined) configOverride.fontFamily = entry.fontFamily;
+        if (entry.fontSize !== undefined) configOverride.fontSize = entry.fontSize;
+        const appearance = resolveAppearance({ projectDefault, configOverride });
+        bgByRowKey.set(`${project.secret}::${entry.terminalId}`, resolveAppearanceBackground(appearance));
+      }
+    }
+
     // HS-8041 — preview pane is a `terminalCheckout` consumer (Phase 2.1
     // of HS-8032). Each row-select releases the prior checkout and pushes
     // a new one for the clicked row's `(secret, terminalId)`. Cancel-
@@ -429,9 +469,24 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
       // `.xterm-screen { background: inherit }` rule lets xterm's own
       // layered elements participate in the cascade so there's no
       // colour seam between the canvas and the gutter.
-      const themeBg = (currentCheckout.term.options.theme as { background?: unknown } | undefined)?.background;
-      if (typeof themeBg === 'string' && themeBg !== '') {
-        previewEl.style.background = themeBg;
+      //
+      // HS-8059 follow-up — read the bg from the pre-resolved
+      // `bgByRowKey` map keyed off the project secret + terminal id.
+      // Pre-fix the read came from `currentCheckout.term.options.theme`,
+      // which is only populated after another consumer (the drawer
+      // pane) has run `applyAppearanceToTerm` against the SHARED xterm.
+      // When the user opened the quit dialog before the drawer ever
+      // mounted that terminal — common when the running PTY was a
+      // long-lived background process the user hadn't visually
+      // attended to — the read returned undefined and the gutter fell
+      // back to SCSS `var(--bg)` gray. The pre-resolved map is
+      // populated synchronously from server-supplied appearance data
+      // (`/api/projects/quit-summary` HS-8059 follow-up payload), so
+      // it's deterministic regardless of which other consumers have
+      // (or haven't) mounted the terminal.
+      const bg = bgByRowKey.get(`${secret}::${terminalId}`);
+      if (typeof bg === 'string' && bg !== '') {
+        previewEl.style.background = bg;
       }
 
       // HS-7969 follow-up — size the xterm to fill the preview pane.

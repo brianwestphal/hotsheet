@@ -12,6 +12,7 @@ import {
   getActiveGroupingId,
   getGroupings,
   getHiddenTerminals,
+  hideAllInGrouping,
   hideNewTerminalInNonDefaultGroupings,
   hydratePersistedHiddenForProject,
   isTerminalHidden,
@@ -22,6 +23,7 @@ import {
   setTerminalHiddenInGrouping,
   subscribeToHiddenChanges,
   unhideAllEverywhere,
+  unhideAllInGrouping,
   unhideAllInProject,
 } from './dashboardHiddenTerminals.js';
 
@@ -396,5 +398,66 @@ describe('pruneHiddenForProject (HS-8016)', () => {
     pruneHiddenForProject('s1', []);
     pruneHiddenForProject('s2', []);
     expect(countHiddenAcrossAllProjects()).toBe(0);
+  });
+});
+
+/**
+ * HS-8063 — `hideAllInGrouping` is the symmetric counterpart to
+ * `unhideAllInGrouping`, used by the dialog's new "Hide All" button.
+ * Hides every supplied terminal id in a specific grouping in one call.
+ * Idempotent: already-hidden ids stay hidden, duplicates collapse.
+ */
+describe('hideAllInGrouping (HS-8063)', () => {
+  it('hides every supplied id in the target grouping', () => {
+    addGroupingForProjectWithId('s1', 'g-server', 'Server');
+    setActiveGroupingForProject('s1', 'g-server');
+
+    hideAllInGrouping('s1', 'g-server', ['a', 'b', 'c']);
+
+    expect(isTerminalHiddenInGrouping('s1', 'g-server', 'a')).toBe(true);
+    expect(isTerminalHiddenInGrouping('s1', 'g-server', 'b')).toBe(true);
+    expect(isTerminalHiddenInGrouping('s1', 'g-server', 'c')).toBe(true);
+  });
+
+  it('is idempotent — calling twice does not duplicate ids', () => {
+    addGroupingForProjectWithId('s1', 'g-server', 'Server');
+    hideAllInGrouping('s1', 'g-server', ['a', 'b']);
+    hideAllInGrouping('s1', 'g-server', ['a', 'b']);
+    expect(getHiddenTerminals('s1').size).toBe(0); // active is still default
+    setActiveGroupingForProject('s1', 'g-server');
+    expect(Array.from(getHiddenTerminals('s1')).sort()).toEqual(['a', 'b']);
+  });
+
+  it('preserves prior hidden ids and merges new ones', () => {
+    addGroupingForProjectWithId('s1', 'g-server', 'Server');
+    setTerminalHiddenInGrouping('s1', 'g-server', 'a', true);
+    hideAllInGrouping('s1', 'g-server', ['b', 'c']);
+    setActiveGroupingForProject('s1', 'g-server');
+    expect(Array.from(getHiddenTerminals('s1')).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('only mutates the target grouping, not the active or default', () => {
+    addGroupingForProjectWithId('s1', 'g-server', 'Server');
+    // Active is default. Mutate only `g-server`.
+    hideAllInGrouping('s1', 'g-server', ['a', 'b']);
+    expect(isTerminalHidden('s1', 'a')).toBe(false); // active=default, untouched
+    expect(isTerminalHiddenInGrouping('s1', 'default', 'a')).toBe(false);
+    expect(isTerminalHiddenInGrouping('s1', 'g-server', 'a')).toBe(true);
+  });
+
+  it('empty terminalIds is a no-op (no notify)', () => {
+    let calls = 0;
+    const unsub = subscribeToHiddenChanges(() => { calls += 1; });
+    hideAllInGrouping('s1', 'default', []);
+    expect(calls).toBe(0);
+    unsub();
+  });
+
+  it('symmetric with unhideAllInGrouping — round trip yields empty grouping', () => {
+    addGroupingForProjectWithId('s1', 'g-server', 'Server');
+    hideAllInGrouping('s1', 'g-server', ['a', 'b', 'c']);
+    unhideAllInGrouping('s1', 'g-server');
+    setActiveGroupingForProject('s1', 'g-server');
+    expect(getHiddenTerminals('s1').size).toBe(0);
   });
 });

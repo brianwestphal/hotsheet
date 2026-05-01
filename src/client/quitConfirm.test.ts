@@ -2,25 +2,38 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { evaluateQuitDecision, type QuitSummary, showQuitConfirmDialog } from './quitConfirm.js';
-import { _getTermForTesting, _inspectStackForTesting, _resetForTesting, checkout, entryCount } from './terminalCheckout.js';
+import { _getTermForTesting, _inspectStackForTesting, _resetForTesting, entryCount } from './terminalCheckout.js';
 
 function project(
   name: string,
   confirmMode: 'always' | 'never' | 'with-non-exempt-processes',
-  entries: Array<{ label: string; cmd: string; isExempt: boolean; isShell?: boolean }>,
+  entries: Array<{ label: string; cmd: string; isExempt: boolean; isShell?: boolean; theme?: string }>,
+  opts?: { terminalDefault?: { theme?: string; fontFamily?: string; fontSize?: number } },
 ) {
-  return {
+  const proj: {
+    secret: string;
+    name: string;
+    confirmMode: typeof confirmMode;
+    entries: Array<{ terminalId: string; label: string; foregroundCommand: string; isShell: boolean; isExempt: boolean; theme?: string }>;
+    terminalDefault?: { theme?: string; fontFamily?: string; fontSize?: number };
+  } = {
     secret: `secret-${name}`,
     name,
     confirmMode,
-    entries: entries.map(e => ({
-      terminalId: e.label,
-      label: e.label,
-      foregroundCommand: e.cmd,
-      isShell: e.isShell ?? false,
-      isExempt: e.isExempt,
-    })),
+    entries: entries.map(e => {
+      const out: { terminalId: string; label: string; foregroundCommand: string; isShell: boolean; isExempt: boolean; theme?: string } = {
+        terminalId: e.label,
+        label: e.label,
+        foregroundCommand: e.cmd,
+        isShell: e.isShell ?? false,
+        isExempt: e.isExempt,
+      };
+      if (e.theme !== undefined) out.theme = e.theme;
+      return out;
+    }),
   };
+  if (opts?.terminalDefault !== undefined) proj.terminalDefault = opts.terminalDefault;
+  return proj;
 }
 
 describe('evaluateQuitDecision (HS-7596 / §37.5)', () => {
@@ -274,14 +287,27 @@ describe('quit-confirm preview pane checkout (HS-8041 §54.5.2)', () => {
 });
 
 /**
- * HS-8058 — the quit-confirm preview pane must paint its container bg
- * to match the live xterm's theme background so the sub-cell slop
- * around the canvas (the right + bottom gutter where `cols * cellW` /
- * `rows * cellH` doesn't fully cover the pane content area) reads as
- * part of the terminal rather than as the contrasting gray pane the
- * user reported as "text poking out of terminal bounds".
+ * HS-8058 / HS-8059 follow-up — the quit-confirm preview pane must
+ * paint its container bg to match the configured xterm theme background
+ * so the sub-cell slop around the canvas (the right + bottom gutter
+ * where `cols * cellW` / `rows * cellH` doesn't fully cover the pane
+ * content area) reads as part of the terminal rather than as the
+ * contrasting gray pane the user reported as "text poking out of
+ * terminal bounds".
+ *
+ * HS-8058's original implementation read the bg from the live xterm
+ * (`currentCheckout.term.options.theme.background`), which only worked
+ * when ANOTHER consumer (the drawer pane) had already mounted the
+ * terminal and run `applyAppearanceToTerm` against it. When the user
+ * opened the quit dialog before the drawer ever attached, the read
+ * returned undefined and the bg fell back to gray — the user's
+ * "inconsistent" report (5/1, 12:59). The HS-8059 follow-up resolves
+ * the bg synchronously from server-supplied per-entry appearance
+ * (`/api/projects/quit-summary` payload's `theme` / `terminalDefault`
+ * fields) so the gutter paints deterministically regardless of
+ * checkout order.
  */
-describe('quit-confirm preview pane theme-bg cascade (HS-8058)', () => {
+describe('quit-confirm preview pane theme-bg cascade (HS-8058 / HS-8059)', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
     _resetForTesting();
@@ -293,95 +319,82 @@ describe('quit-confirm preview pane theme-bg cascade (HS-8058)', () => {
     document.querySelectorAll('.quit-confirm-overlay').forEach(el => el.remove());
   });
 
-  it('applies the live term theme background to the preview pane on row select', () => {
-    // Pre-create the entry so we can poke its theme BEFORE the dialog's
-    // auto-select fires its checkout. Keep the seed handle alive across
-    // the dialog open so the entry isn't disposed (releasing the only
-    // consumer empties the stack and tears the term down). The dialog's
-    // checkout then pushes onto the existing entry's stack and shares
-    // the same term — which carries the seed's theme.
+  it('paints the preview bg from the per-entry theme override on row select', () => {
+    // The auto-selected row's `theme: 'dracula'` resolves to bg
+    // `#282a36` via `resolveAppearance` + `resolveAppearanceBackground`
+    // — applied synchronously from the QuitSummary payload, no
+    // dependency on `term.options.theme` being set by another consumer.
     const proj = project('proj-A', 'always', [
-      { label: 'a-claude', cmd: 'claude', isExempt: false },
+      { label: 'a-claude', cmd: 'claude', isExempt: false, theme: 'dracula' },
     ]);
-    const sink = document.createElement('div');
-    document.body.appendChild(sink);
-    const seedHandle = checkout({
-      projectSecret: 'secret-proj-A',
-      terminalId: 'a-claude',
-      cols: 80,
-      rows: 24,
-      mountInto: sink,
-    });
-    seedHandle.term.options.theme = { background: 'rgb(40, 42, 54)' };
 
     void showQuitConfirmDialog([proj]);
 
-    // Auto-select fired synchronously; the handle reads the term's
-    // current theme bg and applies it inline on the preview pane.
     const preview = document.querySelector<HTMLElement>('.quit-confirm-detail-preview');
     expect(preview).not.toBeNull();
-    expect(preview!.style.background).toBe('rgb(40, 42, 54)');
+    expect(preview!.style.background).toBe('#282a36'); // dracula bg #282a36
 
-    // Sanity: the live term is the one we expect.
+    // Sanity: the term has been checked out (the dialog auto-selected
+    // the only row and pushed a checkout for it).
     const term = _getTermForTesting('secret-proj-A', 'a-claude');
     expect(term).not.toBeNull();
 
     document.querySelector<HTMLButtonElement>('.quit-confirm-btn-cancel')?.click();
-    seedHandle.release();
-    sink.remove();
   });
 
-  it('leaves the inline background empty when the term has no theme set (CSS fallback wins)', () => {
-    void showQuitConfirmDialog([
-      project('proj-A', 'always', [
-        { label: 'a-claude', cmd: 'claude', isExempt: false },
-      ]),
-    ]);
+  it('falls back to project terminalDefault when the entry has no theme override', () => {
+    const proj = project(
+      'proj-A',
+      'always',
+      [{ label: 'a-claude', cmd: 'claude', isExempt: false }],
+      { terminalDefault: { theme: 'github-dark' } },
+    );
+    void showQuitConfirmDialog([proj]);
 
-    // No prior consumer set a theme — the term defaults are unchanged
-    // so the bg-set guard's typeof-string check fails and the inline
-    // background stays empty (the SCSS gray fallback paints).
     const preview = document.querySelector<HTMLElement>('.quit-confirm-detail-preview');
-    expect(preview).not.toBeNull();
-    expect(preview!.style.background).toBe('');
+    expect(preview!.style.background).toBe('#0d1117'); // github-dark bg #0d1117
+
+    document.querySelector<HTMLButtonElement>('.quit-confirm-btn-cancel')?.click();
+  });
+
+  it('regression — does NOT depend on term.options.theme being set by another consumer (HS-8059)', () => {
+    // Pre-fix this test would have failed: the dialog's checkout
+    // creates a fresh xterm, no other consumer ever ran
+    // `applyAppearanceToTerm` against it, so `term.options.theme` was
+    // undefined and the inline bg stayed empty. Post-fix the bg is
+    // resolved from the server-supplied `theme` field synchronously.
+    const proj = project('proj-A', 'always', [
+      { label: 'a-claude', cmd: 'claude', isExempt: false, theme: 'solarized-dark' },
+    ]);
+    void showQuitConfirmDialog([proj]);
+
+    const preview = document.querySelector<HTMLElement>('.quit-confirm-detail-preview');
+    expect(preview!.style.background).toBe('#002b36'); // solarized-dark bg #002b36
+    // Live xterm's theme is whatever the term defaults to (no consumer
+    // touched it) — the bg-paint path no longer reads from it.
+    const term = _getTermForTesting('secret-proj-A', 'a-claude');
+    expect(term).not.toBeNull();
 
     document.querySelector<HTMLButtonElement>('.quit-confirm-btn-cancel')?.click();
   });
 
   it('updates the bg when the user switches rows to a terminal with a different theme', () => {
     const proj = project('proj-A', 'always', [
-      { label: 'a-claude', cmd: 'claude', isExempt: false },
-      { label: 'a-htop', cmd: 'htop', isExempt: true },
+      { label: 'a-claude', cmd: 'claude', isExempt: false, theme: 'dracula' },
+      { label: 'a-htop', cmd: 'htop', isExempt: true, theme: 'github-dark' },
     ]);
-
-    // Seed BOTH terminals with distinct theme bgs so the swap path has
-    // a visible delta. Keep both seed handles alive across the dialog
-    // so the entries aren't disposed when each seed releases its only
-    // consumer (the dialog's checkout pushes onto the same stacks).
-    const sinks: HTMLDivElement[] = [];
-    const seeds: ReturnType<typeof checkout>[] = [];
-    for (const [tid, bg] of [['a-claude', 'rgb(40, 42, 54)'], ['a-htop', 'rgb(13, 17, 23)']] as const) {
-      const sink = document.createElement('div');
-      document.body.appendChild(sink);
-      sinks.push(sink);
-      const h = checkout({ projectSecret: 'secret-proj-A', terminalId: tid, cols: 80, rows: 24, mountInto: sink });
-      h.term.options.theme = { background: bg };
-      seeds.push(h);
-    }
 
     void showQuitConfirmDialog([proj]);
 
     const preview = document.querySelector<HTMLElement>('.quit-confirm-detail-preview');
-    expect(preview!.style.background).toBe('rgb(40, 42, 54)'); // first row's theme
+    expect(preview!.style.background).toBe('#282a36'); // dracula
 
-    // Click row 2 — checkout swaps to the other terminal-id and
-    // re-applies that term's bg.
+    // Click row 2 — the bg map lookup swaps to the second entry's
+    // resolved bg.
     const rows = Array.from(document.querySelectorAll<HTMLButtonElement>('.quit-confirm-row'));
     rows[1].click();
-    expect(preview!.style.background).toBe('rgb(13, 17, 23)');
+    expect(preview!.style.background).toBe('#0d1117'); // github-dark
 
     document.querySelector<HTMLButtonElement>('.quit-confirm-btn-cancel')?.click();
-    for (const s of seeds) s.release();
-    for (const s of sinks) s.remove();
   });
 });

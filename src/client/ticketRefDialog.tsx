@@ -168,6 +168,15 @@ function onKeydown(e: KeyboardEvent): void {
  * HS-8036 — global click handler that intercepts `.ticket-ref` anchor
  * clicks anywhere in the document. Mounted once at app init. Reads the
  * `data-ticket-number` attribute and dispatches to `openTicketRefDialog`.
+ *
+ * HS-8062 — registered with `capture: true` so it runs in the capture
+ * phase BEFORE any ancestor click handler. Otherwise, ancestor listeners
+ * (the note-entry click-to-edit in `noteRenderer.tsx`, the
+ * `.detail-details-rendered` click-to-edit in `detail.tsx`) would fire
+ * first and toggle the surrounding ticket into edit mode before this
+ * handler had a chance to call `stopPropagation` from the bubble phase.
+ * Capture-phase + `stopPropagation` on a hit keeps the click confined to
+ * "open the reference dialog" and nothing else.
  */
 export function bindTicketRefGlobalClickHandler(): void {
   document.addEventListener('click', (e) => {
@@ -180,7 +189,7 @@ export function bindTicketRefGlobalClickHandler(): void {
     e.preventDefault();
     e.stopPropagation();
     void openTicketRefDialog(number);
-  });
+  }, { capture: true });
 }
 
 // --- helpers ---

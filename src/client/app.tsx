@@ -11,7 +11,7 @@ import { TIMERS } from './constants/timers.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
 import { initDbRecoveryBanner } from './dbRecoveryBanner.js';
-import { applyDetailPosition, applyDetailSize, bindDetailDetailsRenderToggle, closeDetail, initResize, openDetail, openDetailAndFocusNote, renderDetailsMarkdown, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
+import { applyDetailPosition, applyDetailSize, bindDetailDetailsRenderToggle, closeDetail, initResize, openDetail, openDetailAndFocusNote, refreshDetail, renderDetailsMarkdown, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
 import { toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
@@ -113,7 +113,11 @@ async function reloadAppState() {
   // so a project with a non-`HS` prefix (e.g. Domotion's `DM`) never
   // got its prefixes picked up — `DM-123` references never linkified
   // when the user switched to Domotion mid-session.
-  void reloadTicketPrefixes();
+  //
+  // HS-8062 — chain `refreshDetail()` so any active detail panel
+  // re-renders with the new prefix set and the `.ticket-ref` anchors
+  // appear / update for the new project's references.
+  void reloadTicketPrefixes().then(() => refreshDetail()).catch(() => { /* swallow — covered by reloadTicketPrefixes fallback */ });
   // Sync toggle button UI to the new project's saved settings
   updateLayoutToggle();
   updateDetailPositionToggle();
@@ -209,7 +213,14 @@ async function init() {
   // until the cache populates; the next mutation re-renders correctly.
   // Also wire the global click handler that intercepts `.ticket-ref`
   // anchor clicks and dispatches to the stacking dialog.
-  void loadTicketPrefixes();
+  //
+  // HS-8062 — after the prefix cache resolves, refresh the active detail
+  // panel so any markdown that was rendered before the cache populated
+  // (race between `init` opening a ticket and `/api/tickets/prefixes`
+  // resolving) gets re-linkified. Without this the user would see plain-
+  // text `HS-1234` in details / notes and clicking it would only enter
+  // edit mode (no `.ticket-ref` anchor for the global handler to catch).
+  void loadTicketPrefixes().then(() => refreshDetail()).catch(() => { /* swallow — covered by the loadTicketPrefixes fallback */ });
   bindTicketRefGlobalClickHandler();
 
   // HS-7962 — non-Tauri only: throttled (≤ once / 30 days) overlay nudging

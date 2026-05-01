@@ -58,7 +58,18 @@ export function getAllowRules(): readonly TerminalPromptAllowRule[] {
  *  originating project's settings, not the active project's). The global
  *  in-memory cache + subscribers only track the active project's rules,
  *  so the secret-targeted path skips the cache update entirely; the
- *  Settings UI for the originating project re-hydrates on next open. */
+ *  Settings UI for the originating project re-hydrates on next open.
+ *
+ *  HS-8061: dedupe by `(parser_id, question_hash, choice_index)` against
+ *  the existing rule list before appending. Pre-fix every "Always allow"
+ *  click appended unconditionally — when several Claude instances hit
+ *  the same WARNING prompt simultaneously on launch (or the prompt
+ *  re-surfaced before the rule write fully propagated to the
+ *  server-side scanner gate), the user clicked allow on each repeat and
+ *  every click added a duplicate row. The Settings → Terminal-prompts
+ *  list ended up showing N identical rows. The match key here is the
+ *  same shape `findMatchingAllowRule` uses server-side, so a duplicate
+ *  add is a no-op for both UI display and auto-allow behaviour. */
 export async function appendAllowRule(
   rule: TerminalPromptAllowRule,
   secret?: string,
@@ -70,8 +81,23 @@ export async function appendAllowRule(
     ? apiWithSecret<FileSettingsShape>('/file-settings', secret)
     : api<FileSettingsShape>('/file-settings');
   const fs = await get;
+  // `parseAllowRules` itself collapses duplicate
+  // `(parser_id, question_hash, choice_index)` entries (HS-8061), so
+  // `existing` is already a clean list even if the on-disk file holds
+  // historical bloat from before the dedupe fix.
   const existing = parseAllowRules(fs.terminal_prompt_allow_rules);
-  const next = [...existing, rule];
+  // HS-8061 dedupe — if the new rule duplicates an existing one, write
+  // the cleaned `existing` list back so any historical duplicates that
+  // were collapsed by `parseAllowRules` get rewritten to the file (not
+  // strictly required since reads dedupe transparently, but rewriting
+  // means a user who manually inspects settings.json sees the cleaned
+  // shape after their next "Always allow" click).
+  const isDuplicate = existing.some(r =>
+    r.parser_id === rule.parser_id
+    && r.question_hash === rule.question_hash
+    && r.choice_index === rule.choice_index,
+  );
+  const next = isDuplicate ? existing : [...existing, rule];
   if (secret !== undefined) {
     await apiWithSecret('/file-settings', secret, {
       method: 'PATCH',

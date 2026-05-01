@@ -39,6 +39,17 @@ export interface TerminalPromptAllowRule {
  * into a list of `TerminalPromptAllowRule`. Accepts the raw array OR the
  * legacy stringified-JSON form. Drops malformed entries silently. Returns
  * `[]` for any unrecoverable input.
+ *
+ * HS-8061 — collapses duplicate `(parser_id, question_hash, choice_index)`
+ * entries down to the FIRST occurrence (preserving insertion order so the
+ * created_at / id of the original allow click stays stable). Pre-fix
+ * `appendAllowRule` had no dedupe gate, so a user who clicked "Always
+ * allow" multiple times on the same prompt (e.g. several Claude
+ * instances hitting the same WARNING on launch) ended up with 10+
+ * identical rows in the Settings → Terminal-prompts list. The dedupe
+ * here makes the bloated state cosmetically harmless even before the
+ * file gets rewritten by the next `appendAllowRule` (which now writes
+ * back the deduped list).
  */
 export function parseAllowRules(raw: unknown): TerminalPromptAllowRule[] {
   let value: unknown = raw;
@@ -47,6 +58,7 @@ export function parseAllowRules(raw: unknown): TerminalPromptAllowRule[] {
   }
   if (!Array.isArray(value)) return [];
   const out: TerminalPromptAllowRule[] = [];
+  const seen = new Set<string>();
   for (const item of value) {
     if (typeof item !== 'object' || item === null) continue;
     const obj = item as Partial<TerminalPromptAllowRule>;
@@ -54,6 +66,9 @@ export function parseAllowRules(raw: unknown): TerminalPromptAllowRule[] {
     if (typeof obj.parser_id !== 'string' || obj.parser_id === '') continue;
     if (typeof obj.question_hash !== 'string' || obj.question_hash === '') continue;
     if (typeof obj.choice_index !== 'number' || !Number.isFinite(obj.choice_index)) continue;
+    const dupKey = `${obj.parser_id}\x00${obj.question_hash}\x00${obj.choice_index}`;
+    if (seen.has(dupKey)) continue;
+    seen.add(dupKey);
     const created_at = typeof obj.created_at === 'string' ? obj.created_at : '';
     const rule: TerminalPromptAllowRule = {
       id: obj.id,

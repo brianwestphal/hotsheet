@@ -80,8 +80,8 @@ vi.mock('../terminals/registry.js', () => ({
   listPendingPromptsForProject: vi.fn((secret: string) => mockPendingPrompts.get(secret) ?? []),
 }));
 
-const mockConfiguredTerminals = new Map<string, Array<{ id: string; name?: string; command: string }>>();
-const mockDynamicTerminals = new Map<string, Array<{ id: string; name?: string; command: string }>>();
+const mockConfiguredTerminals = new Map<string, Array<{ id: string; name?: string; command: string; theme?: string; fontFamily?: string; fontSize?: number }>>();
+const mockDynamicTerminals = new Map<string, Array<{ id: string; name?: string; command: string; theme?: string; fontFamily?: string; fontSize?: number }>>();
 vi.mock('../terminals/config.js', () => ({
   DEFAULT_TERMINAL_ID: 'default',
   listTerminalConfigs: vi.fn((dataDir: string) => {
@@ -412,6 +412,52 @@ describe('GET /projects/quit-summary', () => {
     const persistedEntry = target!.entries.find(e => e.terminalId === 'default');
     expect(persistedEntry).toBeDefined();
     expect(persistedEntry!.label).toBe('Claude');
+  });
+
+  it('includes per-entry appearance overrides + project terminalDefault from settings (HS-8059 follow-up)', async () => {
+    // The quit-confirm preview pane resolves the gutter background
+    // synchronously from these fields so the bg paints deterministically
+    // regardless of whether another consumer (the drawer pane) has already
+    // mounted the same terminal and run `applyAppearanceToTerm` against
+    // the shared xterm. Pre-fix the bg read came from
+    // `term.options.theme`, which raced with the async font load — the
+    // user reported "sometimes works, sometimes doesn't" (HS-8059
+    // follow-up note 5/1, 12:59).
+    const { readFileSettings } = await import('../file-settings.js');
+    (readFileSettings as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      terminal_default: { theme: 'github-dark', fontFamily: 'fira-code', fontSize: 14 },
+    }));
+    mockConfiguredTerminals.set('test-secret-123', [
+      { id: 'default', name: 'Claude', command: 'claude', theme: 'dracula' },
+      { id: 'shell', name: 'Shell', command: 'zsh' /* no per-entry override → falls back to project default */ },
+    ]);
+    mockAliveTerminals.push(
+      { secret: 'test-secret-123', terminalId: 'default', rootPid: 1000 },
+      { secret: 'test-secret-123', terminalId: 'shell', rootPid: 2000 },
+    );
+
+    const res = await app.request('/api/projects/quit-summary');
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      projects: Array<{
+        secret: string;
+        terminalDefault?: { theme?: string; fontFamily?: string; fontSize?: number };
+        entries: Array<{ terminalId: string; theme?: string; fontFamily?: string; fontSize?: number }>;
+      }>;
+    };
+    const target = body.projects.find(p => p.secret === 'test-secret-123');
+    expect(target).toBeDefined();
+    expect(target!.terminalDefault).toEqual({ theme: 'github-dark', fontFamily: 'fira-code', fontSize: 14 });
+    const def = target!.entries.find(e => e.terminalId === 'default');
+    expect(def!.theme).toBe('dracula');
+    const shell = target!.entries.find(e => e.terminalId === 'shell');
+    // No per-entry override → no theme field on the entry; client layers
+    // project default underneath.
+    expect(shell!.theme).toBeUndefined();
+    expect(shell!.fontFamily).toBeUndefined();
+    expect(shell!.fontSize).toBeUndefined();
+
+    (readFileSettings as ReturnType<typeof vi.fn>).mockImplementation(() => ({}));
   });
 
   it('falls back to a friendly basename derived from the dynamic config command when name is omitted', async () => {
