@@ -193,4 +193,38 @@ Each implementation ticket should:
 
 - HS-6602 — investigation that produced this scope and rejected terminal scraping.
 - HS-6477, HS-6536, HS-6536, HS-6637, HS-7266, HS-6634 — historical permission-popup work.
+- HS-7999 — terminal-buffer snapshot for truncated previews (§47.9 below).
 - [12-claude-channel.md §12.10](12-claude-channel.md#1210-permission-relay) — current permission relay design.
+
+## 47.9 Terminal-buffer snapshot for truncated previews (HS-7999)
+
+Claude's MCP channel truncates `input_preview` at ~2000 chars before sending. For long prompts (multi-file diffs, large Bash command-line previews, framed Ink TUI prompts) the popup's flat-string preview shows just `…` because `permissionPreview.ts::extractStringField` couldn't parse a primary-field value past the cut. The snapshot path closes that gap by reaching back into the live terminal buffer:
+
+1. **Detect truncation.** `permissionOverlay.tsx::showPermissionPopup` checks `previewText.endsWith('…')` after computing the formatted preview. The `…` marker is only appended by `extractStringField` when the JSON body was cut mid-stream — short prompts never trigger.
+2. **Async snapshot.** When truncated, `runSnapshotIntoBody(secret, overlay, isDismissed)` fires `captureTerminalSnapshot(secret, 'default', {tempCols: 200, tempRows: 80})` from `src/client/terminalSnapshot.ts`. Runs in the background; the popup mounts immediately with the truncated preview so the user sees something within the standard popup-mount window.
+3. **Capture orchestration** (`terminalSnapshot.ts::captureTerminalSnapshot`):
+   - **Pause** — `pauseEntryWrites` in `terminalCheckout.tsx` flips a `paused: boolean` flag on the entry. Subsequent WS-binary bytes accumulate in `entry.pausedBytes` instead of writing to the live term.
+   - **Resize PTY up** — `sendPtyResize(secret, terminalId, 200, 80)` sends a `{type:'resize'}` control frame on the entry's WebSocket. Claude's TUI redraws at the wider geometry; bytes accumulate in the paused buffer.
+   - **Wait** for the redraw (default 250 ms — empirically the time Claude takes to emit a full SIGWINCH redraw).
+   - **Serialize** — `takePausedBytes` drains the buffer; the bytes are written to an OFFSCREEN `XTerm` at 200×80 with `SerializeAddon` loaded. `serialize()` produces an escape-sequence string that captures Claude's full rendering — colours, cursor position, line wrapping, framing characters.
+   - **Resize PTY back** — second `sendPtyResize` returns the PTY to the original geometry. Claude redraws at original cols; bytes accumulate in the paused buffer (now post-resize-back only).
+   - **Wait + unfreeze** — `resumeEntryWritesAndDrain` writes the (post-resize-back) accumulated bytes to the LIVE term and clears the pause flag. The live view goes from pre-snapshot state directly to the post-resize-back state with no intermediate rendering of the wider geometry. **No visible flicker on the live terminal.**
+4. **Mirror xterm in the popup body.** When `captureTerminalSnapshot` resolves with a `SnapshotResult`, `runSnapshotIntoBody` finds the shell's `[data-role="body"]` slot, replaces its contents with a `.permission-popup-mirror-xterm` wrapper, and `mountMirrorXterm(parent, stream, 200, 80)` builds a fresh read-only `XTerm` (`disableStdin: true`) inside it and writes the captured stream. Picture-perfect colour / cursor / wrap. SCSS gives the wrapper `max-width: 100%; max-height: 360px; overflow: auto` so the wider stream scrolls inside the popup rather than spilling out.
+
+### Bail conditions
+
+The snapshot is best-effort. It returns null (the popup keeps the truncated preview) when:
+- No entry exists for `(secret, 'default')` in `terminalCheckout`'s entry map (the user's project doesn't run a terminal-backed Claude).
+- The WebSocket isn't open (Hot Sheet just launched and the PTY hasn't connected yet).
+- The popup has already been dismissed by the time the snapshot resolves (`respondedRequestIds` / `dismissedRequestIds` checked via `isDismissed` callback).
+- The overlay has been torn down (`overlay.isConnected === false`).
+
+### Cost + risks
+
+- ~500 ms total snapshot time (default 250 ms × 2 phases). The user is looking at the popup during this window so the live terminal pause is invisible.
+- Mid-keystroke risk: if the user types into the live terminal during the snapshot, their bytes still reach the PTY (only the inbound stream is paused) but echo is delayed until unfreeze. In practice the popup-mount path means the user is looking at the popup, not typing. If a real race surfaces, a `term.onData` recency guard ("skip snapshot if a keystroke fired in the last 200 ms") is a one-line addition.
+- The pause/drain machinery (`pauseEntryWrites` / `takePausedBytes` / `resumeEntryWritesAndDrain` / `sendPtyResize`) lives in `terminalCheckout.tsx` so other consumers (drawer, dashboard, dedicated view) are coordinated through the same single source of truth. Concurrent snapshots against the same entry are NOT safe (the second's `takePausedBytes` would race the first's); the natural single-popup-at-a-time serialisation in `permissionOverlay.tsx` (one popup per `activePopupRequestId`) keeps it safe.
+
+### Tests
+
+`src/client/terminalSnapshot.test.ts` (8 tests, happy-dom): pure-helper coverage for `dropBeforeSecondClear` (no-clear, single-clear, two-clears, back-to-back, end-of-buffer, partial-prefix-no-false-positive) plus the early-return paths in `captureTerminalSnapshot` (no entry → null, ws-undefined → null). The interesting end-to-end test (real WS, real PTY, real SIGWINCH redraw) is filed as a Playwright follow-up — happy-dom doesn't ship `WebSocket` so the full orchestration can't run there.

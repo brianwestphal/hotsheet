@@ -3792,6 +3792,31 @@ body.terminal-dashboard-active {
   overflow-y: auto;
 }
 
+// HS-7999 — mirror-xterm wrapper for the snapshot path. The shell's
+// body slot replaces the flat `.permission-popup-preview` with a
+// container that hosts a read-only `XTerm` rendering Claude's full
+// 200×80 TUI. `max-width: 100%` + `max-height: 360px` keeps the
+// rendered xterm constrained inside the popup; xterm's own
+// `.xterm-viewport` provides scrollback if the snapshot's row count
+// overflows. `overflow: auto` on the wrapper handles horizontal
+// overflow when the captured 200-col stream is wider than the popup
+// — the user can scroll right to see the wrapped content rather than
+// having it truncated.
+.permission-popup-mirror-xterm {
+  max-width: 100%;
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #000;
+
+  // Scope xterm's default styling to our wrapper so the snapshot
+  // doesn't bleed sizes / colours from a sibling consumer's xterm.
+  .xterm {
+    padding: 4px;
+  }
+}
+
 // HS-7951 — inline unified diff renderer for Edit/Write permission popups.
 // Replaces the flat-JSON `<pre>` dump with a colour-coded line-level view.
 .edit-diff-preview {

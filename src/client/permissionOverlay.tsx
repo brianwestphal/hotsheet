@@ -9,6 +9,7 @@ import { openPermissionDialogShell } from './permissionDialogShell.js';
 import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
 import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
+import { captureTerminalSnapshot, mountMirrorXterm } from './terminalSnapshot.js';
 
 /**
  * Claude permission-request UI. Historically there were two variants: a
@@ -322,6 +323,28 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     respondToPermission('deny');
   });
 
+  // HS-7999 — when the channel-truncated `input_preview` ended in `…`
+  // (Claude's MCP channel cuts at ~2000 chars; `formatInputPreview`
+  // appends `…` via `permissionPreview.ts::extractStringField` when
+  // the JSON body was cut off mid-stream), kick off a terminal-buffer
+  // snapshot so the popup can show the FULL prompt as Claude actually
+  // rendered it. The snapshot is async (~500 ms — pause WS writes,
+  // resize PTY to 200×80, capture Claude's redraw, resize back, drain
+  // the post-resize-back redraw to the live term). The popup mounts
+  // immediately with the truncated preview; when the snapshot
+  // resolves we replace the body slot with a read-only mirror xterm
+  // showing the captured stream.
+  //
+  // Skipped when (a) the preview wasn't truncated (short prompts use
+  // the channel data verbatim), (b) the secret has no live terminal
+  // entry under id `default` (Claude's channel-supporting terminal
+  // is always `default` per docs/22 + docs/12), (c) the WebSocket
+  // isn't open. The snapshot path returns null in those cases and
+  // the popup stays on the truncated preview.
+  if (perm.input_preview !== undefined && hasStringPreview && previewText.endsWith('…')) {
+    void runSnapshotIntoBody(secret, handle.overlay, () => respondedRequestIds.has(perm.request_id) || dismissedRequestIds.has(perm.request_id));
+  }
+
   // Notify via Tauri attention.
   if (state.settings.notify_permission !== 'none') {
     requestAttention(state.settings.notify_permission);
@@ -329,4 +352,38 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
 
   // HS-7266: no outside-click handler. The popup is non-modal and only
   // closes via Allow / Deny / Minimize / No-response-needed / X.
+}
+
+/**
+ * HS-7999 — orchestrate the terminal-buffer snapshot. Runs async so
+ * the popup mount isn't blocked. When the snapshot resolves we find
+ * the shell's body slot via `[data-role="body"]` and swap its
+ * contents to the mirror xterm. Bails silently when the popup has
+ * already been dismissed (the consumer's `respondedRequestIds` /
+ * `dismissedRequestIds` sets cover the user-action close paths) — no
+ * point mutating a popup that's gone.
+ *
+ * `'default'` is the conventional Claude terminal id (every project's
+ * factory-default `terminals[]` config in `settings.json` carries an
+ * entry with `id: 'default'`, see docs/22). Multi-terminal projects
+ * still find the right one because `default` is also the channel-
+ * registered terminal that Claude runs inside. Future iteration could
+ * scan the project's terminals for one running `claude --channel` if
+ * the assumption breaks.
+ */
+async function runSnapshotIntoBody(
+  secret: string,
+  overlay: HTMLElement,
+  isDismissed: () => boolean,
+): Promise<void> {
+  const result = await captureTerminalSnapshot(secret, 'default', { tempCols: 200, tempRows: 80 });
+  if (result === null) return; // no terminal entry / WS not open — keep flat preview
+  if (isDismissed()) return; // user resolved the popup before the snapshot landed
+  if (!overlay.isConnected) return; // belt-and-braces — overlay torn down
+  const bodySlot = overlay.querySelector<HTMLElement>('[data-role="body"]');
+  if (bodySlot === null) return;
+  const mirrorContainer = document.createElement('div');
+  mirrorContainer.className = 'permission-popup-mirror-xterm';
+  bodySlot.replaceChildren(mirrorContainer);
+  mountMirrorXterm(mirrorContainer, result.stream, result.cols, result.rows);
 }

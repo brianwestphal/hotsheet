@@ -168,6 +168,15 @@ interface StackEntry {
    *  this guard, an explicit final-release would race the reconnect
    *  loop and re-spawn a WS we just intentionally tore down. */
   intentionallyClosing: boolean;
+  /** HS-7999 — when true, incoming WS-binary bytes are buffered into
+   *  `pausedBytes` instead of written to the term. Used by
+   *  `terminalSnapshot.ts` to capture Claude's redraw at a temporary
+   *  geometry without disrupting the live view. */
+  paused: boolean;
+  /** HS-7999 — accumulator for incoming WS-binary bytes while
+   *  `paused === true`. Drained by the snapshot orchestrator on
+   *  unpause. */
+  pausedBytes: Uint8Array[];
 }
 
 const entries = new Map<string, StackEntry>();
@@ -223,6 +232,8 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
     lastAppliedRows: rows,
     stack: [],
     intentionallyClosing: false,
+    paused: false,
+    pausedBytes: [],
   };
 
   // HS-8048 — wire `term.onData` ONCE at term construction. The handler
@@ -287,7 +298,16 @@ function attachWebSocketToEntry(entry: StackEntry): void {
   ws.addEventListener('message', (ev) => {
     const data: unknown = ev.data;
     if (data instanceof ArrayBuffer) {
-      try { entry.term.write(new Uint8Array(data)); } catch { /* term disposed mid-message */ }
+      const bytes = new Uint8Array(data);
+      // HS-7999 — when a snapshot orchestrator paused writes, divert
+      // incoming bytes into a buffer instead of mutating the live term.
+      // The orchestrator calls `resumeEntryWritesAndDrain` to re-write
+      // (filtered) bytes after capture and clear the pause flag.
+      if (entry.paused) {
+        entry.pausedBytes.push(bytes);
+      } else {
+        try { entry.term.write(bytes); } catch { /* term disposed mid-message */ }
+      }
       return;
     }
     if (typeof data === 'string') {
@@ -395,6 +415,93 @@ export function applyHistoryReplay(
  *  a real entry without standing up a WebSocket. */
 export function _getEntryForTesting(secret: string, terminalId: string): StackEntry | null {
   return entries.get(entryKey(secret, terminalId)) ?? null;
+}
+
+/**
+ * HS-7999 — pause incoming WS-binary writes for `(secret, terminalId)`.
+ * Subsequent bytes from the PTY are accumulated in
+ * `entry.pausedBytes` instead of being written to the live term.
+ * Used by `terminalSnapshot.ts` to capture Claude's redraw at a
+ * temporary geometry without disrupting the live view.
+ *
+ * No-op + returns `false` when no entry exists for the key. Idempotent
+ * — calling pause twice doesn't double-buffer.
+ */
+export function pauseEntryWrites(secret: string, terminalId: string): boolean {
+  const entry = entries.get(entryKey(secret, terminalId));
+  if (entry === undefined) return false;
+  entry.paused = true;
+  return true;
+}
+
+/**
+ * HS-7999 — take ownership of all currently-buffered paused bytes.
+ * Returns the concatenated Uint8Array (possibly empty) and clears the
+ * internal buffer. The pause flag stays set; a subsequent
+ * `resumeEntryWritesAndDrain` (or another `takePausedBytes` followed
+ * by `resumeEntryWritesAndDrain`) is required to unpause.
+ */
+export function takePausedBytes(secret: string, terminalId: string): Uint8Array {
+  const entry = entries.get(entryKey(secret, terminalId));
+  if (entry === undefined) return new Uint8Array();
+  const total = entry.pausedBytes.reduce((sum, b) => sum + b.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const b of entry.pausedBytes) {
+    out.set(b, offset);
+    offset += b.byteLength;
+  }
+  entry.pausedBytes = [];
+  return out;
+}
+
+/**
+ * HS-7999 — resume normal WS-binary writes. Drains any
+ * still-buffered bytes through the optional `filter` callback, writes
+ * the result to the live term, and clears the pause flag.
+ *
+ * The filter is the snapshot orchestrator's pass-through optimisation
+ * hook — used to drop bytes from the temp-geometry phase so the live
+ * term goes from pre-snapshot state directly to the post-resize-back
+ * state without rendering an intermediate (e.g. by stripping
+ * everything before the second `\x1b[2J\x1b[H` clear-and-home).
+ *
+ * No-op when no entry exists for the key.
+ */
+export function resumeEntryWritesAndDrain(
+  secret: string,
+  terminalId: string,
+  filter?: (bytes: Uint8Array) => Uint8Array,
+): void {
+  const entry = entries.get(entryKey(secret, terminalId));
+  if (entry === undefined) return;
+  const drained = takePausedBytes(secret, terminalId);
+  const toWrite = filter ? filter(drained) : drained;
+  if (toWrite.byteLength > 0) {
+    try { entry.term.write(toWrite); } catch { /* term disposed */ }
+  }
+  entry.paused = false;
+}
+
+/**
+ * HS-7999 — send a `{type:'resize'}` control frame on the entry's
+ * WebSocket if the socket is open. Does NOT touch the local
+ * `entry.term.cols/rows` or `lastApplied` bookkeeping — `terminalSnapshot`
+ * orchestrates the local term separately so the live view doesn't
+ * resize visually. Returns true on send, false when no socket is
+ * open (or no entry exists).
+ */
+export function sendPtyResize(secret: string, terminalId: string, cols: number, rows: number): boolean {
+  const entry = entries.get(entryKey(secret, terminalId));
+  if (entry === undefined) return false;
+  const ws = entry.ws;
+  if (ws === null || ws.readyState !== WebSocket.OPEN) return false;
+  try {
+    ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** If `(cols, rows)` differs from the term's actual current dims, fire
