@@ -65,7 +65,18 @@ export function readFileSettings(dataDir: string): FileSettings {
       return {};
     }
     return result.data;
-  } catch {
+  } catch (err: unknown) {
+    // HS-8087 — pre-fix this catch was silent: missing file (ENOENT) is
+    // the documented "no settings yet" happy path, but real read errors
+    // (EACCES on a permission-broken settings dir, EIO on a flaky disk,
+    // a JSON.parse exception on a half-written file) ALSO returned `{}`
+    // with no signal. Now we still default-empty, but a non-ENOENT
+    // failure logs so the user has a fighting chance of noticing
+    // permission / disk problems rather than seeing settings silently
+    // reset.
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`[settings] Failed to read settings.json in ${dataDir}: ${err.message}`);
+    }
     return {};
   }
 }

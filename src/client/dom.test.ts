@@ -9,7 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { requireChild } from './dom.js';
+import { byId, byIdOrNull, requireChild } from './dom.js';
 
 beforeEach(() => { document.body.innerHTML = ''; });
 afterEach(() => { document.body.innerHTML = ''; });
@@ -58,5 +58,37 @@ describe('requireChild (HS-8092)', () => {
     // Type-level assertion: `el` is `HTMLElement` so this access compiles.
     el.style.color = 'red';
     expect(el.style.color).toBe('red');
+  });
+});
+
+describe('byId / byIdOrNull (HS-8083)', () => {
+  it('byId returns the element when the id matches', () => {
+    document.body.innerHTML = '<input id="foo" type="text" />';
+    const el = byId<HTMLInputElement>('foo');
+    expect(el.tagName).toBe('INPUT');
+    el.value = 'hello';
+    expect(el.value).toBe('hello');
+  });
+
+  it('byId throws with a descriptive message when the id is missing', () => {
+    document.body.innerHTML = '';
+    expect(() => byId('absent-id')).toThrow(/no element with id "absent-id"/);
+  });
+
+  it('byId defaults to HTMLElement when no generic is supplied', () => {
+    document.body.innerHTML = '<div id="bar"></div>';
+    const el = byId('bar');
+    el.style.color = 'red';
+    expect(el.style.color).toBe('red');
+  });
+
+  it('byIdOrNull returns the element when present', () => {
+    document.body.innerHTML = '<button id="b"></button>';
+    expect(byIdOrNull<HTMLButtonElement>('b')?.tagName).toBe('BUTTON');
+  });
+
+  it('byIdOrNull returns null when missing (no throw)', () => {
+    document.body.innerHTML = '';
+    expect(byIdOrNull('absent')).toBeNull();
   });
 });

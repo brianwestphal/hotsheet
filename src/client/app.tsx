@@ -12,7 +12,7 @@ import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
 import { initDbRecoveryBanner } from './dbRecoveryBanner.js';
 import { applyDetailPosition, applyDetailSize, bindDetailDetailsRenderToggle, closeDetail, initResize, openDetail, openDetailAndFocusNote, refreshDetail, renderDetailsMarkdown, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
@@ -93,7 +93,7 @@ async function reloadPluginToolbar() {
   await refreshPluginUI();
   // Ensure the toolbar container exists in the DOM
   if (!document.querySelector('.plugin-toolbar-container')) {
-    const glassboxBtn = document.getElementById('glassbox-btn');
+    const glassboxBtn = byIdOrNull('glassbox-btn');
     const toolbarTarget = glassboxBtn?.parentElement;
     if (toolbarTarget) {
       const container = toElement(<span className="plugin-toolbar-container"></span>);
@@ -243,7 +243,7 @@ async function init() {
   // via their own close/remove handlers.
 
   // Clicking empty space in the ticket list deselects all (HS-2114)
-  document.getElementById('ticket-list')!.addEventListener('click', (e) => {
+  byId('ticket-list').addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
     // Only deselect if the click landed directly on the container or a column body/gap, not on a ticket row
     if (!target.closest('.ticket-row') && !target.closest('.column-card') && !target.closest('.column-header') && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
@@ -260,7 +260,7 @@ async function init() {
   // Channel auto-trigger on up_next changes
   document.addEventListener('hotsheet:upnext-changed', () => channelAutoTrigger());
   // Print button
-  document.getElementById('print-btn')?.addEventListener('click', showPrintDialog);
+  byIdOrNull('print-btn')?.addEventListener('click', showPrintDialog);
   // Restore saved app icon variant in Tauri (Dock resets to bundle icon on launch)
   void restoreAppIcon();
   bindExternalLinkHandler();
@@ -377,7 +377,7 @@ async function init() {
   focusDraftInput();
   } catch (err) {
     console.error('Hot Sheet init failed:', err);
-    const el = document.getElementById('ticket-list');
+    const el = byIdOrNull('ticket-list');
     if (el) el.replaceChildren(toElement(<div style="padding:20px;color:red">Init error: {String(err)}</div>));
   }
 }
@@ -385,8 +385,8 @@ async function init() {
 // --- Glassbox integration ---
 
 function bindGlassbox() {
-  const btn = document.getElementById('glassbox-btn') as HTMLButtonElement;
-  const icon = document.getElementById('glassbox-icon') as HTMLImageElement;
+  const btn = byId<HTMLButtonElement>('glassbox-btn');
+  const icon = byId<HTMLImageElement>('glassbox-icon');
 
   void api<{ available: boolean }>('/glassbox/status').then(({ available }) => {
     if (!available) return;
@@ -402,7 +402,7 @@ function bindGlassbox() {
 // --- Layout toggle ---
 
 function updateLayoutToggle() {
-  const toggle = document.getElementById('layout-toggle')!;
+  const toggle = byId('layout-toggle');
   const canColumn = canUseColumnView();
   const columnsBtn = toggle.querySelector('[data-layout="columns"]') as HTMLButtonElement;
   columnsBtn.disabled = !canColumn;
@@ -416,7 +416,7 @@ function updateLayoutToggle() {
 }
 
 function bindLayoutToggle() {
-  const toggle = document.getElementById('layout-toggle')!;
+  const toggle = byId('layout-toggle');
   toggle.querySelectorAll('.layout-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const layout = (btn as HTMLElement).dataset.layout as 'list' | 'columns';
@@ -445,22 +445,22 @@ function bindLayoutToggle() {
 // --- Detail position toggle ---
 
 function updateDetailPositionToggle() {
-  const toggle = document.getElementById('detail-position-toggle')!;
+  const toggle = byId('detail-position-toggle');
   toggle.querySelectorAll('.layout-btn').forEach(btn => {
     btn.classList.toggle('active', (btn as HTMLElement).dataset.position === state.settings.detail_position);
   });
 }
 
 function bindDetailPositionToggle() {
-  const toggle = document.getElementById('detail-position-toggle')!;
+  const toggle = byId('detail-position-toggle');
   toggle.querySelectorAll('.layout-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const position = (btn as HTMLElement).dataset.position as AppSettings['detail_position'];
       // If clicking the already-active position, toggle the detail panel off
       if (position === state.settings.detail_position && state.settings.detail_visible) {
         state.settings.detail_visible = false;
-        const panel = document.getElementById('detail-panel');
-        const handle = document.getElementById('detail-resize-handle');
+        const panel = byIdOrNull('detail-panel');
+        const handle = byIdOrNull('detail-resize-handle');
         if (panel) panel.style.display = 'none';
         if (handle) handle.style.display = 'none';
         toggle.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
@@ -470,8 +470,8 @@ function bindDetailPositionToggle() {
       // Switching position or re-enabling
       state.settings.detail_visible = true;
       state.settings.detail_position = position;
-      const panel = document.getElementById('detail-panel');
-      const handle = document.getElementById('detail-resize-handle');
+      const panel = byIdOrNull('detail-panel');
+      const handle = byIdOrNull('detail-resize-handle');
       if (panel) panel.style.display = '';
       if (handle) handle.style.display = '';
       applyDetailPosition(position);
@@ -489,7 +489,7 @@ function bindDetailPositionToggle() {
 function bindDetailAutoSave() {
   const fields = ['detail-title', 'detail-details'];
   for (const fieldId of fields) {
-    const el = document.getElementById(fieldId) as HTMLInputElement | HTMLTextAreaElement;
+    const el = byId<HTMLInputElement | HTMLTextAreaElement>(fieldId);
     el.addEventListener('input', () => {
       // Record text change for undo (coalesces rapid edits)
       const ticket = state.tickets.find(t => t.id === state.activeTicketId);
@@ -531,11 +531,11 @@ function bindDetailAutoSave() {
  *  `syncDetailReaderButton`, called from `bindDetailAutoSave`'s input
  *  handler and `detail.tsx`'s load paths. */
 function bindDetailReaderButton() {
-  const btn = document.getElementById('detail-reader-btn') as HTMLButtonElement | null;
+  const btn = byIdOrNull<HTMLButtonElement>('detail-reader-btn');
   if (btn === null) return;
   btn.addEventListener('click', () => {
     if (btn.disabled) return;
-    const detailsArea = document.getElementById('detail-details') as HTMLTextAreaElement;
+    const detailsArea = byId<HTMLTextAreaElement>('detail-details');
     const ticket = state.tickets.find(t => t.id === state.activeTicketId) ?? null;
     openReaderOverlay({
       title: buildDetailsReaderTitle(ticket?.ticket_number, ticket?.title),
@@ -563,7 +563,7 @@ function bindDetailDropdowns() {
   }
 
   function bindDropdown(elementId: string, getItems: (current: string) => Parameters<typeof createDropdown>[1]) {
-    document.getElementById(elementId)!.addEventListener('click', (e) => {
+    byId(elementId).addEventListener('click', (e) => {
       e.stopPropagation();
       const btn = e.currentTarget as HTMLButtonElement;
       if (btn.disabled) return;
@@ -595,7 +595,7 @@ function bindDetailDropdowns() {
 
 /** Up-next star toggle. */
 function bindDetailUpNext() {
-  document.getElementById('detail-upnext')!.addEventListener('click', async () => {
+  byId('detail-upnext').addEventListener('click', async () => {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
     if (ticket) {
@@ -618,7 +618,7 @@ function bindDetailUpNext() {
 
 /** Add note functionality. */
 function bindDetailNotes() {
-  document.getElementById('detail-add-note-btn')?.addEventListener('click', async () => {
+  byIdOrNull('detail-add-note-btn')?.addEventListener('click', async () => {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
     if (!ticket) return;
@@ -650,7 +650,7 @@ function bindDetailNotes() {
 /** File upload button + drag-and-drop upload. */
 function bindDetailFileUpload() {
   // File upload (supports multiple files)
-  document.getElementById('detail-file-input')!.addEventListener('change', async (e) => {
+  byId('detail-file-input').addEventListener('change', async (e) => {
     const input = e.target as HTMLInputElement;
     const files = input.files;
     if (!files || files.length === 0 || state.activeTicketId == null) return;
@@ -663,7 +663,7 @@ function bindDetailFileUpload() {
   });
 
   // Drag-and-drop file upload onto detail panel
-  const detailBody = document.getElementById('detail-body')!;
+  const detailBody = byId('detail-body');
   let dragCounter = 0; // Track nested enter/leave to avoid flicker
 
   detailBody.addEventListener('dragenter', (e) => {
@@ -699,7 +699,7 @@ function bindDetailFileUpload() {
 
 /** Attachment reveal/delete click handlers. */
 function bindDetailAttachmentActions() {
-  const attEl = document.getElementById('detail-attachments')!;
+  const attEl = byId('detail-attachments');
   attEl.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
 
@@ -764,10 +764,10 @@ function bindDetailAttachmentActions() {
 // Tag autocomplete extracted to tagAutocomplete.ts
 
 function bindDetailPanel() {
-  document.getElementById('detail-close')!.addEventListener('click', closeDetail);
+  byId('detail-close').addEventListener('click', closeDetail);
 
   // Click ticket number to copy to clipboard
-  const ticketNumEl = document.getElementById('detail-ticket-number')!;
+  const ticketNumEl = byId('detail-ticket-number');
   ticketNumEl.style.cursor = 'pointer';
   ticketNumEl.title = 'Click to copy';
   ticketNumEl.addEventListener('click', () => {
