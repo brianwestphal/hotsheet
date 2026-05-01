@@ -2,6 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { refreshLogBadge } from './commandLog.js';
+import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { CMD_COLORS, CMD_ICONS, type CommandItem, contrastColor, type CustomCommand, getCommandItems,isGroup } from './experimentalSettings.js';
 import { renderIconSvg } from './icons.js';
@@ -60,17 +61,75 @@ function isCommandVisible(cmd: CustomCommand, channelEnabled: boolean): boolean 
   return isShell || channelEnabled;
 }
 
+/**
+ * HS-8060 — derive a stable lookup key for a CustomCommand. CustomCommand
+ * has no id field, so the key is a tuple of `(target, name, prompt)` —
+ * that's what uniquely identifies a button shape from the user's saved
+ * `custom_commands` list. Two commands with identical name + prompt
+ * would share state; that's the documented edge case from §57.3.5.
+ */
+export function commandKey(cmd: CustomCommand): string {
+  const target = cmd.target ?? 'claude';
+  return `${target}::${cmd.name}::${cmd.prompt}`;
+}
+
+/**
+ * HS-8060 — `commandKey → /api/shell/exec`-returned log id for every
+ * shell command that's currently running. Updated synchronously when
+ * `runShellCommand` succeeds (added) and on every `/api/shell/running`
+ * poll tick (entries dropped when their id no longer appears in
+ * `response.ids`). The size doubles as the global busy-state input
+ * (`setShellBusy(runningButtons.size > 0)`).
+ *
+ * Exported for tests + Phase 2 callers; production consumers go through
+ * `renderChannelCommands` which reads it during render.
+ */
+export const _runningButtonsForTesting = new Map<string, number>();
+
+/** HS-8060 — per-running-id "auto-show on completion" flag. Replaces the
+ *  pre-fix global `shellAutoShowLog: boolean` which raced when the user
+ *  kicked off two commands with different `autoShowLog` values back-to-
+ *  back (the second flag clobbered the first). */
+const autoShowLogById = new Map<number, boolean>();
+
+const STOP_GLYPH = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="5" y="5" rx="1"/></svg>';
+
+function buildSpinnerElement(textColor: string): HTMLElement {
+  // 14×14 spinner ring + an 8×8 stop glyph centered inside. Both inherit
+  // the spinner's foreground colour (the button's `contrastColor`); the
+  // spinner element itself uses `background: inherit` so it picks up the
+  // button's background — see §57.3.2.
+  return toElement(
+    <span className="channel-command-btn-spinner" style={`color:${textColor}`} aria-hidden="true">
+      <span className="channel-command-btn-spinner-ring"></span>
+      <span className="channel-command-btn-spinner-stop">{raw(STOP_GLYPH)}</span>
+    </span>
+  );
+}
+
 function renderButton(cmd: CustomCommand) {
   const isShell = cmd.target === 'shell';
   const color = cmd.color ?? CMD_COLORS[0].value;
   const textColor = contrastColor(color);
   const iconDef = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
+  const key = commandKey(cmd);
+  const isRunning = isShell && _runningButtonsForTesting.has(key);
   const btn = toElement(
-    <button className="channel-command-btn" style={`background:${color};color:${textColor}`}>{raw(renderIconSvg(iconDef.svg, 14, textColor))}<span>{cmd.name}</span></button>
+    <button
+      className={`channel-command-btn${isRunning ? ' is-running' : ''}`}
+      style={`background:${color};color:${textColor}`}
+      data-command-key={key}
+    >{raw(renderIconSvg(iconDef.svg, 14, textColor))}<span>{cmd.name}</span></button>
   );
+  if (isRunning) btn.appendChild(buildSpinnerElement(textColor));
   btn.addEventListener('click', () => {
     if (isShell) {
-      void runShellCommand(cmd.prompt, cmd.name, cmd.autoShowLog === true);
+      const runningId = _runningButtonsForTesting.get(key);
+      if (runningId !== undefined) {
+        void confirmStopShellCommand(cmd, runningId);
+        return;
+      }
+      void runShellCommand(cmd, cmd.autoShowLog === true);
     } else if (!isChannelAlive()) {
       alert('Claude is not connected. Launch Claude Code with channel support first.');
     } else {
@@ -78,6 +137,32 @@ function renderButton(cmd: CustomCommand) {
     }
   });
   return btn;
+}
+
+/**
+ * HS-8060 — opens the §57.3.3 confirm dialog when the user clicks a
+ * running command's button. On Stop fires `POST /api/shell/kill`; the
+ * next poll tick will report the id has cleared from
+ * `/api/shell/running` and `startShellPoll` will drop the runningButtons
+ * entry + re-render. On Cancel (`Keep running`) the call is a no-op —
+ * the spinner stays.
+ */
+async function confirmStopShellCommand(cmd: CustomCommand, runningLogId: number): Promise<void> {
+  const ok = await confirmDialog({
+    title: 'Stop running command?',
+    message: `"${cmd.name}" is still running. Stop it now?`,
+    confirmLabel: 'Stop',
+    cancelLabel: 'Keep running',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api('/shell/kill', { method: 'POST', body: { id: runningLogId } });
+  } catch {
+    // Best-effort. The poll tick will eventually catch up either way —
+    // if the kill failed, the id stays in `/api/shell/running` and the
+    // button stays in its running state until the user retries.
+  }
 }
 
 export function renderChannelCommands() {
@@ -143,7 +228,6 @@ async function saveCommandItemsExternal(commandItems: CommandItem[]) {
 // --- Shell command execution ---
 
 let shellPollTimer: ReturnType<typeof setInterval> | null = null;
-let shellAutoShowLog = false;
 /**
  * HS-7983 — per-running-id last-seen partial buffer length. The poll
  * adapter only dispatches a `hotsheet:shell-partial-output` event when
@@ -190,8 +274,20 @@ export function decideShellPartialEvents(
   return { events, nextCache };
 }
 
-function startShellPoll(id: number) {
-  if (shellPollTimer) clearInterval(shellPollTimer);
+/**
+ * HS-8060 — single shared poll that watches every entry in
+ * `_runningButtonsForTesting`. Started by `runShellCommand` after
+ * adding to the map; stopped by the tick body when the map empties.
+ *
+ * Pre-fix the timer was per-command and `runShellCommand` would clear
+ * the previous timer when a second command fired — so concurrent
+ * commands silently lost partial-output streaming for the first one
+ * AND raced their completion handlers. The new shape supports the
+ * §57.3.4 concurrency model and the global `setShellBusy` is wired to
+ * `runningButtons.size > 0` rather than a per-command boolean.
+ */
+function startShellPoll(): void {
+  if (shellPollTimer !== null) return;
   shellPollTimer = setInterval(async () => {
     try {
       const response = await api<{ ids: number[]; outputs?: Record<number, string> }>('/shell/running');
@@ -205,19 +301,33 @@ function startShellPoll(id: number) {
         window.dispatchEvent(new CustomEvent<ShellPartialOutputEvent>(SHELL_PARTIAL_OUTPUT_EVENT, { detail: ev }));
       }
 
-      if (!response.ids.includes(id)) {
-        // Process finished
-        const wasAutoShow = shellAutoShowLog;
-
-        shellAutoShowLog = false;
-        if (shellPollTimer) { clearInterval(shellPollTimer); shellPollTimer = null; }
-        // HS-7983 — drop the cache entry; a future re-run with the same
-        // id (rare, would require log-id reuse) starts from zero.
-        lastSeenPartialLength.delete(id);
-        setShellBusy(false);
+      // HS-8060 — drop completed runningButtons entries + fire the
+      // per-id auto-show + per-id log-badge refresh. Re-render the
+      // sidebar exactly once if anything changed so the affected
+      // buttons drop the spinner.
+      const stillRunning = new Set(response.ids);
+      const completedIds: number[] = [];
+      for (const [key, id] of _runningButtonsForTesting) {
+        if (!stillRunning.has(id)) {
+          completedIds.push(id);
+          _runningButtonsForTesting.delete(key);
+          // HS-7983 — drop the per-id partial-output cache entry too.
+          lastSeenPartialLength.delete(id);
+        }
+      }
+      if (completedIds.length > 0) {
+        for (const id of completedIds) {
+          const wasAutoShow = autoShowLogById.get(id) === true;
+          autoShowLogById.delete(id);
+          void autoShowLogEntry(id, wasAutoShow);
+        }
         void refreshLogBadge();
-        // Auto-show log entry on completion or error
-        void autoShowLogEntry(id, wasAutoShow);
+        renderChannelCommands();
+      }
+
+      if (_runningButtonsForTesting.size === 0) {
+        if (shellPollTimer !== null) { clearInterval(shellPollTimer); shellPollTimer = null; }
+        setShellBusy(false);
       }
     } catch { /* ignore */ }
   }, 2000);
@@ -237,17 +347,31 @@ async function autoShowLogEntry(logId: number, autoShow: boolean) {
   } catch { /* non-critical */ }
 }
 
-async function runShellCommand(command: string, name?: string, autoShow = false) {
+async function runShellCommand(cmd: CustomCommand, autoShow = false): Promise<void> {
   setShellBusy(true);
-  shellAutoShowLog = autoShow;
   try {
     // Ensure AI tool skills are installed/up-to-date before running commands
     void api('/ensure-skills', { method: 'POST' });
-    const result = await api<{ id: number }>('/shell/exec', { method: 'POST', body: { command, name } });
-    startShellPoll(result.id);
+    const result = await api<{ id: number }>('/shell/exec', { method: 'POST', body: { command: cmd.prompt, name: cmd.name } });
+    // HS-8060 — register this run in the per-button state map BEFORE
+    // re-rendering so the new render picks up the spinner. The poll
+    // tick will drop the entry once the id leaves /api/shell/running.
+    _runningButtonsForTesting.set(commandKey(cmd), result.id);
+    autoShowLogById.set(result.id, autoShow);
+    renderChannelCommands();
+    startShellPoll();
     void refreshLogBadge();
   } catch {
-    setShellBusy(false);
-    shellAutoShowLog = false;
+    // The exec POST failed — bail without touching runningButtons.
+    if (_runningButtonsForTesting.size === 0) setShellBusy(false);
   }
+}
+
+/** HS-8060 — drop every running-button entry without going through
+ *  /api/shell/kill. Test-only; production never calls this (the poll
+ *  drives entry removal). */
+export function _resetRunningButtonsForTesting(): void {
+  _runningButtonsForTesting.clear();
+  autoShowLogById.clear();
+  if (shellPollTimer !== null) { clearInterval(shellPollTimer); shellPollTimer = null; }
 }

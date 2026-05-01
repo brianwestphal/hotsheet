@@ -5,7 +5,7 @@ When a custom command button (§15 Shell target) is running, the button itself s
 ## 57.1 Status
 
 - **HS-8056** — design (this document).
-- **Phase 1 implementation** — tracked in a separate follow-up ticket (filed alongside the spec). Pure UI + per-button state wiring; no server-side change.
+- **HS-8060** — Phase 1 implementation. Shipped 2026-05-01. Pure UI + per-button state wiring; no server-side change. The pre-existing single-shell-poll global timer was rebuilt as a single shared poll that watches every entry in `_runningButtonsForTesting` (the runtime map name is `runningButtons` — `_*ForTesting` is the export alias for tests). Per-id `autoShowLogById` map replaces the global `shellAutoShowLog: boolean` so concurrent commands don't race their auto-show flags.
 
 ## 57.2 Motivation
 

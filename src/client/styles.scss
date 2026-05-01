@@ -1937,10 +1937,65 @@ body.terminal-dashboard-active {
   font-size: 12px;
   transition: opacity 0.15s;
   text-align: left;
+  // HS-8060 — running-state spinner (`.channel-command-btn-spinner`) is
+  // `position: absolute` inside this button; relative on the host so the
+  // spinner anchors to the button's right edge.
+  position: relative;
 
   svg { flex-shrink: 0; }
 
   &:hover { opacity: 0.85; }
+}
+
+// HS-8060 — running-state spinner-with-stop-icon. Anchored to the
+// button's right edge, `background: inherit` so it picks up the
+// button's colour and visually punches the button (rather than floating
+// on the app's bg). `position: absolute` so the element does NOT
+// contribute to the button's intrinsic width — long button labels get
+// partially obscured (per §57.3.2 / the user's no-reflow directive).
+.channel-command-btn-spinner {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: inherit;
+  border-radius: 50%;
+  pointer-events: none; // click target is the whole button.
+
+  // The spinning ring uses the button's `color` (the CustomCommand's
+  // contrast-foreground) for the visible arc; the rest of the ring is
+  // transparent so it reads as a rotating arc.
+  .channel-command-btn-spinner-ring {
+    position: absolute;
+    inset: 0;
+    border: 1.5px solid transparent;
+    border-top-color: currentColor;
+    border-right-color: currentColor;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  // 8×8 stop glyph centered inside the ring. SVG inherits color from
+  // the spinner element via `fill: currentColor; stroke: currentColor`.
+  .channel-command-btn-spinner-stop {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+    line-height: 0;
+  }
+}
+
+// Visual hint when hovering a running button — the user clicks it to stop.
+.channel-command-btn.is-running:hover .channel-command-btn-spinner {
+  // Subtle scale to reinforce the click affordance. Capped so it doesn't
+  // overflow the button's content rect.
+  transform: translateY(-50%) scale(1.1);
 }
 
 #channel-commands-container {

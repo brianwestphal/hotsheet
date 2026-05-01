@@ -10,11 +10,55 @@
  *
  * HS-7984 — also covers the first-use toast helper +
  * localStorage-sentinel logic.
+ *
+ * HS-8060 — per-button shell-running spinner-with-stop-icon flow. Tests
+ * use `vi.hoisted` + `vi.mock('./api.js')` to stub the network layer so
+ * `runShellCommand` and the poll body don't escape happy-dom.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { decideShellPartialEvents, maybeFireShellStreamFirstUseToast } from './commandSidebar.js';
+import { _resetRunningButtonsForTesting, _runningButtonsForTesting,commandKey, decideShellPartialEvents, maybeFireShellStreamFirstUseToast, renderChannelCommands } from './commandSidebar.js';
+import type { CustomCommand } from './experimentalSettings.js';
+import type * as experimentalSettings from './experimentalSettings.js';
 import { state } from './state.js';
+
+const { apiMock, getCommandItemsMock, isChannelAliveMock, setShellBusyMock, refreshLogBadgeMock, confirmDialogMock } = vi.hoisted(() => ({
+  apiMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  getCommandItemsMock: vi.fn<() => unknown[]>(() => []),
+  isChannelAliveMock: vi.fn<() => boolean>(() => false),
+  setShellBusyMock: vi.fn<(busy: boolean) => void>(),
+  refreshLogBadgeMock: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+  confirmDialogMock: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
+}));
+
+vi.mock('./api.js', () => ({
+  api: (...args: unknown[]) => apiMock(...args),
+  apiWithSecret: (...args: unknown[]) => apiMock(...args),
+}));
+
+vi.mock('./experimentalSettings.js', async () => {
+  type ExpSettings = typeof experimentalSettings;
+  const actual = await vi.importActual<ExpSettings>('./experimentalSettings.js');
+  return {
+    ...actual,
+    getCommandItems: () => getCommandItemsMock(),
+  };
+});
+
+vi.mock('./channelUI.js', () => ({
+  isChannelAlive: () => isChannelAliveMock(),
+  setShellBusy: (busy: boolean) => setShellBusyMock(busy),
+  triggerChannelAndMarkBusy: vi.fn(),
+}));
+
+vi.mock('./commandLog.js', () => ({
+  refreshLogBadge: () => refreshLogBadgeMock(),
+  showLogEntryById: vi.fn(),
+}));
+
+vi.mock('./confirm.js', () => ({
+  confirmDialog: () => confirmDialogMock(),
+}));
 
 describe('decideShellPartialEvents (HS-7983)', () => {
   it('returns no events when no processes are running', () => {
@@ -145,5 +189,166 @@ describe('maybeFireShellStreamFirstUseToast (HS-7984)', () => {
     maybeFireShellStreamFirstUseToast();
     expect(document.querySelector('.hs-toast')).toBeNull();
     expect(window.localStorage.getItem(KEY)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HS-8060 — per-button shell-running spinner-with-stop-icon
+// ---------------------------------------------------------------------------
+
+function makeShellCommand(name: string, prompt = `echo ${name}`): CustomCommand {
+  return { name, prompt, target: 'shell', icon: 'play', color: '#3b82f6' };
+}
+
+function setupSidebarDOM(): HTMLElement {
+  document.body.innerHTML = `
+    <div id="channel-play-section" style="display:none"></div>
+    <div id="channel-commands-container"></div>
+  `;
+  return document.getElementById('channel-commands-container')!;
+}
+
+describe('commandKey (HS-8060)', () => {
+  it('produces the same key for two CustomCommand instances with identical (target, name, prompt)', () => {
+    const a = makeShellCommand('Build');
+    const b = { ...makeShellCommand('Build'), color: '#ff0000' }; // different color
+    expect(commandKey(a)).toBe(commandKey(b));
+  });
+
+  it('produces different keys when the target differs', () => {
+    const shell: CustomCommand = { name: 'X', prompt: 'p', target: 'shell' };
+    const claude: CustomCommand = { name: 'X', prompt: 'p', target: 'claude' };
+    expect(commandKey(shell)).not.toBe(commandKey(claude));
+  });
+
+  it('treats undefined target as the default `claude`', () => {
+    const undef: CustomCommand = { name: 'X', prompt: 'p' };
+    const claude: CustomCommand = { name: 'X', prompt: 'p', target: 'claude' };
+    expect(commandKey(undef)).toBe(commandKey(claude));
+  });
+});
+
+describe('renderButton running-state branch (HS-8060)', () => {
+  beforeEach(() => {
+    apiMock.mockReset();
+    confirmDialogMock.mockReset();
+    setShellBusyMock.mockReset();
+    refreshLogBadgeMock.mockReset();
+    refreshLogBadgeMock.mockResolvedValue();
+    confirmDialogMock.mockResolvedValue(true);
+    _resetRunningButtonsForTesting();
+    setupSidebarDOM();
+  });
+
+  afterEach(() => {
+    _resetRunningButtonsForTesting();
+    document.body.innerHTML = '';
+  });
+
+  it('idle button — no spinner element, no `is-running` class', () => {
+    getCommandItemsMock.mockReturnValue([makeShellCommand('Build')]);
+    renderChannelCommands();
+    const btn = document.querySelector<HTMLButtonElement>('.channel-command-btn');
+    expect(btn).not.toBeNull();
+    expect(btn!.classList.contains('is-running')).toBe(false);
+    expect(btn!.querySelector('.channel-command-btn-spinner')).toBeNull();
+  });
+
+  it('running button — has `is-running` class, contains spinner with bg:inherit + stop glyph', () => {
+    const cmd = makeShellCommand('Build');
+    getCommandItemsMock.mockReturnValue([cmd]);
+    _runningButtonsForTesting.set(commandKey(cmd), 42);
+    renderChannelCommands();
+    const btn = document.querySelector<HTMLButtonElement>('.channel-command-btn');
+    expect(btn!.classList.contains('is-running')).toBe(true);
+    const spinner = btn!.querySelector<HTMLElement>('.channel-command-btn-spinner');
+    expect(spinner).not.toBeNull();
+    // The ring + stop are both inside the spinner.
+    expect(spinner!.querySelector('.channel-command-btn-spinner-ring')).not.toBeNull();
+    const stop = spinner!.querySelector('.channel-command-btn-spinner-stop');
+    expect(stop).not.toBeNull();
+    expect(stop!.querySelector('svg')).not.toBeNull(); // the SVG stop glyph
+  });
+
+  it('clicking a running button opens the confirm dialog and on Stop fires POST /shell/kill with the running id', async () => {
+    const cmd = makeShellCommand('Build');
+    getCommandItemsMock.mockReturnValue([cmd]);
+    _runningButtonsForTesting.set(commandKey(cmd), 42);
+    apiMock.mockResolvedValueOnce({ ok: true });
+    confirmDialogMock.mockResolvedValueOnce(true);
+    renderChannelCommands();
+    document.querySelector<HTMLButtonElement>('.channel-command-btn')!.click();
+    // Drain microtasks so the awaited confirm + kill resolve.
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    expect(confirmDialogMock).toHaveBeenCalledOnce();
+    expect(apiMock).toHaveBeenCalledOnce();
+    expect(apiMock.mock.calls[0][0]).toBe('/shell/kill');
+    const body = (apiMock.mock.calls[0][1] as { method: string; body: { id: number } }).body;
+    expect(body.id).toBe(42);
+  });
+
+  it('clicking a running button — Cancel keeps it running (no kill, runningButtons unchanged)', async () => {
+    const cmd = makeShellCommand('Build');
+    getCommandItemsMock.mockReturnValue([cmd]);
+    _runningButtonsForTesting.set(commandKey(cmd), 42);
+    confirmDialogMock.mockResolvedValueOnce(false);
+    renderChannelCommands();
+    document.querySelector<HTMLButtonElement>('.channel-command-btn')!.click();
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    expect(confirmDialogMock).toHaveBeenCalledOnce();
+    // No kill call. Note we did NOT call /shell/exec either — clicking
+    // a running button must not double-spawn.
+    expect(apiMock).not.toHaveBeenCalled();
+    expect(_runningButtonsForTesting.get(commandKey(cmd))).toBe(42);
+  });
+
+  it('two concurrent commands track independent running state — each button shows its own spinner', () => {
+    const a = makeShellCommand('A', 'echo a');
+    const b = makeShellCommand('B', 'echo b');
+    getCommandItemsMock.mockReturnValue([a, b]);
+    _runningButtonsForTesting.set(commandKey(a), 100);
+    _runningButtonsForTesting.set(commandKey(b), 101);
+    renderChannelCommands();
+    const buttons = document.querySelectorAll<HTMLButtonElement>('.channel-command-btn');
+    expect(buttons.length).toBe(2);
+    for (const btn of buttons) {
+      expect(btn.classList.contains('is-running')).toBe(true);
+      expect(btn.querySelector('.channel-command-btn-spinner')).not.toBeNull();
+    }
+  });
+
+  it('one running + one idle — only the running button shows the spinner', () => {
+    const a = makeShellCommand('A', 'echo a');
+    const b = makeShellCommand('B', 'echo b');
+    getCommandItemsMock.mockReturnValue([a, b]);
+    _runningButtonsForTesting.set(commandKey(a), 100); // only A is running
+    renderChannelCommands();
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.channel-command-btn'));
+    const aBtn = buttons.find(btn => btn.dataset.commandKey === commandKey(a));
+    const bBtn = buttons.find(btn => btn.dataset.commandKey === commandKey(b));
+    expect(aBtn!.classList.contains('is-running')).toBe(true);
+    expect(bBtn!.classList.contains('is-running')).toBe(false);
+    expect(aBtn!.querySelector('.channel-command-btn-spinner')).not.toBeNull();
+    expect(bBtn!.querySelector('.channel-command-btn-spinner')).toBeNull();
+  });
+
+  it('non-shell (claude-target) commands never get the running-state spinner even if their key happens to be in the map', () => {
+    // Defensive: the runningButtons map is shell-only by construction
+    // (`runShellCommand` is the only writer) but a corrupted state map
+    // shouldn't render a spinner on a Claude command.
+    const claude: CustomCommand = { name: 'Ask', prompt: 'hello', target: 'claude' };
+    getCommandItemsMock.mockReturnValue([claude]);
+    isChannelAliveMock.mockReturnValue(true); // make the command visible
+    // Set up a `channel-play-section` that's actually visible so
+    // `channelEnabled` resolves to true.
+    document.getElementById('channel-play-section')!.style.display = '';
+    _runningButtonsForTesting.set(commandKey(claude), 999);
+    renderChannelCommands();
+    const btn = document.querySelector<HTMLButtonElement>('.channel-command-btn');
+    expect(btn).not.toBeNull();
+    expect(btn!.classList.contains('is-running')).toBe(false);
+    expect(btn!.querySelector('.channel-command-btn-spinner')).toBeNull();
   });
 });

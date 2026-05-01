@@ -688,9 +688,9 @@ HS-7969 follow-up. New client module `src/client/terminalCheckout.tsx` owns one 
 
 ## 57. Shell custom-command-button spinner & stop (`57-shell-command-button-spinner.md`)
 
-HS-8056. Spec only — Phase 1 implementation tracked in a separate follow-up ticket. When a §15 Shell-target custom-command button is running, the button itself surfaces an absolute-positioned spinner + stop icon at the right edge (background: inherit so it visually punches the button colour, no reflow against the label). Clicking the running button opens a `confirmDialog` → `POST /api/shell/kill`. Multiple commands can run simultaneously; per-button state lives in a module-private `runningButtons: Map<commandKey, logId>` synced by the existing `/api/shell/running` poll. The existing global "Shell running" toolbar indicator stays as an aggregate signal (reads `runningButtons.size > 0` instead of a single boolean).
+HS-8056 (spec) + HS-8060 (Phase 1 implementation, shipped 2026-05-01). When a §15 Shell-target custom-command button is running, the button itself surfaces an absolute-positioned spinner + stop icon at the right edge (`background: inherit` so it visually punches the button colour, no reflow against the label). Clicking the running button opens a `confirmDialog` → `POST /api/shell/kill`. Multiple commands can run simultaneously; per-button state lives in a module-private `runningButtons: Map<commandKey, logId>` synced by a single shared poll over `/api/shell/running` (replacing the pre-fix single-id-per-timer model). The existing global "Shell running" toolbar indicator now reflects `runningButtons.size > 0` (busy = any button running). Per-id `autoShowLogById` map replaces the global `shellAutoShowLog: boolean` so concurrent commands' auto-show flags don't clobber each other.
 
-**Status:** Design only.
+**Status:** Shipped (Phase 1).
 
 **Cross-refs.** §15 (shell-commands base flow + the existing `/api/shell/exec`+`/api/shell/kill`+`/api/shell/running` endpoints), §53 (streaming output — orthogonal; the spinner doesn't subscribe to the partial-output stream).
 
