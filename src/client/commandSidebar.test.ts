@@ -17,10 +17,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { _resetRunningButtonsForTesting, _runningButtonsForTesting,commandKey, decideShellPartialEvents, maybeFireShellStreamFirstUseToast, renderChannelCommands } from './commandSidebar.js';
+import { _resetRunningButtonsForTesting, _runningButtonsForTesting,commandKey, decideShellPartialEvents, maybeFireShellStreamFirstUseToast, renderChannelCommands, runningKey } from './commandSidebar.js';
 import type { CustomCommand } from './experimentalSettings.js';
 import type * as experimentalSettings from './experimentalSettings.js';
-import { state } from './state.js';
+import { setActiveProject, state } from './state.js';
 
 const { apiMock, getCommandItemsMock, isChannelAliveMock, setShellBusyMock, refreshLogBadgeMock, confirmDialogMock } = vi.hoisted(() => ({
   apiMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
@@ -257,7 +257,7 @@ describe('renderButton running-state branch (HS-8060)', () => {
   it('running button — has `is-running` class, contains spinner with bg:inherit + stop glyph', () => {
     const cmd = makeShellCommand('Build');
     getCommandItemsMock.mockReturnValue([cmd]);
-    _runningButtonsForTesting.set(commandKey(cmd), 42);
+    _runningButtonsForTesting.set(runningKey('', cmd), 42);
     renderChannelCommands();
     const btn = document.querySelector<HTMLButtonElement>('.channel-command-btn');
     expect(btn!.classList.contains('is-running')).toBe(true);
@@ -273,7 +273,7 @@ describe('renderButton running-state branch (HS-8060)', () => {
   it('clicking a running button opens the confirm dialog and on Stop fires POST /shell/kill with the running id', async () => {
     const cmd = makeShellCommand('Build');
     getCommandItemsMock.mockReturnValue([cmd]);
-    _runningButtonsForTesting.set(commandKey(cmd), 42);
+    _runningButtonsForTesting.set(runningKey('', cmd), 42);
     apiMock.mockResolvedValueOnce({ ok: true });
     confirmDialogMock.mockResolvedValueOnce(true);
     renderChannelCommands();
@@ -291,7 +291,7 @@ describe('renderButton running-state branch (HS-8060)', () => {
   it('clicking a running button — Cancel keeps it running (no kill, runningButtons unchanged)', async () => {
     const cmd = makeShellCommand('Build');
     getCommandItemsMock.mockReturnValue([cmd]);
-    _runningButtonsForTesting.set(commandKey(cmd), 42);
+    _runningButtonsForTesting.set(runningKey('', cmd), 42);
     confirmDialogMock.mockResolvedValueOnce(false);
     renderChannelCommands();
     document.querySelector<HTMLButtonElement>('.channel-command-btn')!.click();
@@ -301,15 +301,15 @@ describe('renderButton running-state branch (HS-8060)', () => {
     // No kill call. Note we did NOT call /shell/exec either — clicking
     // a running button must not double-spawn.
     expect(apiMock).not.toHaveBeenCalled();
-    expect(_runningButtonsForTesting.get(commandKey(cmd))).toBe(42);
+    expect(_runningButtonsForTesting.get(runningKey('', cmd))).toBe(42);
   });
 
   it('two concurrent commands track independent running state — each button shows its own spinner', () => {
     const a = makeShellCommand('A', 'echo a');
     const b = makeShellCommand('B', 'echo b');
     getCommandItemsMock.mockReturnValue([a, b]);
-    _runningButtonsForTesting.set(commandKey(a), 100);
-    _runningButtonsForTesting.set(commandKey(b), 101);
+    _runningButtonsForTesting.set(runningKey('', a), 100);
+    _runningButtonsForTesting.set(runningKey('', b), 101);
     renderChannelCommands();
     const buttons = document.querySelectorAll<HTMLButtonElement>('.channel-command-btn');
     expect(buttons.length).toBe(2);
@@ -323,7 +323,7 @@ describe('renderButton running-state branch (HS-8060)', () => {
     const a = makeShellCommand('A', 'echo a');
     const b = makeShellCommand('B', 'echo b');
     getCommandItemsMock.mockReturnValue([a, b]);
-    _runningButtonsForTesting.set(commandKey(a), 100); // only A is running
+    _runningButtonsForTesting.set(runningKey('', a), 100); // only A is running
     renderChannelCommands();
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.channel-command-btn'));
     const aBtn = buttons.find(btn => btn.dataset.commandKey === commandKey(a));
@@ -344,11 +344,94 @@ describe('renderButton running-state branch (HS-8060)', () => {
     // Set up a `channel-play-section` that's actually visible so
     // `channelEnabled` resolves to true.
     document.getElementById('channel-play-section')!.style.display = '';
-    _runningButtonsForTesting.set(commandKey(claude), 999);
+    _runningButtonsForTesting.set(runningKey('', claude), 999);
     renderChannelCommands();
     const btn = document.querySelector<HTMLButtonElement>('.channel-command-btn');
     expect(btn).not.toBeNull();
     expect(btn!.classList.contains('is-running')).toBe(false);
     expect(btn!.querySelector('.channel-command-btn-spinner')).toBeNull();
+  });
+});
+
+/**
+ * HS-8070 — running entries are now scoped by `${secret}::${commandKey}`
+ * so a command running in Project A doesn't make Project B's
+ * identically-named button show the spinner after the user switches
+ * projects. Pre-fix the user reported "stop / spinner keeps showing on
+ * different project after switching" — the spinner persisted because
+ * `commandKey` collided across projects.
+ */
+describe('runningButtons per-project scoping (HS-8070)', () => {
+  beforeEach(() => {
+    apiMock.mockReset();
+    setShellBusyMock.mockReset();
+    refreshLogBadgeMock.mockReset();
+    refreshLogBadgeMock.mockResolvedValue();
+    _resetRunningButtonsForTesting();
+    setupSidebarDOM();
+  });
+
+  afterEach(() => {
+    _resetRunningButtonsForTesting();
+    /* reset done in afterEach via _resetForTesting if needed */
+    document.body.innerHTML = '';
+  });
+
+  it('a command running in Project A does NOT make Project B\'s identically-keyed button show the spinner after a project switch', () => {
+    const buildCmd = makeShellCommand('Build', 'npm run build');
+    // Project A starts the build.
+    setActiveProject({ secret: 'sec-a', name: 'Project A', dataDir: '/tmp/a' });
+    _runningButtonsForTesting.set(runningKey('sec-a', buildCmd), 42);
+    getCommandItemsMock.mockReturnValue([buildCmd]);
+    renderChannelCommands();
+    const aBtn = document.querySelector<HTMLButtonElement>('.channel-command-btn');
+    expect(aBtn?.classList.contains('is-running')).toBe(true);
+
+    // User switches to Project B which has the SAME `Build` command.
+    setActiveProject({ secret: 'sec-b', name: 'Project B', dataDir: '/tmp/b' });
+    renderChannelCommands();
+    const bBtn = document.querySelector<HTMLButtonElement>('.channel-command-btn');
+    // Pre-fix this would have been `true` because the lookup key was
+    // just `commandKey(cmd)` — A and B's Build commands collided.
+    expect(bBtn?.classList.contains('is-running')).toBe(false);
+    expect(bBtn?.querySelector('.channel-command-btn-spinner')).toBeNull();
+  });
+
+  it('switching back to the originating project still shows the spinner', () => {
+    const buildCmd = makeShellCommand('Build', 'npm run build');
+    setActiveProject({ secret: 'sec-a', name: 'Project A', dataDir: '/tmp/a' });
+    _runningButtonsForTesting.set(runningKey('sec-a', buildCmd), 42);
+    getCommandItemsMock.mockReturnValue([buildCmd]);
+
+    // Switch to B (no spinner expected per the test above).
+    setActiveProject({ secret: 'sec-b', name: 'Project B', dataDir: '/tmp/b' });
+    renderChannelCommands();
+    expect(document.querySelector('.channel-command-btn')!.classList.contains('is-running')).toBe(false);
+
+    // Switch BACK to A — spinner should be visible again.
+    setActiveProject({ secret: 'sec-a', name: 'Project A', dataDir: '/tmp/a' });
+    renderChannelCommands();
+    expect(document.querySelector('.channel-command-btn')!.classList.contains('is-running')).toBe(true);
+  });
+
+  it('two projects can each independently run the same-keyed command at the same time', () => {
+    const buildCmd = makeShellCommand('Build', 'npm run build');
+    getCommandItemsMock.mockReturnValue([buildCmd]);
+    _runningButtonsForTesting.set(runningKey('sec-a', buildCmd), 42);
+    _runningButtonsForTesting.set(runningKey('sec-b', buildCmd), 43);
+
+    setActiveProject({ secret: 'sec-a', name: 'Project A', dataDir: '/tmp/a' });
+    renderChannelCommands();
+    expect(document.querySelector('.channel-command-btn')!.classList.contains('is-running')).toBe(true);
+
+    setActiveProject({ secret: 'sec-b', name: 'Project B', dataDir: '/tmp/b' });
+    renderChannelCommands();
+    expect(document.querySelector('.channel-command-btn')!.classList.contains('is-running')).toBe(true);
+  });
+
+  it('runningKey composes secret + commandKey', () => {
+    const cmd = makeShellCommand('Build', 'npm run build');
+    expect(runningKey('sec-a', cmd)).toBe(`sec-a::${commandKey(cmd)}`);
+    expect(runningKey('sec-a', cmd)).not.toBe(runningKey('sec-b', cmd));
   });
 });

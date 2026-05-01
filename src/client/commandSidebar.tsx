@@ -6,7 +6,7 @@ import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { CMD_COLORS, CMD_ICONS, type CommandItem, contrastColor, type CustomCommand, getCommandItems,isGroup } from './experimentalSettings.js';
 import { renderIconSvg } from './icons.js';
-import { state } from './state.js';
+import { getActiveProject, state } from './state.js';
 import { showToast } from './toast.js';
 
 /**
@@ -81,10 +81,30 @@ export function commandKey(cmd: CustomCommand): string {
  * `response.ids`). The size doubles as the global busy-state input
  * (`setShellBusy(runningButtons.size > 0)`).
  *
+ * HS-8070 — keys are now `${secret}::${commandKey(cmd)}` so a running
+ * command in Project A doesn't make Project B's identically-named
+ * button show the spinner after the user switches projects. Pre-fix
+ * the map was keyed by `commandKey(cmd)` alone — two projects with
+ * the same name+prompt button collided on lookup, and the spinner
+ * "kept showing on different project after switching" (the user's
+ * exact symptom). Read/write helpers below build the composite key
+ * from `getActiveProject()`'s secret; the poll loop continues to drop
+ * entries by id (still global on the server side, see /shell/running)
+ * so cross-project bookkeeping stays consistent — entries for
+ * non-active projects survive across switches and the spinner shows
+ * again when the user returns to the originating project.
+ *
  * Exported for tests + Phase 2 callers; production consumers go through
  * `renderChannelCommands` which reads it during render.
  */
 export const _runningButtonsForTesting = new Map<string, number>();
+
+/** HS-8070 — composite key for the per-project runningButtons map.
+ *  `secret` may be empty during boot before `setActiveProject` fires —
+ *  the empty-secret namespace is a benign isolation for that window. */
+export function runningKey(secret: string, cmd: CustomCommand): string {
+  return `${secret}::${commandKey(cmd)}`;
+}
 
 /** HS-8060 — per-running-id "auto-show on completion" flag. Replaces the
  *  pre-fix global `shellAutoShowLog: boolean` which raced when the user
@@ -112,19 +132,25 @@ function renderButton(cmd: CustomCommand) {
   const color = cmd.color ?? CMD_COLORS[0].value;
   const textColor = contrastColor(color);
   const iconDef = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
-  const key = commandKey(cmd);
-  const isRunning = isShell && _runningButtonsForTesting.has(key);
+  // HS-8070 — composite key includes the active project's secret so a
+  // running command in another project doesn't make this button show
+  // the spinner. The data-attribute keeps the unscoped `commandKey` for
+  // any DOM consumers that want a project-stable identity.
+  const activeSecret = getActiveProject()?.secret ?? '';
+  const cmdKey = commandKey(cmd);
+  const lookupKey = runningKey(activeSecret, cmd);
+  const isRunning = isShell && _runningButtonsForTesting.has(lookupKey);
   const btn = toElement(
     <button
       className={`channel-command-btn${isRunning ? ' is-running' : ''}`}
       style={`background:${color};color:${textColor}`}
-      data-command-key={key}
+      data-command-key={cmdKey}
     >{raw(renderIconSvg(iconDef.svg, 14, textColor))}<span>{cmd.name}</span></button>
   );
   if (isRunning) btn.appendChild(buildSpinnerElement(textColor));
   btn.addEventListener('click', () => {
     if (isShell) {
-      const runningId = _runningButtonsForTesting.get(key);
+      const runningId = _runningButtonsForTesting.get(lookupKey);
       if (runningId !== undefined) {
         void confirmStopShellCommand(cmd, runningId);
         return;
@@ -356,7 +382,10 @@ async function runShellCommand(cmd: CustomCommand, autoShow = false): Promise<vo
     // HS-8060 — register this run in the per-button state map BEFORE
     // re-rendering so the new render picks up the spinner. The poll
     // tick will drop the entry once the id leaves /api/shell/running.
-    _runningButtonsForTesting.set(commandKey(cmd), result.id);
+    // HS-8070 — composite key (`${secret}::${commandKey}`) so the
+    // running entry is bound to the project that started the command.
+    const activeSecret = getActiveProject()?.secret ?? '';
+    _runningButtonsForTesting.set(runningKey(activeSecret, cmd), result.id);
     autoShowLogById.set(result.id, autoShow);
     renderChannelCommands();
     startShellPoll();
