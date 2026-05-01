@@ -8,7 +8,7 @@
  */
 import { raw } from '../jsx-runtime.js';
 import type { TerminalPromptAllowRule } from '../shared/terminalPrompt/allowRules.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { state } from './state.js';
 import {
   loadAllowRules,
@@ -32,7 +32,7 @@ export async function loadAndRenderTerminalPromptAllowList(): Promise<void> {
 }
 
 function render(rules: readonly TerminalPromptAllowRule[]): void {
-  const host = document.getElementById('terminal-prompt-allow-list');
+  const host = byIdOrNull('terminal-prompt-allow-list');
   if (host === null) return;
   // Pure rendering — preserves the focus-disable affordance from the master
   // toggle by adding a `is-disabled` class when detection is off. List

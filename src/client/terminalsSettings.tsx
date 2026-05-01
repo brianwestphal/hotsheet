@@ -1,7 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { parseJsonArrayOr } from './json.js';
 import type { TerminalTabConfig } from './terminal.js';
 import { getProjectDefault } from './terminalAppearance.js';
@@ -131,7 +131,7 @@ async function handleDelete(index: number): Promise<void> {
 
   // Reveal the target terminal in the drawer and get the settings dialog out
   // of the way so the user can see what they're about to remove.
-  const settingsOverlay = document.getElementById('settings-overlay');
+  const settingsOverlay = byIdOrNull('settings-overlay');
   const prevOverlayDisplay = settingsOverlay?.style.display ?? '';
   if (settingsOverlay) settingsOverlay.style.display = 'none';
   let restoreDrawer: (() => void) | null = null;
@@ -163,7 +163,7 @@ async function handleDelete(index: number): Promise<void> {
 }
 
 function renderList(): void {
-  const list = document.getElementById('settings-terminals-list');
+  const list = byIdOrNull('settings-terminals-list');
   if (!list) return;
   list.innerHTML = '';
   if (terminals.length === 0) {

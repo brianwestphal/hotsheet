@@ -1,6 +1,6 @@
 import { api } from './api.js';
 import { parseTags } from './detail.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, state } from './state.js';
 
@@ -99,7 +99,7 @@ function printHTML(bodyHTML: string) {
 }
 
 function printDashboard() {
-  const dashboard = document.getElementById('dashboard-container');
+  const dashboard = byIdOrNull('dashboard-container');
   if (!dashboard) return;
   printHTML(`<style>${printStyles()}
     .dashboard-grid { grid-template-columns: 1fr 1fr; }

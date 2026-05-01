@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { state } from './state.js';
 
 /** Normalize a tag: collapse non-alphanumeric runs to single space, lowercase, trim. */
@@ -43,7 +43,7 @@ export function parseTags(raw: string): string[] {
 }
 
 export function renderDetailTags(tags: string[], readOnly: boolean) {
-  const container = document.getElementById('detail-tags');
+  const container = byIdOrNull('detail-tags');
   if (!container) return;
   container.innerHTML = '';
   for (const tag of tags) {

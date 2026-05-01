@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import { ICON_FOLDER_OPEN, ICON_GLOBE, ICON_POWER, ICON_SETTINGS, ICON_UNINSTALL } from './icons.js';
 import { createPreferenceRow, renderConfigLayout } from './pluginConfigDialog.js';
 import type { PluginInfo, SyncConflict } from './pluginTypes.js';
@@ -9,10 +9,10 @@ import { refreshPluginUI } from './pluginUI.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 
 export function bindPluginSettings() {
-  const settingsBtn = document.getElementById('settings-btn')!;
+  const settingsBtn = byId('settings-btn');
   settingsBtn.addEventListener('click', () => { void loadPlugins(); });
 
-  const installBtn = document.getElementById('plugin-install-btn')!;
+  const installBtn = byId('plugin-install-btn');
   installBtn.addEventListener('click', () => showFindPluginsDialog());
 }
 
@@ -162,7 +162,7 @@ function showFindPluginsDialog() {
 }
 
 async function loadPlugins() {
-  const list = document.getElementById('plugin-list')!;
+  const list = byId('plugin-list');
   let plugins: PluginInfo[];
   try {
     plugins = await api<PluginInfo[]>('/plugins');
@@ -392,9 +392,9 @@ async function showPluginConfigDialog(plugin: PluginInfo) {
 // --- Conflict resolution UI ---
 
 async function loadConflicts() {
-  const section = document.getElementById('plugin-conflicts-section')!;
-  const list = document.getElementById('plugin-conflict-list')!;
-  const countBadge = document.getElementById('plugin-conflict-count')!;
+  const section = byId('plugin-conflicts-section');
+  const list = byId('plugin-conflict-list');
+  const countBadge = byId('plugin-conflict-count');
 
   let conflicts: SyncConflict[];
   try {
@@ -406,7 +406,7 @@ async function loadConflicts() {
   if (conflicts.length === 0) {
     section.style.display = 'none';
     // Remove badge from Plugins tab
-    const tab = document.getElementById('settings-tab-plugins');
+    const tab = byIdOrNull('settings-tab-plugins');
     const badge = tab?.querySelector('.plugin-tab-badge');
     if (badge) badge.remove();
     return;
@@ -416,7 +416,7 @@ async function loadConflicts() {
   countBadge.textContent = String(conflicts.length);
 
   // Add badge to Plugins tab
-  const tab = document.getElementById('settings-tab-plugins');
+  const tab = byIdOrNull('settings-tab-plugins');
   if (tab && !tab.querySelector('.plugin-tab-badge')) {
     tab.appendChild(toElement(<span className="plugin-tab-badge">{String(conflicts.length)}</span>));
   }

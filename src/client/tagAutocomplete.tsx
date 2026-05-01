@@ -4,11 +4,11 @@
  */
 import { api } from './api.js';
 import { displayTag,hasTag, normalizeTag, parseTags, renderDetailTags } from './detail.js';
-import { toElement } from './dom.js';
+import { byId, toElement } from './dom.js';
 import { allKnownTags, refreshAllKnownTags, state } from './state.js';
 
 export function bindDetailTagInput(): void {
-  const tagInput = document.getElementById('detail-tag-input') as HTMLInputElement;
+  const tagInput = byId<HTMLInputElement>('detail-tag-input');
   let acDropdown: HTMLElement | null = null;
   let acIndex = -1;
 

@@ -3,7 +3,7 @@ import './markdownSetup.js';
 import { marked } from 'marked';
 
 import { raw } from '../jsx-runtime.js';
-import { requireChild, toElement } from './dom.js';
+import { byIdOrNull, requireChild, toElement } from './dom.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 
 /**
@@ -131,8 +131,8 @@ export function buildDetailsReaderTitle(ticketNumber: string | null | undefined,
  *  in app.tsx) so detail.tsx can call it after populating the textarea on
  *  ticket-load without forming a circular dependency on app.tsx. */
 export function syncDetailReaderButton(): void {
-  const btn = document.getElementById('detail-reader-btn') as HTMLButtonElement | null;
-  const detailsArea = document.getElementById('detail-details') as HTMLTextAreaElement | null;
+  const btn = byIdOrNull<HTMLButtonElement>('detail-reader-btn');
+  const detailsArea = byIdOrNull<HTMLTextAreaElement>('detail-details');
   if (btn === null || detailsArea === null) return;
   btn.disabled = detailsArea.value.trim() === '';
 }

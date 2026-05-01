@@ -13,7 +13,7 @@ import {
 } from './dashboardHiddenTerminals.js';
 import { restoreTicketList } from './dashboardMode.js';
 import { closeDetail } from './detail.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { showHideTerminalDialog } from './hideTerminalDialog.js';
 import { ICON_EYE_OFF, ICON_PENCIL, ICON_X } from './icons.js';
 import { switchProject } from './projectTabs.js';
@@ -165,8 +165,8 @@ let layoutModeLoadPromise: Promise<void> | null = null;
 export function initTerminalDashboard(): void {
   if (getTauriInvoke() === null) return;
 
-  toggleButton = document.getElementById('terminal-dashboard-toggle') as HTMLButtonElement | null;
-  rootElement = document.getElementById('terminal-dashboard-root');
+  toggleButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-toggle');
+  rootElement = byIdOrNull('terminal-dashboard-root');
   if (toggleButton === null || rootElement === null) return;
 
   toggleButton.style.display = '';
@@ -175,11 +175,11 @@ export function initTerminalDashboard(): void {
     else enterDashboard();
   });
 
-  sizerContainer = document.getElementById('terminal-dashboard-sizer');
-  sizeSlider = document.getElementById('terminal-dashboard-size-slider') as HTMLInputElement | null;
-  hideButton = document.getElementById('terminal-dashboard-hide-btn') as HTMLButtonElement | null;
-  groupingSelect = document.getElementById('terminal-dashboard-grouping-select') as HTMLSelectElement | null;
-  layoutToggleButton = document.getElementById('terminal-dashboard-layout-toggle') as HTMLButtonElement | null;
+  sizerContainer = byIdOrNull('terminal-dashboard-sizer');
+  sizeSlider = byIdOrNull<HTMLInputElement>('terminal-dashboard-size-slider');
+  hideButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-hide-btn');
+  groupingSelect = byIdOrNull<HTMLSelectElement>('terminal-dashboard-grouping-select');
+  layoutToggleButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-layout-toggle');
   // HS-7826 — wire the grouping selector. Primary scope: the first project
   // in registered order (drives the visible options + the displayed active
   // id, since groupings are stored per-project but the dashboard renders a
@@ -254,7 +254,7 @@ export function initTerminalDashboard(): void {
         // and exits the view normally. See docs/25-terminal-dashboard.md
         // §25.8.
         const activeEl = document.activeElement as HTMLElement | null;
-        const searchSlot = document.getElementById('terminal-dashboard-search-slot');
+        const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
         const inSearch = activeEl !== null && searchSlot !== null && searchSlot.contains(activeEl)
           && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
         if (inSearch) {
@@ -441,7 +441,7 @@ function teardownAllHandles(): void {
     try { dedicatedSearchHandle.dispose(); } catch { /* ignore */ }
     dedicatedSearchHandle = null;
   }
-  const searchSlot = document.getElementById('terminal-dashboard-search-slot');
+  const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
   if (searchSlot !== null) {
     searchSlot.replaceChildren();
     searchSlot.style.display = 'none';
@@ -710,7 +710,7 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
       }
       const search = new SearchAddon();
       term.loadAddon(search);
-      const searchSlot = document.getElementById('terminal-dashboard-search-slot');
+      const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
       let handleLocal: TerminalSearchHandle | null = null;
       if (searchSlot !== null) {
         handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });
@@ -889,7 +889,7 @@ function renderProjectSection(data: ProjectSectionData, visibleTerminals?: Termi
 
         const search = new SearchAddon();
         term.loadAddon(search);
-        const searchSlot = document.getElementById('terminal-dashboard-search-slot');
+        const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
         let handleLocal: TerminalSearchHandle | null = null;
         if (searchSlot !== null) {
           handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });

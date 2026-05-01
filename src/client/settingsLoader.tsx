@@ -1,7 +1,7 @@
 import { suppressAnimation } from './animate.js';
 import { api } from './api.js';
 import { applyDetailPosition, applyDetailSize, updateDetailCategory } from './detail.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import type { CategoryDef } from './state.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
@@ -60,15 +60,15 @@ export async function loadSettings() {
   } catch { /* use defaults */ }
 
   // Sync sort dropdown UI to loaded state
-  const sortSelect = document.getElementById('sort-select') as HTMLSelectElement | null;
+  const sortSelect = byIdOrNull<HTMLSelectElement>('sort-select');
   if (sortSelect) sortSelect.value = `${state.sortBy}:${state.sortDir}`;
 
   applyDetailPosition(state.settings.detail_position);
   applyDetailSize();
   // Apply detail panel visibility
   if (!state.settings.detail_visible) {
-    const panel = document.getElementById('detail-panel');
-    const handle = document.getElementById('detail-resize-handle');
+    const panel = byIdOrNull('detail-panel');
+    const handle = byIdOrNull('detail-resize-handle');
     if (panel) panel.style.display = 'none';
     if (handle) handle.style.display = 'none';
   }
@@ -85,7 +85,7 @@ export async function loadCategories(rebuildCategoryUI: () => void) {
 
 /** Rebuild the sidebar category buttons and refresh the detail panel category. */
 export function rebuildCategoryUI() {
-  const sidebarSection = document.getElementById('sidebar-categories');
+  const sidebarSection = byIdOrNull('sidebar-categories');
   if (sidebarSection) {
     const label = sidebarSection.querySelector('.sidebar-label');
     sidebarSection.innerHTML = '';

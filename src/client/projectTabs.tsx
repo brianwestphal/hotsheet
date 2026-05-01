@@ -1,7 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_FOLDER, ICON_X } from './icons.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { getMinimizedPermissionSecrets, reopenMinimizedForSecret } from './permissionOverlay.js';
@@ -172,7 +172,7 @@ async function removeProjectsInDirection(project: ProjectInfo, direction: 'left'
 function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
   e.preventDefault();
   // Remove any existing context menu
-  document.getElementById('tab-context-menu')?.remove();
+  byIdOrNull('tab-context-menu')?.remove();
 
   const idx = projectList.findIndex(p => p.secret === project.secret);
   const hasLeft = idx > 0;
@@ -456,7 +456,7 @@ function computeTabsFingerprint(activeSecret: string | null): string {
 }
 
 function renderTabs() {
-  const titleArea = document.getElementById('app-title-area');
+  const titleArea = byIdOrNull('app-title-area');
   if (!titleArea) return;
 
   if (projectList.length < 2) {

@@ -1,6 +1,6 @@
 import { api } from './api.js';
 import { bindDbRepairUI, refreshDbRepairStatus } from './dbRepairUI.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import type { Ticket } from './state.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
@@ -52,7 +52,7 @@ export async function loadBackupList(): Promise<void> {
   // HS-7897: Settings → Backups also hosts the Database Repair panel; refresh
   // its status pill whenever the backup list reloads (i.e. each Settings open).
   void refreshDbRepairStatus();
-  const container = document.getElementById('backup-list');
+  const container = byIdOrNull('backup-list');
   if (!container) return;
 
   try {
@@ -101,12 +101,12 @@ export async function loadBackupList(): Promise<void> {
 
 async function startPreview(tier: string, filename: string, createdAt: string): Promise<void> {
   // Close settings dialog
-  const overlay = document.getElementById('settings-overlay')!;
+  const overlay = byId('settings-overlay');
   overlay.style.display = 'none';
 
   // Show loading state
-  const banner = document.getElementById('backup-preview-banner')!;
-  const label = document.getElementById('backup-preview-label')!;
+  const banner = byId('backup-preview-banner');
+  const label = byId('backup-preview-label');
   label.textContent = 'Loading backup preview...';
   banner.style.display = 'flex';
 
@@ -138,7 +138,7 @@ async function startPreview(tier: string, filename: string, createdAt: string): 
 }
 
 async function cancelPreview(): Promise<void> {
-  const banner = document.getElementById('backup-preview-banner')!;
+  const banner = byId('backup-preview-banner');
   banner.style.display = 'none';
   state.backupPreview = null;
   state.selectedIds.clear();
@@ -150,7 +150,7 @@ async function cancelPreview(): Promise<void> {
 async function confirmRestore(): Promise<void> {
   if (!state.backupPreview) return;
 
-  const btn = document.getElementById('backup-restore-btn') as HTMLButtonElement;
+  const btn = byId<HTMLButtonElement>('backup-restore-btn');
   btn.textContent = 'Restoring...';
   btn.disabled = true;
 
@@ -179,15 +179,15 @@ export function bindBackupsUI(): void {
   // HS-7897: Database Repair panel lives in the same Settings → Backups
   // tab; bind its buttons here so the wiring runs once at app init.
   bindDbRepairUI();
-  document.getElementById('backup-cancel-btn')?.addEventListener('click', () => {
+  byIdOrNull('backup-cancel-btn')?.addEventListener('click', () => {
     void cancelPreview();
   });
 
-  document.getElementById('backup-restore-btn')?.addEventListener('click', () => {
+  byIdOrNull('backup-restore-btn')?.addEventListener('click', () => {
     void confirmRestore();
   });
 
-  const backupNowBtn = document.getElementById('backup-now-btn');
+  const backupNowBtn = byIdOrNull('backup-now-btn');
   backupNowBtn?.addEventListener('click', async () => {
     backupNowBtn.textContent = 'Backing up...';
     (backupNowBtn as HTMLButtonElement).disabled = true;

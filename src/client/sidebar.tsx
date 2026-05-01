@@ -1,5 +1,6 @@
 import { suppressAnimation } from './animate.js';
 import { api } from './api.js';
+import { byId, byIdOrNull } from './dom.js';
 import { state } from './state.js';
 import { draggedTicketIds, loadTickets } from './ticketList.js';
 import { trackedBatch } from './undo/actions.js';
@@ -83,7 +84,7 @@ export function bindSidebar(restoreTicketList: () => void, updateLayoutToggle: (
 // --- Sort controls ---
 
 export function bindSortControls() {
-  const select = document.getElementById('sort-select') as HTMLSelectElement;
+  const select = byId<HTMLSelectElement>('sort-select');
   select.addEventListener('change', () => {
     const [sortBy, sortDir] = select.value.split(':');
     state.sortBy = sortBy;
@@ -99,7 +100,7 @@ export function bindSortControls() {
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 export function bindSearchInput() {
-  const input = document.getElementById('search-input') as HTMLInputElement;
+  const input = byId<HTMLInputElement>('search-input');
   const searchBox = input.closest('.search-box') as HTMLElement;
   const clearBtn = searchBox.querySelector<HTMLButtonElement>('.search-clear-btn');
 
@@ -151,7 +152,7 @@ export function bindSearchInput() {
  *  what the filter is actually using. Also flips `.has-value` so the
  *  pill stays expanded while there's a live query. */
 export function syncSearchInputFromState(): void {
-  const input = document.getElementById('search-input') as HTMLInputElement | null;
+  const input = byIdOrNull<HTMLInputElement>('search-input');
   if (input === null) return;
   const searchBox = input.closest<HTMLElement>('.search-box');
   if (searchBox === null) return;

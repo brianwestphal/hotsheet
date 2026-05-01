@@ -1,7 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 
 /**
  * HS-7953 — Settings → Permissions management page + the per-popup
@@ -116,7 +116,7 @@ export function parseRules(raw: unknown): AllowRule[] {
 }
 
 function renderRules(rules: AllowRule[]): void {
-  const container = document.getElementById('permission-allow-list');
+  const container = byIdOrNull('permission-allow-list');
   if (container === null) return;
   container.replaceChildren();
   if (rules.length === 0) {

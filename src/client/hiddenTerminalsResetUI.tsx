@@ -4,6 +4,7 @@ import {
   subscribeToHiddenChanges,
   unhideAllInProject,
 } from './dashboardHiddenTerminals.js';
+import { byIdOrNull } from './dom.js';
 import { getActiveProject } from './state.js';
 
 /**
@@ -21,8 +22,8 @@ import { getActiveProject } from './state.js';
 let subscriptionUnsub: (() => void) | null = null;
 
 export function loadAndWireHiddenTerminalsReset(): void {
-  const button = document.getElementById('settings-hidden-terminals-reset') as HTMLButtonElement | null;
-  const status = document.getElementById('settings-hidden-terminals-status');
+  const button = byIdOrNull<HTMLButtonElement>('settings-hidden-terminals-reset');
+  const status = byIdOrNull('settings-hidden-terminals-status');
   if (button === null || status === null) return;
 
   // Idempotent — overwrite the click handler each time this is called so
@@ -56,8 +57,8 @@ export function loadAndWireHiddenTerminalsReset(): void {
     subscriptionUnsub = subscribeToHiddenChanges(() => {
       // The button + status nodes might have been replaced (e.g. dialog
       // was reopened) so look them up fresh on every fire.
-      const btnNow = document.getElementById('settings-hidden-terminals-reset') as HTMLButtonElement | null;
-      const statusNow = document.getElementById('settings-hidden-terminals-status');
+      const btnNow = byIdOrNull<HTMLButtonElement>('settings-hidden-terminals-reset');
+      const statusNow = byIdOrNull('settings-hidden-terminals-status');
       if (btnNow !== null && statusNow !== null) refreshStatus(btnNow, statusNow);
     });
   }

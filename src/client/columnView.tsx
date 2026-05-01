@@ -3,7 +3,7 @@ import { suppressAnimation } from './animate.js';
 import { getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel, updateStats } from './detail.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import { createDraftRow } from './draftRow.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, state, syncedTicketMap } from './state.js';
@@ -96,7 +96,7 @@ export function getColumnsForView(): { status: string; label: string }[] {
 // --- Preview column view ---
 
 export function renderPreviewColumnView() {
-  const container = document.getElementById('ticket-list')!;
+  const container = byId('ticket-list');
   const savedScrolls = saveColumnScrollState(container);
   container.innerHTML = '';
   container.classList.add('ticket-list-columns');
@@ -133,7 +133,7 @@ export function renderPreviewColumnView() {
   container.appendChild(columnsContainer);
   restoreColumnScrollState(container, savedScrolls);
 
-  const toolbar = document.getElementById('batch-toolbar');
+  const toolbar = byIdOrNull('batch-toolbar');
   if (toolbar) toolbar.style.display = 'none';
   void updateStats();
 }
@@ -183,7 +183,7 @@ export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
 // --- Interactive column view ---
 
 export function renderColumnView() {
-  const container = document.getElementById('ticket-list')!;
+  const container = byId('ticket-list');
   const savedScrolls = saveColumnScrollState(container);
   container.innerHTML = '';
   container.classList.add('ticket-list-columns');

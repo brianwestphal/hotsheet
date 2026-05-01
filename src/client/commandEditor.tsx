@@ -1,5 +1,5 @@
 import { raw } from '../jsx-runtime.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import {
   CMD_COLORS,
   CMD_ICONS,
@@ -332,7 +332,7 @@ function removeCommandAtRef(ref: ItemRef, commandItems: CommandItem[]): CustomCo
 
 export function renderCustomCommandSettings() {
   const commandItems = getCommandItems();
-  const list = document.getElementById('settings-commands-list');
+  const list = byIdOrNull('settings-commands-list');
   if (!list) return;
   list.innerHTML = '';
 
@@ -355,7 +355,7 @@ export function renderCustomCommandSettings() {
     </div>
   );
 
-  const channelCheckbox = document.getElementById('settings-channel-enabled') as HTMLInputElement | null;
+  const channelCheckbox = byIdOrNull<HTMLInputElement>('settings-channel-enabled');
   btnRow.querySelector('.cmd-outline-add-btn')!.addEventListener('click', () => {
     const defaultTarget = channelCheckbox?.checked === true ? undefined : 'shell' as const;
     commandItems.push({ name: '', prompt: '', target: defaultTarget });

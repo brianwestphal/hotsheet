@@ -1,7 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { api } from './api.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { loadTickets } from './ticketList.js';
 import { showToast } from './toast.js';
 
@@ -35,7 +35,7 @@ function setPluginBusy(pluginId: string, name: string, busy: boolean) {
 }
 
 function updateBusyIndicator() {
-  const indicator = document.getElementById('plugin-busy-indicator');
+  const indicator = byIdOrNull('plugin-busy-indicator');
   if (!indicator) return;
 
   if (busyPlugins.size === 0) {
@@ -45,7 +45,7 @@ function updateBusyIndicator() {
 
   const names = Array.from(busyPlugins.values());
   // Check if Claude is also busy
-  const claudeIndicator = document.getElementById('channel-status-indicator');
+  const claudeIndicator = byIdOrNull('channel-status-indicator');
   const claudeBusy = claudeIndicator && claudeIndicator.style.display !== 'none' &&
     claudeIndicator.classList.contains('busy');
 
@@ -97,7 +97,7 @@ export async function refreshPluginUI(): Promise<void> {
 
 /** Render plugin UI elements into a container by DOM id and plugin location. */
 function renderPluginLocationElements(containerId: string, location: string): void {
-  const container = document.getElementById(containerId);
+  const container = byIdOrNull(containerId);
   if (!container) return;
   container.innerHTML = '';
   const elements = getPluginUIForLocation(location);

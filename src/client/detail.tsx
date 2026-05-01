@@ -4,7 +4,7 @@ import { marked } from 'marked';
 
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import { getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog } from './feedbackDialog.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { type FeedbackDraft, parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
@@ -36,7 +36,7 @@ export function setSuppressAutoRead(suppress: boolean) { suppressAutoRead = supp
  * place by the time CSS shows it.
  */
 export function renderDetailsMarkdown(text: string): void {
-  const rendered = document.getElementById('detail-details-rendered');
+  const rendered = byIdOrNull('detail-details-rendered');
   if (rendered === null) return;
   const html = marked.parse(text, { async: false });
   // HS-8036 — wrap ticket-number references in clickable anchors after
@@ -65,7 +65,7 @@ function setDetailsEditing(editing: boolean): void {
   if (wrap === null) return;
   // Read-only check: textarea.readOnly is the source of truth (set by
   // setDetailReadOnly). Don't flip into edit mode in preview state.
-  const textarea = document.getElementById('detail-details') as HTMLTextAreaElement | null;
+  const textarea = byIdOrNull<HTMLTextAreaElement>('detail-details');
   if (editing && textarea?.readOnly === true) return;
   wrap.classList.toggle('is-editing', editing);
   if (editing && textarea !== null) {
@@ -79,8 +79,8 @@ function setDetailsEditing(editing: boolean): void {
 }
 
 export function bindDetailDetailsRenderToggle(): void {
-  const rendered = document.getElementById('detail-details-rendered');
-  const textarea = document.getElementById('detail-details') as HTMLTextAreaElement | null;
+  const rendered = byIdOrNull('detail-details-rendered');
+  const textarea = byIdOrNull<HTMLTextAreaElement>('detail-details');
   if (rendered === null || textarea === null) return;
   // Click anywhere in the rendered view → enter edit mode + focus the
   // textarea. Anchor (links inside rendered markdown) clicks are still
@@ -120,7 +120,7 @@ export function bindDetailDetailsRenderToggle(): void {
 // --- Detail field button helpers ---
 
 export function updateDetailCategory(value: string) {
-  const btn = document.getElementById('detail-category') as HTMLButtonElement;
+  const btn = byId<HTMLButtonElement>('detail-category');
   btn.dataset.value = value;
   const cat = state.categories.find(c => c.id === value);
   const color = getCategoryColor(value);
@@ -131,7 +131,7 @@ export function updateDetailCategory(value: string) {
 }
 
 export function updateDetailPriority(value: string) {
-  const btn = document.getElementById('detail-priority') as HTMLButtonElement;
+  const btn = byId<HTMLButtonElement>('detail-priority');
   btn.dataset.value = value;
   const icon = toElement(<span className="dropdown-icon" style={`color:${getPriorityColor(value)}`}>{raw(getPriorityIcon(value))}</span>);
   btn.textContent = '';
@@ -140,7 +140,7 @@ export function updateDetailPriority(value: string) {
 }
 
 export function updateDetailStatus(value: string) {
-  const btn = document.getElementById('detail-status') as HTMLButtonElement;
+  const btn = byId<HTMLButtonElement>('detail-status');
   btn.dataset.value = value;
   const icon = toElement(<span className="dropdown-icon">{raw(getStatusIcon(value))}</span>);
   btn.textContent = '';
@@ -179,12 +179,12 @@ export function closeDetail() {
 export function syncDetailPanel() {
   const isTrash = state.view === 'trash';
   const isPreview = state.backupPreview?.active === true;
-  const panel = document.getElementById('detail-panel')!;
-  const handle = document.getElementById('detail-resize-handle');
-  const header = document.getElementById('detail-header')!;
-  const body = document.getElementById('detail-body')!;
-  const placeholder = document.getElementById('detail-placeholder')!;
-  const placeholderText = document.getElementById('detail-placeholder-text')!;
+  const panel = byId('detail-panel');
+  const handle = byIdOrNull('detail-resize-handle');
+  const header = byId('detail-header');
+  const body = byId('detail-body');
+  const placeholder = byId('detail-placeholder');
+  const placeholderText = byId('detail-placeholder-text');
 
   if (isTrash) {
     panel.style.display = 'none';
@@ -237,12 +237,12 @@ export function syncDetailPanel() {
 }
 
 function setDetailReadOnly(readOnly: boolean) {
-  const titleInput = document.getElementById('detail-title') as HTMLInputElement;
-  const detailsArea = document.getElementById('detail-details') as HTMLTextAreaElement;
-  const catBtn = document.getElementById('detail-category') as HTMLButtonElement;
-  const priBtn = document.getElementById('detail-priority') as HTMLButtonElement;
-  const statusBtn = document.getElementById('detail-status') as HTMLButtonElement;
-  const upnextBtn = document.getElementById('detail-upnext') as HTMLButtonElement;
+  const titleInput = byId<HTMLInputElement>('detail-title');
+  const detailsArea = byId<HTMLTextAreaElement>('detail-details');
+  const catBtn = byId<HTMLButtonElement>('detail-category');
+  const priBtn = byId<HTMLButtonElement>('detail-priority');
+  const statusBtn = byId<HTMLButtonElement>('detail-status');
+  const upnextBtn = byId<HTMLButtonElement>('detail-upnext');
   const uploadBtn = document.querySelector<HTMLElement>('.upload-btn');
 
   titleInput.readOnly = readOnly;
@@ -258,15 +258,15 @@ function loadPreviewDetail(id: number) {
   const ticket = state.backupPreview?.tickets.find(t => t.id === id);
   if (!ticket || state.activeTicketId !== id) return;
 
-  (document.getElementById('detail-ticket-number') as HTMLElement).textContent = ticket.ticket_number;
-  (document.getElementById('detail-title') as HTMLInputElement).value = ticket.title;
+  byId('detail-ticket-number').textContent = ticket.ticket_number;
+  byId<HTMLInputElement>('detail-title').value = ticket.title;
   updateDetailCategory(ticket.category);
   updateDetailPriority(ticket.priority);
   updateDetailStatus(ticket.status);
-  const upnextBtn = document.getElementById('detail-upnext') as HTMLButtonElement;
+  const upnextBtn = byId<HTMLButtonElement>('detail-upnext');
   upnextBtn.textContent = ticket.up_next ? '\u2605' : '\u2606';
   upnextBtn.classList.toggle('active', ticket.up_next);
-  (document.getElementById('detail-details') as HTMLTextAreaElement).value = ticket.details;
+  byId<HTMLTextAreaElement>('detail-details').value = ticket.details;
   // HS-8020 — paint the markdown-rendered view alongside the textarea
   // so the read-only preview shows formatted details (matches the live
   // detail panel post-fix).
@@ -278,13 +278,13 @@ function loadPreviewDetail(id: number) {
   setDetailReadOnly(true);
 
   // No attachments in backup preview
-  document.getElementById('detail-attachments')!.innerHTML = '';
+  byId('detail-attachments').innerHTML = '';
 
   // Tags (read-only in preview)
   renderDetailTags(parseTags(ticket.tags), true);
 
   // Render notes (read-only in preview)
-  const notesContainer = document.getElementById('detail-notes')!;
+  const notesContainer = byId('detail-notes');
   const notes = parseNotesJson(ticket.notes);
   if (notes.length > 0) {
     notesContainer.innerHTML = (<>
@@ -300,7 +300,7 @@ function loadPreviewDetail(id: number) {
   }
 
   // Meta info
-  const meta = document.getElementById('detail-meta')!;
+  const meta = byId('detail-meta');
   meta.innerHTML = (<>
     <div>Created: {new Date(ticket.created_at).toLocaleString()}</div>
     <div>Updated: {new Date(ticket.updated_at).toLocaleString()}</div>
@@ -347,20 +347,20 @@ async function loadDetail(id: number) {
   // Restore inputs to editable (in case we were in preview mode before)
   setDetailReadOnly(false);
 
-  (document.getElementById('detail-ticket-number') as HTMLElement).textContent = ticket.ticket_number;
+  byId('detail-ticket-number').textContent = ticket.ticket_number;
 
   // Skip updating text fields that are currently focused to avoid cursor disruption (HS-1454)
-  const titleInput = document.getElementById('detail-title') as HTMLInputElement;
+  const titleInput = byId<HTMLInputElement>('detail-title');
   if (document.activeElement !== titleInput) {
     titleInput.value = ticket.title;
   }
   updateDetailCategory(ticket.category);
   updateDetailPriority(ticket.priority);
   updateDetailStatus(ticket.status);
-  const upnextBtn = document.getElementById('detail-upnext') as HTMLButtonElement;
+  const upnextBtn = byId<HTMLButtonElement>('detail-upnext');
   upnextBtn.textContent = ticket.up_next ? '\u2605' : '\u2606';
   upnextBtn.classList.toggle('active', ticket.up_next);
-  const detailsArea = document.getElementById('detail-details') as HTMLTextAreaElement;
+  const detailsArea = byId<HTMLTextAreaElement>('detail-details');
   if (document.activeElement !== detailsArea) {
     detailsArea.value = ticket.details;
   }
@@ -378,7 +378,7 @@ async function loadDetail(id: number) {
   syncDetailReaderButton();
 
   // Render attachments with selection support
-  const attContainer = document.getElementById('detail-attachments')!;
+  const attContainer = byId('detail-attachments');
   if (ticket.attachments.length > 0) {
     attContainer.innerHTML = (<>
       {ticket.attachments.map(att =>
@@ -397,7 +397,7 @@ async function loadDetail(id: number) {
   renderDetailTags(parseTags(ticket.tags), false);
 
   // Skip re-rendering notes if a note is currently being edited (HS-1454)
-  const notesContainer = document.getElementById('detail-notes');
+  const notesContainer = byIdOrNull('detail-notes');
   const noteBeingEdited = notesContainer?.querySelector('.note-edit-area') as HTMLElement | null;
   const parsedNotes = parseNotesJson(ticket.notes);
   // HS-7822 — auto-show the feedback dialog if the last note is a FEEDBACK
@@ -419,7 +419,7 @@ async function loadDetail(id: number) {
       // Only re-render if the panel is still showing this ticket and no
       // note is being edited (avoid clobbering an in-progress edit).
       if (state.activeTicketId === ticket.id) {
-        const editingNow = document.getElementById('detail-notes')?.querySelector('.note-edit-area') as HTMLElement | null;
+        const editingNow = byIdOrNull('detail-notes')?.querySelector('.note-edit-area') as HTMLElement | null;
         if (editingNow === null || document.activeElement !== editingNow) {
           renderNotes(ticket.id, parsedNotes);
         }
@@ -459,7 +459,7 @@ async function loadDetail(id: number) {
   }
 
   // Meta info
-  const meta = document.getElementById('detail-meta')!;
+  const meta = byId('detail-meta');
   meta.innerHTML = (<>
     <div>Created: {new Date(ticket.created_at).toLocaleString()}</div>
     <div>Updated: {new Date(ticket.updated_at).toLocaleString()}</div>
@@ -478,8 +478,8 @@ async function loadDetail(id: number) {
   </>).toString();
 
   // Render plugin UI extensions for the detail panel
-  const detailTop = document.getElementById('plugin-detail-top');
-  const detailBottom = document.getElementById('plugin-detail-bottom');
+  const detailTop = byIdOrNull('plugin-detail-top');
+  const detailBottom = byIdOrNull('plugin-detail-bottom');
   if (detailTop) { detailTop.innerHTML = ''; renderPluginDetailElements(detailTop, 'detail_top', [ticket.id]); }
   if (detailBottom) { detailBottom.innerHTML = ''; renderPluginDetailElements(detailBottom, 'detail_bottom', [ticket.id]); }
 }
@@ -493,7 +493,7 @@ export async function updateStats() {
       open: number;
       up_next: number;
     }>('/stats');
-    const bar = document.getElementById('status-bar');
+    const bar = byIdOrNull('status-bar');
     if (bar) {
       bar.textContent = `${stats.total} tickets \u00B7 ${stats.open} open \u00B7 ${stats.up_next} up next`;
     }
@@ -503,13 +503,13 @@ export async function updateStats() {
 // --- Detail panel orientation ---
 
 export function applyDetailPosition(position: 'side' | 'bottom') {
-  const contentArea = document.getElementById('content-area')!;
+  const contentArea = byId('content-area');
   contentArea.classList.remove('detail-side', 'detail-bottom');
   contentArea.classList.add(position === 'bottom' ? 'detail-bottom' : 'detail-side');
 }
 
 export function applyDetailSize() {
-  const panel = document.getElementById('detail-panel')!;
+  const panel = byId('detail-panel');
   if (state.settings.detail_position === 'bottom') {
     panel.style.width = '';
     panel.style.height = `${state.settings.detail_height}px`;
@@ -522,9 +522,9 @@ export function applyDetailSize() {
 // --- Resize handle ---
 
 export function initResize() {
-  const handle = document.getElementById('detail-resize-handle')!;
-  const panel = document.getElementById('detail-panel')!;
-  const contentArea = document.getElementById('content-area')!;
+  const handle = byId('detail-resize-handle');
+  const panel = byId('detail-panel');
+  const contentArea = byId('content-area');
 
   let isResizing = false;
 

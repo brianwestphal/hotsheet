@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
-import { requireChild, toElement } from './dom.js';
+import { byIdOrNull, requireChild, toElement } from './dom.js';
 import {
   type BlockResponse,
   combineQuotedResponse,
@@ -545,6 +545,6 @@ function showFeedbackChannelWarning(message: string): void {
   );
   alert.querySelector('button')?.addEventListener('click', () => alert.remove());
   setTimeout(() => alert.remove(), 6000);
-  const notesContainer = document.getElementById('detail-notes');
+  const notesContainer = byIdOrNull('detail-notes');
   if (notesContainer !== null) notesContainer.prepend(alert);
 }

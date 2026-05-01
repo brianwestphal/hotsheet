@@ -1,12 +1,12 @@
 import { api } from './api.js';
-import { toElement } from './dom.js';
+import { byId, toElement } from './dom.js';
 import type { CategoryDef } from './state.js';
 import { state } from './state.js';
 
 let categorySyncTimeout: ReturnType<typeof setTimeout> | null = null;
 
 export function renderCategoryList(rebuildCategoryUI: () => void) {
-  const container = document.getElementById('category-list')!;
+  const container = byId('category-list');
   container.innerHTML = '';
 
   for (let i = 0; i < state.categories.length; i++) {
@@ -94,7 +94,7 @@ function debouncedCategorySync(rebuildCategoryUI: () => void) {
 
 export function bindCategorySettings(rebuildCategoryUI: () => void) {
   // Add button
-  document.getElementById('category-add-btn')!.addEventListener('click', () => {
+  byId('category-add-btn').addEventListener('click', () => {
     state.categories.push({
       id: '',
       label: '',
@@ -111,7 +111,7 @@ export function bindCategorySettings(rebuildCategoryUI: () => void) {
   });
 
   // Preset selector
-  const presetSelect = document.getElementById('category-preset-select') as HTMLSelectElement;
+  const presetSelect = byId<HTMLSelectElement>('category-preset-select');
   void api<{ id: string; name: string }[]>('/category-presets').then(presets => {
     for (const p of presets) {
       presetSelect.appendChild(toElement(<option value={p.id}>{p.name}</option>));
@@ -132,7 +132,7 @@ export function bindCategorySettings(rebuildCategoryUI: () => void) {
   });
 
   // Render initial list when settings dialog opens
-  const settingsBtn = document.getElementById('settings-btn')!;
+  const settingsBtn = byId('settings-btn');
   settingsBtn.addEventListener('click', () => {
     renderCategoryList(rebuildCategoryUI);
   });

@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { byIdOrNull } from './dom.js';
 
 /** HS-7899: launch-time banner that appears when the server fell back
  *  to renaming the live `db/` aside as `db-corrupt-<ts>` and creating
@@ -47,10 +48,10 @@ function truncate(text: string, max: number): string {
  *  and wire its two action buttons. Idempotent — calling twice is
  *  harmless because re-fetching with no marker just hides the banner. */
 export async function initDbRecoveryBanner(): Promise<void> {
-  const banner = document.getElementById('db-recovery-banner');
-  const label = document.getElementById('db-recovery-banner-label');
-  const restoreBtn = document.getElementById('db-recovery-restore-btn');
-  const dismissBtn = document.getElementById('db-recovery-dismiss-btn');
+  const banner = byIdOrNull('db-recovery-banner');
+  const label = byIdOrNull('db-recovery-banner-label');
+  const restoreBtn = byIdOrNull('db-recovery-restore-btn');
+  const dismissBtn = byIdOrNull('db-recovery-dismiss-btn');
   if (banner === null || label === null || restoreBtn === null || dismissBtn === null) return;
 
   let marker: DbRecoveryMarker | null = null;
@@ -76,7 +77,7 @@ export async function initDbRecoveryBanner(): Promise<void> {
 
   restoreBtn.onclick = () => {
     // Open Settings (which loads the Backups list in the General tab)
-    document.getElementById('settings-btn')?.click();
+    byIdOrNull('settings-btn')?.click();
   };
 
   dismissBtn.onclick = () => {

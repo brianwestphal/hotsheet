@@ -4,7 +4,7 @@ import { marked } from 'marked';
 
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { isChannelEnabled } from './experimentalSettings.js';
 import { parseFeedbackPrefix, showFeedbackDialog } from './feedbackDialog.js';
 import { ICON_TRASH } from './icons.js';
@@ -92,7 +92,7 @@ function syncNotesToState(ticketId: number, notes: NoteEntry[]) {
 }
 
 export function renderNotes(ticketId: number, notes: NoteEntry[]) {
-  const container = document.getElementById('detail-notes');
+  const container = byIdOrNull('detail-notes');
   if (!container) return;
   // HS-8036 — look up the current ticket so we can skip self-references
   // when linkifying ticket numbers in note bodies (a ticket viewing
@@ -334,7 +334,7 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
   );
   addBottomBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    document.getElementById('detail-add-note-btn')?.click();
+    byIdOrNull('detail-add-note-btn')?.click();
   });
   container.appendChild(addBottomBtn);
 
@@ -485,6 +485,6 @@ function showMegaphoneWarning(message: string): void {
   );
   alert.querySelector('button')?.addEventListener('click', () => alert.remove());
   setTimeout(() => alert.remove(), 6000);
-  const notesContainer = document.getElementById('detail-notes');
+  const notesContainer = byIdOrNull('detail-notes');
   if (notesContainer !== null) notesContainer.prepend(alert);
 }

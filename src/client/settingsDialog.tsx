@@ -1,7 +1,7 @@
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { api } from './api.js';
 import { loadBackupList } from './backups.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings } from './experimentalSettings.js';
 import { bindCategorySettings } from './settingsCategories.js';
 import type { NotifyLevel } from './state.js';
@@ -9,9 +9,9 @@ import { state } from './state.js';
 import { getTauriInvoke, showUpdateBanner } from './tauriIntegration.js';
 
 export function bindSettingsDialog(rebuildCategoryUI: () => void) {
-  const overlay = document.getElementById('settings-overlay')!;
-  const closeBtn = document.getElementById('settings-close')!;
-  const settingsBtn = document.getElementById('settings-btn')!;
+  const overlay = byId('settings-overlay');
+  const closeBtn = byId('settings-close');
+  const settingsBtn = byId('settings-btn');
 
   // Tab switching
   const tabs = document.querySelectorAll('.settings-tab');
@@ -44,20 +44,20 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     // Update dialog title with project name (from active tab, or app title if single project)
     const activeTabName = document.querySelector('.project-tab.active .project-tab-name')?.textContent;
     const projectName = activeTabName ?? document.querySelector('.app-title h1')?.textContent ?? 'Settings';
-    const titleEl = document.getElementById('settings-dialog-title');
+    const titleEl = byIdOrNull('settings-dialog-title');
     if (titleEl) titleEl.textContent = `${projectName} Settings`;
 
     // Populate fields with current values
-    (document.getElementById('settings-trash-days') as HTMLInputElement).value = String(state.settings.trash_cleanup_days);
-    (document.getElementById('settings-verified-days') as HTMLInputElement).value = String(state.settings.verified_cleanup_days);
-    (document.getElementById('settings-auto-order') as HTMLInputElement).checked = state.settings.auto_order;
-    (document.getElementById('settings-hide-verified-column') as HTMLInputElement).checked = state.settings.hide_verified_column;
-    (document.getElementById('settings-shell-integration-ui') as HTMLInputElement).checked = state.settings.shell_integration_ui;
-    (document.getElementById('settings-terminal-prompt-detection') as HTMLInputElement).checked = state.settings.terminal_prompt_detection_enabled;
+    byId<HTMLInputElement>('settings-trash-days').value = String(state.settings.trash_cleanup_days);
+    byId<HTMLInputElement>('settings-verified-days').value = String(state.settings.verified_cleanup_days);
+    byId<HTMLInputElement>('settings-auto-order').checked = state.settings.auto_order;
+    byId<HTMLInputElement>('settings-hide-verified-column').checked = state.settings.hide_verified_column;
+    byId<HTMLInputElement>('settings-shell-integration-ui').checked = state.settings.shell_integration_ui;
+    byId<HTMLInputElement>('settings-terminal-prompt-detection').checked = state.settings.terminal_prompt_detection_enabled;
     // HS-7984 — §53 Phase 4 streaming toggle.
-    (document.getElementById('settings-shell-streaming-enabled') as HTMLInputElement).checked = state.settings.shell_streaming_enabled;
-    (document.getElementById('settings-notify-permission') as HTMLSelectElement).value = state.settings.notify_permission;
-    (document.getElementById('settings-notify-completed') as HTMLSelectElement).value = state.settings.notify_completed;
+    byId<HTMLInputElement>('settings-shell-streaming-enabled').checked = state.settings.shell_streaming_enabled;
+    byId<HTMLSelectElement>('settings-notify-permission').value = state.settings.notify_permission;
+    byId<HTMLSelectElement>('settings-notify-completed').value = state.settings.notify_completed;
     overlay.style.display = 'flex';
     void loadBackupList();
     // Load file-based settings (app name, backup dir, terminal settings)
@@ -67,11 +67,11 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       ticketPrefix?: string;
       terminal_scrollback_bytes?: string | number;
     }>('/file-settings').then((fs) => {
-      (document.getElementById('settings-app-name') as HTMLInputElement).value = fs.appName ?? '';
-      (document.getElementById('settings-backup-dir') as HTMLInputElement).value = fs.backupDir ?? '';
-      (document.getElementById('settings-ticket-prefix') as HTMLInputElement).value = fs.ticketPrefix ?? '';
+      byId<HTMLInputElement>('settings-app-name').value = fs.appName ?? '';
+      byId<HTMLInputElement>('settings-backup-dir').value = fs.backupDir ?? '';
+      byId<HTMLInputElement>('settings-ticket-prefix').value = fs.ticketPrefix ?? '';
       const scrollback = fs.terminal_scrollback_bytes;
-      const scrollbackInput = document.getElementById('settings-terminal-scrollback') as HTMLInputElement;
+      const scrollbackInput = byId<HTMLInputElement>('settings-terminal-scrollback');
       scrollbackInput.value = scrollback === undefined || scrollback === '' ? '' : String(scrollback);
     });
     // Terminals outline list (HS-6271) — loads asynchronously.
@@ -102,7 +102,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // Trash cleanup days
-  const trashInput = document.getElementById('settings-trash-days') as HTMLInputElement;
+  const trashInput = byId<HTMLInputElement>('settings-trash-days');
   let trashTimeout: ReturnType<typeof setTimeout> | null = null;
   trashInput.addEventListener('input', () => {
     if (trashTimeout) clearTimeout(trashTimeout);
@@ -115,7 +115,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // Verified cleanup days
-  const verifiedInput = document.getElementById('settings-verified-days') as HTMLInputElement;
+  const verifiedInput = byId<HTMLInputElement>('settings-verified-days');
   let verifiedTimeout: ReturnType<typeof setTimeout> | null = null;
   verifiedInput.addEventListener('input', () => {
     if (verifiedTimeout) clearTimeout(verifiedTimeout);
@@ -128,8 +128,8 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // App icon picker
-  const iconBtn = document.getElementById('app-icon-picker-btn')!;
-  const iconPreview = document.getElementById('app-icon-preview') as HTMLImageElement;
+  const iconBtn = byId('app-icon-picker-btn');
+  const iconPreview = byId<HTMLImageElement>('app-icon-preview');
   let currentIcon = 'default';
 
   // Load current icon from file-settings
@@ -189,14 +189,14 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // Auto-prioritize toggle
-  const autoOrderCheckbox = document.getElementById('settings-auto-order') as HTMLInputElement;
+  const autoOrderCheckbox = byId<HTMLInputElement>('settings-auto-order');
   autoOrderCheckbox.addEventListener('change', () => {
     state.settings.auto_order = autoOrderCheckbox.checked;
     void api('/settings', { method: 'PATCH', body: { auto_order: String(autoOrderCheckbox.checked) } });
   });
 
   // Hide verified column toggle
-  const hideVerifiedCheckbox = document.getElementById('settings-hide-verified-column') as HTMLInputElement;
+  const hideVerifiedCheckbox = byId<HTMLInputElement>('settings-hide-verified-column');
   hideVerifiedCheckbox.addEventListener('change', async () => {
     state.settings.hide_verified_column = hideVerifiedCheckbox.checked;
     await api('/settings', { method: 'PATCH', body: { hide_verified_column: String(hideVerifiedCheckbox.checked) } });
@@ -209,7 +209,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   // button + Cmd/Ctrl+Arrow jump shortcuts + hover popover. Toggling fires a
   // custom event that the terminal module listens for so it can re-apply
   // visibility on the currently-active instance without a full rebuild.
-  const shellIntegrationCheckbox = document.getElementById('settings-shell-integration-ui') as HTMLInputElement;
+  const shellIntegrationCheckbox = byId<HTMLInputElement>('settings-shell-integration-ui');
   shellIntegrationCheckbox.addEventListener('change', () => {
     state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
     void api('/settings', { method: 'PATCH', body: { shell_integration_ui: String(shellIntegrationCheckbox.checked) } });
@@ -222,7 +222,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   // — server still buffers so re-enabling mid-run picks up where we
   // left off. The shell-partial-output event is still dispatched; the
   // consumers decide whether to act on it.
-  const shellStreamingCheckbox = document.getElementById('settings-shell-streaming-enabled') as HTMLInputElement;
+  const shellStreamingCheckbox = byId<HTMLInputElement>('settings-shell-streaming-enabled');
   shellStreamingCheckbox.addEventListener('change', () => {
     state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
     void api('/settings', { method: 'PATCH', body: { shell_streaming_enabled: String(shellStreamingCheckbox.checked) } });
@@ -232,7 +232,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   // `isActive()` short-circuits and never fires the parser registry. The
   // configured rules remain in settings.json (they render greyed-out in
   // the Phase 4 list) but are inert.
-  const terminalPromptCheckbox = document.getElementById('settings-terminal-prompt-detection') as HTMLInputElement;
+  const terminalPromptCheckbox = byId<HTMLInputElement>('settings-terminal-prompt-detection');
   terminalPromptCheckbox.addEventListener('change', () => {
     state.settings.terminal_prompt_detection_enabled = terminalPromptCheckbox.checked;
     void api('/settings', { method: 'PATCH', body: { terminal_prompt_detection_enabled: String(terminalPromptCheckbox.checked) } });
@@ -241,8 +241,8 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // Notification dropdowns
-  const notifyPermSelect = document.getElementById('settings-notify-permission') as HTMLSelectElement;
-  const notifyCompSelect = document.getElementById('settings-notify-completed') as HTMLSelectElement;
+  const notifyPermSelect = byId<HTMLSelectElement>('settings-notify-permission');
+  const notifyCompSelect = byId<HTMLSelectElement>('settings-notify-completed');
   notifyPermSelect.addEventListener('change', () => {
     state.settings.notify_permission = notifyPermSelect.value as NotifyLevel;
     void api('/settings', { method: 'PATCH', body: { notify_permission: notifyPermSelect.value } });
@@ -253,8 +253,8 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // App name (file-based setting)
-  const appNameInput = document.getElementById('settings-app-name') as HTMLInputElement;
-  const appNameHint = document.getElementById('settings-app-name-hint')!;
+  const appNameInput = byId<HTMLInputElement>('settings-app-name');
+  const appNameHint = byId('settings-app-name-hint');
   let appNameTimeout: ReturnType<typeof setTimeout> | null = null;
   appNameInput.addEventListener('input', () => {
     if (appNameTimeout) clearTimeout(appNameTimeout);
@@ -271,8 +271,8 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // Ticket prefix (file-based setting)
-  const prefixInput = document.getElementById('settings-ticket-prefix') as HTMLInputElement;
-  const prefixHint = document.getElementById('settings-ticket-prefix-hint')!;
+  const prefixInput = byId<HTMLInputElement>('settings-ticket-prefix');
+  const prefixHint = byId('settings-ticket-prefix-hint');
   let prefixTimeout: ReturnType<typeof setTimeout> | null = null;
   prefixInput.addEventListener('input', () => {
     if (prefixTimeout) clearTimeout(prefixTimeout);
@@ -289,8 +289,8 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // Check for Updates button
-  const checkUpdatesBtn = document.getElementById('check-updates-btn') as HTMLButtonElement;
-  const checkUpdatesStatus = document.getElementById('check-updates-status')!;
+  const checkUpdatesBtn = byId<HTMLButtonElement>('check-updates-btn');
+  const checkUpdatesStatus = byId('check-updates-status');
   checkUpdatesBtn.addEventListener('click', async () => {
     const invoke = getTauriInvoke();
     if (!invoke) return;
@@ -302,7 +302,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       if (version !== null && version !== '') {
         checkUpdatesStatus.textContent = `Update available: v${version}`;
         // Close settings panel so the update banner is visible
-        document.getElementById('settings-overlay')!.style.display = 'none';
+        byId('settings-overlay').style.display = 'none';
         showUpdateBanner(version);
       } else {
         checkUpdatesStatus.textContent = 'Your software is up to date.';
@@ -315,8 +315,8 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // Backup directory (file-based setting)
-  const backupDirInput = document.getElementById('settings-backup-dir') as HTMLInputElement;
-  const backupDirHint = document.getElementById('settings-backup-dir-hint')!;
+  const backupDirInput = byId<HTMLInputElement>('settings-backup-dir');
+  const backupDirHint = byId('settings-backup-dir-hint');
   let backupDirTimeout: ReturnType<typeof setTimeout> | null = null;
   backupDirInput.addEventListener('input', () => {
     if (backupDirTimeout) clearTimeout(backupDirTimeout);
@@ -333,15 +333,15 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   // PTY runs on the user's machine, so there is no sensible web-only UX. The
   // feature is now always on in Tauri (no toggle): adding a terminal entry
   // makes a tab appear; removing the last entry hides them again.
-  const termTabBtn = document.getElementById('settings-tab-terminal');
+  const termTabBtn = byIdOrNull('settings-tab-terminal');
   if (termTabBtn !== null) termTabBtn.style.display = getTauriInvoke() !== null ? '' : 'none';
 
   // Add Terminal button (the per-row editing lives in src/client/terminalsSettings.tsx).
-  document.getElementById('settings-terminals-add-btn')?.addEventListener('click', () => {
+  byIdOrNull('settings-terminals-add-btn')?.addEventListener('click', () => {
     void import('./terminalsSettings.js').then(({ addTerminalEntry }) => addTerminalEntry());
   });
 
-  const termScrollbackInput = document.getElementById('settings-terminal-scrollback') as HTMLInputElement;
+  const termScrollbackInput = byId<HTMLInputElement>('settings-terminal-scrollback');
   let termScrollbackTimeout: ReturnType<typeof setTimeout> | null = null;
   termScrollbackInput.addEventListener('input', () => {
     if (termScrollbackTimeout) clearTimeout(termScrollbackTimeout);
@@ -386,8 +386,8 @@ interface AutoContextEntry {
 let autoContextEntries: AutoContextEntry[] = [];
 
 function bindAutoContextSettings() {
-  const list = document.getElementById('auto-context-list')!;
-  const addBtn = document.getElementById('auto-context-add-btn')!;
+  const list = byId('auto-context-list');
+  const addBtn = byId('auto-context-add-btn');
 
   async function loadEntries() {
     try {
@@ -521,7 +521,7 @@ function bindAutoContextSettings() {
   }
 
   // Load when settings dialog opens
-  const settingsBtn = document.getElementById('settings-btn')!;
+  const settingsBtn = byId('settings-btn');
   settingsBtn.addEventListener('click', () => { void loadEntries(); });
 }
 
@@ -531,14 +531,14 @@ function bindCliToolSettings() {
   const invoke = getTauriInvoke();
   if (!invoke) return;
 
-  const section = document.getElementById('cli-tool-section');
+  const section = byIdOrNull('cli-tool-section');
   if (!section) return;
   section.style.display = '';
 
-  const dot = document.getElementById('cli-status-dot')!;
-  const statusText = document.getElementById('cli-status-text')!;
-  const installBtn = document.getElementById('cli-install-btn') as HTMLButtonElement;
-  const hint = document.getElementById('cli-install-hint')!;
+  const dot = byId('cli-status-dot');
+  const statusText = byId('cli-status-text');
+  const installBtn = byId<HTMLButtonElement>('cli-install-btn');
+  const hint = byId('cli-install-hint');
 
   function showInstalled() {
     dot.className = 'cli-status-dot installed';
@@ -580,7 +580,7 @@ function bindCliToolSettings() {
   });
 
   // Re-check when settings dialog opens
-  const settingsBtn = document.getElementById('settings-btn')!;
+  const settingsBtn = byId('settings-btn');
   settingsBtn.addEventListener('click', () => {
     void invoke('check_cli_installed').then((result: unknown) => {
       const data = result as { installed?: boolean } | null;

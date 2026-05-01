@@ -1,6 +1,7 @@
 import { copyTickets, hasClipboardTickets, pasteTickets } from './clipboard.js';
 import { formatTicketForClipboard } from './clipboardUtil.js';
 import { getActiveDrawerTab } from './commandLog.js';
+import { byId, byIdOrNull } from './dom.js';
 import { showOpenFolderDialog } from './openFolder.js';
 import { showPrintDialog } from './print.js';
 import { closeActiveTab, switchTabByOffset } from './projectTabs.js';
@@ -39,7 +40,7 @@ export function bindKeyboardShortcuts() {
   // Tauri menu events
   window.addEventListener('app:undo', triggerUndo);
   window.addEventListener('app:redo', triggerRedo);
-  window.addEventListener('app:preferences', () => document.getElementById('settings-btn')?.click());
+  window.addEventListener('app:preferences', () => byIdOrNull('settings-btn')?.click());
   window.addEventListener('app:open-folder', () => showOpenFolderDialog());
 
   // Keyboard fallback for browser mode (non-Tauri) — capture phase
@@ -70,7 +71,7 @@ export function bindKeyboardShortcuts() {
       // dismiss / cancel. Opt+Esc still routes to Hot Sheet.
       if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
       for (const id of ['open-folder-overlay', 'settings-overlay']) {
-        const dlg = document.getElementById(id);
+        const dlg = byIdOrNull(id);
         if (dlg && dlg.style.display !== 'none') {
           dlg.style.display = 'none';
           return;
@@ -152,7 +153,7 @@ export function bindKeyboardShortcuts() {
     // configured terminals exist; clicking a hidden button still fires the
     // handler so the shortcut works in every state.
     if (isNewTerminalShortcut(e)) {
-      const btn = document.getElementById('drawer-add-terminal-btn');
+      const btn = byIdOrNull('drawer-add-terminal-btn');
       if (btn !== null) {
         e.preventDefault();
         btn.click();
@@ -170,7 +171,7 @@ export function bindKeyboardShortcuts() {
     // Cmd/Ctrl+,: Settings (browser mode — Tauri handles via menu)
     if ((e.metaKey || e.ctrlKey) && e.key === ',' && !getTauriInvoke()) {
       e.preventDefault();
-      document.getElementById('settings-btn')?.click();
+      byIdOrNull('settings-btn')?.click();
       return;
     }
 
@@ -323,11 +324,11 @@ export function bindKeyboardShortcuts() {
         if (!isFindShortcut(e)) return;
         e.preventDefault();
         if (focusActiveTerminalSearch()) return;
-        (document.getElementById('search-input') as HTMLInputElement).focus();
+        byId<HTMLInputElement>('search-input').focus();
         return;
       }
       e.preventDefault();
-      (document.getElementById('search-input') as HTMLInputElement).focus();
+      byId<HTMLInputElement>('search-input').focus();
       return;
     }
 
@@ -349,7 +350,7 @@ export function bindKeyboardShortcuts() {
           ? 'dashboard'
           : (inTerminal ? 'drawer-grid' : 'dashboard');
         if (target === 'drawer-grid') {
-          const btn = document.getElementById('drawer-grid-toggle') as HTMLButtonElement | null;
+          const btn = byIdOrNull<HTMLButtonElement>('drawer-grid-toggle');
           if (btn !== null && !btn.disabled) btn.click();
           // If the drawer-grid toggle is disabled (≤1 terminal), silently
           // ignore — matches the click behaviour of the disabled button.
@@ -357,7 +358,7 @@ export function bindKeyboardShortcuts() {
           // Dashboard toggle is unconditionally enabled (when Tauri-stubbed
           // visible at all). Click it whether dashboard is currently open or
           // not — the toggle's own click handler flips the state.
-          const btn = document.getElementById('terminal-dashboard-toggle') as HTMLButtonElement | null;
+          const btn = byIdOrNull<HTMLButtonElement>('terminal-dashboard-toggle');
           if (btn !== null && btn.style.display !== 'none') btn.click();
         }
         return;
@@ -552,7 +553,7 @@ export function shouldEscapeBypassHotsheet(target: EventTarget | null, altKey: b
  * regardless of which DOM element happens to have focus.
  */
 export function isCommandsLogFocused(): boolean {
-  const drawerPanel = document.getElementById('command-log-panel');
+  const drawerPanel = byIdOrNull('command-log-panel');
   // Drawer not in the DOM, or hidden via display:none → not "in" commands-log.
   if (drawerPanel === null || drawerPanel.style.display === 'none') return false;
   // The active drawer tab is the source of truth — set by `selectDrawerTab`

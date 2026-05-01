@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { getCategoryColor, state } from './state.js';
 
 interface DashboardData {
@@ -44,7 +44,7 @@ function buildDashboard(data: DashboardData): HTMLElement {
   rangeBar.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', () => {
       currentDays = parseInt((btn as HTMLElement).dataset.days!, 10);
-      const container = document.getElementById('dashboard-container');
+      const container = byIdOrNull('dashboard-container');
       if (container) void renderDashboard(container);
     });
   });

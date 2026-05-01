@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { repositionGitStatusPopover, toggleGitStatusPopover } from './gitStatusPopover.js';
 import { getActiveProject } from './state.js';
 
@@ -64,7 +64,7 @@ const inFlightByKey = new Map<string, Promise<void>>();
 
 /** Public — call once at app boot to wire the chip. */
 export function initGitStatusChip(): void {
-  chipEl = document.getElementById('sidebar-git-chip');
+  chipEl = byIdOrNull('sidebar-git-chip');
   if (chipEl === null) return;
   branchEl = chipEl.querySelector<HTMLElement>('.sidebar-git-branch');
   countsEl = chipEl.querySelector<HTMLElement>('.sidebar-git-counts');

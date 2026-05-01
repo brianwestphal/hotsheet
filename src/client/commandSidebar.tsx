@@ -3,7 +3,7 @@ import { api } from './api.js';
 import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { refreshLogBadge } from './commandLog.js';
 import { confirmDialog } from './confirm.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { CMD_COLORS, CMD_ICONS, type CommandItem, contrastColor, type CustomCommand, getCommandItems,isGroup } from './experimentalSettings.js';
 import { renderIconSvg } from './icons.js';
 import { getActiveProject, state } from './state.js';
@@ -193,12 +193,12 @@ async function confirmStopShellCommand(cmd: CustomCommand, runningLogId: number)
 
 export function renderChannelCommands() {
   const commandItems = getCommandItems();
-  const container = document.getElementById('channel-commands-container');
+  const container = byIdOrNull('channel-commands-container');
   if (!container) return;
   container.innerHTML = '';
 
   // Check if Claude channel is enabled
-  const channelSection = document.getElementById('channel-play-section');
+  const channelSection = byIdOrNull('channel-play-section');
   const channelEnabled = channelSection !== null && channelSection.style.display !== 'none';
 
   // Walk the top-level items and render

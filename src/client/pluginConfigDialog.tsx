@@ -1,7 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { TIMERS } from './constants/timers.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import type { ConfigLayoutItem, PluginPreference } from './pluginTypes.js';
 import { labelColorClass } from './pluginTypes.js';
 
@@ -239,7 +239,7 @@ function savePrefValue(pluginId: string, pref: PluginPreference, value: string) 
 }
 
 async function validateField(pluginId: string, key: string, value: string) {
-  const el = document.getElementById(`pref-validation-${pluginId}-${key}`);
+  const el = byIdOrNull(`pref-validation-${pluginId}-${key}`);
   if (!el) return;
   try {
     const result = await api<{ status: string; message: string } | null>(

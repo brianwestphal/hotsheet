@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { byId } from './dom.js';
 import { renderIconSvg } from './icons.js';
 import type { Ticket } from './state.js';
 import { showSkillsBanner } from './tauriIntegration.js';
@@ -37,10 +38,10 @@ export function formatTicketForClipboard(ticket: Ticket): string {
 }
 
 export function bindCopyPrompt() {
-  const section = document.getElementById('copy-prompt-section')!;
-  const btn = document.getElementById('copy-prompt-btn')!;
-  const label = document.getElementById('copy-prompt-label')!;
-  const icon = document.getElementById('copy-prompt-icon')!;
+  const section = byId('copy-prompt-section');
+  const btn = byId('copy-prompt-btn');
+  const label = byId('copy-prompt-label');
+  const icon = byId('copy-prompt-icon');
   let prompt = '';
 
   void api<{ prompt: string; skillCreated: boolean }>('/worklist-info').then((info) => {

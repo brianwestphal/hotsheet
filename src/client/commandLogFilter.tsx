@@ -1,5 +1,5 @@
 import { raw } from '../jsx-runtime.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { ICON_CHECK } from './icons.js';
 
 // --- Multi-select filter (HS-2550) ---
@@ -27,11 +27,11 @@ export function getFilterLabel(): string {
 export function dismissFilterDropdown() {
   filterDropdownOpen = false;
   document.querySelector('.command-log-filter-dropdown')?.remove();
-  document.getElementById('command-log-filter-btn')?.classList.remove('active');
+  byIdOrNull('command-log-filter-btn')?.classList.remove('active');
 }
 
 function updateFilterButtonLabel() {
-  const btn = document.getElementById('command-log-filter-btn');
+  const btn = byIdOrNull('command-log-filter-btn');
   if (!btn) return;
   const labelSpan = btn.querySelector('span');
   if (labelSpan) labelSpan.textContent = getFilterLabel();
@@ -39,7 +39,7 @@ function updateFilterButtonLabel() {
 
 /** Show the filter type dropdown. Calls `onFilterChange` when the selection changes. */
 export function showFilterDropdown(onFilterChange: () => void) {
-  const btn = document.getElementById('command-log-filter-btn');
+  const btn = byIdOrNull('command-log-filter-btn');
   if (!btn) return;
 
   if (filterDropdownOpen) {

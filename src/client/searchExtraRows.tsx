@@ -19,14 +19,14 @@
  */
 
 import { raw } from '../jsx-runtime.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { ICON_ARCHIVE, ICON_CALENDAR } from './icons.js';
 import { state } from './state.js';
 
 /** Re-render the `#search-extra-rows` container based on the current
  *  `state.search` + `state.searchExtraCounts` + per-bucket include flags. */
 export function renderSearchExtraRows(reload: () => void): void {
-  const container = document.getElementById('search-extra-rows');
+  const container = byIdOrNull('search-extra-rows');
   if (container === null) return;
   container.replaceChildren();
 

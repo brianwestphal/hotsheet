@@ -1,8 +1,8 @@
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 
 export function showErrorPopup(message: string) {
-  document.getElementById('network-error-popup')?.remove();
+  byIdOrNull('network-error-popup')?.remove();
   const popup = toElement(
     <div id="network-error-popup" className="error-popup">
       <div className="error-popup-content">

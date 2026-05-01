@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { byIdOrNull } from './dom.js';
 
 /**
  * Settings → Terminal "Quit confirmation" panel (HS-7596 / §37).
@@ -25,8 +26,8 @@ const DEFAULT_EXEMPT = ['screen', 'tmux', 'less', 'more', 'view', 'mandoc', 'tai
 
 export async function loadAndWireQuitConfirmSettings(): Promise<void> {
   const radios = document.querySelectorAll<HTMLInputElement>('input[name="settings-quit-confirm-mode"]');
-  const exemptTextarea = document.getElementById('settings-quit-confirm-exempt') as HTMLTextAreaElement | null;
-  const resetBtn = document.getElementById('settings-quit-confirm-reset') as HTMLButtonElement | null;
+  const exemptTextarea = byIdOrNull<HTMLTextAreaElement>('settings-quit-confirm-exempt');
+  const resetBtn = byIdOrNull<HTMLButtonElement>('settings-quit-confirm-reset');
   if (radios.length === 0 || exemptTextarea === null || resetBtn === null) return;
 
   // Load current values.

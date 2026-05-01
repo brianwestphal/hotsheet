@@ -2,7 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { suppressAnimation } from './animate.js';
 import { api } from './api.js';
 import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE } from './icons.js';
 import type { CustomView, CustomViewCondition } from './state.js';
@@ -15,7 +15,7 @@ let draggedViewIndex: number | null = null;
 export function initCustomViews(loadTickets: () => void) {
   loadTicketsFn = loadTickets;
   void refreshAllKnownTags();
-  document.getElementById('add-custom-view-btn')!.addEventListener('click', (e) => {
+  byId('add-custom-view-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     showViewEditor();
   });
@@ -33,7 +33,7 @@ export async function loadCustomViews() {
 }
 
 export function renderSidebarViews() {
-  const container = document.getElementById('custom-views-container');
+  const container = byIdOrNull('custom-views-container');
   if (!container) return;
   container.innerHTML = '';
 
