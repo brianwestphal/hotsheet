@@ -228,6 +228,33 @@ function toMap(obj: Record<string, BellStateEntry>): BellStateMap {
 const lastDispatchedPromptSignatures = new Map<string, string>();
 let activeOverlayKey: string | null = null;
 
+/**
+ * HS-8067 — minimized terminal-prompt overlays. Mirrors §47's
+ * `permissionOverlay::minimizedRequests`. When the user clicks the
+ * overlay's `Minimize` link, the overlay tears down its DOM but the
+ * server-side pending entry stays alive (the project tab's bell dot
+ * keeps showing); clicking the tab re-mounts the overlay via
+ * `reopenMinimizedTerminalPromptForSecret`. Auto-dismiss after 2 minutes
+ * so a forgotten minimized prompt doesn't linger forever — matches §47's
+ * `MINIMIZED_TIMEOUT_MS`.
+ */
+type MinimizedTerminalPrompt = {
+  secret: string;
+  terminalId: string;
+  match: MatchResult;
+  sig: string;
+  timeoutId: ReturnType<typeof setTimeout>;
+};
+const minimizedTerminalPrompts = new Map<string, MinimizedTerminalPrompt>();
+const MINIMIZED_TIMEOUT_MS = 2 * 60 * 1000;
+
+/** HS-8067 — keys (`${secret}::${terminalId}`) the user explicitly
+ *  said "No response needed" for. Dispatcher skips re-firing the
+ *  overlay for these even when the server-side pending entry is still
+ *  alive (the long-poll bell-state still reports it). Cleared when the
+ *  server clears the pending entry. */
+const dismissedTerminalPromptKeys = new Set<string>();
+
 function dispatchPendingPrompts(state: BellStateMap): void {
   // Walk every project's pendingPrompts. Build the set of currently-live
   // (secret, terminalId) keys so we can prune entries from
@@ -249,6 +276,16 @@ function dispatchPendingPrompts(state: BellStateMap): void {
       if (match.shape === 'generic') continue;
       const sig = match.signature;
       if (lastDispatchedPromptSignatures.get(key) === sig) continue;
+      // HS-8067 — user explicitly clicked "No response needed" for this
+      // (secret, terminalId). Skip the overlay even though the server-
+      // side pending entry is still alive. The dismissal is cleared when
+      // the server clears its pending entry (the prune loop below).
+      if (dismissedTerminalPromptKeys.has(key)) continue;
+      // HS-8067 — currently minimized. Don't re-fire the overlay; the
+      // user clicks the project tab to bring it back. The minimized
+      // bookkeeping is cleared on tab-click-restore + auto-dismiss
+      // timeout + server-clears-pending.
+      if (minimizedTerminalPrompts.has(key)) continue;
       candidates.push({ secret, terminalId, match, key, sig });
     }
   }
@@ -257,6 +294,18 @@ function dispatchPendingPrompts(state: BellStateMap): void {
   // possible after a /restart) re-fires.
   for (const key of [...lastDispatchedPromptSignatures.keys()]) {
     if (!liveKeys.has(key)) lastDispatchedPromptSignatures.delete(key);
+  }
+  // HS-8067 — same prune for `dismissedTerminalPromptKeys` and
+  // `minimizedTerminalPrompts` so a freshly-bellable prompt after a
+  // /restart re-fires the overlay.
+  for (const key of [...dismissedTerminalPromptKeys]) {
+    if (!liveKeys.has(key)) dismissedTerminalPromptKeys.delete(key);
+  }
+  for (const [key, rec] of [...minimizedTerminalPrompts]) {
+    if (!liveKeys.has(key)) {
+      clearTimeout(rec.timeoutId);
+      minimizedTerminalPrompts.delete(key);
+    }
   }
   // If the active overlay's underlying server-side prompt was cleared
   // (user responded via the terminal directly, another client answered,
@@ -284,6 +333,21 @@ function dispatchPendingPrompts(state: BellStateMap): void {
 export function _resetDispatchStateForTesting(): void {
   lastDispatchedPromptSignatures.clear();
   activeOverlayKey = null;
+  for (const rec of minimizedTerminalPrompts.values()) clearTimeout(rec.timeoutId);
+  minimizedTerminalPrompts.clear();
+  dismissedTerminalPromptKeys.clear();
+}
+
+/** Test-only: peek the minimized-prompt bookkeeping for assertions. */
+export function _minimizedTerminalPromptsForTesting(): ReadonlyMap<string, { secret: string; terminalId: string }> {
+  const out = new Map<string, { secret: string; terminalId: string }>();
+  for (const [k, v] of minimizedTerminalPrompts) out.set(k, { secret: v.secret, terminalId: v.terminalId });
+  return out;
+}
+
+/** Test-only: peek the dismissed-prompt bookkeeping. */
+export function _dismissedTerminalPromptKeysForTesting(): ReadonlySet<string> {
+  return new Set(dismissedTerminalPromptKeys);
 }
 
 /** Test-only: peek the current `activeOverlayKey`. */
@@ -347,5 +411,73 @@ function openCrossProjectOverlay(secret: string, terminalId: string, match: Matc
         void appendAllowRule(rule, secret);
       } catch { /* generic shape would throw; we never pass the cb for generic */ }
     },
+    onMinimize() {
+      // HS-8067 — overlay closed via Minimize. Clear the active-overlay
+      // gate so other projects' pending prompts can dispatch, but KEEP
+      // the dispatched-signature so the dispatcher won't auto-re-fire
+      // this same prompt while it's minimized. Track in
+      // `minimizedTerminalPrompts` so a tab-click on this project's
+      // tab re-mounts the overlay (mirrors §47's
+      // `permissionOverlay::reopenMinimizedForSecret`). Auto-dismiss
+      // after 2 minutes — same window as §47.
+      if (activeOverlayKey === key) activeOverlayKey = null;
+      const sig = match.signature;
+      const timeoutId = setTimeout(() => {
+        // 2-min timeout fired without the user coming back. Treat as
+        // permanent dismissal: clear bookkeeping AND post the
+        // server-side dismiss so the bell stops re-bringing this entry
+        // back on the next chunk. Mirrors §47's auto-dismiss path.
+        const rec = minimizedTerminalPrompts.get(key);
+        if (rec === undefined) return;
+        minimizedTerminalPrompts.delete(key);
+        dismissedTerminalPromptKeys.add(key);
+        lastDispatchedPromptSignatures.delete(key);
+        void apiWithSecret('/terminal/prompt-dismiss', secret, {
+          method: 'POST',
+          body: { terminalId },
+        }).catch(() => { /* swallow — bookkeeping already updated */ });
+      }, MINIMIZED_TIMEOUT_MS);
+      minimizedTerminalPrompts.set(key, { secret, terminalId, match, sig, timeoutId });
+    },
+    onNoResponseNeeded() {
+      // HS-8067 — overlay closed via "No response needed". The user is
+      // saying "I'll handle this in the terminal directly". Clear the
+      // active-overlay gate AND post the server-side dismiss so the
+      // server stops bell-ing on this same prompt. Add to
+      // `dismissedTerminalPromptKeys` as belt-and-braces in case the
+      // server's pending-clear races with the next dispatch tick.
+      if (activeOverlayKey === key) activeOverlayKey = null;
+      lastDispatchedPromptSignatures.delete(key);
+      dismissedTerminalPromptKeys.add(key);
+      void apiWithSecret('/terminal/prompt-dismiss', secret, {
+        method: 'POST',
+        body: { terminalId },
+      }).catch(() => { /* swallow */ });
+    },
   });
+}
+
+/**
+ * HS-8067 — re-open a minimized terminal-prompt overlay for the given
+ * project. Returns true if a popup was re-opened. Called from
+ * `projectTabs.tsx` after a tab click, mirroring §47's
+ * `reopenMinimizedForSecret`. When multiple terminals in the same
+ * project have minimized prompts, the FIRST one we find is restored —
+ * subsequent tab clicks restore the next.
+ */
+export function reopenMinimizedTerminalPromptForSecret(secret: string): boolean {
+  for (const [key, rec] of minimizedTerminalPrompts) {
+    if (rec.secret !== secret) continue;
+    clearTimeout(rec.timeoutId);
+    minimizedTerminalPrompts.delete(key);
+    // Clear the dispatched-signature so the next dispatch tick can
+    // re-mount via the standard path (which also restores the
+    // active-overlay gate).
+    lastDispatchedPromptSignatures.delete(key);
+    openCrossProjectOverlay(rec.secret, rec.terminalId, rec.match);
+    activeOverlayKey = key;
+    lastDispatchedPromptSignatures.set(key, rec.sig);
+    return true;
+  }
+  return false;
 }

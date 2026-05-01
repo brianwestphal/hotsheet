@@ -9043,14 +9043,143 @@ label.detail-details-label {
 
 .terminal-prompt-overlay-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  justify-content: space-between;
   gap: 6px;
 }
 
-.terminal-prompt-overlay-title {
+// HS-8068 — source-name chip mirroring `.permission-popup-tool`'s
+// treatment so §47's permission popup and §52's terminal-prompt overlay
+// read with the same header rhythm. `Claude` for Claude-Ink numbered
+// prompts, `Shell` for shell yes/no, hidden for generic fallbacks.
+.terminal-prompt-overlay-tool {
   font-weight: 600;
+  white-space: nowrap;
   color: var(--text-primary);
+}
+
+// HS-8066 — shared `permissionDialogShell.tsx` chrome. Both §47 (permission
+// popup) and §52 (terminal-prompt overlay) consumers mount their inner
+// content into the shell's slots; these `.dialog-shell-*` selectors style
+// the shell-owned chrome (header / footer-link row / close X). Consumer-
+// scoped styles stay in `.permission-popup-*` and
+// `.terminal-prompt-overlay-*` blocks.
+.dialog-shell-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.dialog-shell-tool {
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.dialog-shell-title {
+  color: var(--text-muted);
+  word-break: break-word;
+  min-width: 0;
+  flex: 1;
+}
+
+.dialog-shell-desc {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.dialog-shell-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+// Empty body / actions / affordance slots collapse via `:empty` so the
+// shell's vertical rhythm doesn't grow extra padding when a consumer
+// omits a slot.
+.dialog-shell-body:empty,
+.dialog-shell-actions:empty,
+.dialog-shell-affordance:empty {
+  display: none;
+}
+
+.dialog-shell-links {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.dialog-shell-links-sep {
+  color: var(--text-muted);
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.dialog-shell-minimize-link,
+.dialog-shell-dismiss-link {
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+    color: var(--text-primary);
+  }
+}
+
+// HS-8067 — Minimize / "No response needed" link row in the overlay
+// footer. Mirrors `.permission-popup-links` from §47 so both overlays
+// read with the same footer rhythm. Only rendered when at least one of
+// `onMinimize` / `onNoResponseNeeded` callbacks is provided by the
+// caller (bare overlays without dispatcher integration hide the row).
+.terminal-prompt-overlay-links {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.terminal-prompt-overlay-links-sep {
+  color: var(--text-muted);
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.terminal-prompt-overlay-minimize-link,
+.terminal-prompt-overlay-dismiss-link {
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+    color: var(--text-primary);
+  }
+}
+
+.terminal-prompt-overlay-title {
+  // HS-8068 — title is no longer the boldest text in the row; the
+  // source-name chip carries that weight. Drop bold + ease the colour
+  // to match the description-line treatment in `.permission-popup-desc`.
+  color: var(--text-muted);
   word-break: break-word;
   min-width: 0;
   flex: 1;

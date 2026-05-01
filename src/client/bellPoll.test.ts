@@ -21,9 +21,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MatchResult, NumberedMatch } from '../shared/terminalPrompt/parsers.js';
 import {
   _activeOverlayKeyForTesting,
+  _dismissedTerminalPromptKeysForTesting,
   _dispatchPendingPromptsForTesting,
+  _minimizedTerminalPromptsForTesting,
   _resetDispatchStateForTesting,
   type BellStateMap,
+  reopenMinimizedTerminalPromptForSecret,
 } from './bellPoll.js';
 
 function makeNumbered(signature: string): NumberedMatch {
@@ -289,5 +292,119 @@ describe('Always choose this — cross-project secret routing (HS-8057)', () => 
     // Silence unused-var on the spy (kept for diagnostic if a future
     // implementation switches back to a direct module spy).
     void appendSpy;
+  });
+});
+
+/**
+ * HS-8067 — `Minimize` and `No response needed` footer links must
+ * route through bellPoll's dispatcher state so a minimized prompt
+ * doesn't re-fire the overlay on every long-poll tick (the
+ * server-side pending entry stays alive, so the bell-state still
+ * reports it). The dispatcher's gates: `lastDispatchedPromptSignatures`
+ * (bypass-on-same-sig), `minimizedTerminalPrompts` (don't re-fire,
+ * 2-min auto-dismiss), `dismissedTerminalPromptKeys` (permanent skip
+ * for "No response needed").
+ */
+describe('Minimize / No-response-needed dispatcher state (HS-8067)', () => {
+  it('Minimize moves the prompt to minimizedTerminalPrompts and does NOT re-fire the overlay on the next tick', () => {
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
+
+    const overlay = document.querySelector<HTMLElement>('.terminal-prompt-overlay');
+    expect(overlay).not.toBeNull();
+    const link = overlay!.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-minimize-link');
+    expect(link).not.toBeNull();
+    link!.click();
+
+    // Overlay torn down, active-overlay gate cleared, but
+    // minimized-prompt bookkeeping kept.
+    expect(document.querySelector('.terminal-prompt-overlay')).toBeNull();
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+    expect(_minimizedTerminalPromptsForTesting().size).toBe(1);
+    expect(_minimizedTerminalPromptsForTesting().get('sec-a::tA')).toEqual({ secret: 'sec-a', terminalId: 'tA' });
+
+    // Re-dispatch with the same state — the server-side pending entry
+    // is still alive (we didn't post /terminal/prompt-dismiss). The
+    // dispatcher must SKIP this prompt because it's minimized.
+    _dispatchPendingPromptsForTesting(state);
+    expect(document.querySelector('.terminal-prompt-overlay')).toBeNull();
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+  });
+
+  it('reopenMinimizedTerminalPromptForSecret restores a minimized overlay', () => {
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    document.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-minimize-link')!.click();
+    expect(document.querySelector('.terminal-prompt-overlay')).toBeNull();
+    expect(_minimizedTerminalPromptsForTesting().size).toBe(1);
+
+    const restored = reopenMinimizedTerminalPromptForSecret('sec-a');
+    expect(restored).toBe(true);
+    expect(document.querySelector('.terminal-prompt-overlay')).not.toBeNull();
+    expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
+    // Minimized bookkeeping cleared after restore.
+    expect(_minimizedTerminalPromptsForTesting().size).toBe(0);
+  });
+
+  it('reopenMinimizedTerminalPromptForSecret returns false when no minimized prompt for the project', () => {
+    expect(reopenMinimizedTerminalPromptForSecret('sec-nonexistent')).toBe(false);
+  });
+
+  it('"No response needed" adds the key to dismissedTerminalPromptKeys and does NOT re-fire on next tick', () => {
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    const overlay = document.querySelector<HTMLElement>('.terminal-prompt-overlay');
+    const link = overlay!.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-dismiss-link');
+    expect(link).not.toBeNull();
+    link!.click();
+
+    expect(document.querySelector('.terminal-prompt-overlay')).toBeNull();
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+    expect(_dismissedTerminalPromptKeysForTesting().has('sec-a::tA')).toBe(true);
+
+    // Re-dispatch — same key is in the dismissed set, so dispatcher
+    // skips even with a fresh signature.
+    const stateWithNewSig = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-changed') },
+    ]);
+    _dispatchPendingPromptsForTesting(stateWithNewSig);
+    expect(document.querySelector('.terminal-prompt-overlay')).toBeNull();
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+  });
+
+  it('dismissed bookkeeping is pruned when the server clears the pending entry (so a fresh prompt re-fires)', () => {
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    document.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-dismiss-link')!.click();
+    expect(_dismissedTerminalPromptKeysForTesting().has('sec-a::tA')).toBe(true);
+
+    // Server clears the pending entry — empty bell-state map.
+    _dispatchPendingPromptsForTesting(new Map());
+    expect(_dismissedTerminalPromptKeysForTesting().has('sec-a::tA')).toBe(false);
+
+    // Fresh prompt arrives — overlay re-fires.
+    _dispatchPendingPromptsForTesting(state);
+    expect(document.querySelector('.terminal-prompt-overlay')).not.toBeNull();
+  });
+
+  it('minimized bookkeeping is pruned (with timeout cleared) when the server clears the pending entry', () => {
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    document.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-minimize-link')!.click();
+    expect(_minimizedTerminalPromptsForTesting().size).toBe(1);
+
+    _dispatchPendingPromptsForTesting(new Map());
+    expect(_minimizedTerminalPromptsForTesting().size).toBe(0);
   });
 });

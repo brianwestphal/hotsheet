@@ -43,6 +43,25 @@ import { toElement } from './dom.js';
 
 const X_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 
+/**
+ * HS-8068 — derive a human-readable source label from the match's
+ * `parser_id`, mirroring `permissionOverlay.tsx`'s tool-name chip
+ * (`Bash`, `Edit`, `Write`, etc.) so both overlays read the same way at
+ * a glance. Returns `null` for `generic` matches — those are
+ * heuristic-fired fallbacks and don't have a meaningful source name to
+ * show; chip is hidden in that case.
+ *
+ * Exported for the unit test.
+ */
+export function sourceLabelForMatch(match: MatchResult): string | null {
+  if (match.shape === 'generic') return null;
+  if (match.parserId === 'claude-numbered') return 'Claude';
+  if (match.parserId === 'yesno') return 'Shell';
+  // Defensive — unknown parser ids surface as the raw id rather than
+  // hiding the chip, so a misconfiguration is visible in QA.
+  return match.parserId;
+}
+
 export interface OpenTerminalPromptOverlayOptions {
   /** The match the parser registry returned. Phase 1 only renders the
    *  `numbered` shape; other shapes are no-ops. */
@@ -61,8 +80,12 @@ export interface OpenTerminalPromptOverlayOptions {
    * the error inline".
    */
   onSend: (payload: string) => boolean;
-  /** Called when the overlay closes (any reason). Lets the detector clear
-   *  per-instance state. */
+  /** Called when the overlay closes via send / cancel / X-close (active
+   *  user dismissal). Lets the dispatcher clear per-instance state and
+   *  post `/terminal/prompt-dismiss` to clear the server-side pending
+   *  entry. Minimize and "No response needed" do NOT trigger this hook —
+   *  they have their own callbacks (`onMinimize` / `onNoResponseNeeded`)
+   *  with different server-side semantics. */
   onClose: () => void;
   /**
    * HS-7987 — fired when the user submits a choice WITH the always-allow
@@ -72,6 +95,26 @@ export interface OpenTerminalPromptOverlayOptions {
    * fallbacks are explicitly NOT allow-listable (see §52.1).
    */
   onAddAllowRule?: (choiceIndex: number, choiceLabel: string) => void;
+  /**
+   * HS-8067 — when provided, renders a `Minimize` link in the footer.
+   * Click hides the overlay client-side, leaves the server-side pending
+   * entry alive (so the project tab keeps its bell dot), and lets the
+   * caller (`bellPoll.tsx`) wire a tab-click → re-open path. Mirrors
+   * §47's `permissionOverlay::cleanupAndMinimize`. Caller is responsible
+   * for the 2-min auto-dismiss timer and the bell-state bookkeeping —
+   * the overlay just fires this callback and tears down its DOM.
+   */
+  onMinimize?: () => void;
+  /**
+   * HS-8067 — when provided, renders a `No response needed` link in the
+   * footer. Click hides the overlay client-side; semantically the user
+   * is saying "I'll handle this in the terminal directly, don't keep
+   * showing me the overlay". Mirrors §47's
+   * `permissionOverlay::cleanupAndDismiss`. Caller decides whether to
+   * post `/terminal/prompt-dismiss` server-side or just track the
+   * dismissal in client-side state.
+   */
+  onNoResponseNeeded?: () => void;
 }
 
 /** Open the overlay. Returns the overlay element so the caller can remove
@@ -170,16 +213,35 @@ function renderAllowRuleCheckbox(opts: OpenTerminalPromptOverlayOptions) {
  *  return helpers the per-shape mounters use to actually send a payload
  *  + close the overlay. HS-8025 removed the "Not a prompt — let me
  *  handle it" link; the cancel button (sends a real cancel payload to
- *  the PTY) covers the same use case more cleanly. */
+ *  the PTY) covers the same use case more cleanly.
+ *
+ *  HS-8067 — added Minimize and "No response needed" link wiring.
+ *  Both bypass `onClose` (which posts `/terminal/prompt-dismiss`) and
+ *  fire dedicated callbacks instead, since their server-side semantics
+ *  differ from active dismissal. */
 function wireSharedOverlay(
   overlay: HTMLElement,
   opts: OpenTerminalPromptOverlayOptions,
   cancelPayload: string,
 ): { close: () => void; send: (payload: string) => void } {
-  function close(): void {
+  function tearDownDom(): void {
     overlay.remove();
     document.removeEventListener('keydown', onKeydown, true);
+  }
+
+  function close(): void {
+    tearDownDom();
     opts.onClose();
+  }
+
+  function minimize(): void {
+    tearDownDom();
+    opts.onMinimize?.();
+  }
+
+  function dismissNoResponse(): void {
+    tearDownDom();
+    opts.onNoResponseNeeded?.();
   }
 
   function send(payload: string): void {
@@ -201,6 +263,17 @@ function wireSharedOverlay(
   overlay.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-close')?.addEventListener('click', () => {
     close();
   });
+  // HS-8067 — Minimize / No response needed links. Only present when the
+  // caller provided the corresponding callback; bare overlays (no
+  // dispatcher integration) hide them.
+  overlay.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-minimize-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    minimize();
+  });
+  overlay.querySelector<HTMLAnchorElement>('.terminal-prompt-overlay-dismiss-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    dismissNoResponse();
+  });
 
   // Capture-phase Escape sends the shape's cancel payload — beats the
   // global blur-input handler in shortcuts.tsx so Esc here means "send Esc
@@ -214,6 +287,32 @@ function wireSharedOverlay(
   document.addEventListener('keydown', onKeydown, true);
 
   return { close, send };
+}
+
+/**
+ * HS-8067 — render the Minimize / No-response-needed link row when at
+ * least one of the corresponding callbacks is provided. Mirrors §47's
+ * `.permission-popup-links` block. Returns `null` when neither callback
+ * is set, so bare overlays (without dispatcher integration) don't grow
+ * empty footer chrome.
+ */
+function renderFooterLinks(opts: OpenTerminalPromptOverlayOptions) {
+  const showMinimize = opts.onMinimize !== undefined;
+  const showDismiss = opts.onNoResponseNeeded !== undefined;
+  if (!showMinimize && !showDismiss) return null;
+  return (
+    <div className="terminal-prompt-overlay-links">
+      {showMinimize
+        ? <a className="terminal-prompt-overlay-minimize-link" href="#">Minimize</a>
+        : null}
+      {showMinimize && showDismiss
+        ? <span className="terminal-prompt-overlay-links-sep">·</span>
+        : null}
+      {showDismiss
+        ? <a className="terminal-prompt-overlay-dismiss-link" href="#">No response needed</a>
+        : null}
+    </div>
+  );
 }
 
 function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: NumberedMatch): HTMLElement {
@@ -236,9 +335,13 @@ function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: Numb
   // post-strip line and was silently dropped from the overlay.
   const hasMultilineContext = contextLines.length > 0;
   const contextText = contextLines.join('\n');
+  const sourceLabel = sourceLabelForMatch(match);
   const overlay = toElement(
     <div className="terminal-prompt-overlay" role="dialog" aria-modal="false" aria-label={`Terminal prompt: ${question}`}>
       <div className="terminal-prompt-overlay-header">
+        {sourceLabel !== null
+          ? <span className="terminal-prompt-overlay-tool">{sourceLabel}</span>
+          : null}
         <span className="terminal-prompt-overlay-title">{question}</span>
         <button className="terminal-prompt-overlay-close" type="button" title="Close (does not respond)" aria-label="Close">
           {raw(X_ICON)}
@@ -264,6 +367,7 @@ function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: Numb
       <div className="terminal-prompt-overlay-footer">
         <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
       </div>
+      {renderFooterLinks(opts)}
       <p className="terminal-prompt-overlay-error" style="display:none"></p>
     </div>
   );
@@ -288,9 +392,13 @@ function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: Numb
 
 function openYesNoOverlay(opts: OpenTerminalPromptOverlayOptions, match: YesNoMatch): HTMLElement {
   const { question } = match;
+  const sourceLabel = sourceLabelForMatch(match);
   const overlay = toElement(
     <div className="terminal-prompt-overlay terminal-prompt-overlay-yesno" role="dialog" aria-modal="false" aria-label={`Terminal prompt: ${question}`}>
       <div className="terminal-prompt-overlay-header">
+        {sourceLabel !== null
+          ? <span className="terminal-prompt-overlay-tool">{sourceLabel}</span>
+          : null}
         <span className="terminal-prompt-overlay-title">{question}</span>
         <button className="terminal-prompt-overlay-close" type="button" title="Close (does not respond)" aria-label="Close">
           {raw(X_ICON)}
@@ -308,6 +416,7 @@ function openYesNoOverlay(opts: OpenTerminalPromptOverlayOptions, match: YesNoMa
       <div className="terminal-prompt-overlay-footer">
         <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
       </div>
+      {renderFooterLinks(opts)}
       <p className="terminal-prompt-overlay-error" style="display:none"></p>
     </div>
   );
@@ -352,6 +461,7 @@ function openGenericOverlay(opts: OpenTerminalPromptOverlayOptions, match: Gener
         <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
         <button className="terminal-prompt-overlay-generic-submit" type="button">Send (Enter)</button>
       </div>
+      {renderFooterLinks(opts)}
       <p className="terminal-prompt-overlay-error" style="display:none"></p>
     </div>
   );

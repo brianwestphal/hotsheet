@@ -517,6 +517,10 @@ function renderTabs() {
         await switchProject(project);
         // HS-6637: if this tab has a minimized permission popup, bring it back.
         reopenMinimizedForSecret(project.secret);
+        // HS-8067 — same path for minimized §52 terminal-prompt overlays.
+        // Lazy import to keep `bellPoll` out of the projectTabs hot
+        // path; the call is fire-and-forget.
+        void import('./bellPoll.js').then(m => { m.reopenMinimizedTerminalPromptForSecret(project.secret); }).catch(() => {});
       })();
     });
     el.addEventListener('contextmenu', (e) => showTabContextMenu(e as MouseEvent, project));
