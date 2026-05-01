@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { api, showErrorPopup } from './api.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import { ICON_FOLDER, ICON_FOLDER_OPEN } from './icons.js';
 import { refreshProjectTabs, switchProject } from './projectTabs.js';
 import type { ProjectInfo } from './state.js';
@@ -14,7 +14,7 @@ interface BrowseResult {
 }
 
 function renderBreadcrumb(path: string) {
-  const container = document.getElementById('open-folder-breadcrumb')!;
+  const container = byId('open-folder-breadcrumb');
   const parts = path.split('/').filter(Boolean);
   container.innerHTML = '';
 
@@ -44,7 +44,7 @@ async function navigateTo(path: string) {
 }
 
 function renderEntries(result: BrowseResult) {
-  const list = document.getElementById('open-folder-list')!;
+  const list = byId('open-folder-list');
   list.innerHTML = '';
 
   if (result.entries.length === 0) {
@@ -64,17 +64,17 @@ function renderEntries(result: BrowseResult) {
     row.addEventListener('click', () => {
       list.querySelectorAll('.open-folder-entry').forEach(e => e.classList.remove('selected'));
       row.classList.add('selected');
-      const selectBtn = document.getElementById('open-folder-select-btn') as HTMLButtonElement;
+      const selectBtn = byId<HTMLButtonElement>('open-folder-select-btn');
       selectBtn.dataset.selectedPath = entry.path;
-      document.getElementById('open-folder-path')!.textContent = entry.path;
+      byId('open-folder-path').textContent = entry.path;
     });
     list.appendChild(row);
   }
 }
 
 function updateFooter(result: BrowseResult) {
-  document.getElementById('open-folder-path')!.textContent = result.path;
-  (document.getElementById('open-folder-select-btn') as HTMLButtonElement).dataset.selectedPath = result.path;
+  byId('open-folder-path').textContent = result.path;
+  byId<HTMLButtonElement>('open-folder-select-btn').dataset.selectedPath = result.path;
 }
 
 async function openSelectedFolder(path: string) {
@@ -88,7 +88,7 @@ async function openSelectedFolder(path: string) {
       method: 'POST',
       body: { dataDir: hotsheetPath },
     });
-    document.getElementById('open-folder-overlay')!.style.display = 'none';
+    byId('open-folder-overlay').style.display = 'none';
     await refreshProjectTabs();
     await switchProject(project);
   } catch (err) {
@@ -120,23 +120,23 @@ export function showOpenFolderDialog() {
 }
 
 function showBrowserDialog() {
-  const overlay = document.getElementById('open-folder-overlay')!;
+  const overlay = byId('open-folder-overlay');
   overlay.style.display = 'flex';
   void navigateTo('');
 }
 
 export function bindOpenFolder() {
   // Dialog close
-  document.getElementById('open-folder-close')?.addEventListener('click', () => {
-    document.getElementById('open-folder-overlay')!.style.display = 'none';
+  byIdOrNull('open-folder-close')?.addEventListener('click', () => {
+    byId('open-folder-overlay').style.display = 'none';
   });
-  document.getElementById('open-folder-overlay')?.addEventListener('click', (e) => {
+  byIdOrNull('open-folder-overlay')?.addEventListener('click', (e) => {
     if (e.target === e.currentTarget) (e.currentTarget as HTMLElement).style.display = 'none';
   });
 
   // Select button
-  document.getElementById('open-folder-select-btn')?.addEventListener('click', () => {
-    const path = (document.getElementById('open-folder-select-btn') as HTMLButtonElement).dataset.selectedPath;
+  byIdOrNull('open-folder-select-btn')?.addEventListener('click', () => {
+    const path = byId<HTMLButtonElement>('open-folder-select-btn').dataset.selectedPath;
     if (path !== undefined && path !== '') void openSelectedFolder(path);
   });
 
@@ -148,7 +148,7 @@ export function bindOpenFolder() {
     // Don't show toolbar context menu if the target is inside a tab (tab has its own menu)
     if ((e.target as HTMLElement).closest('.project-tab')) return;
     e.preventDefault();
-    document.getElementById('toolbar-context-menu')?.remove();
+    byIdOrNull('toolbar-context-menu')?.remove();
 
     const menu = toElement(
       <div className="tab-context-menu" id="toolbar-context-menu">

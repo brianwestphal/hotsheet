@@ -3,7 +3,7 @@ import { api } from './api.js';
 import { activeFilterTypes, ALL_FILTER_TYPES, dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
 import { maybeFireShellStreamFirstUseToast, SHELL_PARTIAL_OUTPUT_EVENT,type ShellPartialOutputEvent } from './commandSidebar.js';
 import { TIMERS } from './constants/timers.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import { resolveDrawerTabForTauri } from './drawerTabGating.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { state } from './state.js';
@@ -132,7 +132,7 @@ export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
   // every render so the live preview no longer flickers empty between
   // ticks.
   latestPartialOutputs.set(detail.id, detail.partial);
-  const container = document.getElementById('command-log-entries');
+  const container = byIdOrNull('command-log-entries');
   if (container === null) return;
   // HS-8015 follow-up #2 — running-shell rows now render twin pres
   // (preview = trailing N lines / full = entire buffer) so the row is
@@ -160,7 +160,7 @@ export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
  */
 export function hydrateRenderedShellPartials(): void {
   if (!state.settings.shell_streaming_enabled) return;
-  const container = document.getElementById('command-log-entries');
+  const container = byIdOrNull('command-log-entries');
   if (container === null) return;
   const pres = container.querySelectorAll<HTMLElement>('pre.command-log-shell-partial[data-shell-partial-id]');
   for (const el of pres) {
@@ -295,7 +295,7 @@ function showContextMenu(x: number, y: number, entries: LogEntry[]) {
 // --- Selection helpers ---
 
 function updateSelectionClasses() {
-  const container = document.getElementById('command-log-entries');
+  const container = byIdOrNull('command-log-entries');
   if (!container) return;
   for (const el of container.querySelectorAll('.command-log-entry')) {
     const id = parseInt((el as HTMLElement).dataset.id ?? '0', 10);
@@ -481,7 +481,7 @@ function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
 
 function renderEntries(entries: LogEntry[]) {
   currentEntries = entries;
-  const container = document.getElementById('command-log-entries');
+  const container = byIdOrNull('command-log-entries');
   if (!container) return;
 
   // Apply client-side type filter
@@ -594,7 +594,7 @@ async function loadEntries() {
 // --- Panel open/close ---
 
 function updateToggleIcon(isOpen: boolean) {
-  const btn = document.getElementById('command-log-btn');
+  const btn = byIdOrNull('command-log-btn');
   if (!btn) return;
   btn.classList.toggle('is-open', isOpen);
   btn.setAttribute('title', isOpen ? 'Close drawer' : 'Commands Log');
@@ -632,7 +632,7 @@ export function switchDrawerTab(tab: string) {
 }
 
 function openPanel() {
-  const panel = document.getElementById('command-log-panel')!;
+  const panel = byId('command-log-panel');
   panel.style.display = '';
   panelOpen = true;
   updateToggleIcon(true);
@@ -666,7 +666,7 @@ export function previewDrawerTab(tab: string): () => void {
 
 /** Refresh the command log contents (e.g., after switching projects). */
 export function refreshCommandLog() {
-  const panel = document.getElementById('command-log-panel');
+  const panel = byIdOrNull('command-log-panel');
   if (panel && panel.style.display !== 'none') {
     void loadEntries();
   }
@@ -715,7 +715,7 @@ export function setDrawerExpanded(expanded: boolean): void {
   const app = document.querySelector('.app');
   if (!app) return;
   app.classList.toggle('drawer-expanded', expanded);
-  const btn = document.getElementById('drawer-expand-btn');
+  const btn = byIdOrNull('drawer-expand-btn');
   if (btn !== null) {
     btn.title = expanded ? 'Restore tickets view' : 'Expand drawer to full height';
     const up = btn.querySelector<HTMLElement>('.drawer-expand-icon-up');
@@ -802,7 +802,7 @@ export function showLogEntryById(logId: number) {
 }
 
 function closePanel() {
-  const panel = document.getElementById('command-log-panel')!;
+  const panel = byId('command-log-panel');
   panel.style.display = 'none';
   panelOpen = false;
   // A collapsed drawer cannot be "expanded" in any meaningful sense — clear
@@ -843,7 +843,7 @@ function stopPolling() {
 // --- Badge ---
 
 function updateBadge(hasNew: boolean) {
-  const badge = document.getElementById('command-log-badge');
+  const badge = byIdOrNull('command-log-badge');
   if (!badge) return;
   badge.style.display = hasNew ? '' : 'none';
 }
@@ -870,8 +870,8 @@ export async function refreshLogBadge() {
 // --- Resize handle ---
 
 function initResize() {
-  const handle = document.getElementById('command-log-resize')!;
-  const panel = document.getElementById('command-log-panel')!;
+  const handle = byId('command-log-resize');
+  const panel = byId('command-log-panel');
   let isResizing = false;
   let startY = 0;
   let startHeight = 0;
@@ -926,7 +926,7 @@ async function clearLogEntries() {
 /** Initialize the command log panel. Call from app.tsx init(). */
 export function initCommandLog() {
   // Button click — toggles drawer open/closed
-  document.getElementById('command-log-btn')?.addEventListener('click', togglePanel);
+  byIdOrNull('command-log-btn')?.addEventListener('click', togglePanel);
 
   // HS-7983 — module-level subscription to the streaming-shell-output
   // event. Delegated to `applyShellPartialEvent` (exported for tests) so
@@ -937,20 +937,20 @@ export function initCommandLog() {
   });
 
   // HS-6312: expand drawer to full height (hides ticket area).
-  document.getElementById('drawer-expand-btn')?.addEventListener('click', toggleDrawerExpanded);
+  byIdOrNull('drawer-expand-btn')?.addEventListener('click', toggleDrawerExpanded);
 
   // Clear button
-  document.getElementById('command-log-clear')?.addEventListener('click', () => { void clearLogEntries(); });
+  byIdOrNull('command-log-clear')?.addEventListener('click', () => { void clearLogEntries(); });
 
   // Filter button (HS-2550)
-  document.getElementById('command-log-filter-btn')?.addEventListener('click', () => { showFilterDropdown(() => renderEntries(currentEntries)); });
+  byIdOrNull('command-log-filter-btn')?.addEventListener('click', () => { showFilterDropdown(() => renderEntries(currentEntries)); });
 
   // Search input
-  const searchEl = document.getElementById('command-log-search') as HTMLInputElement | null;
+  const searchEl = byIdOrNull<HTMLInputElement>('command-log-search');
   searchEl?.addEventListener('input', () => { onSearchInput(searchEl.value); });
 
   // Drawer tab switching — supports `commands-log` and dynamic `terminal:<id>` ids.
-  document.getElementById('command-log-panel')?.addEventListener('click', (e) => {
+  byIdOrNull('command-log-panel')?.addEventListener('click', (e) => {
     const tabEl = (e.target as HTMLElement).closest<HTMLElement>('.drawer-tab');
     if (!tabEl) return;
     if ((e.target as HTMLElement).closest('.drawer-tab-close')) return;  // close button handled by terminal module
@@ -985,7 +985,7 @@ export function initCommandLog() {
 export async function applyTerminalTabVisibility() {
   try {
     const enabled = getTauriInvoke() !== null;
-    const tabsContainer = document.getElementById('drawer-terminal-tabs-wrap');
+    const tabsContainer = byIdOrNull('drawer-terminal-tabs-wrap');
     if (tabsContainer) tabsContainer.style.display = enabled ? '' : 'none';
     // HS-6475: hide the divider alongside the terminal tab strip so it doesn't
     // dangle next to a lone Commands Log icon when terminals are unavailable.

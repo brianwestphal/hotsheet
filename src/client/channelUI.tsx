@@ -1,7 +1,7 @@
 import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { api, apiWithSecret } from './api.js';
 import { TIMERS } from './constants/timers.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import {
   startPermissionPolling, stopPermissionPolling,
 } from './permissionOverlay.js';
@@ -65,9 +65,9 @@ function stopSpinnerPoll(): void {
 /** Unified status indicator renderer. Resolves channel vs. shell busy states
  *  into a single indicator to avoid conflicting innerHTML writes. */
 function updateStatusIndicator() {
-  const indicator = document.getElementById('channel-status-indicator');
+  const indicator = byIdOrNull('channel-status-indicator');
   if (!indicator) return;
-  const channelSection = document.getElementById('channel-play-section');
+  const channelSection = byIdOrNull('channel-play-section');
   if (!channelSection || channelSection.style.display === 'none') {
     indicator.style.display = 'none';
     return;
@@ -98,7 +98,7 @@ function updateStatusIndicator() {
 /** Set shell busy state. Called from commandSidebar when shell commands run. */
 export function setShellBusy(busy: boolean) {
   shellBusyState = busy;
-  const indicator = document.getElementById('channel-status-indicator');
+  const indicator = byIdOrNull('channel-status-indicator');
   if (!indicator) return;
   if (busy) {
     updateStatusIndicator();
@@ -137,9 +137,9 @@ let channelAliveLocal = false;
 export function setChannelAlive(alive: boolean) {
   const wasAlive = channelAliveLocal;
   channelAliveLocal = alive;
-  const warning = document.getElementById('channel-disconnected');
+  const warning = byIdOrNull('channel-disconnected');
   if (!warning) return;
-  const section = document.getElementById('channel-play-section');
+  const section = byIdOrNull('channel-play-section');
   const enabled = section !== null && section.style.display !== 'none';
   warning.style.display = enabled && !alive ? '' : 'none';
   // If the channel server went down while we thought Claude was busy, clear busy state
@@ -241,9 +241,9 @@ export function setChannelBusy(busy: boolean) {
   // HS-6702 — start/stop the spinner-activity poll alongside channel-busy.
   if (busy) startSpinnerPoll();
   else stopSpinnerPoll();
-  const indicator = document.getElementById('channel-status-indicator');
+  const indicator = byIdOrNull('channel-status-indicator');
   if (!indicator) return;
-  const channelSection = document.getElementById('channel-play-section');
+  const channelSection = byIdOrNull('channel-play-section');
   if (!channelSection || channelSection.style.display === 'none') {
     indicator.style.display = 'none';
     return;
@@ -313,7 +313,7 @@ async function checkAndTrigger(btn: HTMLElement) {
 }
 
 function showDisconnectedAlert() {
-  const existing = document.getElementById('channel-disconnected-alert');
+  const existing = byIdOrNull('channel-disconnected-alert');
   if (existing) existing.remove();
   const alert = toElement(
     <div id="channel-disconnected-alert" className="no-upnext-alert">
@@ -323,12 +323,12 @@ function showDisconnectedAlert() {
   );
   alert.querySelector('.no-upnext-dismiss')!.addEventListener('click', () => alert.remove());
   setTimeout(() => alert.remove(), 6000);
-  const playSection = document.getElementById('channel-play-section');
+  const playSection = byIdOrNull('channel-play-section');
   if (playSection) playSection.after(alert);
 }
 
 function showNoUpNextAlert() {
-  const existing = document.getElementById('no-upnext-alert');
+  const existing = byIdOrNull('no-upnext-alert');
   if (existing) existing.remove();
   const alert = toElement(
     <div id="no-upnext-alert" className="no-upnext-alert">
@@ -338,7 +338,7 @@ function showNoUpNextAlert() {
   );
   alert.querySelector('.no-upnext-dismiss')!.addEventListener('click', () => alert.remove());
   setTimeout(() => alert.remove(), 4000);
-  const playSection = document.getElementById('channel-play-section');
+  const playSection = byIdOrNull('channel-play-section');
   if (playSection) playSection.after(alert);
 }
 
@@ -349,10 +349,10 @@ export async function initChannel() {
   } catch { /* endpoint may not exist yet */ }
   // If we couldn't reach the server, keep the previous state
   if (status === null) return;
-  const section = document.getElementById('channel-play-section')!;
-  const btn = document.getElementById('channel-play-btn')!;
-  const playIcon = document.getElementById('channel-play-icon')!;
-  const autoIcon = document.getElementById('channel-auto-icon')!;
+  const section = byId('channel-play-section');
+  const btn = byId('channel-play-btn');
+  const playIcon = byId('channel-play-icon');
+  const autoIcon = byId('channel-auto-icon');
 
   // Save auto-mode for the previous project, restore for the new one
   {
@@ -393,7 +393,7 @@ export async function initChannel() {
   startPermissionPolling(channelBusyTimeout, (t) => { channelBusyTimeout = t; });
 
   // Warn if the running channel server is outdated
-  const versionWarning = document.getElementById('channel-version-warning');
+  const versionWarning = byIdOrNull('channel-version-warning');
   if (versionWarning) {
     versionWarning.style.display = status.versionMismatch === true ? '' : 'none';
   }
@@ -511,7 +511,7 @@ async function attemptAutoTrigger() {
 
 /** Check if Claude signaled done and refresh alive status — called from long polling */
 export function checkChannelDone() {
-  const section = document.getElementById('channel-play-section');
+  const section = byIdOrNull('channel-play-section');
   const enabled = section !== null && section.style.display !== 'none';
   if (!enabled) return;
 
@@ -519,7 +519,7 @@ export function checkChannelDone() {
     // Update alive/disconnected warning
     if (s.alive !== undefined) setChannelAlive(s.alive);
     // Update version mismatch warning
-    const versionWarning = document.getElementById('channel-version-warning');
+    const versionWarning = byIdOrNull('channel-version-warning');
     if (versionWarning) versionWarning.style.display = s.versionMismatch === true ? '' : 'none';
     // Check for done signal — always process it, even if we don't think we're busy
     // (the busy state may have been cleared by timeout or tab switch)

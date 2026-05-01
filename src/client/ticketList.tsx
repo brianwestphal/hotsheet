@@ -2,7 +2,7 @@ import { captureSnapshot, flipAnimate } from './animate.js';
 import { api } from './api.js';
 import { renderColumnView, renderPreviewColumnView, updateColumnSelectionClasses } from './columnView.js';
 import { syncDetailPanel, updateStats } from './detail.js';
-import { toElement } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
 import { renderSearchExtraRows } from './searchExtraRows.js';
 import type { SyncedTicketInfo,Ticket  } from './state.js';
@@ -107,7 +107,7 @@ export function renderTicketList() {
     }
   }
 
-  const container = document.getElementById('ticket-list')!;
+  const container = byId('ticket-list');
   const scrollTop = container.scrollTop;
   container.innerHTML = '';
   container.classList.remove('ticket-list-columns');
@@ -135,12 +135,12 @@ export function renderTicketList() {
 
   if (isPreview) {
     // Hide batch toolbar in preview mode
-    const toolbar = document.getElementById('batch-toolbar');
+    const toolbar = byIdOrNull('batch-toolbar');
     if (toolbar) toolbar.style.display = 'none';
     updateSelectionClasses();
     syncDetailPanel();
   } else {
-    const toolbar = document.getElementById('batch-toolbar');
+    const toolbar = byIdOrNull('batch-toolbar');
     if (toolbar) toolbar.style.display = '';
     // Restore in-progress title edit and cursor position (HS-199, HS-1454, HS-2113)
     if (focusedId != null && editingValue != null) {
@@ -188,24 +188,24 @@ function updateBatchToolbar() {
   const hasSelection = count > 0;
   const isTrash = state.view === 'trash';
 
-  const selectAll = document.getElementById('batch-select-all') as HTMLInputElement;
+  const selectAll = byId<HTMLInputElement>('batch-select-all');
   selectAll.checked = total > 0 && count === total;
   selectAll.indeterminate = count > 0 && count < total;
 
-  document.getElementById('batch-count')!.textContent = hasSelection ? `${count} selected` : '';
+  byId('batch-count').textContent = hasSelection ? `${count} selected` : '';
 
   const normalControls = ['batch-category', 'batch-priority', 'batch-status', 'batch-upnext', 'batch-delete', 'batch-more'];
   for (const id of normalControls) {
-    const el = document.getElementById(id) as HTMLElement;
+    const el = byId(id);
     el.style.display = isTrash ? 'none' : '';
     if (!isTrash) (el as HTMLButtonElement | HTMLSelectElement).disabled = !hasSelection;
   }
 
-  let restoreBtn = document.getElementById('batch-restore') as HTMLButtonElement | null;
-  let emptyBtn = document.getElementById('batch-empty-trash') as HTMLButtonElement | null;
+  let restoreBtn = byIdOrNull<HTMLButtonElement>('batch-restore');
+  let emptyBtn = byIdOrNull<HTMLButtonElement>('batch-empty-trash');
 
   if (isTrash) {
-    const toolbar = document.getElementById('batch-toolbar')!;
+    const toolbar = byId('batch-toolbar');
 
     if (!restoreBtn) {
       restoreBtn = toElement(<button id="batch-restore" className="btn btn-sm">Restore</button>) as HTMLButtonElement;
@@ -217,7 +217,7 @@ function updateBatchToolbar() {
         state.selectedIds.clear();
         void loadTickets();
       });
-      toolbar.insertBefore(restoreBtn, document.getElementById('batch-count'));
+      toolbar.insertBefore(restoreBtn, byId('batch-count'));
     }
     restoreBtn.disabled = !hasSelection;
     restoreBtn.style.display = '';
@@ -229,7 +229,7 @@ function updateBatchToolbar() {
         state.selectedIds.clear();
         void loadTickets();
       });
-      toolbar.insertBefore(emptyBtn, document.getElementById('batch-count'));
+      toolbar.insertBefore(emptyBtn, byId('batch-count'));
     }
     emptyBtn.disabled = total === 0;
     emptyBtn.style.display = '';
@@ -240,7 +240,7 @@ function updateBatchToolbar() {
 
   // Star icon state
   const starIcon = document.querySelector('.batch-star-icon');
-  const starBtn = document.getElementById('batch-upnext') as HTMLButtonElement;
+  const starBtn = byId<HTMLButtonElement>('batch-upnext');
   if (!isTrash && starIcon && hasSelection) {
     const selectedTickets = state.tickets.filter(t => state.selectedIds.has(t.id));
     const allUpNext = selectedTickets.every(t => t.up_next);
