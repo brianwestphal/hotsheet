@@ -46,13 +46,13 @@ function render(rules: readonly TerminalPromptAllowRule[]): void {
     return;
   }
   const wrapper = toElement(
-    <div className={`terminal-prompt-allow-rule-wrapper${enabled ? '' : ' is-disabled'}`}>
-      {rules.map(rule => buildRuleRow(rule))}
-    </div>
+    <div className={`terminal-prompt-allow-rule-wrapper${enabled ? '' : ' is-disabled'}`}></div>
   );
+  for (const rule of rules) wrapper.appendChild(buildRuleRow(rule));
   host.replaceChildren(wrapper);
   wrapper.querySelectorAll<HTMLButtonElement>('[data-delete-rule]').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const id = btn.dataset.deleteRule!;
       btn.disabled = true;
       try { await removeAllowRule(id); }
@@ -62,15 +62,25 @@ function render(rules: readonly TerminalPromptAllowRule[]): void {
 }
 
 function buildRuleRow(rule: TerminalPromptAllowRule) {
+  // HS-8072 — pre-fix the row was a single-line grid that clipped the
+  // question preview to the first character or two ("W..." in the user's
+  // screenshot). The question is the most important field on the row —
+  // it's what the user uses to recognise the rule — so we let it wrap to
+  // up to two lines and make the row clickable to open a read-only
+  // inspector dialog with the full question + tool + choice + creation
+  // date. Editing isn't applicable: rules match by `question_hash`, so
+  // mutating the question would un-match every prompt the rule was
+  // recorded against (cf. permission-allow-rules in §47.4 which DO
+  // support edit).
   const created = formatCreatedAt(rule.created_at);
   const choice = rule.choice_label ?? `choice ${rule.choice_index + 1}`;
   const question = rule.question_preview ?? '(question text not stored — created before HS-7988)';
-  const meta = `→ ${choice}${created !== '' ? ` · ${created}` : ''}`;
-  return (
-    <div className="permission-allow-row">
-      <div className="permission-allow-tool">{rule.parser_id}</div>
-      <div className="permission-allow-pattern" title={question}>{question}</div>
-      <div className="permission-allow-meta">{meta}</div>
+  const row = toElement(
+    <div className="permission-allow-row tpal-rule-row" data-rule-id={rule.id} role="button" tabIndex={0}>
+      <div className="permission-allow-tool tpal-rule-parser">{rule.parser_id}</div>
+      <div className="tpal-rule-question" title={question}>{question}</div>
+      <div className="tpal-rule-choice">{`→ ${choice}`}</div>
+      <div className="tpal-rule-created">{created}</div>
       <button
         className="permission-allow-delete btn btn-sm"
         type="button"
@@ -82,6 +92,76 @@ function buildRuleRow(rule: TerminalPromptAllowRule) {
       </button>
     </div>
   );
+  const openInspector = (): void => { showRuleInspector(rule); };
+  row.addEventListener('click', (e) => {
+    // Don't open the inspector when the click landed on the trash button
+    // — that has its own handler attached in `render`.
+    const targetEl = e.target as HTMLElement | null;
+    if (targetEl !== null && targetEl.closest('[data-delete-rule]') !== null) return;
+    openInspector();
+  });
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openInspector();
+    }
+  });
+  return row;
+}
+
+/**
+ * HS-8072 — read-only inspector dialog. Shows the rule's tool, full
+ * question text (no wrapping limit), chosen option, and creation
+ * timestamp. No edit affordance — rules are immutable once recorded
+ * because their `question_hash` key is derived from the prompt text.
+ */
+function showRuleInspector(rule: TerminalPromptAllowRule): void {
+  document.querySelectorAll('.cmd-editor-overlay.tpal-inspector-overlay').forEach(el => el.remove());
+  const created = formatCreatedAt(rule.created_at);
+  const choice = rule.choice_label ?? `choice ${rule.choice_index + 1}`;
+  const question = rule.question_preview ?? '(question text not stored — created before HS-7988)';
+  const overlay = toElement(
+    <div className="cmd-editor-overlay tpal-inspector-overlay">
+      <div className="cmd-editor-dialog">
+        <div className="cmd-editor-dialog-header">
+          <span>Terminal-prompt allow rule</span>
+          <button className="cmd-editor-close-btn" title="Close" type="button">{'×'}</button>
+        </div>
+        <div className="cmd-editor-dialog-body">
+          <div className="settings-field">
+            <label>Parser</label>
+            <code className="tpal-inspector-value">{rule.parser_id}</code>
+          </div>
+          <div className="settings-field">
+            <label>Question</label>
+            <pre className="tpal-inspector-question">{question}</pre>
+          </div>
+          <div className="settings-field">
+            <label>Auto-response</label>
+            <div className="tpal-inspector-value">{choice}</div>
+          </div>
+          {created !== ''
+            ? <div className="settings-field">
+                <label>Created</label>
+                <div className="tpal-inspector-value">{created}</div>
+              </div>
+            : null}
+        </div>
+        <div className="cmd-editor-dialog-footer">
+          <button className="btn btn-sm tpal-inspector-close-btn" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+  const close = (): void => { overlay.remove(); };
+  overlay.querySelector<HTMLButtonElement>('.cmd-editor-close-btn')!.addEventListener('click', close);
+  overlay.querySelector<HTMLButtonElement>('.tpal-inspector-close-btn')!.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+  };
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(overlay);
 }
 
 function formatCreatedAt(iso: string): string {

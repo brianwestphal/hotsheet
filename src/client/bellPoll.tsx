@@ -255,6 +255,42 @@ const MINIMIZED_TIMEOUT_MS = 2 * 60 * 1000;
  *  server clears the pending entry. */
 const dismissedTerminalPromptKeys = new Set<string>();
 
+/**
+ * HS-8071 — short-TTL guard against a same-prompt re-fire after the
+ * user just answered. The user reported clicking a Claude-numbered
+ * choice, then seeing the "same" popup again moments later — except
+ * the second popup's question hash had drifted (Claude's TUI status-
+ * bar rendering, e.g. `▶▶ accept edits on (shift+tab to cycle)` /
+ * `• high • /effort`, contaminated the captured question region) so
+ * the existing exact-signature dedup in `lastDispatchedPromptSignatures`
+ * didn't catch it. This guard captures the JUST-ANSWERED prompt's
+ * `(parser_id, choice-labels)` shape with a wall-clock timestamp, and
+ * the dispatcher skips any new candidate that matches the shape within
+ * `RECENTLY_ANSWERED_TTL_MS`. Choice labels are normalised (trim +
+ * lowercase) so trivial whitespace/case differences in re-detected
+ * choices don't defeat the match. The TTL is short enough that a
+ * legitimate follow-up prompt with the same shape (e.g. Claude asks
+ * the SAME question again 5 s later) still surfaces — but long enough
+ * that the post-response redraw window (≤ a few hundred ms in
+ * practice) reliably falls inside it.
+ */
+const recentlyAnsweredPrompts = new Map<string, {
+  parserId: string;
+  choiceShape: string; // pipe-joined normalised choice labels
+  answeredAtMs: number;
+}>();
+const RECENTLY_ANSWERED_TTL_MS = 3000;
+
+function buildChoiceShape(match: MatchResult): string {
+  if (match.shape === 'numbered') {
+    return match.choices.map(c => c.label.trim().toLowerCase()).join('|');
+  }
+  if (match.shape === 'yesno') {
+    return `yesno:${match.yesIsCapital ? 'Y' : 'y'}/${match.noIsCapital ? 'N' : 'n'}`;
+  }
+  return ''; // generic shape — can't dedup by choices
+}
+
 function dispatchPendingPrompts(state: BellStateMap): void {
   // Walk every project's pendingPrompts. Build the set of currently-live
   // (secret, terminalId) keys so we can prune entries from
@@ -276,6 +312,24 @@ function dispatchPendingPrompts(state: BellStateMap): void {
       if (match.shape === 'generic') continue;
       const sig = match.signature;
       if (lastDispatchedPromptSignatures.get(key) === sig) continue;
+      // HS-8071 — same-shape re-fire guard. If the user answered a
+      // (parser_id, choice-labels)-equivalent prompt for this terminal
+      // within the last `RECENTLY_ANSWERED_TTL_MS`, skip — a transient
+      // post-response redraw can re-detect the same question with a
+      // contaminated hash (Claude TUI status-bar bleed) and surface a
+      // duplicate popup the user has effectively already answered.
+      const recentlyAnswered = recentlyAnsweredPrompts.get(key);
+      if (recentlyAnswered !== undefined) {
+        if (Date.now() - recentlyAnswered.answeredAtMs >= RECENTLY_ANSWERED_TTL_MS) {
+          recentlyAnsweredPrompts.delete(key);
+        } else if (
+          recentlyAnswered.parserId === match.parserId
+          && recentlyAnswered.choiceShape === buildChoiceShape(match)
+          && recentlyAnswered.choiceShape !== '' // never match generic shape
+        ) {
+          continue;
+        }
+      }
       // HS-8067 — user explicitly clicked "No response needed" for this
       // (secret, terminalId). Skip the overlay even though the server-
       // side pending entry is still alive. The dismissal is cleared when
@@ -336,6 +390,23 @@ export function _resetDispatchStateForTesting(): void {
   for (const rec of minimizedTerminalPrompts.values()) clearTimeout(rec.timeoutId);
   minimizedTerminalPrompts.clear();
   dismissedTerminalPromptKeys.clear();
+  recentlyAnsweredPrompts.clear();
+}
+
+/** Test-only: peek the recently-answered bookkeeping. */
+export function _recentlyAnsweredPromptsForTesting(): ReadonlyMap<string, { parserId: string; choiceShape: string; answeredAtMs: number }> {
+  return new Map(recentlyAnsweredPrompts);
+}
+
+/** Test-only: stamp a recently-answered entry directly. Bypass `onSend`
+ *  so unit tests can drive the dispatch-skip behaviour without spinning
+ *  up the full overlay. */
+export function _markRecentlyAnsweredForTesting(secret: string, terminalId: string, match: MatchResult, answeredAtMs: number): void {
+  recentlyAnsweredPrompts.set(`${secret}::${terminalId}`, {
+    parserId: match.parserId,
+    choiceShape: buildChoiceShape(match),
+    answeredAtMs,
+  });
 }
 
 /** Test-only: peek the minimized-prompt bookkeeping for assertions. */
@@ -376,6 +447,17 @@ function openCrossProjectOverlay(secret: string, terminalId: string, match: Matc
         method: 'POST',
         body: { terminalId, payload },
       }).catch(() => { /* network blip — overlay stays open via the false return */ });
+      // HS-8071 — record the answered prompt's shape so the dispatcher
+      // can skip any same-shape re-fire within the TTL window. Generic
+      // matches set an empty `choiceShape` (which `buildChoiceShape`
+      // produces for the `'generic'` case) so they don't gate any
+      // future prompt — generic-shape detection is heuristic enough
+      // that a wider suppression would be risky.
+      recentlyAnsweredPrompts.set(key, {
+        parserId: match.parserId,
+        choiceShape: buildChoiceShape(match),
+        answeredAtMs: Date.now(),
+      });
       // We optimistically return true so the overlay closes immediately;
       // any real failure surfaces as a follow-up no-response. This
       // matches the prior client-detector behaviour (`onSend` was wired to

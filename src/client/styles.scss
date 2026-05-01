@@ -3748,21 +3748,40 @@ body.terminal-dashboard-active {
 
 // --- Permission Popup (anchored to project tab, both active and non-active; HS-6536) ---
 
+// HS-8074 — when the consumer migrated to `permissionDialogShell.tsx` in
+// HS-8069, the outer `.permission-popup` kept its pre-migration `display:
+// flex; align-items: flex-start; gap: 10px;` row-layout — that shape was
+// designed for the OLD structure (`tool-chip` + `permission-popup-body
+// column` + `actions`). After the shell migration the children are
+// vertical sections (`.dialog-shell-header` / `-body` / `-actions` /
+// `-affordance` / `-links`), so the row-flex squeezed every section into
+// its own narrow column and the curl-command preview wrapped
+// vertically. Fix: column-flex + sensible gap, mirroring the
+// `.terminal-prompt-overlay` block. `width: max-content` lets the popup
+// size to its widest child up to the existing `max-width` cap (instead
+// of collapsing to its narrowest).
 .permission-popup {
   position: fixed;
   z-index: 3000;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  flex-direction: column;
+  gap: 6px;
   padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   font-size: 12px;
+  width: max-content;
   max-width: min(640px, calc(100vw - 16px));
 }
 
+// HS-8074 — `.permission-popup-body` was the pre-HS-8069 inner column
+// that wrapped everything below the tool chip. The shell migration
+// replaced it with `.dialog-shell-body` (slot-based). The class survives
+// in the SCSS but is no longer rendered by `permissionOverlay.tsx`. Keep
+// the rule for legacy markup compatibility (no harm) but don't rely on
+// it for layout.
 .permission-popup-body {
   display: flex;
   flex-direction: column;
@@ -9222,6 +9241,88 @@ label.detail-details-label {
   &.is-disabled {
     opacity: 0.55;
     pointer-events: none;
+  }
+}
+
+// HS-8072 — restyle the legacy single-line `.permission-allow-row` grid
+// for the terminal-prompt allow list specifically, so the question
+// preview wraps to 2 lines instead of being clipped to the first
+// character ("W..." in the bug report screenshot). The grid template
+// gives the question the full second column, with choice / created /
+// trash on the right; on narrow widths the row reflows the bottom
+// metadata under the question. Click-to-open the inspector for the full
+// (unclipped) text — pointer + focus styling matches
+// `.permission-allow-rule-row` so the two surfaces feel like siblings.
+.tpal-rule-row {
+  // Override the legacy 4-column grid from `.permission-allow-row` so the
+  // question can wrap and the choice/created/trash sit on the right.
+  grid-template-columns: minmax(80px, auto) 1fr auto auto auto;
+  grid-template-rows: auto;
+  align-items: center;
+  cursor: pointer;
+  &:hover { background: var(--bg-hover); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+}
+
+.tpal-rule-parser {
+  align-self: start;
+  // Inherits font + size from `.permission-allow-tool`.
+}
+
+.tpal-rule-question {
+  font-size: 12px;
+  color: var(--text);
+  // Wrap to at most 2 lines, ellipsis any overflow past that. `display:
+  // -webkit-box` is the only widely-supported way to clamp by line in
+  // CSS today; both Tauri's WKWebView and modern Chromium honour it.
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  // Allow the row to shrink without forcing the question column to
+  // overflow horizontally.
+  min-width: 0;
+}
+
+.tpal-rule-choice {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tpal-rule-created {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+// HS-8072 — read-only inspector dialog body (`pre` so newlines in the
+// question render as authored). Reuses the cmd-editor overlay shell.
+.tpal-inspector-overlay {
+  .tpal-inspector-question {
+    margin: 0;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 12px;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 40vh;
+    overflow: auto;
+  }
+  .tpal-inspector-value {
+    color: var(--text);
+    font-size: 12px;
+  }
+  code.tpal-inspector-value {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    background: var(--bg-secondary);
+    padding: 2px 6px;
+    border-radius: 3px;
   }
 }
 

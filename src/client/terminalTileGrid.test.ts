@@ -18,8 +18,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  _getEntryForTesting,
   _inspectStackForTesting,
   _resetForTesting,
+  checkout,
   entryCount,
 } from './terminalCheckout.js';
 import { mountTileGrid, type TileEntry, type TileGridHandle } from './terminalTileGrid.js';
@@ -206,6 +208,76 @@ describe('terminalTileGrid — preview bg cascade (HS-8059)', () => {
     // never gets written so the SCSS `--bg` fallback paints the placeholder
     // frame.
     expect(preview!.style.backgroundColor).toBe('');
+    grid.dispose();
+  });
+
+  /**
+   * HS-8073 — when the dedicated full-screen view is bumped down by a
+   * competing checkout consumer (e.g. the quit-confirm preview pane
+   * claiming the same `(secret, terminalId)` for its preview frame) and
+   * subsequently restored (user cancels the quit dialog), the dedicated
+   * view's `pane` dimensions never changed during the round-trip — so the
+   * `bodyResizeObserver` never refires `runFit()`, leaving the term
+   * stuck at whatever (smaller) size the bumping consumer last applied.
+   * Pre-fix, the user saw their full-screen terminal with all output
+   * centered inside an oversized empty frame.
+   *
+   * The fix is a per-consumer `onRestoredToTop` callback on the
+   * dedicated view's `checkout()` call that schedules a refit via
+   * `requestAnimationFrame(runFit)`. This test pins that contract: after
+   * a competing consumer pushes onto the stack and releases, a new
+   * `requestAnimationFrame` is scheduled inside the release flow — the
+   * structural signal that the dedicated view re-fitted to its pane.
+   */
+  it('refits on restore after a competing consumer pushes/releases (HS-8073)', async () => {
+    const grid = mount([makeEntry('s', 't1')]);
+    // Trigger dedicated view via dblclick on the tile.
+    const tile = document.querySelector('.terminal-dashboard-tile');
+    expect(tile).not.toBeNull();
+    tile!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    // Stack now has tile (depth 1) + dedicated view (depth 2) = 2 consumers.
+    const snap1 = _inspectStackForTesting().find(e => e.key === 's::t1');
+    expect(snap1?.stackDepth).toBe(2);
+
+    // Push a competing consumer at smaller dims (simulating the quit-confirm
+    // preview pane). The entry's lastApplied flips to the smaller size.
+    const previewMount = document.createElement('div');
+    document.body.appendChild(previewMount);
+    const competing = checkout({
+      projectSecret: 's', terminalId: 't1',
+      cols: 40, rows: 12,
+      mountInto: previewMount,
+    });
+    const snap2 = _inspectStackForTesting().find(e => e.key === 's::t1');
+    expect(snap2?.stackDepth).toBe(3);
+    expect(snap2?.lastAppliedCols).toBe(40);
+    expect(snap2?.lastAppliedRows).toBe(12);
+
+    // Spy on `fit.fit` (the FitAddon shared on the entry — both the
+    // tile and the dedicated view's checkout handles point at it). The
+    // dedicated view's `onRestoredToTop` schedules a `runFit()` which
+    // calls `fit.fit()`. We flush via `await new Promise(setTimeout)`
+    // so the rAF-deferred `runFit()` actually runs.
+    const entry = _getEntryForTesting('s', 't1');
+    expect(entry).not.toBeNull();
+    let fitCalls = 0;
+    const origFit = entry!.fit.fit.bind(entry!.fit);
+    entry!.fit.fit = () => { fitCalls++; return origFit(); };
+    competing.release();
+    // Drain the rAF the dedicated view scheduled in onRestoredToTop.
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    entry!.fit.fit = origFit;
+
+    // After release, dedicated view is back on top of the stack.
+    const snap3 = _inspectStackForTesting().find(e => e.key === 's::t1');
+    expect(snap3?.stackDepth).toBe(2);
+    // Pre-fix, the dedicated view's checkout had no `onRestoredToTop`,
+    // so `fit.fit()` was never called on restore — the term stayed at
+    // the bumping consumer's last-applied dims. Post-fix the dedicated
+    // view's `onRestoredToTop` schedules `runFit()` (which calls
+    // `fit.fit()`) via rAF.
+    expect(fitCalls).toBeGreaterThan(0);
+
     grid.dispose();
   });
 

@@ -1384,12 +1384,36 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // `fit.fit()` runs in the next frame to resolve real dims from the
     // pane's measured layout, then `applyResizeIfChanged` inside
     // checkout fires the real resize via `term.onResize` below.
+    // HS-8073 — when the dedicated view is bumped down (e.g. quit-confirm
+    // preview pushes the same terminal onto the LIFO stack) and later
+    // restored (cancel), the live xterm reparents back into `pane` but
+    // the pane's own dimensions never changed during the round-trip, so
+    // the `bodyResizeObserver` below doesn't fire and the term keeps the
+    // bumping consumer's last-applied size (e.g. the quit-dialog's
+    // smaller preview dims). The result the user sees is centered
+    // contents inside an oversized empty frame. We need a refit on
+    // restore to reconverge the term to the dedicated pane's actual
+    // dims. `runFit` is hoisted as a `let` so the `onRestoredToTop`
+    // closure (passed into `checkout()` synchronously below, before the
+    // `runFit` const assignment) can call it.
+    let runFit: () => void = () => { /* assigned below before any restore */ };
     const handle = checkout({
       projectSecret: tile.entry.secret,
       terminalId: tile.entry.id,
       cols: TILE_INITIAL_COLS,
       rows: TILE_INITIAL_ROWS,
       mountInto: pane,
+      onRestoredToTop() {
+        // HS-8073 — defer one frame so the pane has a current layout
+        // box (the xterm element just reparented in synchronously, but
+        // FitAddon reads `term.element.parentElement` dims and we want
+        // the browser to have settled any same-frame layout shift the
+        // reparent might have triggered). `runFit()` calls `fit.fit()`
+        // which calls `term.resize(realCols, realRows)`; that fires
+        // `term.onResize` below which routes through `handle.resize`
+        // and updates both `lastApplied` and the server PTY size.
+        requestAnimationFrame(() => { runFit(); });
+      },
     });
     const term = handle.term;
     const fit = handle.fit;
@@ -1413,7 +1437,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       return true;
     });
 
-    const runFit = (): void => {
+    runFit = (): void => {
       try {
         fit.fit();
         // HS-8042 — propagate the fit() result to the checkout entry's

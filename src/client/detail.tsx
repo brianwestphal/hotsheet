@@ -87,9 +87,19 @@ export function bindDetailDetailsRenderToggle(): void {
   // intercepted here, so we don't accidentally swallow target=_blank
   // navigation — we only swap modes.
   rendered.addEventListener('click', (e) => {
+    // HS-8062 — defense-in-depth: skip edit-mode entry when the click
+    // landed on a `.ticket-ref` (or any descendant). Previously this
+    // relied on the rendered anchor's `href` being non-null, which only
+    // worked once `loadTicketPrefixes()` resolved AND `renderDetailsMarkdown`
+    // ran again afterward. The explicit `.ticket-ref` ancestor check
+    // catches the case before linkify wraps the text in an anchor — the
+    // capture-phase global handler in `ticketRefDialog.tsx` is the
+    // primary defence; this is the safety net.
+    const targetEl = e.target as HTMLElement | null;
+    if (targetEl !== null && targetEl.closest('.ticket-ref') !== null) return;
     // Let internal links navigate normally.
-    const a = (e.target as HTMLElement).closest('a');
-    if (a !== null && a.getAttribute('href') !== null) return;
+    const a = targetEl?.closest('a');
+    if (a !== null && a !== undefined && a.getAttribute('href') !== null) return;
     setDetailsEditing(true);
   });
   // Tab-focus also enters edit mode so keyboard users can edit.

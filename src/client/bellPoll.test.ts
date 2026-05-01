@@ -23,7 +23,9 @@ import {
   _activeOverlayKeyForTesting,
   _dismissedTerminalPromptKeysForTesting,
   _dispatchPendingPromptsForTesting,
+  _markRecentlyAnsweredForTesting,
   _minimizedTerminalPromptsForTesting,
+  _recentlyAnsweredPromptsForTesting,
   _resetDispatchStateForTesting,
   type BellStateMap,
   reopenMinimizedTerminalPromptForSecret,
@@ -406,5 +408,98 @@ describe('Minimize / No-response-needed dispatcher state (HS-8067)', () => {
 
     _dispatchPendingPromptsForTesting(new Map());
     expect(_minimizedTerminalPromptsForTesting().size).toBe(0);
+  });
+});
+
+/**
+ * HS-8071 — recently-answered guard. The user reported a same-prompt
+ * re-fire after answering: clicking a Claude-numbered choice, then
+ * seeing the popup again moments later — except the second popup's
+ * question hash had drifted (Claude TUI status-bar lines bled into the
+ * captured question region) so the existing exact-signature dedup in
+ * `lastDispatchedPromptSignatures` didn't catch it. The guard captures
+ * (parser_id, choice-shape) at answer time and the dispatcher skips
+ * any same-shape candidate within `RECENTLY_ANSWERED_TTL_MS`.
+ */
+describe('recently-answered guard (HS-8071)', () => {
+  it('skips a same-shape candidate within the TTL even when the signature drifted', () => {
+    const original = makeNumbered('claude-numbered:abcd1234:0');
+    // User just answered — stamp the bookkeeping at "now".
+    _markRecentlyAnsweredForTesting('sec-a', 'tA', original, Date.now());
+    // Server re-detects the same prompt with a different hash (Claude
+    // TUI status-bar contamination) — same parser_id, same choice
+    // labels, just a different question_hash inside the signature.
+    const driftedSig = makeNumbered('claude-numbered:99999999:0');
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: driftedSig },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    // Pre-fix the dispatcher would have surfaced a new overlay for the
+    // drifted signature. Post-fix the guard suppresses it.
+    expect(document.querySelector('.terminal-prompt-overlay')).toBeNull();
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+  });
+
+  it('does NOT skip when the choice shape differs (a genuinely different prompt is allowed through)', () => {
+    const justAnswered = makeNumbered('sig-A');
+    _markRecentlyAnsweredForTesting('sec-a', 'tA', justAnswered, Date.now());
+    // Different choice list — this is a follow-up question, not the
+    // same prompt re-fired.
+    const followUp: NumberedMatch = {
+      ...makeNumbered('sig-B'),
+      choices: [
+        { index: 0, label: 'Option A', highlighted: true },
+        { index: 1, label: 'Option B', highlighted: false },
+      ],
+    };
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: followUp },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    expect(document.querySelector('.terminal-prompt-overlay')).not.toBeNull();
+  });
+
+  it('expires the entry after the TTL — an identical prompt that arrives later DOES surface', () => {
+    const original = makeNumbered('sig-A');
+    // Stamp it 10 seconds in the past — well past the 3-second TTL.
+    _markRecentlyAnsweredForTesting('sec-a', 'tA', original, Date.now() - 10_000);
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-B') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    expect(document.querySelector('.terminal-prompt-overlay')).not.toBeNull();
+    // And the stale entry was pruned.
+    expect(_recentlyAnsweredPromptsForTesting().has('sec-a::tA')).toBe(false);
+  });
+
+  it('does NOT cross-bleed across (secret, terminalId) — answering on project A leaves project B unguarded', () => {
+    const justAnswered = makeNumbered('sig-A');
+    _markRecentlyAnsweredForTesting('sec-a', 'tA', justAnswered, Date.now());
+    const state = buildState([
+      { secret: 'sec-b', terminalId: 'tB', match: makeNumbered('sig-B') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    // The B project's prompt has the same shape but a different key —
+    // surfaces normally.
+    expect(document.querySelector('.terminal-prompt-overlay')).not.toBeNull();
+  });
+
+  it('records the answered shape when the user clicks a numbered choice', () => {
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-A') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    // Click the highlighted choice — this fires `onSend`, which the
+    // overlay calls before tearing down. Pre-click bookkeeping is empty.
+    expect(_recentlyAnsweredPromptsForTesting().size).toBe(0);
+    const firstChoice = document.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice');
+    expect(firstChoice).not.toBeNull();
+    firstChoice!.click();
+    // After the click, the recently-answered map should have one entry
+    // with the parser_id + choice-shape captured.
+    const recorded = _recentlyAnsweredPromptsForTesting().get('sec-a::tA');
+    expect(recorded).toBeDefined();
+    expect(recorded?.parserId).toBe('claude-numbered');
+    expect(recorded?.choiceShape).toBe('i am using this for local development|exit');
   });
 });

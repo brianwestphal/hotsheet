@@ -193,7 +193,16 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
 
     // Click to edit
     {
-      entry.addEventListener('click', () => {
+      entry.addEventListener('click', (e) => {
+        // HS-8062 — defense-in-depth: even though
+        // `bindTicketRefGlobalClickHandler` runs in capture phase + calls
+        // `stopPropagation`, an explicit early-exit here keeps the click
+        // confined to the dialog when the global handler ever fails to
+        // intercept (e.g. a future refactor changes ordering, or a real-
+        // browser quirk we don't see in happy-dom). Pre-fix the user
+        // reported notes both opening the reader AND entering edit mode
+        // on the same click — this guard fires regardless of upstream.
+        if ((e.target as HTMLElement | null)?.closest('.ticket-ref') !== null) return;
         const textEl = entry.querySelector('.note-text') as HTMLElement;
         if (entry.querySelector('.note-edit-area')) return;
         // HS-7997 — explicit `spellcheck=true` so notes get system spell
