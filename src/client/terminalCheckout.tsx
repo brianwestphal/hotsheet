@@ -306,33 +306,7 @@ function attachWebSocketToEntry(entry: StackEntry): void {
           }
         }
         if (msg.type === 'history' && typeof msg.bytes === 'string') {
-          // Server-side scrollback replay (HS-8031 §54.3.3 — the server's
-          // attach() returns `history` and the WebSocket handler emits a
-          // `history` control message before live data). The bytes are
-          // base64-encoded by the server.
-          //
-          // HS-8042 — when the message also carries the dims at which
-          // the history was captured (`cols` + `rows`), resize the term
-          // FIRST and write the bytes SECOND so the historical content
-          // reflows correctly (otherwise xterm would word-wrap at the
-          // current term dims, mangling box-drawing TUI output that was
-          // captured at different dims). Mirrors what
-          // `terminalReplay.ts::replayHistoryToTerm` did for the per-
-          // tile WS handler before the migration. We don't update the
-          // entry's `lastApplied` bookkeeping here — the consumer's own
-          // resize path (e.g. dedicated's `fit.fit()` echo via
-          // `term.onResize` → `handle.resize`) restores the consumer's
-          // intended dims after the bytes land.
-          try {
-            if (typeof msg.cols === 'number' && typeof msg.rows === 'number'
-                && msg.cols > 0 && msg.rows > 0) {
-              try { entry.term.resize(msg.cols, msg.rows); } catch { /* term disposed */ }
-            }
-            const binary = atob(msg.bytes);
-            const buf = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
-            entry.term.write(buf);
-          } catch { /* malformed history — drop */ }
+          applyHistoryReplay(entry, msg);
         }
       } catch { /* malformed JSON — ignore */ }
     }
@@ -358,6 +332,69 @@ function attachWebSocketToEntry(entry: StackEntry): void {
       attachWebSocketToEntry(entry);
     });
   });
+}
+
+/**
+ * HS-8064 — server-side scrollback replay. Resize the term to the
+ * capture-time dims (so xterm word-wraps the bytes correctly), write
+ * the bytes, then snap the term back to the consumer's intended dims
+ * (`lastAppliedCols/Rows`, which tracked the consumer's last fit-to-pane
+ * resize before this history replay started).
+ *
+ * The capture-time `term.resize(...)` fires xterm's `onResize` event,
+ * which in the drawer's wiring (`terminal.tsx` line 1051) echoes
+ * through `handle.resize` → `applyResizeIfChanged`. That echo updates
+ * `lastApplied` to the capture-time dims and sends a WS resize frame
+ * for them — fine while we're synchronous-mid-replay, because the
+ * second `term.resize(targetCols, targetRows)` below restores the
+ * pre-replay snapshot dims AND fires another onResize echo that brings
+ * `lastApplied` and the server PTY back to the consumer's intended
+ * dims. So we capture the snapshot BEFORE any resize fires.
+ *
+ * Pre-HS-8064 design assumed the consumer's `term.onResize → handle.resize`
+ * echo would bounce the term back automatically after the synthetic
+ * resize — but xterm's onResize fires with the SYNTHETIC capture-time
+ * dims, not the consumer's intended dims, so the echo just acknowledges
+ * the capture-time resize and never restores the pane size. Result:
+ * term stuck at capture-time dims inside the drawer pane (e.g. 80×24
+ * inside a pane that fit 100×30), the visible scrollback never reflowed
+ * to fit, leaving a band of empty pane outside xterm's canvas until the
+ * user manually dragged the drawer to re-trigger fit.
+ *
+ * Exported for the regression test.
+ */
+export function applyHistoryReplay(
+  entry: StackEntry,
+  msg: { bytes?: string; cols?: number; rows?: number },
+): void {
+  if (typeof msg.bytes !== 'string') return;
+  try {
+    const targetCols = entry.lastAppliedCols;
+    const targetRows = entry.lastAppliedRows;
+    if (typeof msg.cols === 'number' && typeof msg.rows === 'number'
+        && msg.cols > 0 && msg.rows > 0) {
+      try { entry.term.resize(msg.cols, msg.rows); } catch { /* term disposed */ }
+    }
+    const binary = atob(msg.bytes);
+    const buf = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
+    entry.term.write(buf);
+    // Snap term back to the consumer's intended dims. xterm reflows the
+    // just-written scrollback to the consumer's pane width. The
+    // synthetic `term.onResize` echo this fires also brings `lastApplied`
+    // and the server PTY back to the consumer's dims via the asymmetric
+    // gate in `applyResizeIfChanged`.
+    if (entry.term.cols !== targetCols || entry.term.rows !== targetRows) {
+      try { entry.term.resize(targetCols, targetRows); } catch { /* term disposed */ }
+    }
+  } catch { /* malformed history — drop */ }
+}
+
+/** **TEST ONLY** — return the entry for `(secret, terminalId)` so the
+ *  HS-8064 history-replay test can drive `applyHistoryReplay` against
+ *  a real entry without standing up a WebSocket. */
+export function _getEntryForTesting(secret: string, terminalId: string): StackEntry | null {
+  return entries.get(entryKey(secret, terminalId)) ?? null;
 }
 
 /** If `(cols, rows)` differs from the term's actual current dims, fire

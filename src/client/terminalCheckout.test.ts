@@ -14,8 +14,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  _getEntryForTesting,
   _inspectStackForTesting,
   _resetForTesting,
+  applyHistoryReplay,
   checkout,
   entryCount,
 } from './terminalCheckout.js';
@@ -557,6 +559,124 @@ describe('checkout — HS-8042 handle.fit + handle.resize additions', () => {
     expect(termResize).not.toHaveBeenCalled();
     expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(61);
     expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(48);
+
+    h.release();
+  });
+});
+
+/**
+ * HS-8064 — server-side scrollback replay (`history` control message)
+ * resizes the term to the capture-time dims so xterm wraps the bytes
+ * correctly, but pre-fix never restored the term to the consumer's
+ * intended dims afterwards. The original HS-8042 design relied on the
+ * consumer's `term.onResize → handle.resize` echo to bounce the term
+ * back, but xterm's onResize fires with the SYNTHETIC capture-time
+ * dims, not the consumer's intended dims, so the echo just acknowledged
+ * the capture-time resize and never restored the pane size — the term
+ * stayed stuck at capture-time dims (e.g. 80×24 from a server-side
+ * scrollback snapshot) inside a drawer pane that fit (100×30), the
+ * scrollback never reflowed to fit, leaving the bottom-and-right of
+ * the pane empty until the user manually dragged the drawer to
+ * re-trigger fit.
+ *
+ * Fix: capture `lastAppliedCols/Rows` (the consumer's intended dims)
+ * BEFORE the synthetic resize, and re-apply AFTER the bytes write so
+ * xterm reflows the just-replayed scrollback to fit the consumer's
+ * pane.
+ */
+describe('applyHistoryReplay — restores consumer dims after replay (HS-8064)', () => {
+  it('writes capture-time bytes then snaps back to the consumer pane dims', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+
+    // Consumer fits the pane and resizes to (120, 40). lastApplied
+    // tracks the consumer's intended dims.
+    h.resize(120, 40);
+    expect(h.term.cols).toBe(120);
+    expect(h.term.rows).toBe(40);
+    expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(120);
+    expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(40);
+
+    // Wire the drawer-style `term.onResize → handle.resize` echo so
+    // synthetic resizes inside applyHistoryReplay flow through the
+    // same `applyResizeIfChanged` gate the production code uses.
+    h.term.onResize(({ cols, rows }) => h.resize(cols, rows));
+
+    // Server emits `history` carrying capture-time dims (80×24) and a
+    // base64-encoded payload — simulate via a single space character
+    // to keep the test surface minimal (real bytes can be anything).
+    const entry = _getEntryForTesting('s', 't');
+    expect(entry).not.toBeNull();
+    applyHistoryReplay(entry!, { bytes: btoa(' '), cols: 80, rows: 24 });
+
+    // Post-replay: term is back at consumer dims (120×40) — xterm
+    // reflowed the just-written scrollback to fit. lastApplied also
+    // back at consumer dims via the second onResize echo.
+    expect(h.term.cols).toBe(120);
+    expect(h.term.rows).toBe(40);
+    expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(120);
+    expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(40);
+
+    h.release();
+  });
+
+  it('no-ops on malformed history (missing bytes)', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    h.resize(120, 40);
+
+    const termResize = vi.spyOn(h.term, 'resize');
+    const entry = _getEntryForTesting('s', 't');
+    applyHistoryReplay(entry!, { cols: 80, rows: 24 } as { bytes?: string; cols?: number; rows?: number });
+    expect(termResize).not.toHaveBeenCalled();
+    expect(h.term.cols).toBe(120);
+    expect(h.term.rows).toBe(40);
+
+    h.release();
+  });
+
+  it('skips the synthetic capture resize when cols/rows are missing or zero', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    h.resize(120, 40);
+    h.term.onResize(({ cols, rows }) => h.resize(cols, rows));
+
+    const termResize = vi.spyOn(h.term, 'resize');
+    const entry = _getEntryForTesting('s', 't');
+    // Only bytes, no dims — write at current term dims, no resize.
+    applyHistoryReplay(entry!, { bytes: btoa(' ') });
+    expect(termResize).not.toHaveBeenCalled();
+    // Term stays at consumer dims; lastApplied unchanged.
+    expect(h.term.cols).toBe(120);
+    expect(h.term.rows).toBe(40);
+    expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(120);
+    expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(40);
+
+    h.release();
+  });
+
+  it('captures the snapshot BEFORE the synthetic resize so the onResize echo cannot poison it', () => {
+    // Pin the timing contract: even though the synthetic
+    // `term.resize(captureCols)` fires onResize → handle.resize →
+    // applyResizeIfChanged → mutates `lastAppliedCols`, the restore
+    // step at the end of applyHistoryReplay uses the snapshot taken
+    // BEFORE that mutation, so the term snaps back to the consumer's
+    // dims, not to the capture-time dims.
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    h.resize(120, 40);
+    h.term.onResize(({ cols, rows }) => h.resize(cols, rows));
+
+    const entry = _getEntryForTesting('s', 't');
+    applyHistoryReplay(entry!, { bytes: btoa(' '), cols: 60, rows: 20 });
+
+    // Sanity: term + lastApplied both back at consumer dims, NOT at
+    // 60×20 (which is what they'd be if the snapshot had been taken
+    // AFTER the synthetic resize).
+    expect(h.term.cols).toBe(120);
+    expect(h.term.rows).toBe(40);
+    expect(_inspectStackForTesting()[0].lastAppliedCols).toBe(120);
+    expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(40);
 
     h.release();
   });
