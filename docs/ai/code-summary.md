@@ -337,7 +337,7 @@ When `IntersectionObserver` is undefined (some test envs without a polyfill), th
 
 All API calls require header `X-Hotsheet-Secret: <settings.secret>` for non-localhost or mutating requests. Mutation requests may include `X-Hotsheet-User-Action: true` to bump `last_read_at` (controls the unread dot).
 
-**Tickets:** `GET /api/tickets` (filters: category, priority, status, up_next, search, sort_by, sort_dir; composite status: `open`, `non_verified`, `active`); `POST /api/tickets`; `GET|PATCH|DELETE /api/tickets/:id`; `DELETE /api/tickets/:id/hard`; `POST /:id/restore`; `POST /:id/up-next`; `POST /api/tickets/batch`; `POST /api/tickets/duplicate`; `POST /api/tickets/query` (custom views); **`GET /api/tickets/prefixes`** (HS-8036 — distinct ticket-number prefixes for the link-detection regex); **`GET /api/tickets/by-number/:number`** (HS-8036 — ticket lookup by `ticket_number` for the stacking ref dialog).
+**Tickets:** `GET /api/tickets` (filters: category, priority, status, up_next, search, sort_by, sort_dir, **`include_backlog`**, **`include_archive`** — HS-7756; composite status: `open`, `non_verified`, `active`); `POST /api/tickets`; `GET|PATCH|DELETE /api/tickets/:id`; `DELETE /api/tickets/:id/hard`; `POST /:id/restore`; `POST /:id/up-next`; `POST /api/tickets/batch`; `POST /api/tickets/duplicate`; `POST /api/tickets/query` (custom views); **`GET /api/tickets/search-counts`** (HS-7756 — backlog + archive match counts for the "Include …" rows); **`GET /api/tickets/prefixes`** (HS-8036 — distinct ticket-number prefixes for the link-detection regex); **`GET /api/tickets/by-number/:number`** (HS-8036 — ticket lookup by `ticket_number` for the stacking ref dialog); **`GET|POST|PATCH|DELETE /api/tickets/:id/feedback-drafts[/:draftId]`** (HS-7599 — local-only feedback-dialog drafts).
 
 **Notes:** `PUT /api/tickets/:id/notes-bulk`, `PATCH|DELETE /api/tickets/:id/notes/:noteId`.
 
@@ -353,13 +353,17 @@ All API calls require header `X-Hotsheet-Secret: <settings.secret>` for non-loca
 
 **Shell:** `POST /api/shell/exec`, `POST /api/shell/kill`, `GET /api/shell/running`.
 
-**Terminal:** `GET /api/terminal/list`, `GET /api/terminal/status`, `POST /api/terminal/restart`, `POST /api/terminal/kill` (body `{ signal?, terminalId? }`), `POST /api/terminal/create`, `POST /api/terminal/destroy`, `GET /api/terminal/foreground-process`, `GET /api/terminal/command-suggestions`. WebSocket upgrade at `/api/terminal/ws?project=<secret>&terminal=<id>`.
+**Terminal:** `GET /api/terminal/list`, `GET /api/terminal/status`, `POST /api/terminal/restart`, `POST /api/terminal/kill` (body `{ signal?, terminalId? }`), `POST /api/terminal/create`, `POST /api/terminal/destroy`, `POST /api/terminal/clear-bell` (HS-6638 §24.3.2), `GET /api/terminal/foreground-process` (HS-7596), `GET /api/terminal/command-suggestions` (HS-7791), `POST /api/terminal/open-cwd` (HS-7262 — opens the OSC 7 cwd in the OS file manager), `POST /api/terminal/prompt-respond` / `POST /api/terminal/prompt-dismiss` / `POST /api/terminal/prompt-resume` (HS-8034 — server-side prompt scanner cross-project surface). WebSocket upgrade at `/api/terminal/ws?project=<secret>&terminal=<id>`.
 
 **Plugins:** `GET /api/plugins`, `GET /api/plugins/ui`, `POST /api/plugins/:id/{action,validate,config,test}`, `PATCH /api/plugins/:id/config`, `POST /api/plugins/sync/manual`, `GET /api/plugins/:id/conflicts`, `POST /api/plugins/:id/conflicts/:cid/resolve`, `PATCH /api/plugins/global-config`, `GET|POST|DELETE /api/plugins/schedules[...]`, `POST /api/plugins/bundled/:id/install`, `GET /api/plugins/:id/image-proxy`.
 
 **Backups:** `GET /api/backups`, `POST /api/backups/restore/:id` (with preview flow).
 
-**Projects (multi-project):** `GET|POST /api/projects`, `DELETE /api/projects/:secret`, `GET /api/projects/:secret`, reorder.
+**Projects (multi-project):** `GET|POST /api/projects`, `DELETE /api/projects/:secret`, `GET /api/projects/:secret`, `POST /api/projects/reorder`, `POST /api/projects/:secret/reveal`, `GET /api/projects/permissions` (long-poll), `GET /api/projects/bell-state` (HS-6638 §24.3.3 — long-poll, includes `pendingPrompts` per HS-8034), `GET /api/projects/channel-status`, `GET /api/projects/quit-summary` (HS-7596 — cross-project foreground-process aggregation for the quit-confirm dialog).
+
+**Git (HS-7598):** `GET /api/git/status` (optional `?files=true` for the popover bucket lists), `POST /api/git/fetch`, `POST /api/git/reveal` (opens a path under the git root in the OS file manager).
+
+**Database (HS-7897 / HS-7899):** `GET /api/db/recovery-status`, `POST /api/db/dismiss-recovery`, `POST /api/db/repair/find-working-backup`, `GET /api/db/repair/pg-resetwal-availability`, `POST /api/db/repair/run-pg-resetwal`.
 
 **Server control:** `POST /api/shutdown`.
 
@@ -429,7 +433,7 @@ All timestamp columns are `TIMESTAMPTZ` (older DBs migrated in place).
 
 - **Layout:** `src/{main.rs,lib.rs}` (minimal stub + app setup), `tauri.conf.json`, `Cargo.toml`, `Entitlements.plist`, `capabilities/{default,remote-localhost}.json`, `icons/`, `resources/` (per-platform CLI launchers), `binaries/` (bundled Node), `server/` (bundled JS + assets).
 - **Sidecar model:** Node.js is packaged as a sidecar because PGLite (WASM) needs filesystem access — single-binary compilation breaks it. Tauri either (a) connects to a pre-started server via `HOTSHEET_SERVER_URL` env, or (b) spawns the sidecar and waits for `running at` on stdout.
-- **Commands exposed to JS:** `quicklook`, `open_folder`, `set_app_icon`, `install_cli`, `check_cli_installed`, `check_for_update`, `install_update`, `get_pending_update`, `request_attention[_once]`, `open_url`, `pick_folder`, `open_project`, `show_native_notification` (HS-7272 — `tauri-plugin-notification` wrapper invoked from `bellPoll.maybeFireNotificationToast` when `document.hidden || !document.hasFocus()` so OSC 9 messages also surface in the OS Notification Center; Tauri permission is primed once from `app.tsx` boot via `requestNativeNotificationPermission()` in `tauriIntegration.tsx`).
+- **Commands exposed to JS:** `quicklook`, `set_app_icon`, `install_cli`, `check_cli_installed`, `check_for_update`, `install_update`, `get_pending_update`, `request_attention[_once]`, `open_url`, `pick_folder`, `open_project`, `confirm_quit` (HS-7596 — second `WindowEvent::CloseRequested` after the JS quit-confirm flow accepted), `show_native_notification` (HS-7272 — `tauri-plugin-notification` wrapper invoked from `bellPoll.maybeFireNotificationToast` when `document.hidden || !document.hasFocus()` so OSC 9 messages also surface in the OS Notification Center; Tauri permission is primed once from `app.tsx` boot via `requestNativeNotificationPermission()` in `tauriIntegration.tsx`).
 - **Icon variants:** 9 `.icns` files in `src-tauri/icons/variants/`; runtime change via `set_app_icon` using `NSApplication.setApplicationIconImage()` on macOS; `Window::set_icon()` on Windows/Linux.
 - **Updates:** GitHub Releases, signed, verified against `plugins.updater.pubkey` in `tauri.conf.json`.
 
