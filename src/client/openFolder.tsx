@@ -80,21 +80,21 @@ function updateFooter(result: BrowseResult) {
 async function openSelectedFolder(path: string) {
   const hotsheetPath = path.endsWith('.hotsheet') ? path : path + '/.hotsheet';
   try {
-    const res = await fetch('/api/projects/register', {
+    // HS-8085 — `api()` already throws on non-2xx with a parsed
+    // `error` field surfaced through the network-error popup, so the
+    // pre-fix manual `if (!res.ok) showErrorPopup(...)` branch
+    // collapses into the catch. Behaviour preserved.
+    const project = await api<ProjectInfo>('/projects/register', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dataDir: hotsheetPath }),
+      body: { dataDir: hotsheetPath },
     });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      showErrorPopup(body.error ?? 'Failed to open folder');
-      return;
-    }
-    const project = await res.json() as ProjectInfo;
     document.getElementById('open-folder-overlay')!.style.display = 'none';
     await refreshProjectTabs();
     await switchProject(project);
   } catch (err) {
+    if (err instanceof Error && err.message !== '') {
+      showErrorPopup(err.message);
+    }
     console.error('Failed to open folder:', err);
   }
 }

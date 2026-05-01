@@ -665,7 +665,18 @@ function createSession(
     hasBeenAttached: false,
     lastOutputAtMs: null,
     lastSpinnerAtMs: null,
-    // Placeholder — replaced immediately below once `state` exists.
+    // HS-8088 — placeholder pattern that's left in place. The scanner
+    // construction below depends on the `state` reference being closed
+    // over by `onMatch`, so we can't assign `promptScanner` before
+    // `state` exists. The two-step (build state with placeholder →
+    // build scanner referencing state → write scanner back into state)
+    // is the cleanest way to thread the closure dependency. Refactoring
+    // to type `promptScanner` as `PromptScanner | null` would force
+    // every reader to non-null-assert (the field is always real by the
+    // time anyone reads it — this function is the only assigner). The
+    // `as unknown as` form documents the placeholder lifetime: the
+    // `unknown` step is the assertion that the reader knows what
+    // they're doing.
     promptScanner: null as unknown as PromptScanner,
     pendingPrompt: null,
   };

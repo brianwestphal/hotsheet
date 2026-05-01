@@ -1,3 +1,4 @@
+import { api, apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
 import { resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
@@ -149,9 +150,7 @@ export function initQuitConfirm(): void {
 export async function runQuitConfirmFlow(): Promise<'proceed' | 'cancel'> {
   let summary: QuitSummary;
   try {
-    const res = await fetch('/api/projects/quit-summary');
-    if (!res.ok) return 'cancel';
-    summary = await res.json() as QuitSummary;
+    summary = await api<QuitSummary>('/projects/quit-summary');
   } catch {
     return 'cancel';
   }
@@ -162,15 +161,14 @@ export async function runQuitConfirmFlow(): Promise<'proceed' | 'cancel'> {
   const choice = await showQuitConfirmDialog(decision.contributing);
   if (choice.outcome === 'proceed' && choice.dontAskAgain) {
     // Persist 'never' for every project that was in the summary.
+    // HS-8085 — `apiWithSecret` is the right helper for cross-project
+    // mutations: each PATCH targets its own project's settings via the
+    // owning secret rather than the active project's.
     await Promise.all(summary.projects.map(async (project) => {
       try {
-        await fetch('/api/file-settings', {
+        await apiWithSecret('/file-settings', project.secret, {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Hotsheet-Secret': project.secret,
-          },
-          body: JSON.stringify({ confirm_quit_with_running_terminals: 'never' }),
+          body: { confirm_quit_with_running_terminals: 'never' },
         });
       } catch { /* best-effort — quit is the user's stronger signal */ }
     }));

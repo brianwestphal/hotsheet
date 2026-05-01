@@ -36,8 +36,10 @@ let projectList: ProjectInfo[] = [];
  */
 export async function initProjectTabs(): Promise<void> {
   try {
-    const res = await fetch('/api/projects');
-    projectList = await res.json() as ProjectInfo[];
+    // HS-8085 — first call before `setActiveProject`, so the api helper
+    // emits a plain GET with no `?project=` query (no active project to
+    // auth against yet). That matches the pre-fix raw-fetch behaviour.
+    projectList = await api<ProjectInfo[]>('/projects');
   } catch {
     projectList = [];
   }
@@ -88,8 +90,7 @@ export async function switchProject(project: ProjectInfo): Promise<void> {
 /** Re-fetch and re-render tabs (e.g., after adding/removing a project). */
 export async function refreshProjectTabs(): Promise<void> {
   try {
-    const res = await fetch('/api/projects');
-    projectList = await res.json() as ProjectInfo[];
+    projectList = await api<ProjectInfo[]>('/projects');
   } catch {
     projectList = [];
   }
@@ -124,8 +125,11 @@ export function closeActiveTab(): void {
 async function removeProject(project: ProjectInfo): Promise<void> {
   if (projectList.length <= 1) return;
   try {
-    const res = await fetch(`/api/projects/${encodeURIComponent(project.secret)}`, { method: 'DELETE' });
-    if (!res.ok) return;
+    // HS-8085 — DELETE auths via the URL `:secret` param, not the
+    // `X-Hotsheet-Secret` header (see `src/routes/projects.ts:90`); the
+    // api helper still adds the active project's secret as the auth
+    // header, which the route ignores. Acceptable.
+    await api(`/projects/${encodeURIComponent(project.secret)}`, { method: 'DELETE' });
     clearPerProjectSessionState(project.secret);
     if (getActiveProject()?.secret === project.secret) {
       const remaining = projectList.filter(p => p.secret !== project.secret);
@@ -140,7 +144,7 @@ async function removeProject(project: ProjectInfo): Promise<void> {
 async function removeOtherProjects(keepProject: ProjectInfo): Promise<void> {
   const toRemove = projectList.filter(p => p.secret !== keepProject.secret);
   for (const p of toRemove) {
-    await fetch(`/api/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
+    await api(`/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
     clearPerProjectSessionState(p.secret);
   }
   if (getActiveProject()?.secret !== keepProject.secret) {
@@ -154,7 +158,7 @@ async function removeProjectsInDirection(project: ProjectInfo, direction: 'left'
   if (idx === -1) return;
   const toRemove = direction === 'left' ? projectList.slice(0, idx) : projectList.slice(idx + 1);
   for (const p of toRemove) {
-    await fetch(`/api/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
+    await api(`/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
     clearPerProjectSessionState(p.secret);
   }
   if (toRemove.some(p => p.secret === getActiveProject()?.secret)) {
@@ -328,9 +332,7 @@ const aliveProjects = new Set<string>();
 /** Called from the long-poll handler to refresh per-project channel status. */
 export async function refreshProjectChannelStatus() {
   try {
-    const res = await fetch('/api/projects/channel-status');
-    if (!res.ok) return;
-    const data = await res.json() as { enabled: boolean; projects: Record<string, boolean> };
+    const data = await api<{ enabled: boolean; projects: Record<string, boolean> }>('/projects/channel-status');
     aliveProjects.clear();
     if (data.enabled) {
       for (const [secret, alive] of Object.entries(data.projects)) {

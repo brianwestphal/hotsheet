@@ -22,8 +22,10 @@ export function renderCategoryList(rebuildCategoryUI: () => void) {
       </div>
     );
 
-    const inputs = row.querySelectorAll('input');
-    const [colorInput, labelInput, shortInput, keyInput, descInput] = inputs as unknown as HTMLInputElement[];
+    // HS-8088 — `querySelectorAll('input')` returns
+    // `NodeListOf<HTMLInputElement>` which is iterable, so destructuring
+    // works without the pre-fix `as unknown as HTMLInputElement[]` cast.
+    const [colorInput, labelInput, shortInput, keyInput, descInput] = row.querySelectorAll('input');
 
     const scheduleSync = () => {
       debouncedCategorySync(rebuildCategoryUI);

@@ -755,8 +755,7 @@ const FLOW_HANDLE_KEY = '__flow_handle__';
 async function fetchProjectSections(): Promise<ProjectSectionData[]> {
   let projects: ProjectInfo[] = [];
   try {
-    const res = await fetch('/api/projects');
-    projects = await res.json() as ProjectInfo[];
+    projects = await api<ProjectInfo[]>('/projects');
   } catch { /* leave empty */ }
 
   const sections: ProjectSectionData[] = [];

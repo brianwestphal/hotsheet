@@ -26,7 +26,14 @@ export interface CommandGroup {
 export type CommandItem = CustomCommand | CommandGroup;
 
 export function isGroup(item: CommandItem): item is CommandGroup {
-  return 'type' in item && (item as unknown as Record<string, unknown>).type === 'group';
+  // HS-8088 — `CommandItem` is `CustomCommand | CommandGroup`. The
+  // `'type' in item` check fully narrows to `CommandGroup` since
+  // `CustomCommand` has no `type` field — no follow-up `=== 'group'`
+  // comparison is needed (and lint flags it as `'group' === 'group'`
+  // always true). Pre-fix this read `(item as unknown as
+  // Record<string, unknown>).type === 'group'` to dodge the narrowing
+  // mismatch the cast had introduced; the cast is gone now.
+  return 'type' in item;
 }
 
 // Predefined color palette for command buttons
@@ -193,7 +200,7 @@ export function bindExperimentalSettings() {
       renderCustomCommandSettings();
     });
 
-    fetch('/api/channel/claude-check').then(r => r.ok ? r.json() : null).then((check: { installed: boolean; version: string | null; meetsMinimum: boolean } | null) => {
+    api<{ installed: boolean; version: string | null; meetsMinimum: boolean }>('/channel/claude-check').catch(() => null).then(check => {
       if (!check || !check.installed) {
         channelCheckbox.disabled = true;
         channelHint.textContent = 'Claude Code not detected. Shell commands are still available.';
@@ -213,7 +220,7 @@ export function bindExperimentalSettings() {
   });
 
   // Load channel enabled state from global config (authoritative source)
-  fetch('/api/global-config').then(r => r.ok ? r.json() as Promise<{ channelEnabled?: boolean }> : null).then(config => {
+  api<{ channelEnabled?: boolean }>('/global-config').catch(() => null).then(config => {
     if (config !== null) {
       const enabled = config.channelEnabled === true;
       channelCheckbox.checked = enabled;

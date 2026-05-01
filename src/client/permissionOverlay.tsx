@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { extractPrimaryValue } from '../permissionAllowRules.js';
-import { api } from './api.js';
+import { api, apiWithSecret } from './api.js';
 import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
 import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
@@ -276,17 +276,19 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     // Include tool/description/input_preview the client already has so that
     // the server-side command-log entry has useful detail even when the
     // respond races ahead of the original permission_request log (HS-6477).
-    void fetch('/api/channel/permission/respond', {
+    // HS-8085 — `apiWithSecret` is the correct helper for cross-project
+    // background-popup responses; sets `X-Hotsheet-Secret` to the
+    // owning project's secret rather than the active project's.
+    void apiWithSecret('/channel/permission/respond', secret, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret },
-      body: JSON.stringify({
+      body: {
         request_id: perm.request_id,
         behavior,
         tool_name: perm.tool_name,
         description: perm.description,
         input_preview: perm.input_preview ?? '',
-      }),
-    });
+      },
+    }).catch(() => { /* network blip — overlay UI already torn down by clearPopupOnly() below */ });
     clearProjectAttention(secret);
     // Also drop any minimized bookkeeping for this request.
     const rec = minimizedRequests.get(perm.request_id);

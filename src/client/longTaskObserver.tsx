@@ -65,6 +65,18 @@ interface LongTaskLog {
   recentInteractions: InteractionEntry[];
 }
 
+/** HS-8088 — DevTools-facing diagnostic helpers attached to `window` at
+ *  init time. Declaring them as a named partial-mixin lets the assignment
+ *  sites use `window as Window & Partial<LongTaskHelpers>` instead of
+ *  the pre-fix `window as unknown as Record<string, unknown>` escape
+ *  hatch — the typed bag tells TS exactly which keys can land on the
+ *  global. */
+interface LongTaskHelpers {
+  __hotsheetGetLongTasks: () => LongTaskLog[];
+  __hotsheetClearLongTasks: () => void;
+  __hotsheetGetInteractions: () => InteractionEntry[];
+}
+
 const interactionBuffer: InteractionEntry[] = [];
 const longTaskBuffer: LongTaskLog[] = [];
 let observer: PerformanceObserver | null = null;
@@ -114,7 +126,9 @@ export function initLongTaskObserver(): void {
     // PerformanceObserver.supportedEntryTypes is the canonical feature
     // detection — narrower than `try { observe(...) }` which can throw
     // synchronously OR fail silently depending on the browser.
-    const supported = (PerformanceObserver as unknown as { supportedEntryTypes?: string[] }).supportedEntryTypes;
+    // HS-8088 — `supportedEntryTypes` is in the standard `lib.dom`
+    // surface as `readonly string[]`; pre-fix cast was unnecessary.
+    const supported = PerformanceObserver.supportedEntryTypes;
     const longtaskSupported = !Array.isArray(supported) || supported.includes('longtask');
     if (longtaskSupported) {
       try {
@@ -158,7 +172,11 @@ export function initLongTaskObserver(): void {
 
   // Expose retrieval helpers on window for the user to dump from
   // DevTools when they notice a hang.
-  const w = window as unknown as Record<string, unknown>;
+  // HS-8088 — replaced `window as unknown as Record<string, unknown>`
+  // with a typed bag interface; the diagnostic helpers attach onto a
+  // structurally-typed `WindowWithLongTaskHelpers` so the assignment
+  // sites compile without escape-hatch casts.
+  const w = window as Window & Partial<LongTaskHelpers>;
   w.__hotsheetGetLongTasks = (): LongTaskLog[] => longTaskBuffer.slice();
   w.__hotsheetClearLongTasks = (): void => { longTaskBuffer.length = 0; };
   w.__hotsheetGetInteractions = (): InteractionEntry[] => interactionBuffer.slice();

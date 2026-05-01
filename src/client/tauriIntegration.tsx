@@ -1,7 +1,22 @@
-export function getTauriInvoke(): ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null {
-  const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
-    | { core?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } }
-    | undefined;
+/**
+ * HS-8088 — Tauri's runtime injects `window.__TAURI__` with three optional
+ * sub-bags: `core` (invoke), `event` (listen), `notification`. Pre-fix
+ * three callsites inside this file each cast `window` through
+ * `as unknown as Record<string, unknown>` and then re-narrowed the
+ * `__TAURI__` value with a per-callsite shape; consolidated here so
+ * callers reference one interface instead of three duplicates of the
+ * same cast pair.
+ */
+type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+interface TauriRuntime {
+  core?: { invoke: TauriInvoke };
+  event?: { listen?: TauriListen };
+  notification?: TauriNotificationGlobal;
+}
+interface WindowWithTauri extends Window { __TAURI__?: TauriRuntime }
+
+export function getTauriInvoke(): TauriInvoke | null {
+  const tauri = (window as WindowWithTauri).__TAURI__;
   return tauri?.core?.invoke ?? null;
 }
 
@@ -15,9 +30,7 @@ type TauriListen = (
 ) => Promise<() => void>;
 
 export function getTauriEventListener(): TauriListen | null {
-  const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
-    | { event?: { listen?: TauriListen } }
-    | undefined;
+  const tauri = (window as WindowWithTauri).__TAURI__;
   return tauri?.event?.listen ?? null;
 }
 
@@ -143,9 +156,7 @@ interface TauriNotificationGlobal {
 }
 
 function getTauriNotificationGlobal(): TauriNotificationGlobal | null {
-  const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as
-    | { notification?: TauriNotificationGlobal }
-    | undefined;
+  const tauri = (window as WindowWithTauri).__TAURI__;
   return tauri?.notification ?? null;
 }
 

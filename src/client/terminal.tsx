@@ -1101,30 +1101,48 @@ function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void 
 // and routes them through `handleControlMessage(inst, msg)` for
 // 'history' / 'exit' handling.
 
-interface HistoryMessage { type: 'history'; bytes: string; alive: boolean; exitCode: number | null; cols: number; rows: number; command: string }
-interface ExitMessage { type: 'exit'; code: number }
+// HS-8088 — discriminated union over the control-message shapes the
+// drawer currently consumes. Pre-fix the parsed JSON arrived as
+// `{ type: string; [k: string]: unknown }` and each branch did
+// `msg as unknown as HistoryMessage` / `as unknown as ExitMessage` to
+// peel apart the fields. The narrowing predicates below let TS pick
+// the right branch from a `msg.type === 'history'` / `'exit'` check
+// without an escape-hatch cast at every callsite. The interface members
+// extend an index signature so the predicates' type guards can narrow
+// against the JSON-shape parameter type.
+interface HistoryMessage { type: 'history'; bytes: string; alive: boolean; exitCode: number | null; cols: number; rows: number; command: string; [k: string]: unknown }
+interface ExitMessage { type: 'exit'; code: number; [k: string]: unknown }
+type ControlMessage = HistoryMessage | ExitMessage;
+
+function isHistoryMessage(msg: { type: string; [k: string]: unknown }): msg is HistoryMessage {
+  return msg.type === 'history' && typeof msg.bytes === 'string' && typeof msg.alive === 'boolean';
+}
+function isExitMessage(msg: { type: string; [k: string]: unknown }): msg is ExitMessage {
+  return msg.type === 'exit' && typeof msg.code === 'number';
+}
+// `ControlMessage` is exposed for tests / future callers — kept exported
+// to mirror the audit's intent.
+export type { ControlMessage };
 
 function handleControlMessage(inst: TerminalInstance, msg: { type: string; [k: string]: unknown }): void {
-  if (msg.type === 'history') {
-    const h = msg as unknown as HistoryMessage;
+  if (isHistoryMessage(msg)) {
     // HS-8044 — bytes-replay (resize first, write second) is now done
     // inside the checkout module's WS handler. The drawer just extracts
     // the metadata fields (alive, exitCode, command) for tab-status /
     // tab-label updates.
-    inst.exitCode = h.exitCode;
-    setStatus(inst, h.alive ? 'alive' : 'exited');
-    if (typeof h.command === 'string' && h.command !== '') {
+    inst.exitCode = msg.exitCode;
+    setStatus(inst, msg.alive ? 'alive' : 'exited');
+    if (msg.command !== '') {
       // Prefer the user-supplied name; fall back to resolved command for unnamed terminals.
-      if ((inst.config.name ?? '') === '') inst.label.textContent = shortCommandName(h.command);
+      if ((inst.config.name ?? '') === '') inst.label.textContent = shortCommandName(msg.command);
     }
     requestAnimationFrame(() => doFit(inst));
     return;
   }
-  if (msg.type === 'exit') {
-    const e = msg as unknown as ExitMessage;
-    inst.exitCode = e.code;
+  if (isExitMessage(msg)) {
+    inst.exitCode = msg.code;
     setStatus(inst, 'exited');
-    inst.term?.write(`\r\n[process exited with code ${e.code}]\r\n`);
+    inst.term?.write(`\r\n[process exited with code ${msg.code}]\r\n`);
     // HS-7267 — if a command was in-flight (A seen, no D yet), close it out
     // with exitCode=-1 so its gutter glyph stays visible (otherwise the
     // record sits dangling with no visible end). §26.9 edge case "runaway
