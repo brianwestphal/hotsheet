@@ -5,7 +5,7 @@ import {
   filterVisible as filterVisibleEntries,
   subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { showHideTerminalDialog } from './hideTerminalDialog.js';
 import { shouldEscapeBypassHotsheet } from './shortcuts.js';
 import {
@@ -97,12 +97,12 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
   // Tauri-only — per §22.11 / §36.8.
   if (getTauriInvoke() === null) return;
 
-  gridEl = document.getElementById('drawer-terminal-grid');
-  toggleBtn = document.getElementById('drawer-grid-toggle') as HTMLButtonElement | null;
-  sizerContainer = document.getElementById('drawer-grid-sizer');
-  sizeSlider = document.getElementById('drawer-grid-size-slider') as HTMLInputElement | null;
-  hideBtn = document.getElementById('drawer-grid-hide-btn') as HTMLButtonElement | null;
-  groupingSelect = document.getElementById('drawer-grid-grouping-select') as HTMLSelectElement | null;
+  gridEl = byIdOrNull('drawer-terminal-grid');
+  toggleBtn = byIdOrNull<HTMLButtonElement>('drawer-grid-toggle');
+  sizerContainer = byIdOrNull('drawer-grid-sizer');
+  sizeSlider = byIdOrNull<HTMLInputElement>('drawer-grid-size-slider');
+  hideBtn = byIdOrNull<HTMLButtonElement>('drawer-grid-hide-btn');
+  groupingSelect = byIdOrNull<HTMLSelectElement>('drawer-grid-grouping-select');
   if (groupingSelect !== null) {
     void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
       wireGroupingSelectChange({
@@ -474,7 +474,7 @@ async function showHideContextMenuAtPointer(e: MouseEvent, secret: string, termi
 
 function showGridChrome(): void {
   if (gridEl === null) return;
-  const panel = document.getElementById('command-log-panel');
+  const panel = byIdOrNull('command-log-panel');
   if (panel !== null) {
     for (const child of panel.querySelectorAll<HTMLElement>('.drawer-tab-content')) {
       child.style.display = 'none';
@@ -526,7 +526,7 @@ function attachResizeHandlers(): void {
     });
   };
   window.addEventListener('resize', resizeListener);
-  const drawerPanel = document.getElementById('command-log-panel');
+  const drawerPanel = byIdOrNull('command-log-panel');
   if (drawerPanel !== null && typeof ResizeObserver !== 'undefined') {
     drawerResizeObserver = new ResizeObserver(() => {
       if (resizeListener !== null) resizeListener();

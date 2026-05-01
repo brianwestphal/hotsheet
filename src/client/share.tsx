@@ -1,5 +1,6 @@
 import type { GlobalConfig } from '../global-config.js';
 import { api } from './api.js';
+import { byIdOrNull } from './dom.js';
 
 const SHARE_URL = 'https://www.npmjs.com/package/hotsheet';
 const SHARE_TEXT = 'A fast, local ticket tracker that feeds your AI coding tools.';
@@ -57,7 +58,7 @@ async function accumulateAndCheck(): Promise<void> {
 
 /** Show the share prompt banner. */
 function showShareBanner(): void {
-  const banner = document.getElementById('share-banner');
+  const banner = byIdOrNull('share-banner');
   if (!banner || banner.style.display !== 'none') return;
   banner.style.display = 'flex';
 
@@ -70,7 +71,7 @@ function showShareBanner(): void {
 
 /** Dismiss the banner and record the timestamp. */
 async function dismissBanner(): Promise<void> {
-  const banner = document.getElementById('share-banner');
+  const banner = byIdOrNull('share-banner');
   if (banner) banner.style.display = 'none';
   try {
     await api('/global-config', { method: 'PATCH', body: { shareLastPrompted: new Date().toISOString() } });
@@ -80,7 +81,7 @@ async function dismissBanner(): Promise<void> {
 /** Handle the share action from the banner. */
 async function handleBannerShare(): Promise<void> {
   await triggerShare();
-  const banner = document.getElementById('share-banner');
+  const banner = byIdOrNull('share-banner');
   if (banner) banner.style.display = 'none';
   try {
     await api('/global-config', {
@@ -99,7 +100,7 @@ export function initShare(): void {
   intervalId = setInterval(() => { void accumulateAndCheck(); }, SESSION_ACCUMULATE_INTERVAL);
 
   // Footer share link — always triggers share directly
-  const shareLink = document.getElementById('share-link');
+  const shareLink = byIdOrNull('share-link');
   if (shareLink) {
     shareLink.addEventListener('click', (e) => {
       e.preventDefault();
@@ -108,6 +109,6 @@ export function initShare(): void {
   }
 
   // Banner buttons
-  document.getElementById('share-banner-share')?.addEventListener('click', () => { void handleBannerShare(); });
-  document.getElementById('share-banner-dismiss')?.addEventListener('click', () => { void dismissBanner(); });
+  byIdOrNull('share-banner-share')?.addEventListener('click', () => { void handleBannerShare(); });
+  byIdOrNull('share-banner-dismiss')?.addEventListener('click', () => { void dismissBanner(); });
 }

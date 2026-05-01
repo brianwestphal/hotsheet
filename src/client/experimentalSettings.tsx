@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { initChannel } from './channelUI.js';
 import { renderCustomCommandSettings } from './commandEditor.js';
 import { renderChannelCommands } from './commandSidebar.js';
+import { byId, byIdOrNull } from './dom.js';
 // All Lucide icons loaded from generated JSON
 import ALL_LUCIDE_ICONS from './lucide-icons.json';
 
@@ -185,15 +186,15 @@ export async function saveCommandItems() {
 }
 
 export function bindExperimentalSettings() {
-  const channelCheckbox = document.getElementById('settings-channel-enabled') as HTMLInputElement;
-  const channelHint = document.getElementById('settings-channel-hint')!;
-  const channelInstructions = document.getElementById('settings-channel-instructions') as HTMLElement;
-  const channelCopyBtn = document.getElementById('settings-channel-copy-btn');
-  const channelCmd = document.getElementById('settings-channel-cmd');
-  const customCommandsSection = document.getElementById('settings-custom-commands-section') as HTMLElement;
+  const channelCheckbox = byId<HTMLInputElement>('settings-channel-enabled');
+  const channelHint = byId('settings-channel-hint');
+  const channelInstructions = byId('settings-channel-instructions');
+  const channelCopyBtn = byIdOrNull('settings-channel-copy-btn');
+  const channelCmd = byIdOrNull('settings-channel-cmd');
+  const customCommandsSection = byId('settings-custom-commands-section');
 
   // Check Claude CLI and reload commands when settings open
-  document.getElementById('settings-btn')!.addEventListener('click', () => {
+  byId('settings-btn').addEventListener('click', () => {
     // Reload commands from the current project's settings
     void reloadCustomCommands().then(() => {
       renderChannelCommands();

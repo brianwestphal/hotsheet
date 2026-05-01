@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { channelAutoTrigger } from './channelUI.js';
+import { byId } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_TAG } from './icons.js';
 import { getPluginBatchMenuItems } from './pluginUI.js';
@@ -9,7 +10,7 @@ import { loadTickets, renderTicketList } from './ticketList.js';
 import { toggleReadState, toggleUpNext, trackedBatch } from './undo/actions.js';
 
 export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
-  const batchCategory = document.getElementById('batch-category') as HTMLButtonElement;
+  const batchCategory = byId<HTMLButtonElement>('batch-category');
   batchCategory.addEventListener('click', (e) => {
     e.stopPropagation();
     closeAllMenus();
@@ -29,7 +30,7 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
     menu.style.visibility = '';
   });
 
-  const batchPriority = document.getElementById('batch-priority') as HTMLButtonElement;
+  const batchPriority = byId<HTMLButtonElement>('batch-priority');
   batchPriority.addEventListener('click', (e) => {
     e.stopPropagation();
     closeAllMenus();
@@ -50,7 +51,7 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
     menu.style.visibility = '';
   });
 
-  const batchStatus = document.getElementById('batch-status') as HTMLButtonElement;
+  const batchStatus = byId<HTMLButtonElement>('batch-status');
   batchStatus.addEventListener('click', (e) => {
     e.stopPropagation();
     closeAllMenus();
@@ -70,14 +71,14 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
     menu.style.visibility = '';
   });
 
-  document.getElementById('batch-upnext')!.addEventListener('click', async () => {
+  byId('batch-upnext').addEventListener('click', async () => {
     const selectedTickets = state.tickets.filter(t => state.selectedIds.has(t.id));
     await toggleUpNext(selectedTickets);
     void loadTickets();
     channelAutoTrigger();
   });
 
-  document.getElementById('batch-delete')!.addEventListener('click', async () => {
+  byId('batch-delete').addEventListener('click', async () => {
     const ids = Array.from(state.selectedIds);
     const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
     await trackedBatch(affected, { ids, action: 'delete' }, 'Batch delete');
@@ -86,7 +87,7 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
   });
 
   // More actions menu
-  const batchMore = document.getElementById('batch-more')!;
+  const batchMore = byId('batch-more');
   batchMore.addEventListener('click', (e) => {
     e.stopPropagation();
     closeAllMenus();
@@ -167,7 +168,7 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
   });
 
   // Select-all checkbox
-  document.getElementById('batch-select-all')!.addEventListener('change', (e) => {
+  byId('batch-select-all').addEventListener('change', (e) => {
     const checkbox = e.target as HTMLInputElement;
     if (checkbox.checked) {
       for (const t of state.tickets) {

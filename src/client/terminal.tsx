@@ -10,7 +10,7 @@ import { fireToastsForActiveProject, subscribeToBellState } from './bellPoll.js'
 import { isChannelAlive, triggerChannelAndMarkBusy } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
 import { pruneHiddenForProject } from './dashboardHiddenTerminals.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import {
   type DrawerGridTileEntry,
   exitDrawerGridMode,
@@ -183,7 +183,7 @@ let lastKnownConfigs: { configured: TerminalTabConfig[]; dynamic: TerminalTabCon
 /** One-time DOM setup for the terminal area inside the drawer. Called from app init. */
 export function initTerminal(): void {
   // Wire up the new + button that creates dynamic terminals.
-  document.getElementById('drawer-add-terminal-btn')?.addEventListener('click', () => { void createDynamicTerminal(); });
+  byIdOrNull('drawer-add-terminal-btn')?.addEventListener('click', () => { void createDynamicTerminal(); });
   // Keep in-drawer bell indicators in sync with bellPoll (HS-6603 §24.4.3).
   ensureBellSubscription();
   window.addEventListener('resize', () => {
@@ -246,7 +246,7 @@ export function initTerminal(): void {
   // full-height expand button. Both of those adjust the drawer element's
   // computed height directly, so we watch the drawer panel with a
   // ResizeObserver and re-run FitAddon.fit() for the active terminal.
-  const drawerPanel = document.getElementById('command-log-panel');
+  const drawerPanel = byIdOrNull('command-log-panel');
   if (drawerPanel !== null && typeof ResizeObserver !== 'undefined') {
     const ro = new ResizeObserver(() => {
       const active = activeTerminalId === null ? null : instances.get(activeTerminalId);
@@ -313,8 +313,8 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   // so previously-mounted terminals re-resolve.
   void loadProjectDefaultAppearance();
 
-  const tabStrip = document.getElementById('drawer-terminal-tabs');
-  const paneContainer = document.getElementById('drawer-terminal-panes');
+  const tabStrip = byIdOrNull('drawer-terminal-tabs');
+  const paneContainer = byIdOrNull('drawer-terminal-panes');
   if (!tabStrip || !paneContainer) return;
 
   const wanted = new Map<string, ListEntry>();
@@ -783,7 +783,7 @@ function attachTabDragHandlers(tabBtn: HTMLElement, terminalId: string): void {
 }
 
 async function reorderTabAfterDrop(fromId: string, toId: string): Promise<void> {
-  const tabStrip = document.getElementById('drawer-terminal-tabs');
+  const tabStrip = byIdOrNull('drawer-terminal-tabs');
   if (tabStrip === null) return;
   const currentOrder: string[] = [];
   for (const el of tabStrip.querySelectorAll<HTMLElement>('.drawer-terminal-tab')) {
@@ -795,7 +795,7 @@ async function reorderTabAfterDrop(fromId: string, toId: string): Promise<void> 
 
   // Apply the visual reorder by re-appending tabs (and matching panes) in
   // the new order. Browsers handle move-via-append cleanly — no flicker.
-  const paneContainer = document.getElementById('drawer-terminal-panes');
+  const paneContainer = byIdOrNull('drawer-terminal-panes');
   for (const id of nextOrder) {
     const tab = tabStrip.querySelector<HTMLElement>(`.drawer-terminal-tab[data-terminal-id="${CSS.escape(id)}"]`);
     if (tab !== null) tabStrip.appendChild(tab);
@@ -1880,7 +1880,7 @@ function isDynamic(id: string): boolean {
 
 /** Ordered list of tab ids, matching the visible left-to-right tab strip order. */
 function orderedTabIds(): string[] {
-  const strip = document.getElementById('drawer-terminal-tabs');
+  const strip = byIdOrNull('drawer-terminal-tabs');
   if (!strip) return [];
   const out: string[] = [];
   for (const el of Array.from(strip.children)) {

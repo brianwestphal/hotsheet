@@ -10,7 +10,7 @@
  * See docs/35-terminal-themes.md §35.6.
  */
 import { api } from './api.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import {
   getProjectDefault,
   loadProjectDefaultAppearance,
@@ -43,9 +43,9 @@ export async function loadAndWireTerminalDefaultAppearance(): Promise<void> {
 }
 
 function render(): void {
-  const themeSel = document.getElementById('settings-terminal-default-theme') as HTMLSelectElement | null;
-  const fontSel = document.getElementById('settings-terminal-default-font') as HTMLSelectElement | null;
-  const sizeInput = document.getElementById('settings-terminal-default-size') as HTMLInputElement | null;
+  const themeSel = byIdOrNull<HTMLSelectElement>('settings-terminal-default-theme');
+  const fontSel = byIdOrNull<HTMLSelectElement>('settings-terminal-default-font');
+  const sizeInput = byIdOrNull<HTMLInputElement>('settings-terminal-default-size');
   if (themeSel === null || fontSel === null || sizeInput === null) return;
 
   const current = getProjectDefault();
@@ -78,9 +78,9 @@ function render(): void {
 }
 
 function attachListeners(): void {
-  const themeSel = document.getElementById('settings-terminal-default-theme') as HTMLSelectElement | null;
-  const fontSel = document.getElementById('settings-terminal-default-font') as HTMLSelectElement | null;
-  const sizeInput = document.getElementById('settings-terminal-default-size') as HTMLInputElement | null;
+  const themeSel = byIdOrNull<HTMLSelectElement>('settings-terminal-default-theme');
+  const fontSel = byIdOrNull<HTMLSelectElement>('settings-terminal-default-font');
+  const sizeInput = byIdOrNull<HTMLInputElement>('settings-terminal-default-size');
   if (themeSel === null || fontSel === null || sizeInput === null) return;
 
   themeSel.addEventListener('change', () => { void persistField({ theme: themeSel.value }); });

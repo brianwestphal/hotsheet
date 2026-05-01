@@ -1,7 +1,7 @@
 import { api } from './api.js';
 import { loadBackupList } from './backups.js';
 import { confirmDialog } from './confirm.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 
 /** HS-7897: client-side controls for the Settings → Backups → Database
  *  Repair panel. Three responsibilities:
@@ -64,8 +64,8 @@ export function formatStatusText(marker: RecoveryMarker | null): { text: string;
 /** Wire the buttons + initial status fetch. Called from `bindBackupsUI`
  *  in `backups.tsx` so the panel is ready whenever Settings opens. */
 export function bindDbRepairUI(): void {
-  const findBtn = document.getElementById('db-repair-find-working-btn');
-  const resetwalBtn = document.getElementById('db-repair-pg-resetwal-btn');
+  const findBtn = byIdOrNull('db-repair-find-working-btn');
+  const resetwalBtn = byIdOrNull('db-repair-pg-resetwal-btn');
   if (findBtn === null || resetwalBtn === null) return;
 
   findBtn.addEventListener('click', () => { void onFindWorkingBackup(); });
@@ -75,7 +75,7 @@ export function bindDbRepairUI(): void {
 /** Refresh the status pill — called every time Settings opens so the
  *  pill stays current after a Restore / Dismiss flow elsewhere. */
 export async function refreshDbRepairStatus(): Promise<void> {
-  const statusEl = document.getElementById('db-repair-status');
+  const statusEl = byIdOrNull('db-repair-status');
   if (statusEl === null) return;
   statusEl.className = 'db-repair-status';
   statusEl.textContent = 'Checking database health…';
@@ -91,7 +91,7 @@ export async function refreshDbRepairStatus(): Promise<void> {
 }
 
 async function onFindWorkingBackup(): Promise<void> {
-  const result = document.getElementById('db-repair-result');
+  const result = byIdOrNull('db-repair-result');
   if (result === null) return;
   result.innerHTML = '';
   result.appendChild(toElement(<span>Validating backups (newest first)…</span>));
@@ -118,7 +118,7 @@ async function onFindWorkingBackup(): Promise<void> {
         </div>
       </div>
     ));
-    document.getElementById('db-repair-restore-found-btn')?.addEventListener('click', () => {
+    byIdOrNull('db-repair-restore-found-btn')?.addEventListener('click', () => {
       void doRestoreFromFoundBackup(b.tier, b.filename);
     });
   } catch (err) {
@@ -143,7 +143,7 @@ async function doRestoreFromFoundBackup(tier: string, filename: string): Promise
     await api('/backups/restore', { method: 'POST', body: { tier, filename } });
     window.location.reload();
   } catch (err) {
-    const result = document.getElementById('db-repair-result');
+    const result = byIdOrNull('db-repair-result');
     if (result !== null) {
       result.innerHTML = '';
       result.appendChild(toElement(
@@ -156,7 +156,7 @@ async function doRestoreFromFoundBackup(tier: string, filename: string): Promise
 }
 
 async function onRunPgResetwal(): Promise<void> {
-  const result = document.getElementById('db-repair-result');
+  const result = byIdOrNull('db-repair-result');
   if (result === null) return;
   result.innerHTML = '';
   result.appendChild(toElement(<span>Checking pg_resetwal availability…</span>));
@@ -219,7 +219,7 @@ async function onRunPgResetwal(): Promise<void> {
         </div>
       </div>
     ));
-    document.getElementById('db-repair-restore-resetwal-btn')?.addEventListener('click', () => {
+    byIdOrNull('db-repair-restore-resetwal-btn')?.addEventListener('click', () => {
       void doRestoreFromFoundBackup(res.tier, res.filename);
     });
   } catch (err) {

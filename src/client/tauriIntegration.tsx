@@ -1,3 +1,5 @@
+import { byIdOrNull } from './dom.js';
+
 /**
  * HS-8088 — Tauri's runtime injects `window.__TAURI__` with three optional
  * sub-bags: `core` (invoke), `event` (listen), `notification`. Pre-fix
@@ -66,15 +68,15 @@ export function requestAttention(level: 'once' | 'persistent') {
 }
 
 export function showUpdateBanner(version: string) {
-  const banner = document.getElementById('update-banner');
+  const banner = byIdOrNull('update-banner');
   if (!banner) return;
 
-  const label = document.getElementById('update-banner-label');
+  const label = byIdOrNull('update-banner-label');
   if (label) label.textContent = `Update available: v${version}`;
 
   banner.style.display = 'flex';
 
-  const installBtn = document.getElementById('update-install-btn') as HTMLButtonElement | null;
+  const installBtn = byIdOrNull<HTMLButtonElement>('update-install-btn');
   installBtn?.addEventListener('click', async () => {
     installBtn.textContent = 'Installing...';
     installBtn.disabled = true;
@@ -89,7 +91,7 @@ export function showUpdateBanner(version: string) {
     }
   });
 
-  const dismissBtn = document.getElementById('update-banner-dismiss');
+  const dismissBtn = byIdOrNull('update-banner-dismiss');
   dismissBtn?.addEventListener('click', () => {
     banner.style.display = 'none';
   });
@@ -100,9 +102,9 @@ export async function checkForUpdate() {
   if (!invoke) return;
 
   // Show the "Updates" tab and panel in settings
-  const section = document.getElementById('settings-updates-section');
+  const section = byIdOrNull('settings-updates-section');
   if (section) section.style.display = '';
-  const updatesTab = document.getElementById('settings-tab-updates');
+  const updatesTab = byIdOrNull('settings-tab-updates');
   if (updatesTab) updatesTab.style.display = '';
 
   // The Rust update check is async and may not have completed yet.
@@ -123,10 +125,10 @@ export async function checkForUpdate() {
 }
 
 export function showSkillsBanner() {
-  const banner = document.getElementById('skills-banner');
+  const banner = byIdOrNull('skills-banner');
   if (!banner) return;
   banner.style.display = 'flex';
-  const dismissBtn = document.getElementById('skills-banner-dismiss');
+  const dismissBtn = byIdOrNull('skills-banner-dismiss');
   dismissBtn?.addEventListener('click', () => { banner.style.display = 'none'; });
 }
 
