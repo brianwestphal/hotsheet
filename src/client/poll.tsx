@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { checkChannelDone, clearBusyForProject, extendBusyForProject } from './channelUI.js';
+import { TIMERS } from './constants/timers.js';
 import { refreshDetail } from './detail.js';
 import { checkFeedbackState } from './feedbackDialog.js';
 import { refreshGitStatusChip } from './gitStatusChip.js';
@@ -43,7 +44,7 @@ export function startLongPoll() {
         void checkHeartbeats();
       }
     } catch {
-      await new Promise(r => setTimeout(r, 5000));
+      await new Promise(r => setTimeout(r, TIMERS.POLL_RETRY_MS));
     }
     setTimeout(poll, 100);
   }

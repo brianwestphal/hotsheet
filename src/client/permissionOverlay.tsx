@@ -2,6 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { extractPrimaryValue } from '../permissionAllowRules.js';
 import { api } from './api.js';
 import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
+import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
 import { renderEditDiffPreview } from './editDiffPreview.js';
 import { buildAlwaysAllowAffordance } from './permissionAllowListUI.js';
@@ -128,7 +129,7 @@ export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof set
       }
 
     } catch {
-      await new Promise(r => setTimeout(r, 5000));
+      await new Promise(r => setTimeout(r, TIMERS.POLL_RETRY_MS));
     }
     if (permissionPollActive) setTimeout(poll, 100); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- can be set false by stopPermissionPolling()
   }
@@ -183,7 +184,7 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     clearTimeout(channelBusyTimeoutModule);
     setChannelBusyTimeoutRefModule(setTimeout(() => {
       if (isChannelBusy()) setChannelBusy(false);
-    }, 60000));
+    }, TIMERS.CHANNEL_BUSY_TIMEOUT_MS));
   }
   if (!isChannelBusy()) setChannelBusy(true);
 

@@ -2,6 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { activeFilterTypes, ALL_FILTER_TYPES, dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
 import { maybeFireShellStreamFirstUseToast, SHELL_PARTIAL_OUTPUT_EVENT,type ShellPartialOutputEvent } from './commandSidebar.js';
+import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
 import { resolveDrawerTabForTauri } from './drawerTabGating.js';
 import { recordInteraction } from './longTaskObserver.js';
@@ -829,7 +830,7 @@ function startPolling() {
   stopPolling();
   pollTimer = setInterval(() => {
     if (panelOpen) void loadEntries();
-  }, 5000);
+  }, TIMERS.COMMAND_LOG_REFRESH_MS);
 }
 
 function stopPolling() {

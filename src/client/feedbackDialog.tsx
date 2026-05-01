@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
-import { toElement } from './dom.js';
+import { requireChild, toElement } from './dom.js';
 import {
   type BlockResponse,
   combineQuotedResponse,
@@ -167,7 +167,7 @@ export function showFeedbackDialog(
           <button className="category-delete-btn" data-idx={String(i)}>{'×'}</button>
         </div>
       );
-      row.querySelector('button')!.addEventListener('click', () => {
+      requireChild<HTMLButtonElement>(row, 'button').addEventListener('click', () => {
         pendingFiles.splice(i, 1);
         renderFileList();
       });
@@ -175,7 +175,7 @@ export function showFeedbackDialog(
     }
   }
 
-  overlay.querySelector('#feedback-add-file')!.addEventListener('click', () => fileInput.click());
+  requireChild<HTMLButtonElement>(overlay, '#feedback-add-file').addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', () => {
     if (fileInput.files) {
       for (const f of Array.from(fileInput.files)) pendingFiles.push(f);
@@ -212,13 +212,13 @@ export function showFeedbackDialog(
       const insertBtn = slot.querySelector('.feedback-insert-btn');
       if (insertBtn !== null) slot.insertBefore(responseEl, insertBtn);
       else slot.appendChild(responseEl);
-      (responseEl.querySelector('textarea') as HTMLTextAreaElement).focus();
+      requireChild<HTMLTextAreaElement>(responseEl, 'textarea').focus();
     });
   });
 
   const close = () => overlay.remove();
-  overlay.querySelector('#feedback-close')!.addEventListener('click', close);
-  overlay.querySelector('#feedback-later')!.addEventListener('click', close);
+  requireChild<HTMLButtonElement>(overlay, '#feedback-close').addEventListener('click', close);
+  requireChild<HTMLButtonElement>(overlay, '#feedback-later').addEventListener('click', close);
   // HS-7599: click outside the dialog dismisses ONLY when no text has been
   // entered. Any text in any input (catch-all or any inline textarea) keeps
   // the dialog open so the user doesn't lose work to a stray click. The
@@ -233,9 +233,9 @@ export function showFeedbackDialog(
   });
 
   // No Response Needed
-  overlay.querySelector('#feedback-no-response')!.addEventListener('click', async () => {
-    const btn = overlay.querySelector('#feedback-no-response') as HTMLButtonElement;
-    btn.disabled = true;
+  const noResponseBtn = requireChild<HTMLButtonElement>(overlay, '#feedback-no-response');
+  noResponseBtn.addEventListener('click', async () => {
+    noResponseBtn.disabled = true;
     try {
       await api(`/tickets/${ticketId}`, {
         method: 'PATCH', body: { notes: 'NO RESPONSE NEEDED' },
@@ -243,7 +243,7 @@ export function showFeedbackDialog(
       close();
       void loadTickets();
     } catch {
-      btn.disabled = false;
+      noResponseBtn.disabled = false;
     }
   });
 

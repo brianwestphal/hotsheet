@@ -136,7 +136,7 @@ The MCP channel gives Claude Code a real-time link to Hot Sheet. Three component
 
 9 icon variants (flame motif) plus the default. Settings → General tab shows a dropdown with thumbnail grid. Click updates the dock icon immediately (no relaunch) via Tauri's `set_app_icon`. Stored in `.hotsheet/settings.json` as `appIcon` (values `default` or `variant-1`…`variant-9`). macOS implementation: reads `.icns`, builds an `NSImage` via the `objc2` crate with a 824×824 body in a 1024×1024 continuous-corner rounded-rect canvas + drop shadow, calls `NSApplication.setApplicationIconImage()`. Cross-platform: Windows taskbar + Linux window via `Window::set_icon()`.
 
-**Shipped:** 9 variants, dropdown, runtime change. **Design only:** startup icon restoration (currently only applied when the Settings dialog opens). Cross-refs: §2 (appIcon), §10 (IPC command).
+**Shipped:** 9 variants, dropdown, runtime change, AND startup icon restoration (HS-8078 audit 2026-05-01 — `apply_saved_icon(app.handle())` in `src-tauri/src/lib.rs::setup()` reads `appIcon` from `.hotsheet/settings.json` on app launch and dispatches `set_app_icon` 500 ms after launch so macOS doesn't reset the dock icon during `applicationDidFinishLaunching`). The client-side `restoreAppIcon()` in `src/client/tauriIntegration.tsx` is now a deliberate no-op — Tauri owns the icon swap end-to-end on the desktop build, and on the browser-mode build no OS icon swap is possible anyway. Cross-refs: §2 (appIcon), §10 (IPC command).
 
 ---
 
@@ -844,7 +844,7 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 9 — API | Shipped | — |
 | 10 — desktop | Partial | Windows code-signing deferred |
 | 12 — Claude channel | Shipped | — |
-| 13 — app icon | Partial | Startup icon restoration not implemented |
+| 13 — app icon | Shipped | — |
 | 14 — command log | Shipped | — |
 | 15 — shell commands | Shipped | — |
 | 16 — command groups | Shipped | — |

@@ -51,7 +51,7 @@ When switching back to "default", reads `icon.icns` from the resource directory 
 
 ### Startup
 
-Client-side startup icon restoration is currently not implemented — the icon is only read and applied when the settings dialog opens. The Rust-side `apply_saved_icon` is also disabled. As a result, the dock icon reverts to the default variant on each app launch until the user opens Settings.
+Startup icon restoration is implemented Rust-side (HS-8078 audit 2026-05-01). `setup()` in `src-tauri/src/lib.rs` calls `apply_saved_icon(app.handle())`, which reads `appIcon` from the active project's `.hotsheet/settings.json`, then spawns a thread that sleeps 500 ms before dispatching `set_app_icon` on the main thread. The 500 ms delay is load-bearing on macOS: applying the icon synchronously inside `setup()` runs before `applicationDidFinishLaunching` fires, and that lifecycle event resets the dock icon back to the bundle icon — sleeping past it lets the runtime swap stick. On browser-mode builds (`getTauriInvoke()` returns null), no OS icon swap is possible, and the client-side `restoreAppIcon()` in `src/client/tauriIntegration.tsx` is intentionally a no-op for both surfaces — Tauri owns the desktop swap end-to-end now.
 
 ### Icon Resources
 

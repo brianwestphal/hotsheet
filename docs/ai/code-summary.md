@@ -382,10 +382,11 @@ Schema lives in one place: `src/db/connection.ts` `initSchema()` function — al
 | `attachments` | `id`, `ticket_id (FK→tickets CASCADE)`, `original_filename`, `stored_path`, `created_at` | `idx_attachments_ticket` |
 | `settings` | `key TEXT PK`, `value TEXT` | **Plugin-only.** Project/app config moved to `.hotsheet/settings.json`. Plugin keys: `plugin:{id}:{key}`, `plugin_enabled:{id}` |
 | `stats_snapshots` | `date TEXT PK`, `data TEXT` (JSON) | Dashboard historical charts |
-| `command_log` | `id`, `event_type`, `direction`, `summary`, `detail`, `created_at` | `idx_command_log_created`. Capped at ~1000 entries. Event types: `trigger`, `done`, `permission_request`, `shell_command` |
+| `command_log` | `id`, `event_type`, `direction`, `summary`, `detail`, `created_at` | `idx_command_log_created`. Capped at ~1000 entries. Event types in code today (HS-8077 audit): `trigger`, `done`, `permission_request`, `shell_command`, `push` (plugin push-ticket — HS-7115 lineage), `sync` (plugin sync engine), `terminal_prompt_auto_allow` (HS-8034 §52 Phase 2 — server-side auto-allow on a `terminal_prompt_allow_rules` match). |
 | `ticket_sync` | `ticket_id (FK)`, `plugin_id`, `remote_id`, `last_synced_at`, `remote_updated_at`, `local_updated_at`, `sync_status`, `conflict_data`. UNIQUE(ticket_id, plugin_id) | Indexes on plugin_id, sync_status, (plugin_id, remote_id) |
 | `sync_outbox` | `ticket_id`, `plugin_id`, `action` (`create`/`delete`), `field_changes`, `attempts`, `last_error` | 5+ failed attempts → permanent removal |
 | `note_sync` | `ticket_id`, `note_id`, `plugin_id`, `remote_comment_id`, `last_synced_at`, `last_synced_text`. UNIQUE(ticket_id, note_id, plugin_id) | `last_synced_text` = baseline for three-way merge |
+| `feedback_drafts` | `id TEXT PK`, `ticket_id (FK→tickets CASCADE)`, `parent_note_id TEXT?` (nulled when parent deleted; HS-7599 §21), `prompt_text TEXT` (snapshot of FEEDBACK NEEDED prompt at save-time so click-to-reopen works after parent deletion), `partitions_json TEXT` (block structure + inline responses + catch-all verbatim per §21.2.3), `created_at/updated_at TIMESTAMPTZ` | `idx_feedback_drafts_ticket`, `idx_feedback_drafts_parent_note`. Local-only — drafts never sync to GitHub / plugin backends. |
 
 All timestamp columns are `TIMESTAMPTZ` (older DBs migrated in place).
 
@@ -510,6 +511,14 @@ Env flags: `PLUGINS_ENABLED` (build/runtime toggle), `NO_WEB_SERVER` (E2E), `NOD
 | Add a Claude hook | `src/claude-hooks.ts` |
 | Change the keychain fallback | `src/keychain.ts`; plugin integration in `src/plugins/loader.ts` |
 | Add an E2E test | `e2e/<topic>.spec.ts` — start real server with a temp data dir, prefer real interactions over mocks |
+| Add a git-status surface (chip / popover / route) | Server: `src/git/status.ts` (status query) + `src/routes/git.ts` (`/api/git/*`). Client: `src/client/gitStatusChip.tsx` (sidebar chip) + `src/client/gitStatusPopover.tsx` (expanded popover). See §48. |
+| Add a terminal-prompt parser | `src/shared/terminalPrompt/parsers.ts` (pure parser registry — `claude-numbered`, `yesno`, `generic`). Server-side scanner driver: `src/terminals/promptScanner.ts`. Client overlay: `src/client/terminalPromptOverlay.tsx`. Allow-rule store: `src/client/terminalPrompt/allowRulesStore.ts`. See §52. |
+| Add a ticket cross-reference behaviour | Linkifier: `src/client/ticketRefs.ts`. Stacking dialog + global click handler: `src/client/ticketRefDialog.tsx`. Server prefix lookup: `GET /api/tickets/prefixes` + `GET /api/tickets/by-number/:number` in `src/routes/tickets.ts`. See §55. |
+| Wire a new consumer of the terminal LIFO stack | Call `checkout({...})` from `src/client/terminalCheckout.tsx`. Per-`(secret, terminalId)` xterm + WebSocket lifecycle is owned by the module; consumers describe `mountInto`, `cols`/`rows`, optional `onBumpedDown` / `onRestoredToTop` / `onControlMessage` callbacks. See §54. |
+| Add a reader-mode trigger surface | `src/client/readerOverlay.tsx::openReaderOverlay({title, markdown})`. Existing triggers: per-note book button (`noteRenderer.tsx`) and the Details `<label>` row (`detail.tsx`). See §49. |
+| Add a quit-confirm exempt-process default | `quit_confirm_exempt_processes` JSON array in `.hotsheet/settings.json` — UI in Settings → Terminal. Foreground-process inspection in `src/terminals/processInspect.ts`. Quit-confirm wiring in `src/client/quitConfirm.tsx` + Tauri command `confirm_quit` in `src-tauri/src/lib.rs`. See §37. |
+| Add a Tauri menu item | `src-tauri/src/lib.rs` (`MenuBuilder` block in `setup()` and the matching `#[tauri::command]` for the action). Sidebar / menu wiring on the JS side via `src/client/tauriIntegration.tsx::getTauriInvoke()`. |
+| Add a visibility-grouping behaviour | `visibility_groupings` array + `active_visibility_grouping_id` + `hidden_terminals` mirror in `.hotsheet/settings.json`. Client: `src/client/visibilityGroupings.ts` (state + selector logic), `src/client/visibilityGroupingSelect.ts` (dropdown), `src/client/hideTerminalDialog.tsx` (multi-tab Show/Hide dialog). See §39. |
 
 ---
 

@@ -19,6 +19,7 @@
 import { buildAllowRule } from '../shared/terminalPrompt/allowRules.js';
 import type { MatchResult } from '../shared/terminalPrompt/parsers.js';
 import { api, apiWithSecret } from './api.js';
+import { TIMERS } from './constants/timers.js';
 import { updateProjectBellIndicators } from './projectTabs.js';
 import { getActiveProject } from './state.js';
 import { fireNativeNotification, isAppBackgrounded } from './tauriIntegration.js';
@@ -101,7 +102,7 @@ async function loop(): Promise<void> {
     } catch {
       // Network hiccup / server restart — pause before retrying to match the
       // permissions-poll pattern. Keeps the browser quiet during real outages.
-      await new Promise(r => setTimeout(r, 5000));
+      await new Promise(r => setTimeout(r, TIMERS.POLL_RETRY_MS));
     }
   }
 }

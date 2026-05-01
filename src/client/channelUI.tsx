@@ -1,5 +1,6 @@
 import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { api, apiWithSecret } from './api.js';
+import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
 import {
   startPermissionPolling, stopPermissionPolling,
@@ -109,7 +110,7 @@ export function setShellBusy(busy: boolean) {
       indicator.innerHTML = '\u2713 Shell done';
       setTimeout(() => {
         if (!shellBusyState && !isChannelBusy()) indicator.style.display = 'none';
-      }, 5000);
+      }, TIMERS.CHANNEL_IDLE_INDICATOR_MS);
     } else {
       // Channel is still busy, just update to show channel state
       updateStatusIndicator();
@@ -120,7 +121,7 @@ let channelBusyTimeout: ReturnType<typeof setTimeout> | null = null;
 let channelAutoRetryInterval: ReturnType<typeof setInterval> | null = null;
 let channelAutoBackoff = 0; // consecutive triggers where Claude didn't become busy
 let channelAutoVerifyTimeout: ReturnType<typeof setTimeout> | null = null;
-const CHANNEL_AUTO_BASE_DELAY = 5000;
+const CHANNEL_AUTO_BASE_DELAY = TIMERS.POLL_RETRY_MS; // 5 s — same cadence as poll-retry; also the base for the auto-retry backoff
 const CHANNEL_AUTO_MAX_DELAY = 120000; // 2 minutes
 
 export function isChannelBusy(): boolean {
@@ -202,7 +203,7 @@ export function extendBusyForProject(secret: string) {
       stopSpinnerPoll();
       updateStatusIndicator();
     }
-  }, 30000));
+  }, TIMERS.CHANNEL_HEARTBEAT_STALE_MS));
 }
 
 /** Called when Claude stops processing (via Stop hook). Immediately clears busy. */
@@ -264,7 +265,7 @@ export function setChannelBusy(busy: boolean) {
       // Auto-hide after 5 seconds
       setTimeout(() => {
         if (!isChannelBusy() && !shellBusyState) indicator.style.display = 'none';
-      }, 5000);
+      }, TIMERS.CHANNEL_IDLE_INDICATOR_MS);
     } else {
       // Shell is still busy, update indicator to show shell state
       updateStatusIndicator();
@@ -287,7 +288,7 @@ function triggerChannelAndMarkBusy(message?: string) {
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
   channelBusyTimeout = setTimeout(() => {
     if (isChannelBusy()) setChannelBusy(false);
-  }, 60000);
+  }, TIMERS.CHANNEL_BUSY_TIMEOUT_MS);
 }
 
 // Exported so experimentalSettings can call it for custom command buttons
@@ -493,7 +494,7 @@ async function attemptAutoTrigger() {
         // Claude didn't pick up — increase backoff for next attempt
         channelAutoBackoff++;
       }
-    }, 10000);
+    }, TIMERS.CHANNEL_AUTO_VERIFY_MS);
   } else if (!channelAutoRetryInterval) {
     // Claude is busy — start retrying with current backoff delay
     const delay = autoTriggerDelay();

@@ -3,7 +3,7 @@ import './markdownSetup.js';
 import { marked } from 'marked';
 
 import { raw } from '../jsx-runtime.js';
-import { toElement } from './dom.js';
+import { requireChild, toElement } from './dom.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 
 /**
@@ -89,7 +89,7 @@ export function openReaderOverlay(options: OpenReaderOverlayOptions): void {
 
   document.addEventListener('keydown', onKeydown, true);
 
-  overlay.querySelector('.reader-mode-close')!.addEventListener('click', close);
+  requireChild<HTMLButtonElement>(overlay, '.reader-mode-close').addEventListener('click', close);
   overlay.addEventListener('click', (e) => {
     // Only dismiss when the click landed on the dimmed backdrop, not when
     // the user clicked anywhere inside the dialog itself.
