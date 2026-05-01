@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { evaluateQuitDecision, type QuitSummary, showQuitConfirmDialog } from './quitConfirm.js';
-import { _inspectStackForTesting, _resetForTesting, entryCount } from './terminalCheckout.js';
+import { _getTermForTesting, _inspectStackForTesting, _resetForTesting, checkout, entryCount } from './terminalCheckout.js';
 
 function project(
   name: string,
@@ -270,5 +270,118 @@ describe('quit-confirm preview pane checkout (HS-8041 §54.5.2)', () => {
     expect(entryCount()).toBe(0);
 
     return expect(promise).resolves.toEqual({ outcome: 'proceed', dontAskAgain: false });
+  });
+});
+
+/**
+ * HS-8058 — the quit-confirm preview pane must paint its container bg
+ * to match the live xterm's theme background so the sub-cell slop
+ * around the canvas (the right + bottom gutter where `cols * cellW` /
+ * `rows * cellH` doesn't fully cover the pane content area) reads as
+ * part of the terminal rather than as the contrasting gray pane the
+ * user reported as "text poking out of terminal bounds".
+ */
+describe('quit-confirm preview pane theme-bg cascade (HS-8058)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    _resetForTesting();
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    _resetForTesting();
+    document.querySelectorAll('.quit-confirm-overlay').forEach(el => el.remove());
+  });
+
+  it('applies the live term theme background to the preview pane on row select', () => {
+    // Pre-create the entry so we can poke its theme BEFORE the dialog's
+    // auto-select fires its checkout. Keep the seed handle alive across
+    // the dialog open so the entry isn't disposed (releasing the only
+    // consumer empties the stack and tears the term down). The dialog's
+    // checkout then pushes onto the existing entry's stack and shares
+    // the same term — which carries the seed's theme.
+    const proj = project('proj-A', 'always', [
+      { label: 'a-claude', cmd: 'claude', isExempt: false },
+    ]);
+    const sink = document.createElement('div');
+    document.body.appendChild(sink);
+    const seedHandle = checkout({
+      projectSecret: 'secret-proj-A',
+      terminalId: 'a-claude',
+      cols: 80,
+      rows: 24,
+      mountInto: sink,
+    });
+    seedHandle.term.options.theme = { background: 'rgb(40, 42, 54)' };
+
+    void showQuitConfirmDialog([proj]);
+
+    // Auto-select fired synchronously; the handle reads the term's
+    // current theme bg and applies it inline on the preview pane.
+    const preview = document.querySelector<HTMLElement>('.quit-confirm-detail-preview');
+    expect(preview).not.toBeNull();
+    expect(preview!.style.background).toBe('rgb(40, 42, 54)');
+
+    // Sanity: the live term is the one we expect.
+    const term = _getTermForTesting('secret-proj-A', 'a-claude');
+    expect(term).not.toBeNull();
+
+    document.querySelector<HTMLButtonElement>('.quit-confirm-btn-cancel')?.click();
+    seedHandle.release();
+    sink.remove();
+  });
+
+  it('leaves the inline background empty when the term has no theme set (CSS fallback wins)', () => {
+    void showQuitConfirmDialog([
+      project('proj-A', 'always', [
+        { label: 'a-claude', cmd: 'claude', isExempt: false },
+      ]),
+    ]);
+
+    // No prior consumer set a theme — the term defaults are unchanged
+    // so the bg-set guard's typeof-string check fails and the inline
+    // background stays empty (the SCSS gray fallback paints).
+    const preview = document.querySelector<HTMLElement>('.quit-confirm-detail-preview');
+    expect(preview).not.toBeNull();
+    expect(preview!.style.background).toBe('');
+
+    document.querySelector<HTMLButtonElement>('.quit-confirm-btn-cancel')?.click();
+  });
+
+  it('updates the bg when the user switches rows to a terminal with a different theme', () => {
+    const proj = project('proj-A', 'always', [
+      { label: 'a-claude', cmd: 'claude', isExempt: false },
+      { label: 'a-htop', cmd: 'htop', isExempt: true },
+    ]);
+
+    // Seed BOTH terminals with distinct theme bgs so the swap path has
+    // a visible delta. Keep both seed handles alive across the dialog
+    // so the entries aren't disposed when each seed releases its only
+    // consumer (the dialog's checkout pushes onto the same stacks).
+    const sinks: HTMLDivElement[] = [];
+    const seeds: ReturnType<typeof checkout>[] = [];
+    for (const [tid, bg] of [['a-claude', 'rgb(40, 42, 54)'], ['a-htop', 'rgb(13, 17, 23)']] as const) {
+      const sink = document.createElement('div');
+      document.body.appendChild(sink);
+      sinks.push(sink);
+      const h = checkout({ projectSecret: 'secret-proj-A', terminalId: tid, cols: 80, rows: 24, mountInto: sink });
+      h.term.options.theme = { background: bg };
+      seeds.push(h);
+    }
+
+    void showQuitConfirmDialog([proj]);
+
+    const preview = document.querySelector<HTMLElement>('.quit-confirm-detail-preview');
+    expect(preview!.style.background).toBe('rgb(40, 42, 54)'); // first row's theme
+
+    // Click row 2 — checkout swaps to the other terminal-id and
+    // re-applies that term's bg.
+    const rows = Array.from(document.querySelectorAll<HTMLButtonElement>('.quit-confirm-row'));
+    rows[1].click();
+    expect(preview!.style.background).toBe('rgb(13, 17, 23)');
+
+    document.querySelector<HTMLButtonElement>('.quit-confirm-btn-cancel')?.click();
+    for (const s of seeds) s.release();
+    for (const s of sinks) s.remove();
   });
 });

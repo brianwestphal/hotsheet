@@ -417,6 +417,23 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
         mountInto: previewEl,
       });
 
+      // HS-8058 — paint the pane background to match the live xterm's
+      // theme background. xterm renders `.xterm-screen` at exactly
+      // `cols * cellWidth × rows * cellHeight` pixels, which is
+      // necessarily ≤ the pane's content area (FitAddon Math.floors
+      // cols/rows from `availableWidth / cellWidth`). The leftover
+      // sub-cell slop on the right + bottom shows the container bg
+      // through, so making it match the terminal bg removes the visual
+      // band of contrasting gray the user reported as "text poking out
+      // of terminal bounds". The SCSS `.xterm`/`.xterm-viewport`/
+      // `.xterm-screen { background: inherit }` rule lets xterm's own
+      // layered elements participate in the cascade so there's no
+      // colour seam between the canvas and the gutter.
+      const themeBg = (currentCheckout.term.options.theme as { background?: unknown } | undefined)?.background;
+      if (typeof themeBg === 'string' && themeBg !== '') {
+        previewEl.style.background = themeBg;
+      }
+
       // HS-7969 follow-up — size the xterm to fill the preview pane.
       // Pre-fix the static 80×30 cols×rows produced a canvas whose pixel
       // dimensions didn't match the pane's, leaving a band of empty
@@ -436,6 +453,30 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
         if (handle !== currentCheckout) return; // stale — user picked another row
         try {
           handle.fit.fit();
+          // HS-8058 — belt-and-braces "always round down" guard. FitAddon
+          // already Math.floors `availableWidth / cellWidth`, but
+          // sub-pixel rounding (parseInt of getComputedStyle's px string,
+          // device-pixel-ratio canvas snapping, fractional cell metrics)
+          // can leave the rendered `.xterm-screen` a hair wider than the
+          // pane's clientWidth — the user's screenshot showed text from
+          // the rightmost column visibly clipping past the canvas edge.
+          // After the fit lands, if `.xterm-screen` still overflows the
+          // pane's content area, decrement cols by one until it fits.
+          const screen = handle.term.element?.querySelector<HTMLElement>('.xterm-screen') ?? null;
+          if (screen !== null) {
+            // Available content width: the pane's clientWidth minus its
+            // horizontal padding (matches what xterm sees from
+            // `getComputedStyle(parent).width`).
+            const cs = window.getComputedStyle(previewEl);
+            const padL = parseFloat(cs.paddingLeft) || 0;
+            const padR = parseFloat(cs.paddingRight) || 0;
+            const avail = previewEl.clientWidth - padL - padR;
+            let safety = 4;
+            while (safety > 0 && screen.offsetWidth > avail && handle.term.cols > 2) {
+              handle.term.resize(handle.term.cols - 1, handle.term.rows);
+              safety -= 1;
+            }
+          }
           handle.resize(handle.term.cols, handle.term.rows);
         } catch { /* fit can throw if the pane is detached mid-frame */ }
       });

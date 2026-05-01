@@ -856,6 +856,19 @@ input, select, textarea {
   min-width: 0;
   min-height: 220px;
 
+  // HS-8058 — let the live theme background paint the gutter around the
+  // canvas (the `cols * cellW` slop on the right and the `rows * cellH`
+  // slop on the bottom) so any sub-cell overflow reads as part of the
+  // terminal rather than as text poking out onto a contrasting gray pane.
+  // The container's `background` is set inline by `quitConfirm.tsx` once
+  // the row is selected; xterm's own layered elements `inherit` so the
+  // bg cascades cleanly through.
+  > .xterm,
+  .xterm-viewport,
+  .xterm-screen {
+    background: inherit !important;
+  }
+
   &[data-state="empty"],
   &[data-state="loading"],
   &[data-state="error"] {

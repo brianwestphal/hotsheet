@@ -559,6 +559,15 @@ export function _inspectStackForTesting(): Array<{
   return out;
 }
 
+/** **TEST ONLY** — return the live `XTerm` for a `(secret, terminalId)`
+ *  pair, or `null` if no entry exists. Lets unit tests poke
+ *  `term.options.theme` directly to exercise downstream consumers (e.g.
+ *  the HS-8058 quit-confirm theme-bg-cascade) without needing to wire a
+ *  real WebSocket / appearance-loader pipeline. */
+export function _getTermForTesting(secret: string, terminalId: string): XTerm | null {
+  return entries.get(entryKey(secret, terminalId))?.term ?? null;
+}
+
 /** **TEST ONLY** — drop every entry without going through dispose. Used
  *  by unit-test cleanup so a stray entry from one test doesn't bleed
  *  into the next. Real consumers use `release()`. */
