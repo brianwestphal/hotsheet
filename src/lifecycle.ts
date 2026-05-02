@@ -127,12 +127,23 @@ async function disposeGitWatchers(): Promise<void> {
 async function closeHttpServer(): Promise<void> {
   if (httpServer === null) return;
   await new Promise<void>((resolve) => {
+    // HS-8096: `server.close()` only stops accepting NEW connections — it
+    // still waits for every existing connection (including idle keep-alive
+    // sockets in the client's connection pool) to drain. A SIGINT-initiated
+    // shutdown right after a client request will routinely have an idle
+    // keep-alive socket from that request still in the pool, which would
+    // otherwise block `close()` until Node's keep-alive timeout. We use
+    // `closeIdleConnections()` (Node 18.2+) — NOT `closeAllConnections()` —
+    // because the /api/shutdown route depends on the in-flight response
+    // socket being able to finish writing the 200 OK reply before the
+    // socket goes away.
     httpServer!.close((err) => {
       if (err !== undefined) {
         console.error('[lifecycle] http server close error:', err);
       }
       resolve();
     });
+    httpServer!.closeIdleConnections();
   });
   httpServer = null;
 }

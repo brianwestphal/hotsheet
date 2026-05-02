@@ -66,8 +66,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `backup.ts` | 3-tier automated backups (5min/hourly/daily); CHECKPOINT before dump, startup catch-up for overdue tiers, JSON co-save sibling |
 | `dbJsonExport.ts` | HS-7893 versioned JSON snapshot of every table; atomic gzip write co-saved alongside each tarball |
 | `attachmentBackup.ts` | HS-7929 attachment-blob backups: streaming `hashFile`, hash-addressed `<backupRoot>/attachments/<sha256>` store with link-then-copy fallback, atomic `<base>.attachments.json` manifest writes, daily orphan GC (aborts on any parse failure), `restoreAttachmentsFromManifest` with `-restored-<TS>` collision suffix |
-| `db/repair.ts` | HS-7897 Repair Database helpers: `findWorkingBackup`, cross-platform `pg_resetwal` probe + run flow, install-hint pure helpers |
-| `db/fsyncWrap.ts` | HS-7935 explicit-fsync wrapper. `fsyncDir(path, fsyncFn?)` recursively walks a directory tree and `fs.fsyncSync`'s every regular file to close the gap left by Emscripten's NODEFS no-oping `fsync` (HS-7932 spike). Wired into `createBackup` after `CHECKPOINT` + `closeAllDatabases` after each `db.close()`. Best-effort: per-file errors are logged + counted, never thrown |
+| `permissionAllowRules.ts` | HS-7952 (§47.4) channel-permission allow-list helpers — `loadPermissionAllowRules(dataDir)` reads `permission_allow_rules: PermissionAllowRule[]` from `<dataDir>/settings.json`, `findMatchingAllowRule(toolName, input, rules)` is the server-side gate consumed by `routes/channel.ts` to auto-approve permission requests + write `channel_permission_auto_allow` audit log entries before the overlay surfaces |
 | `cleanup.ts` | Prune old trash/completed/verified + orphaned attachments |
 | `demo.ts` | `--demo:N` seed data |
 | `skills.ts` | Generates `.claude/skills/hotsheet` + per-category `hs-{cat}` + Cursor/Copilot/Windsurf files |
@@ -96,7 +95,8 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `backups.ts` | `GET /api/backups`, `POST /api/backups/restore/:id`, preview flow |
 | `db.ts` | HS-7899 `GET /api/db/recovery-status` + `POST /api/db/dismiss-recovery` for the launch-time recovery banner; HS-7897 `POST /api/db/repair/find-working-backup` + `GET /api/db/repair/pg-resetwal-availability` + `POST /api/db/repair/run-pg-resetwal` for the Database Repair panel |
 | `projects.ts` | `/api/projects` register/list/unregister, reorder, per-project channel-status, `/api/projects/permissions` long-poll, `/api/projects/bell-state` long-poll (HS-6638 §24.3.3 — aggregates per-project `bellPending`) |
-| `terminal.ts` | `GET /api/terminal/list` (includes `bellPending`), `/status`, `/restart`, `/kill`, `/create`, `/destroy`, `/clear-bell` (HS-6638 §24.3.2), `/foreground-process` (HS-7596), `/command-suggestions` (HS-7791) |
+| `terminal.ts` | `GET /api/terminal/list` (includes `bellPending`), `/status`, `/restart`, `/kill`, `/create`, `/destroy`, `/clear-bell` (HS-6638 §24.3.2), `/foreground-process` (HS-7596), `/command-suggestions` (HS-7791), `/prompt-respond`, `/prompt-dismiss`, `/prompt-resume` (HS-8034 server-side prompt scanner) |
+| `git.ts` | HS-7954-7956 git status tracker — `GET /api/git/status` (branch + working-tree dirty + ahead/behind), `POST /api/git/fetch` (manual fetch), `POST /api/git/auto-fetch` (timer endpoint). 500 ms cache + chokidar watcher on `.git/index` + `.git/HEAD` |
 | `notify.ts` | Shared long-poll + change-version bus (change / permission / bell waiter lists; HS-6638 added `bellVersion` + `addBellWaiter` + `notifyBellWaiters`) |
 | `pages.tsx` | `GET /` server-rendered HTML |
 | `validation.ts` | Zod schemas for body/query validation |
@@ -108,14 +108,17 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 |---|---|
 | `connection.ts` | PGLite instance per dataDir, `initSchema()` — all `CREATE TABLE` + migrations live here |
 | `queries.ts` | Aggregates/re-exports query helpers |
-| `tickets.ts` | CRUD, filtering, batch, status transitions |
+| `tickets.ts` | CRUD, filtering, batch, status transitions. HS-8036 `listKnownTicketPrefixes()` for cross-reference linkification. Search-counts helper (`countSearchMatchesInExcludedStatuses`) for HS-7756 include-rows |
 | `attachments.ts` | Attachment row ops |
 | `notes.ts` | JSON-serialized notes; `note_id` generation |
 | `tags.ts` | Normalization (lowercase), extraction from `[tag]` syntax |
 | `settings.ts` | Plugin-scoped DB settings (`plugin:{id}:{key}`, `plugin_enabled:{id}`) |
-| `commandLog.ts` | Shell + channel + permission log entries |
+| `commandLog.ts` | Shell + channel + permission log entries (incl. HS-7987 `terminal_prompt_auto_allow` event_type via `addLogEntry`) |
 | `stats.ts` | Rolling daily snapshot for dashboard charts |
 | `sync.ts` | `ticket_sync`, `sync_outbox`, `note_sync` accessors |
+| `feedbackDrafts.ts` | HS-7822 per-feedback-note draft persistence (unsent text survives reload + relaunch) |
+| `repair.ts` | HS-7897 Repair Database helpers: `findWorkingBackup`, cross-platform `pg_resetwal` probe + run flow, install-hint pure helpers (was previously listed under `src/` top-level) |
+| `fsyncWrap.ts` | HS-7935 explicit-fsync wrapper. `fsyncDir(path, fsyncFn?)` recursively walks a directory tree and `fs.fsyncSync`'s every regular file to close the gap left by Emscripten's NODEFS no-oping `fsync` (HS-7932 spike). Wired into `createBackup` after `CHECKPOINT` + `closeAllDatabases` after each `db.close()`. Best-effort: per-file errors are logged + counted, never thrown (was previously listed under `src/` top-level) |
 
 ### `src/client/` (browser bundle)
 
@@ -308,7 +311,13 @@ When `IntersectionObserver` is undefined (some test envs without a polyfill), th
 
 **Assets:** `assets/` — app icon PNGs (`icon-default.png`, `icon-variant-1..9.png`, plus `glassbox-icon.png`).
 
-### `src/plugins/`, `src/sync/`, `src/terminals/`, `src/components/`, `src/utils/`
+**Other client modules not separately narrated above** (one-liner each — see file headers / git blame for full context):
+- `editDiffPreview.tsx` — HS-7951 inline unified-diff preview for the Edit-tool permission overlay (replaces the flat-JSON dump for `old_string` / `new_string`).
+- `permissionDialogShell.tsx` — HS-8066 shared chrome (chip / title / body / actions / always-affordance / lifecycle callbacks) consumed by `permissionOverlay.tsx` (§47) and `terminalPromptOverlay.tsx` (§52).
+- `projectTabsFingerprint.ts` — pure-helper fingerprint of the project-tab list shape used by `projectTabs.tsx` to skip rebuilds when the visible tab set is unchanged.
+- `terminalSnapshot.ts` — client-side scrollback snapshot helper; pairs with `terminalReplay.ts` for HS-8042 history-replay-resize handling.
+
+### `src/plugins/`, `src/sync/`, `src/terminals/`, `src/git/`, `src/shared/`, `src/components/`, `src/utils/`
 
 - `plugins/{types.ts,loader.ts,syncEngine.ts}` — plugin API types, discovery/activation, bi-directional sync.
 - `sync/markdown.ts` — debounced export of `worklist.md` / `open-tickets.md`.
@@ -317,9 +326,20 @@ When `IntersectionObserver` is undefined (some test envs without a polyfill), th
   - `eagerSpawn.ts` — `eagerSpawnTerminals(secret, dataDir)` spawns every `lazy:false` configured terminal via `ensureSpawned`. Called from `cli.ts` at project registration and from `/file-settings` PATCH when `terminals` changes.
   - `resolveCommand.ts` — resolves the chosen terminal's command template (`{{claudeCommand}}` substitution) + cwd; accepts optional `terminalId` and a `configOverride` for dynamic terminals. **HS-7991** added `resolveTerminalCwd(setting, projectDir)` pure helper: blank → project root, `{{projectDir}}` token expanded inline, absolute paths verbatim, relative paths resolved against the project root via `path.resolve`. `~` is NOT expanded.
   - `ringBuffer.ts` — FIFO byte buffer capped at a max size for scrollback.
-  - `registry.ts` — `TerminalRegistry` keyed by `${secret}::${terminalId}`; lazy node-pty spawn, subscriber broadcast, restart / kill / destroy lifecycle, `ensureSpawned` (no-subscriber spawn for eager mode), `listProjectTerminalIds`, `destroyProjectTerminals`. Each session has a `hasBeenAttached` flag (HS-6799): on the first real attach to an eager-spawned PTY that provides client dims, `attach()` resizes the PTY to those dims, clears the scrollback ring buffer, and writes `\x0c` (Ctrl-L) to the PTY so the shell redraws its prompt at the right geometry — the 80×24 startup output is otherwise replayed into a wider pane and leaves stray glyphs at the top. Session also carries a `bellPending` flag (HS-6638 §24.2): the PTY `onData` handler runs an OSC-aware `scanForRealBell(session, chunk)` that tracks OSC/DCS/APC/PM/SOS string state across chunks so `\x1b]0;TITLE\x07` title updates, OSC 7 cwd updates, etc. don't trip the bell (HS-6766). Helpers `getBellPending`, `clearBellPending`, `listBellPendingForProject` expose it to the route layer; `restartTerminal` resets both the flag and the OSC-scan state. `setPtyFactory` for tests.
+  - `registry.ts` — `TerminalRegistry` keyed by `${secret}::${terminalId}`; lazy node-pty spawn, subscriber broadcast, restart / kill / destroy lifecycle, `ensureSpawned` (no-subscriber spawn for eager mode), `listProjectTerminalIds`, `destroyProjectTerminals`. Each session has a `hasBeenAttached` flag (HS-6799): on the first real attach to an eager-spawned PTY that provides client dims, `attach()` resizes the PTY to those dims, clears the scrollback ring buffer, and writes `\x0c` (Ctrl-L) to the PTY so the shell redraws its prompt at the right geometry — the 80×24 startup output is otherwise replayed into a wider pane and leaves stray glyphs at the top. Session also carries a `bellPending` flag (HS-6638 §24.2): the PTY `onData` handler runs an OSC-aware `scanForRealBell(session, chunk)` that tracks OSC/DCS/APC/PM/SOS string state across chunks so `\x1b]0;TITLE\x07` title updates, OSC 7 cwd updates, etc. don't trip the bell (HS-6766). Helpers `getBellPending`, `clearBellPending`, `listBellPendingForProject` expose it to the route layer; `restartTerminal` resets both the flag and the OSC-scan state. **HS-8034**: each session also owns a `promptScanner` (see `promptScanner.ts`) constructed with a closure that wires `handleScannerMatch` for server-side auto-allow gating; `pendingPrompt` slot stashes unmatched prompts for the bell-state long-poll to surface cross-project. `setPtyFactory` for tests.
   - `websocket.ts` — `wireTerminalWebSocket(httpServer)` attaches a `ws.Server` (noServer mode) to the Node HTTP server; authenticates upgrade by project secret and parses `?terminal=<id>&cols=N&rows=M`; bridges ws ⇄ registry per terminalId. Client dims from the URL are forwarded into `attach()` so the PTY can be spawned/resized to match before the history frame is sent (HS-6799).
-  - Registered HTTP routes live in `src/routes/terminal.ts` (`/api/terminal/list` — now includes `bellPending` per entry, `/status`, `/restart`, `/kill`, `/create`, `/destroy`, `/clear-bell`). WebSocket endpoint is `/api/terminal/ws?project=<secret>&terminal=<id>`. Cross-project bell aggregation is exposed via `/api/projects/bell-state` (long-poll) in `src/routes/projects.ts`.
+  - `claudeSpinner.ts` — HS-6702 `containsClaudeSpinner(text)` checks for the six Claude busy-spinner glyphs; powers the channel-degraded-busy indicator.
+  - `processInspect.ts` — HS-7591/HS-7596 `inspectForegroundProcess(pid)` resolves the foreground child of a PTY's shell (cross-platform `ps -o comm` parsing + `normalizeComm()` basename stripper) for the quit-confirm dialog.
+  - `promptScanner.ts` — HS-8029 server-side prompt scanner per `TerminalSession`. Owns a small `@xterm/headless` instance (200 cols × 30 rows, 50-row scrollback). `createPromptScanner({onMatch})` returns `{ingest, notifyUserKeystroke, setSuppressed, resize, dispose}`; ingests every PTY chunk and runs the shared parser registry from `src/shared/terminalPrompt/parsers.ts`.
+  - `scrollbackSnapshot.ts` — pure helpers for capture-time scrollback snapshots: `stripAnsi`, `tailLines`, plus historical `buildScrollbackPreview` (deleted in HS-8045 cleanup; only utility helpers survive).
+  - `shellHistory.ts` — HS-7965 per-(project, terminal-id) shell-history scoping. Generates per-shell init files that override `HISTFILE` after the user's rc has loaded.
+  - Registered HTTP routes live in `src/routes/terminal.ts` (`/api/terminal/list` — now includes `bellPending` per entry, `/status`, `/restart`, `/kill`, `/create`, `/destroy`, `/clear-bell`, `/prompt-respond`, `/prompt-dismiss`, `/prompt-resume`). WebSocket endpoint is `/api/terminal/ws?project=<secret>&terminal=<id>`. Cross-project bell aggregation is exposed via `/api/projects/bell-state` (long-poll) in `src/routes/projects.ts`.
+- `git/` — HS-7954-7956 git status tracker (core feature, NOT a plugin):
+  - `status.ts` — `getGitStatus(projectDir)` wraps `git status --porcelain` + `git rev-parse --abbrev-ref HEAD` + ahead/behind via `git rev-list`. 500 ms cache.
+  - `watcher.ts` — chokidar `fs.watch` on `.git/index` + `.git/HEAD` per project, debounced cache-bust. `disposeAllGitWatchers()` is wired into `lifecycle.ts::gracefulShutdown`.
+- `shared/` — code shared between server and client (kept separate from `client/` so server modules can import without dragging in client deps):
+  - `terminalPrompt/parsers.ts` — pure parser registry + `MatchResult` shape (HS-8029 moved here from `client/`). `claudeNumberedParser`, `yesNoParser`, `genericParser`. Helpers: `hashQuestion`, `pickTitleLine`, `isDecorativeLine`, `buildNumberedPayload`, `buildYesNoPayload`, `buildGenericPayload`, cancel-payload helpers.
+  - `terminalPrompt/allowRules.ts` — `findMatchingAllowRule`, `parseAllowRules`, `buildAllowRule`, `payloadForAutoAllow` (HS-8034 moved here from `client/` so the server-side scanner can call it).
 - `components/layout.tsx` — the server HTML shell.
 - `utils/{escapeHtml.ts, errorMessage.ts}` — small shared helpers.
 

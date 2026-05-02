@@ -592,38 +592,24 @@ export function createSignalHandler(hooks: SignalHandlerHooks): (signal: 'SIGINT
   };
 }
 
-/** Write instance file and register exit cleanup handlers. */
-async function setupInstanceLifecycle(actualPort: number): Promise<void> {
-  writeInstanceFile(actualPort);
-  // HS-7528: pre-import the registry so the synchronous `process.on('exit')`
-  // handler can kill PTYs without waiting on an async import. Covers the
-  // `process.exit()` path (e.g. `/api/shutdown`, stale-instance cleanup,
-  // crashes) — the SIGINT / SIGTERM handlers below route through the async
-  // `gracefulShutdown` pipeline (HS-7931) so PGLite gets a chance to
-  // CHECKPOINT and remove `postmaster.pid` instead of leaving it stale for
-  // HS-7888 to mop up on relaunch.
-  const { destroyAllTerminals } = await import('./terminals/registry.js');
-  const { gracefulShutdown } = await import('./lifecycle.js');
-  const cleanupInstance = (): void => {
-    try { destroyAllTerminals(); } catch { /* already torn down */ }
-    removeInstanceFile();
-  };
-  // HS-7931: synchronous exit handler stays as the lockfile-removal safety
-  // net for paths the async pipeline didn't get to (uncaught exceptions,
-  // explicit `process.exit()` from elsewhere).
-  process.on('exit', () => { cleanupInstance(); });
-
-  // HS-7931: signal handlers route through `gracefulShutdown`. A SECOND
-  // identical signal during the await escalates to `process.exit(1)` so a
-  // hung close can't trap the user — they can always Ctrl-C twice to bail.
-  // HS-7934: use `setImmediate` to yield to pending signal handlers before
-  // calling `process.exit(0)` — without it, a late-arriving second signal
-  // can be queued behind gracefulShutdown's resolution microtask, exit(0)
-  // fires, and the escalation path never runs. The setImmediate hop puts
-  // exit(0) on the immediate-callback queue which runs AFTER any pending
-  // signal handler.
+/**
+ * HS-8096: register SIGINT/SIGTERM handlers at the top of `main()`, BEFORE
+ * the HTTP server starts listening. Pre-fix the handlers were installed
+ * deep in `setupInstanceLifecycle` after the server was already serving
+ * `/api/stats` — `lifecycle.e2e.test.ts`'s SIGINT test polls `/api/stats`
+ * to detect readiness, then sends SIGINT, but the handler hadn't been
+ * registered yet, so Node's default handler kicked in and the child
+ * exited with 130 instead of 0. Calling `gracefulShutdown` before the
+ * HTTP server is wired is safe — `lifecycle.ts::closeHttpServer` no-ops
+ * when `httpServer === null`, and the rest of the pipeline is similarly
+ * tolerant of half-initialised state.
+ */
+function registerSignalHandlersEarly(): void {
   const handler = createSignalHandler({
-    runShutdown: gracefulShutdown,
+    runShutdown: async (signal) => {
+      const { gracefulShutdown } = await import('./lifecycle.js');
+      await gracefulShutdown(signal);
+    },
     exit: (code) => process.exit(code),
     setImmediate: (fn) => { setImmediate(fn); },
     log: (m) => { console.error(m); },
@@ -632,9 +618,36 @@ async function setupInstanceLifecycle(actualPort: number): Promise<void> {
   process.on('SIGTERM', () => { void handler('SIGTERM'); });
 }
 
+/** Write instance file and register exit cleanup handlers. */
+async function setupInstanceLifecycle(actualPort: number): Promise<void> {
+  writeInstanceFile(actualPort);
+  // HS-7528: pre-import the registry so the synchronous `process.on('exit')`
+  // handler can kill PTYs without waiting on an async import. Covers the
+  // `process.exit()` path (e.g. `/api/shutdown`, stale-instance cleanup,
+  // crashes). HS-8096 — the signal handlers themselves are registered
+  // earlier in `main()` via `registerSignalHandlersEarly()` so a SIGINT
+  // arriving between server-listening and post-startup completion still
+  // hits the graceful pipeline.
+  const { destroyAllTerminals } = await import('./terminals/registry.js');
+  const cleanupInstance = (): void => {
+    try { destroyAllTerminals(); } catch { /* already torn down */ }
+    removeInstanceFile();
+  };
+  // HS-7931: synchronous exit handler stays as the lockfile-removal safety
+  // net for paths the async pipeline didn't get to (uncaught exceptions,
+  // explicit `process.exit()` from elsewhere).
+  process.on('exit', () => { cleanupInstance(); });
+}
+
 async function main() {
   const t0 = Date.now();
   const elapsed = () => `${Date.now() - t0}ms`;
+
+  // HS-8096: install signal handlers before any HTTP listener can respond,
+  // so a SIGINT arriving between `tryServe`'s listen-callback firing and
+  // `setupInstanceLifecycle` completing still routes through gracefulShutdown
+  // instead of hitting Node's default-handler exit-with-130.
+  registerSignalHandlersEarly();
 
   // Watchdog: dump diagnostic if startup takes too long
   const watchdog = setTimeout(() => {
