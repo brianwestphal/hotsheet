@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildAllowRule,
+  buildChoiceShape,
   findMatchingAllowRule,
   parseAllowRules,
   payloadForAutoAllow,
@@ -174,6 +175,77 @@ describe('findMatchingAllowRule (HS-7987)', () => {
   it('returns null for empty rules list', () => {
     expect(findMatchingAllowRule(numberedMatch, [])).toBeNull();
   });
+
+  // HS-8071 — drift-resistant fallback. When Claude TUI status-bar lines
+  // bleed into the captured question region, the `question_hash` shifts
+  // (sometimes — about 50% of launches per the user's report). The
+  // rule's `choice_shape` field stays stable and lets us recognise the
+  // prompt anyway.
+  describe('choice_shape fallback (HS-8071)', () => {
+    function ruleWithShape(parserId: string, hash: string, shape: string, choiceIndex = 0): TerminalPromptAllowRule {
+      return {
+        id: `r-${parserId}-${hash}`,
+        parser_id: parserId,
+        question_hash: hash,
+        choice_index: choiceIndex,
+        choice_shape: shape,
+        created_at: '',
+      };
+    }
+
+    it('matches on choice_shape when the question_hash drifted', () => {
+      const expectedShape = buildChoiceShape(numberedMatch);
+      const r = ruleWithShape('claude-numbered', 'DRIFTED-HASH-99999999', expectedShape);
+      expect(findMatchingAllowRule(numberedMatch, [r])).toBe(r);
+    });
+
+    it('does NOT match on choice_shape when the parser_id differs', () => {
+      const expectedShape = buildChoiceShape(numberedMatch);
+      const r = ruleWithShape('yesno', 'whatever', expectedShape);
+      expect(findMatchingAllowRule(numberedMatch, [r])).toBeNull();
+    });
+
+    it('does NOT match on choice_shape when the rule shape differs', () => {
+      const r = ruleWithShape('claude-numbered', 'whatever', 'different shape|here');
+      expect(findMatchingAllowRule(numberedMatch, [r])).toBeNull();
+    });
+
+    it('skips the fallback when the rule has no choice_shape (back-compat with pre-HS-8071 rules)', () => {
+      const r: TerminalPromptAllowRule = {
+        id: 'old',
+        parser_id: 'claude-numbered',
+        question_hash: 'DRIFTED-HASH-99999999',
+        choice_index: 0,
+        created_at: '',
+        // no choice_shape — older rule shape.
+      };
+      expect(findMatchingAllowRule(numberedMatch, [r])).toBeNull();
+    });
+
+    it('prefers the question_hash exact match when both tiers would match', () => {
+      // Tier 1 should win — the per-choice rule with the right hash is
+      // returned even when an alternate rule with the same shape also
+      // exists later in the list.
+      const expectedShape = buildChoiceShape(numberedMatch);
+      const tier1 = ruleWithShape('claude-numbered', 'abcd1234', 'wrong shape', 0);
+      const tier2 = ruleWithShape('claude-numbered', 'DRIFTED-HASH', expectedShape, 1);
+      expect(findMatchingAllowRule(numberedMatch, [tier1, tier2])).toBe(tier1);
+    });
+  });
+});
+
+describe('buildChoiceShape (HS-8071)', () => {
+  it('joins numbered choice labels lowercase + pipe-separated', () => {
+    expect(buildChoiceShape(numberedMatch)).toBe('i am using this for local development|exit');
+  });
+
+  it('returns the literal "yes|no" for yesno shape regardless of capitalisation', () => {
+    expect(buildChoiceShape(yesNoMatch)).toBe('yes|no');
+  });
+
+  it('returns empty string for the generic shape (never allow-listable)', () => {
+    expect(buildChoiceShape(genericMatch)).toBe('');
+  });
 });
 
 describe('buildAllowRule (HS-7987)', () => {
@@ -206,6 +278,19 @@ describe('buildAllowRule (HS-7987)', () => {
     };
     const r = buildAllowRule(longMatch, 0, 'A');
     expect(r.question_preview!.length).toBe(120);
+  });
+
+  // HS-8071 — new rules carry a `choice_shape` fingerprint so the
+  // findMatchingAllowRule fallback can pick them up under question_hash
+  // drift.
+  it('records the drift-resistant choice_shape fingerprint on numbered rules', () => {
+    const r = buildAllowRule(numberedMatch, 0, 'I am using this for local development');
+    expect(r.choice_shape).toBe('i am using this for local development|exit');
+  });
+
+  it('records "yes|no" on yesno rules', () => {
+    const r = buildAllowRule(yesNoMatch, 0, 'Yes');
+    expect(r.choice_shape).toBe('yes|no');
   });
 });
 

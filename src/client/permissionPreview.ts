@@ -104,7 +104,7 @@ export function formatEditDiff(toolName: string, raw: string): EditDiffShape | n
     // Truncated mid-JSON. Fall back to the forgiving extractor for
     // `old_string` / `new_string` so partial diffs still render.
     const oldExtract = extractStringField(trimmed, 'old_string');
-    const newExtract = extractStringField(trimmed, 'new_string');
+    let newExtract = extractStringField(trimmed, 'new_string');
     if (toolName === 'Edit') {
       // Edit needs both fields. If either is missing entirely, defer to flat
       // JSON renderer.
@@ -117,8 +117,13 @@ export function formatEditDiff(toolName: string, raw: string): EditDiffShape | n
         truncated: oldExtract.truncated || newExtract.truncated,
       };
     }
-    // Write — only `new_string` matters; old_string is treated as empty
-    // (whole-file replace).
+    // Write — only `new_string` (or its alias `content`) matters; old_string
+    // is treated as empty (whole-file replace). HS-8107 — pre-fix the
+    // truncated path only looked at `new_string`, so a long Write payload
+    // serialised under the modern `content` field collapsed to null and
+    // pushed the popup onto the mirror-xterm snapshot path, which then
+    // surfaced as a solid-black body when Claude wasn't actively redrawing.
+    if (newExtract === null) newExtract = extractStringField(trimmed, 'content');
     if (newExtract === null) return null;
     return {
       oldStr: '',

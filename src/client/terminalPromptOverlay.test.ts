@@ -307,20 +307,36 @@ describe('terminal-prompt overlay Minimize / No-response-needed footer (HS-8067)
     expect(document.querySelector('.terminal-prompt-overlay')).toBeNull();
   });
 
-  it('Cancel button still fires onClose (existing path unchanged)', () => {
-    let onCloseCalls = 0;
-    let sendCalls = 0;
+  // HS-8071 — the Cancel button was removed from numbered + yesno + generic
+  // overlay shapes per the user's feedback ("the 'cancel' button can be
+  // removed, its not helpful"). Esc still cancels via the capture-phase
+  // keyboard handler in `mountShellWithEsc`; the X-close button on the
+  // shell header dismisses without sending. Keeping a regression test so
+  // an accidental re-introduction (e.g. from a future shape) gets caught.
+  it('Cancel button is no longer rendered (HS-8071)', () => {
     openTerminalPromptOverlay({
       match: makeMatch(),
-      onSend: () => { sendCalls += 1; return true; },
-      onClose: () => { onCloseCalls += 1; },
+      onSend: () => true,
+      onClose: () => { /* no-op */ },
       onMinimize: () => { /* no-op */ },
       onNoResponseNeeded: () => { /* no-op */ },
     });
-    const cancelBtn = document.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-cancel');
-    cancelBtn?.click();
-    // Cancel sends a payload then calls onClose.
+    expect(document.querySelector('.terminal-prompt-overlay-cancel')).toBeNull();
+  });
+
+  it('Escape still cancels the overlay (numbered shape) — sends the cancel payload + closes (HS-8071)', () => {
+    let sendCalls = 0;
+    let lastSend = '';
+    openTerminalPromptOverlay({
+      match: makeMatch(),
+      onSend: (payload) => { sendCalls += 1; lastSend = payload; return true; },
+      onClose: () => { /* no-op */ },
+      onMinimize: () => { /* no-op */ },
+      onNoResponseNeeded: () => { /* no-op */ },
+    });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     expect(sendCalls).toBe(1);
-    expect(onCloseCalls).toBe(1);
+    expect(lastSend).toBe('\x1b'); // numbered cancel payload
+    expect(document.querySelector('.terminal-prompt-overlay')).toBeNull();
   });
 });

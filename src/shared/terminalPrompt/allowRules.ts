@@ -30,6 +30,17 @@ export interface TerminalPromptAllowRule {
   /** Human-readable choice label ("Continue" / "Yes" / "1. Foo") — used by
    *  Phase 4's Settings UI for the same reason as `question_preview`. */
   choice_label?: string;
+  /**
+   * HS-8071 — pipe-joined, lowercase-trimmed labels of every choice in the
+   * prompt (numbered shape) or the literal `yes|no` (yesno shape). Acts as
+   * a drift-resistant secondary fingerprint: when Claude TUI status-bar
+   * lines bleed into the captured question region, the `question_hash`
+   * shifts but the choice labels stay stable across renders, so a
+   * `(parser_id, choice_shape)` lookup still recognises the prompt and
+   * auto-allows. Optional for back-compat — rules created before the fix
+   * still match on `question_hash` only.
+   */
+  choice_shape?: string;
   /** ISO timestamp when the rule was created (display only). */
   created_at: string;
 }
@@ -79,20 +90,30 @@ export function parseAllowRules(raw: unknown): TerminalPromptAllowRule[] {
     };
     if (typeof obj.question_preview === 'string') rule.question_preview = obj.question_preview;
     if (typeof obj.choice_label === 'string') rule.choice_label = obj.choice_label;
+    if (typeof obj.choice_shape === 'string' && obj.choice_shape !== '') rule.choice_shape = obj.choice_shape;
     out.push(rule);
   }
   return out;
 }
 
 /**
- * Pure: find the rule that matches `(parser_id, question_hash, choice_index)`
- * for the given `MatchResult`. Returns null when the match's shape is
- * `generic` (not allow-listable) OR when no rule matches.
+ * Pure: find the rule that matches the given `MatchResult`. Two-tier lookup
+ * (HS-8071):
  *
- * Uses the `signature` field on `MatchResult` (already shaped as
- * `parser_id:question_hash:default_choice_index`) for the hash extraction —
- * rules can specify ANY choice index, not just the default, so we
- * deconstruct the signature and pair-up parser_id + question_hash.
+ * 1. **Primary** — `(parser_id, question_hash)` exact match. Same as the
+ *    pre-fix behaviour. Stable for prompts whose surrounding TUI doesn't
+ *    contaminate the captured question region.
+ * 2. **Drift-resistant fallback** — `(parser_id, choice_shape)` exact match.
+ *    The `choice_shape` is computed deterministically from the prompt's
+ *    visible choices (numbered: pipe-joined lowercase-trimmed labels;
+ *    yesno: the literal `yes|no`), so it stays stable even when Claude
+ *    TUI status-bar lines bleed into the question region and the
+ *    `question_hash` shifts. Only kicks in for rules created after the
+ *    HS-8071 fix (older rules don't carry `choice_shape` and skip this
+ *    branch).
+ *
+ * Returns null when the match's shape is `generic` (never allow-listable
+ * — see docs/52 §52.1) or when no rule matches under either tier.
  */
 export function findMatchingAllowRule(
   match: MatchResult,
@@ -103,14 +124,44 @@ export function findMatchingAllowRule(
   if (parts.length < 3) return null;
   const parserId = parts[0];
   const questionHash = parts[1];
+  const matchShape = buildChoiceShape(match);
+  // Tier 1 — primary `(parser_id, question_hash)` lookup.
   for (const rule of rules) {
     if (rule.parser_id !== parserId) continue;
     if (rule.question_hash !== questionHash) continue;
-    // choice_index match is part of the rule, not the match — a single
-    // (parser_id, question_hash) pair could have multiple rules per choice.
     return rule;
   }
+  // Tier 2 — drift-resistant `(parser_id, choice_shape)` fallback. Skipped
+  // when the match has no usable shape (defensive — empty shapes match too
+  // broadly) or when no rule was recorded with a `choice_shape`.
+  if (matchShape !== '') {
+    for (const rule of rules) {
+      if (rule.parser_id !== parserId) continue;
+      if (rule.choice_shape === undefined || rule.choice_shape === '') continue;
+      if (rule.choice_shape !== matchShape) continue;
+      return rule;
+    }
+  }
   return null;
+}
+
+/**
+ * HS-8071 — pure: derive a stable choice-shape fingerprint from a match.
+ * Numbered shape: pipe-joined, lowercase-trimmed choice labels in the
+ * order Claude rendered them (`"i am using this for local development|exit"`).
+ * Yesno shape: literal `"yes|no"` regardless of capitalisation, since the
+ * shape is invariant. Generic shape: empty string (never allow-listable).
+ *
+ * Exported so the always-allow-builder + the auto-allow gate share one
+ * canonical implementation, and so the test suite can pin the expected
+ * values directly.
+ */
+export function buildChoiceShape(match: MatchResult): string {
+  if (match.shape === 'numbered') {
+    return match.choices.map(c => c.label.trim().toLowerCase()).join('|');
+  }
+  if (match.shape === 'yesno') return 'yes|no';
+  return '';
 }
 
 /**
@@ -133,6 +184,10 @@ export function buildAllowRule(
   const questionHash = parts[1];
   const id = newRuleId();
   const preview = match.question.slice(0, 120);
+  // HS-8071 — record the drift-resistant `choice_shape` fingerprint so the
+  // auto-allow gate can fall back to it when Claude's question_hash
+  // shifts under TUI status-bar contamination.
+  const choiceShape = buildChoiceShape(match);
   return {
     id,
     parser_id: parserId,
@@ -140,6 +195,7 @@ export function buildAllowRule(
     question_preview: preview,
     choice_index: choiceIndex,
     choice_label: choiceLabel,
+    choice_shape: choiceShape !== '' ? choiceShape : undefined,
     created_at: new Date().toISOString(),
   };
 }

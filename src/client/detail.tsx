@@ -103,7 +103,23 @@ export function bindDetailDetailsRenderToggle(): void {
     setDetailsEditing(true);
   });
   // Tab-focus also enters edit mode so keyboard users can edit.
+  //
+  // HS-8062 — when the user clicks a `.ticket-ref` anchor inside the
+  // rendered details, WKWebView (Tauri's webview) sometimes routes focus
+  // to the closest tabbable ancestor (this rendered div, via `tabIndex=0`)
+  // instead of to the anchor — the anchor uses `href="javascript:void(0)"`
+  // and WKWebView is conservative about focusing those. The focus then
+  // fires before the document's capture-phase click handler intercepts
+  // the click, pushing the wrap into edit mode underneath the dialog.
+  // To avoid this, we suppress the focus-driven edit-mode entry when a
+  // mousedown landed inside `rendered` within the last few hundred
+  // milliseconds — that path is owned by the click handler (or the
+  // global `.ticket-ref` capture-phase intercept), not the focus path.
+  // Keyboard tab focus still works because there's no preceding mousedown.
+  let recentMouseDownAt = 0;
+  rendered.addEventListener('mousedown', () => { recentMouseDownAt = Date.now(); });
   rendered.addEventListener('focus', () => {
+    if (Date.now() - recentMouseDownAt < 250) return;
     setDetailsEditing(true);
   });
   // Leaving the textarea drops back to rendered view. Suppressed when

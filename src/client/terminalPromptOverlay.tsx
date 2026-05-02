@@ -215,7 +215,12 @@ function mountShellWithEsc(
     handle.close();
   }
 
-  // Cancel button (lives inside the consumer-supplied `actions` DOM).
+  // HS-8071 — Cancel button removed per the user's feedback ("the
+  // 'cancel' button can be removed, its not helpful"). Esc still cancels
+  // via the capture-phase `escHandler` below; the X-close button on the
+  // shell header also dismisses without sending. The selector below is
+  // kept tolerant (`?.`) so any consumer that still renders a cancel
+  // button (e.g. an experimental shape) keeps its previous behaviour.
   handle.overlay.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-cancel')?.addEventListener('click', () => {
     send(cancelPayload);
   });
@@ -265,9 +270,6 @@ function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: Numb
           </button>
         ))}
       </div>
-      <div className="terminal-prompt-overlay-footer">
-        <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
-      </div>
       <p className="terminal-prompt-overlay-error" style="display:none"></p>
     </div>
   );
@@ -301,9 +303,6 @@ function openYesNoOverlay(opts: OpenTerminalPromptOverlayOptions, match: YesNoMa
         <button className="terminal-prompt-overlay-choice terminal-prompt-overlay-no" type="button" data-yesno="no">
           <span className="terminal-prompt-overlay-choice-label">No</span>
         </button>
-      </div>
-      <div className="terminal-prompt-overlay-footer">
-        <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
       </div>
       <p className="terminal-prompt-overlay-error" style="display:none"></p>
     </div>
@@ -351,7 +350,6 @@ function openGenericOverlay(opts: OpenTerminalPromptOverlayOptions, match: Gener
   const actions = toElement(
     <div className="terminal-prompt-overlay-actions terminal-prompt-overlay-generic">
       <div className="terminal-prompt-overlay-footer terminal-prompt-overlay-generic-footer">
-        <button className="terminal-prompt-overlay-cancel" type="button">Cancel (Esc)</button>
         <button className="terminal-prompt-overlay-generic-submit" type="button">Send (Enter)</button>
       </div>
       <p className="terminal-prompt-overlay-error" style="display:none"></p>

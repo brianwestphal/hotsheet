@@ -133,12 +133,15 @@ export function linkifyTicketRefs(
 
 /**
  * Convenience wrapper for callers that don't want to await the
- * prefix-cache. Returns the input HTML unchanged when the cache hasn't
- * been populated yet — the caller can re-render once
- * `loadTicketPrefixes()` resolves. Pre-loaded callers should use
- * `linkifyTicketRefs(html, prefixes, currentTicketNumber)` directly.
+ * prefix-cache. When the cache hasn't resolved yet, falls back to the
+ * default `HS` prefix so the most-common case (Hot Sheet's own tickets)
+ * still linkifies synchronously — without this, a fast click between
+ * boot and `loadTicketPrefixes()` resolution clicks through plain text
+ * straight into edit mode (HS-8062). Once the cache loads, the boot-time
+ * `loadTicketPrefixes().then(refreshDetail)` chain re-renders the active
+ * detail panel with the full prefix set.
  */
 export function linkifyWithCachedPrefixes(html: string, currentTicketNumber?: string): string {
-  if (cachedPrefixes === null) return html;
-  return linkifyTicketRefs(html, cachedPrefixes, currentTicketNumber);
+  const prefixes = cachedPrefixes ?? ['HS'];
+  return linkifyTicketRefs(html, prefixes, currentTicketNumber);
 }

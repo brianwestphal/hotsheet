@@ -9244,57 +9244,77 @@ label.detail-details-label {
   }
 }
 
-// HS-8072 — restyle the legacy single-line `.permission-allow-row` grid
-// for the terminal-prompt allow list specifically, so the question
-// preview wraps to 2 lines instead of being clipped to the first
-// character ("W..." in the bug report screenshot). The grid template
-// gives the question the full second column, with choice / created /
-// trash on the right; on narrow widths the row reflows the bottom
-// metadata under the question. Click-to-open the inspector for the full
-// (unclipped) text — pointer + focus styling matches
-// `.permission-allow-rule-row` so the two surfaces feel like siblings.
+// HS-8106 — two-row layout per rule:
+//   Row 1: [parser] [question, single line + ellipsis]   [trash, vert-centered]
+//   Row 2: [empty ] [→ auto-response · created          ] [trash continues   ]
+// Replaces the HS-8072 single-row, line-clamped layout — the line clamp
+// only ever surfaced the first 1-2 characters of long preambles
+// ("W A...") in the bug report. Splitting the auto-response onto its own
+// line frees the question to use the full row width, and pinning the
+// trash button to the full row height + `align-self: center` keeps it
+// vertically centered regardless of the question's wrap height.
 .tpal-rule-row {
-  // Override the legacy 4-column grid from `.permission-allow-row` so the
-  // question can wrap and the choice/created/trash sit on the right.
-  grid-template-columns: minmax(80px, auto) 1fr auto auto auto;
-  grid-template-rows: auto;
-  align-items: center;
+  grid-template-columns: minmax(80px, auto) 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: start;
+  row-gap: 4px;
   cursor: pointer;
   &:hover { background: var(--bg-hover); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 }
 
 .tpal-rule-parser {
-  align-self: start;
+  grid-row: 1;
+  grid-column: 1;
   // Inherits font + size from `.permission-allow-tool`.
 }
 
 .tpal-rule-question {
+  grid-row: 1;
+  grid-column: 2;
   font-size: 12px;
   color: var(--text);
-  // Wrap to at most 2 lines, ellipsis any overflow past that. `display:
-  // -webkit-box` is the only widely-supported way to clamp by line in
-  // CSS today; both Tauri's WKWebView and modern Chromium honour it.
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  // Single-line ellipsis truncation — the row's now two visual lines
+  // (question on top, auto-response on bottom), so wrapping the question
+  // would push the row to 3+ lines on long preambles. Click-to-open the
+  // inspector for the full text.
+  white-space: nowrap;
   overflow: hidden;
-  word-break: break-word;
-  // Allow the row to shrink without forcing the question column to
-  // overflow horizontally.
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.tpal-rule-meta {
+  grid-row: 2;
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
   min-width: 0;
 }
 
 .tpal-rule-choice {
   color: var(--text-muted);
   font-size: 11px;
-  white-space: nowrap;
+  // Allow the auto-response to wrap so it remains readable on narrow
+  // widths instead of being clipped by `.tpal-rule-meta`'s flex layout.
+  word-break: break-word;
 }
 
 .tpal-rule-created {
   color: var(--text-muted);
   font-size: 11px;
   white-space: nowrap;
+  // Push the date to the right edge of the meta strip so it always sits
+  // opposite the auto-response.
+  margin-left: auto;
+}
+
+.tpal-rule-row .permission-allow-delete {
+  grid-row: 1 / span 2;
+  grid-column: 3;
+  align-self: center;
 }
 
 // HS-8072 — read-only inspector dialog body (`pre` so newlines in the

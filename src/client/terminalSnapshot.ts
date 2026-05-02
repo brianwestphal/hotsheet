@@ -128,7 +128,22 @@ export async function captureTerminalSnapshot(
     // Step 3 — serialize. Drain the buffered bytes, write them to an
     // offscreen `XTerm` at the temp geometry, capture state via
     // `SerializeAddon`. The offscreen term is disposed before return.
+    //
+    // HS-8107 — when Claude wasn't actively redrawing during the resize
+    // wait (e.g. the prompt had already settled), `wideRedraw` lands
+    // empty and the offscreen term serialises a blank screen. The
+    // mirror-xterm wrapper has `background: #000`, so an empty stream
+    // surfaces as a solid black body. Bail out so the popup keeps the
+    // (truncated) flat preview instead of replacing it with nothing.
     const wideRedraw = takePausedBytes(secret, terminalId);
+    if (wideRedraw.byteLength === 0) {
+      // Restore PTY geometry + unpause before returning so the live term
+      // doesn't stay frozen at the wider geometry.
+      sendPtyResize(secret, terminalId, origCols, origRows);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      resumeEntryWritesAndDrain(secret, terminalId);
+      return null;
+    }
     const stream = serializeOffscreen(wideRedraw, targetCols, targetRows);
 
     // Step 4 — resize PTY back to original. Claude redraws at the

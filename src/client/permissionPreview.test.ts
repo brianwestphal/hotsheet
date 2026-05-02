@@ -193,6 +193,25 @@ describe('formatEditDiff (HS-7951)', () => {
     expect(out!.truncated).toBe(true);
   });
 
+  // HS-8107 — modern Claude Write payloads use `content` instead of
+  // `new_string`. The well-formed JSON path already supported this; the
+  // truncated path missed it, so a long Write payload pushed the popup
+  // onto the snapshot fallback and surfaced as a solid-black body.
+  it('truncated Write recovers via content-field extractor (HS-8107)', () => {
+    const raw = '{"file_path":"/tmp/x","content":"line one\\nline two and a half';
+    const out = formatEditDiff('Write', raw);
+    expect(out).not.toBeNull();
+    expect(out!.oldStr).toBe('');
+    expect(out!.newStr).toBe('line one\nline two and a half');
+    expect(out!.filePath).toBe('/tmp/x');
+    expect(out!.truncated).toBe(true);
+  });
+
+  it('truncated Write with neither new_string nor content returns null (defers to flat preview)', () => {
+    const raw = '{"file_path":"/tmp/x","other":"unrelated';
+    expect(formatEditDiff('Write', raw)).toBeNull();
+  });
+
   it('handles non-string field values defensively (returns null for Edit)', () => {
     const raw = JSON.stringify({ old_string: 42, new_string: ['nope'] });
     expect(formatEditDiff('Edit', raw)).toBeNull();

@@ -74,6 +74,25 @@ describe('terminalPromptAllowListUI row layout (HS-8072)', () => {
     expect(q.getAttribute('title')).toBe(FIXTURE_RULE.question_preview);
   });
 
+  // HS-8106 — choice + created sit inside `.tpal-rule-meta` on the
+  // second visual row, with the trash button spanning both rows and
+  // visually centered. The CSS does the centering, but the DOM must
+  // expose the right structure for the layout to take effect.
+  it('renders choice + created inside `.tpal-rule-meta` so they share row 2 (HS-8106)', async () => {
+    loadAllowRulesMock.mockResolvedValueOnce([FIXTURE_RULE]);
+    await loadAndRenderTerminalPromptAllowList();
+    const row = document.querySelector<HTMLElement>('.tpal-rule-row')!;
+    const meta = row.querySelector<HTMLElement>('.tpal-rule-meta');
+    expect(meta).not.toBeNull();
+    expect(meta!.querySelector('.tpal-rule-choice')!.textContent).toBe('→ I am using this for local development');
+    // `created` lives inside the same meta strip — not a sibling of
+    // `.tpal-rule-question` like the pre-fix layout.
+    const createdInMeta = meta!.querySelector('.tpal-rule-created');
+    expect(createdInMeta).not.toBeNull();
+    const createdAsRowChild = Array.from(row.children).some(c => c.classList.contains('tpal-rule-created'));
+    expect(createdAsRowChild).toBe(false);
+  });
+
   it('is keyboard-activatable with role=button + tabIndex=0', async () => {
     loadAllowRulesMock.mockResolvedValueOnce([FIXTURE_RULE]);
     await loadAndRenderTerminalPromptAllowList();
