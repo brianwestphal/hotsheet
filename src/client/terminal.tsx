@@ -261,130 +261,70 @@ export function initTerminal(): void {
  * drawer tab buttons accordingly. Called once at drawer first-open and again
  * whenever the user saves the Embedded Terminal settings.
  */
-export async function loadAndRenderTerminalTabs(): Promise<void> {
-  // HS-7977: terminals are a Tauri-only feature. Web/browser deployments must
-  // never spawn xterm/PTY instances or render terminal panes. The drawer tab
-  // strip is hidden via applyTerminalTabVisibility, but the panes container
-  // would still be populated here without this gate, leaking terminal output
-  // into the drawer when a saved active tab is `terminal:*`.
-  if (getTauriInvoke() === null) return;
+// HS-6603 §24.3.1: the list response carries a server-side `bellPending`
+// flag per terminal. Phase 1's local onBell path only catches bells on a
+// mounted xterm — the server-authoritative field is what lets us surface
+// bells that fired before the xterm was mounted or while the project was
+// inactive.
+type ListEntry = TerminalTabConfig & {
+  bellPending?: boolean;
+  notificationMessage?: string | null;
+  // HS-6311 — drawer grid needs live state + exit code to render lazy /
+  // exited placeholder tiles. Already returned by /terminal/list's
+  // `annotate` helper (see src/routes/terminal.ts).
+  state?: 'alive' | 'exited' | 'not_spawned';
+  exitCode?: number | null;
+};
+type ListResponse = { configured: ListEntry[]; dynamic: ListEntry[]; home?: string };
 
-  const active = getActiveProject();
-  const activeSecret = active?.secret ?? null;
-
-  // If the active project changed since the last render, every previously-mounted
-  // xterm/ws is bound to the old project — tear them all down before refetching.
-  // Otherwise `activateTerminal` would try to reuse stale instances keyed by id
-  // (a configured `default` terminal in project A shadowing project B's `default`).
+function reconcileProjectChange(activeSecret: string | null): void {
+  // If the active project changed since the last render, every previously-
+  // mounted xterm/ws is bound to the old project — tear them all down. Otherwise
+  // `activateTerminal` would reuse stale instances keyed by id (a configured
+  // `default` terminal in project A shadowing project B's `default`).
   if (currentProjectSecret !== null && currentProjectSecret !== activeSecret) {
     disposeAllInstances();
   }
   currentProjectSecret = activeSecret;
+}
 
-  // HS-6603 §24.3.1: the list response carries a server-side `bellPending`
-  // flag per terminal. Phase 1's local onBell path only catches bells on a
-  // mounted xterm — the server-authoritative field is what lets us surface
-  // bells that fired before the xterm was mounted or while the project was
-  // inactive.
-  type ListEntry = TerminalTabConfig & {
-    bellPending?: boolean;
-    notificationMessage?: string | null;
-    // HS-6311 — drawer grid needs live state + exit code to render lazy /
-    // exited placeholder tiles. Already returned by /terminal/list's
-    // `annotate` helper (see src/routes/terminal.ts).
-    state?: 'alive' | 'exited' | 'not_spawned';
-    exitCode?: number | null;
-  };
-  type ListResponse = { configured: ListEntry[]; dynamic: ListEntry[]; home?: string };
-  let data: ListResponse;
-  try {
-    data = await api<ListResponse>('/terminal/list');
-  } catch {
-    return;
-  }
-  lastKnownConfigs = data;
-  // HS-7276 — seed the module-level $HOME cache so the CWD chip can tildify
-  // subsequent OSC 7 pushes. No-op after the first tick; the value doesn't
-  // change mid-session.
-  cacheHomeDir(data.home);
-  // HS-6307 — refresh the project default appearance whenever the terminal
-  // list reloads. Covers project switch + settings-save (which already trigger
-  // this path). Fires the default-changed event if the value actually moved,
-  // so previously-mounted terminals re-resolve.
-  void loadProjectDefaultAppearance();
-
-  const tabStrip = byIdOrNull('drawer-terminal-tabs');
-  const paneContainer = byIdOrNull('drawer-terminal-panes');
-  if (!tabStrip || !paneContainer) return;
-
+function buildWantedMap(data: ListResponse): Map<string, ListEntry> {
   const wanted = new Map<string, ListEntry>();
   for (const c of data.configured) wanted.set(c.id, { ...c, dynamic: false });
   for (const c of data.dynamic) wanted.set(c.id, { ...c, dynamic: true });
+  return wanted;
+}
 
-  // Remove instances for terminals that no longer exist server-side.
-  for (const id of [...instances.keys()]) {
-    if (!wanted.has(id)) removeTerminalInstance(id);
+function ensureInstanceForEntry(entry: ListEntry): TerminalInstance {
+  // `notificationMessage` is already surfaced as a toast via
+  // fireToastsForActiveProject above — drop it here along with `bellPending`
+  // so only the TerminalTabConfig shape flows into `inst.config`.
+  const config: TerminalTabConfig = {
+    id: entry.id, command: entry.command, name: entry.name,
+    cwd: entry.cwd, lazy: entry.lazy, dynamic: entry.dynamic,
+    theme: entry.theme, fontFamily: entry.fontFamily, fontSize: entry.fontSize,
+  };
+  let inst = instances.get(config.id);
+  if (!inst) {
+    inst = createInstance(config);
+    instances.set(config.id, inst);
+  } else {
+    // Config may have changed; update label text if the user renamed.
+    inst.config = { ...inst.config, ...config };
+    updateTabLabel(inst);
   }
-
-  // HS-8016 — reconcile per-project hidden state against the live terminal
-  // list so the eye-icon count badge stops counting terminals that were
-  // closed (drawer X-button), destroyed, or deleted in Settings. Triggers
-  // the `subscribeToHiddenChanges` notify+persist chain when the diff is
-  // non-empty so the Default grouping's stale ids land in `hidden_terminals`
-  // and the per-grouping shape simultaneously.
-  const activeProject = getActiveProject();
-  if (activeProject !== null) pruneHiddenForProject(activeProject.secret, [...wanted.keys()]);
-
-  // Ensure an instance + DOM exists for every wanted terminal, in order.
-  tabStrip.innerHTML = '';
-  paneContainer.querySelectorAll('.drawer-terminal-pane').forEach(el => el.remove());
-
-  // HS-7264 — fire OSC 9 toasts for any pending desktop notifications the
-  // server tracked while we were disconnected / on another project. Dedupes
-  // against the bellPoll recentlyToasted map so a subsequent long-poll tick
-  // doesn't re-fire the same message.
-  fireToastsForActiveProject([...wanted.values()]);
-
-  for (const entry of wanted.values()) {
-    // `notificationMessage` is already surfaced as a toast via
-    // fireToastsForActiveProject above — drop it here along with `bellPending`
-    // so only the TerminalTabConfig shape flows into `inst.config`.
-    const bellPending = entry.bellPending;
-    const config: TerminalTabConfig = {
-      id: entry.id, command: entry.command, name: entry.name,
-      cwd: entry.cwd, lazy: entry.lazy, dynamic: entry.dynamic,
-      theme: entry.theme, fontFamily: entry.fontFamily, fontSize: entry.fontSize,
-    };
-    let inst = instances.get(config.id);
-    if (!inst) {
-      inst = createInstance(config);
-      instances.set(config.id, inst);
-    } else {
-      // Config may have changed; update label text if the user renamed.
-      inst.config = { ...inst.config, ...config };
-      updateTabLabel(inst);
-    }
-    // Seed the bell indicator from the server so a tab that was hidden /
-    // unmounted while the bell fired still shows the glyph the first time
-    // the user sees it (HS-6603 §24.4.3).
-    if (bellPending === true && !inst.hasBell) {
-      inst.hasBell = true;
-      updateTabLabel(inst);
-    }
-    tabStrip.appendChild(inst.tabBtn);
-    paneContainer.appendChild(inst.pane);
+  // Seed the bell indicator from the server so a tab that was hidden /
+  // unmounted while the bell fired still shows the glyph the first time
+  // the user sees it (HS-6603 §24.4.3).
+  if (entry.bellPending === true && !inst.hasBell) {
+    inst.hasBell = true;
+    updateTabLabel(inst);
   }
+  return inst;
+}
 
-  // If the previously-active id no longer exists, default to the first terminal.
-  if (activeTerminalId !== null && !wanted.has(activeTerminalId)) {
-    activeTerminalId = null;
-  }
-
-  // HS-6311 — hand the full list to the drawer-grid module so it can enable /
-  // disable the toggle button (requires ≥2 terminals to enable) and, if the
-  // current project is in grid mode, rebuild its tiles. Shape-compatible with
-  // `DrawerGridTileEntry`; we strip notificationMessage which is unused here.
-  const gridEntries: DrawerGridTileEntry[] = [...wanted.values()].map(e => ({
+function toGridEntries(wanted: Map<string, ListEntry>): DrawerGridTileEntry[] {
+  return [...wanted.values()].map(e => ({
     id: e.id,
     name: e.name,
     command: e.command,
@@ -396,7 +336,65 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
     fontSize: e.fontSize,
     dynamic: e.dynamic,
   }));
-  onTerminalListUpdated(gridEntries);
+}
+
+export async function loadAndRenderTerminalTabs(): Promise<void> {
+  // HS-7977: terminals are a Tauri-only feature. Web/browser deployments must
+  // never spawn xterm/PTY instances or render terminal panes.
+  if (getTauriInvoke() === null) return;
+
+  reconcileProjectChange(getActiveProject()?.secret ?? null);
+
+  let data: ListResponse;
+  try {
+    data = await api<ListResponse>('/terminal/list');
+  } catch {
+    return;
+  }
+  lastKnownConfigs = data;
+  // HS-7276 — seed the module-level $HOME cache so the CWD chip can tildify
+  // subsequent OSC 7 pushes. No-op after the first tick.
+  cacheHomeDir(data.home);
+  // HS-6307 — refresh the project default appearance whenever the terminal
+  // list reloads. Fires the default-changed event if the value moved.
+  void loadProjectDefaultAppearance();
+
+  const tabStrip = byIdOrNull('drawer-terminal-tabs');
+  const paneContainer = byIdOrNull('drawer-terminal-panes');
+  if (!tabStrip || !paneContainer) return;
+
+  const wanted = buildWantedMap(data);
+
+  // Remove instances for terminals that no longer exist server-side.
+  for (const id of [...instances.keys()]) {
+    if (!wanted.has(id)) removeTerminalInstance(id);
+  }
+
+  // HS-8016 — reconcile per-project hidden state so the eye-icon count badge
+  // stops counting deleted terminals.
+  const activeProject = getActiveProject();
+  if (activeProject !== null) pruneHiddenForProject(activeProject.secret, [...wanted.keys()]);
+
+  // Ensure an instance + DOM exists for every wanted terminal, in order.
+  tabStrip.innerHTML = '';
+  paneContainer.querySelectorAll('.drawer-terminal-pane').forEach(el => el.remove());
+
+  // HS-7264 — fire OSC 9 toasts for any pending desktop notifications.
+  fireToastsForActiveProject([...wanted.values()]);
+
+  for (const entry of wanted.values()) {
+    const inst = ensureInstanceForEntry(entry);
+    tabStrip.appendChild(inst.tabBtn);
+    paneContainer.appendChild(inst.pane);
+  }
+
+  // If the previously-active id no longer exists, default to the first terminal.
+  if (activeTerminalId !== null && !wanted.has(activeTerminalId)) {
+    activeTerminalId = null;
+  }
+
+  // HS-6311 — hand the full list to the drawer-grid module.
+  onTerminalListUpdated(toGridEntries(wanted));
 }
 
 /** HS-6603 §24.4.3: re-sync each active-project terminal's bell indicator
@@ -530,16 +528,14 @@ function isTerminalTabActive(inst: TerminalInstance): boolean {
   return activeTerminalId === inst.id && inst.pane.style.display !== 'none';
 }
 
-function createInstance(config: TerminalTabConfig): TerminalInstance {
-  // IMPORTANT: the custom JSX runtime renders to an HTML string, so DOM elements
-  // passed as JSX children (e.g. `<button>{label}</button>` where `label` is an
-  // HTMLElement) silently render as empty strings — the resulting button has no
-  // children at all. Build each tree as a single JSX expression and query the
-  // inner pieces back out via querySelector. This is the root cause of HS-6342
-  // (configured tabs rendered as blank buttons) and HS-6341 (dynamic tab + xterm
-  // pane both rendered with no header / no label).
-  const tabName = tabDisplayName(config);
-  const tabBtn = toElement(
+// IMPORTANT: the custom JSX runtime renders to an HTML string, so DOM
+// elements passed as JSX children silently render as empty strings — the
+// resulting button has no children at all. Build each tree as a single JSX
+// expression and query the inner pieces back out via querySelector. Root
+// cause of HS-6342 (configured tabs rendered as blank buttons) and HS-6341
+// (dynamic tab + xterm pane both rendered with no header / no label).
+function buildTabBtnEl(config: TerminalTabConfig, tabName: string): HTMLElement {
+  return toElement(
     <button className="drawer-tab drawer-terminal-tab" data-drawer-tab={`terminal:${config.id}`} data-terminal-id={config.id} draggable="true">
       <span className="drawer-tab-label">{tabName}</span>
       {config.dynamic === true
@@ -547,10 +543,12 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
         : null}
     </button>
   );
+}
+
+function bindTabBtnHandlers(tabBtn: HTMLElement, config: TerminalTabConfig): void {
   const closeBtn = tabBtn.querySelector<HTMLButtonElement>('.drawer-tab-close');
   tabBtn.addEventListener('click', (e) => {
     if ((e.target as HTMLElement).closest('.drawer-tab-close')) return;
-    // Delegate to the drawer tab switcher so the Commands Log pane is hidden too.
     void selectDrawerTab(`terminal:${config.id}`);
   });
   closeBtn?.addEventListener('click', (e) => {
@@ -565,39 +563,33 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     e.stopPropagation();
     showTabContextMenu(e, config.id);
   });
-  // HS-7827 — drag-to-reorder. Configured-id reorder is persisted to
-  // settings.terminals; dynamic-id reorder lives in memory only (per
-  // the ticket's "for configured terminals at least" caveat).
+  // HS-7827 — drag-to-reorder. Configured-id reorder persists; dynamic-id
+  // reorder is in-memory only.
   attachTabDragHandlers(tabBtn, config.id);
+}
 
-  const pane = toElement(
+function buildPaneEl(config: TerminalTabConfig, tabName: string): HTMLElement {
+  return toElement(
     <div className="drawer-tab-content drawer-terminal-pane" data-drawer-panel={`terminal:${config.id}`} style="display:none">
       <div className="terminal-header">
         <span className="terminal-status-dot" title="Not connected"></span>
         <span className="terminal-label">{tabName}</span>
-        {/* HS-7262 — CWD chip populated by OSC 7 handler; hidden by default,
-            shown once the shell pushes its first file://host/path. Click opens
-            the folder in the OS file manager via /api/terminal/open-cwd. */}
+        {/* HS-7262 — CWD chip; hidden until OSC 7 push. Click opens the
+            folder in the OS file manager via /api/terminal/open-cwd. */}
         <button className="terminal-cwd-chip" title="Open folder" style="display:none">
           {raw(FOLDER_ICON)}
           <span className="terminal-cwd-label"></span>
         </button>
         <span className="terminal-header-spacer"></span>
-        {/* HS-7331 — terminal search slot. The collapsed magnifier + expanding
-            input is mounted from `terminalSearch.tsx` on xterm attach (so we
-            know the SearchAddon instance). Hidden slot until mount keeps the
-            header's fixed-width layout stable before the first connect. */}
+        {/* HS-7331 — terminal search slot. Mounted from terminalSearch.tsx on
+            xterm attach. */}
         <span className="terminal-search-slot"></span>
-        {/* HS-7986 — prompt-detection suppression resume chip. Hidden by
-            default; shown when the user clicks "Not a prompt — let me handle
-            it" on the §52 overlay so they can re-arm detection without
-            typing into the terminal. Click clears suppression. */}
+        {/* HS-7986 — prompt-detection resume chip. Hidden by default; shown
+            after a Not-a-prompt dismiss. */}
         <button className="terminal-header-btn terminal-prompt-resume-chip" title="Prompt detection paused — click to resume" style="display:none">
           <span className="terminal-prompt-resume-label">Detection paused — Resume</span>
         </button>
-        {/* HS-7268 — copy-last-output button, hidden until OSC 133 escapes are
-            seen on this terminal. Reveals in `handleOsc133` when `shellIntegration.enabled`
-            flips; re-hides on PTY restart via `resetShellIntegration`. */}
+        {/* HS-7268 — copy-last-output, hidden until first OSC 133 escape. */}
         <button className="terminal-header-btn terminal-copy-output-btn" title="Copy last command output" style="display:none">
           {raw(CLIPBOARD_ICON)}
         </button>
@@ -607,83 +599,25 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
         <button className="terminal-header-btn terminal-clear-btn" title="Clear screen (keeps process running)">
           {raw(TRASH_ICON)}
         </button>
-        {/* HS-6307 — per-terminal appearance (theme / font / size). Click
-            opens a small floating popover anchored below the button. */}
+        {/* HS-6307 — per-terminal appearance (theme / font / size). */}
         <button className="terminal-header-btn terminal-appearance-btn" title="Appearance (theme, font)">
           {raw(SETTINGS_ICON)}
         </button>
       </div>
-      {/* HS-7959 — `.terminal-body` keeps its visual padding + focus ring,
-          but xterm mounts inside an inner `.terminal-canvas-host` with NO
-          padding so xterm's `FitAddon` reads the parent's true content
-          height. Pre-fix the FitAddon was reading the body's border-box
-          height (because `box-sizing: border-box` is global) and ignoring
-          the parent's own padding, so it over-counted rows by `padding * 2 /
-          cellHeight` and the bottom row was clipped at certain drawer
-          heights. Mirrors the pattern §25's dashboard dedicated view uses
-          (`.terminal-dashboard-dedicated-pane`, see HS-7098). */}
+      {/* HS-7959 — `.terminal-body` keeps padding/focus-ring; xterm mounts
+          inside an inner `.terminal-canvas-host` with NO padding so FitAddon
+          reads the parent's true content height. */}
       <div className="terminal-body">
         <div className="terminal-canvas-host"></div>
       </div>
     </div>
   );
-  const header = pane.querySelector<HTMLElement>('.terminal-header')!;
-  const body = pane.querySelector<HTMLElement>('.terminal-body')!;
-  const canvasHost = pane.querySelector<HTMLElement>('.terminal-canvas-host')!;
-  const statusDot = pane.querySelector<HTMLElement>('.terminal-status-dot')!;
-  const labelText = pane.querySelector<HTMLElement>('.terminal-label')!;
-  const powerBtn = pane.querySelector<HTMLButtonElement>('.terminal-power-btn')!;
-  const clearBtn = pane.querySelector<HTMLButtonElement>('.terminal-clear-btn')!;
-  const promptResumeChip = pane.querySelector<HTMLButtonElement>('.terminal-prompt-resume-chip')!;
+}
 
-  const inst: TerminalInstance = {
-    id: config.id,
-    config,
-    checkout: null,
-    termHandlerDisposers: [],
-    term: null,
-    fit: null,
-    search: null,
-    searchHandle: null,
-    body,
-    canvasHost,
-    header,
-    label: labelText,
-    statusDot,
-    pane,
-    tabBtn,
-    ws: null,
-    wsSecret: null,
-    reconnectAttempts: 0,
-    reconnectTimer: null,
-    status: 'not-connected',
-    exitCode: null,
-    stopRequested: false,
-    mounted: false,
-    runtimeTitle: '',
-    runtimeCwd: null,
-    hasBell: false,
-    shellIntegration: { enabled: false, commands: [], current: null, nextId: 1 },
-    promptResumeChip,
-  };
-
-  // HS-7986 / HS-8035 — chip click POSTs `/api/terminal/prompt-resume` so the
-  // server-side scanner re-arms after a prior dismiss-with-suppress. Network
-  // errors are swallowed: the chip hides immediately for responsiveness, and
-  // the next bell-state poll will re-show it if the server still reports the
-  // scanner as suppressed.
-  promptResumeChip.addEventListener('click', () => {
-    promptResumeChip.style.display = 'none';
-    void api('/terminal/prompt-resume', { method: 'POST', body: { terminalId: inst.id } })
-      .catch(() => { /* swallow */ });
-  });
-
-  powerBtn.addEventListener('click', () => { void onPowerClick(inst); });
-  clearBtn.addEventListener('click', () => { inst.term?.clear(); });
-
-  // HS-6307 — appearance gear. Opens the popover anchored below the button
-  // and routes apply() calls back through reapplyAppearance so the theme /
-  // font / size land on the live xterm instance.
+function bindAppearanceBtn(inst: TerminalInstance, pane: HTMLElement): void {
+  // HS-6307 + HS-7896 — opens the popover anchored below the button; live
+  // hooks read/write `inst.config` synchronously so the user's pick lands on
+  // the live xterm without a settings round-trip.
   const appearanceBtn = pane.querySelector<HTMLButtonElement>('.terminal-appearance-btn');
   appearanceBtn?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -692,12 +626,6 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
       terminalId: inst.id,
       isDynamic: inst.config.dynamic === true,
       onApply: () => { void reapplyAppearance(inst); },
-      // HS-7896 — give the popover a live read of `inst.config` so it shows
-      // the correct selected theme / font / size when opening, and let it
-      // mutate `inst.config` synchronously when the user picks a new value
-      // so reapplyAppearance sees the change on the first re-render. Without
-      // these hooks the popover wrote to disk but the live xterm kept
-      // reading the stale snapshot.
       getCurrentConfigOverride: () => {
         const out: { theme?: string; fontFamily?: string; fontSize?: number } = {};
         if (inst.config.theme !== undefined) out.theme = inst.config.theme;
@@ -721,25 +649,71 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
       },
     });
   });
+}
 
-  // HS-7268 — copy-last-output click. The button is hidden until
-  // `shellIntegration.enabled` flips true (first OSC 133 escape seen), so by
-  // the time the click fires we always have at least one record or an
-  // in-flight one. `copyLastOutput` no-ops with a subtle shake if there's
-  // nothing to copy (e.g. user clicked between A and C, or after C marker
-  // scrolled out of the buffer).
-  const copyOutputBtn = pane.querySelector<HTMLButtonElement>('.terminal-copy-output-btn');
-  copyOutputBtn?.addEventListener('click', () => { void copyLastOutput(inst); });
+function bindPaneHeaderHandlers(inst: TerminalInstance, pane: HTMLElement): void {
+  // HS-7986 / HS-8035 — chip click POSTs `/api/terminal/prompt-resume` so the
+  // server-side scanner re-arms. Network errors swallowed.
+  inst.promptResumeChip.addEventListener('click', () => {
+    inst.promptResumeChip.style.display = 'none';
+    void api('/terminal/prompt-resume', { method: 'POST', body: { terminalId: inst.id } })
+      .catch(() => { /* swallow */ });
+  });
 
-  // HS-7262 — CWD chip click reveals the folder in the OS file manager. Uses
-  // the terminal's own record of the most recent OSC 7 push; the server
-  // endpoint validates the path exists before spawning the file manager.
-  const cwdChip = pane.querySelector<HTMLButtonElement>('.terminal-cwd-chip');
-  cwdChip?.addEventListener('click', () => {
+  pane.querySelector<HTMLButtonElement>('.terminal-power-btn')!.addEventListener('click', () => { void onPowerClick(inst); });
+  pane.querySelector<HTMLButtonElement>('.terminal-clear-btn')!.addEventListener('click', () => { inst.term?.clear(); });
+  bindAppearanceBtn(inst, pane);
+
+  // HS-7268 — copy-last-output click. Button hidden until shell-integration
+  // flips, so by click time we have at least one record.
+  pane.querySelector<HTMLButtonElement>('.terminal-copy-output-btn')
+    ?.addEventListener('click', () => { void copyLastOutput(inst); });
+
+  // HS-7262 — CWD chip click reveals the folder via /api/terminal/open-cwd.
+  pane.querySelector<HTMLButtonElement>('.terminal-cwd-chip')?.addEventListener('click', () => {
     if (inst.runtimeCwd === null || inst.runtimeCwd === '') return;
     void api('/terminal/open-cwd', { method: 'POST', body: { path: inst.runtimeCwd } }).catch(() => { /* ignore */ });
   });
+}
 
+function createInstance(config: TerminalTabConfig): TerminalInstance {
+  const tabName = tabDisplayName(config);
+  const tabBtn = buildTabBtnEl(config, tabName);
+  bindTabBtnHandlers(tabBtn, config);
+
+  const pane = buildPaneEl(config, tabName);
+  const inst: TerminalInstance = {
+    id: config.id,
+    config,
+    checkout: null,
+    termHandlerDisposers: [],
+    term: null,
+    fit: null,
+    search: null,
+    searchHandle: null,
+    body: pane.querySelector<HTMLElement>('.terminal-body')!,
+    canvasHost: pane.querySelector<HTMLElement>('.terminal-canvas-host')!,
+    header: pane.querySelector<HTMLElement>('.terminal-header')!,
+    label: pane.querySelector<HTMLElement>('.terminal-label')!,
+    statusDot: pane.querySelector<HTMLElement>('.terminal-status-dot')!,
+    pane,
+    tabBtn,
+    ws: null,
+    wsSecret: null,
+    reconnectAttempts: 0,
+    reconnectTimer: null,
+    status: 'not-connected',
+    exitCode: null,
+    stopRequested: false,
+    mounted: false,
+    runtimeTitle: '',
+    runtimeCwd: null,
+    hasBell: false,
+    shellIntegration: { enabled: false, commands: [], current: null, nextId: 1 },
+    promptResumeChip: pane.querySelector<HTMLButtonElement>('.terminal-prompt-resume-chip')!,
+  };
+
+  bindPaneHeaderHandlers(inst, pane);
   return inst;
 }
 
@@ -955,35 +929,20 @@ async function reapplyAppearance(inst: TerminalInstance): Promise<void> {
  * reconnect on transient close, so the drawer's old `scheduleReconnect`
  * path is gone.
  */
-function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void {
-  const handle = checkout({
-    projectSecret: secret,
-    terminalId: inst.id,
-    cols: 80,
-    rows: 24,
-    mountInto: inst.canvasHost,
-    onControlMessage(msg) {
-      handleControlMessage(inst, msg);
-    },
-  });
-  const term = handle.term;
-  const fit = handle.fit;
-
-  // HS-8044 — apply per-consumer xterm options. The xterm is shared
-  // across consumers (drawer pane + dashboard tile + dedicated etc.)
-  // for the same `(secret, terminalId)`; option overrides applied here
-  // win for the drawer's lifetime as long as it stays at top-of-stack.
+function applyDrawerXtermOptions(inst: TerminalInstance, term: XTerm): void {
+  // HS-8044 — option overrides applied here win for the drawer's lifetime as
+  // long as it stays at top-of-stack of the shared (secret, terminalId) xterm.
   term.options.theme = resolveAppearanceThemeForInit(inst);
   term.options.linkHandler = {
     activate: (_event, text) => { openExternalUrl(text); },
   };
   term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
   term.loadAddon(new SerializeAddon());
+}
 
-  // HS-7331 — xterm's SearchAddon powers the toolbar Find widget. Mount the
-  // UI into the `.terminal-search-slot` placeholder carved out of the
-  // header markup; the handle is disposed on PTY restart + re-created on
-  // the next mount so search state doesn't leak across spawn cycles.
+function mountDrawerSearchAddon(inst: TerminalInstance, term: XTerm): { search: SearchAddon; searchHandle: TerminalSearchHandle | null } {
+  // HS-7331 — xterm's SearchAddon powers the toolbar Find widget. Disposed on
+  // PTY restart + re-created on the next mount so search state doesn't leak.
   const search = new SearchAddon();
   term.loadAddon(search);
   const searchSlot = inst.header.querySelector<HTMLElement>('.terminal-search-slot');
@@ -992,34 +951,18 @@ function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void 
     searchHandle = mountTerminalSearch(term, search);
     searchSlot.replaceChildren(searchHandle.root);
   }
+  return { search, searchHandle };
+}
 
-  // HS-7960 — paint the body's gutter to match the theme background BEFORE
-  // the async appearance load runs (which is fire-and-forget below). Without
-  // this synchronous prime the very first canvas paint would flash with the
-  // app's `--bg` for a frame on themes whose background differs.
-  inst.body.style.backgroundColor = resolveAppearanceBackground(resolveInstanceAppearance(inst));
-
-  // HS-6307 — apply full appearance (font family + size; theme is already set
-  // synchronously on XTerm options via resolveAppearanceThemeForInit).
-  // Fire-and-forget — the font stylesheet loads async, and xterm falls back to
-  // the System stack via CSS cascade while the webfont resolves.
-  void reapplyAppearance(inst);
-
-  // Clicking anywhere in the body (including the visible padding gutters
-  // outside the xterm canvas) focuses the terminal — preserves the
-  // pre-HS-7959 click-to-focus reach.
-  inst.body.addEventListener('click', () => { term.focus(); });
-
-  // Custom key handler — see comments on the original mountXterm for
-  // the per-shortcut rationale (HS-7329 / HS-7269 / HS-7331 / HS-7594).
+function attachDrawerKeyHandler(inst: TerminalInstance, term: XTerm): void {
+  // Per-shortcut rationale lives on the original mountXterm comments
+  // (HS-7329 / HS-7269 / HS-7331 / HS-7594).
   term.attachCustomKeyEventHandler((e) => {
     if (isClearTerminalShortcut(e)) {
       inst.checkout?.term.clear();
       return false;
     }
-    if (isFindShortcut(e)) {
-      return false;
-    }
+    if (isFindShortcut(e)) return false;
     if (isTerminalViewToggleShortcut(e) !== null) return false;
     if (!shellIntegrationUiEnabled()) return true;
     if (!inst.shellIntegration.enabled) return true;
@@ -1030,22 +973,19 @@ function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void 
     }
     return true;
   });
+}
 
-  // HS-8044 — keystroke-send (`term.onData`) is wired centrally inside
-  // checkout's WS handler, so the drawer no longer needs its own
-  // `term.onData → ws.send` route. We DO still want the prompt-resume
-  // chip auto-hide on keystroke (HS-8035), so register a separate
-  // handler that just touches DOM state — checkout's keystroke-send
-  // continues to fire alongside.
+function attachDrawerTermHandlers(inst: TerminalInstance, term: XTerm, handle: ReturnType<typeof checkout>): void {
+  // HS-8044 — keystroke-send is wired centrally inside checkout's WS handler.
+  // We DO still want the prompt-resume chip auto-hide on keystroke (HS-8035).
   inst.termHandlerDisposers.push(term.onData(() => {
     if (inst.promptResumeChip.style.display !== 'none') {
       inst.promptResumeChip.style.display = 'none';
     }
   }));
 
-  // HS-8044 — `term.onResize` echoes fit-driven dim changes through the
-  // checkout's `handle.resize` so the WS resize frame is sent and the
-  // entry's `lastApplied` bookkeeping stays current.
+  // HS-8044 — echo fit-driven dim changes through `handle.resize` so the WS
+  // resize frame is sent and `lastApplied` bookkeeping stays current.
   inst.termHandlerDisposers.push(term.onResize(({ cols, rows }) => {
     handle.resize(cols, rows);
   }));
@@ -1056,7 +996,7 @@ function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void 
     updateTabLabel(inst);
   }));
 
-  // OSC 7 — shell-pushed CWD (HS-7262). xterm.js does NOT handle OSC 7
+  // OSC 7 — shell-pushed CWD (HS-7262). xterm.js doesn't handle OSC 7
   // natively — register a parser hook on the number directly.
   inst.termHandlerDisposers.push(term.parser.registerOscHandler(7, (payload) => {
     const parsed = parseOsc7Payload(payload);
@@ -1080,6 +1020,36 @@ function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void 
       updateTabLabel(inst);
     }
   }));
+}
+
+function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void {
+  const handle = checkout({
+    projectSecret: secret,
+    terminalId: inst.id,
+    cols: 80,
+    rows: 24,
+    mountInto: inst.canvasHost,
+    onControlMessage(msg) { handleControlMessage(inst, msg); },
+  });
+  const term = handle.term;
+  const fit = handle.fit;
+
+  applyDrawerXtermOptions(inst, term);
+  const { search, searchHandle } = mountDrawerSearchAddon(inst, term);
+
+  // HS-7960 — paint the body's gutter to match the theme BEFORE the async
+  // appearance load runs (fire-and-forget below). Without this synchronous
+  // prime the very first canvas paint flashes with the app's `--bg`.
+  inst.body.style.backgroundColor = resolveAppearanceBackground(resolveInstanceAppearance(inst));
+  // HS-6307 — apply full appearance (font family + size). Fire-and-forget.
+  void reapplyAppearance(inst);
+
+  // Clicking the body (including padding gutters outside the canvas) focuses
+  // the terminal — preserves the pre-HS-7959 click-to-focus reach.
+  inst.body.addEventListener('click', () => { term.focus(); });
+
+  attachDrawerKeyHandler(inst, term);
+  attachDrawerTermHandlers(inst, term, handle);
 
   inst.checkout = handle;
   inst.term = term;

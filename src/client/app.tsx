@@ -161,29 +161,22 @@ async function reloadAppState() {
   void reloadPluginToolbar();
 }
 
-async function init() {
-  try {
-  // HS-8054 — start the longtask observer as early as possible so any
-  // hangs during init itself get logged. Idempotent + inert when the
-  // browser doesn't support `longtask` entries. Console output prefix:
-  // `[hotsheet longtask]`. The user can grab the in-memory buffer via
-  // `window.__hotsheetGetLongTasks()` from DevTools.
-  initLongTaskObserver();
-
-  // Determine the active project before any API calls
+async function loadInitialState(): Promise<void> {
   await initProjectTabs();
   setProjectReloadCallback(async () => {
     closeDetail();
     restoreTicketList(); // Exit dashboard mode if active
     await reloadAppState();
   });
-
   await loadSettings();
   await loadCategories(rebuildCategoryUI);
   await loadCustomViews();
   void loadAppName();
   suppressAnimation();
   await loadTickets();
+}
+
+function bindAllUiHandlers(): void {
   bindSidebar(restoreTicketList, updateLayoutToggle);
   bindLayoutToggle();
   bindDetailPositionToggle();
@@ -194,58 +187,31 @@ async function init() {
   bindKeyboardShortcuts();
   bindSettingsDialog(rebuildCategoryUI);
   bindBackupsUI();
-  // HS-7899: surface the launch-time DB-recovery banner once the
-  // backups UI is wired (the banner's "Restore from backup" button
-  // opens Settings → Backups, which depends on bindBackupsUI).
+  // HS-7899: surface the launch-time DB-recovery banner once the backups UI
+  // is wired (the banner's "Restore from backup" opens Settings → Backups).
   void initDbRecoveryBanner();
   bindCopyPrompt();
   bindOpenFolder();
-
   // HS-7954 — wire the sidebar git status chip. Initial fetch happens
-  // immediately; subsequent refetches are driven by `/api/poll` version
-  // bumps (see `poll.tsx::refreshGitStatusChip`) and `window.focus`.
+  // immediately; subsequent refetches driven by `/api/poll` + `window.focus`.
   initGitStatusChip();
-
-  // HS-8036 — load the project's known ticket-number prefixes (DB-scanned
-  // distinct prefixes + the project's configured `ticketPrefix` from
-  // settings.json) so the linkify pass can match references in
-  // rendered notes / details / reader-mode body. Fire-and-forget — the
-  // first pass through any rendered HTML returns the input unchanged
-  // until the cache populates; the next mutation re-renders correctly.
-  // Also wire the global click handler that intercepts `.ticket-ref`
-  // anchor clicks and dispatches to the stacking dialog.
-  //
-  // HS-8062 — after the prefix cache resolves, refresh the active detail
-  // panel so any markdown that was rendered before the cache populated
-  // (race between `init` opening a ticket and `/api/tickets/prefixes`
-  // resolving) gets re-linkified. Without this the user would see plain-
-  // text `HS-1234` in details / notes and clicking it would only enter
-  // edit mode (no `.ticket-ref` anchor for the global handler to catch).
-  void loadTicketPrefixes().then(() => refreshDetail()).catch(() => { /* swallow — covered by the loadTicketPrefixes fallback */ });
+  // HS-8036 — load the project's known ticket-number prefixes; HS-8062 —
+  // refresh detail after resolution so pre-cache markdown re-linkifies.
+  void loadTicketPrefixes().then(() => refreshDetail()).catch(() => { /* swallow */ });
   bindTicketRefGlobalClickHandler();
-
-  // HS-7962 — non-Tauri only: throttled (≤ once / 30 days) overlay nudging
-  // the user toward the installable build's embedded-terminal feature. Skips
-  // entirely when running under Tauri. Fire-and-forget — the dialog manages
-  // its own lifecycle.
+  // HS-7962 — non-Tauri throttled upgrade nudge. Skips under Tauri.
   maybeShowUpgradeNudge();
-
-  // Load plugin UI elements and render toolbar buttons
   void reloadPluginToolbar();
   bindGlassbox();
   initCustomViews(() => { void loadTickets(); });
   initResize();
-  startLongPoll();
-  void checkForUpdate();
-  // --- Permanent app-level event listeners ---
-  // These are bound once during init and never removed (SPA lifecycle).
-  // Temporary listeners (context menus, dropdowns, modals) are cleaned up
-  // via their own close/remove handlers.
+}
 
-  // Clicking empty space in the ticket list deselects all (HS-2114)
+function bindAppLevelDocumentListeners(): void {
+  // Permanent listeners — bound once and never removed (SPA lifecycle).
+  // Clicking empty space in the ticket list deselects all (HS-2114).
   byId('ticket-list').addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
-    // Only deselect if the click landed directly on the container or a column body/gap, not on a ticket row
     if (!target.closest('.ticket-row') && !target.closest('.column-card') && !target.closest('.column-header') && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (state.selectedIds.size > 0) {
         state.selectedIds.clear();
@@ -253,29 +219,16 @@ async function init() {
       }
     }
   });
-  // Re-render when detail panel dispatches close event
   document.addEventListener('hotsheet:render', () => renderTicketList());
-  // Tags dialog triggered from context menu
   document.addEventListener('hotsheet:show-tags-dialog', () => { void showTagsDialog(); });
-  // Channel auto-trigger on up_next changes
   document.addEventListener('hotsheet:upnext-changed', () => channelAutoTrigger());
-  // Print button
   byIdOrNull('print-btn')?.addEventListener('click', showPrintDialog);
-  // Restore saved app icon variant in Tauri (Dock resets to bundle icon on launch)
-  void restoreAppIcon();
-  bindExternalLinkHandler();
-  // Claude Channel
-  void initChannel();
-  // Prevent browser navigation when files are dropped outside valid drop targets.
-  // If the drop lands on a ticket row / column card (HS-7492) → attach to THAT
-  // ticket regardless of selection. Else if a single ticket is selected →
-  // attach to it. Else create a new ticket.
-  //
-  // HS-7492 — visual feedback: while a file is being dragged, the ticket row
-  // or column card under the cursor gets `.file-drop-target`. Cleared on
-  // dragleave / drop / dragend. We only mark rows on Files drags (not the
-  // column-view ticket-reorder drag which carries text/plain) so the
-  // existing `.column-drop-target` behaviour for reorder is unaffected.
+}
+
+/** HS-7492 — file-drop handling: row/card target wins over selection.
+ *  While dragging, the row/card under the cursor gets `.file-drop-target`;
+ *  cleared on dragleave/drop/dragend. */
+function bindFileDropListeners(): void {
   let lastFileDropRow: HTMLElement | null = null;
   const setFileDropRow = (row: HTMLElement | null): void => {
     if (lastFileDropRow === row) return;
@@ -284,10 +237,9 @@ async function init() {
     lastFileDropRow = row;
   };
   const findRowUnder = (el: HTMLElement): HTMLElement | null => {
-    // `.trash-row` rows are excluded — attachments on trashed tickets would
-    // be silently dropped by the next auto-cleanup sweep.
-    const row = el.closest<HTMLElement>('.ticket-row[data-id]:not(.trash-row), .column-card[data-id]');
-    return row;
+    // `.trash-row` excluded — attachments on trashed tickets would be
+    // silently dropped by the next auto-cleanup sweep.
+    return el.closest<HTMLElement>('.ticket-row[data-id]:not(.trash-row), .column-card[data-id]');
   };
   document.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -298,58 +250,47 @@ async function init() {
     setFileDropRow(findRowUnder(target));
   });
   document.addEventListener('dragleave', (e) => {
-    // Only clear when the drag leaves the viewport — intra-doc moves between
-    // rows flip the highlight via the next dragover. `relatedTarget` is null
-    // when the cursor leaves the window.
     if (e.relatedTarget === null) setFileDropRow(null);
   });
   document.addEventListener('dragend', () => { setFileDropRow(null); });
   document.addEventListener('drop', async (e) => {
-    // Don't intercept drops on valid targets (detail panel, dialogs) — they handle their own drops
     const target = e.target as HTMLElement;
     if (target.closest('.detail-body') || target.closest('.custom-view-editor-overlay') || target.closest('.feedback-dialog-overlay')) return;
-
     e.preventDefault();
     setFileDropRow(null);
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
-
-    let ticketId: number;
-    // HS-7492 — row/card drop target takes precedence over the selection.
-    // A user dropping a file onto a specific ticket obviously intends to
-    // attach to that ticket, even if a different one is currently selected.
-    const rowEl = findRowUnder(target);
-    const rowId = rowEl?.dataset.id;
-    if (rowId !== undefined && rowId !== '') {
-      ticketId = parseInt(rowId, 10);
-    } else if (state.selectedIds.size === 1) {
-      // Attach to the selected ticket
-      ticketId = Array.from(state.selectedIds)[0];
-    } else {
-      // Create a new ticket (use draft input text if available, otherwise empty)
-      const draftInput = document.querySelector<HTMLInputElement>('.draft-input');
-      const title = draftInput?.value.trim() ?? '';
-      const res = await api<{ id: number }>('/tickets', { method: 'POST', body: { title: title || 'Attachment' } });
-      ticketId = res.id;
-      if (draftInput && title !== '') draftInput.value = '';
-      void loadTickets();
-    }
-
+    const ticketId = await resolveDropTicketId(target, findRowUnder);
     for (const file of Array.from(files)) {
       await apiUpload(`/tickets/${ticketId}/attachments`, file);
     }
     void loadTickets();
   });
+}
 
-  // Command log panel + embedded terminal (tabs in the same drawer)
+async function resolveDropTicketId(target: HTMLElement, findRowUnder: (el: HTMLElement) => HTMLElement | null): Promise<number> {
+  // Row/card drop target takes precedence over selection — a user dropping
+  // a file on a specific ticket obviously intends to attach to that ticket.
+  const rowEl = findRowUnder(target);
+  const rowId = rowEl?.dataset.id;
+  if (rowId !== undefined && rowId !== '') return parseInt(rowId, 10);
+  if (state.selectedIds.size === 1) return Array.from(state.selectedIds)[0];
+  // Create a new ticket — use draft input text if available.
+  const draftInput = document.querySelector<HTMLInputElement>('.draft-input');
+  const title = draftInput?.value.trim() ?? '';
+  const res = await api<{ id: number }>('/tickets', { method: 'POST', body: { title: title || 'Attachment' } });
+  if (draftInput && title !== '') draftInput.value = '';
+  void loadTickets();
+  return res.id;
+}
+
+function initDrawerAndDashboard(): void {
   initCommandLog();
   initTerminal();
   initTerminalDashboard();
-  // HS-6311 — drawer terminal grid view (§36). Sits alongside the drawer
-  // tabs; toggled on via a new button in the drawer toolbar. onExitGrid
-  // restores whatever drawer tab was active before grid mode: showGridChrome
-  // set every .drawer-tab-content to display:none so we need to re-reveal the
-  // currently-active one here.
+  // HS-6311 — drawer terminal grid (§36). onExitGrid re-reveals the active
+  // drawer-tab content (showGridChrome had set every .drawer-tab-content to
+  // display:none).
   initDrawerTerminalGrid({
     onExitGrid: () => {
       const activeBtn = document.querySelector<HTMLElement>('.drawer-tab.active');
@@ -357,24 +298,40 @@ async function init() {
       void import('./commandLog.js').then(({ switchDrawerTab }) => { switchDrawerTab(tab); });
     },
   });
-  // HS-7596 / §37 — quit-confirm. Subscribes to the Rust-side
-  // `quit-confirm-requested` event and runs the §37.5 confirm flow.
-  // Tauri-only — no-op in browser context.
+  // HS-7596 / §37 — quit-confirm. Tauri-only.
   initQuitConfirm();
-  // Cross-project bell long-poll (HS-6603 §24.4.1) — surfaces server-side
-  // bell state on project tabs and feeds the in-drawer indicator for
-  // bells fired while the user is inside another project.
+  // Cross-project bell long-poll (HS-6603 §24.4.1).
   startBellPolling();
-  // HS-7272 — prime Tauri notification permission once. First call on macOS
-  // shows the OS permission dialog; subsequent calls short-circuit. A denial
-  // here is fine — the in-app toast still fires for every OSC 9.
+  // HS-7272 — prime Tauri notification permission once.
   void requestNativeNotificationPermission();
-  // Dashboard sidebar widget
   void initDashboardWidget();
-  // Share prompt and toolbar button
   initShare();
-  // Auto-focus the draft input on load
-  focusDraftInput();
+}
+
+async function init() {
+  try {
+    // HS-8054 — start the longtask observer first so any hangs during init
+    // itself get logged. `[hotsheet longtask]` prefix; in-memory buffer via
+    // `window.__hotsheetGetLongTasks()`.
+    initLongTaskObserver();
+
+    await loadInitialState();
+    bindAllUiHandlers();
+
+    startLongPoll();
+    void checkForUpdate();
+    bindAppLevelDocumentListeners();
+
+    // Restore saved app icon variant in Tauri (Dock resets on launch).
+    void restoreAppIcon();
+    bindExternalLinkHandler();
+    void initChannel();
+
+    bindFileDropListeners();
+    initDrawerAndDashboard();
+
+    // Auto-focus the draft input on load.
+    focusDraftInput();
   } catch (err) {
     console.error('Hot Sheet init failed:', err);
     const el = byIdOrNull('ticket-list');

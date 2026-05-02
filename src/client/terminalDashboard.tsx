@@ -163,6 +163,76 @@ let layoutToggleButton: HTMLButtonElement | null = null;
  *  resolution). Subsequent calls return the cached promise. */
 let layoutModeLoadPromise: Promise<void> | null = null;
 
+function bindGroupingSelect(): void {
+  if (groupingSelect === null) return;
+  // HS-7826 — wire the grouping selector. Primary scope: the first project
+  // in registered order. HS-7826 follow-up: `getAdditionalSecrets` returns
+  // every other project so picking a different grouping in the dropdown
+  // flips the active id across ALL projects.
+  void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
+    wireGroupingSelectChange({
+      selectEl: groupingSelect!,
+      getSecret: () => lastSectionData[0]?.project.secret ?? null,
+      getAdditionalSecrets: () => lastSectionData.slice(1).map(s => s.project.secret),
+    });
+  });
+}
+
+function bindSizeSliderInput(): void {
+  sizeSlider?.addEventListener('input', () => {
+    if (sizeSlider === null) return;
+    const parsed = Number.parseFloat(sizeSlider.value);
+    const rawValue = Number.isFinite(parsed) ? parsed : DEFAULT_SLIDER_VALUE;
+    const snapped = maybeSnapSliderValue(rawValue, currentSnapPoints);
+    sliderValue = snapped;
+    if (snapped !== rawValue) sizeSlider.value = String(snapped);
+    if (active) applyAllSizing();
+    schedulePersistSliderValue();
+  });
+}
+
+function handleDashboardEscape(e: KeyboardEvent): void {
+  if (!active) return;
+  if (e.key !== 'Escape') return;
+  // HS-8011 — when a terminal is focused, plain Esc must reach the running
+  // program; Opt+Esc still exits dedicated → centered → dashboard.
+  if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
+  // HS-7661 — let the hide-terminal dialog consume Esc when open.
+  if (document.querySelector('.hide-terminal-dialog-overlay') !== null) return;
+  // Dedicated view active in any handle?
+  for (const handle of gridHandles.values()) {
+    if (handle.isDedicatedOpen()) {
+      // HS-7526 — if focus is in the search input, blur it instead of
+      // exiting; after blurring, focus the dedicated xterm so a SECOND Esc
+      // lands on the terminal-side keypress target and exits the view
+      // normally. See docs/25-terminal-dashboard.md §25.8.
+      const activeEl = document.activeElement as HTMLElement | null;
+      const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
+      const inSearch = activeEl !== null && searchSlot !== null && searchSlot.contains(activeEl)
+        && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+      if (inSearch) {
+        e.preventDefault();
+        e.stopPropagation();
+        activeEl.blur();
+        handle.focusDedicatedTerm();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      handle.exitDedicatedView();
+      return;
+    }
+  }
+  if (centeredHandle !== null) {
+    e.preventDefault();
+    e.stopPropagation();
+    centeredHandle.uncenterTile();
+    return;
+  }
+  e.preventDefault();
+  exitDashboard();
+}
+
 export function initTerminalDashboard(): void {
   if (getTauriInvoke() === null) return;
 
@@ -181,30 +251,13 @@ export function initTerminalDashboard(): void {
   hideButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-hide-btn');
   groupingSelect = byIdOrNull<HTMLSelectElement>('terminal-dashboard-grouping-select');
   layoutToggleButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-layout-toggle');
-  // HS-7826 — wire the grouping selector. Primary scope: the first project
-  // in registered order (drives the visible options + the displayed active
-  // id, since groupings are stored per-project but the dashboard renders a
-  // single dropdown for everything).
-  // HS-7826 follow-up — `getAdditionalSecrets` returns every other project
-  // in the dashboard so picking a different grouping in the dropdown flips
-  // the active id across ALL projects, keeping each project's filter
-  // aligned with what the dropdown displays.
-  if (groupingSelect !== null) {
-    void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
-      wireGroupingSelectChange({
-        selectEl: groupingSelect!,
-        getSecret: () => lastSectionData[0]?.project.secret ?? null,
-        getAdditionalSecrets: () => lastSectionData.slice(1).map(s => s.project.secret),
-      });
-    });
-  }
-  // HS-7662 — fire-and-forget eagerly load the persisted layout mode so the
-  // first dashboard open paints the right layout without flicker. The fetch
-  // is shared with /file-settings calls elsewhere on page load (api wraps
-  // a single in-flight request when the cache is warm).
+
+  bindGroupingSelect();
+  // HS-7662 + HS-7948 — fire-and-forget eagerly load persisted layout mode +
+  // slider value so the first dashboard open paints with restored state and
+  // no flicker. The fetches share /file-settings caching with other on-load
+  // callers.
   void loadLayoutMode();
-  // HS-7948 — same pattern for the persisted slider value so the user's
-  // chosen scale is restored before the dashboard first paints.
   void loadSliderValue();
   layoutToggleButton?.addEventListener('click', () => {
     setLayoutMode(layoutMode === 'sectioned' ? 'flow' : 'sectioned');
@@ -223,63 +276,11 @@ export function initTerminalDashboard(): void {
       })),
     });
   });
-  sizeSlider?.addEventListener('input', () => {
-    if (sizeSlider === null) return;
-    const parsed = Number.parseFloat(sizeSlider.value);
-    const rawValue = Number.isFinite(parsed) ? parsed : DEFAULT_SLIDER_VALUE;
-    const snapped = maybeSnapSliderValue(rawValue, currentSnapPoints);
-    sliderValue = snapped;
-    if (snapped !== rawValue) sizeSlider.value = String(snapped);
-    if (active) applyAllSizing();
-    schedulePersistSliderValue();
-  });
+  bindSizeSliderInput();
 
-  // Esc routing: dedicated → centered → bare-grid → exit.
-  // Capture phase so we beat xterm's helper-textarea Escape handler.
-  document.addEventListener('keydown', (e) => {
-    if (!active) return;
-    if (e.key !== 'Escape') return;
-    // HS-8011 — when a terminal is focused, plain Esc must reach the
-    // running program; Opt+Esc still exits dedicated → centered → dashboard.
-    if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
-    // HS-7661 — let the hide-terminal dialog consume Esc when open;
-    // otherwise the dashboard handler exits dashboard mode before the
-    // dialog has a chance to close.
-    if (document.querySelector('.hide-terminal-dialog-overlay') !== null) return;
-    // Dedicated view active in any handle?
-    for (const handle of gridHandles.values()) {
-      if (handle.isDedicatedOpen()) {
-        // HS-7526 — if focus is in the search input, blur it instead of
-        // exiting the dedicated view. After blurring, focus the dedicated
-        // xterm so a SECOND Esc lands on the terminal-side keypress target
-        // and exits the view normally. See docs/25-terminal-dashboard.md
-        // §25.8.
-        const activeEl = document.activeElement as HTMLElement | null;
-        const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
-        const inSearch = activeEl !== null && searchSlot !== null && searchSlot.contains(activeEl)
-          && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
-        if (inSearch) {
-          e.preventDefault();
-          e.stopPropagation();
-          activeEl.blur();
-          handle.focusDedicatedTerm();
-          return;
-        }
-        e.preventDefault();
-        e.stopPropagation();
-        handle.exitDedicatedView();
-        return;
-      }
-    }
-    if (centeredHandle !== null) {
-      e.preventDefault();
-      e.stopPropagation();
-      centeredHandle.uncenterTile();
-      return;
-    }
-    e.preventDefault();
-    exitDashboard();
-  }, true);
+  // Esc routing: dedicated → centered → bare-grid → exit. Capture phase so
+  // we beat xterm's helper-textarea Escape handler.
+  document.addEventListener('keydown', handleDashboardEscape, true);
 }
 
 export function isDashboardActive(): boolean {
@@ -808,18 +809,12 @@ async function fetchProjectSections(): Promise<ProjectSectionData[]> {
   return sections;
 }
 
-function renderProjectSection(data: ProjectSectionData, visibleTerminals?: TerminalListEntry[]): HTMLElement {
-  // HS-7661 — `count` reflects all configured terminals (per user answer
-  // #6: "should count all terminals, not just visible ones"); `visible` is
-  // the filtered set used for the actual tile render. Default to the full
-  // list when no filter is provided so older callsites keep working.
-  const visible = visibleTerminals ?? data.terminals;
+function buildSectionEl(data: ProjectSectionData): HTMLElement {
   const count = data.terminals.length;
   const headingText = count > 0
     ? `${data.project.name} (${count} ${count === 1 ? 'terminal' : 'terminals'})`
     : data.project.name;
-
-  const section = toElement(
+  return toElement(
     <section className="terminal-dashboard-section" data-secret={data.project.secret}>
       <div className="terminal-dashboard-heading-row">
         {/* HS-7943 — heading is now clickable and routes to the project's
@@ -844,101 +839,89 @@ function renderProjectSection(data: ProjectSectionData, visibleTerminals?: Termi
       )}
     </section>
   );
+}
+
+/** HS-8104 — extracted from `renderProjectSection`. Sectioned-mode dedicated-
+ *  bar mount; structurally similar to flow-mode's variant but flips two chrome
+ *  surfaces (sizer + grouping) instead of four. */
+function buildSectionedDedicatedBarMount(
+  project: ProjectInfo,
+): (bar: HTMLElement, entry: TileEntry, term: Terminal) => () => void {
+  return (bar, entry, term) => {
+    if (sizerContainer !== null) sizerContainer.style.display = 'none';
+    // HS-7826 — also hide the grouping selector while the dedicated view is
+    // open; it shares the toolbar real estate with the sizer.
+    if (groupingSelect !== null) groupingSelect.style.display = 'none';
+    const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
+    if (label !== null) fillDedicatedLabel(label, project, entry.label);
+    const search = new SearchAddon();
+    term.loadAddon(search);
+    const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
+    let handleLocal: TerminalSearchHandle | null = null;
+    if (searchSlot !== null) {
+      handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });
+      searchSlot.replaceChildren(handleLocal.root);
+      searchSlot.style.display = '';
+      dedicatedSearchHandle = handleLocal;
+    }
+    return () => {
+      try { handleLocal?.dispose(); } catch { /* ignore */ }
+      if (searchSlot !== null) {
+        searchSlot.replaceChildren();
+        searchSlot.style.display = 'none';
+      }
+      dedicatedSearchHandle = null;
+      if (sizerContainer !== null && active) sizerContainer.style.display = '';
+      // HS-7826 — restore the grouping selector visibility (count-aware).
+      if (active) refreshDashboardGroupingSelect();
+    };
+  };
+}
+
+function mountSectionGrid(grid: HTMLElement, data: ProjectSectionData, visible: TerminalListEntry[]): void {
+  const handle = mountTileGrid({
+    container: grid,
+    cssPrefix: 'terminal-dashboard',
+    centerSizeFrac: 0.7,
+    centerScope: 'viewport',
+    centerReferenceEl: rootElement ?? undefined,
+    getSliderValue: () => sliderValue,
+    onContextMenu: (entry, e) => { onTileContextMenu(entry, data.project.secret, e); },
+    onTileEnlarge: (_entry, target) => {
+      // Cross-section coordination: only one tile centered globally.
+      if (target === 'center') {
+        for (const [otherSecret, otherHandle] of gridHandles.entries()) {
+          if (otherSecret === data.project.secret) continue;
+          if (otherHandle.isCentered()) otherHandle.uncenterTile();
+        }
+        centeredHandle = handle;
+      }
+    },
+    onTileShrink: () => {
+      if (centeredHandle === handle && !handle.isCentered()) centeredHandle = null;
+    },
+    onDedicatedBarMount: buildSectionedDedicatedBarMount(data.project),
+  });
+  gridHandles.set(data.project.secret, handle);
+  handle.rebuild(visible.map(toTileEntry(data.project.secret)));
+}
+
+function renderProjectSection(data: ProjectSectionData, visibleTerminals?: TerminalListEntry[]): HTMLElement {
+  // HS-7661 — `count` reflects all configured terminals; `visible` is the
+  // filtered set used for the actual tile render. Default to the full list
+  // so older callsites keep working.
+  const visible = visibleTerminals ?? data.terminals;
+  const section = buildSectionEl(data);
 
   // HS-7943 — sectioned-mode heading click routes to the project's tab.
-  // Mirrors the flow-mode badge click + the HS-6832 project-tab-while-
-  // in-dashboard pattern: `exitDashboard()` first, then `switchProject`.
   const headingEl = section.querySelector<HTMLElement>('.terminal-dashboard-heading');
-  if (headingEl !== null) {
-    headingEl.addEventListener('click', () => {
-      exitDashboard();
-      void switchProject(data.project);
-    });
-  }
+  headingEl?.addEventListener('click', () => {
+    exitDashboard();
+    void switchProject(data.project);
+  });
 
   const grid = section.querySelector<HTMLElement>('.terminal-dashboard-grid');
-  if (grid !== null) {
-    const handle = mountTileGrid({
-      container: grid,
-      cssPrefix: 'terminal-dashboard',
-      centerSizeFrac: 0.7,
-      centerScope: 'viewport',
-      centerReferenceEl: rootElement ?? undefined,
-      getSliderValue: () => sliderValue,
-      onContextMenu: (entry, e) => { onTileContextMenu(entry, data.project.secret, e); },
-      onTileEnlarge: (_entry, target) => {
-        // Cross-section coordination: only one tile centered globally.
-        if (target === 'center') {
-          // Uncenter any other handle's centered tile, then record this one.
-          for (const [otherSecret, otherHandle] of gridHandles.entries()) {
-            if (otherSecret === data.project.secret) continue;
-            if (otherHandle.isCentered()) otherHandle.uncenterTile();
-          }
-          centeredHandle = handle;
-        }
-      },
-      onTileShrink: () => {
-        if (centeredHandle === handle && !handle.isCentered()) {
-          centeredHandle = null;
-        }
-      },
-      onDedicatedBarMount: (bar, entry, term) => {
-        // Hide the slider, show the search slot, mount the search widget.
-        if (sizerContainer !== null) sizerContainer.style.display = 'none';
-        // HS-7826 — also hide the grouping selector while the dedicated
-        // view is open; it shares the toolbar real estate with the sizer.
-        if (groupingSelect !== null) groupingSelect.style.display = 'none';
-
-        // Add the project breadcrumb to the bar (between Back and the label).
-        // Append each breadcrumb span individually — the JSX runtime's Fragment
-        // emits multiple top-level elements and `toElement` only returns the
-        // first element child of its parsed template, so a `<>...</>` here
-        // would silently drop the `›` separator and the terminal span.
-        const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
-        if (label !== null) {
-          // Replace the bare terminal label with `Project › Terminal`. The
-          // bar was just constructed with `entry.label` as the label child,
-          // so we know what to render — re-use `entry.label` directly.
-          const terminalLabel = entry.label;
-          label.replaceChildren();
-          label.appendChild(toElement(
-            <span className="terminal-dashboard-dedicated-project">{data.project.name}</span>
-          ));
-          label.appendChild(toElement(
-            <span className="terminal-dashboard-dedicated-sep">{'›'}</span>
-          ));
-          label.appendChild(toElement(
-            <span className="terminal-dashboard-dedicated-terminal">{terminalLabel}</span>
-          ));
-        }
-
-        const search = new SearchAddon();
-        term.loadAddon(search);
-        const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
-        let handleLocal: TerminalSearchHandle | null = null;
-        if (searchSlot !== null) {
-          handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });
-          searchSlot.replaceChildren(handleLocal.root);
-          searchSlot.style.display = '';
-          dedicatedSearchHandle = handleLocal;
-        }
-        return () => {
-          // Disposer: tear down the search widget + restore the slider.
-          try { handleLocal?.dispose(); } catch { /* ignore */ }
-          if (searchSlot !== null) {
-            searchSlot.replaceChildren();
-            searchSlot.style.display = 'none';
-          }
-          dedicatedSearchHandle = null;
-          if (sizerContainer !== null && active) sizerContainer.style.display = '';
-          // HS-7826 — restore the grouping selector visibility (count-aware).
-          if (active) refreshDashboardGroupingSelect();
-        };
-      },
-    });
-    gridHandles.set(data.project.secret, handle);
-    handle.rebuild(visible.map(toTileEntry(data.project.secret)));
-  }
+  if (grid !== null) mountSectionGrid(grid, data, visible);
 
   const addBtn = section.querySelector<HTMLButtonElement>('.terminal-dashboard-add-terminal-btn');
   addBtn?.addEventListener('click', (e) => {
