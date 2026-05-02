@@ -1,4 +1,5 @@
 import { SearchAddon } from '@xterm/addon-search';
+import type { Terminal } from '@xterm/xterm';
 
 import { raw } from '../jsx-runtime.js';
 import { api, apiWithSecret } from './api.js';
@@ -625,8 +626,10 @@ function paintSectionedLayout(root: HTMLElement, sections: ProjectSectionData[])
  *  is unambiguous + symmetric, and the cost is just a few extra characters
  *  per tile label. No `+` button, no terminal-count headings, no per-
  *  section chrome (per user feedback #7 + §25.10.5 spec). */
-function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): void {
-  const flat: { secret: string; entry: TileEntry; project: ProjectInfo }[] = [];
+interface FlowTile { secret: string; entry: TileEntry; project: ProjectInfo }
+
+function flattenSectionsToTiles(sections: ProjectSectionData[]): FlowTile[] {
+  const flat: FlowTile[] = [];
   for (const section of sections) {
     const visible = filterVisibleEntries(section.project.secret, section.terminals);
     if (visible.length === 0) continue;
@@ -639,6 +642,73 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
       });
     }
   }
+  return flat;
+}
+
+function setFlowChromeVisibility(visible: boolean): void {
+  const display = visible ? '' : 'none';
+  if (sizerContainer !== null) sizerContainer.style.display = display;
+  if (layoutToggleButton !== null) layoutToggleButton.style.display = display;
+  if (hideButton !== null) hideButton.style.display = display;
+  if (groupingSelect !== null) groupingSelect.style.display = display;
+}
+
+function fillDedicatedLabel(label: HTMLElement, project: ProjectInfo, terminalLabel: string): void {
+  label.replaceChildren();
+  label.appendChild(toElement(
+    <span className="terminal-dashboard-dedicated-project">{project.name}</span>
+  ));
+  label.appendChild(toElement(
+    <span className="terminal-dashboard-dedicated-sep">{'›'}</span>
+  ));
+  label.appendChild(toElement(
+    <span className="terminal-dashboard-dedicated-terminal">{terminalLabel}</span>
+  ));
+}
+
+/** HS-8104 — extracted from `paintFlowLayout` to keep it readable. The
+ *  callback hides flow-grid chrome on enter, mounts a search widget into the
+ *  dedicated toolbar, and the returned cleanup restores the chrome on exit
+ *  (only when the dashboard is still active — `exitDashboard` will tear
+ *  things down separately). */
+function buildFlowDedicatedBarMount(
+  projectFor: (entry: TileEntry) => ProjectInfo | null,
+): (bar: HTMLElement, entry: TileEntry, term: Terminal) => () => void {
+  return (bar, entry, term) => {
+    setFlowChromeVisibility(false);
+    const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
+    const project = projectFor(entry);
+    if (label !== null && project !== null) fillDedicatedLabel(label, project, entry.label);
+    const search = new SearchAddon();
+    term.loadAddon(search);
+    const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
+    let handleLocal: TerminalSearchHandle | null = null;
+    if (searchSlot !== null) {
+      handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });
+      searchSlot.replaceChildren(handleLocal.root);
+      searchSlot.style.display = '';
+      dedicatedSearchHandle = handleLocal;
+    }
+    return () => {
+      try { handleLocal?.dispose(); } catch { /* ignore */ }
+      if (searchSlot !== null) {
+        searchSlot.replaceChildren();
+        searchSlot.style.display = 'none';
+      }
+      dedicatedSearchHandle = null;
+      if (active) {
+        setFlowChromeVisibility(true);
+        // HS-7826 — restore the grouping selector if it should be visible
+        // (>1 grouping). refreshDashboardGroupingSelect handles the count
+        // check; setFlowChromeVisibility above unconditionally shows it.
+        refreshDashboardGroupingSelect();
+      }
+    };
+  };
+}
+
+function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): void {
+  const flat = flattenSectionsToTiles(sections);
 
   if (flat.length === 0) {
     root.appendChild(toElement(
@@ -688,52 +758,7 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
       exitDashboard();
       void switchProject(project);
     },
-    onDedicatedBarMount: (bar, entry, term) => {
-      if (sizerContainer !== null) sizerContainer.style.display = 'none';
-      if (layoutToggleButton !== null) layoutToggleButton.style.display = 'none';
-      if (hideButton !== null) hideButton.style.display = 'none';
-      if (groupingSelect !== null) groupingSelect.style.display = 'none';
-      const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
-      const project = projectFor(entry);
-      if (label !== null && project !== null) {
-        const terminalLabel = entry.label;
-        label.replaceChildren();
-        label.appendChild(toElement(
-          <span className="terminal-dashboard-dedicated-project">{project.name}</span>
-        ));
-        label.appendChild(toElement(
-          <span className="terminal-dashboard-dedicated-sep">{'›'}</span>
-        ));
-        label.appendChild(toElement(
-          <span className="terminal-dashboard-dedicated-terminal">{terminalLabel}</span>
-        ));
-      }
-      const search = new SearchAddon();
-      term.loadAddon(search);
-      const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
-      let handleLocal: TerminalSearchHandle | null = null;
-      if (searchSlot !== null) {
-        handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });
-        searchSlot.replaceChildren(handleLocal.root);
-        searchSlot.style.display = '';
-        dedicatedSearchHandle = handleLocal;
-      }
-      return () => {
-        try { handleLocal?.dispose(); } catch { /* ignore */ }
-        if (searchSlot !== null) {
-          searchSlot.replaceChildren();
-          searchSlot.style.display = 'none';
-        }
-        dedicatedSearchHandle = null;
-        if (sizerContainer !== null && active) sizerContainer.style.display = '';
-        if (layoutToggleButton !== null && active) layoutToggleButton.style.display = '';
-        if (hideButton !== null && active) hideButton.style.display = '';
-        // HS-7826 — restore the grouping selector if it should be visible
-        // (active && >1 grouping). refreshDashboardGroupingSelect handles
-        // the visibility check based on current groupings count.
-        if (active) refreshDashboardGroupingSelect();
-      };
-    },
+    onDedicatedBarMount: buildFlowDedicatedBarMount(projectFor),
   });
   // Use a sentinel "flow" key so the bell long-poll fan-out treats it
   // uniformly. The bell-poll subscription iterates per-secret, but in flow

@@ -639,6 +639,80 @@ async function setupInstanceLifecycle(actualPort: number): Promise<void> {
   process.on('exit', () => { cleanupInstance(); });
 }
 
+/** Resolve demo mode: validate the scenario id and switch the data dir to a
+ *  fresh temp directory. Process-exits with status 1 if the scenario id
+ *  isn't recognised. */
+function resolveDemoDataDir(demo: number): string {
+  const scenario = DEMO_SCENARIOS.find(s => s.id === demo);
+  if (!scenario) {
+    console.error(`Unknown demo scenario: ${demo}`);
+    console.error('Available scenarios:');
+    for (const s of DEMO_SCENARIOS) {
+      console.error(`  --demo:${s.id}  ${s.label}`);
+    }
+    process.exit(1);
+  }
+  console.log(`\n  DEMO MODE: ${scenario.label}\n`);
+  return join(tmpdir(), `hotsheet-demo-${Date.now()}`);
+}
+
+/** HS-8104 — multi-project: detect an already-running Hot Sheet instance and
+ *  either replace it (`--replace`), join it (default), or just register the
+ *  current dataDir against it (`--no-open`). Returns `true` if the caller
+ *  should NOT continue to fresh-startup (we joined or registered and are
+ *  about to `process.exit`); `false` if we replaced the previous instance
+ *  and should fall through to a fresh startup. Skipped entirely in demo mode. */
+async function handleExistingInstance(
+  dataDir: string,
+  noOpen: boolean,
+  replace: boolean,
+  elapsed: () => string,
+): Promise<boolean> {
+  console.error(`[startup ${elapsed()}] cleaning up stale instances...`);
+  await cleanupStaleInstance();
+  console.error(`[startup ${elapsed()}] stale cleanup done`);
+
+  const instance = readInstanceFile();
+  if (instance === null) return false;
+
+  console.error(`[startup ${elapsed()}] checking if instance on port ${instance.port} is running...`);
+  const running = await isInstanceRunning(instance.port);
+  console.error(`[startup ${elapsed()}] instance check: running=${running}`);
+  if (!running) return false;
+
+  if (replace) {
+    console.error(`[startup ${elapsed()}] --replace: shutting down instance on port ${instance.port}...`);
+    await shutdownRunningInstance(instance.port);
+    console.error(`[startup ${elapsed()}] --replace: previous instance shut down`);
+    return false;
+  }
+
+  // Ensure Claude Code hooks are installed even when joining an existing
+  // instance, since hook installation normally only happens during primary
+  // startup.
+  await ensureHooksForRunningInstance(instance.port);
+
+  if (!noOpen) {
+    await joinRunningInstance(instance.port, dataDir);
+  } else {
+    const absDataDir = resolve(dataDir);
+    const res = await fetch(`http://localhost:${instance.port}/api/projects/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataDir: absDataDir }),
+    });
+    if (res.ok) {
+      const project = await res.json() as { name: string };
+      console.log(`  Registered project "${project.name}" with running instance on port ${instance.port}`);
+    } else {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      console.error(`  Failed to register with running instance: ${body.error ?? 'Unknown error'}`);
+      process.exit(1);
+    }
+  }
+  process.exit(0);
+}
+
 async function main() {
   const t0 = Date.now();
   const elapsed = () => `${Date.now() - t0}ms`;
@@ -673,64 +747,10 @@ async function main() {
   await checkForUpdates(forceUpdateCheck);
   console.error(`[startup ${elapsed()}] update check done`);
 
-  // Demo mode: use a fresh temp directory
   if (demo !== null) {
-    const scenario = DEMO_SCENARIOS.find(s => s.id === demo);
-    if (!scenario) {
-      console.error(`Unknown demo scenario: ${demo}`);
-      console.error('Available scenarios:');
-      for (const s of DEMO_SCENARIOS) {
-        console.error(`  --demo:${s.id}  ${s.label}`);
-      }
-      process.exit(1);
-    }
-    dataDir = join(tmpdir(), `hotsheet-demo-${Date.now()}`);
-    console.log(`\n  DEMO MODE: ${scenario.label}\n`);
-  }
-
-  // Multi-project: check for an already-running instance (skip in demo mode)
-  if (demo === null) {
-    // Clean up stale instances (dead PID but port still occupied)
-    console.error(`[startup ${elapsed()}] cleaning up stale instances...`);
-    await cleanupStaleInstance();
-    console.error(`[startup ${elapsed()}] stale cleanup done`);
-
-    const instance = readInstanceFile();
-    if (instance !== null) {
-      console.error(`[startup ${elapsed()}] checking if instance on port ${instance.port} is running...`);
-      const running = await isInstanceRunning(instance.port);
-      console.error(`[startup ${elapsed()}] instance check: running=${running}`);
-      if (running && replace) {
-        console.error(`[startup ${elapsed()}] --replace: shutting down instance on port ${instance.port}...`);
-        await shutdownRunningInstance(instance.port);
-        console.error(`[startup ${elapsed()}] --replace: previous instance shut down`);
-        // Fall through to fresh startup below.
-      } else if (running) {
-        // Ensure Claude Code hooks are installed even when joining an existing instance,
-        // since hook installation normally only happens during primary startup.
-        await ensureHooksForRunningInstance(instance.port);
-
-        if (!noOpen) {
-          await joinRunningInstance(instance.port, dataDir);
-        } else {
-          const absDataDir = resolve(dataDir);
-          const res = await fetch(`http://localhost:${instance.port}/api/projects/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dataDir: absDataDir }),
-          });
-          if (res.ok) {
-            const project = await res.json() as { name: string };
-            console.log(`  Registered project "${project.name}" with running instance on port ${instance.port}`);
-          } else {
-            const body = await res.json().catch(() => ({})) as { error?: string };
-            console.error(`  Failed to register with running instance: ${body.error ?? 'Unknown error'}`);
-            process.exit(1);
-          }
-        }
-        process.exit(0);
-      }
-    }
+    dataDir = resolveDemoDataDir(demo);
+  } else {
+    await handleExistingInstance(dataDir, noOpen, replace, elapsed);
   }
 
   console.error(`[startup ${elapsed()}] initializing project...`);
