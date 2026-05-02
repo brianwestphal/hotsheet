@@ -306,25 +306,33 @@ function updateSelectionClasses() {
 // --- Render entries ---
 
 /** Create the DOM element for a single log entry, including event handlers. */
-function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
+interface LogEntryRenderState {
+  displayDetail: string;
+  preview: string;
+  hasMore: boolean;
+  isRunningShell: boolean;
+  isCanceling: boolean;
+  shellParts: ReturnType<typeof formatShellDetail>;
+}
+
+function computeLogEntryRenderState(entry: LogEntry): LogEntryRenderState {
+  const shellParts = entry.event_type === 'shell_command' ? formatShellDetail(entry.detail) : null;
+  const displayDetail = shellParts ? shellParts.output : entry.detail;
+  const detailLines = displayDetail.split('\n');
+  const preview = detailLines.slice(0, 3).join('\n');
+  const hasMore = detailLines.length > 3 || displayDetail.length > 300;
+  const isRunningShell = entry.event_type === 'shell_command' && runningShellIds.includes(entry.id);
+  const isCanceling = cancelingShellIds.has(entry.id);
+  return { displayDetail, preview, hasMore, isRunningShell, isCanceling, shellParts };
+}
+
+function buildLogEntryEl(entry: LogEntry, s: LogEntryRenderState): HTMLElement {
   const dir = directionIndicator(entry.direction);
   const badgeColor = typeBadgeColor(entry.event_type);
   const badgeLabel = typeBadgeLabel(entry.event_type);
   const time = relativeTime(entry.created_at);
-
-  // Shell command combined display (HS-2547)
-  const shellParts = entry.event_type === 'shell_command' ? formatShellDetail(entry.detail) : null;
-  const displayDetail = shellParts ? shellParts.output : entry.detail;
-
-  // Truncate detail to first 3 lines for preview
-  const detailLines = displayDetail.split('\n');
-  const preview = detailLines.slice(0, 3).join('\n');
-  const hasMore = detailLines.length > 3 || displayDetail.length > 300;
-
-  const isRunningShell = entry.event_type === 'shell_command' && runningShellIds.includes(entry.id);
-  const isCanceling = cancelingShellIds.has(entry.id);
-
-  const el = toElement(
+  const { shellParts, displayDetail, preview, hasMore, isRunningShell, isCanceling } = s;
+  return toElement(
     <div className={`command-log-entry${selectedLogIds.has(entry.id) ? ' selected' : ''}`} data-id={String(entry.id)}>
       <div className="command-log-entry-header">
         <span className="command-log-direction" style={`color:${dir.color}`}>{dir.symbol}</span>
@@ -392,29 +400,52 @@ function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
       )}
     </div>
   );
+}
 
-  // Stop button handler
-  if (isRunningShell) {
-    const stopBtn = el.querySelector('.command-log-stop-btn') as HTMLElement;
-    stopBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      cancelingShellIds.add(entry.id);
-      void api('/shell/kill', { method: 'POST', body: { id: entry.id } });
-      stopBtn.replaceWith(toElement(<span className="command-log-canceling">{'Canceling\u2026'}</span>));
-    });
+function bindStopButtonHandler(el: HTMLElement, entry: LogEntry): void {
+  const stopBtn = el.querySelector('.command-log-stop-btn') as HTMLElement;
+  stopBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    cancelingShellIds.add(entry.id);
+    void api('/shell/kill', { method: 'POST', body: { id: entry.id } });
+    stopBtn.replaceWith(toElement(<span className="command-log-canceling">{'Canceling\u2026'}</span>));
+  });
+}
+
+/** HS-8015 follow-up #2 — running-shell rows are always expandable
+ *  because the running-shell render branch always emits a hidden
+ *  full-pre alongside the line-clamped preview. Pre-fix `hasMore`
+ *  (computed from the command line alone) was false and the click
+ *  did nothing for a running shell. */
+function applyExpansion(el: HTMLElement, entry: LogEntry, hasMore: boolean, isRunningShell: boolean): void {
+  if (!(hasMore || isRunningShell)) return;
+  const isExpanded = el.classList.toggle('expanded');
+  if (isExpanded) expandedEntryIds.add(entry.id); else expandedEntryIds.delete(entry.id);
+  const detailEls = el.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
+  const fullEl = el.querySelector<HTMLElement>('.command-log-detail-full');
+  if (isExpanded) {
+    for (const d of detailEls) (d as HTMLElement).style.display = 'none';
+    if (fullEl) fullEl.style.display = '';
+  } else {
+    for (const d of detailEls) (d as HTMLElement).style.display = '';
+    if (fullEl) fullEl.style.display = 'none';
   }
+}
 
-  // Click: selection + expand/collapse (HS-2544)
+function bindEntryClickHandler(
+  el: HTMLElement,
+  entry: LogEntry,
+  filtered: LogEntry[],
+  hasMore: boolean,
+  isRunningShell: boolean,
+): void {
   el.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
     if (target.closest('.command-log-stop-btn')) return;
 
     if (e.metaKey || e.ctrlKey) {
-      if (selectedLogIds.has(entry.id)) {
-        selectedLogIds.delete(entry.id);
-      } else {
-        selectedLogIds.add(entry.id);
-      }
+      if (selectedLogIds.has(entry.id)) selectedLogIds.delete(entry.id);
+      else selectedLogIds.add(entry.id);
       lastClickedId = entry.id;
       updateSelectionClasses();
       return;
@@ -426,9 +457,7 @@ function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
       const endIdx = ids.indexOf(entry.id);
       if (startIdx !== -1 && endIdx !== -1) {
         const [lo, hi] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
-        for (let idx = lo; idx <= hi; idx++) {
-          selectedLogIds.add(ids[idx]);
-        }
+        for (let idx = lo; idx <= hi; idx++) selectedLogIds.add(ids[idx]);
         updateSelectionClasses();
         return;
       }
@@ -438,44 +467,26 @@ function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
     selectedLogIds.add(entry.id);
     lastClickedId = entry.id;
     updateSelectionClasses();
-
-    // HS-8015 follow-up #2 — running-shell rows are always expandable
-    // even when the (still-being-written) command line itself is short.
-    // The running-shell render branch always emits a hidden full-pre
-    // alongside the line-clamped preview, and the live writer keeps
-    // both in sync, so the existing `.command-log-detail` ↔
-    // `.command-log-detail-full` display-swap reveals the full live
-    // buffer when the user clicks. Pre-fix `hasMore` (computed from the
-    // command line alone, typically <300 chars / 1 line) was false and
-    // the click did nothing for a running shell.
-    const isExpandable = hasMore || isRunningShell;
-    if (isExpandable) {
-      const isExpanded = el.classList.toggle('expanded');
-      if (isExpanded) expandedEntryIds.add(entry.id); else expandedEntryIds.delete(entry.id);
-      const detailEls = el.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
-      const fullEl = el.querySelector<HTMLElement>('.command-log-detail-full');
-      if (isExpanded) {
-        for (const d of detailEls) (d as HTMLElement).style.display = 'none';
-        if (fullEl) fullEl.style.display = '';
-      } else {
-        for (const d of detailEls) (d as HTMLElement).style.display = '';
-        if (fullEl) fullEl.style.display = 'none';
-      }
-    }
+    applyExpansion(el, entry, hasMore, isRunningShell);
   });
+}
 
-  // Right-click context menu (HS-2546)
+function bindEntryContextMenu(el: HTMLElement, entry: LogEntry, filtered: LogEntry[]): void {
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    let entriesToCopy: LogEntry[];
-    if (selectedLogIds.size > 0 && selectedLogIds.has(entry.id)) {
-      entriesToCopy = filtered.filter(e2 => selectedLogIds.has(e2.id));
-    } else {
-      entriesToCopy = [entry];
-    }
+    const entriesToCopy = (selectedLogIds.size > 0 && selectedLogIds.has(entry.id))
+      ? filtered.filter(e2 => selectedLogIds.has(e2.id))
+      : [entry];
     showContextMenu(e.clientX, e.clientY, entriesToCopy);
   });
+}
 
+function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
+  const s = computeLogEntryRenderState(entry);
+  const el = buildLogEntryEl(entry, s);
+  if (s.isRunningShell) bindStopButtonHandler(el, entry);
+  bindEntryClickHandler(el, entry, filtered, s.hasMore, s.isRunningShell);
+  bindEntryContextMenu(el, entry, filtered);
   return el;
 }
 
