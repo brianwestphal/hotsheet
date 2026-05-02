@@ -554,6 +554,14 @@ Env flags: `PLUGINS_ENABLED` (build/runtime toggle), `NO_WEB_SERVER` (E2E), `NOD
 - **`CHANNEL_VERSION` mismatch is a user-visible warning.** The server compares the running channel's version against `EXPECTED_CHANNEL_VERSION` and tells the user to reconnect via `/mcp`. Always bump both.
 - **Ticket numbers never reuse** even after deletion (sequence-backed).
 - **Debounces:** worklist 500 ms, open-tickets 5 s, detail panel auto-save 300 ms, command log search 300 ms.
+- **Module-level state is the singleton pattern (HS-8086).** Each `src/client/*.tsx` module is a singleton tied to the SPA's never-remounting lifecycle, so a module-level `let X: ... | null = null;` is functionally equivalent to a private field on a singleton class — no class wrapper needed. The audit ran across 139 such declarations in `src/client/` and found exactly one bug (HS-8102: `customViews.tsx::loadTicketsFn` typed without `| null`); every other case is correct. Rules of thumb when adding new module-level state:
+  1. **Type as `... | null = null`** (not `... | undefined`, not bare `: T;` with no init) so the type system reflects the pre-init state and TypeScript forces null-checks at every call site. The `customViews.tsx::loadTicketsFn` (HS-8102) and `settingsLoader.tsx::_restoreTicketList` precedents are the reference shape.
+  2. **DOM-handle mutables** (e.g. `gitStatusChip.tsx`'s 5, `drawerTerminalGrid.tsx`'s 16, `terminalDashboard.tsx`'s 22) are bound in an `init`/`bind` function during app boot and stay live for the SPA lifetime. `null` until init, `HTMLElement` after.
+  3. **Singleton timers** (`pollTimer`, `channelDebounceTimeout`, etc.) — pair with `start*()` / `stop*()` helpers that null-guard before re-init and clear on stop. Examples: `commandSidebar.tsx::shellPollTimer`, `commandLog.tsx::pollTimer`.
+  4. **Per-project Maps** (`Map<projectSecret, T>`) — the per-project pattern. Pruned via the project-unregister flow. Examples: `channelUI.tsx::autoModeByProject`, `bellPoll.tsx::recentlyAnsweredPrompts`.
+  5. **Long-lived id Sets** (e.g. `commandLog.tsx::expandedEntryIds`, `selectedLogIds`) — bounded by total ever-created entity ids; Set membership is O(1) so growth is non-issue. Don't over-engineer pruning.
+
+  Code-quality scans should not re-flag these as hygiene concerns. The pattern is intentional — refactor-to-class adds indirection without removing state.
 
 ---
 

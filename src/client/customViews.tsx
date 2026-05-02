@@ -9,7 +9,14 @@ import type { CustomView, CustomViewCondition } from './state.js';
 import { allKnownTags, refreshAllKnownTags, state } from './state.js';
 import { draggedTicketIds } from './ticketList.js';
 
-let loadTicketsFn: () => void;
+// HS-8102 — typed `(() => void) | null` (was `() => void` with no `| undefined`).
+// Pre-fix the type lied: the variable was implicitly undefined until
+// `initCustomViews` ran at app boot, but every call site invoked it without
+// null-checking. Any reorder that fired a call site before init would have
+// crashed with `loadTicketsFn is not a function` while TypeScript happily
+// green-lit the code. Matches the `settingsLoader.tsx::_restoreTicketList`
+// pattern.
+let loadTicketsFn: (() => void) | null = null;
 let draggedViewIndex: number | null = null;
 
 export function initCustomViews(loadTickets: () => void) {
@@ -61,7 +68,7 @@ export function renderSidebarViews() {
       state.view = `custom:${view.id}`;
       state.selectedIds.clear();
       suppressAnimation();
-      loadTicketsFn();
+      loadTicketsFn?.();
     });
     btn.addEventListener('dblclick', (e) => {
       e.preventDefault();
@@ -136,7 +143,7 @@ async function deleteView(id: string) {
     document.querySelectorAll('.sidebar-item').forEach(i => {
       i.classList.toggle('active', (i as HTMLElement).dataset.view === 'all');
     });
-    loadTicketsFn();
+    loadTicketsFn?.();
   }
   await saveViews();
 }
@@ -155,7 +162,7 @@ async function addTagToTickets(tag: string, ticketIds: number[]) {
     ticket.tags = JSON.stringify(updated);
   }
   if (!hasTag(allKnownTags, normalized)) allKnownTags.push(normalized);
-  loadTicketsFn();
+  loadTicketsFn?.();
 }
 
 // --- Field/operator configuration ---
@@ -457,7 +464,7 @@ function showViewEditor(existing?: CustomView) {
     state.view = `custom:${view.id}`;
     state.selectedIds.clear();
     renderSidebarViews();
-    loadTicketsFn();
+    loadTicketsFn?.();
     close();
   });
 }
