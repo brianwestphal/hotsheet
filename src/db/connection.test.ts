@@ -170,6 +170,14 @@ describe('DB recovery marker (HS-7899)', () => {
  *  PGLite instance — leaving even one open means the process exit will
  *  leave a stale `postmaster.pid` for HS-7888 to clean up next launch. */
 describe('closeAllDatabases (HS-7931)', () => {
+  // HS-8105: this test creates THREE real PGLite instances (dbA, dbB, plus
+  // the post-close re-open). Each `initdb` is a few-hundred-ms operation
+  // when run alone, but vitest's fork-pool runs ~30 sibling test files
+  // in parallel and they fight for the same `initdb` shell-out, blowing
+  // past the default 30 s timeout when run as part of the full suite.
+  // Lift this single test's timeout to 60 s — the test passes in well
+  // under that ceiling solo (~12 s); the wider envelope is purely to
+  // absorb load-induced jitter so coverage can complete.
   it('closes every cached instance and clears the cache so the next getDb opens a fresh handle', async () => {
     const dataDirA = join(tmpdir(), `hs-close-all-a-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const dataDirB = join(tmpdir(), `hs-close-all-b-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -194,7 +202,7 @@ describe('closeAllDatabases (HS-7931)', () => {
       rmSync(dataDirA, { recursive: true, force: true });
       rmSync(dataDirB, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   it('keeps closing remaining instances even if one close throws', async () => {
     const dataDir1 = join(tmpdir(), `hs-close-all-fail-${Date.now()}-${Math.random().toString(36).slice(2)}`);
