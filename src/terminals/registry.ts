@@ -16,6 +16,7 @@ import type { MatchResult } from '../shared/terminalPrompt/parsers.js';
 import { containsClaudeSpinner } from './claudeSpinner.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from './config.js';
 import { scanPtyChunk } from './oscScanner.js';
+import { killProcessTreeBestEffort } from './processInspect.js';
 import { createPromptScanner, type PromptScanner } from './promptScanner.js';
 import { resolveTerminalCommand } from './resolveCommand.js';
 import { RingBuffer } from './ringBuffer.js';
@@ -852,6 +853,19 @@ function teardownPty(session: SessionState): void {
   }
   session.ptyDisposables = [];
   if (session.pty) {
+    // HS-8140 — SIGTERM every descendant before SIGHUP-ing the shell.
+    // node-pty's `kill('SIGHUP')` reaches only the immediate shell process;
+    // grandchildren (a backgrounded `&` job, a `claude` instance running
+    // inside zsh, anything that traps SIGHUP) survive the shell's exit and
+    // become orphans owned by init. Walking the process tree once via
+    // `ps -o pid,ppid,comm -A` and signalling each descendant explicitly
+    // catches those before the shell itself goes away. Sync + best-effort
+    // — never throws, swallows per-pid races (`ESRCH`), and bails to the
+    // pre-fix SIGHUP-only behaviour on Windows / ps unavailable.
+    const rootPid = session.pty.pid;
+    if (rootPid > 0) {
+      killProcessTreeBestEffort(rootPid, 'SIGTERM');
+    }
     // HS-7528: use SIGHUP rather than SIGTERM — interactive shells
     // (zsh / bash / fish) ignore SIGTERM but exit cleanly on hang-up. Same
     // rationale as the `/api/terminal/kill` route (HS-6471). SIGTERM here

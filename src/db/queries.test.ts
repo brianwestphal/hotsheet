@@ -476,6 +476,90 @@ describe('filtering', () => {
     const { countSearchMatchesInExcludedStatuses } = await import('./tickets.js');
     expect(await countSearchMatchesInExcludedStatuses('')).toEqual({ backlog: 0, archive: 0 });
   });
+
+  // HS-8100 — when the search query is an exact ticket-number reference
+  // (e.g. `HS-100`), the ticket is returned regardless of which bucket
+  // it lives in (backlog, archive, even trash). Mirrors the user
+  // intuition that typing a complete id should resolve to that exact
+  // ticket without needing to opt into hidden buckets first.
+  describe('exact ticket-id search bypasses status filter (HS-8100)', () => {
+    it('returns a backlog ticket by exact ticket_number without include_backlog', async () => {
+      const t = await createTicket('Backlog exact-id target');
+      await updateTicket(t.id, { status: 'backlog' });
+      const out = await getTickets({ search: t.ticket_number });
+      expect(out.map(x => x.id)).toContain(t.id);
+    });
+
+    it('returns an archive ticket by exact ticket_number without include_archive', async () => {
+      const t = await createTicket('Archive exact-id target');
+      await updateTicket(t.id, { status: 'archive' });
+      const out = await getTickets({ search: t.ticket_number });
+      expect(out.map(x => x.id)).toContain(t.id);
+    });
+
+    it('returns a trash (deleted) ticket by exact ticket_number — pre-fix this was impossible', async () => {
+      const t = await createTicket('Trash exact-id target');
+      await updateTicket(t.id, { status: 'deleted' });
+      const out = await getTickets({ search: t.ticket_number });
+      expect(out.map(x => x.id)).toContain(t.id);
+    });
+
+    it('exact-id match is case-insensitive', async () => {
+      const t = await createTicket('Case-insensitive target');
+      await updateTicket(t.id, { status: 'archive' });
+      const out = await getTickets({ search: t.ticket_number.toLowerCase() });
+      expect(out.map(x => x.id)).toContain(t.id);
+    });
+
+    it('exact-id `HS-1` does NOT also pull `HS-10`, `HS-100`, etc. (no substring drift)', async () => {
+      // Pre-fix the search used `ILIKE %search%` which would have matched
+      // every ticket whose ticket_number CONTAINS `HS-1` — every ticket
+      // numbered 1, 10..19, 100..199, 1000..1999, etc.
+      const a = await createTicket('Drift target one');
+      const b = await createTicket('Drift target two');
+      await updateTicket(a.id, { status: 'archive' });
+      await updateTicket(b.id, { status: 'archive' });
+      // Search for the LITERAL number of `a`. `b` (different number) must
+      // NOT be in the result even though both are archive.
+      const out = await getTickets({ search: a.ticket_number });
+      const ids = out.map(x => x.id);
+      expect(ids).toContain(a.id);
+      expect(ids).not.toContain(b.id);
+    });
+
+    it('countSearchMatchesInExcludedStatuses returns zeroes for an exact-id search (no include rows needed)', async () => {
+      const { countSearchMatchesInExcludedStatuses } = await import('./tickets.js');
+      const t = await createTicket('No-include-rows target');
+      await updateTicket(t.id, { status: 'backlog' });
+      const counts = await countSearchMatchesInExcludedStatuses(t.ticket_number);
+      // The ticket lives in backlog and matches by id, but the include
+      // row is suppressed because the main query already returned it.
+      expect(counts).toEqual({ backlog: 0, archive: 0 });
+    });
+
+    it('non-exact searches (partial number, free text) keep the pre-fix behaviour', async () => {
+      const t = await createTicket('Free-text bucket-restricted target');
+      await updateTicket(t.id, { status: 'backlog' });
+      // Free-text search → status filter still excludes backlog.
+      const out = await getTickets({ search: 'Free-text bucket-restricted' });
+      expect(out.map(x => x.id)).not.toContain(t.id);
+    });
+
+    it('isExactTicketIdSearch recognises common shapes + rejects free text', async () => {
+      const { isExactTicketIdSearch } = await import('./tickets.js');
+      expect(isExactTicketIdSearch('HS-100')).toBe(true);
+      expect(isExactTicketIdSearch('hs-100')).toBe(true);
+      expect(isExactTicketIdSearch('  HS-8100  ')).toBe(true); // whitespace tolerated
+      expect(isExactTicketIdSearch('BUG-42')).toBe(true);
+      expect(isExactTicketIdSearch('MIGRATION_V2-7')).toBe(true);
+      expect(isExactTicketIdSearch('HS')).toBe(false);             // no number
+      expect(isExactTicketIdSearch('HS-')).toBe(false);            // empty number
+      expect(isExactTicketIdSearch('HS-100 fix')).toBe(false);    // trailing free text
+      expect(isExactTicketIdSearch('100-HS')).toBe(false);         // wrong order
+      expect(isExactTicketIdSearch('-100')).toBe(false);           // no prefix
+      expect(isExactTicketIdSearch('')).toBe(false);
+    });
+  });
 });
 
 describe('sorting', () => {

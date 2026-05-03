@@ -72,23 +72,19 @@ function buildRuleRow(rule: TerminalPromptAllowRule) {
   // mutating the question would un-match every prompt the rule was
   // recorded against (cf. permission-allow-rules in §47.4 which DO
   // support edit).
-  const created = formatCreatedAt(rule.created_at);
   const choice = rule.choice_label ?? `choice ${rule.choice_index + 1}`;
   const question = rule.question_preview ?? '(question text not stored — created before HS-7988)';
   // HS-8106 — two-row layout per item:
-  //   Row 1: [parser] [question]                            [trash, vert-centered]
-  //   Row 2: [empty]  [→ auto-response]   [created]         [trash continues]
-  // Choice + created live inside `.tpal-rule-meta` on row 2 col 2 so they
-  // share a baseline-aligned flex strip; the trash button spans both grid
-  // rows and aligns to the row's vertical center via the shared CSS.
+  //   Row 1: [parser] [question]                       [trash, vert-centered]
+  //   Row 2: [empty]  [→ auto-response, left-aligned]  [trash continues]
+  // The auto-response is the most useful field on row 2 — date was removed
+  // per user feedback (it was using the row's right edge that the
+  // auto-response should be free to fill).
   const row = toElement(
     <div className="permission-allow-row tpal-rule-row" data-rule-id={rule.id} role="button" tabIndex={0}>
       <div className="permission-allow-tool tpal-rule-parser">{rule.parser_id}</div>
       <div className="tpal-rule-question" title={question}>{question}</div>
-      <div className="tpal-rule-meta">
-        <span className="tpal-rule-choice">{`→ ${choice}`}</span>
-        {created !== '' ? <span className="tpal-rule-created">{created}</span> : null}
-      </div>
+      <div className="tpal-rule-choice">{`→ ${choice}`}</div>
       <button
         className="permission-allow-delete btn btn-sm"
         type="button"

@@ -326,17 +326,26 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     respondToPermission('deny');
   });
 
-  // HS-7999 — when the channel-truncated `input_preview` ended in `…`
-  // (Claude's MCP channel cuts at ~2000 chars; `formatInputPreview`
-  // appends `…` via `permissionPreview.ts::extractStringField` when
-  // the JSON body was cut off mid-stream), kick off a terminal-buffer
-  // snapshot so the popup can show the FULL prompt as Claude actually
-  // rendered it. The snapshot is async (~500 ms — pause WS writes,
-  // resize PTY to 200×80, capture Claude's redraw, resize back, drain
-  // the post-resize-back redraw to the live term). The popup mounts
-  // immediately with the truncated preview; when the snapshot
-  // resolves we replace the body slot with a read-only mirror xterm
-  // showing the captured stream.
+  // HS-7999 / HS-8139 — when the channel preview was truncated, kick off
+  // a terminal-buffer snapshot so the popup can show the FULL prompt as
+  // Claude actually rendered it. Two truncation shapes:
+  //   1. **Flat-string preview ending in `…`** (HS-7999) — `formatInputPreview`
+  //      appends `…` via `extractStringField` when Claude's MCP `input_preview`
+  //      cut mid-string at ~2000 chars.
+  //   2. **Parsed Edit/Write diff with `truncated: true`** (HS-8139) — the
+  //      pre-fix gate skipped this path because `previewText` is empty when
+  //      we render the diff DOM, so a long Write payload (the user's
+  //      report: a multi-page Python file truncated to a few lines + `…
+  //      (truncated)` footer) never triggered the snapshot. Now any
+  //      truncation indicator on either path fires the snapshot, and the
+  //      popup body swaps to a scroll-bounded mirror xterm with the
+  //      complete Claude TUI render.
+  //
+  // The snapshot is async (~500 ms — pause WS writes, resize PTY to
+  // 200×80, capture Claude's redraw, resize back, drain the post-resize
+  // redraw to the live term). The popup mounts immediately with the
+  // truncated preview; when the snapshot resolves we replace the body
+  // slot with a read-only mirror xterm showing the captured stream.
   //
   // Skipped when (a) the preview wasn't truncated (short prompts use
   // the channel data verbatim), (b) the secret has no live terminal
@@ -344,7 +353,9 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // is always `default` per docs/22 + docs/12), (c) the WebSocket
   // isn't open. The snapshot path returns null in those cases and
   // the popup stays on the truncated preview.
-  if (perm.input_preview !== undefined && hasStringPreview && previewText.endsWith('…')) {
+  const flatTruncated = hasStringPreview && previewText.endsWith('…');
+  const diffTruncated = editDiff !== null && editDiff.truncated;
+  if (perm.input_preview !== undefined && (flatTruncated || diffTruncated)) {
     void runSnapshotIntoBody(secret, handle.overlay, () => respondedRequestIds.has(perm.request_id) || dismissedRequestIds.has(perm.request_id));
   }
 

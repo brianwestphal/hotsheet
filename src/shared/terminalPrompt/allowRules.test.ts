@@ -232,6 +232,143 @@ describe('findMatchingAllowRule (HS-7987)', () => {
       expect(findMatchingAllowRule(numberedMatch, [tier1, tier2])).toBe(tier1);
     });
   });
+
+  // HS-8071 (post-feedback) — Tier 3 back-compat: legacy rules without
+  // `choice_shape` (created before the choice_shape work) STILL need to
+  // auto-allow when their `question_preview` substring appears anywhere
+  // in the live capture's `questionLines`. Without this, every existing
+  // rule in the user's settings.json silently stopped matching whenever
+  // Claude TUI status-bar lines pushed `pickTitleLine` to a different
+  // headline — the user reported the popup was still leaking through on
+  // ~50% of app launches even after the choice_shape fix shipped.
+  describe('Tier 3 — back-compat preview-substring fallback', () => {
+    function legacyRule(parserId: string, preview: string, choiceIndex = 0): TerminalPromptAllowRule {
+      return {
+        id: 'legacy',
+        parser_id: parserId,
+        question_hash: 'legacy-hash-that-wont-match',
+        question_preview: preview,
+        choice_index: choiceIndex,
+        created_at: '2026-04-01T00:00:00Z',
+        // intentionally NO choice_shape — pre-fix rule
+      };
+    }
+
+    function numberedMatchWithBleed(): NumberedMatch {
+      // Simulates the dev-channels prompt with Claude TUI status-bar lines
+      // bleeding into the captured question region — the exact scenario
+      // the user reported.
+      return {
+        parserId: 'claude-numbered',
+        shape: 'numbered',
+        question: '▶▶ accept edits on (shift+tab to cycle)', // pickTitleLine drift
+        questionLines: [
+          'WARNING: Loading development channels',
+          'Experimental — inbound messages will be pushed into this session.',
+          '',
+          '▶▶ accept edits on (shift+tab to cycle)',
+          '• high · /effort',
+        ],
+        choices: [
+          { index: 0, label: 'I am using this for local development', highlighted: true },
+          { index: 1, label: 'Exit', highlighted: false },
+        ],
+        signature: 'claude-numbered:LIVE-DRIFTED-HASH:0',
+      };
+    }
+
+    it('matches a legacy rule whose question_preview appears as a substring in the live capture', () => {
+      const rule = legacyRule('claude-numbered', 'WARNING: Loading development channels');
+      const m = numberedMatchWithBleed();
+      expect(findMatchingAllowRule(m, [rule])).toBe(rule);
+    });
+
+    it('normalises whitespace so multi-line previews still match', () => {
+      // Preview was recorded across multiple lines (it shouldn't be — but
+      // some captures collapse newlines differently across renders).
+      const rule = legacyRule('claude-numbered', 'WARNING: Loading\ndevelopment   channels');
+      const m = numberedMatchWithBleed();
+      expect(findMatchingAllowRule(m, [rule])).toBe(rule);
+    });
+
+    it('does NOT match when the parser_id differs', () => {
+      const rule = legacyRule('yesno', 'WARNING: Loading development channels');
+      expect(findMatchingAllowRule(numberedMatchWithBleed(), [rule])).toBeNull();
+    });
+
+    it('does NOT match when the preview is too short to be unique', () => {
+      // 14 chars (< MIN_PREVIEW_MATCH_CHARS = 15) → skipped.
+      const rule = legacyRule('claude-numbered', 'Loading dev ch');
+      expect(findMatchingAllowRule(numberedMatchWithBleed(), [rule])).toBeNull();
+    });
+
+    it('does NOT match when the preview is missing entirely (rule predates HS-7988)', () => {
+      const rule: TerminalPromptAllowRule = {
+        id: 'older',
+        parser_id: 'claude-numbered',
+        question_hash: 'no-match-hash',
+        choice_index: 0,
+        created_at: '',
+        // no question_preview AND no choice_shape — earliest rule shape
+      };
+      expect(findMatchingAllowRule(numberedMatchWithBleed(), [rule])).toBeNull();
+    });
+
+    it('does NOT match when the rule has a choice_shape (Tier 3 only fires for legacy rules)', () => {
+      // A modern rule with choice_shape that DOESN'T match the live shape
+      // shouldn't fall through to Tier 3 — it's expected to either match
+      // via Tier 2 or not at all.
+      const rule: TerminalPromptAllowRule = {
+        id: 'modern',
+        parser_id: 'claude-numbered',
+        question_hash: 'wont-match',
+        question_preview: 'WARNING: Loading development channels',
+        choice_index: 0,
+        choice_shape: 'something-else|other-thing',
+        created_at: '2026-05-01T00:00:00Z',
+      };
+      expect(findMatchingAllowRule(numberedMatchWithBleed(), [rule])).toBeNull();
+    });
+
+    it('rejects an out-of-range choice_index for the current numbered shape', () => {
+      // Rule was recorded against a 3-option prompt (choice_index = 2);
+      // current prompt has only 2 options → reject so the auto-response
+      // doesn't pick a non-existent choice.
+      const rule = legacyRule('claude-numbered', 'WARNING: Loading development channels', 2);
+      expect(findMatchingAllowRule(numberedMatchWithBleed(), [rule])).toBeNull();
+    });
+
+    it('Tier 3 is preferred over no match — Tier 1+2 still take precedence when applicable', () => {
+      const rule3 = legacyRule('claude-numbered', 'WARNING: Loading development channels');
+      const rule1: TerminalPromptAllowRule = {
+        id: 'tier1',
+        parser_id: 'claude-numbered',
+        question_hash: 'LIVE-DRIFTED-HASH', // primary hash match
+        question_preview: 'something else',
+        choice_index: 1,
+        created_at: '2026-05-03T00:00:00Z',
+      };
+      // Tier 1 wins even when Tier 3 would also match.
+      expect(findMatchingAllowRule(numberedMatchWithBleed(), [rule3, rule1])).toBe(rule1);
+    });
+
+    it('matches yesno legacy rules via preview substring too', () => {
+      const yesNoBleed: YesNoMatch = {
+        parserId: 'yesno',
+        shape: 'yesno',
+        question: 'Confirm',
+        questionLines: [
+          'About to delete 42 files in /important/data',
+          'Confirm? [y/n]',
+        ],
+        yesIsCapital: false,
+        noIsCapital: false,
+        signature: 'yesno:DRIFTED:0',
+      };
+      const rule = legacyRule('yesno', 'About to delete 42 files in /important/data');
+      expect(findMatchingAllowRule(yesNoBleed, [rule])).toBe(rule);
+    });
+  });
 });
 
 describe('buildChoiceShape (HS-8071)', () => {

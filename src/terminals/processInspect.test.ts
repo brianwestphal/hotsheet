@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  collectDescendantPids,
   DEFAULT_EXEMPT_PROCESSES,
   descendantChain,
+  killProcessTreeBestEffort,
   normalizeComm,
   parsePsOutput,
   pickForegroundProcess,
@@ -251,3 +253,137 @@ describe('pickForegroundProcess', () => {
     expect(info.isExempt).toBe(true);
   });
 });
+
+describe('collectDescendantPids (HS-8140)', () => {
+  it('returns every transitive descendant excluding the root itself', () => {
+    // Tree:
+    //   100 (root)
+    //   ├─ 200
+    //   │  ├─ 300
+    //   │  └─ 301
+    //   └─ 201
+    //      └─ 302
+    const rows = parsePsOutput([
+      'PID PPID COMM',
+      '100 1 zsh',
+      '200 100 npm',
+      '201 100 node',
+      '300 200 sh',
+      '301 200 esbuild',
+      '302 201 claude',
+    ].join('\n'));
+    const pids = collectDescendantPids(rows, 100).sort((a, b) => a - b);
+    expect(pids).toEqual([200, 201, 300, 301, 302]);
+  });
+
+  it('returns empty array when root has no children', () => {
+    const rows = parsePsOutput('PID PPID COMM\n100 1 zsh\n');
+    expect(collectDescendantPids(rows, 100)).toEqual([]);
+  });
+
+  it('returns empty array when root pid is not in the table', () => {
+    const rows = parsePsOutput('PID PPID COMM\n100 1 zsh\n200 100 npm\n');
+    expect(collectDescendantPids(rows, 999)).toEqual([]);
+  });
+
+  it('does not include the root pid itself in the output', () => {
+    const rows = parsePsOutput('PID PPID COMM\n100 1 zsh\n200 100 npm\n');
+    const pids = collectDescendantPids(rows, 100);
+    expect(pids).not.toContain(100);
+    expect(pids).toContain(200);
+  });
+
+  it('handles cycles in malformed ps output without infinite-looping', () => {
+    // 100's ppid points back to 200, which is 100's child — would loop a
+    // naive walker.
+    const rows = parsePsOutput([
+      'PID PPID COMM',
+      '100 200 zsh',
+      '200 100 child',
+    ].join('\n'));
+    const pids = collectDescendantPids(rows, 100);
+    expect(pids).toEqual([200]);
+  });
+});
+
+describe('killProcessTreeBestEffort (HS-8140)', () => {
+  it('returns bailed:true with invalid-pid error for a non-positive root pid', () => {
+    const result = killProcessTreeBestEffort(0);
+    expect(result.bailed).toBe(true);
+    expect(result.error).toBe('invalid pid');
+    expect(result.attempted).toBe(0);
+  });
+
+  it('returns bailed:true with invalid-pid error for a non-finite root pid', () => {
+    const result = killProcessTreeBestEffort(Number.NaN);
+    expect(result.bailed).toBe(true);
+    expect(result.error).toBe('invalid pid');
+  });
+
+  it('returns bailed:false on Unix even when the root has no descendants in ps', () => {
+    // Pick a pid that almost certainly has no live descendants — the test
+    // process's pid+99999 (way above the typical Linux/macOS pid space).
+    // Worst case there IS a descendant and process.kill throws — caught and
+    // recorded as either alreadyDead or first-error, never crashes.
+    if (process.platform === 'win32') return;
+    const result = killProcessTreeBestEffort(99_999_999, 'SIGTERM');
+    expect(result.bailed).toBe(false);
+    expect(result.attempted).toBe(0);
+  });
+});
+
+describe('killProcessTreeBestEffort + spawned subprocess (HS-8140 integration)', () => {
+  // Integration test: spawn a wrapper shell that spawns a long-lived sleep
+  // grandchild. Kill the WRAPPER's tree (not the test process's tree, which
+  // would risk killing the vitest worker). Verify the grandchild dies.
+  // Skipped on Windows (the helper bails by design + `sleep` isn't reliably
+  // present anyway).
+  it.skipIf(process.platform === 'win32')(
+    'a SIGTERM-the-tree call against a wrapper shell actually kills its sleep grandchild',
+    async () => {
+      const { spawn, execFileSync } = await import('child_process');
+      // Wrapper shell that backgrounds a sleep + waits — guarantees the
+      // grandchild exists during the kill, separate from the wrapper shell
+      // itself.
+      const wrapper = spawn('sh', ['-c', 'sleep 30 & wait'], { stdio: 'ignore' });
+      const wrapperPid = wrapper.pid;
+      expect(wrapperPid).toBeGreaterThan(0);
+
+      // Wait briefly for the wrapper to actually fork the sleep grandchild
+      // before snapshotting the process tree.
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      try {
+        // Confirm a sleep grandchild was actually spawned under the wrapper
+        // (otherwise this test isn't exercising the bug).
+        const psOut = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { encoding: 'utf8' });
+        const rows = parsePsOutput(psOut);
+        const descendants = collectDescendantPids(rows, wrapperPid!);
+        expect(descendants.length).toBeGreaterThan(0);
+
+        const result = killProcessTreeBestEffort(wrapperPid!, 'SIGTERM');
+        expect(result.bailed).toBe(false);
+        expect(result.attempted).toBeGreaterThan(0);
+
+        // Wait for the wrapper to exit (its waited-on sleep was just SIGTERM'd
+        // so the wrapper's `wait` returns). 3 s tops so the test never hangs.
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('wrapper did not exit within 3s')), 3000);
+          wrapper.on('exit', () => { clearTimeout(timer); resolve(); });
+        });
+
+        // Verify NO descendant of the wrapper still exists in the process
+        // table — the bug being tested is "grandchildren survive shutdown".
+        const psAfter = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { encoding: 'utf8' });
+        const rowsAfter = parsePsOutput(psAfter);
+        const survivors = collectDescendantPids(rowsAfter, wrapperPid!);
+        expect(survivors).toEqual([]);
+      } finally {
+        // Belt + braces — make sure the wrapper is dead even if assertions
+        // above failed.
+        try { wrapper.kill('SIGKILL'); } catch { /* already dead */ }
+      }
+    },
+  );
+});
+

@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 
 /**
@@ -245,4 +245,100 @@ export async function inspectForegroundProcess(
   const rows = parsePsOutput(stdout);
   const chain = descendantChain(rows, rootPid);
   return pickForegroundProcess(chain, exemptProcesses);
+}
+
+/**
+ * HS-8140 — collect every descendant pid of `rootPid` (BFS). Used by the
+ * shutdown path to signal sub-processes that wouldn't otherwise receive the
+ * shell's SIGHUP — `node-pty` only delivers the signal to the shell itself,
+ * and shells don't reliably propagate SIGHUP to grandchildren (background
+ * jobs disowned with `&`, processes that detached via `setsid`, programs
+ * that trap SIGHUP). The root pid itself is NOT included; the caller
+ * separately kills the PTY's shell via `pty.kill('SIGHUP')`.
+ */
+export function collectDescendantPids(rows: readonly PsRow[], rootPid: number): number[] {
+  const childrenByPpid = new Map<number, PsRow[]>();
+  for (const row of rows) {
+    const list = childrenByPpid.get(row.ppid);
+    if (list === undefined) childrenByPpid.set(row.ppid, [row]);
+    else list.push(row);
+  }
+  const out: number[] = [];
+  const queue: number[] = [rootPid];
+  const seen = new Set<number>([rootPid]);
+  while (queue.length > 0) {
+    const cursor = queue.shift()!;
+    const kids = childrenByPpid.get(cursor) ?? [];
+    for (const kid of kids) {
+      if (seen.has(kid.pid)) continue;
+      seen.add(kid.pid);
+      out.push(kid.pid);
+      queue.push(kid.pid);
+    }
+  }
+  return out;
+}
+
+export interface KillTreeResult {
+  /** Number of descendant pids the helper attempted to signal. */
+  attempted: number;
+  /** Pids that responded with ESRCH (already-dead — not an error). */
+  alreadyDead: number;
+  /** True when the helper bailed out (Windows, ps unavailable, invalid pid). */
+  bailed: boolean;
+  /** First error encountered while walking the tree, for logging. */
+  error: string | null;
+}
+
+/**
+ * HS-8140 — synchronous best-effort SIGTERM-the-tree before the shell's
+ * SIGHUP. Runs in the shutdown hot path (called from `teardownPty`), so
+ * uses `execFileSync` to enumerate the process table once + then iterates
+ * `process.kill(pid, signal)` over the descendants. Errors are swallowed
+ * per-pid (race window between `ps` and `kill` — descendant may have
+ * already exited). The root pid itself is left for the caller's
+ * `pty.kill()` so the shell still gets the SIGHUP it expects.
+ *
+ * Returns a result object purely for logging / test assertions. Never
+ * throws — the worst case is `bailed: true` and the original SIGHUP-only
+ * behaviour stands. Cross-platform note: Windows currently bails (no
+ * `ps`); v1 covers macOS / Linux which is where node-pty's grandchild-
+ * survival problem is observed.
+ */
+export function killProcessTreeBestEffort(
+  rootPid: number,
+  signal: NodeJS.Signals = 'SIGTERM',
+): KillTreeResult {
+  const empty: KillTreeResult = { attempted: 0, alreadyDead: 0, bailed: true, error: null };
+  if (!Number.isFinite(rootPid) || rootPid <= 0) {
+    return { ...empty, error: 'invalid pid' };
+  }
+  if (process.platform === 'win32') {
+    return { ...empty, error: 'windows unsupported in v1' };
+  }
+  let stdout = '';
+  try {
+    stdout = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { encoding: 'utf8', timeout: 2000 });
+  } catch (err) {
+    return { ...empty, error: `ps execution failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const rows = parsePsOutput(stdout);
+  const descendants = collectDescendantPids(rows, rootPid);
+  let alreadyDead = 0;
+  let firstError: string | null = null;
+  for (const pid of descendants) {
+    try {
+      process.kill(pid, signal);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ESRCH') alreadyDead++;
+      else if (firstError === null) firstError = `kill ${pid}: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  return {
+    attempted: descendants.length,
+    alreadyDead,
+    bailed: false,
+    error: firstError,
+  };
 }

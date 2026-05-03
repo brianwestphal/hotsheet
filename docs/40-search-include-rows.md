@@ -95,4 +95,19 @@ See [docs/manual-test-plan.md] (no §40 entry yet — append):
 - §4.3 (List view) + §4.4 (Column view). The auto-switch logic flips between these two.
 - §9 (API). `GET /tickets` flags + new `GET /tickets/search-counts`.
 
-**Status:** Shipped (HS-7756).
+## 40.8 Exact ticket-id search bypasses the status gate (HS-8100)
+
+When the user types an exact ticket-number reference in the search box (e.g. `HS-100`, `BUG-42`, `MIGRATION_V2-7`), the result must show that ticket regardless of which bucket it lives in — including **trash** (`status = 'deleted'`), which the §40.2 include flags don't cover.
+
+**Detection** — pure helper `isExactTicketIdSearch(s)` in `src/db/tickets.ts`. Matches `^\s*[A-Za-z][A-Za-z0-9_]*-\d+\s*$` (case-insensitive, trims whitespace). Same shape as `ticketRefs.ts::buildTicketRefRegex`'s inline-link pattern, anchored to the full string so a query like `HS-100 fix me` (free text containing a ticket id) is NOT treated as exact.
+
+**Server behaviour** in `buildTicketWhereClause`:
+- The default `status NOT IN ('deleted', 'backlog', 'archive')` guard is dropped — every bucket is visible.
+- The search predicate switches from substring `ILIKE %q%` (which would have pulled `HS-1000` for an `HS-1` query) to strict `LOWER(ticket_number) = LOWER($q)` so `HS-1` resolves to exactly that one ticket.
+- Other filters (category / priority / up_next) still apply.
+
+**search-counts** (`countSearchMatchesInExcludedStatuses`) returns `{ backlog: 0, archive: 0 }` for exact-id searches — the main query already returned the matched ticket from any bucket, so the §40.2 "Include {N} ..." rows would be redundant.
+
+**Tests:** 8 new in `src/db/queries.test.ts`'s `exact ticket-id search bypasses status filter (HS-8100)` describe block — covers backlog / archive / trash hits, case insensitivity, no-substring-drift, suppressed include counts, and the regex shape (positive + negative cases).
+
+**Status:** Shipped (HS-7756) + extended (HS-8100).

@@ -182,10 +182,38 @@ export async function hardDeleteTicket(id: number): Promise<void> {
 
 // --- Ticket queries ---
 
+/**
+ * HS-8100 — pure: true when `search` is an exact ticket-number reference
+ * (e.g. `HS-100`, `BUG-42`, `MIGRATION_V2-7`). When the user types a
+ * complete ticket id, they want THAT ticket regardless of which bucket
+ * it lives in — backlog, archive, or even trash. Matches the same shape
+ * `ticketRefs.ts::buildTicketRefRegex` recognises for inline links, but
+ * anchored to the full string (case-insensitive whitespace tolerated).
+ *
+ * Exported for tests + the search-counts route which suppresses the
+ * "Include N ..." rows when the query is an exact-id (the row would
+ * be redundant — the main query already returned it).
+ */
+export function isExactTicketIdSearch(search: string): boolean {
+  return /^\s*[A-Za-z][A-Za-z0-9_]*-\d+\s*$/.test(search);
+}
+
 function buildTicketWhereClause(filters: TicketFilters): { where: string; values: unknown[] } {
   const conditions: string[] = [];
   const values: unknown[] = [];
   let paramIdx = 1;
+
+  // HS-8100 — when the search is an exact ticket-id reference (e.g.
+  // `HS-100`), short-circuit the status gate. Pre-fix typing a ticket
+  // number in trash / archive / backlog returned zero results because the
+  // default `status NOT IN ('deleted', 'backlog', 'archive')` filter
+  // hid them. We still apply category / priority / up_next /
+  // search-text filters; only the status filter (and the include_*
+  // OR-ins) are bypassed since the user has unambiguously asked for one
+  // specific ticket.
+  const exactIdSearch = filters.search !== undefined
+    && filters.search !== ''
+    && isExactTicketIdSearch(filters.search);
 
   // By default, exclude deleted/backlog/archive tickets from main views.
   // HS-7756 — when `include_backlog` / `include_archive` are set on top of
@@ -201,7 +229,10 @@ function buildTicketWhereClause(filters: TicketFilters): { where: string; values
     return `(${statusCondition} OR status IN (${extras}))`;
   };
 
-  if (filters.status === 'open') {
+  if (exactIdSearch) {
+    // No status condition — the search-text filter below will scope by
+    // ticket_number so the result is unambiguous.
+  } else if (filters.status === 'open') {
     conditions.push(wrapWithExtras(`status IN ('not_started', 'started')`));
   } else if (filters.status === 'non_verified') {
     conditions.push(wrapWithExtras(`status IN ('not_started', 'started', 'completed')`));
@@ -239,14 +270,24 @@ function buildTicketWhereClause(filters: TicketFilters): { where: string; values
   }
 
   if (filters.search !== undefined && filters.search !== '') {
-    // HS-7364 — also search the notes (comments) column. Notes are stored as
-    // a JSON-serialized array of `{id, text, created_at}`, so ILIKE on the
-    // column matches text content inline. Substrings that collide with JSON
-    // structural keys (`text`, `id`, `created_at`) or ISO timestamps will
-    // over-match, but typical searches are content words that map cleanly.
-    conditions.push(`(title ILIKE $${paramIdx} OR details ILIKE $${paramIdx} OR ticket_number ILIKE $${paramIdx} OR tags ILIKE $${paramIdx} OR notes ILIKE $${paramIdx})`);
-    values.push(`%${escapeIlike(filters.search)}%`);
-    paramIdx++;
+    if (exactIdSearch) {
+      // HS-8100 — exact ticket-number reference (e.g. `HS-100`). Use
+      // strict equality on ticket_number so `HS-100` matches THE ticket
+      // HS-100, not also `HS-1000` / `HS-1001` (which a substring ILIKE
+      // would have pulled in). Case-insensitive so `hs-100` works too.
+      conditions.push(`LOWER(ticket_number) = LOWER($${paramIdx})`);
+      values.push(filters.search.trim());
+      paramIdx++;
+    } else {
+      // HS-7364 — also search the notes (comments) column. Notes are stored as
+      // a JSON-serialized array of `{id, text, created_at}`, so ILIKE on the
+      // column matches text content inline. Substrings that collide with JSON
+      // structural keys (`text`, `id`, `created_at`) or ISO timestamps will
+      // over-match, but typical searches are content words that map cleanly.
+      conditions.push(`(title ILIKE $${paramIdx} OR details ILIKE $${paramIdx} OR ticket_number ILIKE $${paramIdx} OR tags ILIKE $${paramIdx} OR notes ILIKE $${paramIdx})`);
+      values.push(`%${escapeIlike(filters.search)}%`);
+      paramIdx++;
+    }
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -299,6 +340,11 @@ export async function countSearchMatchesInExcludedStatuses(
   search: string,
 ): Promise<{ backlog: number; archive: number }> {
   if (search === '') return { backlog: 0, archive: 0 };
+  // HS-8100 — exact-id searches already pull from every bucket (incl.
+  // trash) in the main query via the status-gate bypass, so the
+  // "Include {N} backlog/archive" rows are redundant. Return zeroes so
+  // they don't render alongside the matched ticket.
+  if (isExactTicketIdSearch(search)) return { backlog: 0, archive: 0 };
   const db = await getDb();
   const like = `%${escapeIlike(search)}%`;
   // Run both counts in parallel — independent queries, server doesn't care.

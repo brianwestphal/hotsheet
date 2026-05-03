@@ -18,6 +18,7 @@ export function showErrorPopup(message: string) {
 
 /** Build the full URL for an API call, adding project query param for GET requests. */
 function buildUrl(path: string, method?: string): string {
+  assertApiPathShape(path);
   let url = '/api' + path;
   const ap = getActiveProject();
   if (ap !== null && (method === undefined || method === 'GET')) {
@@ -25,6 +26,26 @@ function buildUrl(path: string, method?: string): string {
     url += sep + 'project=' + encodeURIComponent(ap.secret);
   }
   return url;
+}
+
+/**
+ * HS-8141 — defensive guard. Every `api(...)` / `apiWithSecret(...)` /
+ * `apiUpload(...)` call is expected to pass a path that starts with `/`.
+ * Without this, a swapped-args bug like the channel-UI one (path arg got
+ * `project.secret`, no leading slash) silently produced a URL of
+ * `/api<hex-secret>` and 404'd on every poll tick — visible only as
+ * console noise the user spotted manually. Throwing here surfaces the
+ * bug at the point of call instead of letting it ship.
+ *
+ * The check is intentionally loose: any non-empty path that starts with
+ * `/` (or `?`, for query-string-only paths used by no current caller
+ * but worth allowing defensively) passes. Empty paths are also rejected
+ * — `/api` with no further path is never a meaningful request.
+ */
+function assertApiPathShape(path: string): void {
+  if (typeof path !== 'string' || path === '' || !(path.startsWith('/') || path.startsWith('?'))) {
+    throw new Error(`api(): expected path starting with "/", got ${JSON.stringify(path)} — likely a swapped-args bug (HS-8141).`);
+  }
 }
 
 /** Build headers, adding X-Hotsheet-Secret for mutation requests. */
@@ -71,6 +92,7 @@ export async function apiWithSecret<T = any>(path: string, secret: string, opts:
     const headers: Record<string, string> = {};
     if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
     headers['X-Hotsheet-Secret'] = secret;
+    assertApiPathShape(path);
     const res = await fetch('/api' + path, {
       headers,
       method: opts.method,

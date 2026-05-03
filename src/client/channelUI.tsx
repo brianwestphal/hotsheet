@@ -31,10 +31,15 @@ async function refreshSpinnerActivity(): Promise<void> {
   const project = getActiveProject();
   if (project === null) return;
   try {
+    // HS-8141 — args are `(path, secret, opts?)`, NOT `(secret, path)`.
+    // Pre-fix the swap produced a URL of `/api${secret}` (no slash, no
+    // path) which 404'd on every spinner-poll tick — visible in the
+    // browser console as repeated `Failed to load resource: …
+    // /api<hex-secret>` errors.
     const data = await apiWithSecret<{
       configured: { lastSpinnerAtMs?: number | null }[];
       dynamic: { lastSpinnerAtMs?: number | null }[];
-    }>(project.secret, '/terminal/list');
+    }>('/terminal/list', project.secret);
     let newest: number | null = null;
     for (const e of [...data.configured, ...data.dynamic]) {
       const t = e.lastSpinnerAtMs ?? null;

@@ -74,23 +74,23 @@ describe('terminalPromptAllowListUI row layout (HS-8072)', () => {
     expect(q.getAttribute('title')).toBe(FIXTURE_RULE.question_preview);
   });
 
-  // HS-8106 — choice + created sit inside `.tpal-rule-meta` on the
-  // second visual row, with the trash button spanning both rows and
-  // visually centered. The CSS does the centering, but the DOM must
-  // expose the right structure for the layout to take effect.
-  it('renders choice + created inside `.tpal-rule-meta` so they share row 2 (HS-8106)', async () => {
+  // HS-8106 (post-feedback refinement) — auto-response sits as a direct
+  // child of the row on row 2 col 2, left-aligned. The date column was
+  // removed entirely per user feedback so the choice gets the full row
+  // width to itself. The wrapper `.tpal-rule-meta` div was dropped along
+  // with the date.
+  it('renders the auto-response as a direct row child with no date or meta wrapper (HS-8106)', async () => {
     loadAllowRulesMock.mockResolvedValueOnce([FIXTURE_RULE]);
     await loadAndRenderTerminalPromptAllowList();
     const row = document.querySelector<HTMLElement>('.tpal-rule-row')!;
-    const meta = row.querySelector<HTMLElement>('.tpal-rule-meta');
-    expect(meta).not.toBeNull();
-    expect(meta!.querySelector('.tpal-rule-choice')!.textContent).toBe('→ I am using this for local development');
-    // `created` lives inside the same meta strip — not a sibling of
-    // `.tpal-rule-question` like the pre-fix layout.
-    const createdInMeta = meta!.querySelector('.tpal-rule-created');
-    expect(createdInMeta).not.toBeNull();
-    const createdAsRowChild = Array.from(row.children).some(c => c.classList.contains('tpal-rule-created'));
-    expect(createdAsRowChild).toBe(false);
+    // The choice is a direct child of the row, not wrapped in a meta div.
+    const choiceAsDirectChild = Array.from(row.children).find(c => c.classList.contains('tpal-rule-choice'));
+    expect(choiceAsDirectChild).toBeDefined();
+    expect(choiceAsDirectChild!.textContent).toBe('→ I am using this for local development');
+    // The pre-feedback `.tpal-rule-meta` wrapper + `.tpal-rule-created`
+    // date span are both gone.
+    expect(row.querySelector('.tpal-rule-meta')).toBeNull();
+    expect(row.querySelector('.tpal-rule-created')).toBeNull();
   });
 
   it('is keyboard-activatable with role=button + tabIndex=0', async () => {

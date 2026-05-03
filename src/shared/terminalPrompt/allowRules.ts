@@ -97,7 +97,7 @@ export function parseAllowRules(raw: unknown): TerminalPromptAllowRule[] {
 }
 
 /**
- * Pure: find the rule that matches the given `MatchResult`. Two-tier lookup
+ * Pure: find the rule that matches the given `MatchResult`. Three-tier lookup
  * (HS-8071):
  *
  * 1. **Primary** — `(parser_id, question_hash)` exact match. Same as the
@@ -109,11 +109,24 @@ export function parseAllowRules(raw: unknown): TerminalPromptAllowRule[] {
  *    yesno: the literal `yes|no`), so it stays stable even when Claude
  *    TUI status-bar lines bleed into the question region and the
  *    `question_hash` shifts. Only kicks in for rules created after the
- *    HS-8071 fix (older rules don't carry `choice_shape` and skip this
- *    branch).
+ *    first HS-8071 fix (older rules don't carry `choice_shape` and skip
+ *    this branch).
+ * 3. **Back-compat preview-substring fallback** — for rules created BEFORE
+ *    the choice_shape work (no `choice_shape` field, but a non-empty
+ *    `question_preview` from HS-7988+). Matches when the rule's preview
+ *    appears as a normalised substring of the live capture's full
+ *    `questionLines` blob — i.e. the same prompt text is in there
+ *    somewhere, even if `pickTitleLine` chose a different headline this
+ *    time. Lets a stale dev-channels rule whose preview reads "WARNING:
+ *    Loading development channels" still auto-allow when Claude TUI
+ *    status-bar lines push the title-pick to a different row. Min
+ *    preview length is 15 chars to avoid trivial false positives on
+ *    common short strings ("Continue?", "Are you sure", etc.). Choice
+ *    index is bounds-checked so a rule recorded against a 3-option
+ *    prompt can't accidentally fire on a current 2-option prompt.
  *
  * Returns null when the match's shape is `generic` (never allow-listable
- * — see docs/52 §52.1) or when no rule matches under either tier.
+ * — see docs/52 §52.1) or when no rule matches under any tier.
  */
 export function findMatchingAllowRule(
   match: MatchResult,
@@ -142,7 +155,41 @@ export function findMatchingAllowRule(
       return rule;
     }
   }
+  // Tier 3 — back-compat preview-substring fallback for legacy rules that
+  // predate the choice_shape work. Avoids forcing the user to manually
+  // re-tick "Always allow this answer" on every existing rule.
+  const liveCapture = normaliseForSubstring(match.questionLines.join('\n'));
+  if (liveCapture !== '') {
+    for (const rule of rules) {
+      if (rule.parser_id !== parserId) continue;
+      if (rule.choice_shape !== undefined && rule.choice_shape !== '') continue;
+      const previewRaw = rule.question_preview;
+      if (previewRaw === undefined) continue;
+      const preview = normaliseForSubstring(previewRaw);
+      if (preview.length < MIN_PREVIEW_MATCH_CHARS) continue;
+      if (!liveCapture.includes(preview)) continue;
+      // Bounds-check choice_index against the current shape. A rule
+      // recorded against a 3-option prompt would otherwise auto-respond
+      // with an out-of-range index on a 2-option re-render.
+      if (match.shape === 'numbered' && rule.choice_index >= match.choices.length) continue;
+      if (match.shape === 'yesno' && (rule.choice_index < 0 || rule.choice_index > 1)) continue;
+      return rule;
+    }
+  }
   return null;
+}
+
+/** Min preview length for the Tier 3 substring fallback — short strings
+ *  like "Continue?" risk matching unrelated prompts; 15 chars is the
+ *  shortest unique-feeling phrase the user-visible prompts in the wild
+ *  produce (e.g. "Bash Tool: ls" is 13 chars). */
+const MIN_PREVIEW_MATCH_CHARS = 15;
+
+/** Normalise a string for substring comparison: trim, lowercase, collapse
+ *  every run of whitespace (including newlines + box-drawing decorations
+ *  the parser leaves intact) to a single space. Pure. */
+function normaliseForSubstring(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 /**
