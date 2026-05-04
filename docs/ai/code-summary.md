@@ -313,9 +313,9 @@ When `IntersectionObserver` is undefined (some test envs without a polyfill), th
 
 **Other client modules not separately narrated above** (one-liner each — see file headers / git blame for full context):
 - `editDiffPreview.tsx` — HS-7951 inline unified-diff preview for the Edit-tool permission overlay (replaces the flat-JSON dump for `old_string` / `new_string`).
-- `permissionDialogShell.tsx` — HS-8066 shared chrome (chip / title / body / actions / always-affordance / lifecycle callbacks) consumed by `permissionOverlay.tsx` (§47) and `terminalPromptOverlay.tsx` (§52).
+- `permissionDialogShell.tsx` — HS-8066 shared chrome (chip / title / body / actions / always-affordance / lifecycle callbacks) consumed by `permissionOverlay.tsx` (§47) and `terminalPromptOverlay.tsx` (§52). HS-8156 caps long titles (`>200` chars or any newline) to a single-line summary in the header (full text exposed via `title` attribute) and prepends a scroll-bounded `.dialog-shell-title-overflow` block at the top of the body slot so the user can read the whole thing in the scrollable details area.
 - `projectTabsFingerprint.ts` — pure-helper fingerprint of the project-tab list shape used by `projectTabs.tsx` to skip rebuilds when the visible tab set is unchanged.
-- `terminalSnapshot.ts` — client-side scrollback snapshot helper; pairs with `terminalReplay.ts` for HS-8042 history-replay-resize handling.
+- `terminalSnapshot.ts` — client-side scrollback snapshot helper; pairs with `terminalReplay.ts` for HS-8042 history-replay-resize handling. HS-8158 added a `streamHasVisibleContent(stream)` pure helper (strips ANSI CSI / OSC / DCS / 2-char ESC / C0 / whitespace and asserts something printable remains) — `captureTerminalSnapshot` now bails BOTH when the wide-redraw byteLength is 0 (HS-8107) AND when the serialized stream has no visible content, so the §47 permission popup keeps its truncated edit-diff body instead of mounting an empty-black mirror xterm.
 
 ### `src/plugins/`, `src/sync/`, `src/terminals/`, `src/git/`, `src/shared/`, `src/components/`, `src/utils/`
 

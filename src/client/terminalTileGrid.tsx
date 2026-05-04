@@ -897,10 +897,12 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
         void spawnAndEnlarge(tile, 'center');
         return;
       }
-      if (centered === tile) {
-        uncenterTile();
-        return;
-      }
+      // HS-8157 — clicking the already-centered tile is a no-op; the
+      // user dismisses the magnified view by clicking outside (the
+      // backdrop click handler in `centerTile`). Pre-fix the inside
+      // click also uncentered, which made any click inside the
+      // magnified terminal (text selection, focus, etc.) collapse it.
+      if (centered === tile) return;
       if (centered !== null) uncenterTile();
       centerTile(tile);
     }, SINGLE_CLICK_DELAY_MS);

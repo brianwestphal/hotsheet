@@ -296,3 +296,63 @@ describe('terminalTileGrid — preview bg cascade (HS-8059)', () => {
     handle.dispose();
   });
 });
+
+// HS-8157 — clicking a magnified (centered) tile should NOT uncenter it.
+// The user dismisses the magnified view by clicking the surrounding
+// backdrop. Pre-fix any click landing on the centered tile (text
+// selection, focus, idle click on the xterm body) collapsed the
+// magnified view back to the grid. Tests below drive `onTileClick`
+// indirectly by dispatching real `MouseEvent`s on the tile root since
+// the click handler is registered there in `mountTileXterm`.
+describe('terminalTileGrid — magnified-tile click is a no-op (HS-8157)', () => {
+  it('clicking the centered tile leaves it centered (the magnified view is NOT collapsed)', async () => {
+    const grid = mount([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+    const tileRoot = document.querySelector<HTMLElement>('.terminal-dashboard-tile');
+    expect(tileRoot).not.toBeNull();
+    // First click → centers. The single-click handler is debounced
+    // 220 ms (SINGLE_CLICK_DELAY_MS) so wait long enough.
+    tileRoot!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 260));
+    expect(grid.isCentered()).toBe(true);
+
+    // Second click on the same (now-centered) tile — pre-fix this
+    // uncentered. Post-fix: stays centered.
+    tileRoot!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 260));
+    expect(grid.isCentered()).toBe(true);
+
+    grid.dispose();
+  });
+
+  it('clicking the backdrop still uncenters (the only dismissal path)', async () => {
+    const grid = mount([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+    const tileRoot = document.querySelector<HTMLElement>('.terminal-dashboard-tile');
+    tileRoot!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 260));
+    expect(grid.isCentered()).toBe(true);
+
+    const backdrop = document.querySelector<HTMLElement>('.terminal-dashboard-center-backdrop');
+    expect(backdrop).not.toBeNull();
+    backdrop!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(grid.isCentered()).toBe(false);
+
+    grid.dispose();
+  });
+
+  it('clicking a DIFFERENT (uncentered) tile while one is centered swaps the centered tile', async () => {
+    const grid = mount([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+    const tiles = document.querySelectorAll<HTMLElement>('.terminal-dashboard-tile');
+    expect(tiles.length).toBe(2);
+
+    tiles[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 260));
+    expect(grid.isCentered()).toBe(true);
+
+    // Click the OTHER tile — should uncenter the first and center the second.
+    tiles[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 260));
+    expect(grid.isCentered()).toBe(true);
+
+    grid.dispose();
+  });
+});

@@ -45,6 +45,118 @@ describe('openPermissionDialogShell — header (HS-8066)', () => {
   });
 });
 
+describe('openPermissionDialogShell — long title handling (HS-8156)', () => {
+  function longTitle(chars: number): string {
+    const sentence = 'This permission request has an unusually long description. ';
+    let out = '';
+    while (out.length < chars) out += sentence;
+    return out.slice(0, chars);
+  }
+
+  it('renders short single-line titles verbatim with no overflow block + no tooltip', () => {
+    openPermissionDialogShell({
+      rootClassName: 'test-shell', ariaLabel: 'T',
+      title: 'Run `ls`',
+    });
+    const titleEl = document.querySelector('.dialog-shell-title');
+    expect(titleEl?.textContent).toBe('Run `ls`');
+    expect(titleEl?.getAttribute('title')).toBeNull();
+    expect(document.querySelector('.dialog-shell-title-overflow')).toBeNull();
+  });
+
+  it('truncates titles longer than the long-threshold to a single-line summary in the header', () => {
+    const big = longTitle(800);
+    openPermissionDialogShell({
+      rootClassName: 'test-shell', ariaLabel: 'T',
+      title: big,
+    });
+    const headerText = document.querySelector('.dialog-shell-title')?.textContent ?? '';
+    expect(headerText.endsWith('…')).toBe(true);
+    // Header should be substantially shorter than the full title.
+    expect(headerText.length).toBeLessThan(big.length);
+    expect(headerText.length).toBeLessThanOrEqual(122); // 120 + ellipsis + slack
+  });
+
+  it('exposes the full long title via the `title` attribute (browser tooltip)', () => {
+    const big = longTitle(800);
+    openPermissionDialogShell({
+      rootClassName: 'test-shell', ariaLabel: 'T',
+      title: big,
+    });
+    expect(document.querySelector('.dialog-shell-title')?.getAttribute('title')).toBe(big);
+  });
+
+  it('moves the full long title into a scroll-bounded overflow block at the top of the body', () => {
+    const big = longTitle(800);
+    openPermissionDialogShell({
+      rootClassName: 'test-shell', ariaLabel: 'T',
+      title: big,
+    });
+    const overflow = document.querySelector('.dialog-shell-title-overflow');
+    expect(overflow).not.toBeNull();
+    expect(overflow?.textContent).toBe(big);
+    // Lives inside the body slot so it scrolls / collapses with the body.
+    expect(overflow?.parentElement?.getAttribute('data-role')).toBe('body');
+  });
+
+  it('overflow block is the FIRST child of the body slot, ahead of consumer body content', () => {
+    const consumerBody = document.createElement('div');
+    consumerBody.id = 'consumer-body';
+    consumerBody.textContent = 'preview content';
+    openPermissionDialogShell({
+      rootClassName: 'test-shell', ariaLabel: 'T',
+      title: longTitle(500),
+      bodyElement: consumerBody,
+    });
+    const bodySlot = document.querySelector('[data-role="body"]');
+    expect(bodySlot?.children[0].className).toBe('dialog-shell-title-overflow');
+    expect(bodySlot?.children[1].id).toBe('consumer-body');
+  });
+
+  it('treats a multi-line title as long even when its character count is under the threshold', () => {
+    const multi = 'first line\nsecond line\nthird line';
+    openPermissionDialogShell({
+      rootClassName: 'test-shell', ariaLabel: 'T',
+      title: multi,
+    });
+    expect(document.querySelector('.dialog-shell-title-overflow')?.textContent).toBe(multi);
+    expect(document.querySelector('.dialog-shell-title')?.getAttribute('title')).toBe(multi);
+  });
+
+  it('header summary collapses internal whitespace runs to single spaces', () => {
+    const messy = 'word1' + '\n\n\n' + ' '.repeat(50) + 'word2 ' + 'x'.repeat(300);
+    openPermissionDialogShell({
+      rootClassName: 'test-shell', ariaLabel: 'T',
+      title: messy,
+    });
+    const header = document.querySelector('.dialog-shell-title')?.textContent ?? '';
+    expect(header).not.toContain('\n');
+    expect(header).not.toMatch(/ {2,}/);
+    expect(header.startsWith('word1 word2 ')).toBe(true);
+  });
+
+  it('still mounts the overflow block when no consumer body is provided', () => {
+    openPermissionDialogShell({
+      rootClassName: 'test-shell', ariaLabel: 'T',
+      title: longTitle(500),
+    });
+    const bodySlot = document.querySelector('[data-role="body"]');
+    expect(bodySlot?.children.length).toBe(1);
+    expect(bodySlot?.children[0].className).toBe('dialog-shell-title-overflow');
+  });
+
+  it('is title-attribute-only for short titles (no spurious tooltip)', () => {
+    // 199 chars on one line → just under the threshold, no overflow.
+    const justUnder = 'a'.repeat(199);
+    openPermissionDialogShell({
+      rootClassName: 'test-shell', ariaLabel: 'T',
+      title: justUnder,
+    });
+    expect(document.querySelector('.dialog-shell-title-overflow')).toBeNull();
+    expect(document.querySelector('.dialog-shell-title')?.getAttribute('title')).toBeNull();
+  });
+});
+
 describe('openPermissionDialogShell — body slot (HS-8066)', () => {
   it('mounts a pre-built bodyElement DOM tree', () => {
     const body = document.createElement('div');

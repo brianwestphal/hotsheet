@@ -118,6 +118,87 @@ export function isDecorativeLine(line: string): boolean {
 }
 
 /**
+ * HS-8071 — strip the Claude TUI input-box decoration from a row sequence.
+ *
+ * Claude Code renders its prompt input area as three consecutive rows:
+ *
+ * ```
+ * ───────────────────────────────────────────...
+ * ❯ Try "how does markdown.ts work?"
+ * ───────────────────────────────────────────...
+ * ```
+ *
+ * The middle line carries Claude's rotating *placeholder text* that varies
+ * per launch, per terminal width, and on Claude's own whims (the user has
+ * seen `Try "..."`, `> ...`, etc.). When this 3-line block ends up inside
+ * the captured prompt region (which happens when Claude renders the input
+ * box ABOVE its dialog modal), every render produces a different
+ * `question_hash` AND a different `questionLines` blob — defeating Tier 1
+ * (hash), Tier 2 (choice_shape, when no choices change but stub rules
+ * predate it), AND Tier 3 (preview substring) of the allow-rule matcher.
+ *
+ * We strip the 3-row pattern in place. Conservative: BOTH surrounding
+ * rows must be `isDecorativeLine` AND the inner row must start with `❯ `
+ * (optional leading whitespace). A bare `❯ Foo` line not flanked by
+ * dividers is preserved since `❯` may legitimately appear elsewhere.
+ *
+ * Pure; idempotent; safe on any row sequence.
+ */
+export function stripClaudeInputBox(rows: readonly string[]): string[] {
+  if (rows.length < 3) return [...rows];
+  const out: string[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    if (
+      i + 2 < rows.length &&
+      isDecorativeLine(rows[i]) &&
+      /^\s*❯\s/.test(rows[i + 1]) &&
+      isDecorativeLine(rows[i + 2])
+    ) {
+      i += 3;
+      continue;
+    }
+    out.push(rows[i]);
+    i++;
+  }
+  return out;
+}
+
+/**
+ * HS-8071 (2026-05-04 follow-up) — strip Claude Code's TUI status-bar lines
+ * from a row sequence. The earlier `stripClaudeInputBox` removed the
+ * `divider / ❯ <placeholder> / divider` block, but the user's still-failing
+ * repro showed two ADDITIONAL Claude TUI lines bleeding into the captured
+ * question region between the warning text and the numbered choices:
+ *
+ * ```
+ * ▶▶ accept edits on (shift+tab to cycle)
+ * ● high · /effort
+ * ```
+ *
+ * These vary independently from the prompt itself (mode-toggle status,
+ * effort indicator) and shifted the `question_hash` AND defeated the
+ * Tier 3 substring fallback because they pad the `questionLines` blob
+ * with constantly-changing text.
+ *
+ * Conservative pattern set — only strip lines that contain a
+ * highly-distinctive Claude TUI signature:
+ * - The `(shift+tab to cycle)` mode-cycle hint (any `▶▶`/`▶`/`►`/space prefix).
+ * - The `● <mode> · /effort` effort indicator (`high`/`medium`/`low`/`max`).
+ *
+ * Pure; idempotent. Preserves blank lines + everything else verbatim so
+ * the question-region walker still sees natural paragraph structure.
+ */
+const CLAUDE_STATUS_BAR_PATTERNS: readonly RegExp[] = [
+  /\(shift\+tab to cycle\)/i,
+  /^\s*[●•]\s+(?:high|medium|low|max)\s+[·•]\s+\/effort\b/i,
+];
+
+export function stripClaudeStatusBar(rows: readonly string[]): string[] {
+  return rows.filter(row => !CLAUDE_STATUS_BAR_PATTERNS.some(rx => rx.test(row)));
+}
+
+/**
  * HS-8037 — pick a single useful title line out of the multi-line question
  * region. Pre-fix the title was every line joined with spaces, which read
  * as a wall of text whenever the prompt's question region was more than
@@ -208,7 +289,7 @@ const NUMBERED_OPTION_RX = /^(\s*)([>❯▶►])?\s*(\d+)\.\s+(.+?)\s*$/;
 export const claudeNumberedParser: PromptParser = {
   id: 'claude-numbered',
   match(rows) {
-    const trimmed = trimRows(rows);
+    const trimmed = trimRows(stripClaudeStatusBar(stripClaudeInputBox(rows)));
     if (trimmed.length === 0) return null;
     if (!isClaudeNumberedFooter(trimmed[trimmed.length - 1])) return null;
 
@@ -343,7 +424,7 @@ function isUpperCase(letter: string): boolean {
 export const yesNoParser: PromptParser = {
   id: 'yesno',
   match(rows) {
-    const trimmed = trimRows(rows);
+    const trimmed = trimRows(stripClaudeStatusBar(stripClaudeInputBox(rows)));
     if (trimmed.length === 0) return null;
     const last = trimmed[trimmed.length - 1];
     const m = YESNO_MARKER_RX.exec(last);
@@ -405,7 +486,7 @@ function looksLikeDocsLine(line: string): boolean {
 export const genericParser: PromptParser = {
   id: 'generic',
   match(rows) {
-    const trimmed = trimRows(rows);
+    const trimmed = trimRows(stripClaudeStatusBar(stripClaudeInputBox(rows)));
     if (trimmed.length === 0) return null;
     const last = trimmed[trimmed.length - 1];
     if (!GENERIC_TRAILING_RX.test(last)) return null;

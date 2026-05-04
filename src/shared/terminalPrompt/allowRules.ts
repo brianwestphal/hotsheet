@@ -97,7 +97,7 @@ export function parseAllowRules(raw: unknown): TerminalPromptAllowRule[] {
 }
 
 /**
- * Pure: find the rule that matches the given `MatchResult`. Three-tier lookup
+ * Pure: find the rule that matches the given `MatchResult`. Four-tier lookup
  * (HS-8071):
  *
  * 1. **Primary** — `(parser_id, question_hash)` exact match. Same as the
@@ -124,6 +124,19 @@ export function parseAllowRules(raw: unknown): TerminalPromptAllowRule[] {
  *    common short strings ("Continue?", "Are you sure", etc.). Choice
  *    index is bounds-checked so a rule recorded against a 3-option
  *    prompt can't accidentally fire on a current 2-option prompt.
+ *
+ * 4. **Long-choice-label fallback (2026-05-04 follow-up)** — for legacy
+ *    rules whose `question_preview` text has actually changed across
+ *    Claude versions (the user's dev-channels prompt now reads
+ *    "Experimental: inbound messages…" instead of the original
+ *    "WARNING: Loading development channels…", so Tier 3 fails). Match
+ *    when the rule's `choice_label` exactly equals the live capture's
+ *    `choices[choice_index].label`, the label is at least
+ *    `MIN_CHOICE_LABEL_MATCH_CHARS` chars long (uniqueness floor — short
+ *    labels like "Yes" / "OK" are too generic to safely auto-allow on),
+ *    AND the rule has no `choice_shape` (modern rules already use Tier 2).
+ *    The label-length floor + identity match keeps false-positive risk
+ *    in the same range as Tier 3.
  *
  * Returns null when the match's shape is `generic` (never allow-listable
  * — see docs/52 §52.1) or when no rule matches under any tier.
@@ -176,6 +189,25 @@ export function findMatchingAllowRule(
       return rule;
     }
   }
+  // Tier 4 — long-choice-label fallback for legacy rules whose preview
+  // text has changed across Claude versions (Tier 3 fails). The
+  // user-reported dev-channels rule had `choice_label = "I am using
+  // this for local development"` (37 chars) — uniquely identifying enough
+  // that an exact match against the live `choices[choice_index].label`
+  // is safer than continuing to surface the popup on every launch.
+  if (match.shape === 'numbered') {
+    for (const rule of rules) {
+      if (rule.parser_id !== parserId) continue;
+      if (rule.choice_shape !== undefined && rule.choice_shape !== '') continue;
+      const ruleLabel = rule.choice_label;
+      if (ruleLabel === undefined) continue;
+      if (ruleLabel.length < MIN_CHOICE_LABEL_MATCH_CHARS) continue;
+      const idx = rule.choice_index;
+      if (idx < 0 || idx >= match.choices.length) continue;
+      if (match.choices[idx].label !== ruleLabel) continue;
+      return rule;
+    }
+  }
   return null;
 }
 
@@ -184,6 +216,13 @@ export function findMatchingAllowRule(
  *  shortest unique-feeling phrase the user-visible prompts in the wild
  *  produce (e.g. "Bash Tool: ls" is 13 chars). */
 const MIN_PREVIEW_MATCH_CHARS = 15;
+
+/** Min `choice_label` length for the Tier 4 long-label fallback. Short
+ *  labels ("Yes", "No", "OK", "Cancel", "Continue") are too generic to
+ *  safely auto-allow on; 20 chars is well above the longest common
+ *  generic label ("Yes, allow all edits" is 20) so the fallback only
+ *  fires when the rule's saved label is uniquely identifying. */
+const MIN_CHOICE_LABEL_MATCH_CHARS = 20;
 
 /** Normalise a string for substring comparison: trim, lowercase, collapse
  *  every run of whitespace (including newlines + box-drawing decorations

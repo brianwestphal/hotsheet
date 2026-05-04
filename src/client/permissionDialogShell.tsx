@@ -39,6 +39,39 @@ import { toElement } from './dom.js';
 
 const X_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 
+/**
+ * HS-8156 — when an LLM hands us a `title` that's actually a multi-paragraph
+ * blob (the user reported a permission popup whose entire dialog was filled
+ * with a wall of title text, no visible body / actions), the header inflates
+ * vertically and the rest of the dialog chrome is shoved off-screen. We
+ * cap header growth two ways:
+ *
+ * 1. Replace the header text with a single-line summary (`SUMMARY_MAX_CHARS`
+ *    of the title with whitespace collapsed, then `…`). The full text is
+ *    surfaced via the `title` attribute (browser tooltip on hover).
+ * 2. Insert a scroll-bounded `.dialog-shell-title-overflow` block at the
+ *    TOP of the body slot carrying the full text — so the user can still
+ *    read the whole thing in the scrollable details area, exactly as the
+ *    HS-8156 author requested.
+ *
+ * Triggers when the title contains a line break OR exceeds the
+ * `LONG_TITLE_LONG_THRESHOLD` constant. Short, single-line titles (the
+ * common case — `Run ls`, `Read foo.ts`) are rendered verbatim, no
+ * overflow block, no tooltip, preserving the existing dialog appearance.
+ */
+const LONG_TITLE_LONG_THRESHOLD = 200;
+const LONG_TITLE_SUMMARY_MAX_CHARS = 120;
+
+function isLongTitle(title: string): boolean {
+  return title.length > LONG_TITLE_LONG_THRESHOLD || /\r?\n/.test(title);
+}
+
+function summariseLongTitle(title: string): string {
+  const collapsed = title.replace(/\s+/g, ' ').trim();
+  if (collapsed.length <= LONG_TITLE_SUMMARY_MAX_CHARS) return collapsed + '…';
+  return collapsed.slice(0, LONG_TITLE_SUMMARY_MAX_CHARS).trimEnd() + '…';
+}
+
 export interface PermissionDialogShellOptions {
   /** Outer-overlay class. Consumers use this to retain their existing
    *  CSS scoping (`.permission-popup` for §47, `.terminal-prompt-overlay`
@@ -115,13 +148,20 @@ export interface PermissionDialogShellHandle {
  * with the overlay element and lifecycle helpers.
  */
 export function openPermissionDialogShell(opts: PermissionDialogShellOptions): PermissionDialogShellHandle {
+  // HS-8156 — long titles (multi-paragraph LLM-generated descriptions) are
+  // capped to a single-line summary in the header; the full text moves
+  // into the body slot below as a scroll-bounded overflow block.
+  const longTitle = isLongTitle(opts.title);
+  const headerTitleText = longTitle ? summariseLongTitle(opts.title) : opts.title;
+  const headerTitleAttr = longTitle ? opts.title : undefined;
+
   const overlay = toElement(
     <div className={opts.rootClassName} role="dialog" aria-modal="false" aria-label={opts.ariaLabel}>
       <div className="dialog-shell-header">
         {opts.toolChip !== undefined && opts.toolChip !== ''
           ? <span className="dialog-shell-tool">{opts.toolChip}</span>
           : null}
-        <span className="dialog-shell-title">{opts.title}</span>
+        <span className="dialog-shell-title" title={headerTitleAttr}>{headerTitleText}</span>
         {opts.description !== undefined && opts.description !== ''
           ? <span className="dialog-shell-desc">{opts.description}</span>
           : null}
@@ -150,13 +190,22 @@ export function openPermissionDialogShell(opts: PermissionDialogShellOptions): P
 
   // Mount body slot — either bodyElement (DOM tree) or bodyHtml
   // (pre-rendered string). When neither, leave the body slot empty
-  // and CSS hides it via `:empty`.
+  // and CSS hides it via `:empty`. HS-8156 — when the title is long
+  // enough to have been replaced by a header summary, prepend a
+  // scroll-bounded overflow block so the user can read the full text
+  // in the scrollable details area.
   const bodySlot = overlay.querySelector<HTMLElement>('[data-role="body"]');
   if (bodySlot !== null) {
     if (opts.bodyElement !== undefined) {
       bodySlot.replaceChildren(opts.bodyElement);
     } else if (opts.bodyHtml !== undefined) {
       bodySlot.innerHTML = opts.bodyHtml.toString();
+    }
+    if (longTitle) {
+      const overflow = toElement(
+        <pre className="dialog-shell-title-overflow">{opts.title}</pre>
+      );
+      bodySlot.insertBefore(overflow, bodySlot.firstChild);
     }
   }
 

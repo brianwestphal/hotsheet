@@ -14,7 +14,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { _resetForTesting } from './terminalCheckout.js';
-import { captureTerminalSnapshot, dropBeforeSecondClear } from './terminalSnapshot.js';
+import { captureTerminalSnapshot, dropBeforeSecondClear, streamHasVisibleContent } from './terminalSnapshot.js';
 
 afterEach(() => {
   _resetForTesting();
@@ -88,6 +88,62 @@ describe('dropBeforeSecondClear (HS-7999)', () => {
     const partial = new Uint8Array([ESC, 0x5b, 0x32, 0x4a]); // \x1b[2J only
     const bytes = concat(SEQ, partial, new TextEncoder().encode(' filler '), partial);
     expect(dropBeforeSecondClear(bytes).byteLength).toBe(0);
+  });
+});
+
+describe('streamHasVisibleContent (HS-8158)', () => {
+  it('returns false for an empty stream', () => {
+    expect(streamHasVisibleContent('')).toBe(false);
+  });
+
+  it('returns false for a stream of only whitespace', () => {
+    expect(streamHasVisibleContent('   \n\t\r  ')).toBe(false);
+  });
+
+  it('returns false for a stream of only ANSI CSI escape sequences', () => {
+    // Common Claude-Code-style structural redraw: clear screen + cursor home + colour reset.
+    const stream = '\x1b[2J\x1b[H\x1b[0m\x1b[?25l\x1b[?25h\x1b[39;49m';
+    expect(streamHasVisibleContent(stream)).toBe(false);
+  });
+
+  it('returns false for ANSI CSI sequences interspersed with whitespace', () => {
+    const stream = '\x1b[2J\x1b[H   \x1b[1;1H\n\n\x1b[2;1H\t\x1b[0m';
+    expect(streamHasVisibleContent(stream)).toBe(false);
+  });
+
+  it('returns false for OSC sequences (BEL terminator)', () => {
+    const stream = '\x1b]0;Window Title\x07\x1b]2;Other\x07';
+    expect(streamHasVisibleContent(stream)).toBe(false);
+  });
+
+  it('returns false for OSC sequences (ST terminator)', () => {
+    const stream = '\x1b]52;c;abc\x1b\\';
+    expect(streamHasVisibleContent(stream)).toBe(false);
+  });
+
+  it('returns true when a printable character escapes the stripping', () => {
+    const stream = '\x1b[2J\x1b[Hhello\x1b[0m';
+    expect(streamHasVisibleContent(stream)).toBe(true);
+  });
+
+  it('returns true for a stream where the only printable char is wedged between sequences', () => {
+    const stream = '\x1b[1;1H\x1b[31mX\x1b[0m\x1b[2;1H';
+    expect(streamHasVisibleContent(stream)).toBe(true);
+  });
+
+  it('returns true for plain text with no escape sequences', () => {
+    expect(streamHasVisibleContent('Do you want to overwrite ascii-art.py?')).toBe(true);
+  });
+
+  it('treats non-breaking space + other unicode whitespace as not visible', () => {
+    expect(streamHasVisibleContent('  　')).toBe(false);
+  });
+
+  it('returns true even when most bytes are control sequences (one printable suffices)', () => {
+    // The user's 2026-05-04 HS-8158 repro: a redraw that almost entirely
+    // consists of cursor / colour resets, with ONE meaningful char.
+    const stream = '\x1b[2J\x1b[H\x1b[?25l' + 'A'.repeat(1) + '\x1b[?25h';
+    expect(streamHasVisibleContent(stream)).toBe(true);
   });
 });
 

@@ -20,6 +20,8 @@ import {
   isDecorativeLine,
   pickTitleLine,
   runParserRegistry,
+  stripClaudeInputBox,
+  stripClaudeStatusBar,
   trimRows,
   yesNoParser,
 } from './parsers.js';
@@ -485,6 +487,278 @@ describe('claudeNumberedParser (HS-8050) — questionLines context capping', () 
     expect(result.choices[0].label).toBe('I am using this for local development');
     expect(result.choices[1].label).toBe('Exit');
     expect(result.question).toBe('Loading development channels can pose a security risk');
+  });
+});
+
+describe('stripClaudeInputBox (HS-8071)', () => {
+  it('removes the 3-line divider / ❯ <text> / divider pattern', () => {
+    const rows = [
+      'real content',
+      '──────────────────────────────────',
+      '❯ Try "how does markdown.ts work?"',
+      '──────────────────────────────────',
+      'more real content',
+    ];
+    expect(stripClaudeInputBox(rows)).toEqual([
+      'real content',
+      'more real content',
+    ]);
+  });
+
+  it('strips when the inner line carries leading whitespace before ❯', () => {
+    const rows = [
+      '─────',
+      '   ❯ placeholder text',
+      '─────',
+    ];
+    expect(stripClaudeInputBox(rows)).toEqual([]);
+  });
+
+  it('handles back-to-back input boxes (idempotent re-scan)', () => {
+    const rows = [
+      '─────',
+      '❯ a',
+      '─────',
+      '─────',
+      '❯ b',
+      '─────',
+      'tail',
+    ];
+    expect(stripClaudeInputBox(rows)).toEqual(['tail']);
+  });
+
+  it('leaves a bare `❯ Foo` line alone when not flanked by dividers', () => {
+    const rows = [
+      'header',
+      '❯ standalone arrow line',
+      'footer',
+    ];
+    expect(stripClaudeInputBox(rows)).toEqual(rows);
+  });
+
+  it('leaves a divider/divider pair alone when no ❯ inside', () => {
+    const rows = [
+      '──────',
+      'normal text',
+      '──────',
+    ];
+    expect(stripClaudeInputBox(rows)).toEqual(rows);
+  });
+
+  it('leaves the row sequence alone when shorter than 3 rows', () => {
+    expect(stripClaudeInputBox([])).toEqual([]);
+    expect(stripClaudeInputBox(['─────'])).toEqual(['─────']);
+    expect(stripClaudeInputBox(['─────', '❯ foo'])).toEqual(['─────', '❯ foo']);
+  });
+
+  it('does not strip when the dividers are real text rows that happen to look short', () => {
+    // `Hello!` is not in the decorative char set, so `isDecorativeLine` is false.
+    const rows = ['Hello!', '❯ choice', 'World!'];
+    expect(stripClaudeInputBox(rows)).toEqual(rows);
+  });
+
+  it('is pure / does not mutate the input', () => {
+    const rows = ['─────', '❯ x', '─────', 'tail'];
+    const snapshot = [...rows];
+    stripClaudeInputBox(rows);
+    expect(rows).toEqual(snapshot);
+  });
+});
+
+// HS-8071 (2026-05-04 follow-up) — strip Claude TUI status-bar lines from a
+// row sequence so they don't bleed into the captured question region.
+describe('stripClaudeStatusBar (HS-8071)', () => {
+  it('strips the `(shift+tab to cycle)` mode-toggle hint', () => {
+    const rows = [
+      'real prompt body',
+      '▶▶ accept edits on (shift+tab to cycle)',
+      '> 1. Yes',
+    ];
+    expect(stripClaudeStatusBar(rows)).toEqual([
+      'real prompt body',
+      '> 1. Yes',
+    ]);
+  });
+
+  it('strips bypass-permissions and no-edits variations of the cycle hint', () => {
+    const rows = [
+      '▶▶ bypass permissions on (shift+tab to cycle)',
+      '▶▶ no edits made (shift+tab to cycle)',
+      '· accept edits on (shift+tab to cycle)',
+      'preserved line',
+    ];
+    expect(stripClaudeStatusBar(rows)).toEqual(['preserved line']);
+  });
+
+  it('strips the `● <mode> · /effort` indicator (high/medium/low/max)', () => {
+    const rows = [
+      'preserved',
+      '● high · /effort',
+      '● medium · /effort',
+      '● low · /effort',
+      '● max · /effort',
+      'also preserved',
+    ];
+    expect(stripClaudeStatusBar(rows)).toEqual(['preserved', 'also preserved']);
+  });
+
+  it('handles the `•` bullet variant on the effort indicator', () => {
+    const rows = ['• high • /effort', 'kept'];
+    expect(stripClaudeStatusBar(rows)).toEqual(['kept']);
+  });
+
+  it('preserves blank rows verbatim (paragraph structure stays intact)', () => {
+    const rows = [
+      'top',
+      '',
+      '▶▶ accept edits on (shift+tab to cycle)',
+      '',
+      'bottom',
+    ];
+    expect(stripClaudeStatusBar(rows)).toEqual(['top', '', '', 'bottom']);
+  });
+
+  it('does NOT strip lines that mention "shift" or "effort" without the full status-bar shape', () => {
+    const rows = [
+      'shift the focus to the editor',
+      '/effort is a slash command',
+      'high quality output',
+    ];
+    expect(stripClaudeStatusBar(rows)).toEqual(rows);
+  });
+
+  it('is pure / does not mutate input', () => {
+    const rows = ['▶▶ accept edits on (shift+tab to cycle)', 'kept'];
+    const snapshot = [...rows];
+    stripClaudeStatusBar(rows);
+    expect(rows).toEqual(snapshot);
+  });
+
+  it('is idempotent', () => {
+    const rows = ['▶▶ accept edits on (shift+tab to cycle)', '● high · /effort', 'kept'];
+    expect(stripClaudeStatusBar(stripClaudeStatusBar(rows))).toEqual(['kept']);
+  });
+});
+
+// HS-8071 (2026-05-04 follow-up) — end-to-end through claudeNumberedParser:
+// the status-bar lines bleed into the captured rows for the dev-channels
+// dialog. Pre-fix this contaminated `questionLines`, drifted the hash, and
+// defeated the Tier 3 substring fallback. With `stripClaudeStatusBar`
+// applied alongside `stripClaudeInputBox`, the captured question region is
+// stable across the various Claude TUI status bar configurations.
+describe('claudeNumberedParser (HS-8071 status-bar) — Claude status-bar stripped', () => {
+  function buildDevChannelsBuffer(includeStatusBar: boolean, mode: 'high' | 'medium' = 'high'): string[] {
+    const rows: string[] = [
+      'Listening for channel messages from: server:hotsheet-channel',
+      'Experimental: inbound messages will be pushed into this session, this carries prompt injection risks.',
+      'Restart Claude Code without --dangerously-load-development-channels to disable.',
+    ];
+    if (includeStatusBar) {
+      rows.push('▶▶ accept edits on (shift+tab to cycle)');
+      rows.push(`● ${mode} · /effort`);
+    }
+    rows.push('');
+    rows.push('> 1. I am using this for local development');
+    rows.push('  2. Exit');
+    rows.push('');
+    rows.push('Enter to confirm · Esc to cancel');
+    return rows;
+  }
+
+  it('produces the same question / hash whether the status bar is bleeding in or not', () => {
+    const a = claudeNumberedParser.match(buildDevChannelsBuffer(false));
+    const b = claudeNumberedParser.match(buildDevChannelsBuffer(true, 'high'));
+    const c = claudeNumberedParser.match(buildDevChannelsBuffer(true, 'medium'));
+    if (a?.shape !== 'numbered') throw new Error('a not numbered');
+    if (b?.shape !== 'numbered') throw new Error('b not numbered');
+    if (c?.shape !== 'numbered') throw new Error('c not numbered');
+    expect(a.signature).toBe(b.signature);
+    expect(b.signature).toBe(c.signature);
+    expect(a.question).toBe(b.question);
+  });
+
+  it('removes the status-bar lines from questionLines', () => {
+    const result = claudeNumberedParser.match(buildDevChannelsBuffer(true));
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.questionLines.some(l => l.includes('shift+tab to cycle'))).toBe(false);
+    expect(result.questionLines.some(l => l.includes('/effort'))).toBe(false);
+  });
+
+  it('preserves the experimental warning text so Tier 3 substring fallback still works', () => {
+    const result = claudeNumberedParser.match(buildDevChannelsBuffer(true));
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    const blob = result.questionLines.join('\n');
+    expect(blob.includes('Experimental: inbound messages')).toBe(true);
+  });
+});
+
+// HS-8071 — full-stack regression: when Claude renders the dev-channels
+// dialog with its TUI input box rendered ABOVE the modal, the placeholder
+// text inside that input box (e.g. `Try "how does markdown.ts work?"`)
+// varies per launch + per terminal width. Pre-fix that text bled into the
+// captured `questionLines`, shifted the `question_hash` on every
+// re-render, AND defeated the §52 Tier 3 question_preview substring
+// fallback because the substring no longer appeared verbatim.
+describe('claudeNumberedParser (HS-8071) — Claude input-box stripped from question region', () => {
+  // Build the buffer shape the user reported in the 2026-05-04 screenshot:
+  // some warning text at the top, the Claude input box framed by 2
+  // horizontal-rule dividers, then the numbered choices and the footer.
+  function buildBuffer(placeholder: string): string[] {
+    return [
+      'Listening for channel messages from: server:hotsheet-channel',
+      'Experimental: inbound messages will be pushed into this session',
+      '─────────────────────────────────────────────────',
+      `❯ ${placeholder}`,
+      '─────────────────────────────────────────────────',
+      '',
+      '> 1. I am using this for local development',
+      '  2. Exit',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+  }
+
+  it('produces the same question / hash regardless of the rotating placeholder text', () => {
+    const a = claudeNumberedParser.match(buildBuffer('Try "how does markdown.ts work?"'));
+    const b = claudeNumberedParser.match(buildBuffer('Try a question, or describe your task'));
+    const c = claudeNumberedParser.match(buildBuffer('Ask Claude to do something'));
+    if (a?.shape !== 'numbered') throw new Error('a not numbered');
+    if (b?.shape !== 'numbered') throw new Error('b not numbered');
+    if (c?.shape !== 'numbered') throw new Error('c not numbered');
+    expect(a.question).toBe(b.question);
+    expect(b.question).toBe(c.question);
+    expect(a.signature).toBe(b.signature);
+    expect(b.signature).toBe(c.signature);
+  });
+
+  it('removes the divider / ❯ / divider rows from questionLines', () => {
+    const result = claudeNumberedParser.match(buildBuffer('Try foo'));
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.questionLines.some(l => l.includes('❯'))).toBe(false);
+    // The dividers around the input box are gone; any divider that
+    // remained would only be one that wasn't part of the input box.
+    const dividerCount = result.questionLines.filter(l => isDecorativeLine(l)).length;
+    expect(dividerCount).toBe(0);
+  });
+
+  it('still preserves the warning text above the input box', () => {
+    const result = claudeNumberedParser.match(buildBuffer('Try foo'));
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.questionLines.some(l => l.includes('Listening for channel messages'))).toBe(true);
+    expect(result.questionLines.some(l => l.includes('Experimental: inbound messages'))).toBe(true);
+  });
+
+  it('stripped popup body matches the same `question_preview` substring across renders', () => {
+    // Tier 3 of `findMatchingAllowRule` does a normalised .includes() on
+    // the question_preview against the questionLines blob. That should
+    // succeed regardless of the input-box placeholder.
+    const a = claudeNumberedParser.match(buildBuffer('one placeholder'));
+    const b = claudeNumberedParser.match(buildBuffer('an entirely different placeholder'));
+    if (a?.shape !== 'numbered') throw new Error('a not numbered');
+    if (b?.shape !== 'numbered') throw new Error('b not numbered');
+    const preview = 'Listening for channel messages';
+    expect(a.questionLines.join('\n').includes(preview)).toBe(true);
+    expect(b.questionLines.join('\n').includes(preview)).toBe(true);
   });
 });
 

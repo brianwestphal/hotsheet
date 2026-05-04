@@ -137,14 +137,23 @@ export async function captureTerminalSnapshot(
     // (truncated) flat preview instead of replacing it with nothing.
     const wideRedraw = takePausedBytes(secret, terminalId);
     if (wideRedraw.byteLength === 0) {
-      // Restore PTY geometry + unpause before returning so the live term
-      // doesn't stay frozen at the wider geometry.
-      sendPtyResize(secret, terminalId, origCols, origRows);
-      await new Promise(resolve => setTimeout(resolve, waitMs));
-      resumeEntryWritesAndDrain(secret, terminalId);
+      await restoreAndUnpause(secret, terminalId, origCols, origRows, waitMs);
       return null;
     }
     const stream = serializeOffscreen(wideRedraw, targetCols, targetRows);
+
+    // HS-8158 — even when the resize redraw produced bytes, those bytes
+    // can be 100% ANSI control sequences (cursor positioning, attribute
+    // resets, clear-screen) with no printable content — the user's
+    // 2026-05-04 screenshot was a Write permission popup whose body
+    // mounted as a fully-black mirror xterm because Claude's redraw
+    // bytes were structural-only (no visible characters reached the
+    // offscreen buffer). Bail just like the byteLength=0 path so the
+    // popup keeps its existing edit-diff body / flat preview.
+    if (!streamHasVisibleContent(stream)) {
+      await restoreAndUnpause(secret, terminalId, origCols, origRows, waitMs);
+      return null;
+    }
 
     // Step 4 — resize PTY back to original. Claude redraws at the
     // original geometry. Bytes accumulate in the (now-emptied)
@@ -167,6 +176,59 @@ export async function captureTerminalSnapshot(
     try { resumeEntryWritesAndDrain(secret, terminalId); } catch { /* */ }
     return null;
   }
+}
+
+/**
+ * HS-8158 — pure helper that returns true when `stream` contains at
+ * least one printable, non-whitespace character once ANSI control
+ * sequences are stripped. Used by the snapshot orchestrator to bail
+ * out instead of mounting a fully-black mirror xterm for a redraw
+ * that produced only structural escape sequences.
+ *
+ * Stripped sequence shapes:
+ * - CSI:  `ESC [` … final byte in `0x40-0x7E`
+ * - OSC:  `ESC ]` … `BEL` or `ESC \`
+ * - DCS / SOS / PM / APC: `ESC P|X|^|_` … `ESC \`
+ * - Single-byte ESC sequences (`ESC =`, `ESC >`, charset selectors, …)
+ * - Remaining C0 / DEL control chars
+ * - All whitespace (space, tab, newline, NBSP, etc.)
+ *
+ * Anything left over is "visible content" and we proceed to mount
+ * the mirror xterm.
+ */
+export function streamHasVisibleContent(stream: string): boolean {
+  if (stream === '') return false;
+  const visible = stream
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '')   // CSI
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')           // OSC (BEL or ST terminator)
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b[PX^_][^\x1b]*\x1b\\/g, '')                    // DCS / SOS / PM / APC
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b./g, '')                                        // remaining 2-char ESC
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, '')                              // remaining C0 / DEL
+    .replace(/\s/g, '');                                          // any unicode whitespace
+  return visible.length > 0;
+}
+
+/**
+ * HS-8158 — shared post-bail-out cleanup: send the geometry-restore
+ * resize, wait for Claude's redraw, drain the buffered bytes through
+ * to the live term, and clear the pause flag. Used by both bail
+ * paths (no bytes received / serialized stream has no visible content).
+ */
+async function restoreAndUnpause(
+  secret: string,
+  terminalId: string,
+  origCols: number,
+  origRows: number,
+  waitMs: number,
+): Promise<void> {
+  sendPtyResize(secret, terminalId, origCols, origRows);
+  await new Promise(resolve => setTimeout(resolve, waitMs));
+  resumeEntryWritesAndDrain(secret, terminalId);
 }
 
 /**

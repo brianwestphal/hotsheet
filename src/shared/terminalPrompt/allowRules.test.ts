@@ -369,6 +369,166 @@ describe('findMatchingAllowRule (HS-7987)', () => {
       expect(findMatchingAllowRule(yesNoBleed, [rule])).toBe(rule);
     });
   });
+
+  // HS-8071 (2026-05-04 follow-up) — Tier 4 long-choice-label fallback. The
+  // user-reported settings.json had a single rule from 2026-05-01 whose
+  // `question_preview = "WARNING: Loading development channels"` no longer
+  // appears in the live capture (Claude updated the prompt text to
+  // "Experimental: inbound messages will be pushed into this session"),
+  // so Tier 3 substring match also failed. The popup leaked through
+  // every launch and the user (rightly) refused to manually re-tick. The
+  // saved `choice_label = "I am using this for local development"` IS still
+  // in the live choices, and is long enough (37 chars) to be uniquely
+  // identifying — so we match on (parser_id + label-equality at index +
+  // length floor).
+  describe('Tier 4 — long-choice-label fallback', () => {
+    function legacyRuleWithLabel(label: string, choiceIndex = 0): TerminalPromptAllowRule {
+      return {
+        id: 'legacy-label',
+        parser_id: 'claude-numbered',
+        question_hash: 'wont-match',
+        question_preview: 'totally-different-text-than-the-current-prompt',
+        choice_index: choiceIndex,
+        choice_label: label,
+        created_at: '2026-05-01T00:00:00Z',
+      };
+    }
+
+    function liveMatchWithChoices(choices: { index: number; label: string; highlighted: boolean }[]): NumberedMatch {
+      return {
+        parserId: 'claude-numbered',
+        shape: 'numbered',
+        question: 'A new prompt the user has not seen before',
+        questionLines: ['A new prompt the user has not seen before'],
+        choices,
+        signature: 'claude-numbered:NEW-HASH:0',
+      };
+    }
+
+    it('matches when the rule choice_label exactly equals the live choices[index].label and is long enough', () => {
+      const rule = legacyRuleWithLabel('I am using this for local development', 0);
+      const m = liveMatchWithChoices([
+        { index: 0, label: 'I am using this for local development', highlighted: true },
+        { index: 1, label: 'Exit', highlighted: false },
+      ]);
+      expect(findMatchingAllowRule(m, [rule])).toBe(rule);
+    });
+
+    it('does NOT match when the label is too short (uniqueness floor)', () => {
+      // 19 chars — under MIN_CHOICE_LABEL_MATCH_CHARS = 20.
+      const rule = legacyRuleWithLabel('Yes, allow all edit', 0);
+      const m = liveMatchWithChoices([
+        { index: 0, label: 'Yes, allow all edit', highlighted: true },
+        { index: 1, label: 'Exit', highlighted: false },
+      ]);
+      expect(findMatchingAllowRule(m, [rule])).toBeNull();
+    });
+
+    it('does NOT match when the live label at that index differs (different prompt with same shape)', () => {
+      const rule = legacyRuleWithLabel('I am using this for local development', 0);
+      const m = liveMatchWithChoices([
+        { index: 0, label: 'Some entirely different long option label', highlighted: true },
+        { index: 1, label: 'Exit', highlighted: false },
+      ]);
+      expect(findMatchingAllowRule(m, [rule])).toBeNull();
+    });
+
+    it('does NOT match when choice_index is out of range', () => {
+      const rule = legacyRuleWithLabel('I am using this for local development', 5);
+      const m = liveMatchWithChoices([
+        { index: 0, label: 'I am using this for local development', highlighted: true },
+        { index: 1, label: 'Exit', highlighted: false },
+      ]);
+      expect(findMatchingAllowRule(m, [rule])).toBeNull();
+    });
+
+    it('does NOT match when the rule has a choice_shape (Tier 4 only fires for legacy rules)', () => {
+      const rule: TerminalPromptAllowRule = {
+        id: 'modern',
+        parser_id: 'claude-numbered',
+        question_hash: 'wont-match',
+        question_preview: 'old preview',
+        choice_index: 0,
+        choice_label: 'I am using this for local development',
+        choice_shape: 'something-else|other-thing',
+        created_at: '2026-05-04T00:00:00Z',
+      };
+      const m = liveMatchWithChoices([
+        { index: 0, label: 'I am using this for local development', highlighted: true },
+        { index: 1, label: 'Exit', highlighted: false },
+      ]);
+      expect(findMatchingAllowRule(m, [rule])).toBeNull();
+    });
+
+    it('does NOT match yesno shape (Tier 4 is numbered-only — yesno labels are inherently short)', () => {
+      const rule: TerminalPromptAllowRule = {
+        id: 'legacy-yesno',
+        parser_id: 'yesno',
+        question_hash: 'wont-match',
+        choice_index: 0,
+        choice_label: 'Yes, this is a long yesno label',
+        created_at: '2026-05-01T00:00:00Z',
+      };
+      const m: YesNoMatch = {
+        parserId: 'yesno',
+        shape: 'yesno',
+        question: 'Continue',
+        questionLines: ['Continue? [y/n]'],
+        yesIsCapital: false,
+        noIsCapital: false,
+        signature: 'yesno:NEW:0',
+      };
+      expect(findMatchingAllowRule(m, [rule])).toBeNull();
+    });
+
+    it('Tier 1 still wins when both Tier 1 and Tier 4 would match', () => {
+      const tier4Rule = legacyRuleWithLabel('I am using this for local development', 0);
+      const tier1Rule: TerminalPromptAllowRule = {
+        id: 'tier1',
+        parser_id: 'claude-numbered',
+        question_hash: 'NEW-HASH', // primary hash match against the live signature
+        choice_index: 1,
+        created_at: '2026-05-04T00:00:00Z',
+      };
+      const m = liveMatchWithChoices([
+        { index: 0, label: 'I am using this for local development', highlighted: true },
+        { index: 1, label: 'Exit', highlighted: false },
+      ]);
+      expect(findMatchingAllowRule(m, [tier4Rule, tier1Rule])).toBe(tier1Rule);
+    });
+
+    it('Tier 3 still wins when both Tier 3 and Tier 4 would match', () => {
+      const tier4Rule = legacyRuleWithLabel('I am using this for local development', 0);
+      const tier3Rule: TerminalPromptAllowRule = {
+        id: 'tier3',
+        parser_id: 'claude-numbered',
+        question_hash: 'wont-match',
+        question_preview: 'A new prompt the user has not seen', // substring of live questionLines
+        choice_index: 1,
+        created_at: '2026-05-04T00:00:00Z',
+      };
+      const m = liveMatchWithChoices([
+        { index: 0, label: 'I am using this for local development', highlighted: true },
+        { index: 1, label: 'Exit', highlighted: false },
+      ]);
+      expect(findMatchingAllowRule(m, [tier4Rule, tier3Rule])).toBe(tier3Rule);
+    });
+
+    it('does NOT match when choice_label is missing entirely (rule predates HS-7988)', () => {
+      const rule: TerminalPromptAllowRule = {
+        id: 'legacy-no-label',
+        parser_id: 'claude-numbered',
+        question_hash: 'wont-match',
+        choice_index: 0,
+        created_at: '',
+      };
+      const m = liveMatchWithChoices([
+        { index: 0, label: 'I am using this for local development', highlighted: true },
+        { index: 1, label: 'Exit', highlighted: false },
+      ]);
+      expect(findMatchingAllowRule(m, [rule])).toBeNull();
+    });
+  });
 });
 
 describe('buildChoiceShape (HS-8071)', () => {
