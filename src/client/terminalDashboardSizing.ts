@@ -75,78 +75,121 @@ export function computeTileWidth(input: SizingInput): number {
 }
 
 /**
- * HS-7031: map a slider value (0..100) to a tile width in pixels.
- *
- * - `value = 0` → `SLIDER_MIN_TILE_WIDTH` (~133 px — the 100 px preview-height floor).
- * - `value = 100` → `rootWidth` (the full available width the dashboard can
- *   give to a single tile, i.e. `root.clientWidth - 2 * ROOT_PADDING` — the
- *   caller passes the already-padding-adjusted width).
- * - Intermediate values interpolate linearly between those two bounds, so
- *   50 → midpoint. That matches the ticket's example (`133..1000` slider
- *   mid = 567).
- *
- * If `rootWidth` is smaller than the min tile width (very narrow window),
- * the min wins — the caller then lets the dashboard horizontally scroll or
- * the tile wraps as it would at the floor.
+ * HS-8176 — slider value range (number of tiles per row, integer).
+ * The slider's HTML `min` / `max` / `step` attributes mirror these.
+ * Inverted visually via `direction: rtl` on the slider element so the
+ * left edge represents `MAX_TILES_PER_ROW` (smallest tiles, most per
+ * row) and the right edge represents `MIN_TILES_PER_ROW` (one big tile
+ * filling the row). Default chosen to roughly match the pre-HS-8176
+ * 33% slider position on a typical viewport.
  */
-export function tileWidthFromSlider(value: number, rootWidth: number): number {
-  const clampedValue = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 50));
-  const max = Math.max(SLIDER_MIN_TILE_WIDTH, Math.floor(rootWidth));
-  const span = max - SLIDER_MIN_TILE_WIDTH;
-  return Math.round(SLIDER_MIN_TILE_WIDTH + span * (clampedValue / 100));
+export const MIN_TILES_PER_ROW = 1;
+export const MAX_TILES_PER_ROW = 10;
+export const DEFAULT_TILES_PER_ROW = 4;
+
+/**
+ * HS-8176 — map an integer "tiles per row" value to a tile width in
+ * pixels. Replaces the pre-HS-8176 continuous `tileWidthFromSlider`
+ * (0..100 float). Math:
+ *
+ *     tileWidth = (rootWidth - (perRow - 1) * TILE_GAP) / perRow
+ *
+ * For perRow=1 the tile fills the row (modulo TILE_GAP not being
+ * subtracted — there are no gaps when only one tile exists). For
+ * perRow=10 the tiles are a tenth of the row width minus 9 gaps —
+ * intentionally allowed to fall below `SLIDER_MIN_TILE_WIDTH` because
+ * the user explicitly asked for 10 columns; legibility at very narrow
+ * widths is their call. The caller's `applySizing` clamps to a small
+ * positive minimum to avoid CSS `width: 0` breaking xterm's layout.
+ *
+ * `perRow` is clamped to `[MIN_TILES_PER_ROW, MAX_TILES_PER_ROW]` and
+ * floored to the nearest integer so a stale legacy float value (e.g.
+ * the pre-HS-8176 33) doesn't produce a fractional column count — the
+ * caller's persistence-load helper additionally migrates out-of-range
+ * values to `DEFAULT_TILES_PER_ROW`.
+ */
+export function tileWidthFromColumnCount(perRow: number, rootWidth: number): number {
+  const clamped = Math.max(MIN_TILES_PER_ROW, Math.min(MAX_TILES_PER_ROW, Math.floor(Number.isFinite(perRow) ? perRow : DEFAULT_TILES_PER_ROW)));
+  const totalGap = (clamped - 1) * TILE_GAP;
+  const width = (Math.max(0, rootWidth) - totalGap) / clamped;
+  return Math.max(1, Math.floor(width));
 }
+
+/**
+ * HS-8176 — back-compat helper for any caller that hasn't migrated
+ * yet. Treats a legacy 0..100 slider value as a column count by
+ * reverse-mapping linearly: 0 → MIN_TILES_PER_ROW, 100 →
+ * MAX_TILES_PER_ROW. Migration helper, not the long-term API — once
+ * every consumer is converted this can be deleted along with the
+ * legacy `dashboard_slider_value` migration.
+ */
+export function legacySliderValueToColumnCount(legacyValue: number): number {
+  if (!Number.isFinite(legacyValue)) return DEFAULT_TILES_PER_ROW;
+  if (legacyValue >= MIN_TILES_PER_ROW && legacyValue <= MAX_TILES_PER_ROW && Number.isInteger(legacyValue)) {
+    // Already in the new range — pass through.
+    return legacyValue;
+  }
+  // Old continuous 0..100 value — map roughly so the user's tiles
+  // don't dramatically change size on first load after the migration.
+  const clampedLegacy = Math.max(0, Math.min(100, legacyValue));
+  // Old default 33 ≈ "a few big tiles". Map that to perRow=4. Old 0 →
+  // 1 tile (biggest), old 100 → 10 tiles (smallest). Linear.
+  const perRow = Math.round(MIN_TILES_PER_ROW + (clampedLegacy / 100) * (MAX_TILES_PER_ROW - MIN_TILES_PER_ROW));
+  return Math.max(MIN_TILES_PER_ROW, Math.min(MAX_TILES_PER_ROW, perRow));
+}
+
 
 export interface SnapPoint {
   /** Tile count that fits perfectly across one row at this width (accounting for TILE_GAP). */
   perRow: number;
   /** The exact tile width (px) that makes `perRow` tiles fill the row. */
   tileWidth: number;
-  /** Slider value (0..100) that maps to `tileWidth` via `tileWidthFromSlider`. */
+  /** Slider value (post-HS-8176 — integer 1..10 in slider-LTR space, the
+   *  inverse of `perRow` per `perRowToSliderPosition`). */
   sliderValue: number;
 }
 
 /**
- * HS-7271 — compute the slider positions at which an integer number of tiles
- * fits exactly across one row, accounting for TILE_GAP between tiles. The
- * dashboard adds ticks at each position (visual hint) and the slider snaps
- * to one when the user drags within `SLIDER_SNAP_THRESHOLD` of it.
- *
- * For N tiles per row: `N * w + (N - 1) * TILE_GAP = rootWidth` →
- *   `w = (rootWidth - (N - 1) * TILE_GAP) / N`
- *
- * Only widths that fit the slider's valid range `[SLIDER_MIN_TILE_WIDTH, rootWidth]`
- * qualify. Since smaller widths pack more tiles per row, the returned list is
- * naturally sorted by slider value ascending (N descending → smaller widths →
- * lower slider values). The caller de-dupes on `perRow` so we don't emit two
- * snap points for the same integer count after rounding.
+ * HS-8176 — convert a `perRow` column count to its slider-LTR position.
+ * The slider element is LTR with min=`MIN_TILES_PER_ROW` (1) on the
+ * visual left and max=`MAX_TILES_PER_ROW` (10) on the visual right,
+ * but the user's mental model per the HS-8176 spec is *"left = many
+ * small tiles, right = one big tile"* — so the slider's visual
+ * position is the inverse of the column count. Pure helper.
  */
-export function computeSliderSnapPoints(rootWidth: number): SnapPoint[] {
-  const max = Math.max(SLIDER_MIN_TILE_WIDTH, Math.floor(rootWidth));
-  if (max <= SLIDER_MIN_TILE_WIDTH) return [];
-  const span = max - SLIDER_MIN_TILE_WIDTH;
-  const points: SnapPoint[] = [];
-  const seenPerRow = new Set<number>();
-  // Start at N=1 (one big tile filling the row) and walk up until the
-  // resulting width drops below the slider floor.
-  for (let perRow = 1; perRow <= 40; perRow++) {
-    if (seenPerRow.has(perRow)) continue;
-    const tileWidth = (rootWidth - (perRow - 1) * TILE_GAP) / perRow;
-    if (tileWidth < SLIDER_MIN_TILE_WIDTH) break;
-    if (tileWidth > rootWidth) continue;
-    const sliderValue = ((tileWidth - SLIDER_MIN_TILE_WIDTH) / span) * 100;
-    if (sliderValue < 0 || sliderValue > 100) continue;
-    points.push({ perRow, tileWidth, sliderValue });
-    seenPerRow.add(perRow);
-  }
-  // Return sorted ascending by slider value so the UI renders ticks
-  // left-to-right (more tiles per row = narrower tile = lower slider value).
-  return points.sort((a, b) => a.sliderValue - b.sliderValue);
+export function perRowToSliderPosition(perRow: number): number {
+  const clamped = Math.max(MIN_TILES_PER_ROW, Math.min(MAX_TILES_PER_ROW, Math.round(perRow)));
+  return MIN_TILES_PER_ROW + MAX_TILES_PER_ROW - clamped;
 }
 
-/** HS-7271 — threshold (in slider units, 0..100) within which the slider
- *  magnetically snaps to a snap point. 2.5 = ~2.5 % of the slider range;
- *  tuned so brushing past a snap is easy but landing near one locks in. */
-export const SLIDER_SNAP_THRESHOLD = 2.5;
+/** HS-8176 — inverse of `perRowToSliderPosition`. */
+export function sliderPositionToPerRow(sliderPosition: number): number {
+  const clamped = Math.max(MIN_TILES_PER_ROW, Math.min(MAX_TILES_PER_ROW, Math.round(sliderPosition)));
+  return MIN_TILES_PER_ROW + MAX_TILES_PER_ROW - clamped;
+}
+
+/**
+ * HS-8176 — fixed snap points: one tick per integer column count from
+ * `MIN_TILES_PER_ROW` to `MAX_TILES_PER_ROW`. Pre-HS-8176 ticks were
+ * computed dynamically based on `rootWidth` (positions where an
+ * integer number of tiles fit exactly), but the new integer-only
+ * slider has the same set of positions for every viewport — every
+ * value is a snap point. The `tileWidth` field is computed for the
+ * given `rootWidth` so callers can render tooltips like *"5 columns
+ * (~240 px / tile)"* without recomputing.
+ */
+export function computeColumnSnapPoints(rootWidth: number): SnapPoint[] {
+  const points: SnapPoint[] = [];
+  for (let perRow = MIN_TILES_PER_ROW; perRow <= MAX_TILES_PER_ROW; perRow += 1) {
+    points.push({
+      perRow,
+      tileWidth: tileWidthFromColumnCount(perRow, rootWidth),
+      sliderValue: perRowToSliderPosition(perRow),
+    });
+  }
+  return points;
+}
+
 
 /**
  * HS-7950 — pixel offset of a snap-point tick relative to the slider's left
@@ -174,23 +217,6 @@ export function tickLeftPx(sliderValue: number, sliderWidthPx: number, thumbWidt
   return thumbWidthPx / 2 + (v / 100) * usable;
 }
 
-/**
- * If `rawValue` is within `SLIDER_SNAP_THRESHOLD` of any snap point, return
- * that snap point's exact slider value. Otherwise return `rawValue` verbatim
- * (no snap). Picks the nearest snap if multiple are in range.
- */
-export function maybeSnapSliderValue(rawValue: number, snapPoints: SnapPoint[]): number {
-  let best: SnapPoint | null = null;
-  let bestDist = SLIDER_SNAP_THRESHOLD;
-  for (const p of snapPoints) {
-    const d = Math.abs(p.sliderValue - rawValue);
-    if (d <= bestDist) {
-      best = p;
-      bestDist = d;
-    }
-  }
-  return best === null ? rawValue : best.sliderValue;
-}
 
 export interface TileScale {
   /** Uniform scale factor applied via `transform: scale(scale)`. X and Y share

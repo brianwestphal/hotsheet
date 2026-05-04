@@ -7,11 +7,11 @@ import {
   getPriorityColor,
   getPriorityIcon,
   getProjectGridActive,
-  getProjectGridSliderValue,
+  getProjectGridColumnCount,
   getStatusIcon,
   setActiveProject,
   setProjectGridActive,
-  setProjectGridSliderValue,
+  setProjectGridColumnCount,
   shouldResetStatusOnUpNext,
   state,
 } from './state.js';
@@ -202,40 +202,40 @@ describe('per-project drawer grid state (HS-6311)', () => {
     expect(getProjectGridActive('grid-a')).toBe(false);
   });
 
-  it('defaults slider value to 33 for a never-seen project', () => {
-    expect(getProjectGridSliderValue('grid-a')).toBe(33);
-    expect(getProjectGridSliderValue('grid-b')).toBe(33);
+  it('defaults column count to 4 for a never-seen project (HS-8176)', () => {
+    expect(getProjectGridColumnCount('grid-a')).toBe(4);
+    expect(getProjectGridColumnCount('grid-b')).toBe(4);
   });
 
-  it('setProjectGridSliderValue persists per secret', () => {
-    setProjectGridSliderValue('grid-a', 60);
-    setProjectGridSliderValue('grid-b', 15);
-    expect(getProjectGridSliderValue('grid-a')).toBe(60);
-    expect(getProjectGridSliderValue('grid-b')).toBe(15);
+  it('setProjectGridColumnCount persists per secret', () => {
+    setProjectGridColumnCount('grid-a', 6);
+    setProjectGridColumnCount('grid-b', 2);
+    expect(getProjectGridColumnCount('grid-a')).toBe(6);
+    expect(getProjectGridColumnCount('grid-b')).toBe(2);
   });
 
   it('grid state survives a setActiveProject round-trip — not cleared by project switch', () => {
     setProjectGridActive('grid-a', true);
-    setProjectGridSliderValue('grid-a', 72);
+    setProjectGridColumnCount('grid-a', 8);
     setActiveProject(projB);
     setActiveProject(projA);
     expect(getProjectGridActive('grid-a')).toBe(true);
-    expect(getProjectGridSliderValue('grid-a')).toBe(72);
+    expect(getProjectGridColumnCount('grid-a')).toBe(8);
   });
 
-  it('clearPerProjectSessionState drops grid-active + slider value for that secret', () => {
+  it('clearPerProjectSessionState drops grid-active + column count for that secret', () => {
     setProjectGridActive('grid-a', true);
-    setProjectGridSliderValue('grid-a', 50);
+    setProjectGridColumnCount('grid-a', 5);
     clearPerProjectSessionState('grid-a');
     expect(getProjectGridActive('grid-a')).toBe(false);
-    expect(getProjectGridSliderValue('grid-a')).toBe(33);
+    expect(getProjectGridColumnCount('grid-a')).toBe(4);
   });
 
   it('grid state for one project does not leak into another on switch', () => {
     setProjectGridActive('grid-a', true);
-    setProjectGridSliderValue('grid-a', 80);
+    setProjectGridColumnCount('grid-a', 9);
     setActiveProject(projB);
     expect(getProjectGridActive('grid-b')).toBe(false);
-    expect(getProjectGridSliderValue('grid-b')).toBe(33);
+    expect(getProjectGridColumnCount('grid-b')).toBe(4);
   });
 });

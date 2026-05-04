@@ -24,7 +24,7 @@ A new toggle button sits in the drawer toolbar's `.drawer-tabs-end` cluster, **b
 - Gains a pressed/active visual state (`.active`) when grid mode is on, matching the rest of the drawer toolbar affordances.
 - Clicking the button toggles grid mode on and off.
 
-**Tile-size slider.** A second new element sits immediately before the toggle button: `#drawer-grid-sizer`, a small container with a Lucide `scaling` icon + a range input (`#drawer-grid-size-slider`, `min=0 max=100 step=1`, default `33`). Its visibility is tied to grid mode — shown only while grid mode is active. Styling, snap-point tick marks, and behaviour mirror the dashboard slider (§25.4 / HS-7031 / HS-7271) exactly; the underlying math is the same `tileWidthFromSlider` + `computeSliderSnapPoints` + `maybeSnapSliderValue` helpers in `terminalDashboardSizing.ts`.
+**Tile-size slider (HS-8176).** A second new element sits immediately before the toggle button: `#drawer-grid-sizer`, a small container with a discrete range input (`#drawer-grid-size-slider`, `min="1" max="10" step="1"`, default value `7` = `perRow=4`). Visibility is tied to grid mode. Same shape as the dashboard slider (§25.4): LTR position is the inverse of the column count (left = 10 small tiles, right = 1 big tile), persisted per-project in the session-only `projectGridColumnCount` Map (no file persistence — drawer-grid mode is per-project ephemeral). Styling, snap-point tick marks (one per integer, native `<datalist>` plus custom tick divs), and the underlying math (`tileWidthFromColumnCount` + `computeColumnSnapPoints` + `perRowToSliderPosition` / `sliderPositionToPerRow` helpers in `terminalDashboardSizing.ts`) all mirror §25.4. Pre-HS-8176 this was a continuous 0..100 float slider stored as `projectGridSliderValue`.
 
 ## 36.3 Grid mode vs. tabs mode
 
@@ -44,7 +44,7 @@ Exiting grid mode restores the drawer to whatever tab was previously active — 
 
 A single vertically-scrolling flex-wrap grid fills the drawer body. Every tile is strictly 4:3 (preview area) + a centered label below, identical to the dashboard's tile shape (§25.4). Tiles wrap onto additional rows when they exceed the drawer width. The preview + xterm scale math is shared with the dashboard via `terminalDashboardSizing.ts`:
 
-- `tileWidthFromSlider(sliderValue, drawerBodyWidth - 2 * padding)` picks the tile width.
+- `tileWidthFromColumnCount(perRow, drawerBodyWidth - 2 * padding)` picks the tile width (HS-8176; pre-HS-8176 was `tileWidthFromSlider(sliderValue, ...)`).
 - `computeTileScale(tileWidth, tileHeight, naturalWidth, naturalHeight)` computes the uniform scale for the xterm's natural pixel size.
 - `tileNativeGridFromCellMetrics(cellW, cellH)` picks the tile-native 4:3 cols × rows from measured cell metrics (same HS-7097 follow-up behaviour as the dashboard).
 
@@ -99,7 +99,7 @@ Grid mode is tracked per-project, not globally. Session-only (in-memory; resets 
 
 Implementation: two new `Map<secret, …>` structures in `src/client/state.tsx`:
 - `projectGridActive: Map<secret, boolean>` — true when the project is in grid mode.
-- `projectGridSliderValue: Map<secret, number>` — the slider value last used in this project (0..100, default `33`).
+- `projectGridColumnCount: Map<secret, number>` — the column count last used in this project (integer 1..10, default 4). HS-8176; pre-HS-8176 this was `projectGridSliderValue` (continuous 0..100, default 33).
 
 `setActiveProject` saves the current project's grid state before switching and restores the destination project's grid state afterwards. `clearPerProjectSessionState(secret)` (HS-7360) also wipes these two maps so a removed project doesn't leak state.
 

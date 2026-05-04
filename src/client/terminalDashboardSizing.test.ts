@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  computeSliderSnapPoints,
+  computeColumnSnapPoints,
   computeTileGridDims,
   computeTileScale,
   computeTileWidth,
@@ -9,14 +9,16 @@ import {
   DASHBOARD_FALLBACK_ROWS,
   DASHBOARD_TARGET_NATURAL_HEIGHT_PX,
   DASHBOARD_TARGET_NATURAL_WIDTH_PX,
-  maybeSnapSliderValue,
-  SLIDER_MIN_TILE_WIDTH,
-  SLIDER_SNAP_THRESHOLD,
+  DEFAULT_TILES_PER_ROW,
+  legacySliderValueToColumnCount,
+  MAX_TILES_PER_ROW,
+  MIN_TILES_PER_ROW,
+  perRowToSliderPosition,
+  sliderPositionToPerRow,
   tickLeftPx,
   TILE_ASPECT,
-  TILE_GAP,
   tileNativeGridFromCellMetrics,
-  tileWidthFromSlider,
+  tileWidthFromColumnCount,
 } from './terminalDashboardSizing.js';
 
 /**
@@ -275,46 +277,136 @@ describe('computeTileGridDims (HS-6931 follow-up)', () => {
 });
 
 /**
- * HS-7031 — `tileWidthFromSlider` replaces the auto-fit `computeTileWidth`
- * with a user-controlled linear interpolation between the ~133 px floor and
- * the full root width. Verifies the ticket's own example: 133..1000 span,
- * slider = 50 → 567. Unit-tested so we can refactor the slider wiring
- * without breaking the math.
+ * HS-8176 — `tileWidthFromColumnCount` replaces the pre-HS-8176
+ * `tileWidthFromSlider` (continuous 0..100 → tile width). The new
+ * formula is:
+ *
+ *     tileWidth = (rootWidth - (perRow - 1) * TILE_GAP) / perRow
+ *
+ * Clamped to a 1 px floor (no SLIDER_MIN_TILE_WIDTH gate — the user
+ * explicitly chose perRow). Pinned via unit tests so a future tweak
+ * to the slider wiring can't silently change the math.
  */
-describe('tileWidthFromSlider (HS-7031)', () => {
-  it('returns the min tile width at slider = 0', () => {
-    expect(tileWidthFromSlider(0, 1000)).toBe(SLIDER_MIN_TILE_WIDTH);
+describe('tileWidthFromColumnCount (HS-8176)', () => {
+  it('perRow=1 returns the full root width (one big tile, no gap)', () => {
+    expect(tileWidthFromColumnCount(1, 1000)).toBe(1000);
+    expect(tileWidthFromColumnCount(1, 555)).toBe(555);
   });
 
-  it('returns the root width at slider = 100', () => {
-    expect(tileWidthFromSlider(100, 1000)).toBe(1000);
+  it('perRow=2 returns half the root width minus one gap divided in two', () => {
+    // (1000 - 12) / 2 = 494
+    expect(tileWidthFromColumnCount(2, 1000)).toBe(494);
   });
 
-  it('interpolates linearly at slider = 50 — matches the ticket example 133..1000 → 567', () => {
-    // SLIDER_MIN_TILE_WIDTH rounds to 133 (100 px × 4/3 = 133.33...).
-    // Midpoint of 133 and 1000 is 566.5, rounded → 567.
-    expect(tileWidthFromSlider(50, 1000)).toBe(567);
+  it('perRow=10 returns a tenth of the root width minus 9 gaps', () => {
+    // (1000 - 9 * 12) / 10 = 89.2 → floor 89
+    expect(tileWidthFromColumnCount(10, 1000)).toBe(89);
   });
 
-  it('clamps out-of-range slider values', () => {
-    expect(tileWidthFromSlider(-10, 1000)).toBe(SLIDER_MIN_TILE_WIDTH);
-    expect(tileWidthFromSlider(150, 1000)).toBe(1000);
+  it('clamps perRow to MIN_TILES_PER_ROW..MAX_TILES_PER_ROW', () => {
+    // Below floor → MIN_TILES_PER_ROW (one big tile).
+    expect(tileWidthFromColumnCount(0, 1000)).toBe(tileWidthFromColumnCount(MIN_TILES_PER_ROW, 1000));
+    expect(tileWidthFromColumnCount(-5, 1000)).toBe(tileWidthFromColumnCount(MIN_TILES_PER_ROW, 1000));
+    // Above ceiling → MAX_TILES_PER_ROW (smallest tiles).
+    expect(tileWidthFromColumnCount(50, 1000)).toBe(tileWidthFromColumnCount(MAX_TILES_PER_ROW, 1000));
   });
 
-  it('survives a non-finite slider value by defaulting to 50', () => {
-    // NaN and ±Infinity are both "not finite"; both route through the 50
-    // midpoint fallback so a corrupted slider value never blows out the grid.
-    expect(tileWidthFromSlider(Number.NaN, 1000)).toBe(567);
-    expect(tileWidthFromSlider(Number.POSITIVE_INFINITY, 1000)).toBe(567);
-    expect(tileWidthFromSlider(Number.NEGATIVE_INFINITY, 1000)).toBe(567);
+  it('floors a fractional perRow (legacy float values cannot produce a fractional column count)', () => {
+    // 4.7 → floors to 4; matches integer 4 exactly.
+    expect(tileWidthFromColumnCount(4.7, 1000)).toBe(tileWidthFromColumnCount(4, 1000));
   });
 
-  it('returns the floor when the root width is narrower than the floor', () => {
-    // A 100 px root gives no span to interpolate over — the floor wins at
-    // every slider value so the tile keeps its 100 px preview height.
-    expect(tileWidthFromSlider(0, 100)).toBe(SLIDER_MIN_TILE_WIDTH);
-    expect(tileWidthFromSlider(50, 100)).toBe(SLIDER_MIN_TILE_WIDTH);
-    expect(tileWidthFromSlider(100, 100)).toBe(SLIDER_MIN_TILE_WIDTH);
+  it('survives a non-finite perRow by routing through the default', () => {
+    // NaN, ±Infinity all fail the `Number.isFinite` check inside the
+    // helper and fall back to DEFAULT_TILES_PER_ROW before the clamp +
+    // floor pass.
+    expect(tileWidthFromColumnCount(Number.NaN, 1000)).toBe(tileWidthFromColumnCount(DEFAULT_TILES_PER_ROW, 1000));
+    expect(tileWidthFromColumnCount(Number.POSITIVE_INFINITY, 1000)).toBe(tileWidthFromColumnCount(DEFAULT_TILES_PER_ROW, 1000));
+    expect(tileWidthFromColumnCount(Number.NEGATIVE_INFINITY, 1000)).toBe(tileWidthFromColumnCount(DEFAULT_TILES_PER_ROW, 1000));
+  });
+
+  it('returns at least 1 px even when rootWidth cannot fit perRow tiles', () => {
+    // 50 px root with perRow=10 → (50 - 108) / 10 = -5.8. Floor 1.
+    expect(tileWidthFromColumnCount(10, 50)).toBe(1);
+    // 0-width root → 1 (defensive against CSS width: 0 collapsing xterm).
+    expect(tileWidthFromColumnCount(5, 0)).toBe(1);
+  });
+
+  it('produces the same width whether the user passes a stringified or numeric perRow (after Number.parseInt at the slider boundary)', () => {
+    // The slider value is read via `Number.parseInt(sizeSlider.value, 10)`
+    // before reaching this helper, so we don't accept strings here — but we
+    // DO accept floats from the persistence layer's legacy migration.
+    expect(tileWidthFromColumnCount(3, 1200)).toBe(tileWidthFromColumnCount(3.0, 1200));
+  });
+});
+
+/**
+ * HS-8176 — `perRowToSliderPosition` and `sliderPositionToPerRow` are
+ * the conversion at the slider IO boundary. The slider element is LTR
+ * (1 leftmost, 10 rightmost), but the user's mental model is left =
+ * many small tiles, right = one big — so the column count is the
+ * inverse of the slider position.
+ */
+describe('perRowToSliderPosition / sliderPositionToPerRow (HS-8176)', () => {
+  it('inverts: perRow=1 → sliderPos=MAX, perRow=MAX → sliderPos=1', () => {
+    expect(perRowToSliderPosition(MIN_TILES_PER_ROW)).toBe(MAX_TILES_PER_ROW);
+    expect(perRowToSliderPosition(MAX_TILES_PER_ROW)).toBe(MIN_TILES_PER_ROW);
+  });
+
+  it('round-trips for every value in range', () => {
+    for (let perRow = MIN_TILES_PER_ROW; perRow <= MAX_TILES_PER_ROW; perRow += 1) {
+      expect(sliderPositionToPerRow(perRowToSliderPosition(perRow))).toBe(perRow);
+    }
+    for (let pos = MIN_TILES_PER_ROW; pos <= MAX_TILES_PER_ROW; pos += 1) {
+      expect(perRowToSliderPosition(sliderPositionToPerRow(pos))).toBe(pos);
+    }
+  });
+
+  it('clamps inputs outside the valid range', () => {
+    expect(perRowToSliderPosition(0)).toBe(perRowToSliderPosition(MIN_TILES_PER_ROW));
+    expect(perRowToSliderPosition(20)).toBe(perRowToSliderPosition(MAX_TILES_PER_ROW));
+    expect(sliderPositionToPerRow(-3)).toBe(sliderPositionToPerRow(MIN_TILES_PER_ROW));
+    expect(sliderPositionToPerRow(50)).toBe(sliderPositionToPerRow(MAX_TILES_PER_ROW));
+  });
+
+  it('rounds fractional inputs to the nearest integer', () => {
+    expect(perRowToSliderPosition(4.4)).toBe(perRowToSliderPosition(4));
+    expect(sliderPositionToPerRow(7.6)).toBe(sliderPositionToPerRow(8));
+  });
+});
+
+/**
+ * HS-8176 — `legacySliderValueToColumnCount` migrates a pre-HS-8176
+ * persisted `dashboard_slider_value` (continuous 0..100) to a
+ * post-HS-8176 column count (integer 1..10). Linear mapping so users
+ * who had the old default 33 land on a sensible mid-range value.
+ */
+describe('legacySliderValueToColumnCount (HS-8176)', () => {
+  it('maps the pre-fix endpoints', () => {
+    expect(legacySliderValueToColumnCount(0)).toBe(MIN_TILES_PER_ROW);
+    expect(legacySliderValueToColumnCount(100)).toBe(MAX_TILES_PER_ROW);
+  });
+
+  it('passes through values that are already in the new range', () => {
+    for (let perRow = MIN_TILES_PER_ROW; perRow <= MAX_TILES_PER_ROW; perRow += 1) {
+      expect(legacySliderValueToColumnCount(perRow)).toBe(perRow);
+    }
+  });
+
+  it('clamps out-of-range legacy values', () => {
+    expect(legacySliderValueToColumnCount(-50)).toBe(MIN_TILES_PER_ROW);
+    expect(legacySliderValueToColumnCount(500)).toBe(MAX_TILES_PER_ROW);
+  });
+
+  it('returns DEFAULT_TILES_PER_ROW for non-finite inputs', () => {
+    expect(legacySliderValueToColumnCount(Number.NaN)).toBe(DEFAULT_TILES_PER_ROW);
+    expect(legacySliderValueToColumnCount(Number.POSITIVE_INFINITY)).toBe(DEFAULT_TILES_PER_ROW);
+  });
+
+  it('the pre-HS-8176 default 33 lands inside the valid post-fix range', () => {
+    const migrated = legacySliderValueToColumnCount(33);
+    expect(migrated).toBeGreaterThanOrEqual(MIN_TILES_PER_ROW);
+    expect(migrated).toBeLessThanOrEqual(MAX_TILES_PER_ROW);
   });
 });
 
@@ -397,103 +489,49 @@ describe('tileNativeGridFromCellMetrics (HS-7097 follow-up)', () => {
   });
 });
 
-describe('computeSliderSnapPoints (HS-7271)', () => {
-  it('produces a snap point for every N where tiles fit exactly with gaps', () => {
-    const rootWidth = 1000;
-    const points = computeSliderSnapPoints(rootWidth);
-    expect(points.length).toBeGreaterThan(1);
-    // Each snap point's tileWidth must satisfy N*w + (N-1)*TILE_GAP === rootWidth
-    // (within 1 px rounding tolerance).
-    for (const p of points) {
-      const reconstructed = p.perRow * p.tileWidth + (p.perRow - 1) * TILE_GAP;
-      expect(Math.abs(reconstructed - rootWidth)).toBeLessThan(1.5);
+/**
+ * HS-8176 — `computeColumnSnapPoints` returns one snap per integer
+ * column count from `MIN_TILES_PER_ROW` to `MAX_TILES_PER_ROW`. Same
+ * shape regardless of `rootWidth` (post-HS-8176 the slider is
+ * integer-only — every value IS a snap), but `tileWidth` reflects the
+ * given root so the UI can render a tooltip per snap.
+ */
+describe('computeColumnSnapPoints (HS-8176)', () => {
+  it('returns exactly MAX - MIN + 1 snaps regardless of rootWidth', () => {
+    const expected = MAX_TILES_PER_ROW - MIN_TILES_PER_ROW + 1;
+    expect(computeColumnSnapPoints(1000).length).toBe(expected);
+    expect(computeColumnSnapPoints(400).length).toBe(expected);
+    expect(computeColumnSnapPoints(50).length).toBe(expected);
+  });
+
+  it('one snap per integer column count', () => {
+    const perRows = new Set(computeColumnSnapPoints(1000).map(p => p.perRow));
+    expect(perRows).toEqual(new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+  });
+
+  it('sliderValue is the inverse of perRow per perRowToSliderPosition', () => {
+    for (const p of computeColumnSnapPoints(1000)) {
+      expect(p.sliderValue).toBe(perRowToSliderPosition(p.perRow));
     }
   });
 
-  it('has distinct perRow values (no duplicates after rounding)', () => {
-    const points = computeSliderSnapPoints(1600);
-    const counts = new Set(points.map(p => p.perRow));
-    expect(counts.size).toBe(points.length);
-  });
-
-  it('is sorted ascending by slider value (fewer per row = wider tile = higher slider)', () => {
-    const points = computeSliderSnapPoints(1600);
-    for (let i = 1; i < points.length; i++) {
-      expect(points[i].sliderValue).toBeGreaterThan(points[i - 1].sliderValue);
-    }
-    // Fewer-per-row snaps sit at higher slider values. Reversed order of
-    // perRow because the list is sorted by sliderValue ascending.
-    for (let i = 1; i < points.length; i++) {
-      expect(points[i].perRow).toBeLessThan(points[i - 1].perRow);
+  it('tileWidth matches tileWidthFromColumnCount for the given rootWidth', () => {
+    const rootWidth = 1200;
+    for (const p of computeColumnSnapPoints(rootWidth)) {
+      expect(p.tileWidth).toBe(tileWidthFromColumnCount(p.perRow, rootWidth));
     }
   });
 
-  it('drops candidates whose tile width falls below the slider floor', () => {
-    const points = computeSliderSnapPoints(800);
-    for (const p of points) {
-      expect(p.tileWidth).toBeGreaterThanOrEqual(SLIDER_MIN_TILE_WIDTH);
-    }
+  it('the perRow=1 snap maps to slider position MAX (rightmost — one big tile)', () => {
+    const points = computeColumnSnapPoints(1000);
+    const single = points.find(p => p.perRow === 1)!;
+    expect(single.sliderValue).toBe(MAX_TILES_PER_ROW);
   });
 
-  it('returns an empty list when rootWidth cannot fit even a single tile at the floor', () => {
-    expect(computeSliderSnapPoints(SLIDER_MIN_TILE_WIDTH - 1)).toEqual([]);
-    expect(computeSliderSnapPoints(0)).toEqual([]);
-  });
-
-  it('includes a perRow=1 snap at 100% slider (one big tile filling the row)', () => {
-    const points = computeSliderSnapPoints(1600);
-    const full = points.find(p => p.perRow === 1);
-    expect(full).toBeDefined();
-    // perRow=1 => tileWidth = rootWidth => slider value 100.
-    expect(full!.sliderValue).toBe(100);
-  });
-});
-
-describe('maybeSnapSliderValue (HS-7271)', () => {
-  const points = computeSliderSnapPoints(1600);
-
-  it('snaps to the nearest snap point when raw value is within threshold', () => {
-    // Pick a snap point that's isolated — its nearest neighbour is farther
-    // than 2 * SLIDER_SNAP_THRESHOLD away — so the threshold probes can't be
-    // misrouted to the neighbour. The perRow=1 snap sits at slider value 100
-    // and is always the highest snap (followed by the perRow=2 snap some
-    // tens of points below), so probes below it are safe.
-    const target = points.find(p => p.perRow === 1)!;
-    expect(target.sliderValue).toBe(100);
-    expect(maybeSnapSliderValue(100 - (SLIDER_SNAP_THRESHOLD - 0.5), points))
-      .toBe(target.sliderValue);
-    // On-the-point probe is trivially a snap.
-    expect(maybeSnapSliderValue(target.sliderValue, points)).toBe(target.sliderValue);
-  });
-
-  it('returns the raw value verbatim when no snap is within threshold', () => {
-    // Find a gap between two adjacent snaps and pick a midpoint.
-    for (let i = 1; i < points.length; i++) {
-      const gap = points[i].sliderValue - points[i - 1].sliderValue;
-      if (gap > SLIDER_SNAP_THRESHOLD * 4) {
-        const mid = (points[i].sliderValue + points[i - 1].sliderValue) / 2;
-        expect(maybeSnapSliderValue(mid, points)).toBe(mid);
-        return;
-      }
-    }
-    // At rootWidth=1600 there are plenty of adjacent snap gaps >> threshold,
-    // so this loop always returns. Guard the test from a silent pass.
-    throw new Error('expected at least one snap gap larger than 4 * SLIDER_SNAP_THRESHOLD');
-  });
-
-  it('picks the NEAREST snap when two are in range (shouldnt happen in practice at threshold 2.5 but guard anyway)', () => {
-    const synthetic = [
-      { perRow: 3, tileWidth: 400, sliderValue: 40 },
-      { perRow: 2, tileWidth: 600, sliderValue: 42 },
-    ];
-    // Value 41.1 is closer to 42 than to 40.
-    expect(maybeSnapSliderValue(41.1, synthetic)).toBe(42);
-    // Value 40.5 is closer to 40.
-    expect(maybeSnapSliderValue(40.5, synthetic)).toBe(40);
-  });
-
-  it('returns raw value with an empty snap list', () => {
-    expect(maybeSnapSliderValue(37, [])).toBe(37);
+  it('the perRow=MAX snap maps to slider position 1 (leftmost — most tiles)', () => {
+    const points = computeColumnSnapPoints(1000);
+    const max = points.find(p => p.perRow === MAX_TILES_PER_ROW)!;
+    expect(max.sliderValue).toBe(MIN_TILES_PER_ROW);
   });
 });
 

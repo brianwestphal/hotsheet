@@ -23,9 +23,14 @@ import type { ProjectInfo } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { subscribeToDefaultAppearanceChanges } from './terminalAppearance.js';
 import {
-  computeSliderSnapPoints,
-  maybeSnapSliderValue,
+  computeColumnSnapPoints,
+  DEFAULT_TILES_PER_ROW,
+  legacySliderValueToColumnCount,
+  MAX_TILES_PER_ROW,
+  MIN_TILES_PER_ROW,
+  perRowToSliderPosition,
   ROOT_PADDING,
+  sliderPositionToPerRow,
   type SnapPoint,
   tickLeftPx,
 } from './terminalDashboardSizing.js';
@@ -138,13 +143,15 @@ let lastSectionData: ProjectSectionData[] = [];
  *  cleared on exitDashboard. */
 let hiddenChangeUnsubscribe: (() => void) | null = null;
 
-/** Module-level slider value persists across enter / exit calls. HS-7129
- *  default = 33; lines up with three tiles per row on a typical laptop.
- *  HS-7948: hydrated from `/file-settings` (`dashboard_slider_value`) on app
- *  boot and persisted (debounced) on every input change so the user's chosen
- *  scale survives reloads + relaunches instead of snapping back to 33. */
-let sliderValue = 33;
-const DEFAULT_SLIDER_VALUE = 33;
+/** Module-level column count persists across enter / exit calls. HS-8176
+ *  default = `DEFAULT_TILES_PER_ROW` (4) — replaces the pre-HS-8176
+ *  continuous-slider default of 33 (out of 100). Hydrated from
+ *  `/file-settings` (`dashboard_columns_per_row`) on app boot and persisted
+ *  (debounced) on every input change so the user's chosen scale survives
+ *  reloads + relaunches. Legacy `dashboard_slider_value` (0..100) is
+ *  migrated on read by `legacySliderValueToColumnCount`; new writes use
+ *  the integer-keyed setting only. */
+let columnCount = DEFAULT_TILES_PER_ROW;
 let sliderValueLoadPromise: Promise<void> | null = null;
 let sliderPersistTimeout: ReturnType<typeof setTimeout> | null = null;
 const SLIDER_PERSIST_DEBOUNCE_MS = 250;
@@ -181,11 +188,12 @@ function bindGroupingSelect(): void {
 function bindSizeSliderInput(): void {
   sizeSlider?.addEventListener('input', () => {
     if (sizeSlider === null) return;
-    const parsed = Number.parseFloat(sizeSlider.value);
-    const rawValue = Number.isFinite(parsed) ? parsed : DEFAULT_SLIDER_VALUE;
-    const snapped = maybeSnapSliderValue(rawValue, currentSnapPoints);
-    sliderValue = snapped;
-    if (snapped !== rawValue) sizeSlider.value = String(snapped);
+    // HS-8176 — slider value is the LTR position (1=leftmost,
+    // MAX=rightmost). The user's mental model is left=many small,
+    // right=one big, so the column count is the inverse.
+    const parsed = Number.parseInt(sizeSlider.value, 10);
+    const sliderPos = Number.isFinite(parsed) ? parsed : perRowToSliderPosition(DEFAULT_TILES_PER_ROW);
+    columnCount = sliderPositionToPerRow(sliderPos);
     if (active) applyAllSizing();
     schedulePersistSliderValue();
   });
@@ -351,36 +359,45 @@ function loadLayoutMode(): Promise<void> {
   return layoutModeLoadPromise;
 }
 
-/** HS-7948 — pure: parse a `dashboard_slider_value` settings entry into a
- *  numeric slider value, returning `null` for any malformed / out-of-range
- *  input so the caller can keep the existing default. Accepts native
- *  numbers AND numeric strings (for forwards compat with a future settings
- *  shape that stringifies values). Exported for unit testing — DOM- and
- *  fetch-free so the validation rules can be pinned without touching the
- *  live `<input type="range">`. */
-export function parsePersistedSliderValue(raw: unknown): number | null {
-  if (raw === undefined || raw === null) return null;
-  const parsed = typeof raw === 'number' ? raw : (typeof raw === 'string' ? Number.parseFloat(raw) : Number.NaN);
-  if (!Number.isFinite(parsed)) return null;
-  if (parsed < 0 || parsed > 100) return null;
-  return parsed;
+/** HS-7948 / HS-8176 — pure: parse a settings entry into a numeric column
+ *  count (integer in `[MIN_TILES_PER_ROW, MAX_TILES_PER_ROW]`), returning
+ *  `null` for any malformed input. Accepts the new `dashboard_columns_per_row`
+ *  shape (integer 1..10) AND the legacy `dashboard_slider_value` shape
+ *  (continuous 0..100, mapped via `legacySliderValueToColumnCount`).
+ *  Exported for unit testing — DOM- and fetch-free. */
+export function parsePersistedColumnCount(rawNew: unknown, rawLegacy: unknown): number | null {
+  // Prefer the new key when present.
+  if (rawNew !== undefined && rawNew !== null) {
+    const parsed = typeof rawNew === 'number' ? rawNew : (typeof rawNew === 'string' ? Number.parseInt(rawNew, 10) : Number.NaN);
+    if (Number.isFinite(parsed) && parsed >= MIN_TILES_PER_ROW && parsed <= MAX_TILES_PER_ROW) {
+      return Math.round(parsed);
+    }
+  }
+  // Fall back to the legacy 0..100 key — migrate.
+  if (rawLegacy !== undefined && rawLegacy !== null) {
+    const parsed = typeof rawLegacy === 'number' ? rawLegacy : (typeof rawLegacy === 'string' ? Number.parseFloat(rawLegacy) : Number.NaN);
+    if (Number.isFinite(parsed)) {
+      return legacySliderValueToColumnCount(parsed);
+    }
+  }
+  return null;
 }
 
-/** HS-7948 — load the persisted dashboard slider value (`dashboard_slider_value`)
- *  from `/file-settings` once and cache the resulting promise. Resolves
- *  silently on error so the dashboard still works when the settings endpoint
- *  is briefly unavailable. Updates the live `<input type="range">`'s value
- *  when the load completes so the thumb reflects the persisted scale even if
- *  the user opens the dashboard before the fetch resolves. */
+/** HS-7948 / HS-8176 — load the persisted column count from
+ *  `/file-settings` once and cache the resulting promise. Resolves silently
+ *  on error so the dashboard still works when the settings endpoint is
+ *  briefly unavailable. Updates the live `<input type="range">`'s value when
+ *  the load completes so the thumb reflects the persisted scale even if the
+ *  user opens the dashboard before the fetch resolves. */
 function loadSliderValue(): Promise<void> {
   if (sliderValueLoadPromise !== null) return sliderValueLoadPromise;
   sliderValueLoadPromise = (async () => {
     try {
-      const fs = await api<{ dashboard_slider_value?: number | string }>('/file-settings');
-      const parsed = parsePersistedSliderValue(fs.dashboard_slider_value);
+      const fs = await api<{ dashboard_columns_per_row?: number | string; dashboard_slider_value?: number | string }>('/file-settings');
+      const parsed = parsePersistedColumnCount(fs.dashboard_columns_per_row, fs.dashboard_slider_value);
       if (parsed !== null) {
-        sliderValue = parsed;
-        if (sizeSlider !== null) sizeSlider.value = String(sliderValue);
+        columnCount = parsed;
+        if (sizeSlider !== null) sizeSlider.value = String(perRowToSliderPosition(columnCount));
         if (active) applyAllSizing();
       }
     } catch {
@@ -391,18 +408,19 @@ function loadSliderValue(): Promise<void> {
   return sliderValueLoadPromise;
 }
 
-/** HS-7948 — debounced persistence of the slider value to `/file-settings`.
- *  Debounce keeps a fast drag (input fires on every micro-move) from spamming
- *  the settings endpoint with a write per pixel; 250 ms = roughly the gap
- *  after the user releases the thumb. Idempotent: rescheduling cancels any
- *  pending write. */
+/** HS-7948 / HS-8176 — debounced persistence of the column count to
+ *  `/file-settings` under the new `dashboard_columns_per_row` key. Debounce
+ *  keeps a fast drag from spamming the settings endpoint. The legacy
+ *  `dashboard_slider_value` key is intentionally NOT written by the new
+ *  code so older Hot Sheet versions that downgrade-then-reload will fall
+ *  back to their default rather than seeing a stale 0..100 value. */
 function schedulePersistSliderValue(): void {
   if (sliderPersistTimeout !== null) clearTimeout(sliderPersistTimeout);
   sliderPersistTimeout = setTimeout(() => {
     sliderPersistTimeout = null;
     void api('/file-settings', {
       method: 'PATCH',
-      body: { dashboard_slider_value: sliderValue },
+      body: { dashboard_columns_per_row: columnCount },
     }).catch(() => { /* swallow — UI already reflects the new value */ });
   }, SLIDER_PERSIST_DEBOUNCE_MS);
 }
@@ -461,7 +479,7 @@ function enterDashboard(): void {
   if (hideButton !== null) hideButton.style.display = '';
   if (layoutToggleButton !== null) layoutToggleButton.style.display = '';
   applyLayoutToggleVisualState();
-  if (sizeSlider !== null) sizeSlider.value = String(sliderValue);
+  if (sizeSlider !== null) sizeSlider.value = String(perRowToSliderPosition(columnCount));
   if (rootElement !== null) {
     rootElement.style.display = '';
     void renderDashboardGrid(rootElement);
@@ -735,7 +753,7 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
     centerSizeFrac: 0.7,
     centerScope: 'viewport',
     centerReferenceEl: rootElement ?? undefined,
-    getSliderValue: () => sliderValue,
+    getColumnCount: () => columnCount,
     onContextMenu: (entry, e) => {
       const project = projectFor(entry);
       if (project === null) return;
@@ -885,7 +903,7 @@ function mountSectionGrid(grid: HTMLElement, data: ProjectSectionData, visible: 
     centerSizeFrac: 0.7,
     centerScope: 'viewport',
     centerReferenceEl: rootElement ?? undefined,
-    getSliderValue: () => sliderValue,
+    getColumnCount: () => columnCount,
     onContextMenu: (entry, e) => { onTileContextMenu(entry, data.project.secret, e); },
     onTileEnlarge: (_entry, target) => {
       // Cross-section coordination: only one tile centered globally.
@@ -1013,7 +1031,7 @@ function refreshDashboardGrid(): void {
 function refreshSnapPointIndicators(): void {
   if (sizerContainer === null || rootElement === null || sizeSlider === null) return;
   const rootWidth = rootElement.clientWidth - 2 * ROOT_PADDING;
-  currentSnapPoints = computeSliderSnapPoints(rootWidth);
+  currentSnapPoints = computeColumnSnapPoints(rootWidth);
 
   let ticksEl = sizerContainer.querySelector<HTMLElement>('.terminal-dashboard-sizer-ticks');
   if (ticksEl === null) {
@@ -1028,15 +1046,18 @@ function refreshSnapPointIndicators(): void {
   ticksEl.style.width = `${sliderRect.width}px`;
   ticksEl.innerHTML = '';
   // HS-7950 — read the per-instance thumb-width hint from CSS so the tick
-  // helper can shift each tick from its naive `sliderValue%` position to
-  // the thumb's centre at that value. Falls back to 16 (matches the
-  // CSS default for the unstyled native macOS / Chrome / Safari thumb)
-  // if the variable is missing — defensive against a CSS regression.
+  // helper can shift each tick from its naive position to the thumb's
+  // centre at that value. Falls back to 16 if the variable is missing.
+  // HS-8176 — `pt.sliderValue` is the LTR slider position (1..MAX) per
+  // `perRowToSliderPosition`; `tickLeftPx` works in 0..100 percentage
+  // space, so convert via `(sliderValue - MIN) / (MAX - MIN) * 100`.
   const thumbWidthPx = parseFloat(getComputedStyle(sizeSlider).getPropertyValue('--range-thumb-w')) || 16;
+  const sliderRange = MAX_TILES_PER_ROW - MIN_TILES_PER_ROW;
   for (const pt of currentSnapPoints) {
+    const pctPosition = sliderRange === 0 ? 0 : ((pt.sliderValue - MIN_TILES_PER_ROW) / sliderRange) * 100;
     ticksEl.appendChild(toElement(
       <span className="terminal-dashboard-sizer-tick"
-            style={`left:${tickLeftPx(pt.sliderValue, sliderRect.width, thumbWidthPx)}px;`}
+            style={`left:${tickLeftPx(pctPosition, sliderRect.width, thumbWidthPx)}px;`}
             title={`${pt.perRow} per row`}></span>
     ));
   }

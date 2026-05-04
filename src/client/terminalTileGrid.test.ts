@@ -76,7 +76,7 @@ function mount(entries: TileEntry[]): TileGridHandle {
     cssPrefix: 'terminal-dashboard',
     centerSizeFrac: 0.7,
     centerScope: 'viewport',
-    getSliderValue: () => 50,
+    getColumnCount: () => 4,
   });
   handle.rebuild(entries);
   return handle;
@@ -162,7 +162,7 @@ describe('terminalTileGrid — preview bg cascade (HS-8059)', () => {
       cssPrefix: 'terminal-dashboard',
       centerSizeFrac: 0.7,
       centerScope: 'viewport',
-      getSliderValue: () => 50,
+      getColumnCount: () => 4,
     });
     handle.rebuild([entry]);
     return handle;
@@ -186,7 +186,7 @@ describe('terminalTileGrid — preview bg cascade (HS-8059)', () => {
       cssPrefix: 'terminal-dashboard',
       centerSizeFrac: 0.7,
       centerScope: 'viewport',
-      getSliderValue: () => 50,
+      getColumnCount: () => 4,
     });
     grid.rebuild([
       { ...makeEntry('s', 't-dracula'), theme: 'dracula' },
@@ -287,7 +287,7 @@ describe('terminalTileGrid — preview bg cascade (HS-8059)', () => {
       cssPrefix: 'drawer-terminal-grid',
       centerSizeFrac: 0.9,
       centerScope: 'container',
-      getSliderValue: () => 50,
+      getColumnCount: () => 4,
     });
     handle.rebuild([{ ...makeEntry('s', 't1'), theme: 'dracula' }]);
     const preview = document.querySelector<HTMLElement>('.drawer-terminal-grid-tile-preview');

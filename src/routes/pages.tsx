@@ -20,7 +20,17 @@ pageRoutes.get('/', (c) => {
           {/* HS-7832 — the leading icon was visual noise; the slider thumb
               + native range affordance carry the meaning on their own. */}
           <div className="terminal-dashboard-sizer" id="terminal-dashboard-sizer" style="display:none" title="Tile size">
-            <input type="range" id="terminal-dashboard-size-slider" min="0" max="100" step="1" value="33" aria-label="Dashboard tile size" />
+            {/* HS-8176 — integer slider, 1..10 with the spec's inverted
+                visual mapping: leftmost = 10 columns (smallest tiles, most
+                per row), rightmost = 1 column (one big tile filling the
+                row). Slider value IS the LTR position; the JS converts to
+                column count via `sliderPositionToPerRow` (`perRow = 11 -
+                sliderPosition`). Default value 7 corresponds to perRow=4
+                (the post-HS-8176 default). */}
+            <input type="range" id="terminal-dashboard-size-slider" min="1" max="10" step="1" value="7" list="terminal-dashboard-size-ticks" aria-label="Dashboard tile columns" />
+            <datalist id="terminal-dashboard-size-ticks">
+              <option value="1"></option><option value="2"></option><option value="3"></option><option value="4"></option><option value="5"></option><option value="6"></option><option value="7"></option><option value="8"></option><option value="9"></option><option value="10"></option>
+            </datalist>
           </div>
           {/* HS-7833 — Flow / Sectioned layout toggle for the dashboard,
               positioned RIGHT BEFORE the eye-icon hide button (was between
@@ -327,7 +337,13 @@ pageRoutes.get('/', (c) => {
                   by drawerTerminalGrid.tsx in lockstep with the grid. */}
               {/* HS-7832 — leading icon removed for visual quiet. */}
               <div className="drawer-grid-sizer" id="drawer-grid-sizer" style="display:none" title="Tile size">
-                <input type="range" id="drawer-grid-size-slider" min="0" max="100" step="1" value="33" aria-label="Grid tile size" />
+                {/* HS-8176 — see the dashboard size-slider comment above
+                    for the rationale. Same shape: integer 1..10, default 7
+                    (= perRow 4). */}
+                <input type="range" id="drawer-grid-size-slider" min="1" max="10" step="1" value="7" list="drawer-grid-size-ticks" aria-label="Grid tile columns" />
+                <datalist id="drawer-grid-size-ticks">
+                  <option value="1"></option><option value="2"></option><option value="3"></option><option value="4"></option><option value="5"></option><option value="6"></option><option value="7"></option><option value="8"></option><option value="9"></option><option value="10"></option>
+                </datalist>
               </div>
               {/* HS-7661 — Show / Hide Terminals dialog opener for the
                   drawer-grid view. Visible only while drawer-grid mode is

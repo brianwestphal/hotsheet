@@ -20,7 +20,7 @@ import {
   ROOT_PADDING,
   TILE_ASPECT,
   tileNativeGridFromCellMetrics,
-  tileWidthFromSlider,
+  tileWidthFromColumnCount,
 } from './terminalDashboardSizing.js';
 import { type GridNavDirection, isMagnifiedNavShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
@@ -57,8 +57,9 @@ import {
  * - `centerScope` — backdrop attachment target. `'viewport'` makes the
  *   backdrop dim the whole document (dashboard); `'container'` constrains it
  *   to the grid's parent panel (drawer).
- * - `getSliderValue` — caller owns the size slider state; the grid asks for
- *   the current value during sizing passes.
+ * - `getColumnCount` — caller owns the size-slider state and returns the
+ *   currently-selected column count (integer 1..10 per HS-8176). The grid
+ *   asks for the current value during every sizing pass.
  * - `onContextMenu` — optional right-click handler. The dashboard wires a
  *   per-tile context menu (§25.8.5); the drawer-grid currently doesn't.
  *
@@ -140,7 +141,7 @@ export interface TileGridOptions {
   centerReferenceEl?: HTMLElement;
   /** Returns the current slider value (0..100). Callsite owns the slider
    *  state; the grid calls this during sizing passes. */
-  getSliderValue: () => number;
+  getColumnCount: () => number;
   /** Optional right-click context-menu handler. */
   onContextMenu?: (entry: TileEntry, e: MouseEvent) => void;
   /** Optional hook fired when a tile is enlarged (centered or dedicated).
@@ -174,7 +175,7 @@ export interface TileGridHandle {
    *  should call this on every `/terminal/list` refresh that affects this
    *  grid's terminals. */
   rebuild(entries: TileEntry[]): void;
-  /** Re-run the per-tile sizing pass — reads `getSliderValue()` against the
+  /** Re-run the per-tile sizing pass — reads `getColumnCount()` against the
    *  container width and applies the resulting tile dims to every grid
    *  tile (centered tile is skipped). Called on slider input + window
    *  resize + dedicated-view exit. */
@@ -829,8 +830,8 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   function applySizing(): void {
     const rootWidth = Math.max(0, opts.container.clientWidth - ROOT_PADDING * 2);
     if (rootWidth <= 0) return;
-    const sliderValue = opts.getSliderValue();
-    const tileWidth = tileWidthFromSlider(sliderValue, rootWidth);
+    const columnCount = opts.getColumnCount();
+    const tileWidth = tileWidthFromColumnCount(columnCount, rootWidth);
     const tileHeight = Math.round(tileWidth / TILE_ASPECT);
 
     for (const tile of opts.container.querySelectorAll<HTMLElement>(`.${tileClass}`)) {

@@ -11,15 +11,19 @@ import { shouldEscapeBypassHotsheet } from './shortcuts.js';
 import {
   getActiveProject,
   getProjectGridActive,
-  getProjectGridSliderValue,
+  getProjectGridColumnCount,
   setProjectGridActive,
-  setProjectGridSliderValue,
+  setProjectGridColumnCount,
 } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import {
-  computeSliderSnapPoints,
-  maybeSnapSliderValue,
+  computeColumnSnapPoints,
+  DEFAULT_TILES_PER_ROW,
+  MAX_TILES_PER_ROW,
+  MIN_TILES_PER_ROW,
+  perRowToSliderPosition,
   ROOT_PADDING,
+  sliderPositionToPerRow,
   type SnapPoint,
   tickLeftPx,
 } from './terminalDashboardSizing.js';
@@ -149,12 +153,13 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
 
   sizeSlider?.addEventListener('input', () => {
     if (sizeSlider === null) return;
-    const parsed = Number.parseFloat(sizeSlider.value);
-    const rawValue = Number.isFinite(parsed) ? parsed : 33;
-    const snapped = maybeSnapSliderValue(rawValue, currentSnapPoints);
+    // HS-8176 — slider position is LTR (left=many, right=few); convert
+    // to the user-facing column count via `sliderPositionToPerRow`
+    // before persisting to state.
+    const parsed = Number.parseInt(sizeSlider.value, 10);
+    const sliderPos = Number.isFinite(parsed) ? parsed : perRowToSliderPosition(DEFAULT_TILES_PER_ROW);
     const project = getActiveProject();
-    if (project !== null) setProjectGridSliderValue(project.secret, snapped);
-    if (snapped !== rawValue) sizeSlider.value = String(snapped);
+    if (project !== null) setProjectGridColumnCount(project.secret, sliderPositionToPerRow(sliderPos));
     if (gridHandle !== null) gridHandle.applySizing();
   });
 
@@ -422,9 +427,9 @@ function ensureGridHandle(): void {
     // anyway when centerScope === 'viewport', so this only affects where
     // the dedicated overlay + backdrop are mounted in the DOM.
     centerReferenceEl: document.body,
-    getSliderValue: () => {
+    getColumnCount: () => {
       const project = getActiveProject();
-      return project === null ? 33 : getProjectGridSliderValue(project.secret);
+      return project === null ? DEFAULT_TILES_PER_ROW : getProjectGridColumnCount(project.secret);
     },
     // HS-7661 — right-click on a tile opens a small context menu with
     // "Hide in Dashboard". Click sets the terminal hidden in the
@@ -485,7 +490,8 @@ function showGridChrome(): void {
   if (hideBtn !== null) hideBtn.style.display = '';
   if (sizeSlider !== null) {
     const project = getActiveProject();
-    sizeSlider.value = String(project === null ? 33 : getProjectGridSliderValue(project.secret));
+    const perRow = project === null ? DEFAULT_TILES_PER_ROW : getProjectGridColumnCount(project.secret);
+    sizeSlider.value = String(perRowToSliderPosition(perRow));
   }
   refreshSnapPointIndicators();
   // HS-7823 — keep the eye-icon badge in sync when chrome shows (covers
@@ -572,7 +578,7 @@ function detachBellSubscription(): void {
 function refreshSnapPointIndicators(): void {
   if (sizerContainer === null || gridEl === null || sizeSlider === null) return;
   const rootWidth = gridEl.clientWidth - 2 * ROOT_PADDING;
-  currentSnapPoints = computeSliderSnapPoints(rootWidth);
+  currentSnapPoints = computeColumnSnapPoints(rootWidth);
 
   let ticksEl = sizerContainer.querySelector<HTMLElement>('.drawer-grid-sizer-ticks');
   if (ticksEl === null) {
@@ -588,12 +594,15 @@ function refreshSnapPointIndicators(): void {
   ticksEl.innerHTML = '';
   // HS-7950 — see the dashboard sizer's matching block for context. Same
   // thumb-width hint, same `tickLeftPx` shift to keep ticks centred under
-  // the thumb at every snap value.
+  // the thumb at every snap value. HS-8176 — sliderValue is a 1..MAX
+  // integer position; convert to 0..100 percentage for tickLeftPx.
   const thumbWidthPx = parseFloat(getComputedStyle(sizeSlider).getPropertyValue('--range-thumb-w')) || 16;
+  const sliderRange = MAX_TILES_PER_ROW - MIN_TILES_PER_ROW;
   for (const pt of currentSnapPoints) {
+    const pctPosition = sliderRange === 0 ? 0 : ((pt.sliderValue - MIN_TILES_PER_ROW) / sliderRange) * 100;
     ticksEl.appendChild(toElement(
       <span className="drawer-grid-sizer-tick"
-            style={`left:${tickLeftPx(pt.sliderValue, sliderRect.width, thumbWidthPx)}px;`}
+            style={`left:${tickLeftPx(pctPosition, sliderRect.width, thumbWidthPx)}px;`}
             title={`${pt.perRow} per row`}></span>
     ));
   }

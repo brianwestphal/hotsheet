@@ -18,9 +18,11 @@ const projectSearches = new Map<string, string>();
  *  rendering its terminals as a tile grid instead of the normal per-terminal
  *  tab stack (see docs/36-drawer-terminal-grid.md). Session-only. */
 const projectGridActive = new Map<string, boolean>();
-/** HS-6311 — per-project slider value for the drawer-grid view (0..100,
- *  default 33 — same default as the terminal-dashboard slider). Session-only. */
-const projectGridSliderValue = new Map<string, number>();
+/** HS-6311 / HS-8176 — per-project tile-column count for the drawer-grid
+ *  view (integer 1..10, default 4 — same default as the terminal-dashboard
+ *  slider). Session-only. Pre-HS-8176 this stored a continuous 0..100
+ *  slider value; the new integer-only slider stores `perRow` directly. */
+const projectGridColumnCount = new Map<string, number>();
 
 /** Switch active project, saving and restoring the sidebar view. */
 export function setActiveProject(project: ProjectInfo) {
@@ -48,13 +50,13 @@ export function clearPerProjectSessionState(secret: string): void {
   // HS-6311 — also wipe drawer-grid state so a re-added project at the same
   // secret doesn't resurrect the prior project's grid-mode flag / slider.
   projectGridActive.delete(secret);
-  projectGridSliderValue.delete(secret);
+  projectGridColumnCount.delete(secret);
 }
 
 /** HS-6311 — drawer terminal grid per-project state. The drawer grid module
  *  (src/client/drawerTerminalGrid.tsx) calls these on enter / exit / slider
- *  change. Default slider value is 33 to match the terminal-dashboard default
- *  (see docs/25-terminal-dashboard.md §25.4 / HS-7129). */
+ *  change. Default column count is 4 (HS-8176; pre-HS-8176 it was a 0..100
+ *  slider value defaulting to 33). See docs/36 §36.4 + docs/25 §25.4. */
 export function getProjectGridActive(secret: string): boolean {
   return projectGridActive.get(secret) === true;
 }
@@ -62,11 +64,11 @@ export function setProjectGridActive(secret: string, value: boolean): void {
   if (value) projectGridActive.set(secret, true);
   else projectGridActive.delete(secret);
 }
-export function getProjectGridSliderValue(secret: string): number {
-  return projectGridSliderValue.get(secret) ?? 33;
+export function getProjectGridColumnCount(secret: string): number {
+  return projectGridColumnCount.get(secret) ?? 4;
 }
-export function setProjectGridSliderValue(secret: string, value: number): void {
-  projectGridSliderValue.set(secret, value);
+export function setProjectGridColumnCount(secret: string, value: number): void {
+  projectGridColumnCount.set(secret, value);
 }
 
 export interface Ticket {

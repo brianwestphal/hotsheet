@@ -3832,14 +3832,21 @@ body.terminal-dashboard-active {
 // real PTY scrollback AND interact with the running `claude` directly
 // from inside the popup. On popup close / dismiss / respond the
 // checkout releases and the previous owner (drawer pane, dashboard
-// tile) gets the terminal back. Sized to a fixed pixel height so
-// FitAddon has stable dimensions to compute cols/rows from; capped at
-// 60vh so the popup still fits below the dialog shell's
-// `max-height: 80vh` on short laptop screens. Background `#000` so the
-// xterm's transparent canvas blends into the dark terminal palette
-// even before scrollback bytes arrive.
+// tile) gets the terminal back. Background `#000` so the xterm's
+// transparent canvas blends into the dark terminal palette even
+// before scrollback bytes arrive.
+//
+// HS-8180 — fixed pixel width / height. Pre-fix the container used
+// `width: 100%` inside the popup's `width: max-content`, which is a
+// circular sizing constraint — browsers resolve the percentage to 0,
+// the body slot collapsed, the popup looked invisible to the user
+// ("no permissions popup shown"). Width capped at the popup's own
+// `max-width: min(640px, calc(100vw - 16px))` so a narrow viewport
+// still fits the popup chrome. Height capped at 60vh so the popup
+// still fits below the dialog shell's `max-height: 80vh` on short
+// laptop screens.
 .permission-popup-live-terminal {
-  width: 100%;
+  width: min(620px, calc(100vw - 36px));
   height: min(420px, 60vh);
   border: 1px solid var(--border);
   border-radius: 4px;
