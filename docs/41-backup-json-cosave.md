@@ -43,10 +43,10 @@ JSON is written atomically using POSIX rename:
 
 1. Serialise the export to UTF-8 JSON.
 2. `gzipSync` the bytes.
-3. `openSync` `<path>.tmp`, `writeSync` the gzipped buffer, `fsyncSync` to flush to disk, `closeSync`.
-4. `renameSync` `<path>.tmp` to `<path>`.
+3. **HS-8178** — `await fsp.open(<path>.tmp, 'w')`, `await handle.write(gz)`, `await handle.sync()` (the async equivalent of `fsyncSync`), `await handle.close()`. Pre-HS-8178 this was the synchronous `openSync` / `writeSync` / `fsyncSync` / `closeSync` chain — switched to `fs.promises` so the fsync runs on libuv's threadpool instead of blocking the main event loop on a slow `backupDir` (Google Drive stall per HS-8174 candidate 2). The user's `backupDir` points at `~/Library/CloudStorage/GoogleDrive-...` where macOS can stall fsync for tens of seconds while the file-provider sync agent spins up.
+4. `await fsp.rename(<path>.tmp, <path>)`.
 
-A crash mid-write leaves either the previous file (or nothing) at `<path>` — never a partial file. If the rename fails, `<path>.tmp` is unlinked so it doesn't leak.
+A crash mid-write leaves either the previous file (or nothing) at `<path>` — never a partial file. If the rename fails, `<path>.tmp` is unlinked so it doesn't leak. `writeJsonExportAtomically` is now `async` (HS-8178 — was sync); callers `await` it from the backup-tier loop in `src/backup.ts`.
 
 ### 41.4 Pruning
 

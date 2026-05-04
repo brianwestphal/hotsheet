@@ -80,7 +80,7 @@ describe('buildJsonExport (HS-7893)', () => {
 });
 
 describe('writeJsonExportAtomically (HS-7893)', () => {
-  it('writes a gzipped JSON file readable as the same export shape', () => {
+  it('writes a gzipped JSON file readable as the same export shape', async () => {
     const dir = createTempDir();
     const path = join(dir, 'roundtrip.json.gz');
     const exportData: JsonDbExport = {
@@ -89,7 +89,7 @@ describe('writeJsonExportAtomically (HS-7893)', () => {
       tables: { tickets: [{ id: 1, title: 'Hello' }], attachments: [] },
     };
 
-    writeJsonExportAtomically(path, exportData);
+    await writeJsonExportAtomically(path, exportData);
     expect(existsSync(path)).toBe(true);
     expect(statSync(path).size).toBeGreaterThan(0);
 
@@ -100,7 +100,7 @@ describe('writeJsonExportAtomically (HS-7893)', () => {
     expect(decoded.tables.tickets).toEqual([{ id: 1, title: 'Hello' }]);
   });
 
-  it('overwrites an existing file in place — atomic via rename', () => {
+  it('overwrites an existing file in place — atomic via rename', async () => {
     const dir = createTempDir();
     const path = join(dir, 'overwrite.json.gz');
     writeFileSync(path, 'pre-existing junk');
@@ -110,13 +110,13 @@ describe('writeJsonExportAtomically (HS-7893)', () => {
       exportedAt: new Date().toISOString(),
       tables: { settings: [{ key: 'a', value: 'b' }] },
     };
-    writeJsonExportAtomically(path, fresh);
+    await writeJsonExportAtomically(path, fresh);
 
     const decoded = JSON.parse(gunzipSync(readFileSync(path)).toString('utf8')) as JsonDbExport;
     expect(decoded.tables.settings).toEqual([{ key: 'a', value: 'b' }]);
   });
 
-  it('does not leave a .tmp orphan after a successful write', () => {
+  it('does not leave a .tmp orphan after a successful write', async () => {
     const dir = createTempDir();
     const path = join(dir, 'nopartial.json.gz');
     const exportData: JsonDbExport = {
@@ -124,9 +124,42 @@ describe('writeJsonExportAtomically (HS-7893)', () => {
       exportedAt: new Date().toISOString(),
       tables: {},
     };
-    writeJsonExportAtomically(path, exportData);
+    await writeJsonExportAtomically(path, exportData);
 
     expect(existsSync(`${path}.tmp`)).toBe(false);
+  });
+
+  it('runs off the main event loop — concurrent setImmediate timers fire while the write is in flight (HS-8178)', async () => {
+    // The HS-8178 contract: the write runs on libuv's threadpool, so
+    // the main event loop continues servicing tasks during the write.
+    // This is the regression test that locks the contract — pre-fix
+    // the sync `writeSync` + `fsyncSync` chain blocked the main thread
+    // until fsync returned (tens of seconds on Google Drive `backupDir`),
+    // freezing every WS message + PGLite query + HTTP route.
+    //
+    // Method: queue a setImmediate task BEFORE awaiting the write.
+    // Pre-fix the setImmediate would not fire until the sync write
+    // returned (zero-tick delay scheduled on the same thread is still
+    // gated by the synchronous loop). Post-fix the write yields to the
+    // event loop on every `await`, so setImmediate fires before the
+    // write's promise resolves. Asserts a non-zero number of event-loop
+    // ticks happen during the write window.
+    const dir = createTempDir();
+    const path = join(dir, 'concurrent.json.gz');
+    const exportData: JsonDbExport = {
+      schemaVersion: SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      // Bigger payload so the write takes long enough to overlap a few ticks.
+      tables: { tickets: Array.from({ length: 5_000 }, (_, i) => ({ id: i, title: `t${i}` })) },
+    };
+    let tickCount = 0;
+    const tickInterval = setInterval(() => { tickCount += 1; }, 0);
+    try {
+      await writeJsonExportAtomically(path, exportData);
+    } finally {
+      clearInterval(tickInterval);
+    }
+    expect(tickCount).toBeGreaterThan(0);
   });
 });
 

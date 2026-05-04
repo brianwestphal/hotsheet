@@ -87,7 +87,7 @@ The user-supplied direction in HS-7900 maps cleanly onto Option 3.
 
 **`schemaVersion`** lives in `src/db/connection.ts` next to the existing `SCHEMA_VERSION` so the JSON co-save and the manifest stamp the same generation. Bump together when either format changes shape.
 
-**Atomic write** mirrors HS-7893's `writeJsonExportAtomically`: tmp + `fsyncSync` + `renameSync`. A crash mid-write leaves either the previous manifest or no manifest at all — both recoverable per §43.7.
+**Atomic write** mirrors HS-7893's `writeJsonExportAtomically`: tmp + write + fsync + close + rename. HS-8178 — both `writeManifestAtomically` and `ensureBlobInStore` (the per-attachment `link` / `copyFile`) are now async via `fs.promises` so the fsync + cross-device copyFile run on libuv's threadpool instead of blocking the main event loop on a slow `backupDir` (Google Drive stall per HS-8174 candidate 2). A crash mid-write leaves either the previous manifest or no manifest at all — both recoverable per §43.7.
 
 ## 43.6 Backup flow
 

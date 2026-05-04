@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, promises as fsp, readdirSync, readFileSync, rmSync, statSync } from 'fs';
 import { join } from 'path';
 
 import {
@@ -126,9 +126,13 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     const now = new Date();
     const filename = `backup-${formatTimestamp(now)}.tar.gz`;
     const filePath = join(dir, filename);
-    // HS-8160 — wrap the tarball write. This is the call most likely
-    // to stall on Google Drive / network-mounted backupDirs.
-    instrumentSync(dataDir, `backup.writeTarball:${tier}`, () => { writeFileSync(filePath, buffer); });
+    // HS-8160 / HS-8178 — wrap the tarball write. Switched to
+    // `fs.promises.writeFile` + `instrumentAsync` so the write +
+    // implicit fsync run on libuv's threadpool instead of blocking
+    // the main event loop on a slow `backupDir` (Google Drive stall
+    // per HS-8174 candidate 2). The instrument label stays the same
+    // so existing freeze.log entries from HS-8160 still resolve.
+    await instrumentAsync(dataDir, `backup.writeTarball:${tier}`, () => fsp.writeFile(filePath, buffer));
 
     // HS-7893: co-save a versioned JSON snapshot of every row in every
     // table alongside the tarball. Pure escape hatch — the JSON has no
@@ -138,8 +142,9 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     try {
       const exportData = await buildJsonExport(db);
       const jsonPath = join(dir, jsonSiblingFilename(filename));
-      // HS-8160 — wrap the JSON co-save (write + fsync inside).
-      instrumentSync(dataDir, `backup.writeJsonCoSave:${tier}`, () => { writeJsonExportAtomically(jsonPath, exportData); });
+      // HS-8160 / HS-8178 — wrap the JSON co-save (write + fsync inside,
+      // both async via fs.promises post-HS-8178).
+      await instrumentAsync(dataDir, `backup.writeJsonCoSave:${tier}`, () => writeJsonExportAtomically(jsonPath, exportData));
     } catch (jsonErr) {
       console.error(`JSON co-save failed (${tier}):`, jsonErr);
     }
@@ -153,8 +158,9 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
       const backupRoot = backupsDir(dataDir);
       const manifest = await buildAttachmentManifest(db, backupRoot, filename);
       const manifestPath = join(dir, manifestSiblingFilename(filename));
-      // HS-8160 — wrap the attachment-manifest write (write + fsync inside).
-      instrumentSync(dataDir, `backup.writeAttachmentManifest:${tier}`, () => { writeManifestAtomically(manifestPath, manifest); });
+      // HS-8160 / HS-8178 — wrap the attachment-manifest write (write
+      // + fsync inside, both async via fs.promises post-HS-8178).
+      await instrumentAsync(dataDir, `backup.writeAttachmentManifest:${tier}`, () => writeManifestAtomically(manifestPath, manifest));
     } catch (attachErr) {
       console.error(`Attachment manifest failed (${tier}):`, attachErr);
     }

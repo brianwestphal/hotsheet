@@ -1,5 +1,6 @@
 import { type PGlite } from '@electric-sql/pglite';
-import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeSync } from 'fs';
+import { promises as fsp } from 'fs';
+import type { FileHandle } from 'fs/promises';
 import { gzipSync } from 'zlib';
 
 import { SCHEMA_VERSION } from './db/connection.js';
@@ -59,25 +60,36 @@ export async function buildJsonExport(db: PGlite): Promise<JsonDbExport> {
  *  atomically: write to `<path>.tmp`, fsync, rename. Rename is the only
  *  atomic step in POSIX, so a crash mid-write leaves either the previous
  *  file (or nothing) at `path` — never a partial file. The .tmp is
- *  unlinked on rename failure to avoid leaking. */
-export function writeJsonExportAtomically(path: string, exportData: JsonDbExport): void {
+ *  unlinked on rename failure to avoid leaking.
+ *
+ *  HS-8178 — async via `fs.promises` so the fsync runs on libuv's
+ *  threadpool instead of blocking the main event loop. The user's
+ *  `backupDir` points at Google Drive (`~/Library/CloudStorage/...`)
+ *  where macOS can stall fsync for tens of seconds while the file-
+ *  provider sync agent spins up; on the main thread that froze every
+ *  WS message + PGLite query + HTTP route until fsync returned. */
+export async function writeJsonExportAtomically(path: string, exportData: JsonDbExport): Promise<void> {
   const tmp = `${path}.tmp`;
   const json = JSON.stringify(exportData);
   const gz = gzipSync(json);
 
-  let fd: number | null = null;
+  // open + write + sync + close in one async chain. `fileHandle.sync()`
+  // is the Promise-flavoured `fsyncSync` — runs on the libuv threadpool.
+  let handle: FileHandle | null = null;
   try {
-    fd = openSync(tmp, 'w');
-    writeSync(fd, gz);
-    fsyncSync(fd);
+    handle = await fsp.open(tmp, 'w');
+    await handle.write(gz);
+    await handle.sync();
   } finally {
-    if (fd !== null) closeSync(fd);
+    if (handle !== null) {
+      try { await handle.close(); } catch { /* swallow — close error doesn't invalidate the write */ }
+    }
   }
 
   try {
-    renameSync(tmp, path);
+    await fsp.rename(tmp, path);
   } catch (err) {
-    try { unlinkSync(tmp); } catch { /* tmp may already be gone */ }
+    try { await fsp.unlink(tmp); } catch { /* tmp may already be gone */ }
     throw err;
   }
 }

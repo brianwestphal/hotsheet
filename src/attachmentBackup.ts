@@ -17,20 +17,17 @@
  */
 import { createHash } from 'crypto';
 import {
-  closeSync,
   copyFileSync,
-createReadStream, 
+  createReadStream,
   existsSync,
-  fsyncSync,
-  linkSync,
   mkdirSync,
-  openSync,
+  promises as fsp,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
-  writeSync} from 'fs';
+} from 'fs';
+import type { FileHandle } from 'fs/promises';
 import { join } from 'path';
 import { pipeline } from 'stream/promises';
 import { gunzipSync } from 'zlib';
@@ -130,34 +127,44 @@ export function attachmentBlobsDir(backupRoot: string): string {
  *
  * Returns `true` if a new blob was written, `false` if it already existed.
  *
- * HS-8093 — `async` is kept (despite no `await` body today) because the
- * function is part of an evolving backup pipeline where worker-thread or
- * stream-based variants are likely to land; making it sync now would
- * force every caller to flip back to `await` once that happens.
+ * HS-8178 — every disk-touching call is the `fs.promises` async variant
+ * so the operation runs on libuv's threadpool instead of blocking the
+ * main event loop. The `copyFile` fallback in particular can stall for
+ * tens of seconds on a Google-Drive `backupDir` (HS-8174 candidate 2);
+ * keeping it on the main thread froze every WS message + PGLite query
+ * + HTTP route until the kernel returned. The hash-addressed
+ * de-duplication still skips re-copies of unchanged blobs so most
+ * backup ticks don't even reach the slow path.
  */
-// eslint-disable-next-line @typescript-eslint/require-await
 export async function ensureBlobInStore(
   blobsDir: string,
   srcPath: string,
   sha: string,
 ): Promise<boolean> {
-  mkdirSync(blobsDir, { recursive: true });
+  await fsp.mkdir(blobsDir, { recursive: true });
   const finalPath = join(blobsDir, sha);
-  if (existsSync(finalPath)) return false;
+  // HS-8178 — `fsp.access` raises on missing-file, so use a try/catch
+  // probe instead of the sync `existsSync` to keep the whole function
+  // off the main thread. The race window is the same as the prior
+  // `existsSync + linkSync` pattern.
+  try {
+    await fsp.access(finalPath);
+    return false; // already in store
+  } catch { /* not present — fall through to write */ }
 
   const tmpPath = `${finalPath}.tmp`;
-  try { rmSync(tmpPath, { force: true }); } catch { /* ignore */ }
+  try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
 
   try {
-    linkSync(srcPath, tmpPath);
+    await fsp.link(srcPath, tmpPath);
   } catch (linkErr) {
     // EXDEV (cross-device) or any other failure → fall back to copy.
-    try { rmSync(tmpPath, { force: true }); } catch { /* ignore */ }
+    try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
     try {
-      copyFileSync(srcPath, tmpPath);
+      await fsp.copyFile(srcPath, tmpPath);
     } catch (copyErr) {
       // Surface the copy error (more actionable) but log the link error too.
-      console.error('[attachmentBackup] linkSync failed:', linkErr);
+      console.error('[attachmentBackup] link failed:', linkErr);
       throw copyErr;
     }
   }
@@ -166,9 +173,9 @@ export async function ensureBlobInStore(
   // path. Cleanup of the tmp on rename failure mirrors the JSON co-save's
   // pattern in `dbJsonExport.ts`.
   try {
-    renameSync(tmpPath, finalPath);
+    await fsp.rename(tmpPath, finalPath);
   } catch (renameErr) {
-    try { rmSync(tmpPath, { force: true }); } catch { /* ignore */ }
+    try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
     throw renameErr;
   }
   return true;
@@ -176,28 +183,33 @@ export async function ensureBlobInStore(
 
 /**
  * Atomic write of a JSON manifest. Mirrors `writeJsonExportAtomically` in
- * `src/dbJsonExport.ts` — tmp + writeSync + fsyncSync + closeSync + rename.
+ * `src/dbJsonExport.ts` — tmp + write + fsync + close + rename.
  * A crash mid-write leaves either the prior manifest or no manifest, never
  * a partial.
+ *
+ * HS-8178 — async via `fs.promises` so the fsync runs on libuv's
+ * threadpool instead of blocking the main event loop on a slow
+ * `backupDir` (Google Drive, NFS, etc.). Same rationale as
+ * `writeJsonExportAtomically`.
  */
-export function writeManifestAtomically(path: string, manifest: AttachmentManifest): void {
+export async function writeManifestAtomically(path: string, manifest: AttachmentManifest): Promise<void> {
   const json = JSON.stringify(manifest, null, 2) + '\n';
   const buffer = Buffer.from(json, 'utf-8');
   const tmpPath = `${path}.tmp`;
-  try { rmSync(tmpPath, { force: true }); } catch { /* ignore */ }
-  let fd: number | null = null;
+  try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
+  let handle: FileHandle | null = null;
   try {
-    fd = openSync(tmpPath, 'w');
-    writeSync(fd, buffer);
-    fsyncSync(fd);
-    closeSync(fd);
-    fd = null;
-    renameSync(tmpPath, path);
+    handle = await fsp.open(tmpPath, 'w');
+    await handle.write(buffer);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fsp.rename(tmpPath, path);
   } catch (err) {
-    if (fd !== null) {
-      try { closeSync(fd); } catch { /* ignore */ }
+    if (handle !== null) {
+      try { await handle.close(); } catch { /* ignore */ }
     }
-    try { rmSync(tmpPath, { force: true }); } catch { /* ignore */ }
+    try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
     throw err;
   }
 }
@@ -621,7 +633,7 @@ export async function reanalyzeMissingManifests(
           failed++;
           continue;
         }
-        writeManifestAtomically(manifestPath, manifest);
+        await writeManifestAtomically(manifestPath, manifest);
         // Surface it in the index so later iterations in this same pass
         // can cross-reference it.
         for (const e of manifest.entries) {

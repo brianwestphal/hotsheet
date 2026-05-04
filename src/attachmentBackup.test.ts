@@ -132,7 +132,7 @@ describe('ensureBlobInStore (HS-7929)', () => {
 });
 
 describe('writeManifestAtomically + readManifest round-trip', () => {
-  it('round-trips a manifest verbatim', () => {
+  it('round-trips a manifest verbatim', async () => {
     const path = join(backupRoot, 'manifest.json');
     const manifest: AttachmentManifest = {
       schemaVersion: ATTACHMENT_MANIFEST_VERSION,
@@ -142,7 +142,7 @@ describe('writeManifestAtomically + readManifest round-trip', () => {
         { attachmentId: 1, ticketId: 100, originalName: 's.png', storedName: 'HS-100_s.png', sha: 'abc', size: 42 },
       ],
     };
-    writeManifestAtomically(path, manifest);
+    await writeManifestAtomically(path, manifest);
     expect(readManifest(path)).toEqual(manifest);
   });
 
@@ -199,7 +199,7 @@ describe('buildAttachmentManifest (HS-7929)', () => {
 });
 
 describe('runAttachmentGc (HS-7929)', () => {
-  function writeManifestUnder(tier: '5min' | 'hourly' | 'daily', name: string, shas: string[]): void {
+  async function writeManifestUnder(tier: '5min' | 'hourly' | 'daily', name: string, shas: string[]): Promise<void> {
     const tierDir = join(backupRoot, tier);
     mkdirSync(tierDir, { recursive: true });
     const manifest: AttachmentManifest = {
@@ -215,7 +215,7 @@ describe('runAttachmentGc (HS-7929)', () => {
         size: 42,
       })),
     };
-    writeManifestAtomically(join(tierDir, name), manifest);
+    await writeManifestAtomically(join(tierDir, name), manifest);
   }
 
   function blobAt(sha: string): string {
@@ -231,8 +231,8 @@ describe('runAttachmentGc (HS-7929)', () => {
     blobAt('sha-B');
     blobAt('sha-orphan-1');
     blobAt('sha-orphan-2');
-    writeManifestUnder('5min', 'backup-1.attachments.json', ['sha-A']);
-    writeManifestUnder('hourly', 'backup-2.attachments.json', ['sha-B']);
+    await writeManifestUnder('5min', 'backup-1.attachments.json', ['sha-A']);
+    await writeManifestUnder('hourly', 'backup-2.attachments.json', ['sha-B']);
 
     const stats = await runAttachmentGc(backupRoot);
     expect(stats.deleted).toBe(2);
@@ -247,7 +247,7 @@ describe('runAttachmentGc (HS-7929)', () => {
   it('aborts (no deletions) when ANY manifest fails to parse', async () => {
     blobAt('sha-A');
     blobAt('sha-orphan');
-    writeManifestUnder('5min', 'good.attachments.json', ['sha-A']);
+    await writeManifestUnder('5min', 'good.attachments.json', ['sha-A']);
     // Drop a malformed manifest in the same tier dir.
     writeFileSync(join(backupRoot, '5min', 'broken.attachments.json'), 'not valid json {{');
 
@@ -269,7 +269,7 @@ describe('runAttachmentGc (HS-7929)', () => {
     const blobsDir = attachmentBlobsDir(backupRoot);
     mkdirSync(blobsDir, { recursive: true });
     writeFileSync(join(blobsDir, 'sha-A.tmp'), 'in-flight');
-    writeManifestUnder('5min', 'good.attachments.json', []);
+    await writeManifestUnder('5min', 'good.attachments.json', []);
 
     const stats = await runAttachmentGc(backupRoot);
     expect(stats.deleted).toBe(0);
@@ -452,7 +452,7 @@ describe('reanalyzeMissingManifests (HS-7937)', () => {
       tarball: 'backup-has-manifest.tar.gz',
       entries: [],
     };
-    writeManifestAtomically(manifestPath, sentinel);
+    await writeManifestAtomically(manifestPath, sentinel);
 
     const stats = await reanalyzeMissingManifests(backupRoot);
     expect(stats.rebuilt).toBe(0);
@@ -478,7 +478,7 @@ describe('reanalyzeMissingManifests (HS-7937)', () => {
       tarball: 'backup-sibling.tar.gz',
       entries: [{ attachmentId: 1, ticketId: 100, originalName: 'a.bin', storedName: 'HS-100_a.bin', sha: xrefSha, size: xrefBuf.length }],
     };
-    writeManifestAtomically(join(siblingTier, 'backup-sibling.attachments.json'), siblingManifest);
+    await writeManifestAtomically(join(siblingTier, 'backup-sibling.attachments.json'), siblingManifest);
 
     const tarballPath = placeOldTarball('5min', 'backup-target.tar.gz', 25 * 60 * 60 * 1000);
     const ghostPath = join(liveAttachmentsDir, 'HS-100_a.bin');

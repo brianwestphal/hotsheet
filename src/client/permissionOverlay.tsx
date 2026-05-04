@@ -86,6 +86,14 @@ export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof set
           p => p !== null && p.request_id === activePopupRequestId,
         );
         if (!stillPending) {
+          // HS-8182 — release the §54 checkout BEFORE removing the
+          // popup DOM so the live xterm element reparents back into
+          // the previous owner's `mountInto` rather than being
+          // orphaned in the removed-from-document subtree. Without
+          // this, the dashboard tile / drawer pane that was bumped
+          // down stays stuck on the 'Terminal in use elsewhere'
+          // placeholder when the permission times out.
+          releaseActiveCheckoutIfAny();
           document.querySelector('.permission-popup')?.remove();
           activePopupRequestId = null;
         }
@@ -163,6 +171,25 @@ function syncMinimizedDots() {
 // --- Permission popup (single codepath for active + non-active projects) ---
 
 let activePopupRequestId: string | null = null;
+
+/** HS-8171 v2 / HS-8182 — module-level handle for the live-terminal
+ *  checkout the active popup may have taken. Hoisted out of
+ *  `showPermissionPopup`'s closure so the polling-loop's auto-dismiss
+ *  path (which fires when the channel server stops reporting the
+ *  permission as pending — e.g. the user typed a response directly
+ *  into the terminal, or the long-text popup timed out at the channel
+ *  server) can release the checkout too. Pre-HS-8182 the auto-dismiss
+ *  path only removed the popup DOM, leaving the §54 stack with a
+ *  consumer whose `mountInto` was now in a detached subtree — the
+ *  previous owner (dashboard tile, drawer pane) stayed stuck on the
+ *  'Terminal in use elsewhere' placeholder forever. */
+let activeCheckoutHandle: CheckoutHandle | null = null;
+
+function releaseActiveCheckoutIfAny(): void {
+  if (activeCheckoutHandle === null) return;
+  try { activeCheckoutHandle.release(); } catch { /* swallow — entry may already be torn down */ }
+  activeCheckoutHandle = null;
+}
 
 function showPermissionPopup(secret: string, perm: PermissionData) {
   // Already showing this exact request — no-op
@@ -271,17 +298,11 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     });
   }
 
-  // HS-8171 v2 — track the live-terminal checkout (if any) so every
-  // popup-close path can release it. Idempotent — calling twice is a
-  // no-op. The release reparents the live xterm element back into the
-  // previous owner's mountInto (drawer pane, dashboard tile, etc.) or
-  // disposes the entry when the popup was the last consumer.
-  let checkoutHandle: CheckoutHandle | null = null;
-  function releaseCheckoutIfAny() {
-    if (checkoutHandle === null) return;
-    try { checkoutHandle.release(); } catch { /* swallow — entry may already be torn down */ }
-    checkoutHandle = null;
-  }
+  // HS-8171 v2 / HS-8182 — the checkout handle (if any) lives at module
+  // scope (`activeCheckoutHandle`) so the polling-loop's auto-dismiss
+  // path can release it too. Every popup-close path inside this scope
+  // routes through `releaseActiveCheckoutIfAny()` so the release is
+  // idempotent + single-source-of-truth.
 
   function clearPopupOnly() {
     activePopupRequestId = null;
@@ -289,13 +310,13 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   }
 
   function cleanupAndDismiss() {
-    releaseCheckoutIfAny();
+    releaseActiveCheckoutIfAny();
     dismissedRequestIds.add(perm.request_id);
     clearPopupOnly();
   }
 
   function cleanupAndMinimize() {
-    releaseCheckoutIfAny();
+    releaseActiveCheckoutIfAny();
     clearPopupOnly();
     const timeoutId = setTimeout(() => {
       const rec = minimizedRequests.get(perm.request_id);
@@ -337,7 +358,7 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     // tearing down the popup DOM so the xterm element reparents
     // cleanly into the previous owner's mountInto rather than being
     // momentarily orphaned in the removed-from-document subtree.
-    releaseCheckoutIfAny();
+    releaseActiveCheckoutIfAny();
     handle.tearDownDom();
   }
 
@@ -382,7 +403,14 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // respond) the previous owner re-takes the top of the stack and
   // gets its own dims back.
   if (useLiveCheckout && liveTermContainer !== null) {
-    checkoutHandle = checkout({
+    // HS-8182 — defensive: if a stale handle survives from a prior
+    // popup (e.g. the polling loop's auto-dismiss path was never
+    // exercised), release it before claiming a new one. The `checkout`
+    // call itself bumps the previous owner down, but releasing the
+    // stale handle first keeps `activeCheckoutHandle` the single
+    // source of truth for "the popup currently owning the live xterm".
+    releaseActiveCheckoutIfAny();
+    activeCheckoutHandle = checkout({
       projectSecret: secret,
       terminalId: 'default',
       cols: 100,
@@ -392,10 +420,10 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     // Defer the fit one frame so the container has computed layout
     // dimensions before `proposeDimensions` measures it.
     requestAnimationFrame(() => {
-      if (checkoutHandle === null) return;
-      const dims = checkoutHandle.fit.proposeDimensions();
+      if (activeCheckoutHandle === null) return;
+      const dims = activeCheckoutHandle.fit.proposeDimensions();
       if (dims === undefined) return;
-      checkoutHandle.resize(dims.cols, dims.rows);
+      activeCheckoutHandle.resize(dims.cols, dims.rows);
     });
   }
 
