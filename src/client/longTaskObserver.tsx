@@ -228,6 +228,47 @@ function recordLongTask(durationMs: number, source: LongTaskSource): void {
     lastToastTs = ts;
     void showLongTaskToast(durationMs, source, recentInteractions);
   }
+
+  // HS-8054 v3 — POST every detected hang to the server's freeze-log
+  // endpoint so the user gets a single `<dataDir>/freeze.log` file with
+  // both client AND server entries interleaved by timestamp. Pre-fix
+  // the only surfaces were `console.error` + the rate-limited toast;
+  // the user reported on 2026-05-04 that they see neither and need a
+  // file they can paste from. The server-side endpoint
+  // (`POST /api/diagnostics/freeze`) appends a JSONL line. Best-effort:
+  // a failed POST is logged as a console.warn (already-noisy after a
+  // freeze) but never throws.
+  void postFreezeLog(durationMs, source, wallClock, recentInteractions);
+}
+
+/** HS-8054 v3 — fire-and-forget POST to the server's freeze-log endpoint.
+ *  Lazy-imports `./api.js` so the module-init path doesn't pay the cost
+ *  if the freeze never fires. Failures are swallowed — the console.error
+ *  + toast paths above already surface the hang locally. */
+async function postFreezeLog(
+  durationMs: number,
+  source: LongTaskSource,
+  wallClock: string,
+  recentInteractions: InteractionEntry[],
+): Promise<void> {
+  try {
+    const { api } = await import('./api.js');
+    const context = recentInteractions.length === 0
+      ? 'no recent interactions'
+      : recentInteractions
+          .map(i => `${i.label}@${formatRelativeMs(i.ts - performance.now())}`)
+          .join(', ');
+    await api('/diagnostics/freeze', {
+      method: 'POST',
+      body: {
+        ts: new Date().toISOString(),
+        source: source === 'observer' ? 'client-observer' : 'client-heartbeat',
+        durationMs: Math.round(durationMs),
+        clientWallClock: wallClock,
+        context,
+      },
+    });
+  } catch { /* swallow — freeze.log is a diagnostic-only path */ }
 }
 
 /** HS-8054 follow-up — load the toast helper lazily so the heartbeat

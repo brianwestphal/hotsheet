@@ -9,6 +9,10 @@ import {
   takePausedBytes,
 } from './terminalCheckout.js';
 
+// HS-8159 — when the resize-based snapshot bails (no redraw bytes /
+// structural-only redraw), fall back to serializing the LIVE xterm's
+// current buffer including scrollback. See `serializeLiveTerm` below.
+
 /**
  * HS-7999 — capture a wider snapshot of the terminal-backed Claude's
  * current rendering. The capture orchestrates a freeze + temp-resize +
@@ -137,8 +141,24 @@ export async function captureTerminalSnapshot(
     // (truncated) flat preview instead of replacing it with nothing.
     const wideRedraw = takePausedBytes(secret, terminalId);
     if (wideRedraw.byteLength === 0) {
+      // HS-8159 — fall back to serializing the LIVE xterm's current
+      // buffer (including scrollback). The user reported on 2026-05-04
+      // that the popup was STILL truncating long Write payloads after
+      // HS-8139 / HS-8158: when Claude has settled into a permission
+      // dialog, SIGWINCH no longer triggers a redraw of the file diff
+      // (Claude's TUI keeps the existing dialog as-is and only reflows
+      // the prompt selector at the bottom). The wide-redraw bytes land
+      // empty and the popup kept its truncated edit-diff body. With
+      // the fallback, we serialize whatever the live xterm has on
+      // screen RIGHT NOW — including the scrollback rows that hold
+      // the full Claude-rendered diff Claude wrote before the prompt
+      // settled. The popup mirror xterm gets that scrollback, and
+      // mouse-wheel inside the mirror lets the user scroll up through
+      // the FULL diff (the user's stated requirement: "lets the user
+      // scroll through in the prompt to see the entire thing being
+      // asked").
       await restoreAndUnpause(secret, terminalId, origCols, origRows, waitMs);
-      return null;
+      return serializeLiveTerm(secret, terminalId);
     }
     const stream = serializeOffscreen(wideRedraw, targetCols, targetRows);
 
@@ -148,11 +168,12 @@ export async function captureTerminalSnapshot(
     // 2026-05-04 screenshot was a Write permission popup whose body
     // mounted as a fully-black mirror xterm because Claude's redraw
     // bytes were structural-only (no visible characters reached the
-    // offscreen buffer). Bail just like the byteLength=0 path so the
-    // popup keeps its existing edit-diff body / flat preview.
+    // offscreen buffer). HS-8159 — same fallback as the byteLength=0
+    // path so the popup gets the live-term scrollback instead of
+    // staying on the truncated preview.
     if (!streamHasVisibleContent(stream)) {
       await restoreAndUnpause(secret, terminalId, origCols, origRows, waitMs);
-      return null;
+      return serializeLiveTerm(secret, terminalId);
     }
 
     // Step 4 — resize PTY back to original. Claude redraws at the
@@ -176,6 +197,42 @@ export async function captureTerminalSnapshot(
     try { resumeEntryWritesAndDrain(secret, terminalId); } catch { /* */ }
     return null;
   }
+}
+
+/**
+ * HS-8159 — fallback path for `captureTerminalSnapshot`: serialize the
+ * LIVE entry's `xterm.js` buffer (visible region + scrollback) and
+ * return it as a `SnapshotResult` at the live geometry. Fired when the
+ * resize-based redraw produced no usable bytes — Claude has settled
+ * into a permission dialog and SIGWINCH no longer prompts a fresh
+ * render of the diff content.
+ *
+ * The user can scroll back inside the popup mirror xterm to see every
+ * row Claude wrote BEFORE the dialog settled (the diff that scrolled
+ * up out of the visible region) — strictly more content than the
+ * MCP-truncated `input_preview` could carry.
+ *
+ * Returns null when:
+ * - No entry exists for `(secret, terminalId)`.
+ * - `SerializeAddon` throws (malformed buffer state — defensive).
+ * - The serialized stream has no visible content (the live term is
+ *   blank, e.g. user just connected — nothing to show in the popup).
+ */
+export function serializeLiveTerm(secret: string, terminalId: string): SnapshotResult | null {
+  const entry = _getEntryForTesting(secret, terminalId);
+  if (entry === null) return null;
+  const term = entry.term;
+  let stream = '';
+  try {
+    const ser = new SerializeAddon();
+    term.loadAddon(ser);
+    stream = ser.serialize();
+    try { ser.dispose(); } catch { /* */ }
+  } catch {
+    return null;
+  }
+  if (!streamHasVisibleContent(stream)) return null;
+  return { stream, cols: term.cols, rows: term.rows };
 }
 
 /**

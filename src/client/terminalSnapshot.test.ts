@@ -14,7 +14,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { _resetForTesting } from './terminalCheckout.js';
-import { captureTerminalSnapshot, dropBeforeSecondClear, streamHasVisibleContent } from './terminalSnapshot.js';
+import { captureTerminalSnapshot, dropBeforeSecondClear, serializeLiveTerm, streamHasVisibleContent } from './terminalSnapshot.js';
 
 afterEach(() => {
   _resetForTesting();
@@ -170,6 +170,55 @@ describe('captureTerminalSnapshot — early-return paths (HS-7999)', () => {
     try {
       const result = await captureTerminalSnapshot('s', 't', { tempCols: 200, tempRows: 80 });
       expect(result).toBeNull();
+    } finally {
+      handle.release();
+    }
+  });
+});
+
+describe('serializeLiveTerm (HS-8159)', () => {
+  it('returns null when no entry exists for the (secret, terminalId)', () => {
+    expect(serializeLiveTerm('nope', 'nope')).toBeNull();
+  });
+
+  it('returns null when the live xterm buffer has no visible content', async () => {
+    // Fresh xterm with no writes — buffer is blank, snapshot has no
+    // visible content, fallback returns null so the popup keeps its
+    // truncated preview rather than mounting a useless empty mirror.
+    const { checkout } = await import('./terminalCheckout.js');
+    const mount = document.createElement('div');
+    document.body.appendChild(mount);
+    const handle = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: mount });
+    try {
+      const result = serializeLiveTerm('s', 't');
+      expect(result).toBeNull();
+    } finally {
+      handle.release();
+    }
+  });
+
+  it('returns the live xterm scrollback at the live geometry when visible content is present', async () => {
+    const { checkout } = await import('./terminalCheckout.js');
+    const mount = document.createElement('div');
+    document.body.appendChild(mount);
+    const handle = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: mount });
+    try {
+      // Write enough lines to fill the visible region + a few rows of
+      // scrollback, so the serialized stream proves the fallback
+      // captures scrollback content the user can wheel-scroll back to.
+      await new Promise<void>((resolve) => {
+        const lines = Array.from({ length: 30 }, (_, i) => `LIVE-LINE-${i}`).join('\r\n');
+        handle.term.write(lines + '\r\n', () => resolve());
+      });
+      const result = serializeLiveTerm('s', 't');
+      expect(result).not.toBeNull();
+      expect(result!.cols).toBe(80);
+      expect(result!.rows).toBe(24);
+      // A scrollback line beyond the visible region should appear in
+      // the serialized stream — proves we serialized scrollback, not
+      // just the visible 24 rows.
+      expect(result!.stream).toContain('LIVE-LINE-0');
+      expect(result!.stream).toContain('LIVE-LINE-29');
     } finally {
       handle.release();
     }

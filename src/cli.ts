@@ -101,6 +101,15 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   const actualPort = await startServer(port, dataDir, { noOpen: true, strictPort });
   const secret = ensureSecret(dataDir, actualPort);
 
+  // HS-8054 v3 — server-side event-loop heartbeat. Detects Node-process
+  // blocks ≥ 100 ms and appends them to `<dataDir>/freeze.log` next to the
+  // client-detected entries POSTed via `/api/diagnostics/freeze`. Single
+  // file, paste-ready, lets us see whether the freeze the user reports
+  // is in the browser, the Node process, or neither (which would point
+  // at the WS / PTY layer the user suspected on 2026-05-04).
+  const { startServerEventLoopHeartbeat } = await import('./diagnostics/freezeLogger.js');
+  startServerEventLoopHeartbeat(dataDir);
+
   initMarkdownSync(dataDir, actualPort);
   scheduleAllSync(dataDir);
 

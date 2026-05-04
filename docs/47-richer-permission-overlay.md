@@ -219,6 +219,14 @@ The snapshot is best-effort. It returns null (the popup keeps the truncated prev
 - The popup has already been dismissed by the time the snapshot resolves (`respondedRequestIds` / `dismissedRequestIds` checked via `isDismissed` callback).
 - The overlay has been torn down (`overlay.isConnected === false`).
 
+### HS-8159 — live-term scrollback fallback
+
+The user reported on 2026-05-04 that long Write payloads were STILL showing a `… (truncated)` edit-diff body even after HS-8139 / HS-8158. Root cause: when Claude has settled into a permission dialog, SIGWINCH (the resize-up step) no longer triggers a redraw of the file diff — Claude's TUI keeps the existing dialog as-is and only reflows the prompt selector at the bottom. The wide-redraw bytes land empty (HS-8107 path) or structural-only (HS-8158 path), and pre-fix BOTH cases bailed back to the truncated edit-diff body.
+
+The fallback path (`serializeLiveTerm(secret, terminalId)` in `terminalSnapshot.ts`) replaces those bail-to-null paths with: serialize the LIVE entry's `xterm.js` buffer (visible region + scrollback) via `SerializeAddon`, return it as a `SnapshotResult` at the live geometry. The popup mirror xterm renders the captured scrollback, and mouse-wheel inside the mirror lets the user scroll up through the FULL diff that Claude wrote BEFORE the dialog settled (the user's stated requirement: "lets the user scroll through in the prompt to see the entire thing being asked"). Strictly more content than the MCP-truncated `input_preview` could carry — and unlike the resize-based path, it works whether or not Claude actively redraws.
+
+Returns null only when the live term's buffer is itself blank (no entry term content yet — fresh launch). Otherwise the popup gets a faithful mirror of whatever Claude has on screen, with native xterm scrollback navigation.
+
 ### Cost + risks
 
 - ~500 ms total snapshot time (default 250 ms × 2 phases). The user is looking at the popup during this window so the live terminal pause is invisible.
@@ -227,4 +235,4 @@ The snapshot is best-effort. It returns null (the popup keeps the truncated prev
 
 ### Tests
 
-`src/client/terminalSnapshot.test.ts` (8 tests, happy-dom): pure-helper coverage for `dropBeforeSecondClear` (no-clear, single-clear, two-clears, back-to-back, end-of-buffer, partial-prefix-no-false-positive) plus the early-return paths in `captureTerminalSnapshot` (no entry → null, ws-undefined → null). The interesting end-to-end test (real WS, real PTY, real SIGWINCH redraw) is filed as a Playwright follow-up — happy-dom doesn't ship `WebSocket` so the full orchestration can't run there.
+`src/client/terminalSnapshot.test.ts` (22 tests, happy-dom): pure-helper coverage for `dropBeforeSecondClear` (no-clear, single-clear, two-clears, back-to-back, end-of-buffer, partial-prefix-no-false-positive), `streamHasVisibleContent` (HS-8158 — empty / whitespace / CSI / OSC-BEL / OSC-ST / printable-survives / Unicode-whitespace), `serializeLiveTerm` (HS-8159 — no-entry-null, blank-buffer-null, scrollback-content-rendered-at-live-geometry), plus the early-return paths in `captureTerminalSnapshot` (no entry → null, ws-undefined → null). The interesting end-to-end test (real WS, real PTY, real SIGWINCH redraw) is filed as a Playwright follow-up — happy-dom doesn't ship `WebSocket` so the full orchestration can't run there.

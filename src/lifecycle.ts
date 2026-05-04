@@ -13,6 +13,7 @@
 import type { Server as HttpServer } from 'http';
 
 import { closeAllDatabases } from './db/connection.js';
+import { stopServerEventLoopHeartbeat } from './diagnostics/freezeLogger.js';
 import { removeInstanceFile } from './instance.js';
 import { releaseAllLocks } from './lock.js';
 
@@ -84,10 +85,22 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   await destroyTerminals();
   await disposeGitWatchers();
   await closeDatabases();
+  stopFreezeHeartbeat();
   releaseProjectLocks();
   removeLockfile();
 
   console.log(`[lifecycle] gracefulShutdown(${reason}) — done`);
+}
+
+/** HS-8054 v3 — stop the server-side event-loop heartbeat so the timer
+ *  doesn't outlive the data directory in tests / multi-shutdown paths.
+ *  Runs after the heavy work so any blocks ABOVE this in the pipeline
+ *  still get logged (a slow `closeDatabases` is exactly the kind of
+ *  thing the heartbeat exists to surface). */
+function stopFreezeHeartbeat(): void {
+  try {
+    stopServerEventLoopHeartbeat();
+  } catch { /* heartbeat never started — nothing to stop */ }
 }
 
 /** HS-8040 — kill every shell-command process spawned via custom-command
