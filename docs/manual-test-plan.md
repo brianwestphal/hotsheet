@@ -244,6 +244,17 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] **Drawer-grid magnified navigation.** Open the drawer-grid (per §36 toolbar toggle, with ≥2 terminals). Single-click any tile to center within the drawer-grid scope. Shift+Cmd+Arrow swaps the centered tile within the drawer-grid layout. Same behaviour as the dashboard but scoped to the drawer.
 - [ ] **No xterm escape leak.** Inside a centered or dedicated terminal showing a shell prompt, press Shift+Cmd+Right. The shell does NOT receive a `\e[1;9C`-style escape sequence (no random characters appear in the prompt). The chord is fully consumed by the magnified-nav handler.
 
+### Permission popup — synchronous snapshot mount (HS-8171)
+- [ ] Trigger a long Bash / Edit / Write permission via Claude where the MCP `input_preview` is truncated (e.g. a long ImageMagick chain, or a Write of a multi-page file).
+- [ ] The popup should appear with the terminal-mirror xterm body **immediately** — no momentary flash of a truncated `…` preview that swaps to the mirror a moment later. Pre-fix the popup mounted with the truncated body and `runSnapshotIntoBody` async-replaced it; the swap was visible.
+- [ ] **Regression check** — short permission prompts (no truncation) should still mount with the normal flat preview / diff body. Bash with a one-line command, Edit with a small diff, etc.
+
+### Focus ring on magnified terminals (HS-8170)
+- [ ] **Dashboard centered tile.** Single-click a tile in the dashboard. Type a key — the tile shows a 3 px blue (`#3b82f6`) focus ring around the tile preview. Click outside the tile (e.g. on the backdrop) — the ring disappears as focus leaves.
+- [ ] **Dashboard dedicated view.** Double-click a tile to enter the dedicated full-pane view. The xterm pane shows a 3 px blue focus ring. Tab away to a button in the dedicated bar (e.g. Back) — ring disappears. Click back into the xterm — ring returns.
+- [ ] **Drawer-grid centered tile.** Open the drawer-grid (§36 toggle). Single-click a tile. Same focus-ring behaviour as the dashboard.
+- [ ] **Drawer-grid dedicated view.** Double-click a tile in the drawer-grid. Same focus-ring behaviour as the dashboard's dedicated view.
+
 ### PTY size resync after Terminal Dashboard exit (HS-7592, §22 / §25)
 - [ ] Open the drawer with a configured terminal active (e.g. `claude` or a shell) — confirm the prompt fits the drawer width.
 - [ ] Run something that writes to the full screen width (e.g. `printf '%s\n' "$(printf '%-200s' '=')"` to print a 200-char banner, or `htop`).

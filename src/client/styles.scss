@@ -1372,6 +1372,21 @@ input, select, textarea {
   animation: terminal-dashboard-tile-bell-bounce 0.35s ease-out 1;
 }
 
+// HS-8170 — focus ring on magnified terminals when they have keyboard focus.
+// `:focus-within` propagates from the xterm helper textarea (which `term.focus()`
+// targets programmatically) up through every ancestor, including the centered
+// tile / dedicated pane wrappers. Uses the standard accent (#3b82f6) for a
+// typical blue ring; stacks with the existing centered-tile drop shadow.
+.terminal-dashboard-tile.centered:focus-within {
+  .terminal-dashboard-tile-preview {
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 3px var(--accent, #3b82f6);
+  }
+}
+.terminal-dashboard-dedicated-pane:focus-within {
+  box-shadow: 0 0 0 3px var(--accent, #3b82f6);
+  border-radius: var(--radius);
+}
+
 @keyframes terminal-dashboard-tile-bell-bounce {
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(1.08); }
@@ -8060,6 +8075,12 @@ body.terminal-dashboard-active {
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
   }
 
+  // HS-8170 — focus ring when the magnified tile has keyboard focus.
+  // Stacks with the drop shadow so the ring reads on the dimmed backdrop.
+  &:focus-within .drawer-terminal-grid-tile-preview {
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), 0 0 0 3px var(--accent, #3b82f6);
+  }
+
   // HS-8010 — see the matching block on `.terminal-dashboard-tile.centered`
   // for the rationale. Mouse selection is disabled in the scaled centered
   // view because xterm's cellWidth doesn't track CSS transforms; double-click
@@ -8183,6 +8204,12 @@ body.terminal-dashboard-active {
   display: flex;
   align-items: center;
   justify-content: center;
+
+  // HS-8170 — focus ring when the dedicated-view xterm has keyboard focus.
+  &:focus-within {
+    box-shadow: 0 0 0 3px var(--accent, #3b82f6);
+    border-radius: var(--radius);
+  }
 }
 
 .drawer-terminal-grid-dedicated-pane > .xterm {

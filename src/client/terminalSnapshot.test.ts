@@ -162,7 +162,7 @@ describe('captureTerminalSnapshot — early-return paths (HS-7999)', () => {
   // — exactly the path we want to assert on. The test is a touch
   // indirect: drive `checkout` via dynamic import + capture, drive
   // `captureTerminalSnapshot`, assert null.
-  it('returns null when the entry has no open WebSocket (happy-dom path)', async () => {
+  it('returns null when the entry has no open WebSocket and the live term is blank (happy-dom path)', async () => {
     const { checkout } = await import('./terminalCheckout.js');
     const mount = document.createElement('div');
     document.body.appendChild(mount);
@@ -170,6 +170,36 @@ describe('captureTerminalSnapshot — early-return paths (HS-7999)', () => {
     try {
       const result = await captureTerminalSnapshot('s', 't', { tempCols: 200, tempRows: 80 });
       expect(result).toBeNull();
+    } finally {
+      handle.release();
+    }
+  });
+});
+
+describe('captureTerminalSnapshot — live-term primary path (HS-8139 v3)', () => {
+  it('returns the live xterm serialization (NOT a resize-based capture) when the live buffer has visible content', async () => {
+    // The user reported on 2026-05-04 that the resize-based capture
+    // mounted a popup mirror xterm showing only the input-box / status
+    // bar bytes Claude redrew during the resize wait, missing the
+    // dialog/diff context. Fix: serialize the live term first. With
+    // the live term holding visible content, `captureTerminalSnapshot`
+    // must return the live serialization at the LIVE geometry — even
+    // though no WebSocket is connected (resize fallback would fail).
+    const { checkout } = await import('./terminalCheckout.js');
+    const mount = document.createElement('div');
+    document.body.appendChild(mount);
+    const handle = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: mount });
+    try {
+      await new Promise<void>((resolve) => {
+        handle.term.write('VISIBLE-DIFF-CONTENT-LINE\r\n', () => resolve());
+      });
+      const result = await captureTerminalSnapshot('s', 't', { tempCols: 200, tempRows: 80 });
+      expect(result).not.toBeNull();
+      // Live geometry, NOT the temp 200×80 — proves the resize path
+      // was bypassed.
+      expect(result!.cols).toBe(80);
+      expect(result!.rows).toBe(24);
+      expect(result!.stream).toContain('VISIBLE-DIFF-CONTENT-LINE');
     } finally {
       handle.release();
     }

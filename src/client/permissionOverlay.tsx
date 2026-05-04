@@ -10,7 +10,7 @@ import { openPermissionDialogShell } from './permissionDialogShell.js';
 import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
 import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
-import { captureTerminalSnapshot, mountMirrorXterm } from './terminalSnapshot.js';
+import { captureTerminalSnapshot, mountMirrorXterm, serializeLiveTerm, type SnapshotResult } from './terminalSnapshot.js';
 
 /**
  * Claude permission-request UI. Historically there were two variants: a
@@ -212,11 +212,36 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     : '';
   const hasStringPreview = previewText !== '';
 
-  // HS-8069 — body slot: either the diff DOM (HS-7951) OR the flat-JSON
-  // pre-tag preview, OR nothing (when neither is available). Build the
-  // element first so we can pass it to the shell as a slot.
+  // HS-8171 — when a truncation indicator fires, try the live-term
+  // serialize synchronously BEFORE opening the dialog so the popup
+  // mounts directly with the mirror xterm body. Pre-fix the popup
+  // mounted with the truncated `…` preview, then ~1 ms later
+  // `runSnapshotIntoBody` async-replaced the body — the user perceived
+  // the swap as a momentary "non-terminal-based popup" flash. With
+  // `serializeLiveTerm` (synchronous, doesn't perturb the PTY) called
+  // in the same task as the popup mount, there is no intermediate
+  // truncated render. Two truncation shapes (HS-7999 + HS-8139):
+  //   1. `previewText` ending in `…` (flat-string preview that
+  //      `formatInputPreview`'s fallback recovered from a truncated JSON).
+  //   2. `editDiff.truncated === true` (Edit/Write diff that
+  //      `formatEditDiff` recovered from a truncated payload).
+  const flatTruncated = hasStringPreview && previewText.endsWith('…');
+  const diffTruncated = editDiff !== null && editDiff.truncated;
+  let liveSnapshot: SnapshotResult | null = null;
+  if (perm.input_preview !== undefined && (flatTruncated || diffTruncated)) {
+    liveSnapshot = serializeLiveTerm(secret, 'default');
+  }
+
+  // HS-8069 — body slot: mirror xterm (HS-8171) when the live-term
+  // capture succeeded, else the diff DOM (HS-7951), else the flat-JSON
+  // pre-tag preview, else nothing. Build the element first so we can
+  // pass it to the shell as a slot.
   let bodyElement: HTMLElement | undefined;
-  if (editDiff !== null) {
+  let mirrorContainer: HTMLElement | null = null;
+  if (liveSnapshot !== null) {
+    mirrorContainer = toElement(<div className="permission-popup-mirror-xterm"></div>);
+    bodyElement = mirrorContainer;
+  } else if (editDiff !== null) {
     bodyElement = renderEditDiffPreview(editDiff);
   } else if (hasStringPreview) {
     bodyElement = toElement(<pre className="permission-popup-preview">{previewText}</pre>);
@@ -326,36 +351,21 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     respondToPermission('deny');
   });
 
-  // HS-7999 / HS-8139 — when the channel preview was truncated, kick off
-  // a terminal-buffer snapshot so the popup can show the FULL prompt as
-  // Claude actually rendered it. Two truncation shapes:
-  //   1. **Flat-string preview ending in `…`** (HS-7999) — `formatInputPreview`
-  //      appends `…` via `extractStringField` when Claude's MCP `input_preview`
-  //      cut mid-string at ~2000 chars.
-  //   2. **Parsed Edit/Write diff with `truncated: true`** (HS-8139) — the
-  //      pre-fix gate skipped this path because `previewText` is empty when
-  //      we render the diff DOM, so a long Write payload (the user's
-  //      report: a multi-page Python file truncated to a few lines + `…
-  //      (truncated)` footer) never triggered the snapshot. Now any
-  //      truncation indicator on either path fires the snapshot, and the
-  //      popup body swaps to a scroll-bounded mirror xterm with the
-  //      complete Claude TUI render.
-  //
-  // The snapshot is async (~500 ms — pause WS writes, resize PTY to
-  // 200×80, capture Claude's redraw, resize back, drain the post-resize
-  // redraw to the live term). The popup mounts immediately with the
-  // truncated preview; when the snapshot resolves we replace the body
-  // slot with a read-only mirror xterm showing the captured stream.
-  //
-  // Skipped when (a) the preview wasn't truncated (short prompts use
-  // the channel data verbatim), (b) the secret has no live terminal
-  // entry under id `default` (Claude's channel-supporting terminal
-  // is always `default` per docs/22 + docs/12), (c) the WebSocket
-  // isn't open. The snapshot path returns null in those cases and
-  // the popup stays on the truncated preview.
-  const flatTruncated = hasStringPreview && previewText.endsWith('…');
-  const diffTruncated = editDiff !== null && editDiff.truncated;
-  if (perm.input_preview !== undefined && (flatTruncated || diffTruncated)) {
+  // HS-8171 — mount the mirror xterm into the connected container
+  // synchronously, before the browser has a chance to paint the popup.
+  // Together with the synchronous `serializeLiveTerm` capture above
+  // this means the popup opens directly with the terminal-mirror body
+  // — no momentary truncated preview flash.
+  if (liveSnapshot !== null && mirrorContainer !== null) {
+    mountMirrorXterm(mirrorContainer, liveSnapshot.stream, liveSnapshot.cols, liveSnapshot.rows);
+  }
+
+  // HS-7999 / HS-8139 — async resize-based snapshot fallback. Only
+  // fires when the synchronous live-term capture above returned null
+  // (rare — fresh launch with a blank live xterm). In that case the
+  // popup is currently showing the truncated preview; if the resize
+  // fallback succeeds, replace the body with the captured stream.
+  if (perm.input_preview !== undefined && (flatTruncated || diffTruncated) && liveSnapshot === null) {
     void runSnapshotIntoBody(secret, handle.overlay, () => respondedRequestIds.has(perm.request_id) || dismissedRequestIds.has(perm.request_id));
   }
 

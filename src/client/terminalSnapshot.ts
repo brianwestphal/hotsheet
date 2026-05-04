@@ -9,15 +9,38 @@ import {
   takePausedBytes,
 } from './terminalCheckout.js';
 
-// HS-8159 — when the resize-based snapshot bails (no redraw bytes /
-// structural-only redraw), fall back to serializing the LIVE xterm's
-// current buffer including scrollback. See `serializeLiveTerm` below.
+// HS-8139 v3 (2026-05-04) — `captureTerminalSnapshot` now tries
+// `serializeLiveTerm` FIRST, only falling back to the resize-based
+// dance when the live xterm buffer is itself blank. The user reported
+// that the resize path was mounting a mirror xterm showing only the
+// input-box / status-bar bytes Claude emitted during the resize wait,
+// because the offscreen xterm starts blank and only sees the bytes
+// since pause — when Claude has settled into a permission dialog and
+// only redraws the input box on SIGWINCH, the offscreen result loses
+// the dialog/diff context entirely. The live xterm is what the user
+// is actually looking at, with full scrollback available — serialize
+// it unchanged so the popup mirrors the real terminal state.
+//
+// HS-8159 — `serializeLiveTerm` was originally introduced as a
+// resize-bail fallback. It now serves as the primary path; the resize
+// dance survives only as a last-resort when the live term is blank.
 
 /**
- * HS-7999 — capture a wider snapshot of the terminal-backed Claude's
- * current rendering. The capture orchestrates a freeze + temp-resize +
- * serialize + restore + replay dance against the per-(secret, terminalId)
- * `terminalCheckout` entry's PTY:
+ * HS-7999 — capture a snapshot of the terminal-backed Claude's
+ * current rendering for use as the body of the §47 permission popup.
+ *
+ * **Primary path (HS-8139 v3, 2026-05-04):** `serializeLiveTerm` reads
+ * the live `xterm.js` buffer (visible region + scrollback) for the
+ * `(secret, terminalId)` entry. The popup mirror xterm is mounted at
+ * the live geometry with the captured stream — picture-perfect
+ * mirror of what the user is actually looking at, with mouse-wheel
+ * scrollback.
+ *
+ * **Fallback path (legacy HS-7999):** when the live term has no
+ * visible content (rare — fresh launch, no Claude output yet), we
+ * fall back to the resize-and-capture orchestration: freeze + temp-
+ * resize + serialize + restore + replay dance against the per-
+ * `(secret, terminalId)` `terminalCheckout` entry's PTY:
  *
  *   1. **Freeze** — `pauseEntryWrites` diverts incoming WS-binary
  *      bytes into an entry-side buffer. The live term keeps its
@@ -108,6 +131,19 @@ export async function captureTerminalSnapshot(
   terminalId: string,
   opts: CaptureSnapshotOptions,
 ): Promise<SnapshotResult | null> {
+  // HS-8139 v3 — primary path: serialize the live xterm as-is. The
+  // user wants the popup body to mirror what the actual terminal is
+  // showing. `serializeLiveTerm` returns the full visible region +
+  // 1000-row scrollback at the live geometry, which the popup mirror
+  // xterm renders with native mouse-wheel scrollback so the user can
+  // scroll up to see content beyond the visible region.
+  const live = serializeLiveTerm(secret, terminalId);
+  if (live !== null) return live;
+
+  // Fallback (rare) — the live xterm buffer is blank (or no entry).
+  // In that case, try to coax Claude into a fresh redraw by briefly
+  // resizing the PTY and capturing the bytes Claude emits in
+  // response. Returns null when no entry / no WebSocket.
   const entry = _getEntryForTesting(secret, terminalId);
   if (entry === null) return null;
   if (entry.ws === null || entry.ws.readyState !== WebSocket.OPEN) return null;
@@ -132,48 +168,22 @@ export async function captureTerminalSnapshot(
     // Step 3 — serialize. Drain the buffered bytes, write them to an
     // offscreen `XTerm` at the temp geometry, capture state via
     // `SerializeAddon`. The offscreen term is disposed before return.
-    //
-    // HS-8107 — when Claude wasn't actively redrawing during the resize
-    // wait (e.g. the prompt had already settled), `wideRedraw` lands
-    // empty and the offscreen term serialises a blank screen. The
-    // mirror-xterm wrapper has `background: #000`, so an empty stream
-    // surfaces as a solid black body. Bail out so the popup keeps the
-    // (truncated) flat preview instead of replacing it with nothing.
     const wideRedraw = takePausedBytes(secret, terminalId);
     if (wideRedraw.byteLength === 0) {
-      // HS-8159 — fall back to serializing the LIVE xterm's current
-      // buffer (including scrollback). The user reported on 2026-05-04
-      // that the popup was STILL truncating long Write payloads after
-      // HS-8139 / HS-8158: when Claude has settled into a permission
-      // dialog, SIGWINCH no longer triggers a redraw of the file diff
-      // (Claude's TUI keeps the existing dialog as-is and only reflows
-      // the prompt selector at the bottom). The wide-redraw bytes land
-      // empty and the popup kept its truncated edit-diff body. With
-      // the fallback, we serialize whatever the live xterm has on
-      // screen RIGHT NOW — including the scrollback rows that hold
-      // the full Claude-rendered diff Claude wrote before the prompt
-      // settled. The popup mirror xterm gets that scrollback, and
-      // mouse-wheel inside the mirror lets the user scroll up through
-      // the FULL diff (the user's stated requirement: "lets the user
-      // scroll through in the prompt to see the entire thing being
-      // asked").
+      // No bytes — Claude wasn't redrawing. Bail; the popup keeps
+      // the (truncated) flat preview.
       await restoreAndUnpause(secret, terminalId, origCols, origRows, waitMs);
-      return serializeLiveTerm(secret, terminalId);
+      return null;
     }
     const stream = serializeOffscreen(wideRedraw, targetCols, targetRows);
 
     // HS-8158 — even when the resize redraw produced bytes, those bytes
     // can be 100% ANSI control sequences (cursor positioning, attribute
-    // resets, clear-screen) with no printable content — the user's
-    // 2026-05-04 screenshot was a Write permission popup whose body
-    // mounted as a fully-black mirror xterm because Claude's redraw
-    // bytes were structural-only (no visible characters reached the
-    // offscreen buffer). HS-8159 — same fallback as the byteLength=0
-    // path so the popup gets the live-term scrollback instead of
-    // staying on the truncated preview.
+    // resets, clear-screen) with no printable content. Bail to avoid
+    // mounting a fully-black mirror xterm.
     if (!streamHasVisibleContent(stream)) {
       await restoreAndUnpause(secret, terminalId, origCols, origRows, waitMs);
-      return serializeLiveTerm(secret, terminalId);
+      return null;
     }
 
     // Step 4 — resize PTY back to original. Claude redraws at the
@@ -185,8 +195,7 @@ export async function captureTerminalSnapshot(
     // Step 5 — unfreeze. The accumulated bytes (post-resize-back
     // redraw + any other live output during the snapshot window) are
     // written to the live term in one batch, then the pause flag
-    // clears so future bytes flow normally. No filter — the bytes
-    // are all valid post-resize-back content.
+    // clears so future bytes flow normally.
     resumeEntryWritesAndDrain(secret, terminalId);
 
     return { stream, cols: targetCols, rows: targetRows };
@@ -200,23 +209,22 @@ export async function captureTerminalSnapshot(
 }
 
 /**
- * HS-8159 — fallback path for `captureTerminalSnapshot`: serialize the
- * LIVE entry's `xterm.js` buffer (visible region + scrollback) and
- * return it as a `SnapshotResult` at the live geometry. Fired when the
- * resize-based redraw produced no usable bytes — Claude has settled
- * into a permission dialog and SIGWINCH no longer prompts a fresh
- * render of the diff content.
- *
- * The user can scroll back inside the popup mirror xterm to see every
- * row Claude wrote BEFORE the dialog settled (the diff that scrolled
- * up out of the visible region) — strictly more content than the
- * MCP-truncated `input_preview` could carry.
+ * HS-8159 / HS-8139 v3 — primary path for `captureTerminalSnapshot`:
+ * serialize the LIVE entry's `xterm.js` buffer (visible region +
+ * scrollback) and return it as a `SnapshotResult` at the live
+ * geometry. The popup mirror xterm renders the captured stream
+ * unchanged, with native mouse-wheel scrollback so the user can
+ * scroll up through every row Claude has written (including the
+ * diff content scrolled out of the visible region) — strictly more
+ * content than the MCP-truncated `input_preview` could carry.
  *
  * Returns null when:
  * - No entry exists for `(secret, terminalId)`.
  * - `SerializeAddon` throws (malformed buffer state — defensive).
  * - The serialized stream has no visible content (the live term is
  *   blank, e.g. user just connected — nothing to show in the popup).
+ *   In that case `captureTerminalSnapshot` falls back to its legacy
+ *   resize-based capture path.
  */
 export function serializeLiveTerm(secret: string, terminalId: string): SnapshotResult | null {
   const entry = _getEntryForTesting(secret, terminalId);
