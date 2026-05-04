@@ -22,7 +22,7 @@ import {
   peekPending,
 } from './channelPermissions.js';
 
-export const CHANNEL_VERSION = 3;
+export const CHANNEL_VERSION = 4;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -152,6 +152,57 @@ const httpServer = createServer(async (req, res) => {
     clearAllPermissions();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // HS-8205 — debug-only injector used by `scripts/simulate-claude-prompts.mjs`
+  // to exercise the §47 popup (incl. the HS-8171 v2 live-terminal checkout path)
+  // without a real Claude Code session. Same shape as the MCP notification
+  // handler at line 82 — `enqueuePermission` + `notifyMainServer` in lockstep.
+  // `request_id` is optional; we generate one when absent so callers can fire
+  // and forget. Returns the (possibly generated) request_id so the caller can
+  // poll `/permission` for completion if they want symmetric blocking.
+  if (req.method === 'POST' && req.url === '/permission/inject') {
+    let body = '';
+    let bodySize = 0;
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      bodySize += chunk.length;
+      if (bodySize > 1_048_576) { res.writeHead(413); res.end('Payload too large'); return; }
+      body += String(chunk);
+    }
+    try {
+      const payload = JSON.parse(body) as {
+        request_id?: string;
+        tool_name: string;
+        description: string;
+        input_preview: string;
+      };
+      if (typeof payload.tool_name !== 'string' || payload.tool_name === ''
+          || typeof payload.description !== 'string'
+          || typeof payload.input_preview !== 'string') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'tool_name, description, input_preview required' }));
+        return;
+      }
+      const t0 = Date.now();
+      const requestId = (typeof payload.request_id === 'string' && payload.request_id !== '')
+        ? payload.request_id
+        : `sim_${t0.toString(36)}_${Math.random().toString(16).slice(2, 8)}`;
+      enqueuePermission({
+        request_id: requestId,
+        tool_name: payload.tool_name,
+        description: payload.description,
+        input_preview: payload.input_preview,
+        timestamp: t0,
+      });
+      process.stderr.write(`[perm-inject ${t0}] ${payload.tool_name} — ${payload.description}\n`);
+      void notifyMainServer();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, request_id: requestId }));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
     return;
   }
 
