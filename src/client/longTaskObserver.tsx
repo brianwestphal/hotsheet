@@ -156,18 +156,26 @@ export function initLongTaskObserver(): void {
   if (typeof setInterval !== 'undefined' && typeof performance !== 'undefined') {
     lastHeartbeatTs = performance.now();
     heartbeatTimer = setInterval(() => {
-      const now = performance.now();
-      const elapsed = now - lastHeartbeatTs;
-      lastHeartbeatTs = now;
-      // The interval should fire every HEARTBEAT_INTERVAL_MS. Anything
-      // beyond that is the main thread blocking. Subtract the expected
-      // interval so the reported duration is the BLOCK length, not
-      // total elapsed (matches the PerformanceObserver semantics).
-      const blockMs = elapsed - HEARTBEAT_INTERVAL_MS;
-      if (blockMs >= LONG_TASK_THRESHOLD_MS) {
-        recordLongTask(blockMs, 'heartbeat');
+      const isVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
+      const result = computeHeartbeatTick(performance.now(), lastHeartbeatTs, isVisible);
+      lastHeartbeatTs = result.newLastTs;
+      if (result.reportBlockMs !== null) {
+        recordLongTask(result.reportBlockMs, 'heartbeat');
       }
     }, HEARTBEAT_INTERVAL_MS);
+
+    // HS-8173 — reset `lastHeartbeatTs` on the foreground transition.
+    // Without this, the FIRST visible fire after foregrounding would
+    // measure `now - lastHeartbeatTs` where `lastHeartbeatTs` was the
+    // last hidden tick (up to ~1 s ago at throttled cadence), producing
+    // a single false-positive ≥100 ms block on every tab return.
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          lastHeartbeatTs = performance.now();
+        }
+      });
+    }
   }
 
   // Expose retrieval helpers on window for the user to dump from
@@ -300,6 +308,34 @@ function formatRelativeMs(deltaMs: number): string {
   // Negative = past. Format as `-Nms` or `+Nms`.
   const sign = deltaMs < 0 ? '-' : '+';
   return `${sign}${Math.abs(deltaMs).toFixed(0)}ms`;
+}
+
+/**
+ * HS-8173 — pure helper: process a single heartbeat tick. Returns the
+ * new `lastHeartbeatTs` to commit and an optional block duration to
+ * report (null when below the long-task threshold OR when the tab is
+ * hidden). Extracted so the visibility-gating + threshold math can be
+ * unit-tested without driving a real `setInterval`.
+ *
+ * - When `!isVisible`: skip the elapsed math entirely (browser tab
+ *   throttling makes it meaningless) and just commit `now` so the next
+ *   honest fire isn't measured against a stale tick.
+ * - When `isVisible`: compute `elapsed - HEARTBEAT_INTERVAL_MS`. Report
+ *   it when ≥ `LONG_TASK_THRESHOLD_MS`, else null. Always commit `now`.
+ */
+export function computeHeartbeatTick(
+  now: number,
+  lastTs: number,
+  isVisible: boolean,
+): { newLastTs: number; reportBlockMs: number | null } {
+  if (!isVisible) {
+    return { newLastTs: now, reportBlockMs: null };
+  }
+  const blockMs = now - lastTs - HEARTBEAT_INTERVAL_MS;
+  if (blockMs < LONG_TASK_THRESHOLD_MS) {
+    return { newLastTs: now, reportBlockMs: null };
+  }
+  return { newLastTs: now, reportBlockMs: blockMs };
 }
 
 /** Test-only: drop all internal state so tests don't bleed across runs. */

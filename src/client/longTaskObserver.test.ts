@@ -23,6 +23,7 @@ import {
   _getLongTaskBufferForTesting,
   _recordLongTaskForTesting,
   _resetLongTaskObserverForTesting,
+  computeHeartbeatTick,
   initLongTaskObserver,
   recordInteraction,
 } from './longTaskObserver.js';
@@ -218,6 +219,48 @@ describe('longTaskObserver (HS-8054)', () => {
       } finally {
         (globalThis as Record<string, unknown>).PerformanceObserver = original;
       }
+    });
+
+    describe('computeHeartbeatTick — visibility gating (HS-8173)', () => {
+      it('returns reportBlockMs = null when the tab is hidden, regardless of elapsed', () => {
+        // Even a 1000 ms gap (matches the throttled-tab cadence that
+        // produced the user\'s 24 s false-positive cluster) must not
+        // report when isVisible is false.
+        const result = computeHeartbeatTick(11000, 10000, false);
+        expect(result.reportBlockMs).toBeNull();
+        // newLastTs still advances so the next visible fire isn\'t
+        // measured against a stale timestamp.
+        expect(result.newLastTs).toBe(11000);
+      });
+
+      it('returns reportBlockMs = null when visible but block is below the threshold', () => {
+        // Elapsed 100 ms, expected 50 ms → block of 50 ms (under 100 ms threshold).
+        const result = computeHeartbeatTick(10100, 10000, true);
+        expect(result.reportBlockMs).toBeNull();
+        expect(result.newLastTs).toBe(10100);
+      });
+
+      it('returns the block duration when visible AND above the threshold', () => {
+        // Elapsed 200 ms, expected 50 ms → 150 ms block (≥ 100 ms threshold).
+        const result = computeHeartbeatTick(10200, 10000, true);
+        expect(result.reportBlockMs).toBe(150);
+        expect(result.newLastTs).toBe(10200);
+      });
+
+      it('subtracts the expected 50 ms heartbeat interval so the report matches PerformanceObserver semantics', () => {
+        // Elapsed 1000 ms (a real 1 s freeze) → reported as 950 ms block,
+        // not 1000 ms. The user\'s freeze.log entries showed durationMs
+        // values consistent with this subtraction (e.g. throttled ticks
+        // at 1000 ms elapsed reported as ~950 ms).
+        const result = computeHeartbeatTick(11000, 10000, true);
+        expect(result.reportBlockMs).toBe(950);
+      });
+
+      it('exactly at the 100 ms threshold reports (>=, not >)', () => {
+        // Elapsed 150 ms → 100 ms block.
+        const result = computeHeartbeatTick(10150, 10000, true);
+        expect(result.reportBlockMs).toBe(100);
+      });
     });
 
     it('does NOT call observe() when longtask is not in supportedEntryTypes (PerformanceObserver path bails, heartbeat still runs)', () => {
