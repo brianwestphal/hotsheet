@@ -244,10 +244,14 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] **Drawer-grid magnified navigation.** Open the drawer-grid (per §36 toolbar toggle, with ≥2 terminals). Single-click any tile to center within the drawer-grid scope. Shift+Cmd+Arrow swaps the centered tile within the drawer-grid layout. Same behaviour as the dashboard but scoped to the drawer.
 - [ ] **No xterm escape leak.** Inside a centered or dedicated terminal showing a shell prompt, press Shift+Cmd+Right. The shell does NOT receive a `\e[1;9C`-style escape sequence (no random characters appear in the prompt). The chord is fully consumed by the magnified-nav handler.
 
-### Permission popup — synchronous snapshot mount (HS-8171)
+### Permission popup — live-terminal checkout (HS-8171 v2)
 - [ ] Trigger a long Bash / Edit / Write permission via Claude where the MCP `input_preview` is truncated (e.g. a long ImageMagick chain, or a Write of a multi-page file).
-- [ ] The popup should appear with the terminal-mirror xterm body **immediately** — no momentary flash of a truncated `…` preview that swaps to the mirror a moment later. Pre-fix the popup mounted with the truncated body and `runSnapshotIntoBody` async-replaced it; the swap was visible.
-- [ ] **Regression check** — short permission prompts (no truncation) should still mount with the normal flat preview / diff body. Bash with a one-line command, Edit with a small diff, etc.
+- [ ] The popup should appear with the **live project terminal** mounted in the body slot (`.permission-popup-live-terminal` container, ≤ 60vh tall). It is the SAME xterm the project's drawer / dashboard tile would normally show — not a snapshot.
+- [ ] Scroll the mouse wheel inside the popup body — the real PTY scrollback scrolls, including content that scrolled out of the visible region BEFORE the popup opened.
+- [ ] Type a key inside the popup body — the keystroke reaches the running `claude` (test by typing characters into a free-form input).
+- [ ] **Bumped consumer.** If the same project's drawer is open and showing the `'default'` terminal at the moment the popup opens, the drawer pane shows the §54 "Terminal in use elsewhere" placeholder for the duration of the popup. After Allow / Deny / Minimize / X / "No response needed", the drawer pane re-takes the live xterm with its own dims restored.
+- [ ] **No bumped consumer.** If no other surface is currently showing the `'default'` terminal, the popup is the only consumer; on close the §54 entry is disposed cleanly (no leaked WebSocket — verify in DevTools Network tab).
+- [ ] **Regression check** — short permission prompts (no truncation) should still mount with the normal flat preview / diff body, NOT the live terminal. Bash with a one-line command, Edit with a small diff, etc.
 
 ### Focus ring on magnified terminals (HS-8170)
 - [ ] **Dashboard centered tile.** Single-click a tile in the dashboard. Type a key — the tile shows a 3 px blue (`#3b82f6`) focus ring around the tile preview. Click outside the tile (e.g. on the backdrop) — the ring disappears as focus leaves.

@@ -44,7 +44,16 @@ class FakePty implements PtyLike {
     this.cols = args.cols;
     this.rows = args.rows;
     this.command = args.command;
-    this.pid = Math.floor(Math.random() * 1_000_000);
+    // HS-8179 — pid stays at 0 so the prod-side `rootPid > 0` guard in
+    // `teardownPty` skips `killProcessTreeBestEffort` entirely. Pre-fix
+    // we used `Math.floor(Math.random() * 1_000_000)`, which could
+    // collide with a real macOS system process (loginwindow,
+    // WindowServer, …) and cause `vitest run src/terminals` to SIGTERM
+    // the user's GUI session out of existence. The HS-8179 ancestor
+    // guard inside `killProcessTreeBestEffort` is the load-bearing
+    // defence; this `pid = 0` is belt-and-braces so the kill path
+    // doesn't even fire.
+    this.pid = 0;
     FakePty.lastSpawned = this;
   }
 

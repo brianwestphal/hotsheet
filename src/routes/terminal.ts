@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { homedir } from 'os';
 
+import { instrumentSync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
 import { DEFAULT_TERMINAL_ID, listTerminalConfigs, type TerminalConfig } from '../terminals/config.js';
 import {
@@ -175,12 +176,15 @@ terminalRoutes.post('/clear-bell', async (c) => {
  */
 terminalRoutes.post('/prompt-respond', async (c) => {
   const secret = c.get('projectSecret');
+  const dataDir = c.get('dataDir');
   const body = await c.req.json<{ terminalId?: unknown; payload?: unknown } | undefined>().catch(() => undefined);
   const terminalId = typeof body?.terminalId === 'string' && body.terminalId !== '' ? body.terminalId : null;
   const payload = typeof body?.payload === 'string' ? body.payload : null;
   if (terminalId === null) return c.json({ error: 'missing_terminalId' }, 400);
   if (payload === null) return c.json({ error: 'missing_payload' }, 400);
-  const wrote = writePtyInput(secret, terminalId, payload);
+  // HS-8160 — wrap the §52 prompt-respond pty.write so a stalled PTY
+  // shows up in freeze.log tagged `pty.write:from-prompt-respond:<id>`.
+  const wrote = instrumentSync(dataDir, `pty.write:from-prompt-respond:${terminalId}`, () => writePtyInput(secret, terminalId, payload));
   if (!wrote) return c.json({ error: 'pty_dead_or_missing' }, 404);
   clearPendingPrompt(secret, terminalId);
   notifyBellWaiters();

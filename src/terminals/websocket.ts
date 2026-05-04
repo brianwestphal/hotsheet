@@ -4,6 +4,7 @@ import { parse as parseUrl } from 'url';
 import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
 
+import { instrumentSync } from '../diagnostics/freezeLogger.js';
 import { getProjectBySecret } from '../projects.js';
 import { getDynamicTerminalConfig } from '../routes/terminal.js';
 import { DEFAULT_TERMINAL_ID } from './config.js';
@@ -92,7 +93,11 @@ function handleConnection(ws: WebSocket, secret: string, dataDir: string, termin
   const subscriber: TerminalSubscriber = {
     onData(chunk) {
       if (ws.readyState === ws.OPEN) {
-        ws.send(chunk, { binary: true });
+        // HS-8160 — wrap PTY → client send so a slow socket flush
+        // shows up in freeze.log tagged `ws.send:pty-output:<id>`.
+        instrumentSync(dataDir, `ws.send:pty-output:${terminalId}`, () => {
+          ws.send(chunk, { binary: true });
+        });
       }
     },
     onExit(exitCode) {
@@ -126,13 +131,23 @@ function handleConnection(ws: WebSocket, secret: string, dataDir: string, termin
   ws.on('message', (data, isBinary) => {
     const text = normalizeMessage(data);
     if (isBinary) {
-      writeInput(secret, text, terminalId);
+      // HS-8160 — wrap the binary-message → pty.write path. A slow
+      // pty.write (Node-pty back-pressure, kernel pipe full, etc.)
+      // shows up in freeze.log tagged `pty.write:from-ws:<id>`.
+      instrumentSync(dataDir, `pty.write:from-ws:${terminalId}`, () => {
+        writeInput(secret, text, terminalId);
+      });
       return;
     }
     // Text frame — parse as control JSON
     try {
       const msg = JSON.parse(text) as ControlMessage;
-      handleControl(ws, secret, msg, terminalId);
+      // HS-8160 — wrap the control-message handler. Resize frames
+      // call into node-pty's resize which can block while the kernel
+      // services SIGWINCH; long handlers tag freeze.log.
+      instrumentSync(dataDir, `ws.message:control:${msg.type}:${terminalId}`, () => {
+        handleControl(ws, secret, msg, terminalId);
+      });
     } catch {
       // Invalid JSON — ignore silently
     }

@@ -3826,28 +3826,31 @@ body.terminal-dashboard-active {
   overflow-y: auto;
 }
 
-// HS-7999 — mirror-xterm wrapper for the snapshot path. The shell's
-// body slot replaces the flat `.permission-popup-preview` with a
-// container that hosts a read-only `XTerm` rendering Claude's full
-// 200×80 TUI. HS-8139 — bumped `max-height` so long prompts (a
-// multi-page Write of a Python file, a large Edit hunk) get more
-// vertical space before the user has to scroll inside the mirror
-// xterm. Capped at 60vh so the popup itself still fits below the
-// dialog shell's `max-height: 80vh` even on short laptop screens.
-// `overflow: auto` on the wrapper handles horizontal overflow when
-// the captured 200-col stream is wider than the popup; xterm's own
-// `.xterm-viewport` provides scrollback for vertical overflow.
-.permission-popup-mirror-xterm {
-  max-width: 100%;
-  max-height: min(540px, 60vh);
-  overflow: auto;
+// HS-8171 v2 — live-terminal checkout container for the permission
+// popup body. The §54 `checkout()` reparents the project's live
+// `xterm.js` element into this container so the user can scroll the
+// real PTY scrollback AND interact with the running `claude` directly
+// from inside the popup. On popup close / dismiss / respond the
+// checkout releases and the previous owner (drawer pane, dashboard
+// tile) gets the terminal back. Sized to a fixed pixel height so
+// FitAddon has stable dimensions to compute cols/rows from; capped at
+// 60vh so the popup still fits below the dialog shell's
+// `max-height: 80vh` on short laptop screens. Background `#000` so the
+// xterm's transparent canvas blends into the dark terminal palette
+// even before scrollback bytes arrive.
+.permission-popup-live-terminal {
+  width: 100%;
+  height: min(420px, 60vh);
   border: 1px solid var(--border);
   border-radius: 4px;
   background: #000;
+  overflow: hidden;
 
-  // Scope xterm's default styling to our wrapper so the snapshot
-  // doesn't bleed sizes / colours from a sibling consumer's xterm.
+  // Let xterm's own viewport own the inner sizing — the FitAddon
+  // measures the parent container, so a single padding-free fill keeps
+  // the proposed dims aligned with the visible region.
   .xterm {
+    height: 100%;
     padding: 4px;
   }
 }

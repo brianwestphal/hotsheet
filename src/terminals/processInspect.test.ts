@@ -4,6 +4,7 @@ import {
   collectDescendantPids,
   DEFAULT_EXEMPT_PROCESSES,
   descendantChain,
+  isDescendantOrSelf,
   killProcessTreeBestEffort,
   normalizeComm,
   parsePsOutput,
@@ -306,6 +307,70 @@ describe('collectDescendantPids (HS-8140)', () => {
   });
 });
 
+describe('isDescendantOrSelf (HS-8179)', () => {
+  it('returns true when candidate equals ancestor', () => {
+    expect(isDescendantOrSelf([], 100, 100)).toBe(true);
+  });
+
+  it('returns true when candidate is a direct child of ancestor', () => {
+    const rows = parsePsOutput([
+      'PID PPID COMM',
+      '100 1 launchd',
+      '200 100 zsh',
+    ].join('\n'));
+    expect(isDescendantOrSelf(rows, 200, 100)).toBe(true);
+  });
+
+  it('returns true when candidate is a transitive descendant', () => {
+    const rows = parsePsOutput([
+      'PID PPID COMM',
+      '100 1 a',
+      '200 100 b',
+      '300 200 c',
+      '400 300 d',
+    ].join('\n'));
+    expect(isDescendantOrSelf(rows, 400, 100)).toBe(true);
+  });
+
+  it('returns false when candidate is unrelated to ancestor', () => {
+    const rows = parsePsOutput([
+      'PID PPID COMM',
+      '100 1 mine',
+      '500 1 other',
+      '600 500 other-child',
+    ].join('\n'));
+    expect(isDescendantOrSelf(rows, 600, 100)).toBe(false);
+  });
+
+  it('returns false when candidate pid is not in the ps table at all (unknown lineage)', () => {
+    const rows = parsePsOutput([
+      'PID PPID COMM',
+      '100 1 mine',
+    ].join('\n'));
+    expect(isDescendantOrSelf(rows, 999, 100)).toBe(false);
+  });
+
+  it('returns false when ancestry chain reaches init (PID 1) without finding ancestor', () => {
+    const rows = parsePsOutput([
+      'PID PPID COMM',
+      '100 1 mine',
+      '500 1 other',
+    ].join('\n'));
+    expect(isDescendantOrSelf(rows, 500, 100)).toBe(false);
+  });
+
+  it('breaks defensively on a synthetic ppid cycle', () => {
+    // Real Unix process trees can't have cycles but the helper should
+    // not loop forever if the input is malformed.
+    const rows = parsePsOutput([
+      'PID PPID COMM',
+      '100 200 a',
+      '200 100 b',
+    ].join('\n'));
+    expect(isDescendantOrSelf(rows, 100, 999)).toBe(false);
+  });
+});
+
 describe('killProcessTreeBestEffort (HS-8140)', () => {
   it('returns bailed:true with invalid-pid error for a non-positive root pid', () => {
     const result = killProcessTreeBestEffort(0);
@@ -320,16 +385,41 @@ describe('killProcessTreeBestEffort (HS-8140)', () => {
     expect(result.error).toBe('invalid pid');
   });
 
-  it('returns bailed:false on Unix even when the root has no descendants in ps', () => {
-    // Pick a pid that almost certainly has no live descendants — the test
-    // process's pid+99999 (way above the typical Linux/macOS pid space).
-    // Worst case there IS a descendant and process.kill throws — caught and
-    // recorded as either alreadyDead or first-error, never crashes.
+  // HS-8179 — the previous "no descendants in ps" test (pid 99_999_999)
+  // is now expected to bail with 'rootPid not owned by this process'
+  // because such a pid doesn't appear in `ps -A` and therefore can't
+  // pass the ancestor check. Replaced with the explicit guard test below.
+  it('returns bailed:true with not-owned error for a pid that is not a descendant of this process (HS-8179)', () => {
     if (process.platform === 'win32') return;
-    const result = killProcessTreeBestEffort(99_999_999, 'SIGTERM');
-    expect(result.bailed).toBe(false);
+    // PID 1 is launchd / init on macOS / Linux — definitely not a
+    // descendant of the test runner. Pre-HS-8179 this would have
+    // SIGTERMed every descendant of init (i.e. effectively the whole
+    // user session). Post-fix it bails cleanly.
+    const result = killProcessTreeBestEffort(1, 'SIGTERM');
+    expect(result.bailed).toBe(true);
+    expect(result.error).toBe('rootPid not owned by this process');
     expect(result.attempted).toBe(0);
   });
+
+  it('returns bailed:true for a pid not present in ps -A (FakePty random pid scenario, HS-8179)', () => {
+    if (process.platform === 'win32') return;
+    // FakePty in `registry.test.ts` uses `Math.floor(Math.random() *
+    // 1_000_000)` — overwhelmingly unlikely to appear in the live ps
+    // table at all. Pre-HS-8179 such a pid would proceed to BFS-walk
+    // descendants (none, usually) but a collision with a real pid
+    // would SIGTERM real processes. Post-fix: pid not in table →
+    // unknown lineage → bail.
+    const result = killProcessTreeBestEffort(999_999, 'SIGTERM');
+    expect(result.bailed).toBe(true);
+    expect(result.error).toBe('rootPid not owned by this process');
+  });
+
+  // The HS-8179 "happy path" (rootPid IS our descendant, so the guard
+  // passes and we proceed to signal descendants) is exercised by the
+  // integration test below — it spawns a real `sh` wrapper whose pid
+  // IS our direct child. Adding a guard-passes-AND-signals unit test
+  // here using `process.pid` would SIGTERM sibling vitest workers,
+  // which is exactly the destructive behaviour HS-8179 fixes.
 });
 
 describe('killProcessTreeBestEffort + spawned subprocess (HS-8140 integration)', () => {

@@ -13,6 +13,7 @@ import {
 import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
 import { fsyncDbDir } from './db/fsyncWrap.js';
 import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from './dbJsonExport.js';
+import { instrumentAsync, instrumentSync } from './diagnostics/freezeLogger.js';
 import { getBackupDir } from './file-settings.js';
 
 export interface BackupInfo {
@@ -105,21 +106,29 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     // as zero/garbage — restore then PANICs with "could not locate a valid
     // checkpoint record". The CHECKPOINT flushes WAL into the data files so
     // the snapshot is internally consistent.
-    await db.exec('CHECKPOINT');
+    // HS-8160 — wrap CHECKPOINT (the most likely PGLite-side stall in
+    // the backup pipeline) so freeze.log tags it as
+    // `pglite.checkpoint:backup:<tier>`.
+    await instrumentAsync(dataDir, `pglite.checkpoint:backup:${tier}`, () => db.exec('CHECKPOINT'));
     // HS-7935: PGLite's WASM ↔ host-fs bridge silently no-ops the postgres
     // `fsync()` calls (HS-7932 spike), so the CHECKPOINT-rewritten files
     // are still in the host kernel page cache rather than physical disk.
     // Walk `<dataDir>/db/` and explicitly fsync every regular file so
     // durability isn't bounded by the OS's natural dirty-page flush
     // interval (~30s).
-    fsyncDbDir(dataDir);
+    // HS-8160 — wrap fsyncDbDir; on a slow filesystem (e.g. user's
+    // Google Drive backupDir per HS-8174) this is the most likely
+    // sync-side stall.
+    instrumentSync(dataDir, `fsyncDbDir:backup:${tier}`, () => { fsyncDbDir(dataDir); });
     const blob = await db.dumpDataDir('gzip');
     const buffer = Buffer.from(await blob.arrayBuffer());
 
     const now = new Date();
     const filename = `backup-${formatTimestamp(now)}.tar.gz`;
     const filePath = join(dir, filename);
-    writeFileSync(filePath, buffer);
+    // HS-8160 — wrap the tarball write. This is the call most likely
+    // to stall on Google Drive / network-mounted backupDirs.
+    instrumentSync(dataDir, `backup.writeTarball:${tier}`, () => { writeFileSync(filePath, buffer); });
 
     // HS-7893: co-save a versioned JSON snapshot of every row in every
     // table alongside the tarball. Pure escape hatch — the JSON has no
@@ -129,7 +138,8 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     try {
       const exportData = await buildJsonExport(db);
       const jsonPath = join(dir, jsonSiblingFilename(filename));
-      writeJsonExportAtomically(jsonPath, exportData);
+      // HS-8160 — wrap the JSON co-save (write + fsync inside).
+      instrumentSync(dataDir, `backup.writeJsonCoSave:${tier}`, () => { writeJsonExportAtomically(jsonPath, exportData); });
     } catch (jsonErr) {
       console.error(`JSON co-save failed (${tier}):`, jsonErr);
     }
@@ -143,7 +153,8 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
       const backupRoot = backupsDir(dataDir);
       const manifest = await buildAttachmentManifest(db, backupRoot, filename);
       const manifestPath = join(dir, manifestSiblingFilename(filename));
-      writeManifestAtomically(manifestPath, manifest);
+      // HS-8160 — wrap the attachment-manifest write (write + fsync inside).
+      instrumentSync(dataDir, `backup.writeAttachmentManifest:${tier}`, () => { writeManifestAtomically(manifestPath, manifest); });
     } catch (attachErr) {
       console.error(`Attachment manifest failed (${tier}):`, attachErr);
     }

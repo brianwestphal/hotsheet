@@ -5,6 +5,7 @@ import { spawn as spawnPty } from 'node-pty';
 import { dirname, join } from 'path';
 
 import { addLogEntry } from '../db/queries.js';
+import { instrumentSync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
 import {
   findMatchingAllowRule,
@@ -707,7 +708,13 @@ function handleScannerMatch(state: SessionState, secret: string, dataDir: string
   if (rule !== null && state.pty !== null) {
     const payload = payloadForAutoAllow(match, rule);
     if (payload !== null) {
-      try { state.pty.write(payload); } catch { /* PTY died mid-match */ }
+      // HS-8160 — wrap the auto-allow injection pty.write so a stalled
+      // PTY shows up in freeze.log tagged `pty.write:auto-allow:<id>`.
+      try {
+        instrumentSync(dataDir, `pty.write:auto-allow:${state.terminalId}`, () => {
+          state.pty!.write(payload);
+        });
+      } catch { /* PTY died mid-match */ }
       // Fire-and-forget audit log — best-effort, mirrors HS-7987's client
       // behaviour. The DB write happens off-event-loop.
       void appendAutoAllowAuditEntry(match, rule).catch(() => { /* ignore */ });

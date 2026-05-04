@@ -22,7 +22,12 @@ class FakePty implements PtyLike {
   private exitListeners = new Set<(e: { exitCode: number }) => void>();
   constructor(args: SpawnArgs) {
     this.cols = args.cols; this.rows = args.rows; this.command = args.command;
-    this.pid = FakePty.spawned.length + 1;
+    // HS-8179 — pid stays at 0 so the prod-side `rootPid > 0` guard
+    // skips killProcessTreeBestEffort entirely. Pre-fix the small
+    // sequential pids (1, 2, 3, …) routinely matched real macOS
+    // process pids — pid 1 is launchd, walking its descendants would
+    // SIGTERM the entire user session.
+    this.pid = 0;
     FakePty.spawned.push(this);
   }
   onData(listener: (s: string) => void) { this.dataListeners.add(listener); return { dispose: () => { this.dataListeners.delete(listener); } }; }

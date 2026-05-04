@@ -248,6 +248,36 @@ export async function inspectForegroundProcess(
 }
 
 /**
+ * HS-8179 — return true when `candidatePid` is the same as `ancestorPid`
+ * OR appears in the chain of ppid hops from `candidatePid` up to PID 1
+ * (init). Used as the safety guard inside `killProcessTreeBestEffort`
+ * to refuse signalling pids we don't own.
+ *
+ * Pure helper over the parsed `ps` table — no syscalls. Bounded by the
+ * ps row count (cycle-safe via `seen` set even though Unix process trees
+ * are acyclic by construction).
+ */
+export function isDescendantOrSelf(rows: readonly PsRow[], candidatePid: number, ancestorPid: number): boolean {
+  if (candidatePid === ancestorPid) return true;
+  const ppidByPid = new Map<number, number>();
+  for (const row of rows) ppidByPid.set(row.pid, row.ppid);
+  const seen = new Set<number>([candidatePid]);
+  let cursor = candidatePid;
+  // Bound the walk by the table size so a malformed input can't loop
+  // forever even if the cycle break is bypassed somehow.
+  for (let step = 0; step < rows.length + 1; step += 1) {
+    const ppid = ppidByPid.get(cursor);
+    if (ppid === undefined) return false; // pid not in table → unknown lineage, refuse
+    if (ppid === ancestorPid) return true;
+    if (ppid <= 1) return false;          // hit init / orphan boundary without finding ancestor
+    if (seen.has(ppid)) return false;     // defensive cycle break
+    seen.add(ppid);
+    cursor = ppid;
+  }
+  return false;
+}
+
+/**
  * HS-8140 — collect every descendant pid of `rootPid` (BFS). Used by the
  * shutdown path to signal sub-processes that wouldn't otherwise receive the
  * shell's SIGHUP — `node-pty` only delivers the signal to the shell itself,
@@ -323,6 +353,16 @@ export function killProcessTreeBestEffort(
     return { ...empty, error: `ps execution failed: ${err instanceof Error ? err.message : String(err)}` };
   }
   const rows = parsePsOutput(stdout);
+  // HS-8179 — verify rootPid is actually a descendant (or self) of this
+  // Node process before signalling its descendants. Defends against a
+  // caller passing a synthetic / random pid that happens to collide with
+  // a real system process (e.g. test fakes whose `pid` is a `Math.random`
+  // integer can otherwise SIGTERM `loginwindow`'s descendants and log the
+  // user out of macOS). In production every rootPid is `node-pty`'s
+  // direct child, so the ancestor walk lands on `process.pid` quickly.
+  if (!isDescendantOrSelf(rows, rootPid, process.pid)) {
+    return { ...empty, error: 'rootPid not owned by this process' };
+  }
   const descendants = collectDescendantPids(rows, rootPid);
   let alreadyDead = 0;
   let firstError: string | null = null;

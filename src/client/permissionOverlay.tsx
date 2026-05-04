@@ -10,7 +10,7 @@ import { openPermissionDialogShell } from './permissionDialogShell.js';
 import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
 import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
-import { captureTerminalSnapshot, mountMirrorXterm, serializeLiveTerm, type SnapshotResult } from './terminalSnapshot.js';
+import { checkout, type CheckoutHandle } from './terminalCheckout.js';
 
 /**
  * Claude permission-request UI. Historically there were two variants: a
@@ -212,35 +212,35 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     : '';
   const hasStringPreview = previewText !== '';
 
-  // HS-8171 — when a truncation indicator fires, try the live-term
-  // serialize synchronously BEFORE opening the dialog so the popup
-  // mounts directly with the mirror xterm body. Pre-fix the popup
-  // mounted with the truncated `…` preview, then ~1 ms later
-  // `runSnapshotIntoBody` async-replaced the body — the user perceived
-  // the swap as a momentary "non-terminal-based popup" flash. With
-  // `serializeLiveTerm` (synchronous, doesn't perturb the PTY) called
-  // in the same task as the popup mount, there is no intermediate
-  // truncated render. Two truncation shapes (HS-7999 + HS-8139):
+  // HS-8171 v2 — when a truncation indicator fires, the popup body
+  // becomes the LIVE project terminal via the §54 checkout mechanism
+  // instead of a one-shot serialized mirror. The user can scroll
+  // through the real PTY scrollback AND interact with the running
+  // `claude` directly from inside the popup. When the popup is
+  // dismissed / minimized / responded to, the checkout releases and
+  // the previous owner (drawer pane, dashboard tile, etc.) gets the
+  // terminal back via the LIFO stack. Pre-fix iterations (HS-7999
+  // / HS-8139 / HS-8158 / HS-8171 v1) tried to mount a serialized
+  // snapshot — the user reported repeated cases where the snapshot
+  // sampled stale or empty content. A real checkout sidesteps the
+  // sampling problem entirely. Two truncation shapes (HS-7999 + HS-8139):
   //   1. `previewText` ending in `…` (flat-string preview that
   //      `formatInputPreview`'s fallback recovered from a truncated JSON).
   //   2. `editDiff.truncated === true` (Edit/Write diff that
   //      `formatEditDiff` recovered from a truncated payload).
   const flatTruncated = hasStringPreview && previewText.endsWith('…');
   const diffTruncated = editDiff !== null && editDiff.truncated;
-  let liveSnapshot: SnapshotResult | null = null;
-  if (perm.input_preview !== undefined && (flatTruncated || diffTruncated)) {
-    liveSnapshot = serializeLiveTerm(secret, 'default');
-  }
+  const useLiveCheckout = perm.input_preview !== undefined && (flatTruncated || diffTruncated);
 
-  // HS-8069 — body slot: mirror xterm (HS-8171) when the live-term
-  // capture succeeded, else the diff DOM (HS-7951), else the flat-JSON
-  // pre-tag preview, else nothing. Build the element first so we can
-  // pass it to the shell as a slot.
+  // HS-8069 — body slot: live-terminal checkout container (HS-8171 v2)
+  // when truncation fired, else the diff DOM (HS-7951), else the
+  // flat-JSON pre-tag preview, else nothing. Build the element first so
+  // we can pass it to the shell as a slot.
   let bodyElement: HTMLElement | undefined;
-  let mirrorContainer: HTMLElement | null = null;
-  if (liveSnapshot !== null) {
-    mirrorContainer = toElement(<div className="permission-popup-mirror-xterm"></div>);
-    bodyElement = mirrorContainer;
+  let liveTermContainer: HTMLElement | null = null;
+  if (useLiveCheckout) {
+    liveTermContainer = toElement(<div className="permission-popup-live-terminal"></div>);
+    bodyElement = liveTermContainer;
   } else if (editDiff !== null) {
     bodyElement = renderEditDiffPreview(editDiff);
   } else if (hasStringPreview) {
@@ -271,17 +271,31 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     });
   }
 
+  // HS-8171 v2 — track the live-terminal checkout (if any) so every
+  // popup-close path can release it. Idempotent — calling twice is a
+  // no-op. The release reparents the live xterm element back into the
+  // previous owner's mountInto (drawer pane, dashboard tile, etc.) or
+  // disposes the entry when the popup was the last consumer.
+  let checkoutHandle: CheckoutHandle | null = null;
+  function releaseCheckoutIfAny() {
+    if (checkoutHandle === null) return;
+    try { checkoutHandle.release(); } catch { /* swallow — entry may already be torn down */ }
+    checkoutHandle = null;
+  }
+
   function clearPopupOnly() {
     activePopupRequestId = null;
     if (tab) tab.classList.remove('permission-highlight');
   }
 
   function cleanupAndDismiss() {
+    releaseCheckoutIfAny();
     dismissedRequestIds.add(perm.request_id);
     clearPopupOnly();
   }
 
   function cleanupAndMinimize() {
+    releaseCheckoutIfAny();
     clearPopupOnly();
     const timeoutId = setTimeout(() => {
       const rec = minimizedRequests.get(perm.request_id);
@@ -319,6 +333,11 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     const rec = minimizedRequests.get(perm.request_id);
     if (rec) { clearTimeout(rec.timeoutId); minimizedRequests.delete(perm.request_id); syncMinimizedDots(); }
     clearPopupOnly();
+    // HS-8171 v2 — release the live-terminal checkout BEFORE
+    // tearing down the popup DOM so the xterm element reparents
+    // cleanly into the previous owner's mountInto rather than being
+    // momentarily orphaned in the removed-from-document subtree.
+    releaseCheckoutIfAny();
     handle.tearDownDom();
   }
 
@@ -351,22 +370,33 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     respondToPermission('deny');
   });
 
-  // HS-8171 — mount the mirror xterm into the connected container
-  // synchronously, before the browser has a chance to paint the popup.
-  // Together with the synchronous `serializeLiveTerm` capture above
-  // this means the popup opens directly with the terminal-mirror body
-  // — no momentary truncated preview flash.
-  if (liveSnapshot !== null && mirrorContainer !== null) {
-    mountMirrorXterm(mirrorContainer, liveSnapshot.stream, liveSnapshot.cols, liveSnapshot.rows);
-  }
-
-  // HS-7999 / HS-8139 — async resize-based snapshot fallback. Only
-  // fires when the synchronous live-term capture above returned null
-  // (rare — fresh launch with a blank live xterm). In that case the
-  // popup is currently showing the truncated preview; if the resize
-  // fallback succeeds, replace the body with the captured stream.
-  if (perm.input_preview !== undefined && (flatTruncated || diffTruncated) && liveSnapshot === null) {
-    void runSnapshotIntoBody(secret, handle.overlay, () => respondedRequestIds.has(perm.request_id) || dismissedRequestIds.has(perm.request_id));
+  // HS-8171 v2 — check out the live project terminal into the popup
+  // body container. The checkout is synchronous: `checkout()` reparents
+  // the live xterm element into `liveTermContainer` in the same JS
+  // task as the popup mount, so there is no intermediate render of any
+  // truncated preview. The container is already DOM-connected at this
+  // point because `openPermissionDialogShell` did `document.body.appendChild`
+  // synchronously above. After reparenting, we propose dimensions from
+  // the rendered container and resize to fit so Claude's TUI redraws
+  // for the popup geometry; on `release()` (popup close / dismiss /
+  // respond) the previous owner re-takes the top of the stack and
+  // gets its own dims back.
+  if (useLiveCheckout && liveTermContainer !== null) {
+    checkoutHandle = checkout({
+      projectSecret: secret,
+      terminalId: 'default',
+      cols: 100,
+      rows: 30,
+      mountInto: liveTermContainer,
+    });
+    // Defer the fit one frame so the container has computed layout
+    // dimensions before `proposeDimensions` measures it.
+    requestAnimationFrame(() => {
+      if (checkoutHandle === null) return;
+      const dims = checkoutHandle.fit.proposeDimensions();
+      if (dims === undefined) return;
+      checkoutHandle.resize(dims.cols, dims.rows);
+    });
   }
 
   // Notify via Tauri attention.
@@ -378,35 +408,3 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // closes via Allow / Deny / Minimize / No-response-needed / X.
 }
 
-/**
- * HS-7999 — orchestrate the terminal-buffer snapshot. Runs async so
- * the popup mount isn't blocked. When the snapshot resolves we find
- * the shell's body slot via `[data-role="body"]` and swap its
- * contents to the mirror xterm. Bails silently when the popup has
- * already been dismissed (the consumer's `respondedRequestIds` /
- * `dismissedRequestIds` sets cover the user-action close paths) — no
- * point mutating a popup that's gone.
- *
- * `'default'` is the conventional Claude terminal id (every project's
- * factory-default `terminals[]` config in `settings.json` carries an
- * entry with `id: 'default'`, see docs/22). Multi-terminal projects
- * still find the right one because `default` is also the channel-
- * registered terminal that Claude runs inside. Future iteration could
- * scan the project's terminals for one running `claude --channel` if
- * the assumption breaks.
- */
-async function runSnapshotIntoBody(
-  secret: string,
-  overlay: HTMLElement,
-  isDismissed: () => boolean,
-): Promise<void> {
-  const result = await captureTerminalSnapshot(secret, 'default', { tempCols: 200, tempRows: 80 });
-  if (result === null) return; // no terminal entry / WS not open — keep flat preview
-  if (isDismissed()) return; // user resolved the popup before the snapshot landed
-  if (!overlay.isConnected) return; // belt-and-braces — overlay torn down
-  const bodySlot = overlay.querySelector<HTMLElement>('[data-role="body"]');
-  if (bodySlot === null) return;
-  const mirrorContainer = toElement(<div className="permission-popup-mirror-xterm"></div>);
-  bodySlot.replaceChildren(mirrorContainer);
-  mountMirrorXterm(mirrorContainer, result.stream, result.cols, result.rows);
-}
