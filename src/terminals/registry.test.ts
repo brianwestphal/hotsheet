@@ -14,6 +14,7 @@ import {
   getTerminalStatus,
   killTerminal,
   listBellPendingForProject,
+  listPendingPromptsForProject,
   type PtyFactory,
   type PtyLike,
   resizeTerminal,
@@ -926,6 +927,88 @@ describe('TerminalRegistry', () => {
       expect(result.history.toString()).toBe('welcome');
       expect(pty.writes).not.toContain('\x0c');
       expect(pty.resizes).toEqual([]);
+    });
+  });
+
+  // HS-8208 — integration test: when a session's PTY emits the production
+  // dev-channels prompt bytes, the per-session promptScanner must surface
+  // them via `listPendingPromptsForProject` (the data source the
+  // `/api/projects/bell-state` long-poll reads from). The user reported
+  // "no popup at all" on app boot when claude was already parked at this
+  // prompt — this test pins the scanner-integration contract that the
+  // bell-state path NEVER misses a production-shape numbered prompt.
+  // Server-side parser correctness is covered by
+  // `src/shared/terminalPrompt/parsers.test.ts:110-142`; per-scanner
+  // detection is in `src/terminals/promptScanner.test.ts`. The integration
+  // through the registry is what was uncovered.
+  describe('listPendingPromptsForProject — production prompt surfaces (HS-8208)', () => {
+    /** ~120 ms — covers the 100 ms scanner debounce + write-callback flush. */
+    const DEBOUNCE_WAIT_MS = 120;
+    const PROD_DEV_CHANNELS_PROMPT = [
+      '\r\n',
+      'Loading development channels can pose a security risk\r\n',
+      '\r\n',
+      'Please use --channels to run a list of approved channels.\r\n',
+      '\r\n',
+      'Channels: server:hotsheet-channel\r\n',
+      '\r\n',
+      '> 1. I am using this for local development\r\n',
+      '  2. Exit\r\n',
+      '\r\n',
+      'Enter to confirm · Esc to cancel\r\n',
+    ].join('');
+
+    it('surfaces a numbered MatchResult after the PTY emits the dev-channels prompt', async () => {
+      const dir = tmpDataDir();
+      const { sub } = makeSub();
+      attach('secret-prod-1', dir, sub);
+      const pty = FakePty.lastSpawned!;
+      // Pre-emit: no pending prompt.
+      expect(listPendingPromptsForProject('secret-prod-1')).toEqual([]);
+
+      pty.emit(PROD_DEV_CHANNELS_PROMPT);
+
+      // Wait for the scanner debounce + buffer flush.
+      await new Promise((r) => setTimeout(r, DEBOUNCE_WAIT_MS));
+
+      const pending = listPendingPromptsForProject('secret-prod-1');
+      expect(pending).toHaveLength(1);
+      expect(pending[0].terminalId).toBe('default');
+      const match = pending[0].match;
+      expect(match.parserId).toBe('claude-numbered');
+      expect(match.shape).toBe('numbered');
+      if (match.shape === 'numbered') {
+        expect(match.choices).toHaveLength(2);
+        expect(match.choices[0].label).toBe('I am using this for local development');
+        expect(match.choices[0].highlighted).toBe(true);
+        expect(match.choices[1].label).toBe('Exit');
+      }
+      expect(match.signature).toMatch(/^claude-numbered:[0-9a-f]{8}:0$/);
+    });
+
+    it('still surfaces the prompt when the PTY emits it BEFORE the first attach (eager-spawn case)', async () => {
+      // The user's repro path: project's PTY auto-spawns at server boot,
+      // emits the prompt before any client connects. The session's
+      // promptScanner ingests every chunk regardless of subscriber count,
+      // so `pendingPrompt` should be set by the time the first client
+      // attaches. The HS-6799 first-attach Ctrl-L + scrollback drop must
+      // NOT clear the pendingPrompt — this test pins that guarantee.
+      const dir = tmpDataDir();
+      // Use ensureSpawned (no subscriber) to model eager-spawn-at-boot.
+      ensureSpawned('secret-prod-2', dir);
+      const pty = FakePty.lastSpawned!;
+      pty.emit(PROD_DEV_CHANNELS_PROMPT);
+      await new Promise((r) => setTimeout(r, DEBOUNCE_WAIT_MS));
+      expect(listPendingPromptsForProject('secret-prod-2')).toHaveLength(1);
+
+      // First-client attach with explicit cols/rows — triggers HS-6799's
+      // scrollback.clear() + Ctrl-L send. The pendingPrompt must SURVIVE
+      // this reset so the bell-state long-poll surfaces it to the client.
+      const { sub } = makeSub();
+      attach('secret-prod-2', dir, sub, { cols: 120, rows: 40 });
+      const stillPending = listPendingPromptsForProject('secret-prod-2');
+      expect(stillPending).toHaveLength(1);
+      expect(stillPending[0].match.parserId).toBe('claude-numbered');
     });
   });
 });

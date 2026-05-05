@@ -686,6 +686,26 @@ HS-7969 follow-up. New client module `src/client/terminalCheckout.tsx` owns one 
 
 ---
 
+## 58. Channel auto-approve / known-channel allow-list (`58-channel-auto-approve.md`)
+
+HS-8210. Extends §52's terminal-prompt always-allow path with a Tier 0 matcher keyed on Claude's `Channels: server:<name>` line. Today the user's `--dangerously-load-development-channels` prompt re-fires every `claude` startup despite §52's existing four-tier matcher (HS-8071) — Claude's TUI rewrites the prompt prose between version bumps, so hash / preview / choice-shape / choice-label all drift across launches. The channel name is the user's actual *intent* signal ("I trust this channel") and is invariant against every text drift the user has reported.
+
+**Parser.** `claudeNumberedParser` extracts the channel via `/^Channels:\s+(\S+)/m` against the joined `questionLines` (after the existing strips) and exposes it as a new optional `channel?: string` field on `NumberedMatch`. Signature stays unchanged so existing rules keep matching.
+
+**Allow-rule.** `TerminalPromptAllowRule` gains an optional `match_channel?: string`. When set, it indexes Tier 0 of `findMatchingAllowRule` — fires before all four existing tiers regardless of question hash / preview / choice shape / choice label. Bounds-checks `choice_index` against the live `match.choices.length` so a 3-option rule can't auto-respond on a 2-option re-render. Empty `question_hash` is permitted only when `match_channel` is set.
+
+**Implicit creation.** First manual approval on a channel-bearing prompt automatically appends a `match_channel`-keyed rule — no checkbox required (user-confirmed UX 2026-05-06). Opt-out is a "Don't remember" footer checkbox surfaced only when `match.channel !== undefined`. The existing always-allow checkbox stays for non-channel prompts.
+
+**Settings UI.** Channel rules render with a `Channel: <match_channel>` label in the question column instead of the question preview. Audit-log entries include the channel name in the summary.
+
+**Status:** Design only. Implementation phased: HS-8211 (parser + types), HS-8212 (allow-rule schema + Tier 0), HS-8213 (implicit creation + UI), HS-8214 (Settings label + audit-log).
+
+**Out of scope.** Pre-seeding rules without first manual approval. Auto-approving non-channel-bearing prompts (security risk — generic always-allow stays opt-in). Multi-channel rules (one rule per channel). Cross-project channel rules (per-project scope mirrors existing rules).
+
+**Cross-refs.** §52 (parent surface — Tier 0 inserts into §52.4's matcher; §52.7's Settings UI gains the channel label). §47 §47.4 (sibling MCP-relayed allow-list — same conventions, different transport). HS-8208 (sibling — original report covered the "no popup at all" bug separately).
+
+---
+
 ## 57. Shell custom-command-button spinner & stop (`57-shell-command-button-spinner.md`)
 
 HS-8056 (spec) + HS-8060 (Phase 1 implementation, shipped 2026-05-01). When a §15 Shell-target custom-command button is running, the button itself surfaces an absolute-positioned spinner + stop icon at the right edge (`background: inherit` so it visually punches the button colour, no reflow against the label). Clicking the running button opens a `confirmDialog` → `POST /api/shell/kill`. Multiple commands can run simultaneously; per-button state lives in a module-private `runningButtons: Map<commandKey, logId>` synced by a single shared poll over `/api/shell/running` (replacing the pre-fix single-id-per-timer model). The existing global "Shell running" toolbar indicator now reflects `runningButtons.size > 0` (busy = any button running). Per-id `autoShowLogById` map replaces the global `shellAutoShowLog: boolean` so concurrent commands' auto-show flags don't clobber each other.
@@ -888,6 +908,7 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 55 — ticket cross-references | Shipped | HS-8036 + HS-8053: `HS-NNNN` linkifier, stacking modal, server prefix lookup; cache reload on project switch. |
 | 56 — magnified grid nav | Shipped | HS-8028 + HS-8028 follow-up #2: Shift+Cmd/Ctrl+Arrow grid-neighbour navigation while centered or dedicated; placeholder-rect fix when centered. |
 | 57 — shell-button spinner & stop | Shipped | HS-8060 Phase 1: per-button spinner with stop icon, click-to-confirm-then-kill, multiple concurrent commands tracked via `runningButtons: Map<commandKey, logId>`. |
+| 58 — channel auto-approve | Design only | HS-8210: extends §52 with Tier 0 channel-keyed allow-list. Parser extracts `Channels: server:<name>` into `NumberedMatch.channel?: string`; allow-rule schema gains `match_channel?: string`; first manual approval implicitly creates a channel-keyed rule (opt-out via "Don't remember" footer checkbox). Tier 0 wins over Tiers 1–4 so the channel rule is invariant against question/preview/choice-shape/choice-label drift. Implementation phased: HS-8211 parser, HS-8212 schema + Tier 0, HS-8213 implicit creation + UI, HS-8214 Settings label + audit-log. |
 | 54 — terminal checkout | Fully shipped (Phase 1 + Phase 2 all sub-tickets) | HS-8031 (Phase 1) + HS-8041 (Phase 2.1 quit-confirm) + HS-8042 (Phase 2.2 dedicated) + HS-8048 (Phase 2.2b tile) + HS-8043 (Phase 2.3 verification) + **HS-8044 (Phase 2.4 drawer pane, 2026-04-30)** + **HS-8045 (Phase 2.5 cleanup, 2026-04-30)**. Drawer migration: `mountXterm` + `connect` → single `mountInstanceViaCheckout`; `connect` + `scheduleReconnect` deleted entirely (module-driven reconnect lives in `terminalCheckout.tsx::attachWebSocketToEntry`). New `onControlMessage` callback on `CheckoutOptions` for drawer's `'history'` / `'exit'` handling (fans out to all stack consumers). New `intentionallyClosing` flag distinguishes explicit `release()` from network drop. `term.onData` registration moved to `createEntry` (closes a hidden HS-8042 regression where the closure captured the original WS reference and dispatched to the old dead WS after reconnect). Cleanup deleted `ansiSpans.ts` + `ansiSpans.test.ts` + `paintPreviewContent` / `paletteFromTheme` / `fetchScrollbackPreview` / `applyAppearanceToPreview` in `quitConfirm.tsx` + the `void <fn>` references + `GET /api/terminal/scrollback-preview` route + `getTerminalScrollbackPreview` / `getTerminalScrollbackPreviewWithAnsi` registry helpers + `buildScrollbackPreview` / `buildScrollbackPreviewWithAnsi` snapshot helpers + their tests. `stripAnsi` / `tailLines` kept (pure utilities with existing test coverage) |
 | tauri-architecture | Shipped | — |
 | tauri-setup | Shipped | — |

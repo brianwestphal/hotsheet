@@ -137,13 +137,23 @@ projectRoutes.get('/permissions', async (c) => {
     const result: Record<string, { request_id: string; tool_name: string; description: string; input_preview?: string } | null> = {};
     await Promise.all(projects.map(async (p) => {
       const port = getChannelPort(p.dataDir);
+      // No channel-port file → channel server has never been connected for
+      // this project. Definitive "not pending" → null.
       if (port === null) { result[p.secret] = null; return; }
       try {
         const res = await fetch(`http://127.0.0.1:${port}/permission`);
         const data = await res.json() as { pending: { request_id: string; tool_name: string; description: string; input_preview?: string } | null };
         result[p.secret] = data.pending;
       } catch {
-        result[p.secret] = null;
+        // HS-8207 — channel-server unreachable transiently (restart, network
+        // blip, slow response getting cancelled). OMIT this project from the
+        // result — pre-fix we returned null here, which the client treated as
+        // confirmed-not-pending and ticked the auto-dismiss counter. Two such
+        // transients in a row tore the popup out from under the user even
+        // though Claude was still waiting. Omitting tells the client "no
+        // info — don't change popup state on this poll", which the client's
+        // smart auto-dismiss path uses to distinguish "channel-unreachable"
+        // from "no permission pending".
       }
     }));
     return result;

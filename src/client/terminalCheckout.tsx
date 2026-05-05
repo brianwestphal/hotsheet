@@ -564,6 +564,28 @@ export function entryCount(): number {
   return entries.size;
 }
 
+/**
+ * HS-8207 — read the live `(cols, rows)` an entry is currently sized to,
+ * or `null` when no entry exists for `(secret, terminalId)`. Lets a
+ * consumer that's about to call `checkout()` pre-pick the existing dims
+ * so the swap-time `applyResizeIfChanged` is a no-op (no SIGWINCH, no
+ * TUI redraw). The popup's live-checkout flow uses this to avoid the
+ * "shows some content → shows completely different content" multi-phase
+ * symptom: pre-fix, the popup hardcoded `cols: 100, rows: 30` which
+ * fired one redraw, then the fit-retry resized to popup-fit dims firing
+ * a second one back-to-back. With the existing-dims pass-through, only
+ * the fit-retry's resize is visible to claude / the shell.
+ *
+ * Returns the term's CURRENT dims (not the bookkeeping `lastApplied*`),
+ * matching the source-of-truth choice in `applyResizeIfChanged` per
+ * HS-8051.
+ */
+export function peekEntryDims(secret: string, terminalId: string): { cols: number; rows: number } | null {
+  const entry = entries.get(entryKey(secret, terminalId));
+  if (entry === undefined) return null;
+  return { cols: entry.term.cols, rows: entry.term.rows };
+}
+
 /** **TEST ONLY** — full snapshot of the current stack state for assertions.
  *  Returns a deep-cloned shape so callers can't mutate the live entries.
  *  Exported unconditionally so unit tests can assert internal state; the

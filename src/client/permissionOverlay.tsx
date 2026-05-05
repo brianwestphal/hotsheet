@@ -10,7 +10,7 @@ import { openPermissionDialogShell } from './permissionDialogShell.js';
 import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
 import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
-import { checkout, type CheckoutHandle } from './terminalCheckout.js';
+import { checkout, type CheckoutHandle, peekEntryDims } from './terminalCheckout.js';
 
 /**
  * Claude permission-request UI. Historically there were two variants: a
@@ -96,8 +96,25 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
     const stillPending = Object.values(data.permissions).some(
       p => p !== null && p.request_id === activePopupRequestId,
     );
+    // HS-8207 — when the popup's owning project is missing entirely from
+    // `data.permissions` (vs. present-with-null), the per-project channel-
+    // server fetch in `routes/projects.ts::checkAll` threw transiently
+    // (restart, network blip, slow response cancelled). Treat as "no info
+    // this poll" — don't tick the auto-dismiss counter. Two consecutive
+    // such transients no longer tear the popup out from under the user;
+    // the next successful poll will either confirm pending (reset) or
+    // confirm not-pending (start ticking). Pre-HS-8207 the server returned
+    // `null` on fetch failure, which collapsed transient-unreachable into
+    // confirmed-not-pending and produced exactly the "popup disappears
+    // entirely" tail of the HS-8207 repro.
+    const ownerKnown = activePopupOwnerSecret === null
+      || activePopupOwnerSecret in data.permissions;
     if (stillPending) {
       autoDismissMissCount = 0;
+    } else if (!ownerKnown) {
+      // No state change — keep counter where it is. We don't reset it
+      // either, so a chain of misses interleaved with unreachables still
+      // eventually dismisses (slowly).
     } else {
       autoDismissMissCount++;
       if (autoDismissMissCount >= AUTO_DISMISS_MISS_THRESHOLD) {
@@ -111,6 +128,7 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
         releaseActiveCheckoutIfAny();
         document.querySelector('.permission-popup')?.remove();
         activePopupRequestId = null;
+        activePopupOwnerSecret = null;
         autoDismissMissCount = 0;
       }
     }
@@ -203,6 +221,16 @@ function syncMinimizedDots() {
 
 let activePopupRequestId: string | null = null;
 
+/** HS-8207 — the project secret the active popup belongs to. Tracked so
+ *  the auto-dismiss path in `processPermissionPollResponse` can
+ *  distinguish "owner project absent from poll response = channel server
+ *  unreachable" from "owner project present with null = no permission
+ *  pending". Pre-HS-8207 the auto-dismiss path could not tell the two
+ *  cases apart, so a transient channel-server failure ticked the
+ *  dismiss counter and contributed to the "popup disappears entirely"
+ *  tail of the HS-8207 repro. */
+let activePopupOwnerSecret: string | null = null;
+
 /** HS-8171 v2 / HS-8182 — module-level handle for the live-terminal
  *  checkout the active popup may have taken. Hoisted out of
  *  `showPermissionPopup`'s closure so the polling-loop's auto-dismiss
@@ -236,6 +264,7 @@ let activeLiveTermResizeObserver: ResizeObserver | null = null;
 
 function releaseActiveCheckoutIfAny(): void {
   disconnectActiveLiveTermResizeObserver();
+  clearLiveTermFitRetryTimer();
   if (activeCheckoutHandle === null) return;
   try { activeCheckoutHandle.release(); } catch { /* swallow — entry may already be torn down */ }
   activeCheckoutHandle = null;
@@ -245,6 +274,62 @@ function disconnectActiveLiveTermResizeObserver(): void {
   if (activeLiveTermResizeObserver === null) return;
   try { activeLiveTermResizeObserver.disconnect(); } catch { /* swallow */ }
   activeLiveTermResizeObserver = null;
+}
+
+/** HS-8206 v2 — total retry budget for the live-term fit. xterm's
+ *  renderer typically measures cell dims within a couple of frames after
+ *  reparenting; the budget is generous enough to cover slow first paints
+ *  on cold startup (heavy theme load, lots of scrollback to replay) but
+ *  not so long that a genuinely-broken environment hangs the fit forever. */
+const LIVE_TERM_FIT_RETRY_INTERVAL_MS = 16;
+const LIVE_TERM_FIT_RETRY_MAX_ATTEMPTS = 30;
+
+/** HS-8206 v2 — pending retry timeout id so a re-run from the
+ *  ResizeObserver doesn't stack up parallel retry chains. */
+let liveTermFitRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearLiveTermFitRetryTimer(): void {
+  if (liveTermFitRetryTimer === null) return;
+  clearTimeout(liveTermFitRetryTimer);
+  liveTermFitRetryTimer = null;
+}
+
+/** HS-8206 v2 — drive `fit.proposeDimensions()` to a successful resize,
+ *  retrying up to {@link LIVE_TERM_FIT_RETRY_MAX_ATTEMPTS} times with
+ *  {@link LIVE_TERM_FIT_RETRY_INTERVAL_MS} between attempts. Bails if
+ *  the active checkout handle changes (popup closed / replaced) or the
+ *  popup is dismissed mid-retry. Idempotent: a re-entry while a retry
+ *  chain is in flight cancels the pending timer and starts fresh, so
+ *  the ResizeObserver firing during a retry doesn't produce overlapping
+ *  chains. */
+function runLiveTermFitWithRetry(forHandle: CheckoutHandle): void {
+  clearLiveTermFitRetryTimer();
+  let attempts = 0;
+  function attempt(): void {
+    liveTermFitRetryTimer = null;
+    if (activeCheckoutHandle !== forHandle) return; // popup closed or re-checked-out.
+    attempts++;
+    let proposed: { cols: number; rows: number } | undefined;
+    try {
+      proposed = forHandle.fit.proposeDimensions();
+    } catch { /* term disposed mid-flight */ return; }
+    if (proposed === undefined) {
+      if (attempts >= LIVE_TERM_FIT_RETRY_MAX_ATTEMPTS) return;
+      liveTermFitRetryTimer = setTimeout(attempt, LIVE_TERM_FIT_RETRY_INTERVAL_MS);
+      return;
+    }
+    if (proposed.cols === forHandle.term.cols && proposed.rows === forHandle.term.rows) {
+      return; // already at the right dims — break the fit/observe loop.
+    }
+    try { forHandle.resize(proposed.cols, proposed.rows); } catch { /* term disposed */ }
+  }
+  // First attempt on the next animation frame so the popup overlay's
+  // initial layout has settled before we read CSS dims.
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(attempt);
+  } else {
+    liveTermFitRetryTimer = setTimeout(attempt, 0);
+  }
 }
 
 function showPermissionPopup(secret: string, perm: PermissionData) {
@@ -273,10 +358,12 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // loop's catch logs the original error.
   document.querySelector('.permission-popup')?.remove();
   activePopupRequestId = perm.request_id;
+  activePopupOwnerSecret = secret;
   try {
     showPermissionPopupBody(secret, perm);
   } catch (err) {
     activePopupRequestId = null;
+    activePopupOwnerSecret = null;
     releaseActiveCheckoutIfAny();
     document.querySelector('.permission-popup')?.remove();
     throw err;
@@ -385,6 +472,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
 
   function clearPopupOnly() {
     activePopupRequestId = null;
+    activePopupOwnerSecret = null;
     if (tab) tab.classList.remove('permission-highlight');
   }
 
@@ -489,46 +577,52 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     // stale handle first keeps `activeCheckoutHandle` the single
     // source of truth for "the popup currently owning the live xterm".
     releaseActiveCheckoutIfAny();
+    // HS-8207 — pass through the EXISTING entry's dims (when there is
+    // one — drawer pane / dashboard tile already mounted) so the
+    // checkout's swap-time `applyResizeIfChanged` is a no-op (no
+    // SIGWINCH, no TUI redraw). Pre-fix the popup hardcoded
+    // `cols: 100, rows: 30`, which fired one redraw at checkout, and
+    // then the fit-retry below resized to popup-fit dims firing a
+    // second redraw back-to-back. The user perceived the two
+    // back-to-back claude TUI redraws as the "shows some content →
+    // shows completely different content" multi-phase symptom.
+    // Post-fix, only the fit-retry's resize causes a redraw — single
+    // visible state change. When NO existing entry exists (popup is
+    // first consumer of this terminal), default to (80, 24): a
+    // sensible TUI baseline that's closer to popup-fit than (100, 30)
+    // so the fit-retry's resize is small or no-op.
+    const existingDims = peekEntryDims(secret, 'default');
+    const startCols = existingDims?.cols ?? 80;
+    const startRows = existingDims?.rows ?? 24;
     activeCheckoutHandle = checkout({
       projectSecret: secret,
       terminalId: 'default',
-      cols: 100,
-      rows: 30,
+      cols: startCols,
+      rows: startRows,
       mountInto: liveTermContainer,
     });
-    // HS-8206 — install a ResizeObserver on the live-term container so
-    // every layout pass refits the term to its current cell-fit dims.
-    // Pre-fix a single rAF + `proposeDimensions()` was the only resize
-    // attempt; if cell metrics were 0 at that moment (xterm just
-    // reparented out of the 1×1 parking sink, renderer hadn't measured
-    // the new layout yet), `proposeDimensions()` returned undefined,
-    // the resize was skipped, and the term stayed at 100×30 forever
-    // even though the popup body was 620×420. The observer fires once
-    // when initial layout completes (replacing the old single-rAF
-    // attempt) AND on every subsequent layout change. Same `pendingFit`
-    // / `proposeDimensions` skip-on-same-size guard as
-    // `quitConfirm.tsx::HS-8055` to avoid the well-known fit/observe
-    // feedback loop.
+    // HS-8206 v2 — `proposeDimensions()` returns undefined when xterm's
+    // renderer hasn't measured cell dims for the new layout
+    // (`renderService.dimensions.css.cell` is 0×0). Right after the term
+    // reparents out of the offscreen 1×1 parking sink, the renderer
+    // hasn't yet rendered a frame in the popup container, so cell dims
+    // are 0. The HS-8206 v1 ResizeObserver fired once on initial observe
+    // + bailed if dims were undefined; with a fixed-CSS-size popup
+    // container no further size-change events ever fire, so the term
+    // stayed at the initial 100×30 forever. Fix: kick a retry loop that
+    // polls `proposeDimensions()` until it returns valid dims (cell
+    // metrics measured) or we exhaust the retry budget. The
+    // ResizeObserver still installs in case a window resize / DPR change
+    // shifts the popup CSS layout mid-popup; same retry path runs from
+    // the observer's callback. `pendingFit` coalesces overlapping fit
+    // attempts; the proposed-vs-current short-circuit prevents the
+    // well-known fit/observe feedback loop.
     disconnectActiveLiveTermResizeObserver();
+    runLiveTermFitWithRetry(activeCheckoutHandle);
     if (typeof ResizeObserver !== 'undefined') {
-      let pendingFit = false;
       activeLiveTermResizeObserver = new ResizeObserver(() => {
-        if (pendingFit) return;
         if (activeCheckoutHandle === null) return;
-        pendingFit = true;
-        requestAnimationFrame(() => {
-          pendingFit = false;
-          const handle = activeCheckoutHandle;
-          if (handle === null) return;
-          try {
-            const proposed = handle.fit.proposeDimensions();
-            if (proposed === undefined) return;
-            if (proposed.cols === handle.term.cols && proposed.rows === handle.term.rows) {
-              return;
-            }
-            handle.resize(proposed.cols, proposed.rows);
-          } catch { /* container may have detached mid-frame */ }
-        });
+        runLiveTermFitWithRetry(activeCheckoutHandle);
       });
       activeLiveTermResizeObserver.observe(liveTermContainer);
     }
@@ -557,8 +651,10 @@ export function _resetStateForTesting(): void {
   for (const rec of minimizedRequests.values()) clearTimeout(rec.timeoutId);
   minimizedRequests.clear();
   activePopupRequestId = null;
+  activePopupOwnerSecret = null;
   activeCheckoutHandle = null;
   disconnectActiveLiveTermResizeObserver();
+  clearLiveTermFitRetryTimer();
   autoDismissMissCount = 0;
   channelBusyTimeoutModule = null;
   setChannelBusyTimeoutRefModule = () => {};
@@ -569,6 +665,7 @@ export function _resetStateForTesting(): void {
  *  without holding live references. */
 export function _inspectStateForTesting(): {
   activePopupRequestId: string | null;
+  activePopupOwnerSecret: string | null;
   activeCheckoutHandle: boolean;
   activeLiveTermResizeObserver: boolean;
   respondedRequestIds: string[];
@@ -579,6 +676,7 @@ export function _inspectStateForTesting(): {
 } {
   return {
     activePopupRequestId,
+    activePopupOwnerSecret,
     activeCheckoutHandle: activeCheckoutHandle !== null,
     activeLiveTermResizeObserver: activeLiveTermResizeObserver !== null,
     respondedRequestIds: [...respondedRequestIds],

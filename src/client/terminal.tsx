@@ -1030,6 +1030,20 @@ function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void 
     rows: 24,
     mountInto: inst.canvasHost,
     onControlMessage(msg) { handleControlMessage(inst, msg); },
+    onRestoredToTop() {
+      // HS-8206 v2 — when another consumer (e.g. the §47 permission popup
+      // borrowing the live terminal via §54 checkout) releases, the live
+      // xterm reparents back into our `canvasHost`. `applyResizeIfChanged`
+      // inside `releaseInternal` resizes the term to the cols/rows we
+      // originally requested at checkout time (80×24), NOT to the drawer
+      // pane's actual current geometry — which is typically much wider
+      // (e.g. 178×42). Without an explicit refit here, the user sees the
+      // drawer terminal stuck at the popup's narrow size with content
+      // wrapping at ~80 cols even though the drawer pane is full-width.
+      // Defer one rAF so the reparent + applyResizeIfChanged round-trip
+      // has settled before FitAddon reads CSS dims.
+      requestAnimationFrame(() => doFit(inst));
+    },
   });
   const term = handle.term;
   const fit = handle.fit;

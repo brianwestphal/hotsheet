@@ -278,6 +278,80 @@ describe('POST /projects/:secret/reveal', () => {
   });
 });
 
+// HS-8207 — `/api/projects/permissions` is a long-poll that aggregates
+// per-project permission state. The new contract: when the per-project
+// channel-server fetch throws (channel-server restart, network blip,
+// slow response cancelled), the project is OMITTED from the response
+// rather than mapped to null. Pre-fix, omitting vs null was conflated;
+// the client treated both as "confirmed not pending" and ticked the
+// auto-dismiss counter. Two consecutive transient fetch failures tore
+// the popup out from under the user. The new "missing key" signal lets
+// the client distinguish channel-unreachable from no-permission-pending.
+describe('GET /projects/permissions — channel-unreachable signaling (HS-8207)', () => {
+  beforeEach(() => {
+    mockProjects = [mockProject, mockProject2];
+  });
+
+  it('OMITS a project from the response when the channel-server fetch throws', async () => {
+    const { readGlobalConfig } = await import('../global-config.js');
+    vi.mocked(readGlobalConfig).mockReturnValue({ channelEnabled: true });
+    const { getChannelPort } = await import('../channel-config.js');
+    vi.mocked(getChannelPort).mockReturnValue(9999);
+    // Stub global fetch to simulate a transient channel-server failure
+    // for ONE project and a successful pending response for the other.
+    const realFetch = global.fetch;
+    global.fetch = vi.fn((url: unknown): Promise<Response> => {
+      const u = String(url);
+      if (u.includes('/permission')) {
+        // We can't tell which project from the URL alone (both use port 9999),
+        // so we throw on the FIRST call and succeed on the SECOND. The
+        // ordering in `Promise.all(projects.map(...))` is deterministic.
+        const callCount = vi.mocked(global.fetch).mock.calls.length;
+        if (callCount === 1) return Promise.reject(new Error('ECONNREFUSED'));
+        return Promise.resolve(new Response(
+          JSON.stringify({ pending: { request_id: 'req-123', tool_name: 'Bash', description: 'ls', input_preview: '{"command":"ls"}' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ));
+      }
+      return Promise.reject(new Error('unexpected url ' + u));
+    }) as unknown as typeof fetch;
+
+    try {
+      // Pass v with a high value so the version-ahead fast path doesn't
+      // skip checkAll.
+      const res = await app.request('/api/projects/permissions?v=0');
+      expect(res.status).toBe(200);
+      const body = await res.json() as { permissions: Record<string, unknown> };
+      // First project: channel fetch threw → OMITTED from the result.
+      expect(body.permissions).not.toHaveProperty(mockProject.secret);
+      // Second project: channel fetch succeeded → present with the
+      // pending permission.
+      expect(body.permissions[mockProject2.secret]).toMatchObject({
+        request_id: 'req-123',
+        tool_name: 'Bash',
+      });
+    } finally {
+      global.fetch = realFetch;
+    }
+  });
+
+  it('still returns null (NOT omitted) when the project has no channel-port file', async () => {
+    // No channel-port file is a definitive "channel never connected for this
+    // project" — distinct from a transient fetch failure. Stays null so the
+    // client's not-pending checks aren't broken.
+    const { readGlobalConfig } = await import('../global-config.js');
+    vi.mocked(readGlobalConfig).mockReturnValue({ channelEnabled: true });
+    const { getChannelPort } = await import('../channel-config.js');
+    vi.mocked(getChannelPort).mockReturnValue(null);
+
+    const res = await app.request('/api/projects/permissions?v=0');
+    expect(res.status).toBe(200);
+    const body = await res.json() as { permissions: Record<string, unknown> };
+    expect(body.permissions[mockProject.secret]).toBeNull();
+    expect(body.permissions[mockProject2.secret]).toBeNull();
+  });
+});
+
 describe('POST /projects/reorder', () => {
   it('reorders projects by secret', async () => {
     const res = await app.request('/api/projects/reorder', post({ secrets: ['test-secret-456', 'test-secret-123'] }));
