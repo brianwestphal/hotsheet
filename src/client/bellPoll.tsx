@@ -17,10 +17,9 @@
  *     arrive while the user is inside the same project.
  */
 import { buildAllowRule, buildChannelAllowRule } from '../shared/terminalPrompt/allowRules.js';
-import type { MatchResult } from '../shared/terminalPrompt/parsers.js';
+import { isAiParserId, type MatchResult } from '../shared/terminalPrompt/parsers.js';
 import { api, apiWithSecret } from './api.js';
 import { TIMERS } from './constants/timers.js';
-import { getActivePermissionPopupOwnerSecret } from './permissionOverlay.js';
 import { updateProjectBellIndicators } from './projectTabs.js';
 import { getActiveProject } from './state.js';
 import { fireNativeNotification, isAppBackgrounded } from './tauriIntegration.js';
@@ -231,6 +230,23 @@ const lastDispatchedPromptSignatures = new Map<string, string>();
 let activeOverlayKey: string | null = null;
 
 /**
+ * HS-8245 — set of project secrets that have at least one live AI-parser
+ * pendingPrompt (parserId in `AI_PARSER_IDS`). Recomputed at the top of
+ * every `dispatchPendingPrompts` tick. Read by `permissionOverlay.tsx`
+ * via `hasAiTerminalPromptForSecret(secret)` to suppress the §47 channel-
+ * permission popup for that project. Inverts the HS-8228 precedence —
+ * when an AI tool is at a prompt, the in-terminal §52 overlay is the
+ * authoritative surface (the borrow-terminal technique answers via
+ * keystrokes the TUI is already listening for) and the channel popup
+ * is redundant.
+ */
+const liveAiPromptSecrets = new Set<string>();
+
+export function hasAiTerminalPromptForSecret(secret: string): boolean {
+  return liveAiPromptSecrets.has(secret);
+}
+
+/**
  * HS-8067 — minimized terminal-prompt overlays. Mirrors §47's
  * `permissionOverlay::minimizedRequests`. When the user clicks the
  * overlay's `Minimize` link, the overlay tears down its DOM but the
@@ -302,11 +318,22 @@ function dispatchPendingPrompts(state: BellStateMap): void {
   // signature changed since the last dispatch).
   const liveKeys = new Set<string>();
   const candidates: Array<{ secret: string; terminalId: string; match: MatchResult; key: string; sig: string }> = [];
+  // HS-8245 — recompute the live-AI-prompts set from scratch every tick so
+  // a server-cleared pendingPrompt also clears the suppression flag for
+  // §47. Drop entries before walking; populate as we encounter AI matches.
+  liveAiPromptSecrets.clear();
   for (const [secret, entry] of state.entries()) {
     const prompts = entry.pendingPrompts ?? {};
     for (const [terminalId, match] of Object.entries(prompts)) {
       const key = `${secret}::${terminalId}`;
       liveKeys.add(key);
+      // HS-8245 — track which projects have a live AI-parser prompt.
+      // `permissionOverlay.tsx` reads this via `hasAiTerminalPromptForSecret`
+      // to suppress the §47 channel popup for the same project. Computed
+      // here even for matches that the candidate-collection loop below
+      // skips (e.g. generic-shape matches that never auto-surface) so the
+      // suppression is driven by detection, not by overlay-mount eligibility.
+      if (isAiParserId(match.parserId)) liveAiPromptSecrets.add(secret);
       // Generic-fallback matches NEVER auto-surface an overlay — too high
       // a false-positive risk to interrupt cross-project work with. The
       // user gets the prompt the next time they switch into that project
@@ -342,21 +369,13 @@ function dispatchPendingPrompts(state: BellStateMap): void {
       // bookkeeping is cleared on tab-click-restore + auto-dismiss
       // timeout + server-clears-pending.
       if (minimizedTerminalPrompts.has(key)) continue;
-      // HS-8228 — the §47 channel-permission popup (`permissionOverlay.tsx`)
-      // and this §52 terminal-prompt overlay describe the same Claude
-      // decision when both fire on the same project: Claude's MCP
-      // `request_permission` triggers the §47 popup, and Claude's TUI
-      // text scrape (server-side scanner → bellPoll long-poll) triggers
-      // the §52 overlay. Pre-fix the user reported seeing both popups
-      // stacked on top of each other (terminal-prompt overlay covering
-      // the channel-permission popup). When §47 already has a popup
-      // mounted for this project, skip the §52 candidate — the §47
-      // popup is the authoritative decision surface (its Allow / Deny
-      // sends a real MCP response), so it should win the user's
-      // attention. The §52 candidate stays in the server's
-      // `pendingPrompts` and re-fires on the next tick once §47
-      // resolves; the dispatch-skip is purely a render-time gate.
-      if (getActivePermissionPopupOwnerSecret() === secret) continue;
+      // HS-8245 — inverts HS-8228's old precedence. When this candidate
+      // is for an AI tool (claude / codex / etc.) we DO want the §52
+      // overlay to surface; if the §47 channel-permission popup is also
+      // mounted for the same project, we tear it down below (right
+      // before the new §52 overlay mounts) so the user sees one surface,
+      // not two. Non-AI candidates (yesno from a `git push?` etc.) keep
+      // mounting unconditionally — they don't conflict with §47.
       candidates.push({ secret, terminalId, match, key, sig });
     }
   }
@@ -397,33 +416,23 @@ function dispatchPendingPrompts(state: BellStateMap): void {
   const next = candidates[0];
   lastDispatchedPromptSignatures.set(next.key, next.sig);
   activeOverlayKey = next.key;
+  // HS-8245 — when surfacing an AI-parser overlay, tear down any §47
+  // channel-permission popup mounted for the same project before this
+  // §52 overlay mounts. The two surfaces describe the same Claude
+  // decision; the §52 overlay's borrow-terminal answers via keystrokes
+  // the AI's TUI is already listening for, which is what the user wants
+  // to see. The channel server's pending MCP request stays alive — if
+  // the AI-detected prompt clears without resolving the MCP side, the
+  // next poll cycle's `processPermissionPollResponse` for-each will
+  // re-mount §47 because `hasAiTerminalPromptForSecret(secret)` will
+  // then return false. Lazy import to avoid the bellPoll ↔ permission-
+  // overlay static-import cycle.
+  if (isAiParserId(next.match.parserId)) {
+    void import('./permissionOverlay.js')
+      .then(m => m.dismissPermissionPopupForSecret(next.secret))
+      .catch(() => { /* swallow — best-effort dedup */ });
+  }
   openCrossProjectOverlay(next.secret, next.terminalId, next.match);
-}
-
-/**
- * HS-8228 — tear down any active terminal-prompt overlay (§52) belonging
- * to `secret`. Called from `permissionOverlay.tsx::showPermissionPopupBody`
- * when a §47 channel-permission popup is about to mount for `secret` —
- * pre-fix the §52 overlay stayed visible underneath the §47 popup,
- * stacking two indistinguishable surfaces. The §47 popup is the
- * authoritative decision surface (its Allow / Deny writes a real MCP
- * response), so it takes precedence; the §52 server-side
- * `pendingPrompts` entry stays alive and the dispatcher re-fires on the
- * next tick if §47 closes without resolving the underlying scanner
- * match.
- *
- * Idempotent — no-op when no overlay is open for `secret`.
- */
-export function dismissTerminalPromptOverlayForSecret(secret: string): void {
-  if (activeOverlayKey === null) return;
-  if (!activeOverlayKey.startsWith(`${secret}::`)) return;
-  document.querySelectorAll('.terminal-prompt-overlay').forEach(el => el.remove());
-  // Drop the dispatched-signature record for this key so the next tick
-  // (after §47 closes) will re-pick the candidate. The next-tick gate
-  // `getActivePermissionPopupOwnerSecret() === secret` keeps suppressing
-  // the §52 overlay until §47 has fully closed.
-  lastDispatchedPromptSignatures.delete(activeOverlayKey);
-  activeOverlayKey = null;
 }
 
 /** Test-only: reset all dispatcher state between cases. */
@@ -434,6 +443,7 @@ export function _resetDispatchStateForTesting(): void {
   minimizedTerminalPrompts.clear();
   dismissedTerminalPromptKeys.clear();
   recentlyAnsweredPrompts.clear();
+  liveAiPromptSecrets.clear();
 }
 
 /** Test-only: peek the recently-answered bookkeeping. */

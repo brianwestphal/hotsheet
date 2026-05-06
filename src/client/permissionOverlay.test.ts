@@ -33,10 +33,14 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// HS-8245 — type-only import for `vi.importActual<...>` below so the
+// `@typescript-eslint/consistent-type-imports` rule stays clean.
+import type * as BellPollModule from './bellPoll.js';
 import {
   _inspectStateForTesting,
   _resetStateForTesting,
   dismissedRequestIds,
+  dismissPermissionPopupForSecret,
   LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD,
   type PermissionData,
   processPermissionPollResponse,
@@ -52,6 +56,23 @@ import {
   checkout,
   entryCount,
 } from './terminalCheckout.js';
+
+// HS-8245 — mock `hasAiTerminalPromptForSecret` so the `showPermissionPopup`
+// gate that suppresses §47 when an AI terminal prompt is detected can be
+// exercised. Default is `false` (no AI prompt) so every pre-HS-8245 test
+// continues to behave the same way. `vi.mock` is hoisted by vitest so it
+// runs before the static `import { ... } from './permissionOverlay.js'`
+// above; positioning here keeps `import/first` happy.
+const { hasAiPromptMock } = vi.hoisted(() => ({
+  hasAiPromptMock: vi.fn<(secret: string) => boolean>(() => false),
+}));
+vi.mock('./bellPoll.js', async () => {
+  const actual = await vi.importActual<typeof BellPollModule>('./bellPoll.js');
+  return {
+    ...actual,
+    hasAiTerminalPromptForSecret: (secret: string) => hasAiPromptMock(secret),
+  };
+});
 
 // channelUI's mark/clearProjectAttention writes into module state we don't
 // care about for these tests — the polling code calls them, and we just
@@ -89,6 +110,11 @@ beforeEach(() => {
   document.body.innerHTML = '';
   _resetStateForTesting();
   resetCheckout();
+  // HS-8245 — reset the bellPoll mock so each test starts with no AI
+  // prompt detected. Tests that exercise the suppression path override
+  // explicitly.
+  hasAiPromptMock.mockReset();
+  hasAiPromptMock.mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -1341,5 +1367,117 @@ describe('showPermissionPopup — short bash stays static (HS-8217)', () => {
     expect(document.querySelector('.permission-popup-live-terminal')).toBeNull();
     // No checkout entry was created for this popup since useLiveCheckout was false.
     expect(_inspectStackForTesting()).toHaveLength(0);
+  });
+});
+
+/**
+ * HS-8245 — when an AI tool's in-terminal prompt is detected for a project
+ * (signalled by `bellPoll.hasAiTerminalPromptForSecret(secret) === true`),
+ * the §47 channel-permission popup must NOT mount for the same project.
+ * The §52 in-terminal overlay is the authoritative surface; the user
+ * answers via the borrow-terminal keystrokes the AI's TUI is already
+ * listening for. The MCP request stays alive on the channel server and
+ * the next poll cycle's for-each will surface §47 naturally if the AI
+ * prompt clears without resolving the MCP side.
+ *
+ * Inverts HS-8228's earlier "§47 wins" precedence — the user reported
+ * that the channel popup and the in-terminal overlay describe the same
+ * Claude decision and stacking them was a regression.
+ */
+describe('HS-8245 — AI-prompt suppression of §47', () => {
+  it('does NOT mount the popup when hasAiTerminalPromptForSecret(secret) is true at mount time', () => {
+    hasAiPromptMock.mockImplementation((secret) => secret === 'sec-a');
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm() },
+      v: 1,
+    });
+    expect(document.querySelector('.permission-popup')).toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
+  });
+
+  it('still mounts the popup for OTHER projects even when one has an AI prompt', () => {
+    hasAiPromptMock.mockImplementation((secret) => secret === 'sec-a');
+    processPermissionPollResponse({
+      permissions: {
+        'sec-a': makePerm({ request_id: 'req-a' }),
+        'sec-b': makePerm({ request_id: 'req-b' }),
+      },
+      v: 1,
+    });
+    // sec-a suppressed — sec-b mounts.
+    expect(document.querySelectorAll('.permission-popup').length).toBe(1);
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-b');
+    expect(_inspectStateForTesting().activePopupOwnerSecret).toBe('sec-b');
+  });
+
+  it('mounts on the next poll cycle once the AI prompt clears', () => {
+    // First poll — AI detected for sec-a, popup suppressed.
+    hasAiPromptMock.mockImplementation((secret) => secret === 'sec-a');
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm() },
+      v: 1,
+    });
+    expect(document.querySelector('.permission-popup')).toBeNull();
+
+    // AI prompt clears. Server still has the MCP request pending; the
+    // next poll cycle's for-each calls showPermissionPopup again.
+    hasAiPromptMock.mockReturnValue(false);
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm() },
+      v: 2,
+    });
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-1');
+  });
+
+  it('dismissPermissionPopupForSecret tears down the popup without responding to the MCP request', () => {
+    // First mount the popup (no AI prompt yet).
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm() },
+      v: 1,
+    });
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-1');
+
+    // Now AI prompt fires for sec-a — bellPoll calls dismiss.
+    dismissPermissionPopupForSecret('sec-a');
+    expect(document.querySelector('.permission-popup')).toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
+    expect(_inspectStateForTesting().activePopupOwnerSecret).toBeNull();
+    // Request id NOT in respondedRequestIds — the MCP request is still
+    // alive on the server so the user can answer it via the in-terminal
+    // overlay or the popup can re-mount once the AI prompt clears.
+    expect(respondedRequestIds.has('req-1')).toBe(false);
+  });
+
+  it('dismissPermissionPopupForSecret is a no-op when the popup belongs to a different project', () => {
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm() },
+      v: 1,
+    });
+    expect(_inspectStateForTesting().activePopupOwnerSecret).toBe('sec-a');
+
+    dismissPermissionPopupForSecret('sec-other');
+    // sec-a's popup survives — only sec-other would have been torn down.
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-1');
+  });
+
+  it('dismissPermissionPopupForSecret is a no-op when no popup is active', () => {
+    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
+    dismissPermissionPopupForSecret('sec-a');
+    expect(document.querySelector('.permission-popup')).toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
+  });
+
+  it('keeps the suppression effective across many poll ticks while the AI prompt remains live', () => {
+    hasAiPromptMock.mockImplementation((secret) => secret === 'sec-a');
+    for (let v = 1; v <= 5; v++) {
+      processPermissionPollResponse({
+        permissions: { 'sec-a': makePerm() },
+        v,
+      });
+      expect(document.querySelector('.permission-popup')).toBeNull();
+    }
   });
 });

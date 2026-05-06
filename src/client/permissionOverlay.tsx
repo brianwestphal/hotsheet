@@ -1,6 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { extractPrimaryValue } from '../permissionAllowRules.js';
 import { api, apiWithSecret } from './api.js';
+import { hasAiTerminalPromptForSecret } from './bellPoll.js';
 import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
 import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
@@ -181,20 +182,38 @@ export function getMinimizedPermissionSecrets(): Set<string> {
 }
 
 /**
- * HS-8228 — read the project secret of the popup currently mounted on
- * screen, or null when no popup is active. Used by `bellPoll.tsx`'s
- * terminal-prompt dispatcher to skip §52 overlays for projects whose §47
- * popup is already up — the two surfaces describe the same Claude
- * decision and stacking them on top of each other was the user-visible
- * regression on HS-8228.
+ * HS-8245 — tear down any §47 channel-permission popup belonging to
+ * `secret` without responding to the underlying MCP request. Called
+ * from `bellPoll.tsx`'s dispatcher when an AI-parser §52 overlay is
+ * about to mount for the same project — the two surfaces describe the
+ * same Claude decision and the §52 overlay (which answers via
+ * keystrokes the TUI is already listening for) is the authoritative
+ * one. The MCP request stays alive on the channel server; if the AI
+ * prompt clears without resolving the MCP side, the next
+ * `processPermissionPollResponse` for-each iteration will re-mount §47
+ * naturally because `hasAiTerminalPromptForSecret(secret)` will then
+ * return false. Inverts the HS-8228 `dismissTerminalPromptOverlayForSecret`
+ * direction (which let §47 win — the user reported that was the wrong
+ * choice for AI prompts).
  *
- * "Active" = the popup is in the DOM. Minimized popups don't count
- * (they're hidden + the user has already chosen not to interact yet);
- * the dispatcher should still surface §52 for those if the underlying
- * scanner match is fresh.
+ * "Tear down" = remove the popup DOM, release the §54 checkout (so
+ * the borrowed live xterm reparents back into its previous owner),
+ * and clear `activePopupRequestId` / `activePopupOwnerSecret` so the
+ * next mount can proceed. Idempotent — no-op when no popup is active
+ * for `secret`. Minimized popups (DOM-not-present) are explicitly
+ * preserved; the user already chose to defer that one.
  */
-export function getActivePermissionPopupOwnerSecret(): string | null {
-  return permissionState.activePopupOwnerSecret;
+export function dismissPermissionPopupForSecret(secret: string): void {
+  if (permissionState.activePopupOwnerSecret !== secret) return;
+  if (permissionState.activePopupRequestId === null) return;
+  // Release checkout BEFORE removing the popup DOM so the live xterm
+  // reparents back into the previous owner's `mountInto` rather than
+  // being orphaned in the removed-from-document subtree (HS-8182).
+  releaseActiveCheckoutIfAny();
+  document.querySelectorAll('.permission-popup').forEach(el => el.remove());
+  permissionState.activePopupRequestId = null;
+  permissionState.activePopupOwnerSecret = null;
+  permissionState.autoDismissMissCount = 0;
 }
 
 /** HS-8183 — number of consecutive polls in which `state.permissionState.activePopupRequestId`
@@ -511,6 +530,18 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   if (permissionState.activePopupRequestId === perm.request_id) return;
   // Already responded / dismissed / minimized — don't re-show.
   if (shouldSkipPermission(perm.request_id)) return;
+  // HS-8245 — when an AI tool's in-terminal prompt is detected for this
+  // project (Claude / Codex / etc., per `AI_PARSER_IDS`), suppress the
+  // §47 channel-permission popup entirely. The §52 in-terminal overlay
+  // is the authoritative surface — its borrow-terminal interaction
+  // sends keystrokes the AI's TUI is already listening for. The MCP
+  // request stays alive on the channel server; the next
+  // `processPermissionPollResponse` for-each iteration will re-call
+  // `showPermissionPopup` (every 100ms) and naturally surface §47 if
+  // the AI prompt clears without resolving the MCP side. We don't
+  // push onto `pendingPermissionStack` because that's for "popup is
+  // already up, queue this one" — here no popup mounted at all.
+  if (hasAiTerminalPromptForSecret(secret)) return;
   // HS-8219 — already queued on the pending stack? No-op (the active
   // popup will pop it when dismissed). Prevents the polling loop's
   // for-each from re-pushing the same request_id every 100 ms.
@@ -565,20 +596,12 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
 }
 
 function showPermissionPopupBody(secret: string, perm: PermissionData) {
-  // HS-8228 — tear down any §52 terminal-prompt overlay for this project
-  // before mounting the §47 popup. The two surfaces describe the same
-  // Claude decision (channel-permission MCP request + the TUI text it
-  // also paints), and pre-fix the user reported seeing both stacked. The
-  // §47 popup is authoritative (its Allow / Deny writes a real MCP
-  // response) so it takes precedence; the §52 entry stays in the
-  // server's `pendingPrompts` so a future tick can re-fire if §47
-  // closes without resolving the underlying scanner match. Lazy import
-  // to avoid the bellPoll ↔ permissionOverlay static-import cycle (we
-  // already import getActivePermissionPopupOwnerSecret from here over
-  // there).
-  void import('./bellPoll.js')
-    .then(m => m.dismissTerminalPromptOverlayForSecret(secret))
-    .catch(() => { /* swallow — best-effort dedup */ });
+  // HS-8245 — the precedence is now reversed from HS-8228: §52 (in-
+  // terminal overlay for AI prompts) wins, and §47 is suppressed at the
+  // gate in `showPermissionPopup` when `hasAiTerminalPromptForSecret`
+  // is true. There's no longer a `dismissTerminalPromptOverlayForSecret`
+  // call here — by the time we reach this body, the AI gate has
+  // already passed.
 
   // A permission request is proof Claude is actively working — extend busy timeout.
   if (permissionState.channelBusyTimeoutModule) {

@@ -297,6 +297,24 @@ export function isClaudeNumberedFooter(line: string): boolean {
  */
 export const MAX_QUESTION_CONTEXT_ROWS = 15;
 
+/**
+ * HS-8245 — parser ids that identify AI-tool prompts (Claude / Codex / etc.)
+ * detected via terminal-text scraping. When `bellPoll`'s dispatcher sees a
+ * pendingPrompt with one of these ids, the §52 in-terminal overlay is the
+ * authoritative surface (the borrow-terminal technique answers directly via
+ * keystrokes the AI's TUI is already listening for) and the §47 channel-
+ * permission MCP popup is suppressed for the same project. This inverts
+ * HS-8226 / HS-8228's previous "§47 wins" precedence — the user reported
+ * that the channel popup and the in-terminal overlay describe the same
+ * Claude decision and stacking them was a regression. Reads via
+ * `isAiParserId()` so future ids (Codex, Aider, etc.) drop in here.
+ */
+export const AI_PARSER_IDS: ReadonlySet<string> = new Set(['claude-numbered']);
+
+export function isAiParserId(parserId: string): boolean {
+  return AI_PARSER_IDS.has(parserId);
+}
+
 // HS-7995 — Recent Claude Code builds render the highlighted-row cursor as
 // `❯` (U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT) rather
 // than the older ASCII `>`. Other CLIs occasionally use the box-drawing

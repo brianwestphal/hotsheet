@@ -19,22 +19,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MatchResult, NumberedMatch } from '../shared/terminalPrompt/parsers.js';
-
-// HS-8228 — mock `getActivePermissionPopupOwnerSecret` so the dispatcher's
-// new "skip §52 candidate when §47 is up for the same project" gate can
-// be exercised in isolation. Default is `null` (no popup active) so every
-// pre-HS-8228 test continues to behave the same way.
-const { ownerSecretMock } = vi.hoisted(() => ({
-  ownerSecretMock: vi.fn<() => string | null>(() => null),
-}));
-vi.mock('./permissionOverlay.js', async () => {
-  const actual = await vi.importActual<typeof import('./permissionOverlay.js')>('./permissionOverlay.js');
-  return {
-    ...actual,
-    getActivePermissionPopupOwnerSecret: () => ownerSecretMock(),
-  };
-});
-
 import {
   _activeOverlayKeyForTesting,
   _dismissedTerminalPromptKeysForTesting,
@@ -44,9 +28,30 @@ import {
   _recentlyAnsweredPromptsForTesting,
   _resetDispatchStateForTesting,
   type BellStateMap,
-  dismissTerminalPromptOverlayForSecret,
+  hasAiTerminalPromptForSecret,
   reopenMinimizedTerminalPromptForSecret,
 } from './bellPoll.js';
+// HS-8245 — type-only import for `vi.importActual<...>` below so the
+// `@typescript-eslint/consistent-type-imports` rule stays clean.
+import type * as PermissionOverlayModule from './permissionOverlay.js';
+
+// HS-8245 — mock `dismissPermissionPopupForSecret` from permissionOverlay
+// so the dispatcher's new "AI-parser candidate dismisses §47 first"
+// behaviour can be observed without mounting a real channel popup.
+// `hasAiTerminalPromptForSecret` is exported by bellPoll itself (the
+// mock here is solely for the §47-dismiss side-effect). `vi.mock` is
+// hoisted by vitest so it runs before the static imports above;
+// positioning here keeps `import/first` happy.
+const { dismissPermissionPopupMock } = vi.hoisted(() => ({
+  dismissPermissionPopupMock: vi.fn<(secret: string) => void>(),
+}));
+vi.mock('./permissionOverlay.js', async () => {
+  const actual = await vi.importActual<typeof PermissionOverlayModule>('./permissionOverlay.js');
+  return {
+    ...actual,
+    dismissPermissionPopupForSecret: (secret: string) => dismissPermissionPopupMock(secret),
+  };
+});
 
 function makeNumbered(signature: string): NumberedMatch {
   return {
@@ -86,10 +91,9 @@ function buildState(entries: Array<{ secret: string; terminalId: string; match: 
 
 beforeEach(() => {
   _resetDispatchStateForTesting();
-  // HS-8228 — reset the `permissionOverlay` mock to its default (no popup
-  // active) so a test that overrides it doesn't leak into the next.
-  ownerSecretMock.mockReset();
-  ownerSecretMock.mockReturnValue(null);
+  // HS-8245 — reset the dismiss-§47 mock between cases so spy state
+  // from one test doesn't leak into the next.
+  dismissPermissionPopupMock.mockReset();
   // happy-dom doesn't ship a real fetch — stub it so the dispatcher's
   // background `apiWithSecret(...)` calls (POST /terminal/prompt-respond
   // and /terminal/prompt-dismiss) don't reject in a way that pollutes
@@ -680,107 +684,112 @@ describe('implicit channel-rule creation (HS-8210)', () => {
 });
 
 /**
- * HS-8228 — when the §47 channel-permission popup is active for a project,
- * the §52 terminal-prompt overlay must NOT also fire on the same project.
- * Pre-fix the user reported seeing both popups stacked on top of each
- * other (terminal-prompt overlay covering the channel-permission popup).
- * The §47 popup is the authoritative decision surface (its Allow / Deny
- * writes a real MCP response), so it takes precedence; the §52 candidate
- * stays in the server's `pendingPrompts` and re-fires on the next tick if
- * §47 closes without resolving the underlying scanner match.
+ * HS-8245 — inverts HS-8228's earlier precedence. When an AI tool
+ * (Claude / Codex / etc., parser id in `AI_PARSER_IDS`) is detected at
+ * an in-terminal prompt for a project, the §52 in-terminal overlay is
+ * the authoritative surface (its borrow-terminal interaction sends
+ * keystrokes the AI's TUI is already listening for). The §47 channel-
+ * permission MCP popup is suppressed for the same project for as long
+ * as that AI prompt is live in the server's `pendingPrompts`, AND any
+ * mounted §47 popup for the same project is dismissed when the AI
+ * candidate dispatches. Removed `dismissTerminalPromptOverlayForSecret`
+ * tests — the helper itself was deleted (no callers under HS-8245).
  */
-describe('HS-8228 — dedup with permission popup (§47 takes precedence)', () => {
-  it('skips the §52 candidate whose secret matches the active §47 popup owner', () => {
-    ownerSecretMock.mockReturnValue('sec-a');
+describe('HS-8245 — AI prompt detection drives §47 suppression', () => {
+  it('exposes hasAiTerminalPromptForSecret() === true when the project has a live claude-numbered match', () => {
+    expect(hasAiTerminalPromptForSecret('sec-a')).toBe(false);
     const state = buildState([
       { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
     ]);
     _dispatchPendingPromptsForTesting(state);
-    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(0);
-    expect(_activeOverlayKeyForTesting()).toBeNull();
+    expect(hasAiTerminalPromptForSecret('sec-a')).toBe(true);
   });
 
-  it('still fires for OTHER projects when §47 popup is active for a different project', () => {
-    ownerSecretMock.mockReturnValue('sec-a');
-    const state = buildState([
-      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
-      { secret: 'sec-b', terminalId: 'tB', match: makeNumbered('sig-b') },
-    ]);
-    _dispatchPendingPromptsForTesting(state);
-    // sec-a is suppressed (popup active), sec-b surfaces its overlay.
-    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(1);
-    expect(_activeOverlayKeyForTesting()).toBe('sec-b::tB');
-  });
-
-  it('re-fires the §52 candidate on the next tick after §47 closes (popup owner returns null)', () => {
-    // First tick — §47 popup is up for sec-a, §52 suppressed.
-    ownerSecretMock.mockReturnValue('sec-a');
+  it('returns false for OTHER projects that do not have an AI-parser match', () => {
     const state = buildState([
       { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
     ]);
     _dispatchPendingPromptsForTesting(state);
-    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(0);
-
-    // §47 popup closes → owner-secret returns null. Server-side
-    // `pendingPrompts` is unchanged (Claude's MCP response and the
-    // text-scrape are independent surfaces). Next tick must surface the
-    // §52 overlay.
-    ownerSecretMock.mockReturnValue(null);
-    _dispatchPendingPromptsForTesting(state);
-    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(1);
-    expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
+    expect(hasAiTerminalPromptForSecret('sec-a')).toBe(true);
+    expect(hasAiTerminalPromptForSecret('sec-b')).toBe(false);
   });
-});
 
-describe('HS-8228 — dismissTerminalPromptOverlayForSecret', () => {
-  it('tears down the active §52 overlay when the secret matches', () => {
+  it('clears hasAiTerminalPromptForSecret() when the server clears its pendingPrompt', () => {
     const state = buildState([
       { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
     ]);
     _dispatchPendingPromptsForTesting(state);
-    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(1);
-    expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
+    expect(hasAiTerminalPromptForSecret('sec-a')).toBe(true);
 
-    dismissTerminalPromptOverlayForSecret('sec-a');
-    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(0);
-    expect(_activeOverlayKeyForTesting()).toBeNull();
+    // Server cleared pendingPrompts — tick again with empty bell state.
+    const empty: BellStateMap = new Map([
+      ['sec-a', { anyTerminalPending: false, terminalIds: [], pendingPrompts: {} }],
+    ]);
+    _dispatchPendingPromptsForTesting(empty);
+    expect(hasAiTerminalPromptForSecret('sec-a')).toBe(false);
   });
 
-  it('is a no-op when no overlay is open', () => {
-    expect(_activeOverlayKeyForTesting()).toBeNull();
-    dismissTerminalPromptOverlayForSecret('sec-a');
-    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(0);
-    expect(_activeOverlayKeyForTesting()).toBeNull();
-  });
-
-  it('is a no-op when the active overlay belongs to a different project', () => {
+  it('dispatches the §52 overlay AND calls dismissPermissionPopupForSecret(secret) when the candidate is an AI parser', async () => {
     const state = buildState([
       { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
     ]);
     _dispatchPendingPromptsForTesting(state);
     expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
-
-    dismissTerminalPromptOverlayForSecret('sec-other');
-    // sec-a's overlay survives — only sec-other would have been torn down.
-    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(1);
-    expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
+    // The dispatcher fires `void import('./permissionOverlay.js').then(...)`
+    // which resolves asynchronously; vi.waitFor polls until the mock is
+    // called or times out. Times out fast (~50 ms) so a regression where
+    // the call never fires fails the test promptly.
+    await vi.waitFor(() => {
+      expect(dismissPermissionPopupMock).toHaveBeenCalledWith('sec-a');
+    }, { timeout: 200 });
   });
 
-  it('drops the dispatched-signature record so the dispatcher can re-fire on a later tick', () => {
+  it('does NOT call dismissPermissionPopupForSecret for non-AI parsers (yesno / generic)', async () => {
+    // yesno match — same secret as before, but parserId !== 'claude-numbered'.
+    const yesno: MatchResult = {
+      parserId: 'yesno',
+      shape: 'yesno',
+      question: 'Continue?',
+      questionLines: ['Continue?'],
+      signature: 'yn-sig',
+      yesIsCapital: true,
+      noIsCapital: false,
+    };
     const state = buildState([
-      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+      { secret: 'sec-a', terminalId: 'tA', match: yesno },
     ]);
     _dispatchPendingPromptsForTesting(state);
-
-    dismissTerminalPromptOverlayForSecret('sec-a');
-    expect(_activeOverlayKeyForTesting()).toBeNull();
-
-    // Re-dispatch with the SAME signature — pre-fix the
-    // `lastDispatchedPromptSignatures` map would block the second mount.
-    // Post-fix `dismissTerminalPromptOverlayForSecret` cleared the entry,
-    // so the dispatcher re-mounts.
-    _dispatchPendingPromptsForTesting(state);
-    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(1);
     expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
+    // Give the dispatcher's microtask queue time to drain — if a
+    // regression fires the dynamic import for non-AI parsers, the
+    // assertion below would catch it on the next tick.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(dismissPermissionPopupMock).not.toHaveBeenCalled();
+  });
+
+  it('tracks AI prompts even for generic-shape candidates that the candidate loop skipped', () => {
+    // The candidate loop skips matches with `shape === 'generic'` (too high
+    // false-positive risk to auto-surface), but if a future generic-shape
+    // match somehow uses an AI parser id, the suppression flag for §47
+    // should still fire. Today no AI parser produces generic shape, so this
+    // test asserts the *detection* path is decoupled from the
+    // *candidate-eligibility* path. Ensures a future Codex parser that
+    // emits generic-shape during exploratory phases still suppresses §47.
+    const aiGeneric: MatchResult = {
+      parserId: 'claude-numbered', // pretend an AI parser produced generic
+      shape: 'generic',
+      question: 'open-ended',
+      questionLines: ['open-ended'],
+      signature: 'sig-g',
+      rawText: 'open-ended',
+    };
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: aiGeneric },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    // No overlay (generic-shape skipped from candidate loop) but the
+    // detection set still records sec-a so §47 is suppressed.
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+    expect(hasAiTerminalPromptForSecret('sec-a')).toBe(true);
   });
 });
