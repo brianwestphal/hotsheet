@@ -126,6 +126,109 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 
 ### `src/client/` (browser bundle)
 
+**Module index** — quick reference matching the table style used elsewhere in §3. Each row is one client module; the **Notable feature notes** below the table cover cross-cutting changes that touch multiple files. When you add a new file under `src/client/`, append a row here.
+
+| File | Role |
+|---|---|
+| `animate.ts` | Shared FLIP / fade / slide helpers used by overlay enter / exit animations |
+| `api.tsx` | `api(path, opts)` HTTP helper, file upload, network-error popup, `apiWithSecret` for cross-project routing |
+| `app.tsx` | Client entry point — wires every `init*` from the other modules together |
+| `backups.tsx` | Settings → Backups list + restore preview UI |
+| `batch.tsx` | Multi-select toolbar + batch-action handlers |
+| `bellPoll.tsx` | `/api/projects/bell-state` long-poll loop, fans out to project-tab + per-terminal indicators (HS-6638), dispatches cross-project terminal-prompt overlays (HS-8047) |
+| `channelUI.tsx` | Sidebar play button, channel status, project-tab status dot, no-upnext alert |
+| `clipboard.ts` / `clipboardUtil.tsx` | Cross-platform clipboard write helpers (Tauri-aware fallback) |
+| `columnView.tsx` | Multi-column ticket grid layout |
+| `commandEditor.tsx` | Modal editor for shell / channel commands (Settings → Commands) |
+| `commandLog.tsx` | Drawer shell + Commands Log tab; delegates `terminal:<id>` tabs to `terminal.tsx` |
+| `commandLogFilter.tsx` | Filter chips above the Commands Log entries |
+| `commandSidebar.tsx` | Sidebar custom-command buttons + spinner (HS-8056) |
+| `confirm.tsx` | `confirmDialog({...})` Tauri-safe replacement for `window.confirm` |
+| `contextMenu.tsx` | Shared right-click menu primitive |
+| `customViews.tsx` | Custom-view editor + autocomplete + filter wiring |
+| `dashboard.tsx` | KPI / chart dashboard view |
+| `dashboardHiddenTerminals.tsx` | Per-project visibility-grouping state + `applyHideButtonBadge` |
+| `dashboardMode.tsx` | Layout toggle for §25 dashboard (sectioned vs flow) |
+| `dbRecoveryBanner.tsx` | HS-7899 launch-time recovery banner |
+| `dbRepairUI.tsx` | Settings → Database Repair (HS-7897) |
+| `detail.tsx` | Detail panel — title / details / notes / megaphone / resize / stats |
+| `dom.ts` | `toElement(<jsx/>)` helper — single source of JSX → DOM conversion |
+| `draftRow.tsx` | New-ticket inline-create row at the top of the list |
+| `drawerTabGating.ts` | Pure helper: which drawer tab to focus when set members close |
+| `drawerTerminalGrid.tsx` | §36 per-project drawer grid view; delegates per-tile lifecycle to `terminalTileGrid.tsx` |
+| `dropdown.tsx` | Generic context-dropdown menu (category / priority / etc.) |
+| `editDiffPreview.tsx` | Edit-tool inline diff preview for the §47 permission popup |
+| `experimentalSettings.tsx` | Settings → Experimental panel |
+| `feedbackDialog.tsx` | §21 feedback-needed dialog with auto-detected partition blocks |
+| `feedbackParser.ts` | Pure heuristic that splits a feedback note into `partitions` |
+| `gitStatusChip.tsx` / `gitStatusPopover.tsx` | §48 sidebar git chip + expanded popover (HS-7954-7956) |
+| `gridNavGeometry.ts` | Pure grid-neighbour math for HS-8028 magnified grid nav |
+| `hiddenTerminalsResetUI.tsx` | "Reset hidden terminals" link in Settings → Terminal |
+| `hideTerminalDialog.tsx` | Show / Hide Terminals dialog with §39 grouping tab bar |
+| `iconPicker.tsx` | App-icon picker for Settings → General |
+| `icons.ts` | Lucide SVG paths used as client-side icons |
+| `imageProxy.tsx` | Image download / GitHub-image proxy + `appendImageDownloadLinks` |
+| `json.ts` | Tiny JSON parse / stringify wrappers with default fallback |
+| `longTaskObserver.tsx` | HS-8054 client-side performance observer; reports to `/api/diagnostics/freeze` |
+| `markdownSetup.ts` | Marked + DOMPurify configuration shared by every markdown render path |
+| `noteRenderer.tsx` | Note rendering, megaphone, ticket-ref linkification, undo wiring |
+| `openFolder.tsx` | Open-folder dialog (multi-project register) |
+| `permissionAllowListUI.tsx` | §47.4 channel-permission allow-list — row + modal editor (`openRuleEditor`) — `cmd-outline-row` shell post-HS-8021/HS-8026 |
+| `permissionDialogShell.tsx` | Shared chrome (header, drag handle, dismiss button) for the §47 permission popup |
+| `permissionOverlay.tsx` | The §47 permission popup itself: poll loop, minimize-to-pulsating-dot, live-terminal checkout (HS-8171 v2), `pendingPermissionStack` LIFO queue (HS-8219), `shouldUseLiveCheckout` heuristic (HS-8217) |
+| `permissionPreview.ts` | `formatInputPreview(tool, raw)` — strips JSON wrapper from Claude's `input_preview` |
+| `persistedHiddenTerminals.ts` | Hydrate / persist `hidden_terminals` to file-settings |
+| `pluginConfigDialog.tsx` / `pluginSettings.tsx` / `pluginUI.tsx` / `pluginTypes.ts` | §18 plugin host UI — config dialogs, settings panel, per-location UI extensions |
+| `poll.tsx` | `/api/poll` long-poll change-version loop |
+| `print.tsx` | Print-this-view dialog |
+| `projectTabs.tsx` / `projectTabsFingerprint.ts` | Top-bar project tabs + change-detection fingerprint |
+| `quitConfirm.tsx` / `quitConfirmSettingsUI.tsx` | §37 quit-confirm dialog + master-detail preview pane + Settings panel |
+| `readerOverlay.tsx` | §49 reader-mode overlay (notes + Details) |
+| `searchExtraRows.tsx` | §40 "Include {N} archive / backlog matches" gray rows |
+| `settingsCategories.tsx` | Category-management UI in Settings |
+| `settingsDialog.tsx` | Settings overlay shell + tab routing |
+| `settingsLoader.tsx` | One-shot loader that hydrates client settings on app boot |
+| `share.tsx` | §17 share prompt + toolbar button |
+| `shortcuts.tsx` | Global keyboard shortcuts + `MODAL_OVERLAY_SELECTORS` registry (HS-8033 — modals own the keyboard until Esc) |
+| `sidebar.tsx` | Left sidebar layout, custom-command list, search box, filter chips |
+| `state.tsx` | Shared client state (active project, settings cache, per-project session-only maps) |
+| `stripAnsi.ts` | `stripAnsi(text)` + `tailLines(text, n)` pure helpers |
+| `tagAutocomplete.tsx` | Tag autocomplete dropdown for the new-ticket row + filter chips |
+| `tags.tsx` / `tagsDialog.tsx` | Tag chip rendering + Tags-dialog editor |
+| `tauriIntegration.tsx` | Tauri invoke / IPC abstraction (`getTauriInvoke`, `openExternalUrl`, `requestAttention`) |
+| `terminal.tsx` | Embedded terminal: per-instance xterm mount + WebSocket + tab strip + power button + gutter popover (HS-7269) + Ask-Claude (HS-7270) + history-replay refit. **Long file (~2030 lines after HS-8195 extraction) — further split tracked in HS-8194.** |
+| `terminal/renameDialog.tsx` | HS-8195 — shared rename overlay extracted from `terminal.tsx::promptRenameTerminal` + `terminalDashboard.tsx::openDashboardTileRename`. Single `openRenameDialog({ initialValue, onApply, title?, label?, hint? })` consumer. Owns the overlay shell + Enter / Escape / backdrop / X / Cancel / Rename interactions; the surface passes its commit logic via `onApply(next)`. |
+| `terminalAppearance.ts` / `terminalAppearancePopover.tsx` / `terminalDefaultAppearanceUI.tsx` / `terminalFonts.ts` / `terminalThemes.ts` | §35 terminal theme + font system (registry, three-layer resolver, gear popover, Settings → Terminal default panel) |
+| `terminalCheckout.tsx` | §54 global xterm checkout / LIFO stack — `checkout({...}) → CheckoutHandle`. Single xterm per `(secret, terminalId)` shared across drawer / dashboard / popup; `peekEntryDims` (HS-8207); `noSpawn` opt-in (HS-8218); `_simulateNoSessionForTesting` |
+| `terminalDashboard.tsx` | §25 cross-project dashboard view (per-project sections, slider, click-to-center, dedicated full-pane) |
+| `terminalDashboardSizing.ts` | Pure tile-math helpers — `tileWidthFromColumnCount`, `perRowToSliderPosition`, `sliderPositionToPerRow`, `computeTileScale`, `computeColumnSnapPoints`, `legacySliderValueToColumnCount` (post-HS-8176 column-count semantics) |
+| `terminalDedicatedState.ts` | Tracks which tile is currently in the dashboard's dedicated overlay |
+| `terminalKeybindings.ts` | Pure helpers `isClearTerminalShortcut` / `isFindShortcut` / `isJumpShortcut` (platform-aware) |
+| `terminalOsc133.ts` | §31-33 OSC 133 helpers — `parseOsc133ExitCode`, `findPromptLine`, `computeLastOutputRange`, `buildAskClaudePrompt` |
+| `terminalOsc7.ts` | §29 OSC 7 CWD parser + `formatCwdLabel` + `cacheHomeDir` |
+| `terminalPrompt/` | §52 terminal-prompt-overlay client store: `allowRulesStore.ts` (`appendAllowRule` / `removeAllowRule` / `loadAllowRules` / `subscribeToAllowRules`) |
+| `terminalPromptAllowListUI.tsx` | §52 terminal-prompt allow-list (Settings → Permissions); legacy `.permission-allow-row` grid (per HS-8186 — intentional, not a typo) |
+| `terminalPromptOverlay.tsx` | §52 overlay UI itself; project-tab anchored (HS-8012); channel-rule footer (HS-8210 Phase C) |
+| `terminalReplay.ts` | History-replay helpers (`replayHistoryToTerm`, `applyDedicatedHistoryFrame`) |
+| `terminalSearch.tsx` / `terminalSearchHistory.ts` | §34 in-pane find widget + saved-search history |
+| `terminalsSettings.tsx` | Settings → Terminal outline list + edit modal for configured terminals; lazy-fetched `command-suggestions` datalist |
+| `terminalTabReorder.ts` | Pure helpers for drag-to-reorder drawer tabs |
+| `terminalTabSelection.ts` | `pickNearestTerminalTabId` post-close-fallback math |
+| `terminalTileGrid.tsx` | Shared per-tile lifecycle (mount xterm, scale, click-to-center, dedicated view) consumed by both §25 dashboard and §36 drawer-grid |
+| `terminalTileVirtualization.ts` | HS-7968 IntersectionObserver-driven lazy mount / 8 s-debounced dispose for off-screen tiles |
+| `ticketList.tsx` / `ticketListState.ts` / `ticketRow.tsx` | Ticket-list rendering, drag-and-drop, row-state cache |
+| `ticketRefDialog.tsx` / `ticketRefs.ts` | §55 cross-reference linkifier + stacking modal |
+| `toast.tsx` | Shared toast helper (used by §27 OSC 9 + miscellaneous status messages) |
+| `uiTimings.ts` | HS-8191 named timing constants — `TOAST_AUTOHIDE_MS`, `BUTTON_BUSY_MS`, `POPOVER_CLOSE_DELAY_MS`, `SHAKE_DURATION_MS`, `COPIED_GLYPH_FLASH_MS`, `BLUR_DEBOUNCE_MS` |
+| `undo/` | Undo-action types + handlers (notes / status / category) |
+| `upgradeNudge.tsx` | §50 npm → Tauri upgrade nudge overlay |
+| `visibilityGroupings.ts` / `visibilityGroupingSelect.tsx` | §39 visibility-grouping pure state helpers + `<select>` wiring |
+| `xtermTheme.ts` | `readXtermTheme()` builds an xterm `ITheme` from CSS vars + `withAlpha` |
+
+### Notable feature notes
+
+The paragraphs below cover cross-cutting changes that touch multiple files in the table above. Treat them as deep-dives — the table is the orientation index, these are the recent-history annotations.
+
 **Skill `/clear` prefix removed (HS-7992 → HS-8022):** A previous build added a per-project `hotsheet_skill_clear_context` toggle in Settings → General that prepended `/clear` to the generated `/hotsheet` skill body. The mechanism never worked — skill bodies are returned to the model as Skill *tool output*, not typed at the REPL prompt, so the Claude Code CLI never re-parsed the prefix as a slash command and the model itself cannot invoke slash commands. The skill frontmatter spec has no `clear-context` equivalent, and skill hooks fire shell commands rather than slash commands. **Do not re-add this** without first confirming a first-class skill / MCP context-clear API exists. HS-8022 deleted: the toggle in `pages.tsx` (was `#settings-hotsheet-skill-clear-context`), the change-handler in `settingsDialog.tsx`, the conditional `clearPrefix` in `skills.ts::mainSkillBody`, and the regen-on-PATCH block in `routes/settings.ts`. `SKILL_VERSION` bumped 8 → 9 so existing files re-author themselves through the normal `updateFile` upgrade path on next boot. `regenerateMainSkill` is kept exported for any future explicit-user-action regen flow. The HS-7992 unit tests in `src/skills.test.ts` were replaced by 3 HS-8022 regression tests that assert `/clear` never appears in the body, including when a stale `hotsheet_skill_clear_context: true` value is present in the per-project settings (back-compat — old users won't accidentally resurrect the prefix). Workaround for users who want a fresh context per `/hotsheet`: type `/clear` yourself before invoking the skill, or remap `/hotsheet` to a personal alias. `docs/6-markdown-sync.md` §6.8 rewritten to document the removal + the underlying mechanism limitation.
 
 **Permission allow rules — UI cleanups (HS-8021 / HS-8026):** Pre-fix the §47.4 channel-permission allow-list row was a 4-column grid (tool / pattern / "overlay · 4/29/2026" / red `×`) with the pattern column ellipsis-truncated and no way to view the full text or edit a rule in place. Per the user feedback, the row layout was rewritten to mirror the custom-command + terminal settings rows: `<div class="cmd-outline-row permission-allow-rule-row">` with tool name + pattern code chip + pencil-edit button + trash-delete button, matching the `cmd-outline-edit-btn` / `cmd-outline-delete-btn` icon set used by `terminalsSettings.tsx` and `commandEditor.tsx`. The whole row is `cursor: pointer` and `role="button"` — clicking anywhere on the row OR on the pencil opens the new modal rule editor (`openRuleEditor` in `permissionAllowListUI.tsx`), which reuses the `.cmd-editor-overlay` / `.cmd-editor-dialog` shell with a tool select + pattern textarea (3 rows) + inline validation + Cmd/Ctrl+Enter to submit. Trash button still confirms then PATCHes the rule out. The legacy inline +Add form (select + input + button + error paragraph) was removed from `routes/pages.tsx` in favour of a single `+ Add rule` button at the bottom of the list (`renderAddButton()`) that opens the same editor in `add` mode — add and edit now share one validation path. The `Date Added` and `Source (overlay / settings)` columns were dropped (the `added_by` field is preserved on the rule for audit but no longer surfaced — users found the "overlay" wording confusing). Long patterns now stay discoverable via the `title` tooltip on the pattern code chip + the editor dialog. Class rename: the new rows use `.permission-allow-rule-row` (not `.permission-allow-row`) so the §52 `terminalPromptAllowListUI.tsx` keeps its existing grid styling unchanged — that surface gets the same treatment in a future follow-up. `formatRuleMeta` was deleted (no longer needed). 12 new happy-dom tests in `permissionAllowListUI.test.ts` covering empty-state + Add button, row-renders-pencil-and-trash, long-pattern title-tooltip, click-row-opens-editor, click-pencil-opens-editor, trash-confirms-and-PATCHes; openRuleEditor add / edit modes + blank-pattern validation + Cancel + backdrop-click + idempotent re-open. Sub-ticket HS-8027 tracks the bigger piece (per-rule auto-allow stats panel with chart-line button + last-30-day usage graph).

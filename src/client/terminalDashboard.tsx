@@ -21,6 +21,7 @@ import { switchProject } from './projectTabs.js';
 import { shouldEscapeBypassHotsheet } from './shortcuts.js';
 import type { ProjectInfo } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
+import { openRenameDialog } from './terminal/renameDialog.js';
 import { subscribeToDefaultAppearanceChanges } from './terminalAppearance.js';
 import {
   computeColumnSnapPoints,
@@ -1178,67 +1179,26 @@ async function closeDashboardTile(entry: TileEntry, secret: string, isDynamic: b
 }
 
 function openDashboardTileRename(entry: TileEntry): void {
-  document.querySelectorAll('.terminal-rename-overlay').forEach(el => el.remove());
-
-  const overlay = toElement(
-    <div className="cmd-editor-overlay terminal-rename-overlay">
-      <div className="cmd-editor-dialog">
-        <div className="cmd-editor-dialog-header">
-          <span>Rename Terminal</span>
-          <button className="cmd-editor-close-btn" title="Close">{'×'}</button>
-        </div>
-        <div className="cmd-editor-dialog-body">
-          <div className="settings-field">
-            <label>Tab name</label>
-            <input type="text" className="term-rename-input" value={entry.label} />
-            <span className="settings-hint">This rename is temporary — it doesn't change saved settings and resets on reload or project switch.</span>
-          </div>
-        </div>
-        <div className="cmd-editor-dialog-footer">
-          <button className="btn btn-sm cmd-editor-cancel-btn">Cancel</button>
-          <button className="btn btn-sm btn-primary cmd-editor-done-btn">Rename</button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const input = overlay.querySelector<HTMLInputElement>('.term-rename-input');
-  if (input === null) { overlay.remove(); return; }
-
-  const apply = (): void => {
-    const next = input.value.trim();
-    const resolved = next === '' ? entry.label : next;
-    // Update the tile DOM directly via data-terminal-id; cheaper than asking
-    // the shared module for a rename-API and still works because
-    // refreshDashboardGrid would clobber the rename anyway on next refresh.
-    // HS-7662 — write to the inner `.terminal-dashboard-tile-name` span so
-    // the project badge + project-name prefix (in flow mode) survive the
-    // rename. Older sectioned-mode tiles without the wrapper still work
-    // because the fallback overwrites the whole label.
-    const labelEl = document.querySelector<HTMLElement>(
-      `.terminal-dashboard-tile[data-terminal-id="${CSS.escape(entry.id)}"] .terminal-dashboard-tile-label`,
-    );
-    if (labelEl !== null) {
-      const nameEl = labelEl.querySelector<HTMLElement>('.terminal-dashboard-tile-name');
-      if (nameEl !== null) nameEl.textContent = resolved;
-      else labelEl.textContent = resolved;
-      labelEl.setAttribute('title', resolved);
-    }
-    overlay.remove();
-  };
-
-  const cancel = (): void => { overlay.remove(); };
-
-  overlay.querySelector('.cmd-editor-close-btn')?.addEventListener('click', cancel);
-  overlay.querySelector('.cmd-editor-cancel-btn')?.addEventListener('click', cancel);
-  overlay.querySelector('.cmd-editor-done-btn')?.addEventListener('click', apply);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) cancel(); });
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); apply(); }
-    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  openRenameDialog({
+    initialValue: entry.label,
+    onApply: (next) => {
+      const resolved = next === '' ? entry.label : next;
+      // Update the tile DOM directly via data-terminal-id; cheaper than asking
+      // the shared module for a rename-API and still works because
+      // refreshDashboardGrid would clobber the rename anyway on next refresh.
+      // HS-7662 — write to the inner `.terminal-dashboard-tile-name` span so
+      // the project badge + project-name prefix (in flow mode) survive the
+      // rename. Older sectioned-mode tiles without the wrapper still work
+      // because the fallback overwrites the whole label.
+      const labelEl = document.querySelector<HTMLElement>(
+        `.terminal-dashboard-tile[data-terminal-id="${CSS.escape(entry.id)}"] .terminal-dashboard-tile-label`,
+      );
+      if (labelEl !== null) {
+        const nameEl = labelEl.querySelector<HTMLElement>('.terminal-dashboard-tile-name');
+        if (nameEl !== null) nameEl.textContent = resolved;
+        else labelEl.textContent = resolved;
+        labelEl.setAttribute('title', resolved);
+      }
+    },
   });
-
-  document.body.appendChild(overlay);
-  input.focus();
-  input.select();
 }

@@ -21,6 +21,7 @@ import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_PENCIL, ICON
 import { recordInteraction } from './longTaskObserver.js';
 import { getActiveProject, state } from './state.js';
 import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
+import { openRenameDialog } from './terminal/renameDialog.js';
 import {
   applyAppearanceToTerm,
   getProjectDefault,
@@ -2024,61 +2025,20 @@ async function closeTabs(ids: string[]): Promise<void> {
  * consistent (the dynamic config is also in-memory-only on the server).
  */
 function promptRenameTerminal(inst: TerminalInstance): void {
-  document.querySelectorAll('.terminal-rename-overlay').forEach(el => el.remove());
-  const current = tabDisplayName(inst.config);
-
-  const overlay = toElement(
-    <div className="cmd-editor-overlay terminal-rename-overlay">
-      <div className="cmd-editor-dialog">
-        <div className="cmd-editor-dialog-header">
-          <span>Rename Terminal</span>
-          <button className="cmd-editor-close-btn" title="Close">{'×'}</button>
-        </div>
-        <div className="cmd-editor-dialog-body">
-          <div className="settings-field">
-            <label>Tab name</label>
-            <input type="text" className="term-rename-input" value={current} />
-            <span className="settings-hint">This rename is temporary — it doesn't change saved settings and resets on reload or project switch.</span>
-          </div>
-        </div>
-        <div className="cmd-editor-dialog-footer">
-          <button className="btn btn-sm cmd-editor-cancel-btn">Cancel</button>
-          <button className="btn btn-sm btn-primary cmd-editor-done-btn">Rename</button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const input = overlay.querySelector<HTMLInputElement>('.term-rename-input')!;
-
-  const apply = () => {
-    const next = input.value.trim();
-    // Update the in-memory config so tabDisplayName() picks up the new name on
-    // every subsequent updateTabLabel() call. Empty input falls back to the
-    // default derivation (effectively restoring the original).
-    if (next === '') {
-      const rest = { ...inst.config };
-      delete rest.name;
-      inst.config = rest;
-    } else {
-      inst.config = { ...inst.config, name: next };
-    }
-    updateTabLabel(inst);
-    overlay.remove();
-  };
-
-  const cancel = () => { overlay.remove(); };
-
-  overlay.querySelector('.cmd-editor-close-btn')?.addEventListener('click', cancel);
-  overlay.querySelector('.cmd-editor-cancel-btn')?.addEventListener('click', cancel);
-  overlay.querySelector('.cmd-editor-done-btn')?.addEventListener('click', apply);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) cancel(); });
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); apply(); }
-    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  openRenameDialog({
+    initialValue: tabDisplayName(inst.config),
+    onApply: (next) => {
+      // Update the in-memory config so tabDisplayName() picks up the new name on
+      // every subsequent updateTabLabel() call. Empty input falls back to the
+      // default derivation (effectively restoring the original).
+      if (next === '') {
+        const rest = { ...inst.config };
+        delete rest.name;
+        inst.config = rest;
+      } else {
+        inst.config = { ...inst.config, name: next };
+      }
+      updateTabLabel(inst);
+    },
   });
-
-  document.body.appendChild(overlay);
-  input.focus();
-  input.select();
 }
