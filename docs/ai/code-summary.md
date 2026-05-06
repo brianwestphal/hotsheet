@@ -218,7 +218,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `terminalsSettings.tsx` | Settings → Terminal outline list + edit modal for configured terminals; lazy-fetched `command-suggestions` datalist |
 | `terminalTabReorder.ts` | Pure helpers for drag-to-reorder drawer tabs |
 | `terminalTabSelection.ts` | `pickNearestTerminalTabId` post-close-fallback math |
-| `terminalTileGrid.tsx` | Shared per-tile lifecycle (mount xterm, scale, click-to-center, dedicated view) consumed by both §25 dashboard and §36 drawer-grid |
+| `terminalTileGrid.tsx` | Shared per-tile lifecycle (mount xterm, scale, click-to-center, dedicated view) consumed by both §25 dashboard and §36 drawer-grid. **HS-8225** — also wires the per-tile stall chip in `mountTileViaCheckout` (subscribes to `subscribeStallState` + 250 ms tick + toggles a `.terminal-stall-indicator` in the tile label area). |
 | `terminalTileVirtualization.ts` | HS-7968 IntersectionObserver-driven lazy mount / 8 s-debounced dispose for off-screen tiles |
 | `ticketList.tsx` / `ticketListState.ts` / `ticketRow.tsx` | Ticket-list rendering, drag-and-drop, row-state cache |
 | `ticketRefDialog.tsx` / `ticketRefs.ts` | §55 cross-reference linkifier + stacking modal |

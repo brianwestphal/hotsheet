@@ -6,13 +6,14 @@ import { apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
 import { type NavRect, pickGridNeighbourIndex } from './gridNavGeometry.js';
 import { openExternalUrl } from './tauriIntegration.js';
+import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
 import {
   applyAppearanceToTerm,
   getProjectDefault,
   getSessionOverride,
   resolveAppearance,
 } from './terminalAppearance.js';
-import { checkout,type CheckoutHandle } from './terminalCheckout.js';
+import { checkout,type CheckoutHandle, peekStallTimestamps, subscribeStallState } from './terminalCheckout.js';
 import {
   computeTileScale,
   DASHBOARD_FALLBACK_COLS,
@@ -392,6 +393,14 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
             ? <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}><span className={`${cssPrefix}-tile-project-name`}>{badge.name}</span>{' › '}</span>
             : null}
           <span className={`${cssPrefix}-tile-name`}>{entry.label}</span>
+          {/* HS-8225 — per-tile stall chip; shares the drawer pane's
+              `.terminal-stall-indicator` class (HS-8175) so the SCSS pulse
+              + amber palette is reused. Toggled by the stall-state
+              subscription wired in mountTileViaCheckout. */}
+          <span className="terminal-stall-indicator" title="Server is slow to echo — your keystrokes were sent but the response hasn't returned yet" style="display:none">
+            <span className="terminal-stall-dot"></span>
+            <span className="terminal-stall-label">Server slow</span>
+          </span>
         </div>
         {cwdLabel === ''
           ? null
@@ -740,6 +749,33 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       handleTileRender(tile);
     });
     tile.termHandlerDisposers.push(renderDispose);
+
+    // HS-8225 — wire the per-tile stall chip. Subscribes to type / echo
+    // updates from the checkout entry; ticks every 250 ms so the
+    // `now - lastTypeTs > 1500ms` boundary crosses without an event firing.
+    // Mirrors `terminal.tsx::attachStallIndicator` for the drawer pane.
+    const stallChip = tile.labelEl.querySelector<HTMLElement>('.terminal-stall-indicator');
+    if (stallChip !== null) {
+      const evaluateStall = (): void => {
+        const ts = peekStallTimestamps(tile.entry.secret, tile.entry.id);
+        if (ts === null) {
+          stallChip.style.display = 'none';
+          return;
+        }
+        const show = shouldShowStallIndicator(ts.lastTypeTs, ts.lastEchoTs, Date.now());
+        stallChip.style.display = show ? '' : 'none';
+      };
+      const stallUnsubscribe = subscribeStallState(tile.entry.secret, tile.entry.id, evaluateStall);
+      const stallTickHandle = window.setInterval(evaluateStall, 250);
+      tile.termHandlerDisposers.push({
+        dispose() {
+          stallUnsubscribe();
+          window.clearInterval(stallTickHandle);
+          stallChip.style.display = 'none';
+        },
+      });
+      evaluateStall();
+    }
   }
 
   /** HS-8051 follow-up #2 — runs on every `term.onRender` for a tile.

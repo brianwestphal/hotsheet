@@ -461,7 +461,9 @@ This is a belt-and-braces UX for the residual stall risk that survives HS-8160 (
 
 **Tests.** 6 pure-helper tests in `src/client/terminal/stallIndicator.test.ts` (every corner case + custom threshold + boundary at exactly threshold). 11 tests in `src/client/serverBusyChip.test.ts` covering `isLongPollUrl`, the `shouldShowServerBusyChip` boundary check, `trackServerRequest` lifecycle (single + concurrent), and the long-poll skip path.
 
-**Out of scope for v1.** The dashboard tile (§25) and drawer-grid tile (§36) don't yet show the per-terminal chip — only the drawer pane does. Both surfaces use the same `terminalCheckout.tsx` entry, so the data is available; surfacing the chip on those views is a small follow-up.
+**HS-8225 — dashboard + drawer-grid tile coverage.** The chip now also appears on dashboard tiles (§25) and drawer-grid tiles (§36) via a `.terminal-stall-indicator` mounted in the tile's label area. The wiring lives in `terminalTileGrid.tsx::mountTileViaCheckout` (right after the `term.onBell` + `term.onRender` disposers): subscribe to `subscribeStallState(secret, terminalId, evaluate)` + `setInterval(evaluate, 250)`, both pushed onto `tile.termHandlerDisposers` so a soft-dispose / re-mount cycle tears them down. Compact SCSS overrides scoped to `.terminal-dashboard-tile-label` and `.drawer-terminal-grid-tile-label` keep the chip proportional inside the small tile label band (10 px font, 1 px padding, 6 px gap from the name).
+
+**Dedicated full-pane view.** The dedicated overlay (double-click on a tile) hides the parent tile's label, so the chip isn't visible there. The stall *data* is still tracked (the dedicated view's xterm shares the same `terminalCheckout.tsx` entry), so surfacing a chip on the dedicated bar is a small follow-up if the residual stall ever shows up while a user is in dedicated mode.
 
 ## 22.20 Cross-references
 

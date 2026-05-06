@@ -1527,6 +1527,36 @@ input, select, textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: center;
+
+  // HS-8225 — the per-tile stall chip rides in the label area. Compact
+  // override of the drawer-pane chip's default styling so it stays
+  // proportional inside the small tile label band.
+  .terminal-stall-indicator {
+    font-size: 10px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  .terminal-stall-dot {
+    width: 6px;
+    height: 6px;
+  }
+}
+
+// HS-8225 — same compact override for the §36 drawer-grid tile labels.
+.drawer-terminal-grid-tile-label {
+  .terminal-stall-indicator {
+    font-size: 10px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  .terminal-stall-dot {
+    width: 6px;
+    height: 6px;
+  }
 }
 
 // HS-7278 — tile CWD badge rendered below the terminal label when the server
