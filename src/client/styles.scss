@@ -7203,37 +7203,42 @@ body.terminal-dashboard-active {
   50%      { opacity: 0.35; }
 }
 
-// HS-8175 — global server-busy chip. Mounted into document.body by
-// `serverBusyChip.tsx`. Top-right of the viewport, fixed position so it
-// floats above every other UI surface; visible whenever any non-long-poll
-// HTTP request has been in flight longer than `SERVER_BUSY_THRESHOLD_MS`
-// (3000 ms).
-.server-busy-chip {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  z-index: 5000;
-  display: inline-flex;
+// HS-8175 / HS-8226 — global server-slow banner. Server-rendered as
+// `#server-slow-banner` in `pages.tsx` next to the update / share /
+// skills banners; toggled visible by `serverBusyChip.tsx` whenever any
+// non-long-poll HTTP request has been in flight longer than
+// `SERVER_BUSY_THRESHOLD_MS` (3000 ms).
+//
+// Pre-HS-8226 this was a translucent corner chip (`.server-busy-chip`)
+// fixed to the top-right; user reported it as "too transparent and too
+// in the corner". The banner mirrors `.update-banner`'s layout-flow
+// strip pattern in the amber palette already used by
+// `.backup-preview-banner`, with the `terminal-stall-pulse` dot kept
+// from the chip so the indicator still has motion to draw the eye.
+.server-slow-banner {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 12px;
-  background: rgba(245, 158, 11, 0.15);
-  border: 1px solid rgba(245, 158, 11, 0.55);
-  color: rgb(180, 100, 0);
-  font-size: 12px;
+  gap: 10px;
+  padding: 8px 20px;
+  background: #fef3c7;
+  border-bottom: 2px solid #f59e0b;
+  font-size: 13px;
   font-weight: 500;
-  user-select: none;
-  pointer-events: none; // so the chip doesn't intercept clicks the user is mid-fire
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  color: #92400e;
+  flex-shrink: 0;
 }
 
-.server-busy-dot {
-  width: 8px;
-  height: 8px;
+.server-slow-dot {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: rgb(245, 158, 11);
+  background: #f59e0b;
   animation: terminal-stall-pulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.server-slow-label {
+  flex: 1;
 }
 
 .terminal-header-btn {

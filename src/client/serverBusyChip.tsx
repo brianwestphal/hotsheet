@@ -1,22 +1,30 @@
 /**
- * HS-8175 — Global "server is slow to respond" chip.
+ * HS-8175 — Global "server is slow to respond" indicator.
  *
- * Sits next to the per-terminal stall indicator: when a non-long-poll HTTP
- * request takes longer than the threshold, mount a small fixed-position
- * chip in the top-right of the viewport so the user knows the click /
- * action they fired is still in flight (vs the alternative — staring at
- * an unresponsive UI wondering whether the click registered).
+ * When a non-long-poll HTTP request takes longer than the threshold, light
+ * up a banner so the user knows the click / action they fired is still in
+ * flight (vs the alternative — staring at an unresponsive UI wondering
+ * whether the click registered).
  *
  * The user reported a 25 s freeze in `freeze.log` (2026-05-06) where a
  * `fsyncDbDir:backup:5min` blocked the event loop for 25.2 s during which
  * any concurrent button click would have been silently held in flight.
- * The chip surfaces that residual risk now that HS-8160's instrumentation
+ * The banner surfaces that residual risk now that HS-8160's instrumentation
  * + HS-8178's async backup writers cover the dominant prevention surface.
+ *
+ * **HS-8226 (2026-05-06)** — replaced the original top-right corner chip
+ * with a layout-flow banner styled like `.update-banner`. The chip was
+ * "too transparent and too in the corner" per the user's report; the
+ * banner sits at the top of the page in the same flex-stack as the
+ * update / share / skills banners, in amber palette, non-dismissable
+ * (auto-hides when the in-flight set drains). The element is rendered
+ * server-side in `pages.tsx` (id `server-slow-banner`) so it lives in
+ * the layout flow without us having to push it via `document.body`.
  *
  * ### Excluded endpoints
  * Long-poll endpoints intentionally hold the connection for up to 3 s.
  * `LONG_POLL_PATTERNS` matches any URL we skip — those would false-fire
- * the chip on every poll cycle. Currently:
+ * the banner on every poll cycle. Currently:
  * - `/poll?version=` (the dashboard change-version long-poll)
  * - `/projects/permissions` (channel permission long-poll)
  * - `/projects/bell-state` (bell long-poll)
@@ -28,7 +36,7 @@
  * requests can normally take longer (DB queries, attachment serving,
  * markdown sync). Tunable later.
  */
-import { toElement } from './dom.js';
+import { byIdOrNull } from './dom.js';
 
 export const SERVER_BUSY_THRESHOLD_MS = 3000;
 
@@ -52,7 +60,7 @@ interface InFlightRequest {
 
 const inFlight = new Set<InFlightRequest>();
 let evaluateTimer: number | null = null;
-let chipEl: HTMLElement | null = null;
+let bannerEl: HTMLElement | null = null;
 
 /** Test the in-flight set for a request that's been open longer than the
  *  threshold. Pure helper — no DOM. Exported for unit-test isolation. */
@@ -67,24 +75,24 @@ export function shouldShowServerBusyChip(
   return false;
 }
 
-function ensureChip(): HTMLElement {
-  if (chipEl !== null) return chipEl;
-  chipEl = toElement(
-    <div className="server-busy-chip" style="display:none" title="Server is slow — your request is still in flight">
-      <span className="server-busy-dot"></span>
-      <span className="server-busy-label">Server slow</span>
-    </div>,
-  );
-  document.body.appendChild(chipEl);
-  return chipEl;
+/** Look up the server-side-rendered banner element. The banner lives in
+ *  the layout flow next to `.update-banner` (HS-8226), so when shown it
+ *  pushes content down the same way the update banner does. Returns null
+ *  when the layout hasn't rendered yet (e.g. unit tests in happy-dom that
+ *  bypass the page render) — callers treat that as "no banner to toggle"
+ *  and the chip stays a no-op. */
+function lookupBanner(): HTMLElement | null {
+  if (bannerEl !== null && bannerEl.isConnected) return bannerEl;
+  bannerEl = byIdOrNull('server-slow-banner');
+  return bannerEl;
 }
 
 function evaluate(): void {
-  const chip = ensureChip();
+  const banner = lookupBanner();
   const starts: number[] = [];
   for (const r of inFlight) starts.push(r.startTs);
   const show = shouldShowServerBusyChip(starts, Date.now());
-  chip.style.display = show ? '' : 'none';
+  if (banner !== null) banner.style.display = show ? '' : 'none';
 }
 
 function startEvaluateTimer(): void {
@@ -98,7 +106,8 @@ function stopEvaluateTimerIfIdle(): void {
     window.clearInterval(evaluateTimer);
     evaluateTimer = null;
   }
-  if (chipEl !== null) chipEl.style.display = 'none';
+  const banner = lookupBanner();
+  if (banner !== null) banner.style.display = 'none';
 }
 
 /**
@@ -129,16 +138,16 @@ export function _resetServerBusyChipForTesting(): void {
     window.clearInterval(evaluateTimer);
     evaluateTimer = null;
   }
-  if (chipEl !== null) {
-    chipEl.remove();
-    chipEl = null;
-  }
+  const banner = lookupBanner();
+  if (banner !== null) banner.style.display = 'none';
+  bannerEl = null;
 }
 
 /** **TEST ONLY** — peek at the current in-flight count. */
 export function _inspectServerBusyForTesting(): { inFlightCount: number; chipVisible: boolean } {
+  const banner = lookupBanner();
   return {
     inFlightCount: inFlight.size,
-    chipVisible: chipEl !== null && chipEl.style.display !== 'none',
+    chipVisible: banner !== null && banner.style.display !== 'none',
   };
 }

@@ -180,6 +180,23 @@ export function getMinimizedPermissionSecrets(): Set<string> {
   return secrets;
 }
 
+/**
+ * HS-8228 — read the project secret of the popup currently mounted on
+ * screen, or null when no popup is active. Used by `bellPoll.tsx`'s
+ * terminal-prompt dispatcher to skip §52 overlays for projects whose §47
+ * popup is already up — the two surfaces describe the same Claude
+ * decision and stacking them on top of each other was the user-visible
+ * regression on HS-8228.
+ *
+ * "Active" = the popup is in the DOM. Minimized popups don't count
+ * (they're hidden + the user has already chosen not to interact yet);
+ * the dispatcher should still surface §52 for those if the underlying
+ * scanner match is fresh.
+ */
+export function getActivePermissionPopupOwnerSecret(): string | null {
+  return permissionState.activePopupOwnerSecret;
+}
+
 /** HS-8183 — number of consecutive polls in which `state.permissionState.activePopupRequestId`
  *  must be missing from `data.permissions` before the auto-dismiss path
  *  fires. Pre-fix the auto-dismiss fired on the first missed poll, which
@@ -548,6 +565,20 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
 }
 
 function showPermissionPopupBody(secret: string, perm: PermissionData) {
+  // HS-8228 — tear down any §52 terminal-prompt overlay for this project
+  // before mounting the §47 popup. The two surfaces describe the same
+  // Claude decision (channel-permission MCP request + the TUI text it
+  // also paints), and pre-fix the user reported seeing both stacked. The
+  // §47 popup is authoritative (its Allow / Deny writes a real MCP
+  // response) so it takes precedence; the §52 entry stays in the
+  // server's `pendingPrompts` so a future tick can re-fire if §47
+  // closes without resolving the underlying scanner match. Lazy import
+  // to avoid the bellPoll ↔ permissionOverlay static-import cycle (we
+  // already import getActivePermissionPopupOwnerSecret from here over
+  // there).
+  void import('./bellPoll.js')
+    .then(m => m.dismissTerminalPromptOverlayForSecret(secret))
+    .catch(() => { /* swallow — best-effort dedup */ });
 
   // A permission request is proof Claude is actively working — extend busy timeout.
   if (permissionState.channelBusyTimeoutModule) {

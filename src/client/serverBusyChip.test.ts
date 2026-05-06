@@ -84,10 +84,49 @@ describe('trackServerRequest (HS-8175)', () => {
     expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
   });
 
-  it('chip stays hidden when requests resolve before the threshold', async () => {
+  it('chip stays hidden when requests resolve before the threshold', () => {
     const done = trackServerRequest('/api/tickets');
     expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
     done();
     expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+  });
+});
+
+describe('server-slow banner (HS-8226)', () => {
+  /** HS-8226 — the indicator now toggles a layout-flow banner that
+   *  `pages.tsx` renders server-side as `#server-slow-banner`. Tests
+   *  that walk the visible state need to mount that element before
+   *  asserting; without it, `_inspectServerBusyForTesting().chipVisible`
+   *  reports false unconditionally (treated as "no banner to show"). */
+  function mountBanner(): HTMLElement {
+    const el = document.createElement('div');
+    el.id = 'server-slow-banner';
+    el.className = 'server-slow-banner';
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  afterEach(() => {
+    document.getElementById('server-slow-banner')?.remove();
+  });
+
+  it('chipVisible reports false when the banner element is missing from the layout', () => {
+    // No banner element mounted — happens in unit tests that bypass the
+    // server-rendered page. The chip module treats that as a no-op.
+    const done = trackServerRequest('/api/tickets');
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+    done();
+  });
+
+  it('chipVisible reports false when the banner element is mounted but hidden', () => {
+    mountBanner();
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+  });
+
+  it('chipVisible reports true once the banner is shown', () => {
+    const banner = mountBanner();
+    banner.style.display = '';
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
   });
 });

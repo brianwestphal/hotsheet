@@ -123,6 +123,16 @@ pageRoutes.get('/', (c) => {
           </div>
         </div>
 
+        {/* HS-8226 — server-slow banner (replaces the HS-8175 corner chip).
+            Mirrors the `.update-banner` layout-flow strip (`flex-shrink: 0`)
+            but in amber + non-dismissable: lights up whenever any non-long-poll
+            HTTP request has been in flight longer than the threshold. The chip
+            is auto-shown / auto-hidden by `serverBusyChip.tsx`. */}
+        <div id="server-slow-banner" className="server-slow-banner" style="display:none">
+          <span className="server-slow-dot"></span>
+          <span className="server-slow-label">Server slow — your request is still in flight</span>
+        </div>
+
         <div id="share-banner" className="share-banner" style="display:none">
           <span>Enjoying Hot Sheet? Share it with others!</span>
           <div className="share-banner-actions">

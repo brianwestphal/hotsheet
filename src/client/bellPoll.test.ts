@@ -19,6 +19,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MatchResult, NumberedMatch } from '../shared/terminalPrompt/parsers.js';
+
+// HS-8228 — mock `getActivePermissionPopupOwnerSecret` so the dispatcher's
+// new "skip §52 candidate when §47 is up for the same project" gate can
+// be exercised in isolation. Default is `null` (no popup active) so every
+// pre-HS-8228 test continues to behave the same way.
+const { ownerSecretMock } = vi.hoisted(() => ({
+  ownerSecretMock: vi.fn<() => string | null>(() => null),
+}));
+vi.mock('./permissionOverlay.js', async () => {
+  const actual = await vi.importActual<typeof import('./permissionOverlay.js')>('./permissionOverlay.js');
+  return {
+    ...actual,
+    getActivePermissionPopupOwnerSecret: () => ownerSecretMock(),
+  };
+});
+
 import {
   _activeOverlayKeyForTesting,
   _dismissedTerminalPromptKeysForTesting,
@@ -28,6 +44,7 @@ import {
   _recentlyAnsweredPromptsForTesting,
   _resetDispatchStateForTesting,
   type BellStateMap,
+  dismissTerminalPromptOverlayForSecret,
   reopenMinimizedTerminalPromptForSecret,
 } from './bellPoll.js';
 
@@ -69,6 +86,10 @@ function buildState(entries: Array<{ secret: string; terminalId: string; match: 
 
 beforeEach(() => {
   _resetDispatchStateForTesting();
+  // HS-8228 — reset the `permissionOverlay` mock to its default (no popup
+  // active) so a test that overrides it doesn't leak into the next.
+  ownerSecretMock.mockReset();
+  ownerSecretMock.mockReturnValue(null);
   // happy-dom doesn't ship a real fetch — stub it so the dispatcher's
   // background `apiWithSecret(...)` calls (POST /terminal/prompt-respond
   // and /terminal/prompt-dismiss) don't reject in a way that pollutes
@@ -655,5 +676,111 @@ describe('implicit channel-rule creation (HS-8210)', () => {
     const rules = body.terminal_prompt_allow_rules ?? [];
     expect(rules).toHaveLength(1);
     expect(rules[0].id).toBe('tp_existing');
+  });
+});
+
+/**
+ * HS-8228 — when the §47 channel-permission popup is active for a project,
+ * the §52 terminal-prompt overlay must NOT also fire on the same project.
+ * Pre-fix the user reported seeing both popups stacked on top of each
+ * other (terminal-prompt overlay covering the channel-permission popup).
+ * The §47 popup is the authoritative decision surface (its Allow / Deny
+ * writes a real MCP response), so it takes precedence; the §52 candidate
+ * stays in the server's `pendingPrompts` and re-fires on the next tick if
+ * §47 closes without resolving the underlying scanner match.
+ */
+describe('HS-8228 — dedup with permission popup (§47 takes precedence)', () => {
+  it('skips the §52 candidate whose secret matches the active §47 popup owner', () => {
+    ownerSecretMock.mockReturnValue('sec-a');
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(0);
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+  });
+
+  it('still fires for OTHER projects when §47 popup is active for a different project', () => {
+    ownerSecretMock.mockReturnValue('sec-a');
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+      { secret: 'sec-b', terminalId: 'tB', match: makeNumbered('sig-b') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    // sec-a is suppressed (popup active), sec-b surfaces its overlay.
+    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(1);
+    expect(_activeOverlayKeyForTesting()).toBe('sec-b::tB');
+  });
+
+  it('re-fires the §52 candidate on the next tick after §47 closes (popup owner returns null)', () => {
+    // First tick — §47 popup is up for sec-a, §52 suppressed.
+    ownerSecretMock.mockReturnValue('sec-a');
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(0);
+
+    // §47 popup closes → owner-secret returns null. Server-side
+    // `pendingPrompts` is unchanged (Claude's MCP response and the
+    // text-scrape are independent surfaces). Next tick must surface the
+    // §52 overlay.
+    ownerSecretMock.mockReturnValue(null);
+    _dispatchPendingPromptsForTesting(state);
+    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(1);
+    expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
+  });
+});
+
+describe('HS-8228 — dismissTerminalPromptOverlayForSecret', () => {
+  it('tears down the active §52 overlay when the secret matches', () => {
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(1);
+    expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
+
+    dismissTerminalPromptOverlayForSecret('sec-a');
+    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(0);
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+  });
+
+  it('is a no-op when no overlay is open', () => {
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+    dismissTerminalPromptOverlayForSecret('sec-a');
+    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(0);
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+  });
+
+  it('is a no-op when the active overlay belongs to a different project', () => {
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
+
+    dismissTerminalPromptOverlayForSecret('sec-other');
+    // sec-a's overlay survives — only sec-other would have been torn down.
+    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(1);
+    expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
+  });
+
+  it('drops the dispatched-signature record so the dispatcher can re-fire on a later tick', () => {
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-a') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+
+    dismissTerminalPromptOverlayForSecret('sec-a');
+    expect(_activeOverlayKeyForTesting()).toBeNull();
+
+    // Re-dispatch with the SAME signature — pre-fix the
+    // `lastDispatchedPromptSignatures` map would block the second mount.
+    // Post-fix `dismissTerminalPromptOverlayForSecret` cleared the entry,
+    // so the dispatcher re-mounts.
+    _dispatchPendingPromptsForTesting(state);
+    expect(document.querySelectorAll('.terminal-prompt-overlay').length).toBe(1);
+    expect(_activeOverlayKeyForTesting()).toBe('sec-a::tA');
   });
 });
