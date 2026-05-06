@@ -104,8 +104,8 @@ ask_multiline() {
     info "${prompt} ${DIM}(opening ${editor##*/})${RESET}"
     $editor "$tmpfile"
 
-    # Read back, strip trailing blank lines
-    REPLY=$(sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$tmpfile")
+    # Read back: strip lines starting with '#' (guidance/comments), then strip trailing blank lines
+    REPLY=$(grep -v '^#' "$tmpfile" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
 
     if [[ -z "$REPLY" ]]; then
       warn "Release notes are empty."
@@ -269,12 +269,52 @@ step_version() {
 step_release_notes() {
   echo ""
 
-  # Build initial content from commits since last tag
+  # Build initial content. We seed the editor with brief guidance + a
+  # commented-out reference list of commits since the last tag. Lines starting
+  # with '#' are stripped on save (git-commit-style), so the guidance never
+  # makes it into the tag annotation or GitHub Release body.
+  #
+  # Commit subjects in this repo are intentionally long (multi-paragraph dev
+  # diaries), so we truncate each to its first sentence/clause for the
+  # reference list — the goal is to jog memory, not paste subjects verbatim.
   local last_tag
   last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
   local log_range="${last_tag:+${last_tag}..HEAD}"
+
+  local commits
+  commits=$(git log ${log_range:-"-10"} --format="%s" --no-decorate \
+    | awk '{
+        # Truncate at first " — " (em-dash separator we use after ticket id)
+        # or first ". " (sentence end), whichever comes first; cap at 120 chars.
+        s = $0
+        n = length(s)
+        idx = index(s, " — ")
+        if (idx > 0) n = idx - 1
+        idx2 = index(s, ". ")
+        if (idx2 > 0 && idx2 - 1 < n) n = idx2 - 1
+        if (n > 120) n = 120
+        out = substr(s, 1, n)
+        if (length(s) > length(out)) out = out " …"
+        print "# - " out
+      }')
+
   local initial
-  initial=$(git log ${log_range:-"-10"} --format="- %s" --no-decorate)
+  initial="# Release notes — keep it SHORT and USER-FACING.
+#
+# What to include:  new features, bug fixes, breaking changes, anything a user
+#                   would notice or care about.
+# What to skip:     internal refactors, test additions, doc-only updates,
+#                   implementation rationale, ticket numbers.
+#
+# Aim for a handful of bullets, one short line each. The reader is a user
+# upgrading their install — not a maintainer reading the diff.
+#
+# Lines starting with '#' are removed on save.
+#
+# Reference — commits since ${last_tag:-last 10}:
+${commits}
+#
+"
 
   ask_multiline "release_notes" "Release notes" "$initial"
 }
