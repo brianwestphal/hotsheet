@@ -416,10 +416,72 @@ step_rc_tag_and_push() {
   echo -e "  ${DIM}Monitor progress:${RESET} https://github.com/brianwestphal/hotsheet/actions"
 }
 
+# Beta tag-and-push: like the RC path but creates v{ver}-beta.{N} tags off
+# HEAD without first committing version-file bumps. The CI workflow
+# (release-beta.yml) extracts the version from the tag, publishes npm with
+# `--tag beta`, and creates a GitHub Release flagged `prerelease: true` so
+# `releases/latest` (Tauri updater + §50 upgrade-nudge) keeps pointing at the
+# prior stable. There is no auto-promote — betas stay opt-in via
+# `npm install hotsheet@beta` or by clicking through the GH Release page.
+step_beta_tag_and_push() {
+  local version
+  version=$(get_state "version")
+  local notes
+  notes=$(get_state "release_notes")
+
+  # Auto-increment beta number: find existing v{version}-beta.N tags
+  local beta_num=1
+  while git rev-parse "v${version}-beta.${beta_num}" >/dev/null 2>&1; do
+    beta_num=$((beta_num + 1))
+  done
+  local beta_tag="v${version}-beta.${beta_num}"
+
+  info "Creating beta tag ${BOLD}${beta_tag}${RESET}..."
+
+  # Annotated tag with release notes
+  echo -e "$notes" | git tag -a "$beta_tag" -F -
+
+  info "Pushing beta tag to origin..."
+  git push origin "$beta_tag"
+
+  echo ""
+  success "Beta tag ${beta_tag} pushed!"
+  echo ""
+  echo -e "  ${DIM}CI will now:${RESET}"
+  echo -e "    1. Run tests, lint, and build verification"
+  echo -e "    2. Publish beta to npm (hotsheet@${version}-beta.${beta_num}) with --tag beta"
+  echo -e "    3. Build Tauri bundles for every platform"
+  echo -e "    4. Create a GitHub Release flagged ${BOLD}prerelease: true${RESET}"
+  echo ""
+  echo -e "  ${DIM}This is a beta — there is no auto-promote.${RESET}"
+  echo -e "  ${DIM}Users get it via:${RESET}  npm install hotsheet@beta"
+  echo -e "  ${DIM}Or by downloading from the GitHub Release page.${RESET}"
+  echo -e "  ${DIM}The Tauri updater + §50 upgrade-nudge keep pointing at the prior stable${RESET}"
+  echo -e "  ${DIM}because GitHub's releases/latest skips prereleases automatically.${RESET}"
+  echo ""
+  echo -e "  ${DIM}Monitor progress:${RESET} https://github.com/brianwestphal/hotsheet/actions"
+}
+
 # --- Main ---
 main() {
+  # --beta switches the flow into pre-release mode: no version-file bumps,
+  # no CHANGELOG entry, no release commit; just a v{ver}-beta.{N} tag pushed
+  # off HEAD. CI publishes npm with --tag beta and creates a GH Release
+  # flagged prerelease: true so the Tauri updater + §50 upgrade-nudge skip it.
+  BETA_MODE=false
+  for arg in "$@"; do
+    case "$arg" in
+      --beta) BETA_MODE=true ;;
+    esac
+  done
+
   echo ""
-  echo -e "${BOLD}  Hot Sheet Release${RESET}"
+  if [[ "$BETA_MODE" == "true" ]]; then
+    echo -e "${BOLD}  Hot Sheet Beta Release${RESET}"
+    echo -e "  ${DIM}--beta mode: tag-only, no version-file bump, no auto-promote.${RESET}"
+  else
+    echo -e "${BOLD}  Hot Sheet Release${RESET}"
+  fi
   echo ""
 
   init_state
@@ -463,50 +525,91 @@ main() {
   # Step 4: Review
   if ! past_step 4; then
     step_review
-    if ! confirm "Proceed with this release?"; then
-      warn "Aborted. State saved — run again to resume or edit."
-      exit 0
+    if [[ "$BETA_MODE" == "true" ]]; then
+      if ! confirm "Proceed with this BETA release?"; then
+        warn "Aborted. State saved — run again to resume or edit."
+        exit 0
+      fi
+    else
+      if ! confirm "Proceed with this release?"; then
+        warn "Aborted. State saved — run again to resume or edit."
+        exit 0
+      fi
     fi
     set_step 4
   fi
 
-  # Step 5: Update version in package.json
-  if ! past_step 5; then
-    echo ""
-    step_update_version
-    set_step 5
-  fi
+  if [[ "$BETA_MODE" == "true" ]]; then
+    # Beta path: skip version/changelog/commit steps. The user-entered version
+    # is the upcoming target (e.g. 0.17.0); package.json stays at the current
+    # stable until the actual final release runs. CI bumps the version
+    # ephemerally at publish time via `npm version ... --no-git-tag-version`.
 
-  # Step 6: Update CHANGELOG.md
-  if ! past_step 6; then
-    step_update_changelog
-    set_step 6
-  fi
+    # Step 7: Build + local checks (still run them — beta should pass too)
+    if ! past_step 7; then
+      echo ""
+      step_build
 
-  # Step 7: Build + local checks
-  if ! past_step 7; then
-    echo ""
-    step_build
+      info "Running local checks..."
+      echo ""
+      info "Unit tests..."
+      npm test
+      echo ""
+      info "Linting..."
+      npm run lint
+      echo ""
+      info "Type checking..."
+      npx tsc --noEmit
+      success "All local checks passed"
+      set_step 7
+    fi
 
-    info "Running local checks..."
-    echo ""
-    info "Unit tests..."
-    npm test
-    echo ""
-    info "Linting..."
-    npm run lint
-    echo ""
-    info "Type checking..."
-    npx tsc --noEmit
-    success "All local checks passed"
-    set_step 7
-  fi
+    # Step 8: Beta tag + push (no commit)
+    if ! past_step 8; then
+      step_beta_tag_and_push
+      set_step 8
+    fi
+  else
+    # Stable path: full version-bump + changelog + commit + RC tag flow.
 
-  # Step 8: Git commit + RC tag + push
-  if ! past_step 8; then
-    step_git_commit
-    step_rc_tag_and_push
-    set_step 8
+    # Step 5: Update version in package.json
+    if ! past_step 5; then
+      echo ""
+      step_update_version
+      set_step 5
+    fi
+
+    # Step 6: Update CHANGELOG.md
+    if ! past_step 6; then
+      step_update_changelog
+      set_step 6
+    fi
+
+    # Step 7: Build + local checks
+    if ! past_step 7; then
+      echo ""
+      step_build
+
+      info "Running local checks..."
+      echo ""
+      info "Unit tests..."
+      npm test
+      echo ""
+      info "Linting..."
+      npm run lint
+      echo ""
+      info "Type checking..."
+      npx tsc --noEmit
+      success "All local checks passed"
+      set_step 7
+    fi
+
+    # Step 8: Git commit + RC tag + push
+    if ! past_step 8; then
+      step_git_commit
+      step_rc_tag_and_push
+      set_step 8
+    fi
   fi
 
   # Done — clean up

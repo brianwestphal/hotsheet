@@ -187,10 +187,40 @@ Stores should be testable WITHOUT mounting any DOM. The DOM rendering is the §6
 - **HS-8239 — Phase 2: `ticketsStore` migration.** Single atomic PR; biggest win.
 - **HS-8240 — Phase 3: long tail.** Opportunistic; each sub-store is its own sub-ticket.
 
-## 61.13 Cross-refs
+## 61.13 Rejected alternative: nanostores as the backbone
+
+HS-8248 evaluated [`nanostores`](https://github.com/nanostores/nanostores) (~294 bytes core, atom / map / computed / cleanStores primitives) as a drop-in replacement for the bespoke `defineStore` factory. **Rejected.** A future contributor finding nanostores attractive can stop here.
+
+### The compatibility blocker
+
+§60's binding helpers (`bindText` / `bindAttr` / `bindList`) are built on `@preact/signals-core`'s `effect()`, which auto-tracks dependencies via the `signal.value` getter — read a signal inside an `effect()` and the effect re-runs when that signal changes. **Nanostores does not participate in this protocol.** Per the upstream source (`atom/index.js`), `.get()` is a plain accessor that reads `$atom.value`; subscriptions go through explicit `.listen(cb)` / `.subscribe(cb)`; cross-store derivation is the explicit `computed([$a, $b], fn)` constructor that wires its own listeners.
+
+Consequence: every §60 helper would need a parallel nanostores variant (`bindTextNano(el, $store)`), OR every nanostore would need a manual signal mirror at the consumer (`const sig = signal($store.get()); $store.listen(v => { sig.value = v })`) — either way, **two reactivity systems on the client**, exactly the smell §60 + §61 exist to remove. The whole point of the bespoke factory is that its `state` field IS a `@preact/signals-core` signal, so §60 helpers consume stores for free with no adapter layer.
+
+The decision criterion in HS-8248 was explicit: adopt nanostores only if §60 helpers integrate cleanly. They don't. That alone settles it.
+
+### Secondary findings (each independently insufficient, but pile up)
+
+1. **Bundle-size win is illusory.** Nanostores core is 294 bytes; the bespoke factory is ~50 lines (a few hundred bytes minified). Both are negligible against the 1.4 KB `@preact/signals-core` baseline either approach already pays. Nanostores doesn't displace any code we'd otherwise write — it sits *on top of* signals-core, not instead of it.
+2. **`cleanStores` ≠ `resetAllStores`.** Nanostores' `cleanStores(...stores)` tears stores down entirely (subscribers detach, listeners cleared) — designed for test cleanup, not for runtime project-switch reset. §61.3's `resetAllStores()` resets to `initial()` *while keeping subscribers attached*, so binding helpers stay live across the project switch and just see the new initial state. Fundamentally different semantics; we'd be wrapping nanostores anyway to re-implement `reset()`. The wrapper is the bespoke factory.
+3. **Actions-only convention costs a wrapper either way.** Nanostores' `set()` / `setKey()` are publicly callable by any consumer. §61.3's three rules (read-only state, actions-only mutation, reset-to-initial) require hiding `.set` / `.setKey` behind named action functions. Wrapping `atom` to enforce that isn't simpler than just exposing a `set` to the action-builder closure ourselves — the closure is the bespoke factory, give or take 10 lines.
+4. **`task()` is not a need we have.** Async actions in §61 are plain `async` functions calling existing actions; we don't need nanostores' built-in racing primitive. If a real need surfaces, it's a 20-line helper on top of the factory rather than a reason to adopt a second library.
+5. **TypeScript ergonomics — wash.** Both produce reasonable inference. Nanostores' `map` types are slightly nicer for partial updates; the bespoke factory's `actions: (set, get) => TActions` shape is slightly nicer for the action surface. Neither is a tipping point.
+
+### What this investigation validated
+
+- **§60 IS the reactivity backbone.** The bespoke factory is a thin convention layer over `@preact/signals-core` signals — that's a feature, not an interim. The signals primitive *is* the reactivity system; stores are just a structured way to organise consumers + mutations on top. Adopting any second reactive library — nanostores or otherwise — would have been a regression toward the "two reactivity systems" smell HS-8165 already ruled out at framework scale.
+- **The §61.2 rule (one consumer = signal, two+ = store) holds.** Nanostores' atom-as-default culture nudges every callsite toward an atom even when a raw signal would do. Our convention pushes the other direction, which is correct for our codebase size.
+
+### Bottom line
+
+Nanostores is well-built and small, but its compatibility cost (parallel binding helpers OR a manual signal-mirror layer) exceeds its size win, and the wrapper required to enforce §61's three rules is the bespoke factory regardless. Stay with the §61.3 spec as written. **HS-8238 ships the factory from scratch.** Do not re-open this question without a new piece of evidence that invalidates the auto-tracking analysis above.
+
+## 61.14 Cross-refs
 
 - [§60. Fine-grained reactivity primitive](60-reactivity-primitive.md) — hard dependency. HS-8166 must ship before HS-8167 phases start.
 - [§62. Unified JSX render targets](62-unified-jsx-render-targets.md) — independent track. No dependency either direction.
 - HS-8165 — investigation that produced the verdict driving this doc.
 - HS-8189 / HS-8190 / HS-8222 / HS-8223 / HS-8224 — prior bundling of per-file module-level `let`s; this doc is the next step that makes those bundles testable.
+- HS-8248 — pre-implementation investigation that confirmed the bespoke factory; rationale archived in §61.13.
 - §18 (plugin system) — plugin-defined stores deferred per §61.8.

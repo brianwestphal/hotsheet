@@ -730,7 +730,9 @@ HS-8167. Layered convention on top of §60's signals primitive. Hard dependency 
 
 **Migration plan.** Phase 1 (HS-8238) factory + project-tab attention-dot trial + written test pattern. Phase 2 (HS-8239 — atomic) `ticketsStore` end-to-end. Phase 3 (HS-8240) opportunistic per-store sub-tickets.
 
-**Status:** Design only. Cross-refs: §60 (HS-8166 signals primitive — hard dependency), §62 (independent), HS-8165 (origin), HS-8189 / HS-8190 / HS-8222 / HS-8223 / HS-8224 (prior `let`-bundling work this doc takes the next step on), §18 (plugin-defined stores deferred per §61.8).
+**Pre-implementation investigation rejected nanostores backbone (HS-8248).** Evaluated `nanostores` (~294 bytes core) as a drop-in for the bespoke `defineStore`. Rejected: nanostores' `.get()` doesn't auto-track via the `signal.value` getter protocol, so §60's `effect()`-based binding helpers can't consume nanostores without either parallel `bindTextNano` helpers OR a manual signal-mirror at every consumer — both reintroduce the "two reactivity systems" smell §60 + §61 exist to remove. Also: `cleanStores` semantics tear subscribers down (wrong shape for `resetAllStores` reset-to-initial), and the actions-only wrapper would be the bespoke factory regardless. Rationale archived in §61.13; HS-8238 ships the factory from scratch.
+
+**Status:** Design only (nanostores alternative investigated and rejected per HS-8248). Cross-refs: §60 (HS-8166 signals primitive — hard dependency), §62 (independent), HS-8165 (origin), HS-8189 / HS-8190 / HS-8222 / HS-8223 / HS-8224 (prior `let`-bundling work this doc takes the next step on), §18 (plugin-defined stores deferred per §61.8).
 
 ---
 

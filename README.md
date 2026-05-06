@@ -6,6 +6,10 @@
 
 <br>
 
+> **hot sheet** *(noun)* — a document or report listing items of high current interest, typically featuring urgent, new, or updated information.
+
+<br>
+
 **Hot Sheet** is a lightweight project management tool that runs entirely on your machine. Create tickets with a bullet-list interface, drag them into priority order, and your AI tools automatically get a structured worklist they can act on.
 
 No cloud. No logins. No JIRA. Just tickets and a tight feedback loop.
