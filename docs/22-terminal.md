@@ -443,7 +443,27 @@ When focus is **outside** a terminal, `Cmd+Shift+Left/Right` continues to switch
 
 **Tab selection.** `switchTerminalTabByOffset()` queries `.drawer-tab[data-drawer-tab]` elements in DOM order (HS-7927 — was `.drawer-terminal-tab` per HS-6472, broadened to include the Commands Log tab), finds the one with `.active`, and delegates to `switchDrawerTab(dataDrawerTab)` from `src/client/commandLog.tsx` — same code path as clicking a tab. The `[data-drawer-tab]` filter excludes the "+" add-terminal button (which carries the `drawer-tab` class but no `data-drawer-tab`) so cycling skips it. Selecting a terminal tab re-focuses that terminal's xterm instance via `activateTerminal` → `term.focus()`; selecting Commands Log focuses the log panel. Pure-helper `pickNextDrawerTabId(tabs, offset)` factored out + tested in `src/client/shortcuts.test.ts` (6 cases covering forward / backward cycling, wrap behaviour, the HS-7927 first-terminal-→-commands-log case, the single-tab no-op, and the no-active-tab fallback).
 
-## 22.19 Cross-references
+## 22.19 Stall indicator (HS-8175)
+
+When the user types a keystroke in a drawer terminal AND the PTY hasn't echoed it back within 1.5 s, a small `.terminal-stall-indicator` chip ("Server slow") appears in the terminal pane's header (between the `#terminal-prompt-resume-chip` and the copy-output button). The chip clears the moment the next binary `ws.message` arrives.
+
+This is a belt-and-braces UX for the residual stall risk that survives HS-8160 (`instrumentSync` wraps so future stalls self-tag in `freeze.log`) and HS-8178 (backup writers async via `fs.promises` so the macOS Google Drive `fsync` stall no longer blocks the main event loop). It surfaces a known-not-yet-fully-prevented failure mode — under heavy load (a `pty.write` flood, a PGLite WAL checkpoint blip, an unknown subsystem) the user might still type and see nothing for several seconds; the chip tells them their keystrokes did go out, the server just hasn't responded yet.
+
+**Detection.** Pure helper `shouldShowStallIndicator(lastTypeTs, lastEchoTs, now, thresholdMs)` in `src/client/terminal/stallIndicator.ts`. Returns true when `lastTypeTs > 0 && lastTypeTs > lastEchoTs && now - lastTypeTs > thresholdMs`. Default threshold `STALL_INDICATOR_THRESHOLD_MS = 1500`.
+
+**Wiring.**
+
+- `src/client/terminalCheckout.tsx::createEntry` records `entry.lastTypeTs = Date.now()` after every `term.onData` keystroke send AND `entry.lastEchoTs = Date.now()` on every binary `ws.message` (the PTY's echo).
+- `peekStallTimestamps(secret, terminalId)` returns the current pair; `subscribeStallState(secret, terminalId, handler)` fires on every type / echo update.
+- `src/client/terminal.tsx::attachStallIndicator(inst, secret)` subscribes + ticks every 250 ms (so the threshold-cross moment lights the chip without requiring an extra event) and toggles the `display` of the chip element. The disposer is added to `inst.termHandlerDisposers` so a tab close / project switch tears it down.
+
+**Companion: global server-busy chip.** Sibling `src/client/serverBusyChip.tsx` mounts a fixed-position chip in the top-right of the viewport whenever ANY non-long-poll HTTP request crosses `SERVER_BUSY_THRESHOLD_MS = 3000`. `api.tsx` wraps every `api()` / `apiWithSecret()` / `apiUpload()` fetch with `trackServerRequest(url)` (returned `done()` is called in the `finally` clause); long-poll endpoints (`/poll?`, `/projects/permissions`, `/projects/bell-state`) are skipped via `LONG_POLL_PATTERNS` so the chip doesn't false-fire on every poll cycle. This addresses the user's note that *"sometimes its not typing into the terminal that's slow, sometimes its when i click a button and nothing happens"* — the chip surfaces stuck button clicks the same way the per-terminal chip surfaces stuck keystrokes.
+
+**Tests.** 6 pure-helper tests in `src/client/terminal/stallIndicator.test.ts` (every corner case + custom threshold + boundary at exactly threshold). 11 tests in `src/client/serverBusyChip.test.ts` covering `isLongPollUrl`, the `shouldShowServerBusyChip` boundary check, `trackServerRequest` lifecycle (single + concurrent), and the long-poll skip path.
+
+**Out of scope for v1.** The dashboard tile (§25) and drawer-grid tile (§36) don't yet show the per-terminal chip — only the drawer pane does. Both surfaces use the same `terminalCheckout.tsx` entry, so the data is available; surfacing the chip on those views is a small follow-up.
+
+## 22.20 Cross-references
 
 - [4-user-interface.md](4-user-interface.md) — drawer now has tabs; push-up layout affects ticket list region.
 - [8-cli-server.md](8-cli-server.md) — startup/shutdown lifecycle must kill live PTYs on SIGTERM.

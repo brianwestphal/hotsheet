@@ -7141,6 +7141,71 @@ body.terminal-dashboard-active {
   }
 }
 
+// HS-8175 — per-terminal stall indicator. Shown when the user typed a
+// keystroke and the PTY hasn't echoed it back within
+// `STALL_INDICATOR_THRESHOLD_MS` (1500 ms). Toggled by the subscription
+// in `terminal.tsx::attachStallIndicator`. The pulsing dot makes the chip
+// readable without a strong colour cue.
+.terminal-stall-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: rgb(180, 100, 0);
+  font-size: 11px;
+  user-select: none;
+  cursor: default;
+}
+
+.terminal-stall-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(245, 158, 11);
+  animation: terminal-stall-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes terminal-stall-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+// HS-8175 — global server-busy chip. Mounted into document.body by
+// `serverBusyChip.tsx`. Top-right of the viewport, fixed position so it
+// floats above every other UI surface; visible whenever any non-long-poll
+// HTTP request has been in flight longer than `SERVER_BUSY_THRESHOLD_MS`
+// (3000 ms).
+.server-busy-chip {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 5000;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  color: rgb(180, 100, 0);
+  font-size: 12px;
+  font-weight: 500;
+  user-select: none;
+  pointer-events: none; // so the chip doesn't intercept clicks the user is mid-fire
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.server-busy-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(245, 158, 11);
+  animation: terminal-stall-pulse 1.4s ease-in-out infinite;
+}
+
 .terminal-header-btn {
   background: transparent;
   border: none;

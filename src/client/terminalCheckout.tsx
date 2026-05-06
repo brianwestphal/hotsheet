@@ -201,6 +201,15 @@ interface StackEntry {
    *  inside the history-frame handler — non-noSpawn entries never see
    *  `noSession: true` and shouldn't pay attention to the field. */
   noSpawn: boolean;
+  /** HS-8175 — `Date.now()` at the most recent keystroke send (`term.onData`).
+   *  0 means no keystroke has been sent on this entry. */
+  lastTypeTs: number;
+  /** HS-8175 — `Date.now()` at the most recent PTY echo (`ws.message`
+   *  binary frame). 0 means no echo has been received yet. */
+  lastEchoTs: number;
+  /** HS-8175 — subscribers fire on every type / echo update so consumers
+   *  (drawer pane, dashboard tile) can re-evaluate their stall chip. */
+  stallSubscribers: Set<() => void>;
 }
 
 const entries = new Map<string, StackEntry>();
@@ -257,6 +266,9 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
     stack: [],
     intentionallyClosing: false,
     noSpawn,
+    lastTypeTs: 0,
+    lastEchoTs: 0,
+    stallSubscribers: new Set(),
   };
 
   // HS-8048 — wire `term.onData` ONCE at term construction. The handler
@@ -269,6 +281,13 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
     if (ws !== null && ws.readyState === WebSocket.OPEN) {
       try { ws.send(encoder.encode(data)); } catch { /* socket may have closed mid-send */ }
     }
+    // HS-8175 — record the keystroke send AFTER the WS send call so the
+    // timestamp reflects the moment the byte left the client. Subscribers
+    // re-evaluate the stall chip; they typically tick on a 250 ms timer
+    // anyway since `Date.now() - lastTypeTs` keeps creeping past the
+    // threshold without a fresh event.
+    entry.lastTypeTs = Date.now();
+    notifyStallSubscribers(entry);
   });
 
   attachWebSocketToEntry(entry);
@@ -328,6 +347,10 @@ function attachWebSocketToEntry(entry: StackEntry): void {
     if (data instanceof ArrayBuffer) {
       const bytes = new Uint8Array(data);
       try { entry.term.write(bytes); } catch { /* term disposed mid-message */ }
+      // HS-8175 — record the PTY echo so `shouldShowStallIndicator` can
+      // hide the chip the moment output comes back. Subscribers re-evaluate.
+      entry.lastEchoTs = Date.now();
+      notifyStallSubscribers(entry);
       return;
     }
     if (typeof data === 'string') {
@@ -638,6 +661,41 @@ export function peekEntryDims(secret: string, terminalId: string): { cols: numbe
   const entry = entries.get(entryKey(secret, terminalId));
   if (entry === undefined) return null;
   return { cols: entry.term.cols, rows: entry.term.rows };
+}
+
+/**
+ * HS-8175 — read the current `lastTypeTs` / `lastEchoTs` for an entry. Returns
+ * null when no entry exists (consumers should hide their stall chip). Mostly
+ * useful for the polling tick that drives the chip's CSS class — the chip
+ * needs to RE-EVALUATE every ~250 ms because the threshold check is
+ * `now - lastTypeTs > 1500` and `now` is constantly advancing.
+ */
+export function peekStallTimestamps(secret: string, terminalId: string): { lastTypeTs: number; lastEchoTs: number } | null {
+  const entry = entries.get(entryKey(secret, terminalId));
+  if (entry === undefined) return null;
+  return { lastTypeTs: entry.lastTypeTs, lastEchoTs: entry.lastEchoTs };
+}
+
+/**
+ * HS-8175 — subscribe to keystroke / echo timestamp updates. The handler
+ * fires once per `term.onData` (keystroke send) and once per binary
+ * `ws.message` (PTY echo) — those are the events that change whether the
+ * stall threshold has been crossed. Consumers should ALSO tick on a timer
+ * since the `now - lastTypeTs > threshold` boundary crosses without an
+ * event firing. Returns an unsubscribe function. No-op when no entry
+ * exists for `(secret, terminalId)` (returns a noop unsubscribe).
+ */
+export function subscribeStallState(secret: string, terminalId: string, handler: () => void): () => void {
+  const entry = entries.get(entryKey(secret, terminalId));
+  if (entry === undefined) return () => { /* nothing to unsubscribe */ };
+  entry.stallSubscribers.add(handler);
+  return () => { entry.stallSubscribers.delete(handler); };
+}
+
+function notifyStallSubscribers(entry: StackEntry): void {
+  for (const handler of entry.stallSubscribers) {
+    try { handler(); } catch { /* swallow — subscriber callbacks are advisory */ }
+  }
 }
 
 /** **TEST ONLY** — full snapshot of the current stack state for assertions.

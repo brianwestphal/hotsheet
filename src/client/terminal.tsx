@@ -21,6 +21,7 @@ import { getActiveProject, state } from './state.js';
 import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 import { attachGutterHoverPopover } from './terminal/gutterPopover.js';
 import { openRenameDialog } from './terminal/renameDialog.js';
+import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
 import { showTabContextMenu as showSharedTabContextMenu } from './terminal/tabContextMenu.js';
 import {
   applyAppearanceToTerm,
@@ -32,7 +33,7 @@ import {
   subscribeToDefaultAppearanceChanges,
 } from './terminalAppearance.js';
 import { mountAppearancePopover } from './terminalAppearancePopover.js';
-import { checkout,type CheckoutHandle } from './terminalCheckout.js';
+import { checkout,type CheckoutHandle, peekStallTimestamps, subscribeStallState } from './terminalCheckout.js';
 import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { cacheHomeDir, formatCwdLabel, getCachedHomeDir, parseOsc7Payload } from './terminalOsc7.js';
 import { computeLastOutputRange, exitCodeGutterClass, findPromptLine, parseOsc133ExitCode } from './terminalOsc133.js';
@@ -591,6 +592,13 @@ function buildPaneEl(config: TerminalTabConfig, tabName: string): HTMLElement {
         <button className="terminal-header-btn terminal-prompt-resume-chip" title="Prompt detection paused — click to resume" style="display:none">
           <span className="terminal-prompt-resume-label">Detection paused — Resume</span>
         </button>
+        {/* HS-8175 — server-busy chip; hidden until lastTypeTs >
+            lastEchoTs > threshold. Toggled by the stall-state subscription
+            wired in mountInstanceViaCheckout. */}
+        <span className="terminal-stall-indicator" title="Server is slow to echo — your keystrokes were sent but the response hasn't returned yet" style="display:none">
+          <span className="terminal-stall-dot"></span>
+          <span className="terminal-stall-label">Server slow</span>
+        </span>
         {/* HS-7268 — copy-last-output, hidden until first OSC 133 escape. */}
         <button className="terminal-header-btn terminal-copy-output-btn" title="Copy last command output" style="display:none">
           {raw(CLIPBOARD_ICON)}
@@ -1024,6 +1032,39 @@ function attachDrawerTermHandlers(inst: TerminalInstance, term: XTerm, handle: R
   }));
 }
 
+/**
+ * HS-8175 — toggle the `.terminal-stall-indicator` chip on the per-pane
+ * header based on the entry's type / echo timestamps. Fires on every
+ * keystroke / echo via the checkout subscription AND on a 250 ms timer
+ * (so the threshold-cross moment lights the chip without needing an
+ * extra event). Disposers are tied to the instance's `termHandlerDisposers`
+ * so a tab close / project switch tears them down with the rest.
+ */
+function attachStallIndicator(inst: TerminalInstance, secret: string): void {
+  const chip = inst.pane.querySelector<HTMLElement>('.terminal-stall-indicator');
+  if (chip === null) return;
+  const STALL_TICK_MS = 250;
+  const evaluate = (): void => {
+    const ts = peekStallTimestamps(secret, inst.id);
+    if (ts === null) {
+      chip.style.display = 'none';
+      return;
+    }
+    const show = shouldShowStallIndicator(ts.lastTypeTs, ts.lastEchoTs, Date.now());
+    chip.style.display = show ? '' : 'none';
+  };
+  const unsubscribe = subscribeStallState(secret, inst.id, evaluate);
+  const tickHandle = window.setInterval(evaluate, STALL_TICK_MS);
+  inst.termHandlerDisposers.push({
+    dispose() {
+      unsubscribe();
+      window.clearInterval(tickHandle);
+      chip.style.display = 'none';
+    },
+  });
+  evaluate();
+}
+
 function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void {
   const handle = checkout({
     projectSecret: secret,
@@ -1073,6 +1114,11 @@ function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void 
   inst.search = search;
   inst.searchHandle = searchHandle;
   inst.wsSecret = secret;
+
+  // HS-8175 — wire the per-terminal stall chip. Subscribes to type / echo
+  // updates from the checkout entry; also ticks every 250 ms so the
+  // `now - lastTypeTs > 1500ms` boundary crosses without an event firing.
+  attachStallIndicator(inst, secret);
 }
 
 // HS-8044 — pre-fix `connect(inst)` opened a per-instance WebSocket

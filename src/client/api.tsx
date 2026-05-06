@@ -1,4 +1,5 @@
 import { byIdOrNull, toElement } from './dom.js';
+import { trackServerRequest } from './serverBusyChip.js';
 import { getActiveProject } from './state.js';
 
 export function showErrorPopup(message: string) {
@@ -64,8 +65,12 @@ function buildHeaders(opts: { body?: unknown; method?: string }): Record<string,
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+  // HS-8175 — track every non-long-poll fetch so the global server-busy
+  // chip can light up if a request crosses the threshold (3 s).
+  const url = buildUrl(path, opts.method);
+  const done = trackServerRequest(url);
   try {
-    const res = await fetch(buildUrl(path, opts.method), {
+    const res = await fetch(url, {
       headers: buildHeaders(opts),
       method: opts.method,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -82,18 +87,22 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
       showErrorPopup('Unable to reach the server. It may have been stopped.');
     }
     throw err;
+  } finally {
+    done();
   }
 }
 
 /** Like `api()`, but uses a specific project secret instead of the active project. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function apiWithSecret<T = any>(path: string, secret: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+  const url = '/api' + path;
+  const done = trackServerRequest(url);
   try {
     const headers: Record<string, string> = {};
     if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
     headers['X-Hotsheet-Secret'] = secret;
     assertApiPathShape(path);
-    const res = await fetch('/api' + path, {
+    const res = await fetch(url, {
       headers,
       method: opts.method,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -110,10 +119,14 @@ export async function apiWithSecret<T = any>(path: string, secret: string, opts:
       showErrorPopup('Unable to reach the server. It may have been stopped.');
     }
     throw err;
+  } finally {
+    done();
   }
 }
 
 export async function apiUpload<T>(path: string, file: File): Promise<T> {
+  const url = buildUrl(path, 'POST');
+  const done = trackServerRequest(url);
   try {
     const form = new FormData();
     form.append('file', file);
@@ -122,7 +135,7 @@ export async function apiUpload<T>(path: string, file: File): Promise<T> {
     if (proj !== null) {
       headers['X-Hotsheet-Secret'] = proj.secret;
     }
-    const res = await fetch(buildUrl(path, 'POST'), { method: 'POST', body: form, headers });
+    const res = await fetch(url, { method: 'POST', body: form, headers });
     if (!res.ok) {
       const body = await res.json().catch(() => null) as { error?: string } | null;
       const message = body?.error ?? `Server returned ${res.status}`;
@@ -135,5 +148,7 @@ export async function apiUpload<T>(path: string, file: File): Promise<T> {
       showErrorPopup('Unable to reach the server. It may have been stopped.');
     }
     throw err;
+  } finally {
+    done();
   }
 }
