@@ -7,7 +7,7 @@ import { toElement } from './dom.js';
 import { renderEditDiffPreview } from './editDiffPreview.js';
 import { buildAlwaysAllowAffordance } from './permissionAllowListUI.js';
 import { openPermissionDialogShell } from './permissionDialogShell.js';
-import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
+import { type EditDiffShape, formatEditDiff, formatInputPreview } from './permissionPreview.js';
 import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
 import { checkout, type CheckoutHandle, peekEntryDims } from './terminalCheckout.js';
@@ -30,6 +30,60 @@ import { checkout, type CheckoutHandle, peekEntryDims } from './terminalCheckout
  */
 
 export type PermissionData = { request_id: string; tool_name: string; description: string; input_preview?: string };
+
+/**
+ * HS-8217 — single-line flat preview length above which the popup
+ * borrows the live terminal instead of rendering a static `<pre>`. Tuned
+ * so that short bash one-liners (`ls -la`, `git status`) stay on the
+ * tight static path while pipelines / longer commands surface the rich
+ * TUI output. 80 chars matches the conventional "fits on one terminal
+ * line" cap.
+ */
+export const LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD = 80;
+
+/**
+ * HS-8217 — pure heuristic: should the popup borrow the live terminal
+ * via §54 checkout instead of rendering a static `<pre>` / DOM diff?
+ *
+ * Triggers (any one — short-circuit OR):
+ *   - **Edit / Write parseable** — `editDiff !== null`. Edit/Write diffs
+ *     are inherently multi-line and benefit substantially from the real
+ *     claude TUI's coloured rendering (file-name header + dim-faded
+ *     unchanged context + green added rows + red removed rows + the
+ *     numbered choices list directly below) over the static
+ *     `renderEditDiffPreview` HTML diff. User report HS-8217: "the text
+ *     is hard to follow. in the terminal, the edits are color coded so
+ *     it's easier to see what's being added / removed".
+ *   - **Truncation** — flat preview ends in `…` (HS-7999) OR
+ *     `editDiff.truncated === true` (HS-8139). Pre-HS-8217 these were
+ *     the only triggers — the static body would otherwise be
+ *     ambiguous.
+ *   - **Multi-line flat** — `previewText.includes('\n')` for non-Edit
+ *     tools (e.g. WebFetch with a multi-line body, generic key/value
+ *     dumps from `formatInputPreview`'s flat fallback).
+ *   - **Long single-line flat** — `previewText.length > 80` (the
+ *     `LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD` constant). Long single-line
+ *     bash pipelines benefit from seeing the actual claude prompt's
+ *     wrapping + surrounding context.
+ *
+ * Stays static for: short single-line bash / `git status` / one-line
+ * `Read` previews, where the `<pre>` is tight and the live terminal
+ * would surround the value with noise that adds no scanning value AND
+ * would pay the noSpawn-fallback round-trip if `'default'` isn't live.
+ *
+ * Pure helper, no DOM / module state. Exported for unit-test isolation.
+ */
+export function shouldUseLiveCheckout(
+  editDiff: EditDiffShape | null,
+  previewText: string,
+): boolean {
+  if (editDiff !== null) return true;
+  if (previewText === '') return false;
+  if (previewText.endsWith('…')) return true;
+  if (previewText.includes('\n')) return true;
+  if (previewText.length > LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD) return true;
+  return false;
+}
 
 let permissionPollActive = false;
 export let permissionVersion = 0;
@@ -126,10 +180,17 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
         // down stays stuck on the 'Terminal in use elsewhere'
         // placeholder when the permission times out.
         releaseActiveCheckoutIfAny();
-        document.querySelector('.permission-popup')?.remove();
+        // HS-8219 — defensive querySelectorAll so any duplicate is
+        // also removed (the active slot is the source of truth and
+        // there should never be more than one in DOM, but cheap
+        // insurance).
+        document.querySelectorAll('.permission-popup').forEach(el => el.remove());
         activePopupRequestId = null;
         activePopupOwnerSecret = null;
         autoDismissMissCount = 0;
+        // HS-8219 — pop the next queued permission so the user sees
+        // it immediately rather than waiting another poll cycle.
+        mountNextFromPendingStack();
       }
     }
   } else {
@@ -170,6 +231,17 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
       clearTimeout(rec.timeoutId);
       minimizedRequests.delete(id);
       syncMinimizedDots();
+    }
+  }
+  // HS-8219 — GC the pending-permission stack: drop entries whose
+  // `request_id` is no longer in the channel server's response (e.g.
+  // the user typed a response directly into the terminal, the channel
+  // server aged it out, etc.). Keeps the stack from accumulating
+  // entries across a long-running session and prevents a never-going-
+  // to-be-shown popup from popping when the active is dismissed.
+  for (let i = pendingPermissionStack.length - 1; i >= 0; i--) {
+    if (!pendingRequestIds.has(pendingPermissionStack[i].perm.request_id)) {
+      pendingPermissionStack.splice(i, 1);
     }
   }
 }
@@ -218,6 +290,36 @@ function syncMinimizedDots() {
 }
 
 // --- Permission popup (single codepath for active + non-active projects) ---
+
+/**
+ * HS-8219 — stack of permissions waiting for the active popup to clear.
+ * The TOP of the stack pops next when the active popup is dismissed /
+ * responded / minimized / auto-dismissed. Pre-HS-8219 a new permission
+ * arriving while one was showing was simply dropped at the gate in
+ * `showPermissionPopup`; the polling loop re-introduced it ~100 ms
+ * later via `processPermissionPollResponse`'s for-each. That worked in
+ * the steady-state but offered no resilience against a transient where
+ * two `.permission-popup` elements somehow ended up in the DOM at once
+ * (the user reported "it's sometimes showing multiple permissions
+ * popups at once -- it should only show one at a time -- using a stack
+ * data structure"). The stack centralises the "next to show" queue so
+ * the active popup is always the single source of truth, AND every
+ * popup-close path pops the next directly without waiting for the
+ * 100 ms poll reschedule. Combined with the `querySelectorAll`
+ * defensive cleanup below, no path can mount a second popup while one
+ * is already alive.
+ *
+ * Literal stack semantics (LIFO) — the most recently arrived permission
+ * pops first. Per HS-8219 the user explicitly asked for a "stack data
+ * structure".
+ *
+ * Stale entries are GC'd at the end of every `processPermissionPollResponse`
+ * so a permission resolved on the channel server (e.g. user typed a
+ * response directly into the terminal) is dropped from the stack
+ * without ever being shown.
+ */
+type StackedPermission = { secret: string; perm: PermissionData };
+const pendingPermissionStack: StackedPermission[] = [];
 
 let activePopupRequestId: string | null = null;
 
@@ -332,17 +434,74 @@ function runLiveTermFitWithRetry(forHandle: CheckoutHandle): void {
   }
 }
 
+/**
+ * HS-8219 — should `perm` be skipped entirely (already-handled / waiting
+ * for the user)? Pure helper, exported for unit-test isolation. Three
+ * "permanent" skip reasons (responded / dismissed / user-minimized);
+ * once skipped here the stack push path doesn't need to second-guess.
+ */
+export function shouldSkipPermission(requestId: string): boolean {
+  if (respondedRequestIds.has(requestId)) return true;
+  if (dismissedRequestIds.has(requestId)) return true;
+  if (minimizedRequests.has(requestId)) return true;
+  return false;
+}
+
+/** HS-8219 — read-only view of the queued permissions (top is the next
+ *  to pop after the active is dismissed). Exported for tests + the
+ *  status-dot updater. */
+export function getQueuedPermissionRequestIds(): string[] {
+  return pendingPermissionStack.map(e => e.perm.request_id);
+}
+
+/**
+ * HS-8219 — drain the stack from the top, popping responded /
+ * dismissed / minimized entries that became stale while waiting in the
+ * queue, and mount the next valid one (if any). Called from every
+ * popup-close path AFTER `clearPopupOnly()` (or equivalent state
+ * reset) so the gate `if (activePopupRequestId !== null)` doesn't
+ * block the new mount. Idempotent — safe to call when the stack is
+ * empty or when no popup was active.
+ */
+function mountNextFromPendingStack(): void {
+  while (pendingPermissionStack.length > 0) {
+    const next = pendingPermissionStack[pendingPermissionStack.length - 1];
+    if (shouldSkipPermission(next.perm.request_id)) {
+      pendingPermissionStack.pop();
+      continue;
+    }
+    // Pop the entry off the stack BEFORE calling showPermissionPopup
+    // so the activePopupRequestId !== null gate doesn't re-enqueue
+    // it (which would just yield a no-op duplicate-on-stack check).
+    pendingPermissionStack.pop();
+    showPermissionPopup(next.secret, next.perm);
+    return;
+  }
+}
+
 function showPermissionPopup(secret: string, perm: PermissionData) {
   // Already showing this exact request — no-op
   if (activePopupRequestId === perm.request_id) return;
-  // Already responded to this request
-  if (respondedRequestIds.has(perm.request_id)) return;
-  // User explicitly dismissed this request — don't re-show until it
-  // disappears server-side (HS-6436).
-  if (dismissedRequestIds.has(perm.request_id)) return;
-  // Another popup is already showing — don't replace it (prevents bouncing).
-  // The next poll cycle will show this one after the current is dismissed.
-  if (activePopupRequestId !== null) return;
+  // Already responded / dismissed / minimized — don't re-show.
+  if (shouldSkipPermission(perm.request_id)) return;
+  // HS-8219 — already queued on the pending stack? No-op (the active
+  // popup will pop it when dismissed). Prevents the polling loop's
+  // for-each from re-pushing the same request_id every 100 ms.
+  if (pendingPermissionStack.some(e => e.perm.request_id === perm.request_id)) return;
+  // HS-8219 — another popup is already showing. Push onto the stack;
+  // it'll mount when the active popup closes (any path —
+  // respondToPermission / cleanupAndDismiss / cleanupAndMinimize /
+  // auto-dismiss — calls `mountNextFromPendingStack`). Pre-HS-8219 we
+  // simply returned and waited for the next 100 ms poll cycle to
+  // re-introduce the permission via the for-each in
+  // `processPermissionPollResponse`. The stack centralises the queue
+  // so the active popup is always the single source of truth +
+  // surfaces the next permission immediately on dismiss without
+  // waiting on a poll round-trip.
+  if (activePopupRequestId !== null) {
+    pendingPermissionStack.push({ secret, perm });
+    return;
+  }
 
   // HS-8183 — wrap the entire mount path in try/catch so a throw
   // partway through (e.g. xterm constructor failing under WebGL
@@ -356,7 +515,12 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // "first popup briefly appears, no popups ever after" repro
   // ` user reported. The catch resets state + rethrows so the poll
   // loop's catch logs the original error.
-  document.querySelector('.permission-popup')?.remove();
+  // HS-8219 — defensive: `querySelectorAll(...).forEach(remove)` instead
+  // of single `querySelector(...)?.remove()` so that even if a duplicate
+  // popup somehow slipped through (a partial-mount throw in a prior
+  // cycle, an unmount that didn't disconnect, etc.) only one
+  // `.permission-popup` ever exists in the DOM at a time.
+  document.querySelectorAll('.permission-popup').forEach(el => el.remove());
   activePopupRequestId = perm.request_id;
   activePopupOwnerSecret = secret;
   try {
@@ -365,7 +529,10 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
     activePopupRequestId = null;
     activePopupOwnerSecret = null;
     releaseActiveCheckoutIfAny();
-    document.querySelector('.permission-popup')?.remove();
+    document.querySelectorAll('.permission-popup').forEach(el => el.remove());
+    // HS-8219 — try the next queued permission on partial-mount throw so
+    // a malformed payload doesn't strand subsequent valid permissions.
+    mountNextFromPendingStack();
     throw err;
   }
 }
@@ -405,25 +572,25 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     : '';
   const hasStringPreview = previewText !== '';
 
-  // HS-8171 v2 — when a truncation indicator fires, the popup body
-  // becomes the LIVE project terminal via the §54 checkout mechanism
-  // instead of a one-shot serialized mirror. The user can scroll
-  // through the real PTY scrollback AND interact with the running
-  // `claude` directly from inside the popup. When the popup is
-  // dismissed / minimized / responded to, the checkout releases and
-  // the previous owner (drawer pane, dashboard tile, etc.) gets the
-  // terminal back via the LIFO stack. Pre-fix iterations (HS-7999
+  // HS-8171 v2 + HS-8217 — when the preview is non-trivial the popup
+  // body becomes the LIVE project terminal via the §54 checkout
+  // mechanism instead of a static `<pre>` / DOM diff. The user can
+  // scroll through the real PTY scrollback AND interact with the
+  // running `claude` directly from inside the popup. When the popup
+  // is dismissed / minimized / responded to, the checkout releases
+  // and the previous owner (drawer pane, dashboard tile, etc.) gets
+  // the terminal back via the LIFO stack. Pre-fix iterations (HS-7999
   // / HS-8139 / HS-8158 / HS-8171 v1) tried to mount a serialized
   // snapshot — the user reported repeated cases where the snapshot
   // sampled stale or empty content. A real checkout sidesteps the
-  // sampling problem entirely. Two truncation shapes (HS-7999 + HS-8139):
-  //   1. `previewText` ending in `…` (flat-string preview that
-  //      `formatInputPreview`'s fallback recovered from a truncated JSON).
-  //   2. `editDiff.truncated === true` (Edit/Write diff that
-  //      `formatEditDiff` recovered from a truncated payload).
-  const flatTruncated = hasStringPreview && previewText.endsWith('…');
-  const diffTruncated = editDiff !== null && editDiff.truncated;
-  const useLiveCheckout = perm.input_preview !== undefined && (flatTruncated || diffTruncated);
+  // sampling problem entirely. See `shouldUseLiveCheckout` for the
+  // pure heuristic — pre-HS-8217 only truncation triggered live; the
+  // user reported (HS-8217) that the static colour-coded HTML diff
+  // was still hard to follow vs the actual claude TUI's coloured
+  // output, so the gate now also fires for any non-trivial preview
+  // (Edit/Write tool with parseable diff, multi-line flat preview,
+  // long single-line flat preview).
+  const useLiveCheckout = perm.input_preview !== undefined && shouldUseLiveCheckout(editDiff, previewText);
 
   // HS-8069 — body slot: live-terminal checkout container (HS-8171 v2)
   // when truncation fired, else the diff DOM (HS-7951), else the
@@ -514,6 +681,11 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     releaseActiveCheckoutIfAny();
     dismissedRequestIds.add(perm.request_id);
     clearPopupOnly();
+    // HS-8219 — pop the next queued permission off the stack now that
+    // the active slot is free. Without this the user would have to
+    // wait up to ~100 ms for the next poll cycle to surface the next
+    // pending permission.
+    mountNextFromPendingStack();
   }
 
   function cleanupAndMinimize() {
@@ -528,6 +700,10 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     }, MINIMIZED_TIMEOUT_MS);
     minimizedRequests.set(perm.request_id, { secret, perm, timeoutId });
     syncMinimizedDots();
+    // HS-8219 — same as cleanupAndDismiss: pop the next queued
+    // permission immediately so the user sees it without waiting on a
+    // poll round-trip.
+    mountNextFromPendingStack();
   }
 
   function respondToPermission(behavior: 'allow' | 'deny') {
@@ -561,6 +737,9 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     // momentarily orphaned in the removed-from-document subtree.
     releaseActiveCheckoutIfAny();
     handle.tearDownDom();
+    // HS-8219 — surface the next queued permission immediately
+    // (before the next ~100 ms poll tick).
+    mountNextFromPendingStack();
   }
 
   // HS-8069 — chrome (header / anchor / footer-link row / close X) is now
@@ -702,6 +881,7 @@ export function _resetStateForTesting(): void {
   activePopupRequestId = null;
   activePopupOwnerSecret = null;
   activeCheckoutHandle = null;
+  pendingPermissionStack.length = 0;
   disconnectActiveLiveTermResizeObserver();
   clearLiveTermFitRetryTimer();
   autoDismissMissCount = 0;
@@ -720,6 +900,8 @@ export function _inspectStateForTesting(): {
   respondedRequestIds: string[];
   dismissedRequestIds: string[];
   minimizedRequestIds: string[];
+  /** HS-8219 — request_ids of permissions queued behind the active popup. */
+  pendingPermissionStackIds: string[];
   permissionVersion: number;
   autoDismissMissCount: number;
 } {
@@ -731,6 +913,7 @@ export function _inspectStateForTesting(): {
     respondedRequestIds: [...respondedRequestIds],
     dismissedRequestIds: [...dismissedRequestIds],
     minimizedRequestIds: [...minimizedRequests.keys()],
+    pendingPermissionStackIds: pendingPermissionStack.map(e => e.perm.request_id),
     permissionVersion,
     autoDismissMissCount,
   };

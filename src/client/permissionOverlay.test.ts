@@ -37,10 +37,14 @@ import {
   _inspectStateForTesting,
   _resetStateForTesting,
   dismissedRequestIds,
+  LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD,
   type PermissionData,
   processPermissionPollResponse,
   respondedRequestIds,
+  shouldSkipPermission,
+  shouldUseLiveCheckout,
 } from './permissionOverlay.js';
+import type { EditDiffShape } from './permissionPreview.js';
 import {
   _inspectStackForTesting,
   _resetForTesting as resetCheckout,
@@ -977,5 +981,365 @@ describe('showPermissionPopup — partial-mount safety (HS-8183)', () => {
     });
     expect(_inspectStateForTesting().activePopupRequestId).toBe('req-2');
     expect(document.querySelector('.permission-popup')).not.toBeNull();
+  });
+});
+
+describe('pendingPermissionStack — single-popup contract (HS-8219)', () => {
+  // HS-8219 — user reported "it's sometimes showing multiple permissions
+  // popups at once -- it should only show one at a time -- using a stack
+  // data structure". Pre-fix new permissions arriving while one was
+  // showing were dropped at the gate; the polling loop's next 100 ms
+  // iteration re-introduced them via the for-each. Post-fix the
+  // pending-permission stack centralises the queue + mounts the next
+  // entry immediately on every popup-close path.
+
+  it('shows the first popup and queues subsequent permissions on the stack', () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({ request_id: 'req-A' }),
+        'secret-B': makePerm({ request_id: 'req-B' }),
+        'secret-C': makePerm({ request_id: 'req-C' }),
+      },
+      v: 1,
+    });
+    // Exactly one popup in the DOM.
+    expect(document.querySelectorAll('.permission-popup')).toHaveLength(1);
+    const state = _inspectStateForTesting();
+    // One of the three is active; the other two are queued.
+    expect(state.activePopupRequestId).not.toBeNull();
+    expect(state.pendingPermissionStackIds).toHaveLength(2);
+    const allKnown = new Set([
+      state.activePopupRequestId,
+      ...state.pendingPermissionStackIds,
+    ]);
+    expect(allKnown).toEqual(new Set(['req-A', 'req-B', 'req-C']));
+  });
+
+  it('repeated polls do NOT re-push the same request_id', () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({ request_id: 'req-A' }),
+        'secret-B': makePerm({ request_id: 'req-B' }),
+      },
+      v: 1,
+    });
+    expect(_inspectStateForTesting().pendingPermissionStackIds).toHaveLength(1);
+
+    // Same data on the next poll — stack should NOT grow.
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({ request_id: 'req-A' }),
+        'secret-B': makePerm({ request_id: 'req-B' }),
+      },
+      v: 2,
+    });
+    expect(_inspectStateForTesting().pendingPermissionStackIds).toHaveLength(1);
+  });
+
+  it('GCs stack entries whose request_id disappears from the channel server', () => {
+    // Push A active, B queued, C queued.
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({ request_id: 'req-A' }),
+        'secret-B': makePerm({ request_id: 'req-B' }),
+        'secret-C': makePerm({ request_id: 'req-C' }),
+      },
+      v: 1,
+    });
+    expect(_inspectStateForTesting().pendingPermissionStackIds).toHaveLength(2);
+
+    const activeId = _inspectStateForTesting().activePopupRequestId;
+    expect(activeId).not.toBeNull();
+    // Pick one queued id to GC out (one that isn't the active).
+    const queuedIds = _inspectStateForTesting().pendingPermissionStackIds;
+    const gcId = queuedIds[0];
+    const gcSecret = gcId === 'req-A' ? 'secret-A' : gcId === 'req-B' ? 'secret-B' : 'secret-C';
+
+    // Next poll: gcSecret reports null (channel server resolved it
+    // elsewhere — e.g. user typed a response in the terminal).
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': activeId === 'req-A' ? makePerm({ request_id: 'req-A' }) : null,
+        'secret-B': activeId === 'req-B' ? makePerm({ request_id: 'req-B' }) : null,
+        'secret-C': activeId === 'req-C' ? makePerm({ request_id: 'req-C' }) : null,
+        // override the gc'd one to null
+        [gcSecret]: null,
+      },
+      v: 2,
+    });
+    const post = _inspectStateForTesting();
+    expect(post.pendingPermissionStackIds).not.toContain(gcId);
+  });
+
+  it('mounts the next queued permission immediately on Allow / respondToPermission', () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({ request_id: 'req-A' }),
+        'secret-B': makePerm({ request_id: 'req-B' }),
+      },
+      v: 1,
+    });
+    const firstActive = _inspectStateForTesting().activePopupRequestId;
+    expect(firstActive).not.toBeNull();
+
+    // Click Allow on the active popup. The respond path calls
+    // mountNextFromPendingStack, so the queued one should pop and
+    // mount synchronously.
+    const allowBtn = document.querySelector<HTMLButtonElement>('.permission-popup-allow');
+    expect(allowBtn).not.toBeNull();
+    allowBtn?.click();
+
+    const secondActive = _inspectStateForTesting().activePopupRequestId;
+    expect(secondActive).not.toBeNull();
+    expect(secondActive).not.toBe(firstActive);
+    expect(document.querySelectorAll('.permission-popup')).toHaveLength(1);
+    // Stack drained.
+    expect(_inspectStateForTesting().pendingPermissionStackIds).toHaveLength(0);
+  });
+
+  it('mounts the next queued permission on dismiss (X button) without waiting on a poll', () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({ request_id: 'req-A' }),
+        'secret-B': makePerm({ request_id: 'req-B' }),
+      },
+      v: 1,
+    });
+    const firstActive = _inspectStateForTesting().activePopupRequestId;
+    const closeBtn = document.querySelector<HTMLButtonElement>('.dialog-shell-close');
+    expect(closeBtn).not.toBeNull();
+    closeBtn?.click();
+
+    const secondActive = _inspectStateForTesting().activePopupRequestId;
+    expect(secondActive).not.toBeNull();
+    expect(secondActive).not.toBe(firstActive);
+    expect(document.querySelectorAll('.permission-popup')).toHaveLength(1);
+  });
+
+  it('LIFO ordering: most recently pushed pops first', () => {
+    // Initial poll: A active.
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makePerm({ request_id: 'req-A' }) },
+      v: 1,
+    });
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-A');
+
+    // Next poll: B added — pushed onto stack since A is active.
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({ request_id: 'req-A' }),
+        'secret-B': makePerm({ request_id: 'req-B' }),
+      },
+      v: 2,
+    });
+    // Next poll: C added.
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({ request_id: 'req-A' }),
+        'secret-B': makePerm({ request_id: 'req-B' }),
+        'secret-C': makePerm({ request_id: 'req-C' }),
+      },
+      v: 3,
+    });
+    expect(_inspectStateForTesting().pendingPermissionStackIds).toEqual(['req-B', 'req-C']);
+
+    // Dismiss A → C (most recent push) pops first.
+    document.querySelector<HTMLButtonElement>('.dialog-shell-close')?.click();
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-C');
+
+    // Dismiss C → B pops.
+    document.querySelector<HTMLButtonElement>('.dialog-shell-close')?.click();
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-B');
+  });
+
+  it('skips queued entries that were dismissed/responded/minimized while waiting', () => {
+    // Set up: A active, B queued, C queued.
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({ request_id: 'req-A' }),
+        'secret-B': makePerm({ request_id: 'req-B' }),
+        'secret-C': makePerm({ request_id: 'req-C' }),
+      },
+      v: 1,
+    });
+    const queued = _inspectStateForTesting().pendingPermissionStackIds;
+    expect(queued).toHaveLength(2);
+
+    // Mark the top-of-stack entry as dismissed (simulating that the
+    // user dismissed it via some other path while it was waiting).
+    const topOfStack = queued[queued.length - 1];
+    dismissedRequestIds.add(topOfStack);
+
+    // Dismiss the active popup → mountNextFromPendingStack should
+    // skip the dismissed top and mount the other queued entry.
+    document.querySelector<HTMLButtonElement>('.dialog-shell-close')?.click();
+    const newActive = _inspectStateForTesting().activePopupRequestId;
+    expect(newActive).not.toBeNull();
+    expect(newActive).not.toBe(topOfStack);
+  });
+
+  it('querySelectorAll defensive cleanup: never leaves multiple .permission-popup in DOM', () => {
+    // Manually inject a stale stray popup BEFORE the poll runs.
+    const stray = document.createElement('div');
+    stray.className = 'permission-popup';
+    stray.textContent = 'stale';
+    document.body.appendChild(stray);
+    expect(document.querySelectorAll('.permission-popup')).toHaveLength(1);
+
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makePerm({ request_id: 'req-A' }) },
+      v: 1,
+    });
+    // Single popup post-mount — the stray was cleaned up.
+    expect(document.querySelectorAll('.permission-popup')).toHaveLength(1);
+    expect(document.querySelector('.permission-popup')?.textContent).not.toBe('stale');
+  });
+
+  it('shouldSkipPermission gates on responded / dismissed / minimized', () => {
+    expect(shouldSkipPermission('req-A')).toBe(false);
+    respondedRequestIds.add('req-R');
+    dismissedRequestIds.add('req-D');
+    expect(shouldSkipPermission('req-R')).toBe(true);
+    expect(shouldSkipPermission('req-D')).toBe(true);
+    expect(shouldSkipPermission('req-A')).toBe(false);
+  });
+});
+
+describe('shouldUseLiveCheckout — pure heuristic (HS-8217)', () => {
+  // HS-8217 — the user reported that the static `<pre>` / DOM diff path
+  // for non-truncated previews was hard to follow vs the actual claude
+  // TUI's coloured output. The heuristic now triggers live-borrow for
+  // any non-trivial preview, not just truncation.
+
+  function diff(overrides: Partial<EditDiffShape> = {}): EditDiffShape {
+    return {
+      oldStr: '',
+      newStr: '',
+      filePath: null,
+      replaceAll: false,
+      truncated: false,
+      ...overrides,
+    };
+  }
+
+  it('triggers for ANY parseable Edit/Write diff — even single-line', () => {
+    // The user's HS-8217 example: a single-line function-signature
+    // change. Pre-fix this would render as the static colour-coded
+    // HTML diff (`+`/`−` rows); the user finds the real claude TUI's
+    // rendering significantly easier to scan.
+    expect(shouldUseLiveCheckout(diff({
+      oldStr: 'def lookup_glyph(ch: str) -> Glyph:',
+      newStr: 'def lookup_glyph(ch: str, *, force_block: bool = False) -> Glyph:',
+    }), '')).toBe(true);
+  });
+
+  it('triggers for a multi-line Edit diff', () => {
+    expect(shouldUseLiveCheckout(diff({
+      oldStr: 'a\nb\nc',
+      newStr: 'a\nB\nc',
+    }), '')).toBe(true);
+  });
+
+  it('triggers for a truncated Edit diff (back-compat with HS-8139 gate)', () => {
+    expect(shouldUseLiveCheckout(diff({ truncated: true }), '')).toBe(true);
+  });
+
+  it('triggers for a flat preview ending in the truncation ellipsis (back-compat with HS-7999)', () => {
+    expect(shouldUseLiveCheckout(null, 'find / -name foo …')).toBe(true);
+  });
+
+  it('triggers for a multi-line flat preview', () => {
+    expect(shouldUseLiveCheckout(null, 'url: https://example.com\nbody: hello')).toBe(true);
+  });
+
+  it('triggers for a long single-line flat preview (>80 chars)', () => {
+    const longCmd = 'find / -name "*.log" -mtime -1 -size +1M | xargs -I {} sh -c \'echo === found {} ===\'';
+    expect(longCmd.length).toBeGreaterThan(LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD);
+    expect(shouldUseLiveCheckout(null, longCmd)).toBe(true);
+  });
+
+  it('stays static for a short single-line bash one-liner', () => {
+    expect(shouldUseLiveCheckout(null, 'ls -la')).toBe(false);
+    expect(shouldUseLiveCheckout(null, 'git status')).toBe(false);
+    expect(shouldUseLiveCheckout(null, '/Users/me/file.ts')).toBe(false);
+  });
+
+  it('stays static for an empty preview when there is no edit diff', () => {
+    expect(shouldUseLiveCheckout(null, '')).toBe(false);
+  });
+
+  it('treats a single-line at exactly the threshold as static (boundary)', () => {
+    const exactly = 'a'.repeat(LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD);
+    expect(exactly.length).toBe(LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD);
+    expect(shouldUseLiveCheckout(null, exactly)).toBe(false);
+    // One char over flips the gate.
+    expect(shouldUseLiveCheckout(null, exactly + 'b')).toBe(true);
+  });
+});
+
+describe('showPermissionPopup — non-truncated Edit triggers live checkout (HS-8217)', () => {
+  // Integration regression: an Edit-tool permission with a parseable
+  // (non-truncated) `input_preview` now mounts the live-terminal
+  // container in the popup body, not the static `renderEditDiffPreview`
+  // DOM diff. Pre-HS-8217 this case took the static `.edit-diff-preview`
+  // path.
+
+  function makeEditPerm(): PermissionData {
+    return {
+      request_id: 'req-edit-1',
+      tool_name: 'Edit',
+      description: 'Edit ascii-art.py',
+      input_preview: JSON.stringify({
+        file_path: '/Users/me/ascii-art.py',
+        old_string: 'def lookup_glyph(ch: str) -> Glyph:',
+        new_string: 'def lookup_glyph(ch: str, *, force_block: bool = False) -> Glyph:',
+      }),
+    };
+  }
+
+  it('mounts the live-terminal container instead of the static diff preview', () => {
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makeEditPerm() },
+      v: 1,
+    });
+    expect(document.querySelector('.permission-popup-live-terminal')).not.toBeNull();
+    // Pre-HS-8217 this DOM was present for non-truncated Edits.
+    expect(document.querySelector('.edit-diff-preview')).toBeNull();
+  });
+
+  it('falls back to the static diff preview when the server reports no live session', () => {
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makeEditPerm() },
+      v: 1,
+    });
+    // Server says there's no live PTY for `(secret-A, 'default')`.
+    _simulateNoSessionForTesting('secret-A', 'default');
+    // Live container gone, static diff preview now in its place.
+    expect(document.querySelector('.permission-popup-live-terminal')).toBeNull();
+    expect(document.querySelector('.edit-diff-preview')).not.toBeNull();
+  });
+});
+
+describe('showPermissionPopup — short bash stays static (HS-8217)', () => {
+  // Negative regression: a short single-line bash one-liner does NOT
+  // trigger the live-checkout path — the tight static `<pre>` is the
+  // intended UX for one-liners.
+
+  it('renders the flat `<pre>` preview for a short single-line bash command', () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': {
+          request_id: 'req-bash-short',
+          tool_name: 'Bash',
+          description: 'List files',
+          input_preview: '{"command":"ls -la"}',
+        },
+      },
+      v: 1,
+    });
+    expect(document.querySelector('.permission-popup-preview')).not.toBeNull();
+    expect(document.querySelector('.permission-popup-live-terminal')).toBeNull();
+    // No checkout entry was created for this popup since useLiveCheckout was false.
+    expect(_inspectStackForTesting()).toHaveLength(0);
   });
 });
