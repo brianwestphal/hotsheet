@@ -113,6 +113,27 @@ export interface CheckoutOptions {
    *  inside the callback are swallowed so a misbehaving consumer can't
    *  break sibling consumers' delivery. */
   onControlMessage?: (msg: { type: string; [k: string]: unknown }) => void;
+  /** HS-8218 — when true, the WebSocket attach passes `?noSpawn=1`. The
+   *  server returns a `history` frame with `noSession: true` (no PTY
+   *  was spawned) and closes the socket cleanly with code 1000 instead
+   *  of attempting to attach a subscriber. The §47 popup uses this so
+   *  its `terminalId: 'default'` checkout doesn't inadvertently spawn
+   *  a new claude that disrupts an existing MCP-connected claude
+   *  running under a non-`'default'` terminal id. The flag is recorded
+   *  on the entry itself so a subsequent live-checkout from a different
+   *  consumer (drawer pane / dashboard tile, which want to spawn) gets
+   *  a fresh session as before. */
+  noSpawn?: boolean;
+  /** HS-8218 — fires when the server's `history` frame for this entry
+   *  carried `noSession: true`, signalling the consumer that no live
+   *  session exists and the requested `noSpawn` mode prevented a fresh
+   *  spawn. The consumer should `release()` and fall back to a
+   *  non-live UI (the §47 popup swaps its body to the flat / diff
+   *  preview). The callback fires AFTER the `onControlMessage` history
+   *  dispatch so a consumer that wires both can rely on
+   *  `onNoLiveSession` being the late signal. Module-level: only fires
+   *  when `noSpawn: true` was passed at checkout. */
+  onNoLiveSession?: () => void;
 }
 
 export interface CheckoutHandle {
@@ -174,6 +195,12 @@ interface StackEntry {
    *  this guard, an explicit final-release would race the reconnect
    *  loop and re-spawn a WS we just intentionally tore down. */
   intentionallyClosing: boolean;
+  /** HS-8218 — true when the entry was created with `noSpawn: true`.
+   *  Carried through to `attachWebSocketToEntry` so the WS query string
+   *  includes `noSpawn=1`. Also gates the `onNoLiveSession` dispatch
+   *  inside the history-frame handler — non-noSpawn entries never see
+   *  `noSession: true` and shouldn't pay attention to the field. */
+  noSpawn: boolean;
 }
 
 const entries = new Map<string, StackEntry>();
@@ -204,7 +231,7 @@ function writePlaceholderInto(mountInto: HTMLElement): void {
 /** Construct the xterm + open the WebSocket. The xterm is `term.open()`'d
  *  into the offscreen parking sink so the caller can immediately
  *  reparent its DOM node into `mountInto` via `appendChild`. */
-function createEntry(secret: string, terminalId: string, cols: number, rows: number): StackEntry {
+function createEntry(secret: string, terminalId: string, cols: number, rows: number, noSpawn: boolean): StackEntry {
   const term = new XTerm({
     cols,
     rows,
@@ -229,6 +256,7 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
     lastAppliedRows: rows,
     stack: [],
     intentionallyClosing: false,
+    noSpawn,
   };
 
   // HS-8048 — wire `term.onData` ONCE at term construction. The handler
@@ -274,7 +302,12 @@ function attachWebSocketToEntry(entry: StackEntry): void {
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(entry.secret)}&terminal=${encodeURIComponent(entry.terminalId)}&cols=${entry.lastAppliedCols}&rows=${entry.lastAppliedRows}`;
+  // HS-8218 — append `&noSpawn=1` when the entry was created with
+  // `noSpawn: true` (e.g. the §47 popup's defensive checkout). Server
+  // responds with `history` frame `noSession: true` + close-1000 if no
+  // live session exists, so no fresh PTY is spawned.
+  const noSpawnQuery = entry.noSpawn ? '&noSpawn=1' : '';
+  const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(entry.secret)}&terminal=${encodeURIComponent(entry.terminalId)}&cols=${entry.lastAppliedCols}&rows=${entry.lastAppliedRows}${noSpawnQuery}`;
 
   let ws: WebSocket;
   try {
@@ -299,7 +332,7 @@ function attachWebSocketToEntry(entry: StackEntry): void {
     }
     if (typeof data === 'string') {
       try {
-        const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number };
+        const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number; noSession?: boolean };
         // HS-8044 — fan out the parsed control message to every stack
         // consumer's `onControlMessage` callback BEFORE the module's
         // own history-bytes replay runs. Consumers that need the
@@ -314,6 +347,21 @@ function attachWebSocketToEntry(entry: StackEntry): void {
         }
         if (msg.type === 'history' && typeof msg.bytes === 'string') {
           applyHistoryReplay(entry, msg);
+        }
+        // HS-8218 — server signalled "no session, didn't spawn". Mark
+        // the entry intentionally-closing so the close-event listener
+        // skips its auto-reconnect path (the server would just say
+        // noSession again — looping wastes round-trips), then fire
+        // every stack consumer's `onNoLiveSession` so each can release
+        // and fall back. The `noSpawn` gate keeps the dispatch tight:
+        // a consumer that never asked for noSpawn shouldn't be
+        // surprised by a no-session signal (the server only emits it
+        // when ?noSpawn=1 was set).
+        if (msg.type === 'history' && msg.noSession === true && entry.noSpawn) {
+          entry.intentionallyClosing = true;
+          for (const handle of entry.stack) {
+            try { handle._options.onNoLiveSession?.(); } catch { /* swallow */ }
+          }
         }
       } catch { /* malformed JSON — ignore */ }
     }
@@ -493,7 +541,13 @@ export function checkout(opts: CheckoutOptions): CheckoutHandle {
   const key = entryKey(opts.projectSecret, opts.terminalId);
   let entry = entries.get(key);
   if (entry === undefined) {
-    entry = createEntry(opts.projectSecret, opts.terminalId, opts.cols, opts.rows);
+    // HS-8218 — propagate `noSpawn` to the new entry so the WS URL
+    // carries `?noSpawn=1`. When an entry already exists we ignore the
+    // caller's `noSpawn` because the WS is already attached and a
+    // session is already alive (otherwise the existing entry would
+    // have torn itself down on the prior `noSession: true` history
+    // frame).
+    entry = createEntry(opts.projectSecret, opts.terminalId, opts.cols, opts.rows, opts.noSpawn === true);
     entries.set(key, entry);
   } else if (entry.stack.length > 0) {
     const previousTop = entry.stack[entry.stack.length - 1];
@@ -598,6 +652,8 @@ export function _inspectStackForTesting(): Array<{
   lastAppliedRows: number;
   stackDepth: number;
   topMountInto: HTMLElement | null;
+  /** HS-8218 — `true` when the entry was created via `checkout({ noSpawn: true })`. */
+  noSpawn: boolean;
 }> {
   const out: Array<{
     key: string;
@@ -607,6 +663,7 @@ export function _inspectStackForTesting(): Array<{
     lastAppliedRows: number;
     stackDepth: number;
     topMountInto: HTMLElement | null;
+    noSpawn: boolean;
   }> = [];
   for (const [key, entry] of entries.entries()) {
     const topMountInto = entry.stack.length === 0
@@ -620,6 +677,7 @@ export function _inspectStackForTesting(): Array<{
       lastAppliedRows: entry.lastAppliedRows,
       stackDepth: entry.stack.length,
       topMountInto,
+      noSpawn: entry.noSpawn,
     });
   }
   return out;
@@ -632,6 +690,25 @@ export function _inspectStackForTesting(): Array<{
  *  real WebSocket / appearance-loader pipeline. */
 export function _getTermForTesting(secret: string, terminalId: string): XTerm | null {
   return entries.get(entryKey(secret, terminalId))?.term ?? null;
+}
+
+/** **TEST ONLY** — fire each stack consumer's `onNoLiveSession` callback
+ *  for the entry at `(secret, terminalId)`, mirroring what the real
+ *  WebSocket message handler does when it receives a `history` frame
+ *  with `noSession: true`. The entry must have been created with
+ *  `noSpawn: true`; otherwise the helper is a no-op (matching the prod
+ *  gate). Marks `entry.intentionallyClosing` so the close-event listener
+ *  skips its auto-reconnect path, the same way the prod code does.
+ *  Used by HS-8218 popup tests to exercise the fallback-to-flat-preview
+ *  path without standing up a real WebSocket. */
+export function _simulateNoSessionForTesting(secret: string, terminalId: string): void {
+  const entry = entries.get(entryKey(secret, terminalId));
+  if (entry === undefined) return;
+  if (!entry.noSpawn) return;
+  entry.intentionallyClosing = true;
+  for (const handle of entry.stack) {
+    try { handle._options.onNoLiveSession?.(); } catch { /* swallow */ }
+  }
 }
 
 /** **TEST ONLY** — drop every entry without going through dispose. Used

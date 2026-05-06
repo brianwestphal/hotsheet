@@ -470,6 +470,40 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   // routes through `releaseActiveCheckoutIfAny()` so the release is
   // idempotent + single-source-of-truth.
 
+  /**
+   * HS-8218 — fired from the checkout's `onNoLiveSession` callback when
+   * the server returned `noSession: true` (no live PTY existed for
+   * `terminalId: 'default'` and `noSpawn: true` prevented a fresh
+   * spawn). Release the checkout and swap the popup body from the
+   * empty live-terminal container to the same flat / diff preview the
+   * non-live code path would have rendered.
+   *
+   * Pre-fix the popup checked out `terminalId: 'default'` regardless;
+   * if the project's claude was running under a different terminal id
+   * (and `'default'` had never been started), the server's `attach`
+   * spawned a brand-new `claude --dangerously-load-development-channels`
+   * PTY into the popup body, which stole the channel-server's MCP
+   * connection from the user's actual claude session.
+   */
+  function fallbackToNonLivePreview(): void {
+    if (liveTermContainer === null) return;
+    releaseActiveCheckoutIfAny();
+    let fallback: HTMLElement;
+    if (editDiff !== null) {
+      fallback = renderEditDiffPreview(editDiff);
+    } else if (hasStringPreview) {
+      fallback = toElement(<pre className="permission-popup-preview">{previewText}</pre>);
+    } else {
+      // Neither preview was buildable — show a minimal explainer so the
+      // popup body isn't empty.
+      fallback = toElement(
+        <pre className="permission-popup-preview">{'(no preview — terminal not live)'}</pre>,
+      );
+    }
+    liveTermContainer.replaceWith(fallback);
+    liveTermContainer = null;
+  }
+
   function clearPopupOnly() {
     activePopupRequestId = null;
     activePopupOwnerSecret = null;
@@ -600,6 +634,21 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
       cols: startCols,
       rows: startRows,
       mountInto: liveTermContainer,
+      // HS-8218 — never spawn a fresh PTY for the popup. Pre-fix when
+      // the project's claude was running under a NON-`'default'`
+      // terminal id (and `'default'` had no live session), the
+      // popup's `attach` call on the server side spawned a brand-new
+      // `claude --dangerously-load-development-channels` PTY which
+      // stole the channel-server's MCP connection from the user's
+      // actual claude session. Symptom (HS-8218 repro): popup briefly
+      // shows blank → channel-approval prompt → fresh claude REPL →
+      // permission popup auto-dismisses (because the original
+      // claude's MCP request was orphaned). With `noSpawn: true` the
+      // server returns `noSession: true` instead of spawning, and we
+      // fall back to the flat / diff preview via the
+      // `onNoLiveSession` callback below.
+      noSpawn: true,
+      onNoLiveSession: () => { fallbackToNonLivePreview(); },
     });
     // HS-8206 v2 — `proposeDimensions()` returns undefined when xterm's
     // renderer hasn't measured cell dims for the new layout

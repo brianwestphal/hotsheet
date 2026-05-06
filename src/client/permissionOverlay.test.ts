@@ -44,6 +44,7 @@ import {
 import {
   _inspectStackForTesting,
   _resetForTesting as resetCheckout,
+  _simulateNoSessionForTesting,
   checkout,
   entryCount,
 } from './terminalCheckout.js';
@@ -804,6 +805,136 @@ describe('showPermissionPopup — checkout dim pass-through (HS-8207)', () => {
     const stack = _inspectStackForTesting()[0];
     expect(stack.lastAppliedCols).toBe(80);
     expect(stack.lastAppliedRows).toBe(24);
+  });
+});
+
+describe('showPermissionPopup — noSpawn fallback (HS-8218)', () => {
+  // HS-8218 — the user reported that on the Edit-permission case the
+  // popup briefly showed a blank terminal, then a Claude channels
+  // permission check, then a fresh empty Claude prompt, then the
+  // permission popup auto-dismissed. Root cause: the popup hardcoded
+  // `terminalId: 'default'` for live-checkout, and when the project's
+  // claude was running in some other terminal id (and `'default'` had
+  // never been started), the server's `attach` spawned a brand-new
+  // `claude --dangerously-load-development-channels` PTY into the
+  // popup body — which stole the channel-server's MCP connection from
+  // the user's actual claude session.
+  //
+  // Fix: the popup's checkout passes `noSpawn: true`. Server returns
+  // `noSession: true` instead of spawning. Client-side the
+  // `onNoLiveSession` callback fires; popup releases the checkout and
+  // swaps the body to the flat / diff preview that the non-live code
+  // path would have rendered.
+
+  const truncatedBashInput = '{"command":"' + (
+    "find / -name '*.log' -mtime -1 -size +1M "
+    + "| xargs -I {} sh -c 'echo === {} ==='; "
+  ).repeat(20);
+
+  function makeTruncatedPerm(id = 'req-live'): PermissionData {
+    return {
+      request_id: id,
+      tool_name: 'Bash',
+      description: 'Run a long pipeline',
+      input_preview: truncatedBashInput,
+    };
+  }
+
+  it('passes noSpawn: true on the popup checkout when no entry exists', () => {
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makeTruncatedPerm() },
+      v: 1,
+    });
+    // The popup is the first consumer of (secret-A, 'default') so a
+    // new entry was created — and it carries the noSpawn flag.
+    const stack = _inspectStackForTesting();
+    expect(stack).toHaveLength(1);
+    expect(stack[0].noSpawn).toBe(true);
+  });
+
+  it('falls back to the flat / diff preview when the server reports no live session', () => {
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makeTruncatedPerm() },
+      v: 1,
+    });
+    // Pre-fix: the popup body would just sit empty (or, before the
+    // noSpawn change, would mount a freshly-spawned claude). Post-fix
+    // the noSession signal triggers `onNoLiveSession` → fallback.
+    expect(document.querySelector('.permission-popup-live-terminal')).not.toBeNull();
+    expect(document.querySelector('.permission-popup-preview')).toBeNull();
+
+    // Server says noSession (no PTY exists for `(secret-A, 'default')`).
+    _simulateNoSessionForTesting('secret-A', 'default');
+
+    // Live-terminal container is replaced by the flat preview.
+    expect(document.querySelector('.permission-popup-live-terminal')).toBeNull();
+    const fallbackPre = document.querySelector('.permission-popup-preview');
+    expect(fallbackPre).not.toBeNull();
+    // The flat preview text comes from `formatInputPreview` and ends
+    // with the truncation ellipsis since the input was truncated.
+    expect(fallbackPre?.textContent ?? '').toContain('find /');
+
+    // Checkout was released — entry torn down (popup was the only
+    // consumer, so `disposeEntry` ran via `releaseInternal`).
+    expect(entryCount()).toBe(0);
+  });
+
+  it('keeps the popup chrome and Allow / Deny actions intact across the fallback swap', () => {
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makeTruncatedPerm() },
+      v: 1,
+    });
+    const popupBefore = document.querySelector('.permission-popup');
+    const allowBefore = document.querySelector('.permission-popup-allow');
+    const denyBefore = document.querySelector('.permission-popup-deny');
+    expect(popupBefore).not.toBeNull();
+    expect(allowBefore).not.toBeNull();
+    expect(denyBefore).not.toBeNull();
+
+    _simulateNoSessionForTesting('secret-A', 'default');
+
+    // Same popup root, same action buttons — only the body slot was
+    // swapped. The user can still Allow / Deny / X / Minimize from the
+    // fallback view.
+    expect(document.querySelector('.permission-popup')).toBe(popupBefore);
+    expect(document.querySelector('.permission-popup-allow')).toBe(allowBefore);
+    expect(document.querySelector('.permission-popup-deny')).toBe(denyBefore);
+  });
+
+  it('does NOT fire fallback when the entry already exists with a non-noSpawn drawer pane consumer', () => {
+    // A drawer pane (or dashboard tile) already has a live entry for
+    // `(secret-A, 'default')` — it created the entry WITHOUT noSpawn.
+    // The popup's checkout call passes noSpawn: true, but `checkout`
+    // ignores noSpawn for an existing entry per HS-8218 (the WS is
+    // already attached to a real session). The simulator's noSpawn
+    // gate keeps `_simulateNoSessionForTesting` a no-op for this
+    // entry, so the popup's body stays as the live xterm.
+    const externalMount = document.createElement('div');
+    document.body.appendChild(externalMount);
+    const externalHandle = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: externalMount,
+    });
+    expect(_inspectStackForTesting()[0].noSpawn).toBe(false);
+
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makeTruncatedPerm() },
+      v: 1,
+    });
+    // Popup body has the live xterm (drawer pane is bumped down).
+    expect(document.querySelector('.permission-popup-live-terminal')?.querySelector('.xterm')).not.toBeNull();
+
+    _simulateNoSessionForTesting('secret-A', 'default');
+
+    // Entry's noSpawn is false → simulator was a no-op → popup body
+    // unchanged.
+    expect(document.querySelector('.permission-popup-live-terminal')).not.toBeNull();
+    expect(document.querySelector('.permission-popup-preview')).toBeNull();
+
+    externalHandle.release();
   });
 });
 

@@ -37,12 +37,12 @@ export function wireTerminalWebSocket(httpServer: HttpServer): void {
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
-      handleConnection(ws, authResult.secret, authResult.dataDir, authResult.terminalId, authResult.cols, authResult.rows);
+      handleConnection(ws, authResult.secret, authResult.dataDir, authResult.terminalId, authResult.cols, authResult.rows, authResult.noSpawn);
     });
   });
 }
 
-export interface AuthOk { ok: true; secret: string; dataDir: string; terminalId: string; cols: number | undefined; rows: number | undefined }
+export interface AuthOk { ok: true; secret: string; dataDir: string; terminalId: string; cols: number | undefined; rows: number | undefined; noSpawn: boolean }
 export interface AuthFail { ok: false; status: number; reason: string }
 
 export function authenticate(req: IncomingMessage): AuthOk | AuthFail {
@@ -68,6 +68,9 @@ export function authenticate(req: IncomingMessage): AuthOk | AuthFail {
     terminalId: termQuery,
     cols: parsePositiveInt(url.query.cols),
     rows: parsePositiveInt(url.query.rows),
+    // HS-8218 — `noSpawn=1` tells `attach` to skip the create-session +
+    // spawn-PTY path when no live session exists, returning `noSession: true`.
+    noSpawn: url.query.noSpawn === '1',
   };
 }
 
@@ -89,7 +92,7 @@ function reject(socket: Duplex, status: number, reason: string): void {
   socket.destroy();
 }
 
-function handleConnection(ws: WebSocket, secret: string, dataDir: string, terminalId: string, cols: number | undefined, rows: number | undefined): void {
+function handleConnection(ws: WebSocket, secret: string, dataDir: string, terminalId: string, cols: number | undefined, rows: number | undefined, noSpawn: boolean): void {
   const subscriber: TerminalSubscriber = {
     onData(chunk) {
       if (ws.readyState === ws.OPEN) {
@@ -110,7 +113,7 @@ function handleConnection(ws: WebSocket, secret: string, dataDir: string, termin
   let result;
   try {
     const configOverride = getDynamicTerminalConfig(secret, terminalId) ?? undefined;
-    result = attach(secret, dataDir, subscriber, { configOverride, cols, rows }, terminalId);
+    result = attach(secret, dataDir, subscriber, { configOverride, cols, rows, noSpawn }, terminalId);
   } catch (err) {
     ws.send(JSON.stringify({ type: 'error', message: err instanceof Error ? err.message : String(err) }));
     ws.close(1011, 'attach failed');
@@ -118,6 +121,10 @@ function handleConnection(ws: WebSocket, secret: string, dataDir: string, termin
   }
 
   // First frame: history replay (even if empty, so the client knows attach succeeded).
+  // HS-8218 — when `noSession: true` (caller asked for noSpawn and no live
+  // session existed), include the flag so the client can fall back without
+  // having to infer it from `alive: false` (an exited session also has
+  // `alive: false` but it has scrollback the consumer wants to see).
   ws.send(JSON.stringify({
     type: 'history',
     bytes: result.history.toString('base64'),
@@ -126,7 +133,17 @@ function handleConnection(ws: WebSocket, secret: string, dataDir: string, termin
     cols: result.cols,
     rows: result.rows,
     command: result.command,
+    noSession: result.noSession === true ? true : undefined,
   }));
+
+  if (result.noSession === true) {
+    // HS-8218 — no subscriber added (no session to subscribe to). Close
+    // the socket cleanly so the client doesn't sit on a dead WS. The
+    // close-code 1000 (normal closure) signals "intentional, do not
+    // reconnect" to the client-side `terminalCheckout` reconnect path.
+    try { ws.close(1000, 'no-session'); } catch { /* ignore */ }
+    return;
+  }
 
   ws.on('message', (data, isBinary) => {
     const text = normalizeMessage(data);

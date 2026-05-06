@@ -88,6 +88,30 @@ describe('authenticate', () => {
       if (res.ok) { expect(res.cols).toBeUndefined(); expect(res.rows).toBeUndefined(); }
     }
   });
+
+  // HS-8218 — `noSpawn=1` opt-in for callers that must not inadvertently
+  // spawn a fresh PTY (the §47 popup, which used to hardcode
+  // `terminalId: 'default'` and accidentally spawned a brand-new claude
+  // when `'default'` had no live session).
+  it('parses ?noSpawn=1 into AuthOk.noSpawn (HS-8218)', () => {
+    const res = authenticate({ url: `/api/terminal/ws?project=${FAKE_SECRET}&noSpawn=1`, headers: {} } as never);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.noSpawn).toBe(true);
+  });
+
+  it('defaults AuthOk.noSpawn to false when the query param is absent (HS-8218)', () => {
+    const res = authenticate({ url: `/api/terminal/ws?project=${FAKE_SECRET}`, headers: {} } as never);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.noSpawn).toBe(false);
+  });
+
+  it('treats other values of ?noSpawn as false (only `1` opts in) (HS-8218)', () => {
+    for (const v of ['true', 'yes', '0', '']) {
+      const res = authenticate({ url: `/api/terminal/ws?project=${FAKE_SECRET}&noSpawn=${v}`, headers: {} } as never);
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.noSpawn).toBe(false);
+    }
+  });
 });
 
 describe('WebSocket roundtrip (real http.Server)', () => {
@@ -203,6 +227,50 @@ describe('WebSocket roundtrip (real http.Server)', () => {
     expect(FakePty.last!.cols).toBe(160);
     expect(FakePty.last!.rows).toBe(50);
     ws.close();
+  });
+
+  // HS-8218 — when `?noSpawn=1` is set and no session exists for
+  // `(secret, terminalId)`, the server returns a history frame with
+  // `noSession: true`, does NOT spawn a fresh PTY, and closes the
+  // socket with code 1000 so the client's auto-reconnect path skips.
+  it('returns noSession history frame and closes when noSpawn=1 and no session exists (HS-8218)', async () => {
+    expect(FakePty.last).toBeNull();
+    const { ws, next } = openWs(`?project=${FAKE_SECRET}&noSpawn=1`);
+    const first = await next((_d, isBinary) => !isBinary);
+    const text = first.data instanceof Buffer ? first.data.toString('utf8') : String(first.data);
+    const parsed = JSON.parse(text) as { type: string; alive: boolean; noSession?: boolean; bytes: string };
+    expect(parsed.type).toBe('history');
+    expect(parsed.alive).toBe(false);
+    expect(parsed.noSession).toBe(true);
+    expect(parsed.bytes).toBe(''); // empty scrollback (no PTY).
+    // Critically: NO PTY was spawned.
+    expect(FakePty.last).toBeNull();
+    // Server-initiated close arrives shortly after.
+    const closeCode = await new Promise<number>((resolve) => ws.on('close', (code: number) => resolve(code)));
+    expect(closeCode).toBe(1000);
+  });
+
+  it('attaches normally and DOES spawn a PTY when noSpawn=1 and a live session is created via a non-noSpawn attach first (HS-8218)', async () => {
+    // First connection without noSpawn — spawns a PTY.
+    const { ws: ws1, next: next1 } = openWs();
+    await next1((_d, isBinary) => !isBinary);
+    expect(FakePty.last).not.toBeNull();
+    const livePty = FakePty.last!;
+
+    // Second connection WITH noSpawn=1 — finds the existing live
+    // session, returns a normal history frame (alive: true,
+    // noSession undefined), reuses the PTY, no new spawn.
+    const { ws: ws2, next: next2 } = openWs(`?project=${FAKE_SECRET}&noSpawn=1`);
+    const first = await next2((_d, isBinary) => !isBinary);
+    const text = first.data instanceof Buffer ? first.data.toString('utf8') : String(first.data);
+    const parsed = JSON.parse(text) as { type: string; alive: boolean; noSession?: boolean };
+    expect(parsed.type).toBe('history');
+    expect(parsed.alive).toBe(true);
+    expect(parsed.noSession).toBeUndefined();
+    expect(FakePty.last).toBe(livePty);
+
+    ws1.close();
+    ws2.close();
   });
 
   it('replays scrollback to a reattaching client', async () => {

@@ -249,7 +249,10 @@ export function pickTitleLine(lines: readonly string[]): string {
  * ```
  *
  * Match rules:
- * - The trailing non-empty row equals one of the known footers.
+ * - The trailing non-empty row matches `NUMBERED_FOOTER_RX` — starts with
+ *   `Enter to confirm` or `Esc to cancel`, optionally followed by ` · <suffix>`
+ *   (covers the legacy `Enter to confirm · Esc to cancel`, the short form
+ *   `Enter to confirm`, and the HS-8216 `Esc to cancel · Tab to amend` shape).
  * - At least one row above it matches `^(\s*[>]?\s*)\d+\.\s+(.+)$`.
  * - The first row whose leading marker is `>` is the highlighted option.
  *
@@ -257,17 +260,31 @@ export function pickTitleLine(lines: readonly string[]): string {
  * inside docs / chatter, not a prompt). We require the digits to start at
  * 1 and be contiguous — Claude renders 1..N without skipping.
  */
-const NUMBERED_FOOTERS: ReadonlySet<string> = new Set([
-  'Enter to confirm · Esc to cancel',
-  'Enter to confirm', // Some Ink builds drop the Esc clause
-]);
+/**
+ * HS-8216 (2026-05-06) — pre-fix this was a hardcoded `Set<string>` of two
+ * literals (`Enter to confirm · Esc to cancel`, `Enter to confirm`). The
+ * user reported a Claude prompt in a non-MCP-connected project where the
+ * §52 overlay never surfaced even though the prompt was visibly stuck in
+ * the terminal — root cause: Claude Code 2026-05 builds emit
+ * `Esc to cancel · Tab to amend` as the trailing footer when the prompt
+ * has an "amend" affordance (e.g. the "Yes, allow reading from &lt;dir&gt;/
+ * during this session" choice that the user can amend with Tab to scope
+ * the allow more tightly). That literal wasn't in the Set, so the parser
+ * returned null and the scanner dropped the match.
+ *
+ * Switched to a regex that accepts ANY trailing footer starting with
+ * `Enter to confirm` or `Esc to cancel`, optionally followed by a single
+ * ` · <suffix>` clause. Specific enough that arbitrary docs/output lines
+ * almost never start with these phrases on a trailing row, but
+ * future-proof against further claude-side renames of the suffix.
+ */
+const NUMBERED_FOOTER_RX = /^(?:Enter to confirm|Esc to cancel)(?:\s+·\s+\S.*)?$/;
 
 /** Used by both the detection footer test (§52.3.3) and the parser. The
  *  trailing footer can be wrapped in faint colour or have trailing
  *  whitespace; normalise via `trim()` before comparison. */
 export function isClaudeNumberedFooter(line: string): boolean {
-  const t = line.trim();
-  return NUMBERED_FOOTERS.has(t);
+  return NUMBERED_FOOTER_RX.test(line.trim());
 }
 
 /**

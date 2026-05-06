@@ -49,6 +49,20 @@ export interface AttachResult {
   scrollbackBytes: number;
   /** Full scrollback at attach time; the subscriber should replay this before live data. */
   history: Buffer;
+  /**
+   * HS-8218 — true when the caller passed `noSpawn: true` AND no session
+   * exists for `(secret, terminalId)`. In that case the registry returns
+   * an empty result WITHOUT creating a session or spawning a PTY, and
+   * the subscriber is NOT added. The transport (HTTP / WS) is expected
+   * to surface this to the client so the consumer can fall back to a
+   * non-live path. Pre-fix the §47 popup hardcoded `terminalId: 'default'`
+   * — when LingoGist's claude was running in some OTHER terminal id and
+   * 'default' was not alive, the popup's checkout caused `attach` to
+   * spawn a NEW `claude --dangerously-load-development-channels` PTY
+   * which stole the channel-server's MCP connection from the user's
+   * actual claude session.
+   */
+  noSession?: boolean;
 }
 
 /** Minimal PTY interface the registry depends on — matches node-pty's IPty. */
@@ -83,6 +97,16 @@ export interface AttachOptions {
    * here so the registry can spawn without consulting settings.
    */
   configOverride?: TerminalConfig;
+  /**
+   * HS-8218 — when true, never create a session or spawn a fresh PTY:
+   * if `(secret, terminalId)` has no live session, return an
+   * `AttachResult` with `noSession: true` and don't add the subscriber.
+   * The §47 popup uses this so its `terminalId: 'default'` checkout
+   * doesn't inadvertently spawn a new claude that disrupts an
+   * existing MCP connection from the project's claude (running under
+   * a non-`'default'` terminal id).
+   */
+  noSpawn?: boolean;
 }
 
 const DEFAULT_COLS = 80;
@@ -191,11 +215,40 @@ export function attach(
   const key = sessionKey(secret, terminalId);
   let session = sessions.get(key);
   if (!session) {
+    if (opts.noSpawn === true) {
+      // HS-8218 — no session and the caller forbade spawning. Return a
+      // synthetic empty result so the transport can signal "no live
+      // session" to the consumer (§47 popup uses this to skip its
+      // live-checkout body and fall back to the flat preview).
+      return {
+        alive: false,
+        cols: opts.cols ?? DEFAULT_COLS,
+        rows: opts.rows ?? DEFAULT_ROWS,
+        command: '',
+        exitCode: null,
+        scrollbackBytes: 0,
+        history: Buffer.alloc(0),
+        noSession: true,
+      };
+    }
     session = createSession(secret, dataDir, terminalId, opts.configOverride ?? null, opts.cols, opts.rows);
     sessions.set(key, session);
     spawnIntoSession(session, dataDir);
   } else if (session.pty === null && session.exitCode === null) {
     // Session exists but was never spawned — should be rare, but spawn now.
+    if (opts.noSpawn === true) {
+      // HS-8218 — same no-spawn contract as the no-session branch above.
+      return {
+        alive: false,
+        cols: session.cols,
+        rows: session.rows,
+        command: '',
+        exitCode: null,
+        scrollbackBytes: 0,
+        history: Buffer.alloc(0),
+        noSession: true,
+      };
+    }
     if (opts.cols !== undefined && opts.cols > 0) session.cols = opts.cols;
     if (opts.rows !== undefined && opts.rows > 0) session.rows = opts.rows;
     spawnIntoSession(session, dataDir);

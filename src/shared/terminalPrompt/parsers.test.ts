@@ -67,6 +67,31 @@ describe('isClaudeNumberedFooter (HS-7971)', () => {
     expect(isClaudeNumberedFooter('Press Enter to continue')).toBe(false);
     expect(isClaudeNumberedFooter('Loading...')).toBe(false);
   });
+  // HS-8216 — Claude Code 2026-05 builds emit `Esc to cancel · Tab to amend`
+  // as the trailing footer when the prompt has an "amend" affordance (e.g.
+  // a `…allow during this session` option the user can scope tighter with
+  // Tab). Pre-fix this fell through the hardcoded Set and the parser
+  // dropped the whole prompt.
+  it('matches the Esc-to-cancel · Tab-to-amend variant (HS-8216)', () => {
+    expect(isClaudeNumberedFooter('Esc to cancel · Tab to amend')).toBe(true);
+  });
+  it('matches the bare Esc-to-cancel form (HS-8216)', () => {
+    expect(isClaudeNumberedFooter('Esc to cancel')).toBe(true);
+  });
+  it('tolerates trailing whitespace on the new variants (HS-8216)', () => {
+    expect(isClaudeNumberedFooter('Esc to cancel · Tab to amend   ')).toBe(true);
+  });
+  it('matches future-proof suffix clauses (HS-8216)', () => {
+    expect(isClaudeNumberedFooter('Enter to confirm · Tab to expand')).toBe(true);
+    expect(isClaudeNumberedFooter('Esc to cancel · Shift+Tab to skip')).toBe(true);
+  });
+  it('rejects lookalikes that share the leading phrase but continue with prose (HS-8216)', () => {
+    // Without a ` · ` separator the regex requires end-of-string after the
+    // leading phrase, so an arbitrary docs line starting with the phrase
+    // doesn't trip the matcher.
+    expect(isClaudeNumberedFooter('Esc to cancel the operation')).toBe(false);
+    expect(isClaudeNumberedFooter('Enter to confirm and proceed')).toBe(false);
+  });
 });
 
 describe('claudeNumberedParser (HS-7971) — happy paths', () => {
@@ -138,6 +163,34 @@ describe('claudeNumberedParser (HS-7971) — happy paths', () => {
       label: 'Exit',
       highlighted: false,
     });
+    expect(result.signature).toMatch(/^claude-numbered:[0-9a-f]{8}:0$/);
+  });
+
+  // HS-8216 (2026-05-06) — user-reported regression. In a project whose
+  // claude session was NOT MCP-connected (so the §47 popup path doesn't
+  // fire), running a prompt that asks Read permission produced a TUI
+  // numbered prompt with a `Esc to cancel · Tab to amend` footer. Pre-fix
+  // the hardcoded `NUMBERED_FOOTERS` set didn't include that variant, so
+  // the parser returned null and the §52 overlay never surfaced. This
+  // test pins the exact text the user pasted from their LingoGist
+  // terminal so any future footer-set drift is caught immediately.
+  it('parses the LingoGist Read-permission prompt with `Esc to cancel · Tab to amend` footer (HS-8216)', () => {
+    const rows = [
+      ' Do you want to proceed?',
+      ' ❯ 1. Yes',
+      '   2. Yes, allow reading from Desktop/ during this session',
+      '   3. No',
+      '',
+      ' Esc to cancel · Tab to amend',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    expect(result).not.toBeNull();
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.choices).toHaveLength(3);
+    expect(result.choices[0]).toEqual({ index: 0, label: 'Yes', highlighted: true });
+    expect(result.choices[1].label).toBe('Yes, allow reading from Desktop/ during this session');
+    expect(result.choices[2]).toEqual({ index: 2, label: 'No', highlighted: false });
+    expect(result.question).toBe('Do you want to proceed?');
     expect(result.signature).toMatch(/^claude-numbered:[0-9a-f]{8}:0$/);
   });
 

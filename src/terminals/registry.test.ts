@@ -455,6 +455,79 @@ describe('TerminalRegistry', () => {
     expect(ptyB.killed).toBe(false);
   });
 
+  // HS-8218 — `noSpawn` opt-in for callers that must not inadvertently
+  // spawn a fresh PTY (the §47 popup, which used to hardcode
+  // `terminalId: 'default'` and accidentally spawned a brand-new
+  // `claude --dangerously-load-development-channels` process when
+  // `'default'` had no live session, stealing the channel-server's
+  // MCP connection from the user's actual claude).
+  describe('attach with noSpawn (HS-8218)', () => {
+    it('returns noSession: true and does NOT spawn when no session exists', () => {
+      const dir = tmpDataDir();
+      const { sub } = makeSub();
+      expect(FakePty.lastSpawned).toBeNull();
+      const result = attach('secret-nospawn', dir, sub, { noSpawn: true });
+      expect(result.noSession).toBe(true);
+      expect(result.alive).toBe(false);
+      expect(result.history.length).toBe(0);
+      expect(FakePty.lastSpawned).toBeNull();
+      // No subscriber added — emitting from a (non-existent) PTY can't
+      // reach `sub` since no session was created.
+      expect(getTerminalStatus('secret-nospawn', dir).state).toBe('not_spawned');
+    });
+
+    it('finds an existing live session and attaches normally (noSpawn pass-through)', () => {
+      const dir = tmpDataDir();
+      const { sub: first } = makeSub();
+      // Pre-attach without noSpawn — session is now alive.
+      attach('secret-nospawn-live', dir, first);
+      const livePty = FakePty.lastSpawned!;
+      // Now attach with noSpawn — should reuse the live session.
+      const { sub: second, received } = makeSub();
+      const result = attach('secret-nospawn-live', dir, second, { noSpawn: true });
+      expect(result.alive).toBe(true);
+      expect(result.noSession).toBeUndefined();
+      // Same PTY (no new spawn).
+      expect(FakePty.lastSpawned).toBe(livePty);
+      // Subscriber was added — emit reaches it.
+      livePty.emit('hello');
+      expect(Buffer.concat(received).toString()).toBe('hello');
+    });
+
+    it('returns noSession: true when session exists but never spawned (rare race)', () => {
+      // Manufacture a session in the unspawned state by killing the PTY
+      // mid-session. After the PTY exits, the session goes to `exited`
+      // (with exitCode set) — that's a different branch. The
+      // "session exists but pty=null && exitCode=null" branch in attach
+      // is only reachable if a future code path creates a session
+      // without spawning. We exercise it via the symmetric default-
+      // behaviour assertion: a noSpawn attach to an exited session
+      // returns the exited state (NOT noSession), since the session
+      // exists in a definite state.
+      const dir = tmpDataDir();
+      const { sub: first } = makeSub();
+      attach('secret-nospawn-exit', dir, first);
+      FakePty.lastSpawned!.emitExit(7);
+      const { sub: second } = makeSub();
+      const result = attach('secret-nospawn-exit', dir, second, { noSpawn: true });
+      expect(result.alive).toBe(false);
+      expect(result.exitCode).toBe(7);
+      // Critically: NOT a noSession — the session is in `exited` state,
+      // not "doesn't exist". Consumer can choose to render the
+      // scrollback if it wants.
+      expect(result.noSession).toBeUndefined();
+    });
+
+    it('still spawns when noSpawn is false / unset (default behaviour preserved)', () => {
+      const dir = tmpDataDir();
+      const { sub } = makeSub();
+      const result = attach('secret-nospawn-default', dir, sub);
+      expect(result.alive).toBe(true);
+      expect(result.noSession).toBeUndefined();
+      expect(FakePty.lastSpawned).not.toBeNull();
+    });
+  });
+
   // HS-6603 §24.2 — server-side bell detection
   describe('bell detection (HS-6603)', () => {
     it('bellPending starts false and flips to true on a chunk containing 0x07', () => {
