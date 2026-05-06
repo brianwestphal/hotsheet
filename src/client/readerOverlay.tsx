@@ -21,9 +21,16 @@ import { linkifyWithCachedPrefixes } from './ticketRefs.js';
  * `document.body`. No native dialog APIs. Z-index 2400 sits below the
  * feedback dialog (2500) and above everything else (terminal dashboard,
  * popups), per §49.6.
+ *
+ * **HS-8233 (2026-05-06)** — optional `navigation` slot adds chevron-up /
+ * chevron-down buttons in the header for stepping through a list of
+ * entries (used by the per-note reader so the user can read through every
+ * non-empty note without re-clicking the book icon for each). When
+ * `navigation` is omitted (e.g. the Details reader), the buttons are not
+ * rendered at all. See docs/59-reader-note-navigation.md.
  */
 
-export interface OpenReaderOverlayOptions {
+export interface ReaderEntry {
   /** Plain-text title shown in the overlay header. Pre-formatted by the
    *  caller — see `buildNoteReaderTitle` / `buildDetailsReaderTitle`. */
   title: string;
@@ -31,7 +38,43 @@ export interface OpenReaderOverlayOptions {
   markdown: string;
 }
 
+export interface ReaderNavigationOptions {
+  /** Every entry in display order. Index 0 is the topmost entry in the
+   *  caller's list. Must contain at least one element. */
+  entries: ReaderEntry[];
+  /** Initial entry to render. Must be in `[0, entries.length)`. */
+  initialIndex: number;
+}
+
+export interface OpenReaderOverlayOptions extends ReaderEntry {
+  /**
+   * HS-8233 — optional list-navigation context. When provided, the overlay
+   * renders chevron-up (previous) + chevron-down (next) buttons in the
+   * header next to the close X. Up navigates to `entries[index-1]`, down
+   * to `entries[index+1]`; both are disabled at list boundaries. The
+   * top-level `title` / `markdown` fields are ignored when navigation is
+   * supplied — the overlay derives them from `entries[initialIndex]`
+   * instead so a mis-matched call site can't surface inconsistent state.
+   * Keyboard: ArrowUp / ArrowDown also navigate while the overlay has
+   * focus.
+   */
+  navigation?: ReaderNavigationOptions;
+}
+
 const CLOSE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+/** HS-8233 — Lucide `chevron-up` glyph for the previous-entry button. */
+const CHEVRON_UP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+/** HS-8233 — Lucide `chevron-down` glyph for the next-entry button. */
+const CHEVRON_DOWN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+
+/** Render a single entry's markdown body to safe HTML, applying the same
+ *  `linkifyWithCachedPrefixes` post-process the noteRenderer applies inline.
+ *  Pure helper — DOM-free. Exported for unit testing. */
+export function renderReaderBodyHtml(markdown: string): string {
+  const trimmed = markdown.trim();
+  if (trimmed === '') return '<p class="reader-mode-empty"><em>(empty)</em></p>';
+  return linkifyWithCachedPrefixes(marked.parse(markdown, { async: false }));
+}
 
 /**
  * Open the reader overlay. Returns nothing — the overlay manages its own
@@ -44,31 +87,77 @@ export function openReaderOverlay(options: OpenReaderOverlayOptions): void {
   // other — only one at a time.
   document.querySelectorAll('.reader-mode-overlay').forEach(el => el.remove());
 
-  const { title, markdown } = options;
-  const trimmed = markdown.trim();
-  // HS-8036 — wrap ticket-number references in clickable anchors after
-  // markdown renders so a `HS-1234` inside reader-mode body opens the
-  // stacking ticket-reference dialog (the document-level click handler
-  // intercepts `.ticket-ref` clicks regardless of mount surface).
-  const renderedHtml = trimmed === ''
-    ? '<p class="reader-mode-empty"><em>(empty)</em></p>'
-    : linkifyWithCachedPrefixes(marked.parse(markdown, { async: false }));
+  const navigation = options.navigation ?? null;
+  // HS-8233 — when navigation is provided, the active entry is the source
+  // of truth; otherwise fall back to the top-level title/markdown so
+  // existing call sites (Details reader, future single-entry callers) keep
+  // working without change.
+  let currentIndex = navigation === null
+    ? 0
+    : Math.max(0, Math.min(navigation.entries.length - 1, navigation.initialIndex));
+  function currentEntry(): ReaderEntry {
+    if (navigation !== null) return navigation.entries[currentIndex];
+    return { title: options.title, markdown: options.markdown };
+  }
 
+  const initial = currentEntry();
   const overlay = toElement(
-    <div className="reader-mode-overlay" role="dialog" aria-modal="true" aria-label={title}>
+    <div className="reader-mode-overlay" role="dialog" aria-modal="true" aria-label={initial.title}>
       <div className="reader-mode-dialog">
         <div className="reader-mode-header">
-          <span className="reader-mode-title">{title}</span>
-          <button className="reader-mode-close" type="button" title="Close" aria-label="Close reader">
-            {raw(CLOSE_ICON_SVG)}
-          </button>
+          <span className="reader-mode-title">{initial.title}</span>
+          <div className="reader-mode-header-actions">
+            {navigation !== null
+              ? <>
+                  <button className="reader-mode-prev" type="button" title="Previous (Up)" aria-label="Previous note">
+                    {raw(CHEVRON_UP_SVG)}
+                  </button>
+                  <button className="reader-mode-next" type="button" title="Next (Down)" aria-label="Next note">
+                    {raw(CHEVRON_DOWN_SVG)}
+                  </button>
+                </>
+              : null}
+            <button className="reader-mode-close" type="button" title="Close" aria-label="Close reader">
+              {raw(CLOSE_ICON_SVG)}
+            </button>
+          </div>
         </div>
         <div className="reader-mode-body note-markdown">
-          {raw(renderedHtml)}
+          {raw(renderReaderBodyHtml(initial.markdown))}
         </div>
       </div>
     </div>
   );
+
+  const titleEl = requireChild<HTMLSpanElement>(overlay, '.reader-mode-title');
+  const bodyEl = requireChild<HTMLDivElement>(overlay, '.reader-mode-body');
+  const prevBtn = navigation === null ? null : requireChild<HTMLButtonElement>(overlay, '.reader-mode-prev');
+  const nextBtn = navigation === null ? null : requireChild<HTMLButtonElement>(overlay, '.reader-mode-next');
+
+  function paintCurrent(): void {
+    const entry = currentEntry();
+    titleEl.textContent = entry.title;
+    overlay.setAttribute('aria-label', entry.title);
+    bodyEl.innerHTML = renderReaderBodyHtml(entry.markdown);
+    // Reset scroll on navigation so a long previous note doesn't leave the
+    // new one mid-scrolled — fresh entry, fresh top-of-page.
+    bodyEl.scrollTop = 0;
+    if (navigation !== null && prevBtn !== null && nextBtn !== null) {
+      prevBtn.disabled = currentIndex === 0;
+      nextBtn.disabled = currentIndex === navigation.entries.length - 1;
+    }
+  }
+
+  function navigatePrev(): void {
+    if (navigation === null || currentIndex === 0) return;
+    currentIndex -= 1;
+    paintCurrent();
+  }
+  function navigateNext(): void {
+    if (navigation === null || currentIndex === navigation.entries.length - 1) return;
+    currentIndex += 1;
+    paintCurrent();
+  }
 
   const close = (): void => {
     overlay.remove();
@@ -80,21 +169,44 @@ export function openReaderOverlay(options: OpenReaderOverlayOptions): void {
   // would still close the overlay (the global handler doesn't preventDefault)
   // but the input-blur side-effect would also fire for any focused element
   // inside the overlay.
+  // HS-8233 — ArrowUp / ArrowDown navigate when navigation is provided.
   const onKeydown = (e: KeyboardEvent): void => {
-    if (e.key !== 'Escape') return;
-    e.preventDefault();
-    e.stopPropagation();
-    close();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      return;
+    }
+    if (navigation === null) return;
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      e.stopPropagation();
+      navigatePrev();
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      e.stopPropagation();
+      navigateNext();
+      return;
+    }
   };
 
   document.addEventListener('keydown', onKeydown, true);
 
   requireChild<HTMLButtonElement>(overlay, '.reader-mode-close').addEventListener('click', close);
+  if (prevBtn !== null) prevBtn.addEventListener('click', navigatePrev);
+  if (nextBtn !== null) nextBtn.addEventListener('click', navigateNext);
   overlay.addEventListener('click', (e) => {
     // Only dismiss when the click landed on the dimmed backdrop, not when
     // the user clicked anywhere inside the dialog itself.
     if (e.target === overlay) close();
   });
+
+  // Initial paint to set the disabled state on the prev/next buttons (the
+  // server-rendered DOM has them enabled — `paintCurrent` runs the boundary
+  // check immediately).
+  if (navigation !== null) paintCurrent();
 
   document.body.appendChild(overlay);
 }

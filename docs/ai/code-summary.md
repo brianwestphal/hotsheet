@@ -183,7 +183,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `print.tsx` | Print-this-view dialog |
 | `projectTabs.tsx` / `projectTabsFingerprint.ts` | Top-bar project tabs + change-detection fingerprint |
 | `quitConfirm.tsx` / `quitConfirmSettingsUI.tsx` | §37 quit-confirm dialog + master-detail preview pane + Settings panel |
-| `readerOverlay.tsx` | §49 reader-mode overlay (notes + Details) |
+| `readerOverlay.tsx` | §49 reader-mode overlay (notes + Details). **HS-8233 (2026-05-06)** — optional `navigation: { entries, initialIndex }` slot on `OpenReaderOverlayOptions` adds chevron-up / chevron-down buttons in the header for stepping through a list of entries (used by the per-note book button so the user can read every non-empty note without re-clicking the book icon). Buttons disable at list boundaries (no wrap-around); ArrowUp / ArrowDown also navigate. The Details reader keeps the single-entry path — buttons aren't rendered when `navigation` is omitted. New exported pure helper `renderReaderBodyHtml(markdown)` (used internally + tested). 14 new tests cover the rendered-buttons / disabled-at-boundaries / step-forward+backward / keyboard / aria-label / clamped-initialIndex / Escape-still-works contracts. See docs/59-reader-note-navigation.md. |
 | `searchExtraRows.tsx` | §40 "Include {N} archive / backlog matches" gray rows |
 | `settingsCategories.tsx` | Category-management UI in Settings |
 | `settingsDialog.tsx` | Settings overlay shell + tab routing |

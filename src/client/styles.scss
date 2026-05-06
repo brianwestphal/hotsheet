@@ -8493,7 +8493,19 @@ label.detail-details-label {
   text-overflow: ellipsis;
 }
 
-.reader-mode-close {
+// HS-8233 — chevron-up / chevron-down navigation buttons live in the same
+// header-actions cluster as the close X. Share the visual treatment so the
+// row reads as one related set of icon-only controls.
+.reader-mode-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.reader-mode-close,
+.reader-mode-prev,
+.reader-mode-next {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8507,10 +8519,15 @@ label.detail-details-label {
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 
-  &:hover {
+  &:hover:not(:disabled) {
     background: var(--bg-hover);
     color: var(--text);
     border-color: var(--border);
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
   }
 }
 

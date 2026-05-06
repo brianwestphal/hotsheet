@@ -686,6 +686,24 @@ HS-7969 follow-up. New client module `src/client/terminalCheckout.tsx` owns one 
 
 ---
 
+## 59. Reader-mode note navigation (`59-reader-note-navigation.md`)
+
+HS-8233. Adds chevron-up (`previous`) / chevron-down (`next`) buttons to the §49 reader-mode overlay header so the user can step through every non-empty note on a ticket without re-clicking the per-note book icon for each. ArrowUp / ArrowDown also navigate. Buttons are disabled at list boundaries (no wrap-around).
+
+**API.** New optional `navigation: { entries: ReaderEntry[]; initialIndex: number }` slot on `OpenReaderOverlayOptions` in `src/client/readerOverlay.tsx`. When omitted (the existing Details-reader path), the buttons aren't rendered and the overlay behaves exactly as it did pre-HS-8233. When provided, the active entry is the source of truth — overlay derives title + body from `entries[index]` on initial paint and on every navigation step. `initialIndex` is clamped to `[0, entries.length)` defensively.
+
+**Wiring.** `noteRenderer.tsx`'s `.note-reader-btn` click handler builds the navigation list at click time from every non-empty note in display order. Empty notes are skipped (they don't have a reader button anyway). When the ticket has just one non-empty note, `navigation` is omitted so the chevrons aren't rendered (they would always be disabled).
+
+**SCSS.** New `.reader-mode-header-actions` flex cluster groups the chevrons + close X. The `.reader-mode-close, .reader-mode-prev, .reader-mode-next` rule shares hover treatment + a `:disabled` opacity-0.35-cursor-default styling.
+
+**Status.** Shipped (2026-05-06).
+
+**Out of scope.** Wrap-around navigation. Cross-ticket navigation. Edit-in-reader (§49 stays read-only). Navigation for the Details reader (single entry — nothing to step through).
+
+**Cross-refs.** §49 (parent reader-mode design; the §49.6 overlay shell HS-8233 extends).
+
+---
+
 ## 58. Channel auto-approve / known-channel allow-list (`58-channel-auto-approve.md`)
 
 HS-8210. Extends §52's terminal-prompt always-allow path with a Tier 0 matcher keyed on Claude's `Channels: server:<name>` line. Today the user's `--dangerously-load-development-channels` prompt re-fires every `claude` startup despite §52's existing four-tier matcher (HS-8071) — Claude's TUI rewrites the prompt prose between version bumps, so hash / preview / choice-shape / choice-label all drift across launches. The channel name is the user's actual *intent* signal ("I trust this channel") and is invariant against every text drift the user has reported.

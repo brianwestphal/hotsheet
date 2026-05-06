@@ -13,6 +13,7 @@ import {
   buildDetailsReaderTitle,
   buildNoteReaderTitle,
   openReaderOverlay,
+  renderReaderBodyHtml,
 } from './readerOverlay.js';
 
 afterEach(() => {
@@ -145,5 +146,161 @@ describe('openReaderOverlay (HS-7957)', () => {
     // DOM stays empty.
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(document.querySelector('.reader-mode-overlay')).toBeNull();
+  });
+});
+
+/**
+ * HS-8233 — chevron-up / chevron-down navigation through a list of
+ * ReaderEntry items. Used by the per-note reader so the user can step
+ * through every non-empty note without re-clicking the book icon.
+ */
+describe('reader navigation (HS-8233)', () => {
+  function entries(...titles: string[]): { title: string; markdown: string }[] {
+    return titles.map((t, i) => ({ title: t, markdown: `body ${i}` }));
+  }
+
+  it('does NOT render prev/next buttons when navigation is omitted', () => {
+    openReaderOverlay({ title: 'solo', markdown: 'one' });
+    expect(document.querySelector('.reader-mode-prev')).toBeNull();
+    expect(document.querySelector('.reader-mode-next')).toBeNull();
+  });
+
+  it('renders prev + next buttons when navigation is supplied', () => {
+    openReaderOverlay({
+      title: 'a',
+      markdown: 'a',
+      navigation: { entries: entries('a', 'b'), initialIndex: 0 },
+    });
+    expect(document.querySelector('.reader-mode-prev')).not.toBeNull();
+    expect(document.querySelector('.reader-mode-next')).not.toBeNull();
+  });
+
+  it('disables prev at the first entry and next at the last entry', () => {
+    openReaderOverlay({
+      title: 'first',
+      markdown: 'a',
+      navigation: { entries: entries('first', 'middle', 'last'), initialIndex: 0 },
+    });
+    const prev = document.querySelector('.reader-mode-prev') as HTMLButtonElement;
+    const next = document.querySelector('.reader-mode-next') as HTMLButtonElement;
+    expect(prev.disabled).toBe(true);
+    expect(next.disabled).toBe(false);
+
+    next.click();
+    next.click();
+    expect(prev.disabled).toBe(false);
+    expect(next.disabled).toBe(true);
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('last');
+  });
+
+  it('clicking next steps forward and rewrites title + body', () => {
+    openReaderOverlay({
+      title: 'first',
+      markdown: 'a',
+      navigation: { entries: entries('first', 'second'), initialIndex: 0 },
+    });
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('first');
+    (document.querySelector('.reader-mode-next') as HTMLButtonElement).click();
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('second');
+    expect(document.querySelector('.reader-mode-body')?.textContent).toContain('body 1');
+  });
+
+  it('clicking prev steps backward', () => {
+    openReaderOverlay({
+      title: 'middle',
+      markdown: 'b',
+      navigation: { entries: entries('first', 'middle', 'last'), initialIndex: 1 },
+    });
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('middle');
+    (document.querySelector('.reader-mode-prev') as HTMLButtonElement).click();
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('first');
+  });
+
+  it('ArrowDown navigates next; ArrowUp navigates previous', () => {
+    openReaderOverlay({
+      title: 'a',
+      markdown: 'a',
+      navigation: { entries: entries('a', 'b', 'c'), initialIndex: 0 },
+    });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('b');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('c');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('b');
+  });
+
+  it('ArrowDown at the last entry is a no-op (stays on last)', () => {
+    openReaderOverlay({
+      title: 'last',
+      markdown: 'x',
+      navigation: { entries: entries('first', 'last'), initialIndex: 1 },
+    });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('last');
+  });
+
+  it('ArrowUp at the first entry is a no-op (stays on first)', () => {
+    openReaderOverlay({
+      title: 'first',
+      markdown: 'x',
+      navigation: { entries: entries('first', 'last'), initialIndex: 0 },
+    });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('first');
+  });
+
+  it('Escape still dismisses when navigation is active', () => {
+    openReaderOverlay({
+      title: 'a',
+      markdown: 'a',
+      navigation: { entries: entries('a', 'b'), initialIndex: 0 },
+    });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.querySelector('.reader-mode-overlay')).toBeNull();
+  });
+
+  it('clamps initialIndex into bounds defensively', () => {
+    openReaderOverlay({
+      title: 'fallback',
+      markdown: 'x',
+      navigation: { entries: entries('a', 'b', 'c'), initialIndex: 99 },
+    });
+    // Out-of-range initialIndex clamps to last entry.
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('c');
+  });
+
+  it('clamps a negative initialIndex to 0', () => {
+    openReaderOverlay({
+      title: 'fallback',
+      markdown: 'x',
+      navigation: { entries: entries('a', 'b'), initialIndex: -5 },
+    });
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('a');
+  });
+
+  it('updates ARIA label on navigation so screen readers see the active entry', () => {
+    openReaderOverlay({
+      title: 'a',
+      markdown: 'a',
+      navigation: { entries: entries('a', 'b'), initialIndex: 0 },
+    });
+    const overlay = document.querySelector('.reader-mode-overlay') as HTMLElement;
+    expect(overlay.getAttribute('aria-label')).toBe('a');
+    (document.querySelector('.reader-mode-next') as HTMLButtonElement).click();
+    expect(overlay.getAttribute('aria-label')).toBe('b');
+  });
+});
+
+describe('renderReaderBodyHtml (HS-8233)', () => {
+  it('renders empty markdown to a placeholder', () => {
+    expect(renderReaderBodyHtml('')).toContain('reader-mode-empty');
+    expect(renderReaderBodyHtml('   ')).toContain('reader-mode-empty');
+  });
+
+  it('renders non-empty markdown to HTML containing the source text', () => {
+    const html = renderReaderBodyHtml('# heading\n\ntext');
+    expect(html).toContain('heading');
+    expect(html).toContain('text');
   });
 });

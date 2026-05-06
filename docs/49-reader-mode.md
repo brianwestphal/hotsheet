@@ -3,6 +3,8 @@
 HS-7957 (design) / HS-7961 (implementation). Almost-full-screen, read-only **reader mode** overlay for individual notes and for a ticket's Details section. Both surfaces routinely grow long enough that scanning them inside the constrained detail panel is tedious — the user wants to "expand to read" without leaving the current ticket / project context.
 
 > **Status:** Shipped. Notes + Details share a single `openReaderOverlay({title, markdown})` export from `src/client/readerOverlay.tsx`. 18 unit tests in `readerOverlay.test.ts` cover the two pure title-builders (`buildNoteReaderTitle`, `buildDetailsReaderTitle`) and the open / dismiss happy paths.
+>
+> **HS-8233 (2026-05-06)** — added optional `navigation` slot for stepping through a list of entries (chevron-up / chevron-down buttons in the header + ArrowUp / ArrowDown keyboard shortcuts). Wired up by the per-note book button so the user can read every non-empty note on a ticket without re-clicking the book icon for each. Buttons disable at list boundaries; the Details reader continues to render without navigation buttons (only one entry). Full design in [59-reader-note-navigation.md](59-reader-note-navigation.md).
 
 ## 49.1 Problem statement
 

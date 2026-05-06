@@ -162,14 +162,39 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
     // reader opened on a note that's already mid-edit shows the persisted
     // value (the inline edit-area writes back on commit, not on every
     // keystroke).
+    // HS-8233 — pass a `navigation` slot so the reader overlay can render
+    // chevron-up / chevron-down buttons stepping through every non-empty
+    // note in the same display order. The clicked note is the initial
+    // entry; the buttons are disabled at the list boundaries.
     {
       const readerBtn = entry.querySelector<HTMLButtonElement>('.note-reader-btn');
       if (readerBtn !== null) {
         readerBtn.addEventListener('click', (e) => {
           e.stopPropagation();
+          // Build the navigation list from every non-empty note in display
+          // order — empty notes don't have a reader button so they aren't
+          // navigable from this surface either. Snapshot at click time
+          // matches the per-note `note.text` snapshot above (reader is
+          // read-only; mid-edit changes happen outside this overlay).
+          const navEntries: { title: string; markdown: string; id: string | undefined }[] = [];
+          for (const n of notes) {
+            if (n.text.trim() === '') continue;
+            navEntries.push({
+              title: buildNoteReaderTitle(n.created_at),
+              markdown: n.text,
+              id: n.id,
+            });
+          }
+          const initialIndex = Math.max(0, navEntries.findIndex(e2 => e2.id === note.id));
           openReaderOverlay({
             title: buildNoteReaderTitle(note.created_at),
             markdown: note.text,
+            navigation: navEntries.length > 1
+              ? {
+                  entries: navEntries.map(e2 => ({ title: e2.title, markdown: e2.markdown })),
+                  initialIndex,
+                }
+              : undefined,
           });
         });
       }
