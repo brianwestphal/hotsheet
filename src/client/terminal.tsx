@@ -39,6 +39,7 @@ import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch
 import { configuredSubsetInStripOrder, reorderConfigsById, reorderIds } from './terminalTabReorder.js';
 import { pickNearestTerminalTabId } from './terminalTabSelection.js';
 import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
+import { COPIED_GLYPH_FLASH_MS, POPOVER_CLOSE_DELAY_MS, SHAKE_DURATION_MS } from './uiTimings.js';
 
 type Status = 'not-connected' | 'connecting' | 'alive' | 'exited';
 
@@ -1363,7 +1364,7 @@ function showGutterPopover(inst: TerminalInstance, anchor: HTMLElement, term: XT
 
 function scheduleGutterPopoverClose(): void {
   if (gutterPopoverCloseTimer !== null) return;
-  gutterPopoverCloseTimer = window.setTimeout(closeGutterPopover, 200);
+  gutterPopoverCloseTimer = window.setTimeout(closeGutterPopover, POPOVER_CLOSE_DELAY_MS);
 }
 
 function closeGutterPopover(): void {
@@ -1579,14 +1580,14 @@ function flashCopyOutputBtnSuccess(inst: TerminalInstance): void {
   window.setTimeout(() => {
     btn.innerHTML = CLIPBOARD_ICON;
     btn.classList.remove('copied');
-  }, 900);
+  }, COPIED_GLYPH_FLASH_MS);
 }
 
 function shakeCopyOutputBtn(inst: TerminalInstance): void {
   const btn = inst.header.querySelector<HTMLButtonElement>('.terminal-copy-output-btn');
   if (btn === null) return;
   btn.classList.add('shake');
-  window.setTimeout(() => btn.classList.remove('shake'), 400);
+  window.setTimeout(() => btn.classList.remove('shake'), SHAKE_DURATION_MS);
 }
 
 function shortCommandName(command: string): string {

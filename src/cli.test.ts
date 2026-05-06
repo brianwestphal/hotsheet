@@ -4,10 +4,29 @@
  * Tests the arg parsing logic directly (unit) and key server behaviors
  * via process spawning (integration).
  */
+import { execFileSync } from 'child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, describe, expect, it } from 'vitest';
+
+/**
+ * HS-8202 — precondition probe for tsx-child-spawn capability. Restricted
+ * sandboxes (e.g. Claude Code on macOS) deny the `mkfifo` syscall tsx uses
+ * for its IPC pipe at `/tmp/claude-501/tsx-501/<random>.pipe`, so every
+ * `npx tsx src/cli.ts` invocation in this file would EPERM and time out
+ * (4 × 5 s = 20 s of red per full run). Probe once at module load with a
+ * short-lived `tsx --help` and skip the spawn-bearing describe blocks
+ * cleanly when it fails. Skip messages cite the env requirement so a dev
+ * doesn't mistake a skip for a flake.
+ */
+function probeCanSpawnTsxChild(): boolean {
+  try {
+    execFileSync('npx', ['tsx', '--help'], { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
+    return true;
+  } catch { return false; }
+}
+const canSpawnTsxChild = probeCanSpawnTsxChild();
 
 // We can't import parseArgs directly (it's not exported), so test via
 // spawning the CLI process and checking its behavior.
@@ -34,7 +53,7 @@ async function spawn(args: string[], opts?: { timeout?: number; env?: Record<str
   });
 }
 
-describe('CLI — help and version', () => {
+describe.skipIf(!canSpawnTsxChild)('CLI — help and version (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
   it('--help prints usage and exits 0', async () => {
     const { stdout, exitCode } = await spawn(['--help']);
     expect(exitCode).toBe(0);
@@ -60,7 +79,7 @@ describe('CLI — help and version', () => {
   });
 });
 
-describe('CLI — server startup with custom args', () => {
+describe.skipIf(!canSpawnTsxChild)('CLI — server startup with custom args (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
   const tempDir = join(tmpdir(), `hs-cli-test-${Date.now()}`);
   const tempHome = join(tmpdir(), `hs-cli-home-${Date.now()}`);
   const dataDir = join(tempDir, '.hotsheet');
@@ -110,7 +129,7 @@ describe('CLI — server startup with custom args', () => {
   });
 });
 
-describe('CLI — instance file and lock cleanup', () => {
+describe.skipIf(!canSpawnTsxChild)('CLI — instance file and lock cleanup (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
   it('stale instance file does not prevent startup', async () => {
     const tempDir = join(tmpdir(), `hs-stale-${Date.now()}`);
     const dataDir = join(tempDir, '.hotsheet');

@@ -12,6 +12,7 @@ import { appendImageDownloadLinks, proxyGitHubImages } from './imageProxy.js';
 import { buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
 import { state } from './state.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
+import { BUTTON_BUSY_MS, TOAST_AUTOHIDE_MS } from './uiTimings.js';
 import { pushNotesUndo } from './undo/actions.js';
 
 /** HS-7957 — Lucide `book-open-text` glyph. Inline SVG (not a sprite ref)
@@ -468,7 +469,7 @@ async function onMegaphoneClick(btn: HTMLButtonElement, ticketId: number, noteTe
     showMegaphoneWarning(`Failed to send: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
-  setTimeout(() => { btn.classList.remove('is-busy'); }, 2000);
+  setTimeout(() => { btn.classList.remove('is-busy'); }, BUTTON_BUSY_MS);
 }
 
 /** HS-7601 — surface a warning toast at the bottom of the detail panel
@@ -484,7 +485,7 @@ function showMegaphoneWarning(message: string): void {
     </div>
   );
   alert.querySelector('button')?.addEventListener('click', () => alert.remove());
-  setTimeout(() => alert.remove(), 6000);
+  setTimeout(() => alert.remove(), TOAST_AUTOHIDE_MS);
   const notesContainer = byIdOrNull('detail-notes');
   if (notesContainer !== null) notesContainer.prepend(alert);
 }

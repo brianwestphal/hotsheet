@@ -1,3 +1,4 @@
+import { execFileSync as childExecFileSync } from 'child_process';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,8 +10,21 @@ import {
   normalizeComm,
   parsePsOutput,
   pickForegroundProcess,
+  type PsRow,
   SHELL_BASENAMES,
 } from './processInspect.js';
+
+/** HS-8200 — probe ps once at module load so the integration test can skip
+ *  cleanly under restricted sandboxes (where `execFileSync('ps', ...)`
+ *  EPERMs). Lifted out of the describe block so the eslint
+ *  no-require-imports rule isn't tripped. */
+function probeCanSpawnPs(): boolean {
+  if (process.platform === 'win32') return false;
+  try {
+    childExecFileSync('ps', ['-o', 'pid', '-p', String(process.pid)], { encoding: 'utf8', timeout: 1000 });
+    return true;
+  } catch { return false; }
+}
 
 describe('normalizeComm', () => {
   it('strips Unix path prefix (macOS ps -o comm reports full executable path)', () => {
@@ -395,7 +409,14 @@ describe('killProcessTreeBestEffort (HS-8140)', () => {
     // descendant of the test runner. Pre-HS-8179 this would have
     // SIGTERMed every descendant of init (i.e. effectively the whole
     // user session). Post-fix it bails cleanly.
-    const result = killProcessTreeBestEffort(1, 'SIGTERM');
+    // HS-8200 — supply fixture rows so the test runs deterministically
+    // even when sandboxing makes a real `ps -A` exec EPERM.
+    const fixture: PsRow[] = [
+      { pid: 1, ppid: 0, comm: 'launchd' },
+      { pid: 50, ppid: 1, comm: 'WindowServer' },
+      { pid: process.pid, ppid: 999, comm: 'node' },
+    ];
+    const result = killProcessTreeBestEffort(1, 'SIGTERM', () => fixture);
     expect(result.bailed).toBe(true);
     expect(result.error).toBe('rootPid not owned by this process');
     expect(result.attempted).toBe(0);
@@ -409,7 +430,12 @@ describe('killProcessTreeBestEffort (HS-8140)', () => {
     // descendants (none, usually) but a collision with a real pid
     // would SIGTERM real processes. Post-fix: pid not in table →
     // unknown lineage → bail.
-    const result = killProcessTreeBestEffort(999_999, 'SIGTERM');
+    // HS-8200 — supply a small fixture that omits the candidate pid.
+    const fixture: PsRow[] = [
+      { pid: 1, ppid: 0, comm: 'launchd' },
+      { pid: process.pid, ppid: 1, comm: 'node' },
+    ];
+    const result = killProcessTreeBestEffort(999_999, 'SIGTERM', () => fixture);
     expect(result.bailed).toBe(true);
     expect(result.error).toBe('rootPid not owned by this process');
   });
@@ -428,7 +454,11 @@ describe('killProcessTreeBestEffort + spawned subprocess (HS-8140 integration)',
   // would risk killing the vitest worker). Verify the grandchild dies.
   // Skipped on Windows (the helper bails by design + `sleep` isn't reliably
   // present anyway).
-  it.skipIf(process.platform === 'win32')(
+  // HS-8200 — also skip when we cannot spawn `ps` at all (restricted sandbox);
+  // the inline `execFileSync('ps', ...)` calls below would EPERM and leave
+  // the test perpetually red. Probe once at module load.
+  const canSpawnPs = probeCanSpawnPs();
+  it.skipIf(process.platform === 'win32' || !canSpawnPs)(
     'a SIGTERM-the-tree call against a wrapper shell actually kills its sleep grandchild',
     async () => {
       const { spawn, execFileSync } = await import('child_process');

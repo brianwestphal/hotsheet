@@ -68,7 +68,11 @@ function makeFakeServer(closeBehavior: 'immediate' | 'delayed' | 'error' = 'imme
       cb?.();
     }
   });
-  return { close: closeFn } as unknown as HttpServer;
+  // HS-8199: stub `closeIdleConnections` so production `lifecycle.ts` can call
+  // it without an optional chain (Node 18.2+ always provides it; the prod
+  // code's `?.` was purely a test-stub accommodation).
+  const closeIdleConnectionsFn = vi.fn();
+  return { close: closeFn, closeIdleConnections: closeIdleConnectionsFn } as unknown as HttpServer;
 }
 
 describe('gracefulShutdown (HS-7931)', () => {
@@ -76,6 +80,7 @@ describe('gracefulShutdown (HS-7931)', () => {
     const order: string[] = [];
     const server = {
       close: vi.fn((cb?: (err?: Error) => void) => { order.push('http'); cb?.(); }),
+      closeIdleConnections: vi.fn(),
     } as unknown as HttpServer;
     killAllRunningShellCommandsMock.mockImplementation(() => {
       order.push('shells');

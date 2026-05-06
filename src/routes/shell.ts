@@ -105,12 +105,15 @@ shellRoutes.post('/shell/exec', async (c) => {
     const combinedDetail = command + '\n---SHELL_OUTPUT---\n' + output;
     if (logId > 0) {
       const label = name !== undefined && name !== '' ? name : command.slice(0, 100);
-      updateLogEntry(logId, { summary: `${label} — ${exitSummary}`, detail: combinedDetail }).catch(() => {});
+      updateLogEntry(logId, { summary: `${label} — ${exitSummary}`, detail: combinedDetail })
+        .catch((err: unknown) => { console.warn('[shell] updateLogEntry on close failed:', err); });
     } else {
-      addLogEntry('shell_command', 'outgoing', exitSummary, combinedDetail).catch(() => {});
+      addLogEntry('shell_command', 'outgoing', exitSummary, combinedDetail)
+        .catch((err: unknown) => { console.warn('[shell] addLogEntry on close failed:', err); });
     }
     // Notify the client via long-poll
-    import('./notify.js').then(({ notifyChange }) => notifyChange()).catch(() => {});
+    import('./notify.js').then(({ notifyChange }) => notifyChange())
+      .catch((err: unknown) => { console.warn('[shell] notifyChange on close failed:', err); });
   });
 
   child.on('error', (err) => {
@@ -121,11 +124,14 @@ shellRoutes.post('/shell/exec', async (c) => {
     partialOutputs.delete(logId);
     const combinedDetail = command + '\n---SHELL_OUTPUT---\n' + (err.stack ?? err.message);
     if (logId > 0) {
-      updateLogEntry(logId, { summary: `${command.slice(0, 100)} — Error: ${err.message}`, detail: combinedDetail }).catch(() => {});
+      updateLogEntry(logId, { summary: `${command.slice(0, 100)} — Error: ${err.message}`, detail: combinedDetail })
+        .catch((logErr: unknown) => { console.warn('[shell] updateLogEntry on spawn-error failed:', logErr); });
     } else {
-      addLogEntry('shell_command', 'outgoing', `Error: ${err.message}`, combinedDetail).catch(() => {});
+      addLogEntry('shell_command', 'outgoing', `Error: ${err.message}`, combinedDetail)
+        .catch((logErr: unknown) => { console.warn('[shell] addLogEntry on spawn-error failed:', logErr); });
     }
-    import('./notify.js').then(({ notifyChange }) => notifyChange()).catch(() => {});
+    import('./notify.js').then(({ notifyChange }) => notifyChange())
+      .catch((logErr: unknown) => { console.warn('[shell] notifyChange on spawn-error failed:', logErr); });
   });
 
   return c.json({ id: logId });

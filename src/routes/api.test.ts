@@ -145,6 +145,16 @@ vi.mock('../open-in-file-manager.js', () => ({
   revealInFileManager: vi.fn(() => Promise.resolve()),
 }));
 
+// HS-8198: mock claude-hooks so the channel/enable + channel/disable tests
+// don't try to copyfile / writefile against the real `~/.claude/settings.json`.
+// Under restricted sandboxes the copyfile is EPERM, the disable handler throws
+// from `removeHeartbeatHook`, and the test sees a 500 instead of 200.
+vi.mock('../claude-hooks.js', () => ({
+  installHeartbeatHook: vi.fn(),
+  removeHeartbeatHook: vi.fn(),
+  isHeartbeatHookInstalled: vi.fn(() => false),
+}));
+
 let tempDir: string;
 let app: Hono<AppEnv>;
 
@@ -610,6 +620,33 @@ interface TerminalCreateResponse {
 }
 
 describe('terminal route', () => {
+  // HS-8197: install a minimal in-memory PTY factory so the spawn-on-create
+  // test (and any future spawn-side test) doesn't try to fork a real shell
+  // through node-pty's `spawn-helper`. Under restricted sandboxes the real
+  // factory throws `posix_spawnp failed` and the eager-spawn try/catch in
+  // `routes/terminal.ts::POST /create` swallows the error, leaving the
+  // session in `not_spawned` and the test seeing the wrong state.
+  let restorePtyFactory: ((factory: import('../terminals/registry.js').PtyFactory) => import('../terminals/registry.js').PtyFactory) | null = null;
+  let savedPtyFactory: import('../terminals/registry.js').PtyFactory | null = null;
+  beforeAll(async () => {
+    const { setPtyFactory } = await import('../terminals/registry.js');
+    restorePtyFactory = setPtyFactory;
+    const fakeFactory: import('../terminals/registry.js').PtyFactory = (args) => ({
+      pid: 0,
+      cols: args.cols,
+      rows: args.rows,
+      onData: () => ({ dispose: () => {} }),
+      onExit: () => ({ dispose: () => {} }),
+      write: () => {},
+      resize: () => {},
+      kill: () => {},
+    });
+    savedPtyFactory = setPtyFactory(fakeFactory);
+  });
+  afterAll(async () => {
+    if (restorePtyFactory !== null && savedPtyFactory !== null) restorePtyFactory(savedPtyFactory);
+  });
+
   // HS-6341: a freshly-created dynamic terminal must appear in /list before any
   // websocket attaches. Without this, the client renders no tab for it but
   // still switches the drawer to its (non-existent) panel — a blank drawer.

@@ -7,6 +7,7 @@ import {
 } from './permissionOverlay.js';
 import { getActiveProject, state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
+import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
 
 // --- Claude Channel ---
 
@@ -327,7 +328,7 @@ function showDisconnectedAlert() {
     </div>
   );
   alert.querySelector('.no-upnext-dismiss')!.addEventListener('click', () => alert.remove());
-  setTimeout(() => alert.remove(), 6000);
+  setTimeout(() => alert.remove(), TOAST_AUTOHIDE_MS);
   const playSection = byIdOrNull('channel-play-section');
   if (playSection) playSection.after(alert);
 }

@@ -145,11 +145,13 @@ New section in **Settings → Permissions** (parallel to existing Settings tabs)
 - One row per rule: **Tool** (mono, bold) + **Pattern** (mono code chip, ellipsis-truncated with `title` tooltip showing the full text) + **pencil-edit button** + **trash-delete button**. Row layout matches the custom-command + terminal settings rows (`cmd-outline-row` shell) so the surfaces read as siblings.
 - Sort: most-recently-added first.
 - Empty state: "No allow rules yet. Click '+ Add rule' below or 'Always allow' on a permission popup to create one."
-- **Click the row** OR **click the pencil button** to open the modal rule editor (`openRuleEditor` in `permissionAllowListUI.tsx`). Reuses the `.cmd-editor-overlay` / `.cmd-editor-dialog` shell. Fields: tool select + pattern textarea (3 rows so long regexes wrap visibly) + inline validation against the same `^…$` anchoring the matcher uses. Cmd/Ctrl+Enter submits; Esc cancels; backdrop click cancels.
+- **Click the row** OR press **Enter** / **Space** while the row is focused (the row is `role="button" tabIndex="0"`) OR **click the pencil button** to open the modal rule editor (`openRuleEditor` in `permissionAllowListUI.tsx`). Reuses the `.cmd-editor-overlay` / `.cmd-editor-dialog` shell. Fields: tool select + pattern textarea (3 rows so long regexes wrap visibly) + inline validation against the same `^…$` anchoring the matcher uses. Cmd/Ctrl+Enter submits; Esc cancels; backdrop click cancels.
 - **+ Add rule** button at the bottom of the list opens the same editor in `add` mode (header reads "Add allow rule", Save button reads "Add rule"). Pre-HS-8026 the page had an inline form (select + input + button) directly under the list; replaced by a single button so the add + edit flows share one validation path and the page stays uncluttered.
 - Trash delete confirms (rule body shown) before PATCHing.
 
 **HS-8026 cleanups (2026-04-29):** dropped the `Date Added` column (noise for the typical user) and the `Source (overlay / settings)` column (the "overlay" / "settings" wording confused users — the value is preserved on the rule for audit but no longer surfaced). Long patterns are no longer irrecoverably truncated — the `title` tooltip + the editor dialog both expose the full text.
+
+**Class-name note (HS-8186, 2026-05-06):** The post-HS-8026 §47.4 row uses `.permission-allow-rule-row` (combined with `cmd-outline-row` for the shared visual scale + hover + border + click-to-edit cursor). The §52 terminal-prompt allow-rule UI deliberately stays on the **legacy** `.permission-allow-row` grid layout — HS-8021 / HS-8026 only restyled this surface; the §52 surface gets the same treatment in a future follow-up. The two class names are NOT a typo — `_row` is the legacy grid layout, `_rule_row` is the post-HS-8026 cmd-outline-shell variant.
 
 ### 47.4.5 Test/dry-run mode
 A "Test pattern" affordance in the management UI:

@@ -21,6 +21,7 @@ import {
   setActiveGroupingForProject,
   subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
+import { toElement } from './dom.js';
 
 export interface GroupingSelectOptions {
   /** The `<select>` element in the DOM. */
@@ -59,13 +60,9 @@ export function refreshGroupingSelect(opts: GroupingSelectOptions): { count: num
   opts.selectEl.replaceChildren();
   const activeId = getActiveGroupingId(secret);
   for (const g of groupings) {
-    // HS-8098 — file is `.ts` (no JSX); see `dashboardHiddenTerminals.ts`
-    // for the same exception. Renaming to `.tsx` solely for this single
-    // append would touch the existing test file's import path.
-    const opt = document.createElement('option');
-    opt.value = g.id;
-    opt.textContent = g.name;
-    if (g.id === activeId) opt.selected = true;
+    const opt = toElement(
+      <option value={g.id} selected={g.id === activeId}>{g.name}</option>,
+    ) as HTMLOptionElement;
     opts.selectEl.appendChild(opt);
   }
   return { count: groupings.length };

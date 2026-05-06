@@ -8,6 +8,7 @@ import { ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE } from './icons.js'
 import type { CustomView, CustomViewCondition } from './state.js';
 import { allKnownTags, refreshAllKnownTags, state } from './state.js';
 import { draggedTicketIds } from './ticketList.js';
+import { BLUR_DEBOUNCE_MS } from './uiTimings.js';
 
 // HS-8102 — typed `(() => void) | null` (was `() => void` with no `| undefined`).
 // Pre-fix the type lied: the variable was implicitly undefined until
@@ -258,7 +259,7 @@ function setupTagAutocomplete(input: HTMLInputElement, dropdown: HTMLElement, on
 
   input.addEventListener('input', showAc);
   input.addEventListener('focus', showAc);
-  input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 150); });
+  input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, BLUR_DEBOUNCE_MS); });
   input.addEventListener('keydown', (e) => {
     const items = dropdown.querySelectorAll('.tag-autocomplete-item');
     if (items.length === 0) return;

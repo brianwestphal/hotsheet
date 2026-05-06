@@ -22,6 +22,7 @@
  * settings.json.
  */
 
+import { toElement } from './dom.js';
 import {
   addGrouping as addGroupingPure,
   addGroupingWithId as addGroupingWithIdPure,
@@ -165,12 +166,7 @@ export function applyHideButtonBadge(button: HTMLElement | null, count: number):
     return;
   }
   if (badge === null) {
-    // HS-8098 — file is `.ts` (no JSX); a single-element creation that needs
-    // string-class assignment is the one CLAUDE.md exception that doesn't
-    // get to use `toElement(<jsx />)` because pulling in the JSX runtime
-    // would require renaming the whole module to `.tsx`.
-    badge = document.createElement('span');
-    badge.className = 'hide-btn-badge';
+    badge = toElement(<span className="hide-btn-badge" />) as HTMLSpanElement;
     button.appendChild(badge);
   }
   const text = count > 99 ? '99+' : String(count);

@@ -79,6 +79,16 @@ const PermissionRequestSchema = z.object({
   }),
 });
 
+// HS-8192 — validates the body of `POST /permission/respond`. Pre-fix the
+// handler did `JSON.parse(body) as { ... }` with a raw `as` cast — malformed
+// JSON or wrong-shape payloads (missing fields, wrong types, unknown
+// `behavior` values) propagated silently. Centralising the schema gives the
+// handler a clean 400 response on bad input.
+const PermissionRespondBodySchema = z.object({
+  request_id: z.string().min(1),
+  behavior: z.enum(['allow', 'deny']),
+});
+
 mcp.setNotificationHandler(PermissionRequestSchema, ({ params }) => {
   const t0 = Date.now();
   enqueuePermission({
@@ -130,8 +140,20 @@ const httpServer = createServer(async (req, res) => {
       if (bodySize > 1_048_576) { res.writeHead(413); res.end('Payload too large'); return; }
       body += String(chunk);
     }
+    let parsed: unknown;
+    try { parsed = JSON.parse(body); } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Invalid JSON: ${String(err)}` }));
+      return;
+    }
+    const validated = PermissionRespondBodySchema.safeParse(parsed);
+    if (!validated.success) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: validated.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ') }));
+      return;
+    }
+    const { request_id, behavior } = validated.data;
     try {
-      const { request_id, behavior } = JSON.parse(body) as { request_id: string; behavior: 'allow' | 'deny' };
       await mcp.notification({
         method: 'notifications/claude/channel/permission',
         params: { request_id, behavior },
@@ -142,7 +164,7 @@ const httpServer = createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: String(err) }));
     }
     return;

@@ -156,11 +156,7 @@ async function closeHttpServer(): Promise<void> {
       }
       resolve();
     });
-    // Guard for the unit-test path: `lifecycle.test.ts` registers a stub
-    // `httpServer` that only mocks `close()`. `closeIdleConnections` was
-    // added in Node 18.2 and is always present in production but not on
-    // the stub. Use a `?.` chain so the unit tests don't TypeError.
-    httpServer!.closeIdleConnections?.();
+    httpServer!.closeIdleConnections();
   });
   httpServer = null;
 }

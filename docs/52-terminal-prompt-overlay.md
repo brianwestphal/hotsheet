@@ -196,6 +196,7 @@ Settings → Permissions gains a sibling sub-section beside the §47.4 MCP allow
 - **Terminal prompt overlay** master toggle (`terminal_prompt_overlay_enabled`, default `true`). When off, the detector is fully disabled.
 - **Terminal-prompt allow rules** table. Columns: `human_label`, `parser_id`, `added_at`, `added_by`, Delete.
 - No "+ Add" affordance from settings — terminal-prompt rules are **only created from the overlay's "Always allow" checkbox**. There's no usable way to hand-author a `signature` + `response_payload` pair.
+- **Class-name note (HS-8186, 2026-05-06):** the rule rows here use the **legacy** `.permission-allow-row` 4-column grid (`tool` / `pattern` / `meta` / delete). The §47.4 MCP allow-list has since moved to a `.permission-allow-rule-row` `cmd-outline-row` shell layout (HS-8021 / HS-8026); this surface stays on the legacy class until it gets the same treatment in a follow-up. The two class names are NOT a typo — `_row` is the legacy grid layout, `_rule_row` is the post-HS-8026 cmd-outline-shell variant.
 
 ## 52.8 Security model
 

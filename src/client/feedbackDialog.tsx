@@ -9,6 +9,7 @@ import {
 } from './feedbackParser.js';
 import type { NoteEntry } from './noteRenderer.js';
 import { loadTickets } from './ticketList.js';
+import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
 
 const FEEDBACK_PREFIX = 'FEEDBACK NEEDED:';
 const IMMEDIATE_PREFIX = 'IMMEDIATE FEEDBACK NEEDED:';
@@ -544,7 +545,7 @@ function showFeedbackChannelWarning(message: string): void {
     </div>
   );
   alert.querySelector('button')?.addEventListener('click', () => alert.remove());
-  setTimeout(() => alert.remove(), 6000);
+  setTimeout(() => alert.remove(), TOAST_AUTOHIDE_MS);
   const notesContainer = byIdOrNull('detail-notes');
   if (notesContainer !== null) notesContainer.prepend(alert);
 }

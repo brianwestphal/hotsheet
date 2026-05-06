@@ -3,6 +3,7 @@ import type { Duplex } from 'stream';
 import { parse as parseUrl } from 'url';
 import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
+import { z } from 'zod';
 
 import { instrumentSync } from '../diagnostics/freezeLogger.js';
 import { getProjectBySecret } from '../projects.js';
@@ -12,10 +13,18 @@ import { attach, detach, resizeTerminal, type TerminalSubscriber, writeInput } f
 
 const WS_PATH = '/api/terminal/ws';
 
-type ControlMessage =
-  | { type: 'resize'; cols: number; rows: number }
-  | { type: 'kill' }
-  | { type: 'ping' };
+// HS-8192 — schema validates inbound text-frame control messages. Pre-fix
+// the handler did `JSON.parse(text) as ControlMessage` with a raw `as` cast,
+// so a malformed payload (wrong type literal, missing cols/rows on a resize,
+// negative dims) silently fell through `handleControl`'s permissive guards.
+// Centralising the schema rejects bad shapes before they reach the dispatcher.
+const ControlMessageSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('resize'), cols: z.number().positive(), rows: z.number().positive() }),
+  z.object({ type: z.literal('kill') }),
+  z.object({ type: z.literal('ping') }),
+]);
+
+type ControlMessage = z.infer<typeof ControlMessageSchema>;
 
 /**
  * Attach a WebSocket upgrade handler to an existing http.Server for the
@@ -156,18 +165,20 @@ function handleConnection(ws: WebSocket, secret: string, dataDir: string, termin
       });
       return;
     }
-    // Text frame — parse as control JSON
-    try {
-      const msg = JSON.parse(text) as ControlMessage;
-      // HS-8160 — wrap the control-message handler. Resize frames
-      // call into node-pty's resize which can block while the kernel
-      // services SIGWINCH; long handlers tag freeze.log.
-      instrumentSync(dataDir, `ws.message:control:${msg.type}:${terminalId}`, () => {
-        handleControl(ws, secret, msg, terminalId);
-      });
-    } catch {
-      // Invalid JSON — ignore silently
-    }
+    // Text frame — parse + validate as control JSON. HS-8192: schema
+    // validation rejects bad shapes (unknown `type`, missing/negative dims)
+    // before they hit `handleControl`'s dispatch.
+    let raw: unknown;
+    try { raw = JSON.parse(text); } catch { return; /* invalid JSON — ignore silently */ }
+    const validated = ControlMessageSchema.safeParse(raw);
+    if (!validated.success) return; /* wrong shape — ignore silently */
+    const msg = validated.data;
+    // HS-8160 — wrap the control-message handler. Resize frames
+    // call into node-pty's resize which can block while the kernel
+    // services SIGWINCH; long handlers tag freeze.log.
+    instrumentSync(dataDir, `ws.message:control:${msg.type}:${terminalId}`, () => {
+      handleControl(ws, secret, msg, terminalId);
+    });
   });
 
   ws.on('close', () => { detach(secret, subscriber, terminalId); });

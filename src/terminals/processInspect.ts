@@ -338,6 +338,10 @@ export interface KillTreeResult {
 export function killProcessTreeBestEffort(
   rootPid: number,
   signal: NodeJS.Signals = 'SIGTERM',
+  // HS-8200 — optional row provider so tests can supply fixture rows without
+  // forking `ps` (which EPERMs under restricted sandboxes). Production callers
+  // omit it and the helper enumerates the live process table itself.
+  psRowsProvider?: () => readonly PsRow[],
 ): KillTreeResult {
   const empty: KillTreeResult = { attempted: 0, alreadyDead: 0, bailed: true, error: null };
   if (!Number.isFinite(rootPid) || rootPid <= 0) {
@@ -346,13 +350,22 @@ export function killProcessTreeBestEffort(
   if (process.platform === 'win32') {
     return { ...empty, error: 'windows unsupported in v1' };
   }
-  let stdout = '';
-  try {
-    stdout = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { encoding: 'utf8', timeout: 2000 });
-  } catch (err) {
-    return { ...empty, error: `ps execution failed: ${err instanceof Error ? err.message : String(err)}` };
+  let rows: readonly PsRow[];
+  if (psRowsProvider !== undefined) {
+    try {
+      rows = psRowsProvider();
+    } catch (err) {
+      return { ...empty, error: `ps row provider failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  } else {
+    let stdout = '';
+    try {
+      stdout = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { encoding: 'utf8', timeout: 2000 });
+    } catch (err) {
+      return { ...empty, error: `ps execution failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    rows = parsePsOutput(stdout);
   }
-  const rows = parsePsOutput(stdout);
   // HS-8179 — verify rootPid is actually a descendant (or self) of this
   // Node process before signalling its descendants. Defends against a
   // caller passing a synthetic / random pid that happens to collide with

@@ -215,6 +215,44 @@ describe('WebSocket roundtrip (real http.Server)', () => {
     ws.close();
   });
 
+  // HS-8192 — schema validation rejects malformed control messages before
+  // they reach `handleControl`. Pre-fix the raw `as ControlMessage` cast
+  // would propagate wrong-shape data into the dispatcher.
+  it('rejects malformed JSON without crashing (HS-8192)', async () => {
+    const { ws, next } = openWs();
+    await next((_d, isBinary) => !isBinary);
+    await new Promise<void>((resolve) => { if (ws.readyState === WebSocket.OPEN) resolve(); else ws.on('open', () => resolve()); });
+    ws.send('not-json {{{');
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    // Socket still alive after the bad message — not crashed by the parse.
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    expect(FakePty.last!.resizes).toEqual([]);
+    ws.close();
+  });
+
+  it('rejects unknown control message types without crashing (HS-8192)', async () => {
+    const { ws, next } = openWs();
+    await next((_d, isBinary) => !isBinary);
+    await new Promise<void>((resolve) => { if (ws.readyState === WebSocket.OPEN) resolve(); else ws.on('open', () => resolve()); });
+    ws.send(JSON.stringify({ type: 'wat', cols: 1, rows: 1 }));
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    expect(FakePty.last!.resizes).toEqual([]);
+    ws.close();
+  });
+
+  it('rejects resize with non-positive dims without resizing the PTY (HS-8192)', async () => {
+    const { ws, next } = openWs();
+    await next((_d, isBinary) => !isBinary);
+    await new Promise<void>((resolve) => { if (ws.readyState === WebSocket.OPEN) resolve(); else ws.on('open', () => resolve()); });
+    ws.send(JSON.stringify({ type: 'resize', cols: 0, rows: 40 }));
+    ws.send(JSON.stringify({ type: 'resize', cols: 80, rows: -5 }));
+    ws.send(JSON.stringify({ type: 'resize' })); // missing fields
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(FakePty.last!.resizes).toEqual([]);
+    ws.close();
+  });
+
   // HS-6799 — the WS URL carries the client's post-fit xterm dims. On first
   // attach to an eager-spawned PTY the server must resize the PTY to those
   // dims, clear the scrollback, and send Ctrl-L to the PTY so the shell

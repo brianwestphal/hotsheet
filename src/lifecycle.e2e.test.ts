@@ -13,7 +13,7 @@
  *   3. Double-SIGINT escalation — assert exit code 1 on second signal.
  *   4. Concurrent SIGINT + /api/shutdown — assert idempotent single exit.
  */
-import { type ChildProcess,spawn } from 'child_process';
+import { type ChildProcess,execFileSync,spawn } from 'child_process';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -21,6 +21,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const REPO_ROOT = join(import.meta.dirname, '..');
 const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
+
+/** HS-8202 — see `cli.test.ts` for rationale. Restricted sandboxes block
+ *  tsx's IPC mkfifo, so all four cases below would EPERM and time out
+ *  (4 × 30 s = 120 s of red per full run). Probe once and skip the
+ *  describe cleanly when the env can't fork tsx. */
+function probeCanSpawnTsxChild(): boolean {
+  try {
+    execFileSync('npx', ['tsx', '--help'], { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
+    return true;
+  } catch { return false; }
+}
+const canSpawnTsxChild = probeCanSpawnTsxChild();
 
 interface SpawnedHotSheet {
   proc: ChildProcess;
@@ -172,7 +184,7 @@ async function postJson(url: string, body: unknown, secret?: string): Promise<Re
   return fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
 }
 
-describe('graceful shutdown e2e (HS-7934)', () => {
+describe.skipIf(!canSpawnTsxChild)('graceful shutdown e2e (HS-7934) (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
   it('round-trip: writes rows, POST /api/shutdown, child exits 0, rows survive into the next spawn', async () => {
     const child = spawnHotSheet();
     await child.ready;
