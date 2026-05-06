@@ -43,6 +43,7 @@
     "lint": "eslint src/",
     "clean": "rm -rf dist node_modules/.cache",
     "release": "bash scripts/release.sh",
+    "release:beta": "bash scripts/release.sh --beta",
     "prepublishOnly": "npm run build",
     "dev:server": "npm run build:client && npm run build:plugins && tsx --tsconfig tsconfig.json src/cli.ts --no-open --strict-port",
     "tauri": "tauri",
