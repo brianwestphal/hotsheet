@@ -10,7 +10,7 @@
  * docs/52-terminal-prompt-overlay.md §52.1 for the rationale (free-text
  * replies are too high-risk to auto-respond).
  */
-import { buildNumberedPayload, buildYesNoPayload, type MatchResult } from './parsers.js';
+import { buildNumberedPayload, buildYesNoPayload, type MatchResult, type NumberedMatch } from './parsers.js';
 
 export interface TerminalPromptAllowRule {
   /** Stable id (caller-generated, e.g. ULID). */
@@ -41,6 +41,15 @@ export interface TerminalPromptAllowRule {
    * still match on `question_hash` only.
    */
   choice_shape?: string;
+  /**
+   * HS-8210 (§58.4) — when set, the rule matches any `claude-numbered` match
+   * whose `match.channel === match_channel`, regardless of question hash /
+   * preview / choice shape / choice label drift. Channel-keyed rules carry
+   * an EMPTY `question_hash` (the Tier 0 lookup ignores the hash); non-
+   * channel rules still require a non-empty hash. The auto-allow gate
+   * evaluates Tier 0 (channel) BEFORE any of Tiers 1–4.
+   */
+  match_channel?: string;
   /** ISO timestamp when the rule was created (display only). */
   created_at: string;
 }
@@ -75,9 +84,20 @@ export function parseAllowRules(raw: unknown): TerminalPromptAllowRule[] {
     const obj = item as Partial<TerminalPromptAllowRule>;
     if (typeof obj.id !== 'string' || obj.id === '') continue;
     if (typeof obj.parser_id !== 'string' || obj.parser_id === '') continue;
-    if (typeof obj.question_hash !== 'string' || obj.question_hash === '') continue;
     if (typeof obj.choice_index !== 'number' || !Number.isFinite(obj.choice_index)) continue;
-    const dupKey = `${obj.parser_id}\x00${obj.question_hash}\x00${obj.choice_index}`;
+    // HS-8210 (§58.4) — channel-keyed rules carry an empty `question_hash`
+    // because Tier 0 ignores the hash. Empty `question_hash` is allowed only
+    // when `match_channel` is a non-empty string; non-channel rules still
+    // require a non-empty hash.
+    const matchChannel = typeof obj.match_channel === 'string' && obj.match_channel !== ''
+      ? obj.match_channel
+      : undefined;
+    if (typeof obj.question_hash !== 'string') continue;
+    if (obj.question_hash === '' && matchChannel === undefined) continue;
+    // HS-8210 — extended dedupe key includes `match_channel || ''` so a
+    // channel-keyed rule and a hash-keyed rule for the same (parser, hash,
+    // choice) coexist.
+    const dupKey = `${obj.parser_id}\x00${obj.question_hash}\x00${obj.choice_index}\x00${matchChannel ?? ''}`;
     if (seen.has(dupKey)) continue;
     seen.add(dupKey);
     const created_at = typeof obj.created_at === 'string' ? obj.created_at : '';
@@ -91,6 +111,7 @@ export function parseAllowRules(raw: unknown): TerminalPromptAllowRule[] {
     if (typeof obj.question_preview === 'string') rule.question_preview = obj.question_preview;
     if (typeof obj.choice_label === 'string') rule.choice_label = obj.choice_label;
     if (typeof obj.choice_shape === 'string' && obj.choice_shape !== '') rule.choice_shape = obj.choice_shape;
+    if (matchChannel !== undefined) rule.match_channel = matchChannel;
     out.push(rule);
   }
   return out;
@@ -151,9 +172,33 @@ export function findMatchingAllowRule(
   const parserId = parts[0];
   const questionHash = parts[1];
   const matchShape = buildChoiceShape(match);
+  // HS-8210 (§58.4.2) — Tier 0 — channel-keyed lookup. Only fires for
+  // claude-numbered matches that carry a `channel` field. When a rule's
+  // `match_channel` equals the live match.channel, that rule wins
+  // regardless of question hash / preview / choice shape / choice label
+  // drift across Claude versions. Bounds-checks `choice_index` against
+  // `match.choices.length` so a rule recorded against a 3-option prompt
+  // can't auto-respond with an out-of-range index on a now-2-option
+  // re-render. Runs BEFORE Tiers 1–4 — the channel-keyed rule is the
+  // cleanest user-intent signal ("I trust this channel") and is invariant
+  // across TUI / wording drift.
+  if (match.shape === 'numbered' && match.channel !== undefined) {
+    for (const rule of rules) {
+      if (rule.parser_id !== parserId) continue;
+      if (rule.match_channel === undefined) continue;
+      if (rule.match_channel !== match.channel) continue;
+      if (rule.choice_index < 0 || rule.choice_index >= match.choices.length) continue;
+      return rule;
+    }
+  }
   // Tier 1 — primary `(parser_id, question_hash)` lookup.
   for (const rule of rules) {
     if (rule.parser_id !== parserId) continue;
+    // HS-8210 — skip channel-keyed rules in Tiers 1–4 so they only fire
+    // via Tier 0. Channel rules carry empty question_hash (would never
+    // match Tier 1 anyway) but DO carry a question_preview, which could
+    // accidentally trip Tier 3 on an unrelated prompt.
+    if (rule.match_channel !== undefined) continue;
     if (rule.question_hash !== questionHash) continue;
     return rule;
   }
@@ -163,6 +208,7 @@ export function findMatchingAllowRule(
   if (matchShape !== '') {
     for (const rule of rules) {
       if (rule.parser_id !== parserId) continue;
+      if (rule.match_channel !== undefined) continue;
       if (rule.choice_shape === undefined || rule.choice_shape === '') continue;
       if (rule.choice_shape !== matchShape) continue;
       return rule;
@@ -175,6 +221,7 @@ export function findMatchingAllowRule(
   if (liveCapture !== '') {
     for (const rule of rules) {
       if (rule.parser_id !== parserId) continue;
+      if (rule.match_channel !== undefined) continue;
       if (rule.choice_shape !== undefined && rule.choice_shape !== '') continue;
       const previewRaw = rule.question_preview;
       if (previewRaw === undefined) continue;
@@ -198,6 +245,7 @@ export function findMatchingAllowRule(
   if (match.shape === 'numbered') {
     for (const rule of rules) {
       if (rule.parser_id !== parserId) continue;
+      if (rule.match_channel !== undefined) continue;
       if (rule.choice_shape !== undefined && rule.choice_shape !== '') continue;
       const ruleLabel = rule.choice_label;
       if (ruleLabel === undefined) continue;
@@ -282,6 +330,37 @@ export function buildAllowRule(
     choice_index: choiceIndex,
     choice_label: choiceLabel,
     choice_shape: choiceShape !== '' ? choiceShape : undefined,
+    created_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * HS-8210 (§58.5.2) — pure: build a channel-keyed allow rule for a
+ * (numbered match with channel, chosenIndex, chosenLabel) triple. The
+ * rule keys off the channel name + parser id alone — `question_hash` is
+ * intentionally empty (Tier 0 ignores it). The Phase C overlay flow calls
+ * this when the user clicks a choice on a channel-bearing prompt and
+ * hasn't ticked "Don't remember".
+ *
+ * Throws when called without a captured channel — the caller should have
+ * gated on `match.channel !== undefined` already.
+ */
+export function buildChannelAllowRule(
+  match: NumberedMatch,
+  choiceIndex: number,
+  choiceLabel: string,
+): TerminalPromptAllowRule {
+  if (match.channel === undefined) {
+    throw new Error('buildChannelAllowRule called without a channel — caller bug');
+  }
+  return {
+    id: newRuleId(),
+    parser_id: 'claude-numbered',
+    question_hash: '',
+    question_preview: match.question.slice(0, 120),
+    choice_index: choiceIndex,
+    choice_label: choiceLabel,
+    match_channel: match.channel,
     created_at: new Date().toISOString(),
   };
 }

@@ -762,6 +762,114 @@ describe('claudeNumberedParser (HS-8071) — Claude input-box stripped from ques
   });
 });
 
+// HS-8210 Phase A (§58.3) — channel-name extraction from claude-numbered
+// prompts. Pure parser test; no allow-rule or matcher coverage here (Phase B).
+describe('claudeNumberedParser (HS-8210) — channel extraction', () => {
+  it('captures the channel name from the production dev-channels prompt', () => {
+    const rows = [
+      '  WARNING: Loading development channels',
+      '',
+      '  --dangerously-load-development-channels is for local channel development',
+      '  only.',
+      '',
+      '  Channels: server:hotsheet-channel',
+      '',
+      '  ❯ 1. I am using this for local development',
+      '    2. Exit',
+      '',
+      '  Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.channel).toBe('server:hotsheet-channel');
+  });
+
+  it('leaves channel undefined for a non-channel-bearing numbered prompt', () => {
+    const rows = [
+      'Pick one',
+      '',
+      '> 1. Foo',
+      '  2. Bar',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.channel).toBeUndefined();
+  });
+
+  it('does NOT capture a `Channels: foo` substring that appears mid-line (must be at line start)', () => {
+    const rows = [
+      'Some preamble mentioning Channels: server:wrong inline',
+      '',
+      '> 1. Yes',
+      '  2. No',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.channel).toBeUndefined();
+  });
+
+  it('captures cleanly when the channel line has trailing whitespace', () => {
+    const rows = [
+      'Loading development channels',
+      '',
+      'Channels: server:hotsheet-channel   ',
+      '',
+      '> 1. Yes',
+      '  2. Exit',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    if (result?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(result.channel).toBe('server:hotsheet-channel');
+  });
+
+  it('captures the verbatim `server:` prefix so distinct prefixes produce distinct values', () => {
+    const rowsServer = [
+      'Loading',
+      '',
+      'Channels: server:foo',
+      '',
+      '> 1. Yes',
+      '  2. No',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const rowsClient = [
+      'Loading',
+      '',
+      'Channels: client:foo',
+      '',
+      '> 1. Yes',
+      '  2. No',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const a = claudeNumberedParser.match(rowsServer);
+    const b = claudeNumberedParser.match(rowsClient);
+    if (a?.shape !== 'numbered' || b?.shape !== 'numbered') throw new Error('expected numbered');
+    expect(a.channel).toBe('server:foo');
+    expect(b.channel).toBe('client:foo');
+    expect(a.channel).not.toBe(b.channel);
+  });
+
+  it('yesno + generic shapes never carry a channel field (defensive shape test)', () => {
+    const yesnoMatch = yesNoParser.match(['Channels: server:foo — proceed? [y/n]']);
+    expect(yesnoMatch).not.toBeNull();
+    // Defensive: the field doesn't exist on YesNoMatch at the type level,
+    // but at runtime confirm there's no spurious property.
+    expect((yesnoMatch as unknown as { channel?: string }).channel).toBeUndefined();
+
+    const genericMatch = genericParser.match(['Channels: server:foo. What now?']);
+    expect(genericMatch).not.toBeNull();
+    expect((genericMatch as unknown as { channel?: string }).channel).toBeUndefined();
+  });
+});
+
 describe('claudeNumberedParser (HS-7971) — negative cases', () => {
   it('returns null when the footer is missing', () => {
     const rows = [

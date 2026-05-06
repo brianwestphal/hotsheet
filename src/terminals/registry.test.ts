@@ -3,8 +3,11 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { TerminalPromptAllowRule } from '../shared/terminalPrompt/allowRules.js';
+import type { NumberedMatch } from '../shared/terminalPrompt/parsers.js';
 import {
   attach,
+  buildAutoAllowAuditStrings,
   clearBellPending,
   destroyAllTerminals,
   destroyTerminal,
@@ -1123,5 +1126,55 @@ describe('scrubParentEnv / shouldStripEnvKey (HS-7527)', () => {
     expect(input.TSX_TSCONFIG_PATH).toBe('tsconfig.json'); // original unchanged
     out.NEW_KEY = 'value';
     expect('NEW_KEY' in input).toBe(false);
+  });
+
+  // HS-8210 Phase D (§58.8) — `buildAutoAllowAuditStrings` produces the
+  // command-log summary + detail strings. Channel-keyed rules append
+  // `(channel <match_channel>)` to the summary and a `Channel:` line to
+  // the detail; non-channel rules keep the legacy `(rule <id>)` shape.
+  describe('buildAutoAllowAuditStrings (HS-8210 Phase D)', () => {
+    const numberedMatch: NumberedMatch = {
+      parserId: 'claude-numbered',
+      shape: 'numbered',
+      question: 'Loading development channels can pose a security risk',
+      questionLines: ['Loading development channels can pose a security risk'],
+      choices: [
+        { index: 0, label: 'I am using this for local development', highlighted: true },
+        { index: 1, label: 'Exit', highlighted: false },
+      ],
+      signature: 'claude-numbered:abcd1234:0',
+    };
+
+    it('appends `(channel <match_channel>)` to the summary for channel-keyed rules', () => {
+      const channelRule: TerminalPromptAllowRule = {
+        id: 'tp_channel',
+        parser_id: 'claude-numbered',
+        question_hash: '',
+        choice_index: 0,
+        choice_label: 'I am using this for local development',
+        match_channel: 'server:hotsheet-channel',
+        created_at: '2026-05-06T00:00:00Z',
+      };
+      const { summary, detail } = buildAutoAllowAuditStrings(numberedMatch, channelRule);
+      expect(summary).toContain('(channel server:hotsheet-channel)');
+      expect(summary).not.toContain('(rule tp_channel)');
+      expect(summary).toContain('Auto-allowed');
+      expect(detail).toContain('Channel: server:hotsheet-channel');
+    });
+
+    it('falls back to `(rule <id>)` summary suffix for non-channel rules (back-compat)', () => {
+      const hashRule: TerminalPromptAllowRule = {
+        id: 'tp_hash',
+        parser_id: 'claude-numbered',
+        question_hash: 'abcd1234',
+        choice_index: 0,
+        choice_label: 'I am using this for local development',
+        created_at: '2026-05-06T00:00:00Z',
+      };
+      const { summary, detail } = buildAutoAllowAuditStrings(numberedMatch, hashRule);
+      expect(summary).toContain('(rule tp_hash)');
+      expect(summary).not.toContain('(channel ');
+      expect(detail).not.toContain('Channel:');
+    });
   });
 });

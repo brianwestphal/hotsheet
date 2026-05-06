@@ -49,6 +49,10 @@ interface BaseMatch {
 export interface NumberedMatch extends BaseMatch {
   shape: 'numbered';
   choices: ChoiceOption[];
+  /** HS-8210 — when the question region contains a `Channels: <value>` line,
+   *  the captured value (e.g. `server:hotsheet-channel`). Drives the channel-
+   *  keyed allow-rule path in §58. Absent for non-channel prompts. */
+  channel?: string;
 }
 
 export interface YesNoMatch extends BaseMatch {
@@ -286,6 +290,18 @@ export const MAX_QUESTION_CONTEXT_ROWS = 15;
 const CURSOR_CHARS: ReadonlySet<string> = new Set(['>', '❯', '▶', '►']);
 const NUMBERED_OPTION_RX = /^(\s*)([>❯▶►])?\s*(\d+)\.\s+(.+?)\s*$/;
 
+/**
+ * HS-8210 (§58.3) — extract the `Channels: <value>` line from a Claude
+ * numbered-prompt question region. Anchored at line start (`m` flag) with
+ * optional leading indent (Claude's WARNING-shape prompt indents body
+ * paragraphs by two spaces), one literal whitespace after the colon, then a
+ * single non-whitespace token capturing the `server:` prefix verbatim so
+ * distinct prefixes produce distinct rules. Trailing whitespace allowed;
+ * nothing else allowed after the value (rejects mid-paragraph false
+ * positives like "...mentions Channels: server:foo inline").
+ */
+export const CHANNEL_LINE_RX = /^[ \t]*Channels:\s+(\S+)\s*$/m;
+
 export const claudeNumberedParser: PromptParser = {
   id: 'claude-numbered',
   match(rows) {
@@ -385,6 +401,12 @@ export const claudeNumberedParser: PromptParser = {
     const defaultIdx = highlightedIndex >= 0 ? highlightedIndex : 0;
     const signature = `claude-numbered:${hashQuestion(question)}:${defaultIdx}`;
 
+    // HS-8210 (§58.3) — extract the channel name from a `Channels: <value>`
+    // line in the question region. Drives the Tier 0 channel-keyed allow-
+    // rule lookup. Absent for non-channel-bearing prompts.
+    const channelMatch = CHANNEL_LINE_RX.exec(questionLines.join('\n'));
+    const channel = channelMatch !== null ? channelMatch[1] : undefined;
+
     return {
       parserId: 'claude-numbered',
       shape: 'numbered',
@@ -392,6 +414,7 @@ export const claudeNumberedParser: PromptParser = {
       questionLines,
       choices,
       signature,
+      ...(channel !== undefined ? { channel } : {}),
     };
   },
 };

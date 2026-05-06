@@ -181,3 +181,52 @@ describe('terminalPromptAllowListUI inspector dialog (HS-8072)', () => {
     expect(q.textContent).toContain('question text not stored');
   });
 });
+
+// HS-8210 Phase D (§58.7) — channel-keyed rules surface `Channel:
+// <match_channel>` in the question column instead of the question
+// preview, so the user sees what the rule actually keys off (Tier 0
+// ignores question_hash / question_preview).
+describe('terminalPromptAllowListUI channel-rule label (HS-8210)', () => {
+  const CHANNEL_RULE: TerminalPromptAllowRule = {
+    id: 'tp_channel_d_test',
+    parser_id: 'claude-numbered',
+    question_hash: '',
+    question_preview: 'WARNING: Loading development channels',
+    choice_index: 0,
+    choice_label: 'I am using this for local development',
+    match_channel: 'server:hotsheet-channel',
+    created_at: '2026-05-06T07:00:00.000Z',
+  };
+
+  it('renders `Channel: <match_channel>` in the question column for channel-keyed rules', async () => {
+    loadAllowRulesMock.mockResolvedValueOnce([CHANNEL_RULE]);
+    await loadAndRenderTerminalPromptAllowList();
+    const q = document.querySelector<HTMLElement>('.tpal-rule-question')!;
+    expect(q.textContent).toBe('Channel: server:hotsheet-channel');
+    expect(q.getAttribute('title')).toBe('Channel: server:hotsheet-channel');
+  });
+
+  it('keeps showing the question preview for non-channel rules (back-compat)', async () => {
+    loadAllowRulesMock.mockResolvedValueOnce([FIXTURE_RULE]);
+    await loadAndRenderTerminalPromptAllowList();
+    const q = document.querySelector<HTMLElement>('.tpal-rule-question')!;
+    expect(q.textContent).toBe(FIXTURE_RULE.question_preview);
+  });
+
+  it('inspector dialog labels the field "Channel" for channel-keyed rules', async () => {
+    loadAllowRulesMock.mockResolvedValueOnce([CHANNEL_RULE]);
+    await loadAndRenderTerminalPromptAllowList();
+    document.querySelector<HTMLElement>('.tpal-rule-row')!.click();
+    const overlay = document.querySelector<HTMLElement>('.tpal-inspector-overlay')!;
+    expect(overlay).not.toBeNull();
+    // The label for the question/channel field reads "Channel" instead of
+    // "Question" for channel rules.
+    const labels = Array.from(overlay.querySelectorAll('label')).map(l => l.textContent);
+    expect(labels).toContain('Channel');
+    expect(labels).not.toContain('Question');
+    // The channel-name pre block carries the bare channel value (no
+    // `Channel: ` prefix — that lives in the column-row label).
+    const pre = overlay.querySelector<HTMLPreElement>('.tpal-inspector-question')!;
+    expect(pre.textContent).toBe('server:hotsheet-channel');
+  });
+});

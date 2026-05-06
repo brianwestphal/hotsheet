@@ -2,7 +2,7 @@
 
 HS-8210 — extend the §52 terminal-prompt always-allow path so the Claude Code `--dangerously-load-development-channels` startup prompt auto-approves on every subsequent launch once the user has confirmed it once. Today the prompt re-fires every `claude` startup and the user has to click Allow → "Always allow this answer" → choice-1 every time, despite §52.4's existing always-allow rules being in place — the rules drift across Claude version bumps (§52.4's HS-8071 four-tier matcher is the residue of repeated "the popup is still leaking through" iterations).
 
-> **Status:** Design only. Implementation tickets filed alongside this doc (see §58.10).
+> **Status:** Shipped (HS-8211 / HS-8212 / HS-8213 / HS-8214 all landed 2026-05-06).
 
 ## 58.1 Problem statement
 

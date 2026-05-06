@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildAllowRule,
+  buildChannelAllowRule,
   buildChoiceShape,
   findMatchingAllowRule,
   parseAllowRules,
@@ -635,5 +636,264 @@ describe('payloadForAutoAllow (HS-8034)', () => {
   it('returns null when the rule choice_index is negative', () => {
     const negativeRule: TerminalPromptAllowRule = { ...baseRule, choice_index: -1 };
     expect(payloadForAutoAllow(numberedMatch, negativeRule)).toBe(null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HS-8210 Phase B (§58.4) — channel-keyed allow rules + Tier 0 matcher.
+// ---------------------------------------------------------------------------
+
+describe('HS-8210 Phase B — channel-keyed allow rules', () => {
+  const channelMatch: NumberedMatch = {
+    parserId: 'claude-numbered',
+    shape: 'numbered',
+    question: 'Loading development channels can pose a security risk',
+    questionLines: [
+      'Loading development channels',
+      '',
+      'Channels: server:hotsheet-channel',
+    ],
+    choices: [
+      { index: 0, label: 'I am using this for local development', highlighted: true },
+      { index: 1, label: 'Exit', highlighted: false },
+    ],
+    signature: 'claude-numbered:abcd1234:0',
+    channel: 'server:hotsheet-channel',
+  };
+
+  const otherChannelMatch: NumberedMatch = {
+    ...channelMatch,
+    questionLines: ['Channels: server:other-channel'],
+    channel: 'server:other-channel',
+  };
+
+  const channelRule: TerminalPromptAllowRule = {
+    id: 'tp_channel_1',
+    parser_id: 'claude-numbered',
+    question_hash: '',
+    question_preview: 'Loading development channels can pose a security risk',
+    choice_index: 0,
+    choice_label: 'I am using this for local development',
+    match_channel: 'server:hotsheet-channel',
+    created_at: '2026-05-06T00:00:00Z',
+  };
+
+  describe('Tier 0 — channel-keyed lookup', () => {
+    it('hits when the rule match_channel equals match.channel', () => {
+      const result = findMatchingAllowRule(channelMatch, [channelRule]);
+      expect(result).toBe(channelRule);
+    });
+
+    it('misses when the channel name differs and falls through to Tier 1+', () => {
+      const otherRule: TerminalPromptAllowRule = {
+        id: 'tp_other',
+        parser_id: 'claude-numbered',
+        question_hash: 'abcd1234',
+        choice_index: 0,
+        created_at: '2026-05-06T00:00:00Z',
+      };
+      const result = findMatchingAllowRule(otherChannelMatch, [channelRule, otherRule]);
+      // Channel rule misses (different channel); falls through to Tier 1
+      // hash match on the legacy hash-keyed rule.
+      expect(result).toBe(otherRule);
+    });
+
+    it('Tier 0 wins when both a channel rule and a hash rule could match', () => {
+      const hashRule: TerminalPromptAllowRule = {
+        id: 'tp_hash',
+        parser_id: 'claude-numbered',
+        question_hash: 'abcd1234',
+        choice_index: 1,
+        created_at: '2026-05-06T00:00:00Z',
+      };
+      // List the hash rule first so insertion order doesn't accidentally
+      // dictate the result.
+      const result = findMatchingAllowRule(channelMatch, [hashRule, channelRule]);
+      expect(result).toBe(channelRule);
+    });
+
+    it('does NOT match a yesno match — Tier 0 is numbered-only', () => {
+      // YesNoMatch has no `channel` field at the type level, but at runtime
+      // a defensive bag-shaped object would still skip Tier 0.
+      const yesnoMatchAny = { ...yesNoMatch, channel: 'server:hotsheet-channel' } as unknown as MatchResult;
+      const result = findMatchingAllowRule(yesnoMatchAny, [channelRule]);
+      expect(result).toBeNull();
+    });
+
+    it('skips when choice_index is out of range for the live shape (bounds check)', () => {
+      const overflowRule: TerminalPromptAllowRule = { ...channelRule, choice_index: 2 };
+      // channelMatch has 2 choices (indexes 0 and 1); choice_index 2 is OOR.
+      const result = findMatchingAllowRule(channelMatch, [overflowRule]);
+      expect(result).toBeNull();
+    });
+
+    it('skips when choice_index is negative (defensive)', () => {
+      const negRule: TerminalPromptAllowRule = { ...channelRule, choice_index: -1 };
+      const result = findMatchingAllowRule(channelMatch, [negRule]);
+      expect(result).toBeNull();
+    });
+
+    it('does NOT match when match.channel is undefined (non-channel-bearing prompt)', () => {
+      const result = findMatchingAllowRule(numberedMatch, [channelRule]);
+      // numberedMatch has no `channel` field, so Tier 0 is skipped. Tier 1
+      // sees a rule with empty hash that doesn't match `abcd1234`. No match.
+      expect(result).toBeNull();
+    });
+
+    it('channel-keyed rules are skipped by Tier 1–4 — only fire via Tier 0', () => {
+      // A non-channel match whose preview happens to overlap a channel
+      // rule's preview must NOT trigger the channel rule via Tier 3.
+      const nonChannelMatch: NumberedMatch = {
+        ...numberedMatch,
+        questionLines: ['Loading development channels can pose a security risk'],
+      };
+      const result = findMatchingAllowRule(nonChannelMatch, [channelRule]);
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('buildChannelAllowRule', () => {
+    it('produces a valid rule with empty question_hash + populated match_channel', () => {
+      const rule = buildChannelAllowRule(channelMatch, 0, 'I am using this for local development');
+      expect(rule.parser_id).toBe('claude-numbered');
+      expect(rule.question_hash).toBe('');
+      expect(rule.match_channel).toBe('server:hotsheet-channel');
+      expect(rule.choice_index).toBe(0);
+      expect(rule.choice_label).toBe('I am using this for local development');
+      expect(rule.question_preview).toBe('Loading development channels can pose a security risk');
+      expect(rule.id).toMatch(/^tp_/);
+      expect(rule.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it('throws when called without a captured channel', () => {
+      const noChannel: NumberedMatch = { ...numberedMatch };
+      expect(() => buildChannelAllowRule(noChannel, 0, 'foo')).toThrow(/without a channel/);
+    });
+  });
+
+  describe('parseAllowRules — channel-keyed schema', () => {
+    it('accepts a channel-keyed rule with empty question_hash', () => {
+      const arr = [{
+        id: 'r1',
+        parser_id: 'claude-numbered',
+        question_hash: '',
+        choice_index: 0,
+        match_channel: 'server:hotsheet-channel',
+        created_at: '2026-05-06T00:00:00Z',
+      }];
+      const parsed = parseAllowRules(arr);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].match_channel).toBe('server:hotsheet-channel');
+      expect(parsed[0].question_hash).toBe('');
+    });
+
+    it('still rejects a non-channel rule with empty question_hash (back-compat)', () => {
+      const arr = [{
+        id: 'r1',
+        parser_id: 'claude-numbered',
+        question_hash: '',
+        choice_index: 0,
+        created_at: '2026-05-06T00:00:00Z',
+      }];
+      expect(parseAllowRules(arr)).toHaveLength(0);
+    });
+
+    it('drops rules whose match_channel is the wrong type', () => {
+      const arr = [{
+        id: 'r1',
+        parser_id: 'claude-numbered',
+        question_hash: '',
+        choice_index: 0,
+        match_channel: 42,
+        created_at: '2026-05-06T00:00:00Z',
+      }];
+      // match_channel isn't a string → not retained → empty hash gate kicks in.
+      expect(parseAllowRules(arr)).toHaveLength(0);
+    });
+
+    it('dedupe: a channel rule and a hash rule for the same (parser, choice_index) coexist', () => {
+      const arr = [
+        {
+          id: 'r_chan',
+          parser_id: 'claude-numbered',
+          question_hash: '',
+          choice_index: 0,
+          match_channel: 'server:hotsheet-channel',
+          created_at: '2026-05-06T00:00:00Z',
+        },
+        {
+          id: 'r_hash',
+          parser_id: 'claude-numbered',
+          question_hash: 'abcd1234',
+          choice_index: 0,
+          created_at: '2026-05-06T00:00:00Z',
+        },
+      ];
+      const parsed = parseAllowRules(arr);
+      expect(parsed).toHaveLength(2);
+      expect(parsed.map(r => r.id).sort()).toEqual(['r_chan', 'r_hash']);
+    });
+
+    it('dedupe: two channel rules with different channels coexist', () => {
+      const arr = [
+        {
+          id: 'r_a',
+          parser_id: 'claude-numbered',
+          question_hash: '',
+          choice_index: 0,
+          match_channel: 'server:foo',
+          created_at: '2026-05-06T00:00:00Z',
+        },
+        {
+          id: 'r_b',
+          parser_id: 'claude-numbered',
+          question_hash: '',
+          choice_index: 0,
+          match_channel: 'server:bar',
+          created_at: '2026-05-06T00:00:00Z',
+        },
+      ];
+      expect(parseAllowRules(arr)).toHaveLength(2);
+    });
+
+    it('dedupe: two channel rules for the SAME channel collapse to the first', () => {
+      const arr = [
+        {
+          id: 'r_first',
+          parser_id: 'claude-numbered',
+          question_hash: '',
+          choice_index: 0,
+          match_channel: 'server:foo',
+          created_at: '2026-05-06T00:00:00Z',
+        },
+        {
+          id: 'r_dup',
+          parser_id: 'claude-numbered',
+          question_hash: '',
+          choice_index: 0,
+          match_channel: 'server:foo',
+          created_at: '2026-05-06T01:00:00Z',
+        },
+      ];
+      const parsed = parseAllowRules(arr);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].id).toBe('r_first');
+    });
+  });
+
+  describe('payloadForAutoAllow — channel-keyed rules', () => {
+    it('produces the same payload as an equivalent hash-keyed rule', () => {
+      const channelPayload = payloadForAutoAllow(channelMatch, channelRule);
+      const hashRule: TerminalPromptAllowRule = {
+        id: 'tp_hash',
+        parser_id: 'claude-numbered',
+        question_hash: 'abcd1234',
+        choice_index: 0,
+        created_at: '2026-05-06T00:00:00Z',
+      };
+      const hashPayload = payloadForAutoAllow(channelMatch, hashRule);
+      expect(channelPayload).toBe(hashPayload);
+      expect(channelPayload).toBe('\r');
+    });
   });
 });

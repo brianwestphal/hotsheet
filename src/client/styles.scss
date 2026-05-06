@@ -9426,6 +9426,39 @@ label.detail-details-label {
   }
 }
 
+// HS-8210 (§58.6) — channel-rule auto-approval footer line. Replaces the
+// always-allow checkbox for prompts with a captured `Channels: <value>`
+// line. Muted text on the left ("This channel will be auto-approved next
+// time."), opt-out checkbox on the right ("Don't remember"). Smaller font
+// + muted colour so it reads as informational rather than an action the
+// user has to take.
+.terminal-prompt-overlay-channel-rule-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: default;
+  user-select: none;
+  .terminal-prompt-overlay-channel-rule-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .terminal-prompt-overlay-channel-rule-optout {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    &:hover {
+      color: var(--text-primary);
+    }
+    input[type="checkbox"] {
+      margin: 0;
+    }
+  }
+}
+
 // HS-7986 Phase 2 — yes/no overlay variant. Two side-by-side buttons; reuse
 // the choice-button styling but lay out horizontally.
 .terminal-prompt-overlay-yesno {

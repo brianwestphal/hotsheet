@@ -340,3 +340,89 @@ describe('terminal-prompt overlay Minimize / No-response-needed footer (HS-8067)
     expect(document.querySelector('.terminal-prompt-overlay')).toBeNull();
   });
 });
+
+// HS-8210 Phase C (§58.6) — channel-rule footer + extras passthrough on
+// numbered overlays. Pre-fix the always-allow checkbox row was the only
+// allow-list affordance; for prompts with a captured channel we now hide
+// that checkbox and surface a muted "auto-approved next time" footer with
+// a `Don't remember` opt-out instead.
+describe('terminal-prompt overlay channel footer (HS-8210)', () => {
+  function makeChannelMatch(over: Partial<NumberedMatch> = {}): NumberedMatch {
+    return {
+      ...makeMatch(),
+      channel: 'server:hotsheet-channel',
+      ...over,
+    };
+  }
+
+  it('renders the channel footer line for prompts with match.channel', () => {
+    openTerminalPromptOverlay({
+      match: makeChannelMatch(),
+      onSend: () => true,
+      onClose: () => { /* no-op */ },
+      onAddAllowRule: () => { /* no-op */ },
+    });
+    const overlay = document.querySelector('.terminal-prompt-overlay');
+    expect(overlay).not.toBeNull();
+    const channelRow = overlay?.querySelector('.terminal-prompt-overlay-channel-rule-row');
+    expect(channelRow).not.toBeNull();
+    expect(channelRow?.textContent ?? '').toContain('auto-approved next time');
+    // Always-allow checkbox is hidden when a channel is captured.
+    expect(overlay?.querySelector('.terminal-prompt-overlay-allow-rule-row')).toBeNull();
+  });
+
+  it('hides the channel footer + shows the always-allow checkbox for non-channel numbered prompts', () => {
+    openTerminalPromptOverlay({
+      match: makeMatch(), // no channel
+      onSend: () => true,
+      onClose: () => { /* no-op */ },
+      onAddAllowRule: () => { /* no-op */ },
+    });
+    const overlay = document.querySelector('.terminal-prompt-overlay');
+    expect(overlay?.querySelector('.terminal-prompt-overlay-channel-rule-row')).toBeNull();
+    expect(overlay?.querySelector('.terminal-prompt-overlay-allow-rule-row')).not.toBeNull();
+  });
+
+  it('passes choiceIndex + choiceLabel + dontRememberChannel:false to onSend when the user clicks a choice without ticking opt-out', () => {
+    let lastExtras: { choiceIndex?: number; choiceLabel?: string; dontRememberChannel?: boolean } | undefined;
+    openTerminalPromptOverlay({
+      match: makeChannelMatch(),
+      onSend: (_payload, extras) => { lastExtras = extras; return true; },
+      onClose: () => { /* no-op */ },
+    });
+    const firstChoice = document.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice');
+    firstChoice?.click();
+    expect(lastExtras).toEqual({
+      choiceIndex: 0,
+      choiceLabel: 'I am using this for local development',
+      dontRememberChannel: false,
+    });
+  });
+
+  it('passes dontRememberChannel:true to onSend when the user ticks the opt-out checkbox before clicking', () => {
+    let lastExtras: { choiceIndex?: number; choiceLabel?: string; dontRememberChannel?: boolean } | undefined;
+    openTerminalPromptOverlay({
+      match: makeChannelMatch(),
+      onSend: (_payload, extras) => { lastExtras = extras; return true; },
+      onClose: () => { /* no-op */ },
+    });
+    const cb = document.querySelector<HTMLInputElement>('.terminal-prompt-overlay-channel-dont-remember');
+    expect(cb).not.toBeNull();
+    if (cb !== null) cb.checked = true;
+    document.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice')?.click();
+    expect(lastExtras?.dontRememberChannel).toBe(true);
+  });
+
+  it('passes choiceIndex + choiceLabel without dontRememberChannel for non-channel numbered prompts', () => {
+    let lastExtras: { choiceIndex?: number; choiceLabel?: string; dontRememberChannel?: boolean } | undefined;
+    openTerminalPromptOverlay({
+      match: makeMatch(),
+      onSend: (_payload, extras) => { lastExtras = extras; return true; },
+      onClose: () => { /* no-op */ },
+    });
+    document.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice')?.click();
+    expect(lastExtras?.choiceIndex).toBe(0);
+    expect(lastExtras?.choiceLabel).toBe('I am using this for local development');
+    expect(lastExtras?.dontRememberChannel).toBeUndefined();
+  });
+});

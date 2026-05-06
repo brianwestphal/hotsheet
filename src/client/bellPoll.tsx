@@ -16,7 +16,7 @@
  *     this to keep the in-drawer per-terminal indicator in sync when bells
  *     arrive while the user is inside the same project.
  */
-import { buildAllowRule } from '../shared/terminalPrompt/allowRules.js';
+import { buildAllowRule, buildChannelAllowRule } from '../shared/terminalPrompt/allowRules.js';
 import type { MatchResult } from '../shared/terminalPrompt/parsers.js';
 import { api, apiWithSecret } from './api.js';
 import { TIMERS } from './constants/timers.js';
@@ -443,11 +443,29 @@ function openCrossProjectOverlay(secret: string, terminalId: string, match: Matc
   openTerminalPromptOverlay({
     match,
     projectSecret: secret,
-    onSend(payload) {
+    onSend(payload, extras) {
       void apiWithSecret('/terminal/prompt-respond', secret, {
         method: 'POST',
         body: { terminalId, payload },
       }).catch(() => { /* network blip — overlay stays open via the false return */ });
+      // HS-8210 (§58.5) — implicit channel-rule creation. Only fires for
+      // claude-numbered matches with a captured channel; only when "Don't
+      // remember" was NOT ticked; only when the overlay handed us a
+      // concrete `choiceIndex` (cancel paths via Esc / X / cancel-button
+      // don't set it). `appendAllowRule` itself dedupes so accidental
+      // double-clicks don't bloat the file.
+      if (
+        match.shape === 'numbered'
+        && match.channel !== undefined
+        && extras?.dontRememberChannel !== true
+        && extras?.choiceIndex !== undefined
+      ) {
+        const choiceLabel = extras.choiceLabel ?? match.choices[extras.choiceIndex].label;
+        try {
+          const rule = buildChannelAllowRule(match, extras.choiceIndex, choiceLabel);
+          void appendAllowRule(rule, secret);
+        } catch { /* shouldn't happen — gated on match.channel above */ }
+      }
       // HS-8071 — record the answered prompt's shape so the dispatcher
       // can skip any same-shape re-fire within the TTL window. Generic
       // matches set an empty `choiceShape` (which `buildChoiceShape`

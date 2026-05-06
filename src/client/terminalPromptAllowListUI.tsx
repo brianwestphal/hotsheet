@@ -73,7 +73,14 @@ function buildRuleRow(rule: TerminalPromptAllowRule) {
   // recorded against (cf. permission-allow-rules in §47.4 which DO
   // support edit).
   const choice = rule.choice_label ?? `choice ${rule.choice_index + 1}`;
-  const question = rule.question_preview ?? '(question text not stored — created before HS-7988)';
+  // HS-8210 (§58.7) — channel-keyed rules surface `Channel: <match_channel>`
+  // in the question column so the user sees what the rule actually keys
+  // off (Tier 0 ignores `question_hash` / `question_preview`). Non-channel
+  // rules continue to render the saved question preview.
+  const isChannelRule = rule.match_channel !== undefined;
+  const question = isChannelRule
+    ? `Channel: ${rule.match_channel}`
+    : rule.question_preview ?? '(question text not stored — created before HS-7988)';
   // HS-8106 — two-row layout per item:
   //   Row 1: [parser] [question]                       [trash, vert-centered]
   //   Row 2: [empty]  [→ auto-response, left-aligned]  [trash continues]
@@ -123,7 +130,14 @@ function showRuleInspector(rule: TerminalPromptAllowRule): void {
   document.querySelectorAll('.cmd-editor-overlay.tpal-inspector-overlay').forEach(el => el.remove());
   const created = formatCreatedAt(rule.created_at);
   const choice = rule.choice_label ?? `choice ${rule.choice_index + 1}`;
-  const question = rule.question_preview ?? '(question text not stored — created before HS-7988)';
+  // HS-8210 (§58.7) — channel-keyed rules show the channel name as the
+  // primary key the rule matches against; non-channel rules show the
+  // saved question preview.
+  const isChannelRule = rule.match_channel !== undefined;
+  const question = isChannelRule
+    ? `Channel: ${rule.match_channel}`
+    : rule.question_preview ?? '(question text not stored — created before HS-7988)';
+  const questionLabel = isChannelRule ? 'Channel' : 'Question';
   const overlay = toElement(
     <div className="cmd-editor-overlay tpal-inspector-overlay">
       <div className="cmd-editor-dialog">
@@ -137,8 +151,8 @@ function showRuleInspector(rule: TerminalPromptAllowRule): void {
             <code className="tpal-inspector-value">{rule.parser_id}</code>
           </div>
           <div className="settings-field">
-            <label>Question</label>
-            <pre className="tpal-inspector-question">{question}</pre>
+            <label>{questionLabel}</label>
+            <pre className="tpal-inspector-question">{isChannelRule ? rule.match_channel! : question}</pre>
           </div>
           <div className="settings-field">
             <label>Auto-response</label>

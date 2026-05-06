@@ -92,10 +92,15 @@ export async function appendAllowRule(
   // strictly required since reads dedupe transparently, but rewriting
   // means a user who manually inspects settings.json sees the cleaned
   // shape after their next "Always allow" click).
+  // HS-8210 — extended dedupe to include `match_channel ?? ''` so two
+  // channel-keyed rules for different channels (which both carry empty
+  // `question_hash`) don't collapse into one. Mirrors the dedupe key
+  // shape `parseAllowRules` now uses.
   const isDuplicate = existing.some(r =>
     r.parser_id === rule.parser_id
     && r.question_hash === rule.question_hash
-    && r.choice_index === rule.choice_index,
+    && r.choice_index === rule.choice_index
+    && (r.match_channel ?? '') === (rule.match_channel ?? ''),
   );
   const next = isDuplicate ? existing : [...existing, rule];
   if (secret !== undefined) {

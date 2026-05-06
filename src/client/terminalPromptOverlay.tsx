@@ -57,8 +57,18 @@ export interface OpenTerminalPromptOverlayOptions {
    * chosen option or `buildNumberedCancelPayload()` for cancel. Returning
    * false signals "WebSocket dropped — keep the overlay open and surface
    * the error inline".
+   *
+   * HS-8210 (§58.6) — `extras` is forwarded by `openNumberedOverlay` when
+   * a numbered choice is clicked: `choiceIndex` / `choiceLabel` carry the
+   * picked answer (so callers can build a channel-keyed rule without
+   * re-deriving them from the keystroke payload), and
+   * `dontRememberChannel` reflects the channel-rule opt-out checkbox.
+   * Cancel-payload paths (Esc / X / cancel button) never set extras — the
+   * user only declines the implicit channel rule by checking the box AND
+   * choosing a numbered answer. Callers that don't care can ignore the
+   * second arg.
    */
-  onSend: (payload: string) => boolean;
+  onSend: (payload: string, extras?: { choiceIndex?: number; choiceLabel?: string; dontRememberChannel?: boolean }) => boolean;
   /** Called when the overlay closes via send / cancel / X-close (active
    *  user dismissal). Lets the dispatcher clear per-instance state and
    *  post `/terminal/prompt-dismiss` to clear the server-side pending
@@ -181,7 +191,7 @@ function mountShellWithEsc(
   actions: HTMLElement,
   alwaysAffordance: HTMLElement | null,
   cancelPayload: string,
-): { handle: PermissionDialogShellHandle; send: (payload: string) => void } {
+): { handle: PermissionDialogShellHandle; send: (payload: string, extras?: { choiceIndex?: number; choiceLabel?: string; dontRememberChannel?: boolean }) => void } {
   let escHandler: ((e: KeyboardEvent) => void) | null = null;
   function disposeEsc(): void {
     if (escHandler !== null) document.removeEventListener('keydown', escHandler, true);
@@ -202,8 +212,8 @@ function mountShellWithEsc(
     projectSecret: opts.projectSecret,
   });
 
-  function send(payload: string): void {
-    const ok = opts.onSend(payload);
+  function send(payload: string, extras?: { choiceIndex?: number; choiceLabel?: string; dontRememberChannel?: boolean }): void {
+    const ok = opts.onSend(payload, extras);
     if (!ok) {
       const err = handle.overlay.querySelector<HTMLElement>('.terminal-prompt-overlay-error');
       if (err !== null) {
@@ -274,11 +284,33 @@ function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: Numb
     </div>
   );
 
-  const alwaysAffordance = buildAllowRuleCheckbox(opts);
+  // HS-8210 (§58.6) — when the prompt has a captured channel, the implicit
+  // channel-rule path subsumes the existing always-allow checkbox. Render a
+  // muted "auto-approved next time" footer line with a `Don't remember`
+  // opt-out checkbox INSTEAD of the always-allow checkbox. Non-channel
+  // prompts keep the existing always-allow checkbox.
+  const hasChannel = match.channel !== undefined;
+  const channelAffordance = hasChannel
+    ? toElement(
+        <label className="terminal-prompt-overlay-channel-rule-row" title="Hot Sheet will skip this prompt next time and pick the same option for this channel">
+          <span className="terminal-prompt-overlay-channel-rule-text">This channel will be auto-approved next time.</span>
+          <span className="terminal-prompt-overlay-channel-rule-optout">
+            <input type="checkbox" className="terminal-prompt-overlay-channel-dont-remember" />
+            <span>Don't remember</span>
+          </span>
+        </label>,
+      )
+    : null;
+  const alwaysAffordance = hasChannel ? channelAffordance : buildAllowRuleCheckbox(opts);
 
   const { handle, send } = mountShellWithEsc(opts, bodyElement, actions, alwaysAffordance, buildNumberedCancelPayload());
 
-  const checkbox = handle.overlay.querySelector<HTMLInputElement>('.terminal-prompt-overlay-allow-rule');
+  const checkbox = hasChannel
+    ? null
+    : handle.overlay.querySelector<HTMLInputElement>('.terminal-prompt-overlay-allow-rule');
+  const dontRememberCheckbox = hasChannel
+    ? handle.overlay.querySelector<HTMLInputElement>('.terminal-prompt-overlay-channel-dont-remember')
+    : null;
   handle.overlay.querySelectorAll<HTMLButtonElement>('.terminal-prompt-overlay-choice').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.choiceIndex ?? '0', 10);
@@ -286,7 +318,10 @@ function openNumberedOverlay(opts: OpenTerminalPromptOverlayOptions, match: Numb
       if (checkbox?.checked === true && opts.onAddAllowRule !== undefined) {
         opts.onAddAllowRule(idx, label);
       }
-      send(buildNumberedPayload(choices, idx));
+      const extras = hasChannel
+        ? { choiceIndex: idx, choiceLabel: label, dontRememberChannel: dontRememberCheckbox?.checked === true }
+        : { choiceIndex: idx, choiceLabel: label };
+      send(buildNumberedPayload(choices, idx), extras);
     });
   });
 

@@ -503,3 +503,157 @@ describe('recently-answered guard (HS-8071)', () => {
     expect(recorded?.choiceShape).toBe('i am using this for local development|exit');
   });
 });
+
+// HS-8210 Phase C (§58.5) — implicit channel-rule creation in
+// `openCrossProjectOverlay::onSend`. The four contracts the design pins:
+//   1. channel-bearing match + click → `appendAllowRule` writes a channel-
+//      keyed rule (asserted via fetch-spy on /api/file-settings).
+//   2. same match + "Don't remember" ticked → no rule is written.
+//   3. non-channel match → no implicit channel rule (the legacy always-
+//      allow checkbox path is unchanged).
+//   4. channel match where settings already contain a matching channel
+//      rule → dedupe (PATCH writes the existing list back unchanged).
+describe('implicit channel-rule creation (HS-8210)', () => {
+  function makeChannelMatch(signature: string): NumberedMatch {
+    return {
+      ...makeNumbered(signature),
+      channel: 'server:hotsheet-channel',
+    };
+  }
+
+  async function flushMicrotasks(): Promise<void> {
+    // appendAllowRule does GET → PATCH; yield enough times for both to
+    // resolve through the stubbed fetch.
+    for (let i = 0; i < 4; i++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+
+  function getFetchMock(): ReturnType<typeof vi.fn> {
+    return (globalThis as { fetch: typeof fetch }).fetch as unknown as ReturnType<typeof vi.fn>;
+  }
+
+  it('writes a channel-keyed rule when the user clicks a choice on a channel-bearing prompt without ticking opt-out', async () => {
+    const state = buildState([
+      { secret: 'origin-secret', terminalId: 'tA', match: makeChannelMatch('sig-channel') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    const overlay = document.querySelector<HTMLElement>('.terminal-prompt-overlay');
+    expect(overlay).not.toBeNull();
+    // Channel footer is present; always-allow checkbox is not.
+    expect(overlay!.querySelector('.terminal-prompt-overlay-channel-rule-row')).not.toBeNull();
+    expect(overlay!.querySelector('.terminal-prompt-overlay-allow-rule-row')).toBeNull();
+
+    overlay!.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice[data-choice-index="0"]')!.click();
+    await flushMicrotasks();
+
+    // Find the PATCH /file-settings call that wrote the rule.
+    const fetchMock = getFetchMock();
+    const patchCall = fetchMock.mock.calls.find(call => {
+      const url = String(call[0]);
+      const opts = call[1] as { method?: string } | undefined;
+      return url.includes('/api/file-settings') && opts?.method === 'PATCH';
+    });
+    expect(patchCall).toBeDefined();
+    const bodyRaw = (patchCall![1] as { body?: string }).body ?? '{}';
+    const body = JSON.parse(bodyRaw) as { terminal_prompt_allow_rules?: Array<{ parser_id: string; match_channel?: string; choice_index: number; question_hash: string }> };
+    const rules = body.terminal_prompt_allow_rules ?? [];
+    expect(rules).toHaveLength(1);
+    expect(rules[0].parser_id).toBe('claude-numbered');
+    expect(rules[0].match_channel).toBe('server:hotsheet-channel');
+    expect(rules[0].choice_index).toBe(0);
+    expect(rules[0].question_hash).toBe('');
+
+    // X-Hotsheet-Secret carries the originating project's secret.
+    const headers = (patchCall![1] as { headers?: Record<string, string> }).headers ?? {};
+    expect(headers['X-Hotsheet-Secret']).toBe('origin-secret');
+  });
+
+  it('does NOT write a channel-keyed rule when the user ticks "Don\'t remember" before clicking', async () => {
+    const state = buildState([
+      { secret: 'origin-secret', terminalId: 'tA', match: makeChannelMatch('sig-channel') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    const overlay = document.querySelector<HTMLElement>('.terminal-prompt-overlay');
+    overlay!.querySelector<HTMLInputElement>('.terminal-prompt-overlay-channel-dont-remember')!.checked = true;
+    overlay!.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice[data-choice-index="0"]')!.click();
+    await flushMicrotasks();
+
+    const fetchMock = getFetchMock();
+    const patchCall = fetchMock.mock.calls.find(call => {
+      const url = String(call[0]);
+      const opts = call[1] as { method?: string } | undefined;
+      return url.includes('/api/file-settings') && opts?.method === 'PATCH';
+    });
+    expect(patchCall).toBeUndefined();
+  });
+
+  it('does NOT write an implicit channel rule for a non-channel-bearing numbered prompt', async () => {
+    // makeNumbered() with no channel field — the always-allow checkbox
+    // path is the only allow-list affordance and the user didn't tick it.
+    const state = buildState([
+      { secret: 'origin-secret', terminalId: 'tA', match: makeNumbered('sig-no-channel') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    document.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice[data-choice-index="0"]')!.click();
+    await flushMicrotasks();
+
+    const fetchMock = getFetchMock();
+    const patchCall = fetchMock.mock.calls.find(call => {
+      const url = String(call[0]);
+      const opts = call[1] as { method?: string } | undefined;
+      return url.includes('/api/file-settings') && opts?.method === 'PATCH';
+    });
+    expect(patchCall).toBeUndefined();
+  });
+
+  it('dedupes when an existing channel rule already covers the same (parser, channel, choice_index)', async () => {
+    // Override the GET /file-settings response so the existing-rules
+    // list already has the channel rule we're about to "create".
+    const existingRule = {
+      id: 'tp_existing',
+      parser_id: 'claude-numbered',
+      question_hash: '',
+      choice_index: 0,
+      match_channel: 'server:hotsheet-channel',
+      created_at: '2026-05-01T00:00:00Z',
+    };
+    const fetchMock = getFetchMock();
+    fetchMock.mockImplementation((url: string, opts?: { method?: string }) => {
+      if (url.includes('/api/file-settings') && (opts?.method === undefined || opts.method === 'GET')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ terminal_prompt_allow_rules: [existingRule] }),
+          text: () => Promise.resolve(''),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(''),
+      });
+    });
+
+    const state = buildState([
+      { secret: 'origin-secret', terminalId: 'tA', match: makeChannelMatch('sig-channel') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    document.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice[data-choice-index="0"]')!.click();
+    await flushMicrotasks();
+
+    // The PATCH should still happen (appendAllowRule writes the cleaned
+    // existing list back), but the body must contain only the original
+    // rule — not a second one.
+    const patchCall = fetchMock.mock.calls.find(call => {
+      const url = String(call[0]);
+      const o = call[1] as { method?: string } | undefined;
+      return url.includes('/api/file-settings') && o?.method === 'PATCH';
+    });
+    expect(patchCall).toBeDefined();
+    const bodyRaw = (patchCall![1] as { body?: string }).body ?? '{}';
+    const body = JSON.parse(bodyRaw) as { terminal_prompt_allow_rules?: Array<{ id: string }> };
+    const rules = body.terminal_prompt_allow_rules ?? [];
+    expect(rules).toHaveLength(1);
+    expect(rules[0].id).toBe('tp_existing');
+  });
+});

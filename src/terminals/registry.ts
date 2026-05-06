@@ -739,10 +739,27 @@ function findMatchingRuleForProject(dataDir: string, match: MatchResult): Termin
   }
 }
 
-async function appendAutoAllowAuditEntry(match: MatchResult, rule: TerminalPromptAllowRule): Promise<void> {
+/**
+ * HS-8210 (§58.8) — pure helper that builds the `summary` + `detail`
+ * strings written to the command log when an auto-allow fires. Channel-
+ * keyed rules carry `(channel <match_channel>)` in the summary suffix
+ * (and a `Channel:` line in the detail) so the user can filter the
+ * command log by channel and tell at a glance which auto-allows fired
+ * via Tier 0 vs the legacy hash / preview / label tiers. Exported for
+ * unit testing in isolation.
+ */
+export function buildAutoAllowAuditStrings(match: MatchResult, rule: TerminalPromptAllowRule): { summary: string; detail: string } {
   const choiceLabel = rule.choice_label ?? `choice_index=${rule.choice_index}`;
-  const summary = `Terminal prompt: ${match.parserId} → ${choiceLabel.slice(0, 80)} — Auto-allowed (rule ${rule.id})`.slice(0, 200);
-  const detail = `Question: ${match.question}\nChoice: ${choiceLabel}\nParser: ${match.parserId}\nRule: ${rule.id}`.slice(0, 4000);
+  const channelSuffix = rule.match_channel !== undefined
+    ? ` (channel ${rule.match_channel})`
+    : ` (rule ${rule.id})`;
+  const summary = `Terminal prompt: ${match.parserId} → ${choiceLabel.slice(0, 80)} — Auto-allowed${channelSuffix}`.slice(0, 200);
+  const detail = `Question: ${match.question}\nChoice: ${choiceLabel}\nParser: ${match.parserId}\nRule: ${rule.id}${rule.match_channel !== undefined ? `\nChannel: ${rule.match_channel}` : ''}`.slice(0, 4000);
+  return { summary, detail };
+}
+
+async function appendAutoAllowAuditEntry(match: MatchResult, rule: TerminalPromptAllowRule): Promise<void> {
+  const { summary, detail } = buildAutoAllowAuditStrings(match, rule);
   await addLogEntry('terminal_prompt_auto_allow', 'incoming', summary, detail);
 }
 
