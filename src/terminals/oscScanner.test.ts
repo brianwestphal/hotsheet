@@ -113,14 +113,26 @@ describe('scanPtyChunk — OSC 9 desktop notification (HS-7264)', () => {
     expect(result.osc9Message).toBe('Third');
   });
 
-  /** HS-8220 — the scanner accumulates payload bytes via
-   *  `String.fromCharCode(b)`, which treats each byte as a Latin-1 code
-   *  point and mojibake-corrupts multi-byte UTF-8 sequences. Filed
-   *  HS-8230 as a follow-up. The test below pins the current ASCII
-   *  behaviour; multi-byte UTF-8 is documented as unsupported. */
   it('preserves ASCII content in the notification message', () => {
     const result = scanPtyChunk(freshState(), Buffer.from(`${ESC}]9;Build PASSED${BEL}`));
     expect(result.osc9Message).toBe('Build PASSED');
+  });
+
+  /** HS-8230 — the scanner now accumulates payload as raw bytes and
+   *  UTF-8-decodes once on close, so multi-byte sequences round-trip. */
+  it('preserves multi-byte UTF-8 emoji in the notification message (HS-8230)', () => {
+    const result = scanPtyChunk(freshState(), Buffer.from(`${ESC}]9;Done ✅${BEL}`));
+    expect(result.osc9Message).toBe('Done ✅');
+  });
+
+  it('preserves Cyrillic content in the notification message (HS-8230)', () => {
+    const result = scanPtyChunk(freshState(), Buffer.from(`${ESC}]9;Привет${BEL}`));
+    expect(result.osc9Message).toBe('Привет');
+  });
+
+  it('preserves CJK content in the notification message (HS-8230)', () => {
+    const result = scanPtyChunk(freshState(), Buffer.from(`${ESC}]9;完了${BEL}`));
+    expect(result.osc9Message).toBe('完了');
   });
 });
 
@@ -160,6 +172,25 @@ describe('scanPtyChunk — OSC 7 CWD push (HS-7278)', () => {
     const chunk = `${ESC}]7;file:///a${BEL}${ESC}]7;file:///b${BEL}${ESC}]7;file:///c${BEL}`;
     const result = scanPtyChunk(freshState(), Buffer.from(chunk));
     expect(result.osc7Cwd).toBe('/c');
+  });
+
+  /** HS-8230 — non-ASCII paths in the OSC 7 payload survived as mojibake
+   *  pre-fix. Now they round-trip correctly through the bytes →
+   *  UTF-8-decode-on-close path. */
+  it('preserves Cyrillic content in the CWD path (HS-8230)', () => {
+    const result = scanPtyChunk(freshState(), Buffer.from(`${ESC}]7;file:///Users/foo/проект${BEL}`));
+    expect(result.osc7Cwd).toBe('/Users/foo/проект');
+  });
+
+  it('preserves CJK content in the CWD path (HS-8230)', () => {
+    const result = scanPtyChunk(freshState(), Buffer.from(`${ESC}]7;file:///Users/foo/プロジェクト${BEL}`));
+    expect(result.osc7Cwd).toBe('/Users/foo/プロジェクト');
+  });
+
+  it('decodes percent-encoded multi-byte UTF-8 in the CWD path', () => {
+    // %D0%9F%D1%80%D0%BE%D0%B5%D0%BA%D1%82 = "Проект" UTF-8 percent-encoded.
+    const result = scanPtyChunk(freshState(), Buffer.from(`${ESC}]7;file:///Users/foo/%D0%9F%D1%80%D0%BE%D0%B5%D0%BA%D1%82${BEL}`));
+    expect(result.osc7Cwd).toBe('/Users/foo/Проект');
   });
 });
 
@@ -204,6 +235,27 @@ describe('scanPtyChunk — cross-chunk state', () => {
     const r2 = scanPtyChunk(state, Buffer.from('\\'));
     expect(r2.osc9Message).toBe('Hello');
     expect(state.bellScanInString).toBe(false);
+  });
+
+  /** HS-8230 — the byte-array accumulator preserves runes even when
+   *  the chunk boundary lands inside a multi-byte UTF-8 sequence. The
+   *  earlier per-byte `String.fromCharCode` path didn't fail outright
+   *  (no boundary handling needed there) but it produced corrupt
+   *  output; the new path concatenates raw bytes and decodes once on
+   *  close, so the boundary doesn't matter. */
+  it('preserves a UTF-8 rune split across two chunks (HS-8230)', () => {
+    const state = freshState();
+    // "Done ✅" — split between bytes 5 and 6 of the emoji's UTF-8.
+    // ✅ = U+2705 = E2 9C 85 in UTF-8. Place the split between E2 and 9C.
+    const fullMessage = Buffer.from('Done ✅', 'utf8'); // 5 ASCII + space + 3-byte emoji
+    const splitAt = 6 /* "Done " */ + 1 /* first byte of emoji */;
+    const introducer = Buffer.from(`${ESC}]9;`, 'utf8');
+    const part1 = Buffer.concat([introducer, fullMessage.subarray(0, splitAt)]);
+    const part2 = Buffer.concat([fullMessage.subarray(splitAt), Buffer.from(BEL, 'utf8')]);
+    const r1 = scanPtyChunk(state, part1);
+    expect(r1.osc9Message).toBeNull();
+    const r2 = scanPtyChunk(state, part2);
+    expect(r2.osc9Message).toBe('Done ✅');
   });
 
   it('a bell INSIDE an open OSC string is the terminator, not a bell', () => {

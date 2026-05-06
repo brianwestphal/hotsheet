@@ -119,8 +119,11 @@ export interface SessionState {
   /** Cross-chunk state for `scanPtyChunk`. HS-6766. */
   bellScanInString: boolean;
   bellScanAfterEsc: boolean;
-  /** OSC accumulator for HS-7264 payload extraction. */
-  oscAccumulator: string | null;
+  /** OSC accumulator for HS-7264 payload extraction. HS-8230 — switched
+   *  from `string | null` to `number[] | null` so multi-byte UTF-8
+   *  sequences round-trip correctly (UTF-8 decode happens once on close
+   *  in `oscScanner.finishOscString`). */
+  oscAccumulator: number[] | null;
   /** True once a real client has attached. HS-6799. */
   hasBeenAttached: boolean;
   /** HS-6702 — wall-clock ms timestamp of the last PTY chunk. */

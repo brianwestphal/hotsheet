@@ -11,7 +11,7 @@ import {
   manifestSiblingFilename,
   readManifest,
 } from './attachmentBackup.js';
-import { type BackupInfo, createBackup, findOverdueTiers, listBackups, triggerMissedBackups } from './backup.js';
+import { _resetGlobalBackupLockForTesting, type BackupInfo, createBackup, findOverdueTiers, listBackups, triggerMissedBackups, withGlobalBackupLock } from './backup.js';
 import { addAttachment } from './db/attachments.js';
 import { getDb, SCHEMA_VERSION } from './db/connection.js';
 import { createTicket } from './db/queries.js';
@@ -246,5 +246,115 @@ describe('triggerMissedBackups (HS-7894)', () => {
     expect(tiers.has('5min')).toBe(true);
     expect(tiers.has('hourly')).toBe(true);
     expect(tiers.has('daily')).toBe(true);
+  }, 60_000);
+});
+
+/**
+ * HS-8229 — process-global async mutex around `createBackup`. Pre-fix N
+ * registered projects each ran their backup scheduler independently with
+ * no cross-project coordination, so up to N backups could run
+ * concurrently in various phases (CHECKPOINT serialized at the JS event
+ * loop, but `await fsp.writeFile` releases control and lets the next
+ * project's CHECKPOINT start). Risk: contention for libuv threadpool +
+ * disk bandwidth + Google Drive sync rate limits per HS-8174. Fix is a
+ * process-global FIFO mutex; per-dataDir `backupInProgress` flag stays
+ * as a per-project early-return so same-project tier collisions don't
+ * pile up in the queue.
+ */
+describe('withGlobalBackupLock (HS-8229)', () => {
+  it('serializes two concurrent calls — second runs strictly after the first finishes', async () => {
+    _resetGlobalBackupLockForTesting();
+    const events: string[] = [];
+
+    async function task(label: string, durationMs: number): Promise<string> {
+      events.push(`${label}:start`);
+      await new Promise(resolve => setTimeout(resolve, durationMs));
+      events.push(`${label}:end`);
+      return label;
+    }
+
+    const a = withGlobalBackupLock(() => task('A', 30));
+    const b = withGlobalBackupLock(() => task('B', 30));
+    const results = await Promise.all([a, b]);
+    expect(results).toEqual(['A', 'B']);
+    // Strict serialization: A:start → A:end → B:start → B:end.
+    expect(events).toEqual(['A:start', 'A:end', 'B:start', 'B:end']);
+  });
+
+  it('preserves FIFO order across three concurrent calls', async () => {
+    _resetGlobalBackupLockForTesting();
+    const events: string[] = [];
+    const task = (label: string) => async (): Promise<string> => {
+      events.push(`${label}:start`);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      events.push(`${label}:end`);
+      return label;
+    };
+
+    const a = withGlobalBackupLock(task('A'));
+    const b = withGlobalBackupLock(task('B'));
+    const c = withGlobalBackupLock(task('C'));
+    await Promise.all([a, b, c]);
+    expect(events).toEqual(['A:start', 'A:end', 'B:start', 'B:end', 'C:start', 'C:end']);
+  });
+
+  it('releases the lock when the wrapped function throws', async () => {
+    _resetGlobalBackupLockForTesting();
+    const events: string[] = [];
+
+    const a = withGlobalBackupLock(() => {
+      events.push('A:throw');
+      throw new Error('boom');
+    });
+    const b = withGlobalBackupLock(async () => {
+      events.push('B:start');
+      await new Promise(resolve => setTimeout(resolve, 10));
+      events.push('B:end');
+      return 'B';
+    });
+
+    await expect(a).rejects.toThrow('boom');
+    await expect(b).resolves.toBe('B');
+    expect(events).toEqual(['A:throw', 'B:start', 'B:end']);
+  });
+
+  it('a predecessor failure does NOT poison the queue — successor still runs', async () => {
+    // Stress version of the previous test: A throws synchronously inside
+    // the wrapped function; the await-loop in withGlobalBackupLock has a
+    // try/catch around `await activeBackup` so the failure is observed
+    // by A's caller AND ignored by waiters.
+    _resetGlobalBackupLockForTesting();
+
+    const a = withGlobalBackupLock(() => Promise.reject(new Error('A failed')));
+    const b = withGlobalBackupLock(() => Promise.resolve('B ok'));
+    const results = await Promise.allSettled([a, b]);
+    expect(results[0].status).toBe('rejected');
+    expect(results[1].status).toBe('fulfilled');
+    if (results[1].status === 'fulfilled') expect(results[1].value).toBe('B ok');
+  });
+
+  it('a single call without contention runs immediately', async () => {
+    _resetGlobalBackupLockForTesting();
+    const result = await withGlobalBackupLock(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1));
+      return 42;
+    });
+    expect(result).toBe(42);
+  });
+});
+
+describe('createBackup global lock (HS-8229)', () => {
+  it('two concurrent createBackup calls for the SAME dataDir bail at the per-project gate without queuing on the global lock', async () => {
+    _resetGlobalBackupLockForTesting();
+    // Both fire at once — second hits state.backupInProgress === true and
+    // returns null immediately. Per-dataDir gate is the early-return
+    // path, NOT the global lock — verified by the second call resolving
+    // strictly before the first.
+    const a = createBackup(tempDir, '5min');
+    const b = createBackup(tempDir, '5min');
+    const second = await b;
+    expect(second).toBeNull(); // bailed at per-project gate
+    const first = await a;
+    expect(first).not.toBeNull(); // first acquired both gates and produced a backup
   }, 60_000);
 });

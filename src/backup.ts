@@ -67,6 +67,55 @@ function getOrCreateState(dataDir: string): BackupState {
  *  Modified by: loadBackupForPreview() (add), cleanupPreview() (clear). */
 const activePreviews = new Map<string, PGlite>();
 
+/**
+ * HS-8229 — process-global async mutex. Wraps `createBackup`'s body so
+ * at most one project's backup runs at a time across the whole Hot Sheet
+ * process, regardless of which project's timer fired. Pre-fix each
+ * project's `BackupState.backupInProgress` flag only prevented same-
+ * project tier collisions; with N registered projects on similar
+ * cadences, up to N backups could run concurrently — contending for
+ * libuv threadpool + disk bandwidth + Google Drive sync rate limits
+ * (HS-8174).
+ *
+ * The natural FIFO produced by the await-loop is round-robin enough for
+ * v1 — projects join the queue in arrival order. The per-dataDir
+ * `backupInProgress` flag stays as a per-project early-return so
+ * same-project tier collisions don't pile up in the queue.
+ *
+ * Exported for unit tests; production callers go through `createBackup`.
+ */
+let activeBackup: Promise<unknown> | null = null;
+
+export async function withGlobalBackupLock<T>(fn: () => Promise<T>): Promise<T> {
+  // Wait for any predecessor to release. Loop because by the time we wake
+  // up another caller might have grabbed the slot first; we just keep
+  // waiting until we observe a free slot. Predecessor failures are
+  // swallowed here — they're the predecessor's caller's problem; ours is
+  // simply to wait until the slot is free.
+  while (activeBackup !== null) {
+    try {
+      await activeBackup;
+    } catch {
+      /* predecessor failed — caller already saw the rejection; we just need to wait */
+    }
+  }
+  const p = (async () => fn())();
+  activeBackup = p;
+  try {
+    return await p;
+  } finally {
+    // Clear only if we still own the slot — defensive against unexpected
+    // re-entry or forced reset paths.
+    if (activeBackup === p) activeBackup = null;
+  }
+}
+
+/** **TEST ONLY** — drop the global lock state. Used between cases so a
+ *  prior test's leaked lock doesn't strand the next case. */
+export function _resetGlobalBackupLockForTesting(): void {
+  activeBackup = null;
+}
+
 function backupsDir(dataDir: string): string {
   return getBackupDir(dataDir);
 }
@@ -95,6 +144,12 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
   if (state.backupInProgress) return null;
   state.backupInProgress = true;
 
+  // HS-8229 — wrap the body in the process-global mutex so cross-project
+  // backups serialize. The per-dataDir `backupInProgress` gate above
+  // (untouched) still prevents same-project tier collisions, so a
+  // 5-min/hourly tier-pile-up on a single project bails BEFORE entering
+  // the global queue.
+  return withGlobalBackupLock(async () => {
   try {
     const db = await runWithDataDir(dataDir, () => getDb());
     const dir = tierDir(dataDir, tier);
@@ -188,6 +243,7 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
   } finally {
     state.backupInProgress = false;
   }
+  });
 }
 
 function pruneBackups(dataDir: string, tier: Tier): void {

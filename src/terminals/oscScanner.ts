@@ -29,9 +29,24 @@ export interface OscScanState {
   bellScanInString: boolean;
   /** Just saw an `ESC`; deciding what kind of escape this is on the next byte. */
   bellScanAfterEsc: boolean;
-  /** Accumulated OSC payload bytes so we can inspect on string close.
-   *  null when not inside an OSC (DCS/APC/PM/SOS skip the alloc). */
-  oscAccumulator: string | null;
+  /**
+   * Accumulated OSC payload bytes so we can inspect on string close.
+   * null when not inside an OSC (DCS/APC/PM/SOS skip the alloc).
+   *
+   * **HS-8230 (2026-05-06)** — switched from `string | null` (each byte
+   * appended via `String.fromCharCode(b)`, which treats every byte as a
+   * Latin-1 code point) to `number[] | null` so multi-byte UTF-8
+   * sequences round-trip correctly. The pre-fix path mojibake-corrupted
+   * any non-ASCII OSC 9 message (toast text) and OSC 7 CWD path
+   * (dashboard tile + toolbar CWD chips). On close `finishOscString`
+   * runs `Buffer.from(bytes).toString('utf8')` once which decodes
+   * multi-byte sequences correctly even when the boundary lands inside a
+   * rune (the rune is still complete because the OSC payload is between
+   * the introducer and the terminator — UTF-8 byte sequences are always
+   * fully contained in a single OSC payload, no cross-OSC fragmentation
+   * possible).
+   */
+  oscAccumulator: number[] | null;
 }
 
 export interface ScanChunkResult {
@@ -84,8 +99,10 @@ export function scanPtyChunk(state: OscScanState, chunk: Buffer): ScanChunkResul
       }
       // Plain content byte inside a string escape. Append to the OSC payload
       // buffer if we're tracking one (i.e. this is an OSC, not DCS/APC/PM/SOS).
+      // HS-8230 — push raw bytes; UTF-8 decode happens once on close in
+      // `finishOscString` so multi-byte sequences round-trip correctly.
       if (state.oscAccumulator !== null && state.oscAccumulator.length < MAX_OSC_PAYLOAD_LEN) {
-        state.oscAccumulator += String.fromCharCode(b);
+        state.oscAccumulator.push(b);
       }
       continue;
     }
@@ -93,8 +110,10 @@ export function scanPtyChunk(state: OscScanState, chunk: Buffer): ScanChunkResul
       state.bellScanAfterEsc = false;
       if (b === 0x5D /* ] */) {
         // OSC introducer — begin string AND begin accumulating payload bytes.
+        // HS-8230 — accumulator is a byte array; UTF-8 decode happens once
+        // on close in `finishOscString`.
         state.bellScanInString = true;
-        state.oscAccumulator = '';
+        state.oscAccumulator = [];
         continue;
       }
       if (b === 0x50 || b === 0x5F || b === 0x5E || b === 0x58) {
@@ -131,7 +150,11 @@ export function scanPtyChunk(state: OscScanState, chunk: Buffer): ScanChunkResul
  */
 export function finishOscString(state: OscScanState): { osc9: string | null; osc7: string | null } {
   if (state.oscAccumulator === null) return { osc9: null, osc7: null };
-  const payload = state.oscAccumulator;
+  // HS-8230 — decode the accumulated bytes as UTF-8 once. Buffer.from(number[])
+  // copies the array into a fresh Buffer; toString('utf8') replaces invalid
+  // sequences with U+FFFD so a stray non-UTF-8 byte stream surfaces as
+  // garbled-but-non-throwing text rather than crashing the scanner.
+  const payload = Buffer.from(state.oscAccumulator).toString('utf8');
   if (payload.startsWith('9;')) {
     const rest = payload.slice(2);
     // iTerm2 has proprietary numeric sub-commands in the 9 namespace (9;1
