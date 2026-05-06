@@ -269,52 +269,70 @@ step_version() {
 step_release_notes() {
   echo ""
 
-  # Build initial content. We seed the editor with brief guidance + a
-  # commented-out reference list of commits since the last tag. Lines starting
-  # with '#' are stripped on save (git-commit-style), so the guidance never
-  # makes it into the tag annotation or GitHub Release body.
-  #
-  # Commit subjects in this repo are intentionally long (multi-paragraph dev
-  # diaries), so we truncate each to its first sentence/clause for the
-  # reference list — the goal is to jog memory, not paste subjects verbatim.
+  # If we have saved notes from a prior run of this same release, ask_multiline
+  # will pick them up via get_state — skip the AI draft entirely so we don't
+  # waste a model call on resume.
+  local prev
+  prev=$(get_state "release_notes")
+  if [[ -n "$prev" ]]; then
+    ask_multiline "release_notes" "Release notes" ""
+    return
+  fi
+
   local last_tag
   last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
   local log_range="${last_tag:+${last_tag}..HEAD}"
 
-  local commits
-  commits=$(git log ${log_range:-"-10"} --format="%s" --no-decorate \
-    | awk '{
-        # Truncate at first " — " (em-dash separator we use after ticket id)
-        # or first ". " (sentence end), whichever comes first; cap at 120 chars.
-        s = $0
-        n = length(s)
-        idx = index(s, " — ")
-        if (idx > 0) n = idx - 1
-        idx2 = index(s, ". ")
-        if (idx2 > 0 && idx2 - 1 < n) n = idx2 - 1
-        if (n > 120) n = 120
-        out = substr(s, 1, n)
-        if (length(s) > length(out)) out = out " …"
-        print "# - " out
-      }')
+  local commit_log
+  commit_log=$(git log ${log_range:-"-30"} --format="%s" --no-decorate)
+
+  # Ask Claude to draft a SHORT, user-facing bullet list from the commit
+  # subjects. We only use the subjects (not the bodies) because this repo's
+  # bodies are intentionally very long dev diaries — the subjects already
+  # encode enough scope for a release-notes summary.
+  local generated=""
+  if command -v claude &>/dev/null; then
+    info "Drafting release notes with Claude (commits since ${last_tag:-last 30})..."
+    local prompt
+    prompt=$(cat <<EOF
+Draft release notes for Hot Sheet (a developer-focused CLI project management tool) from the commit subjects below.
+
+Rules:
+- Output ONLY markdown bullets — no heading, no preamble, no closing remarks.
+- Each bullet is ONE short line (~80 chars max), user-facing.
+- Group related changes into single bullets.
+- INCLUDE: new features, UX improvements, bug fixes, breaking changes — anything a user upgrading would notice.
+- EXCLUDE: ticket IDs (HS-NNNN), internal refactors, test additions, doc-only changes, implementation rationale, build/CI tweaks.
+- Aim for 5–10 bullets total. Fewer is better.
+
+Commits:
+${commit_log}
+EOF
+)
+    generated=$(claude -p "$prompt" 2>/dev/null || true)
+    # Strip leading/trailing blank lines + any stray code-fence wrappers
+    generated=$(echo "$generated" | sed -e '/^```/d' -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
+  fi
 
   local initial
-  initial="# Release notes — keep it SHORT and USER-FACING.
-#
-# What to include:  new features, bug fixes, breaking changes, anything a user
-#                   would notice or care about.
-# What to skip:     internal refactors, test additions, doc-only updates,
-#                   implementation rationale, ticket numbers.
-#
-# Aim for a handful of bullets, one short line each. The reader is a user
-# upgrading their install — not a maintainer reading the diff.
-#
+  if [[ -n "$generated" ]]; then
+    success "Draft ready — review and edit in the editor."
+    initial="# Release notes — Claude draft below. Edit freely.
 # Lines starting with '#' are removed on save.
-#
-# Reference — commits since ${last_tag:-last 10}:
-${commits}
-#
-"
+
+${generated}"
+  else
+    if command -v claude &>/dev/null; then
+      warn "Claude draft was empty — opening blank editor."
+    else
+      warn "'claude' CLI not found — opening blank editor. Install Claude Code for AI drafts."
+    fi
+    initial="# Release notes — keep it SHORT and USER-FACING.
+# Bullets only. Skip ticket IDs, refactors, tests, docs, internals.
+# Lines starting with '#' are removed on save.
+
+- "
+  fi
 
   ask_multiline "release_notes" "Release notes" "$initial"
 }

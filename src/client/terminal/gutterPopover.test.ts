@@ -53,7 +53,7 @@ function makeRecord(opts: { hasD?: boolean } = {}): CommandRecord {
   };
 }
 
-function makeTerm(linesAt: Record<number, string> = {}): FakeXTerm {
+function makeTerm(linesAt: Partial<Record<number, string>> = {}): FakeXTerm {
   return {
     buffer: {
       active: {
@@ -113,7 +113,7 @@ describe('attachGutterHoverPopover (HS-8194)', () => {
     const askBtn = document.querySelector<HTMLButtonElement>('[data-action="ask-claude"]')!;
     askBtn.click();
     expect(vi.mocked(channelUI.triggerChannelAndMarkBusy)).toHaveBeenCalledTimes(1);
-    const arg = vi.mocked(channelUI.triggerChannelAndMarkBusy).mock.calls[0]![0] as string;
+    const arg = vi.mocked(channelUI.triggerChannelAndMarkBusy).mock.calls[0][0];
     expect(arg).toContain('"command":"echo hi"');
     expect(arg).toContain('"cwd":"/var/x"');
   });

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import type { PtyFactory } from '../terminals/registry.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
 import { apiRoutes } from './api.js';
@@ -626,12 +627,12 @@ describe('terminal route', () => {
   // factory throws `posix_spawnp failed` and the eager-spawn try/catch in
   // `routes/terminal.ts::POST /create` swallows the error, leaving the
   // session in `not_spawned` and the test seeing the wrong state.
-  let restorePtyFactory: ((factory: import('../terminals/registry.js').PtyFactory) => import('../terminals/registry.js').PtyFactory) | null = null;
-  let savedPtyFactory: import('../terminals/registry.js').PtyFactory | null = null;
+  let restorePtyFactory: ((factory: PtyFactory) => PtyFactory) | null = null;
+  let savedPtyFactory: PtyFactory | null = null;
   beforeAll(async () => {
     const { setPtyFactory } = await import('../terminals/registry.js');
     restorePtyFactory = setPtyFactory;
-    const fakeFactory: import('../terminals/registry.js').PtyFactory = (args) => ({
+    const fakeFactory: PtyFactory = (args) => ({
       pid: 0,
       cols: args.cols,
       rows: args.rows,
@@ -643,7 +644,7 @@ describe('terminal route', () => {
     });
     savedPtyFactory = setPtyFactory(fakeFactory);
   });
-  afterAll(async () => {
+  afterAll(() => {
     if (restorePtyFactory !== null && savedPtyFactory !== null) restorePtyFactory(savedPtyFactory);
   });
 

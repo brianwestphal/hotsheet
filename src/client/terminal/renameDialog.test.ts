@@ -16,7 +16,7 @@ describe('openRenameDialog (HS-8195)', () => {
     openRenameDialog({ initialValue: 'my-tab', onApply: vi.fn() });
     const overlays = document.querySelectorAll('.terminal-rename-overlay');
     expect(overlays.length).toBe(1);
-    const input = overlays[0]!.querySelector<HTMLInputElement>('.term-rename-input')!;
+    const input = overlays[0].querySelector<HTMLInputElement>('.term-rename-input')!;
     expect(input.value).toBe('my-tab');
     expect(document.activeElement).toBe(input);
   });
