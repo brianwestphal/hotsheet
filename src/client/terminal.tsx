@@ -16,12 +16,12 @@ import {
   isDrawerGridActive,
   onTerminalListUpdated,
 } from './drawerTerminalGrid.js';
-import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_PENCIL, ICON_X } from './icons.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { getActiveProject, state } from './state.js';
 import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 import { attachGutterHoverPopover } from './terminal/gutterPopover.js';
 import { openRenameDialog } from './terminal/renameDialog.js';
+import { showTabContextMenu as showSharedTabContextMenu } from './terminal/tabContextMenu.js';
 import {
   applyAppearanceToTerm,
   getProjectDefault,
@@ -1681,10 +1681,11 @@ export function getLastKnownTerminalConfigs() {
 // Configured (default) terminals cannot be closed at all — the menu still
 // opens on them, but "Close Tab" is disabled, and the "Close Others/Left/Right"
 // actions skip configured tabs so only dynamic ones get torn down.
-
-function dismissTabContextMenu(): void {
-  document.querySelector('.terminal-tab-context-menu')?.remove();
-}
+//
+// HS-8221 — the menu DOM + viewport-clamp + outside-click-dismiss live in
+// `terminal/tabContextMenu.tsx`. The helpers below adapt this file's
+// per-tab state (`instances` Map, `orderedTabIds` walker, `isDynamic`
+// predicate) into the callback contract that module exposes.
 
 function isDynamic(id: string): boolean {
   return instances.get(id)?.config.dynamic === true;
@@ -1703,83 +1704,19 @@ function orderedTabIds(): string[] {
 }
 
 function showTabContextMenu(e: MouseEvent, clickedId: string): void {
-  dismissTabContextMenu();
-  const isClickedDynamic = isDynamic(clickedId);
-
-  // HS-7835 — Lucide icons on every entry.
-  const menu = toElement(
-    <div className="terminal-tab-context-menu command-log-context-menu" style={`left:${e.clientX}px;top:${e.clientY}px`}>
-      <div className={`context-menu-item${isClickedDynamic ? '' : ' disabled'}`} data-action="close">
-        <span className="dropdown-icon">{raw(ICON_X)}</span>
-        <span className="context-menu-label">Close Tab</span>
-      </div>
-      <div className="context-menu-item" data-action="close-others">
-        <span className="dropdown-icon">{raw(ICON_CLOSE_OTHERS)}</span>
-        <span className="context-menu-label">Close Other Tabs</span>
-      </div>
-      <div className="context-menu-item" data-action="close-left">
-        <span className="dropdown-icon">{raw(ICON_CLOSE_LEFT)}</span>
-        <span className="context-menu-label">Close Tabs to the Left</span>
-      </div>
-      <div className="context-menu-item" data-action="close-right">
-        <span className="dropdown-icon">{raw(ICON_CLOSE_RIGHT)}</span>
-        <span className="context-menu-label">Close Tabs to the Right</span>
-      </div>
-      <div className="context-menu-separator"></div>
-      <div className="context-menu-item" data-action="rename">
-        <span className="dropdown-icon">{raw(ICON_PENCIL)}</span>
-        <span className="context-menu-label">Rename...</span>
-      </div>
-    </div>
-  );
-
-  const bind = (action: string, handler: () => void) => {
-    const el = menu.querySelector<HTMLElement>(`[data-action="${action}"]`);
-    if (!el) return;
-    if (el.classList.contains('disabled')) return;
-    el.addEventListener('click', () => {
-      dismissTabContextMenu();
-      handler();
-    });
-  };
-
-  bind('close', () => { void closeDynamicTerminal(clickedId); });
-  bind('close-others', () => { void closeTabs(orderedTabIds().filter(id => id !== clickedId && isDynamic(id))); });
-  bind('close-left', () => {
-    const ids = orderedTabIds();
-    const idx = ids.indexOf(clickedId);
-    if (idx < 0) return;
-    void closeTabs(ids.slice(0, idx).filter(isDynamic));
+  showSharedTabContextMenu({
+    event: e,
+    clickedId,
+    clickedIsDynamic: isDynamic(clickedId),
+    orderedIds: orderedTabIds(),
+    isDynamic,
+    onClose: (id) => { void closeDynamicTerminal(id); },
+    onCloseSet: (ids) => { void closeTabs(ids); },
+    onRename: (id) => {
+      const inst = instances.get(id);
+      if (inst) promptRenameTerminal(inst);
+    },
   });
-  bind('close-right', () => {
-    const ids = orderedTabIds();
-    const idx = ids.indexOf(clickedId);
-    if (idx < 0) return;
-    void closeTabs(ids.slice(idx + 1).filter(isDynamic));
-  });
-  bind('rename', () => {
-    const inst = instances.get(clickedId);
-    if (inst) promptRenameTerminal(inst);
-  });
-
-  document.body.appendChild(menu);
-
-  // Clamp to viewport.
-  const rect = menu.getBoundingClientRect();
-  if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 4}px`;
-  if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 4}px`;
-
-  setTimeout(() => {
-    const close = (ev: MouseEvent) => {
-      if (!menu.contains(ev.target as Node)) {
-        dismissTabContextMenu();
-        document.removeEventListener('click', close, true);
-        document.removeEventListener('contextmenu', close, true);
-      }
-    };
-    document.addEventListener('click', close, true);
-    document.addEventListener('contextmenu', close, true);
-  }, 0);
 }
 
 /**
