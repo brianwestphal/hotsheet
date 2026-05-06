@@ -85,8 +85,71 @@ export function shouldUseLiveCheckout(
   return false;
 }
 
-let permissionPollActive = false;
-export let permissionVersion = 0;
+/**
+ * HS-8190 — every long-lived mutable lifecycle ref this module owns lives
+ * inside a single named container so a future audit can spot stale handles
+ * immediately. Pre-fix the file carried 10 separately-declared module-level
+ * `let`s scattered across ~300 lines of prose; the HS-8171 v2 / HS-8180 /
+ * HS-8182 / HS-8183 / HS-8206 / HS-8207 / HS-8217 / HS-8218 / HS-8219
+ * regression family was fed by exactly this kind of "where does that handle
+ * actually get cleared?" confusion. Now: read `state.foo` everywhere; reset
+ * via `_resetStateForTesting()` (assigns `freshState()` after running the
+ * disposers).
+ *
+ * The `respondedRequestIds` / `dismissedRequestIds` / `minimizedRequests` /
+ * `pendingPermissionStack` collections stay separate const Set/Map/Arrays —
+ * they're long-lived containers, not single-slot mutable refs, and they have
+ * their own GC paths inside `processPermissionPollResponse`.
+ */
+interface PermissionOverlayState {
+  /** True while the long-poll loop in `startPermissionPolling` is running. */
+  permissionPollActive: boolean;
+  /** Long-poll change-version cursor — sent as `?v=N` and updated from each response. */
+  permissionVersion: number;
+  /** HS-8183 — number of consecutive polls in which `permissionState.activePopupRequestId`
+   *  has been missing from `data.permissions`. Auto-dismiss fires at threshold. */
+  autoDismissMissCount: number;
+  /** Module-level channel-busy timeout slot, captured at poll start so the popup's
+   *  reopen path can extend the timeout from anywhere. */
+  channelBusyTimeoutModule: ReturnType<typeof setTimeout> | null;
+  /** Setter callback paired with `channelBusyTimeoutModule` so a remote caller
+   *  can update the live ref through the same slot. */
+  setChannelBusyTimeoutRefModule: (t: ReturnType<typeof setTimeout> | null) => void;
+  /** Active popup's `request_id`. Null when no popup is mounted. */
+  activePopupRequestId: string | null;
+  /** HS-8207 — the project secret the active popup belongs to. Tracked so the
+   *  auto-dismiss path can distinguish "owner project absent from poll response =
+   *  channel server unreachable" from "owner project present with null = no
+   *  permission pending". */
+  activePopupOwnerSecret: string | null;
+  /** HS-8171 v2 / HS-8182 — the §54 live-terminal checkout handle the popup
+   *  may have taken. Hoisted out of the popup's closure so the polling loop's
+   *  auto-dismiss path can `release()` it too. */
+  activeCheckoutHandle: CheckoutHandle | null;
+  /** HS-8206 — ResizeObserver that keeps the borrowed live-terminal sized
+   *  to fit the popup's `liveTermContainer`. */
+  activeLiveTermResizeObserver: ResizeObserver | null;
+  /** HS-8206 v2 — pending retry timeout id so a re-run from the
+   *  ResizeObserver doesn't stack up parallel retry chains. */
+  liveTermFitRetryTimer: ReturnType<typeof setTimeout> | null;
+}
+
+function freshPermissionOverlayState(): PermissionOverlayState {
+  return {
+    permissionPollActive: false,
+    permissionVersion: 0,
+    autoDismissMissCount: 0,
+    channelBusyTimeoutModule: null,
+    setChannelBusyTimeoutRefModule: () => {},
+    activePopupRequestId: null,
+    activePopupOwnerSecret: null,
+    activeCheckoutHandle: null,
+    activeLiveTermResizeObserver: null,
+    liveTermFitRetryTimer: null,
+  };
+}
+
+let permissionState: PermissionOverlayState = freshPermissionOverlayState();
 
 // Track request IDs we've already responded to, so polling doesn't re-show them.
 export const respondedRequestIds = new Set<string>();
@@ -117,12 +180,7 @@ export function getMinimizedPermissionSecrets(): Set<string> {
   return secrets;
 }
 
-/** Module-level channel-busy-timeout refs, captured at poll start so the
- *  popup's reopen path can extend the timeout from anywhere. */
-let channelBusyTimeoutModule: ReturnType<typeof setTimeout> | null = null;
-let setChannelBusyTimeoutRefModule: (t: ReturnType<typeof setTimeout> | null) => void = () => {};
-
-/** HS-8183 — number of consecutive polls in which `activePopupRequestId`
+/** HS-8183 — number of consecutive polls in which `state.permissionState.activePopupRequestId`
  *  must be missing from `data.permissions` before the auto-dismiss path
  *  fires. Pre-fix the auto-dismiss fired on the first missed poll, which
  *  meant a single transient channel-server fetch failure (the per-project
@@ -135,7 +193,6 @@ let setChannelBusyTimeoutRefModule: (t: ReturnType<typeof setTimeout> | null) =>
  *  given the 3s long-poll cap + 100ms reschedule) while ignoring the
  *  single-poll transient. */
 const AUTO_DISMISS_MISS_THRESHOLD = 2;
-let autoDismissMissCount = 0;
 
 export type PermissionPollResponse = { permissions: Record<string, PermissionData | null>; v: number };
 
@@ -143,12 +200,12 @@ export type PermissionPollResponse = { permissions: Record<string, PermissionDat
  *  per-poll bookkeeping is unit-testable without a real `api` round-trip
  *  or `setTimeout` advance. Pure side-effects on module state + DOM. */
 export function processPermissionPollResponse(data: PermissionPollResponse): void {
-  permissionVersion = data.v;
+  permissionState.permissionVersion = data.v;
 
   // Auto-dismiss an open popup if its backing permission was handled elsewhere.
-  if (activePopupRequestId !== null) {
+  if (permissionState.activePopupRequestId !== null) {
     const stillPending = Object.values(data.permissions).some(
-      p => p !== null && p.request_id === activePopupRequestId,
+      p => p !== null && p.request_id === permissionState.activePopupRequestId,
     );
     // HS-8207 — when the popup's owning project is missing entirely from
     // `data.permissions` (vs. present-with-null), the per-project channel-
@@ -161,17 +218,17 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
     // `null` on fetch failure, which collapsed transient-unreachable into
     // confirmed-not-pending and produced exactly the "popup disappears
     // entirely" tail of the HS-8207 repro.
-    const ownerKnown = activePopupOwnerSecret === null
-      || activePopupOwnerSecret in data.permissions;
+    const ownerKnown = permissionState.activePopupOwnerSecret === null
+      || permissionState.activePopupOwnerSecret in data.permissions;
     if (stillPending) {
-      autoDismissMissCount = 0;
+      permissionState.autoDismissMissCount = 0;
     } else if (!ownerKnown) {
       // No state change — keep counter where it is. We don't reset it
       // either, so a chain of misses interleaved with unreachables still
       // eventually dismisses (slowly).
     } else {
-      autoDismissMissCount++;
-      if (autoDismissMissCount >= AUTO_DISMISS_MISS_THRESHOLD) {
+      permissionState.autoDismissMissCount++;
+      if (permissionState.autoDismissMissCount >= AUTO_DISMISS_MISS_THRESHOLD) {
         // HS-8182 — release the §54 checkout BEFORE removing the
         // popup DOM so the live xterm element reparents back into
         // the previous owner's `mountInto` rather than being
@@ -185,16 +242,16 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
         // there should never be more than one in DOM, but cheap
         // insurance).
         document.querySelectorAll('.permission-popup').forEach(el => el.remove());
-        activePopupRequestId = null;
-        activePopupOwnerSecret = null;
-        autoDismissMissCount = 0;
+        permissionState.activePopupRequestId = null;
+        permissionState.activePopupOwnerSecret = null;
+        permissionState.autoDismissMissCount = 0;
         // HS-8219 — pop the next queued permission so the user sees
         // it immediately rather than waiting another poll cycle.
         mountNextFromPendingStack();
       }
     }
   } else {
-    autoDismissMissCount = 0;
+    permissionState.autoDismissMissCount = 0;
   }
 
   // Mark attention dots and show popup for every project with a pending permission.
@@ -247,26 +304,26 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
 }
 
 export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof setTimeout> | null, setChannelBusyTimeoutRef: (t: ReturnType<typeof setTimeout> | null) => void) {
-  if (permissionPollActive) return;
-  permissionPollActive = true;
-  channelBusyTimeoutModule = channelBusyTimeout;
-  setChannelBusyTimeoutRefModule = (t) => { channelBusyTimeoutModule = t; setChannelBusyTimeoutRef(t); };
+  if (permissionState.permissionPollActive) return;
+  permissionState.permissionPollActive = true;
+  permissionState.channelBusyTimeoutModule = channelBusyTimeout;
+  permissionState.setChannelBusyTimeoutRefModule = (t) => { permissionState.channelBusyTimeoutModule = t; setChannelBusyTimeoutRef(t); };
 
   async function poll() {
-    if (!permissionPollActive) return;
+    if (!permissionState.permissionPollActive) return;
     try {
-      const data = await api<PermissionPollResponse>(`/projects/permissions?v=${permissionVersion}`);
+      const data = await api<PermissionPollResponse>(`/projects/permissions?v=${permissionState.permissionVersion}`);
       processPermissionPollResponse(data);
     } catch {
       await new Promise(r => setTimeout(r, TIMERS.POLL_RETRY_MS));
     }
-    if (permissionPollActive) setTimeout(poll, 100); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- can be set false by stopPermissionPolling()
+    if (permissionState.permissionPollActive) setTimeout(poll, 100); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- can be set false by stopPermissionPolling()
   }
   void poll();
 }
 
 export function stopPermissionPolling() {
-  permissionPollActive = false;
+  permissionState.permissionPollActive = false;
 }
 
 /** Re-open a minimized permission popup for the given project. Returns true
@@ -321,61 +378,18 @@ function syncMinimizedDots() {
 type StackedPermission = { secret: string; perm: PermissionData };
 const pendingPermissionStack: StackedPermission[] = [];
 
-let activePopupRequestId: string | null = null;
-
-/** HS-8207 — the project secret the active popup belongs to. Tracked so
- *  the auto-dismiss path in `processPermissionPollResponse` can
- *  distinguish "owner project absent from poll response = channel server
- *  unreachable" from "owner project present with null = no permission
- *  pending". Pre-HS-8207 the auto-dismiss path could not tell the two
- *  cases apart, so a transient channel-server failure ticked the
- *  dismiss counter and contributed to the "popup disappears entirely"
- *  tail of the HS-8207 repro. */
-let activePopupOwnerSecret: string | null = null;
-
-/** HS-8171 v2 / HS-8182 — module-level handle for the live-terminal
- *  checkout the active popup may have taken. Hoisted out of
- *  `showPermissionPopup`'s closure so the polling-loop's auto-dismiss
- *  path (which fires when the channel server stops reporting the
- *  permission as pending — e.g. the user typed a response directly
- *  into the terminal, or the long-text popup timed out at the channel
- *  server) can release the checkout too. Pre-HS-8182 the auto-dismiss
- *  path only removed the popup DOM, leaving the §54 stack with a
- *  consumer whose `mountInto` was now in a detached subtree — the
- *  previous owner (dashboard tile, drawer pane) stayed stuck on the
- *  'Terminal in use elsewhere' placeholder forever. */
-let activeCheckoutHandle: CheckoutHandle | null = null;
-
-/** HS-8206 — ResizeObserver that keeps the borrowed live-terminal sized
- *  to fit the popup's `liveTermContainer`. Pre-fix the popup did a single
- *  `requestAnimationFrame(() => fit.proposeDimensions() + handle.resize)`
- *  after `checkout()`. That single rAF fired before xterm's renderer had
- *  measured cell dims (the term was just reparented out of the offscreen
- *  parking sink — the renderer's `dimensions.css.cell` were still 0 from
- *  the 1×1 sink layout), so `proposeDimensions()` returned undefined, the
- *  resize was skipped, and the term stayed at the initial 100×30 forever.
- *  Symptom: `claude`'s TUI overflowed the 620×420 popup container, only
- *  the top-left ~67×24 cells were visible (the rest clipped by
- *  `overflow: hidden`). The fix mirrors the `quitConfirm.tsx::HS-8055`
- *  ResizeObserver pattern: observe the container, refit on every layout
- *  fire, skip same-size to avoid feedback loops, coalesce same-frame
- *  fires via a `pendingFit` rAF guard. The observer also catches the
- *  legitimate "second-layout-pass" case xterm needs to converge cell
- *  dims after the first font measurement. */
-let activeLiveTermResizeObserver: ResizeObserver | null = null;
-
 function releaseActiveCheckoutIfAny(): void {
   disconnectActiveLiveTermResizeObserver();
   clearLiveTermFitRetryTimer();
-  if (activeCheckoutHandle === null) return;
-  try { activeCheckoutHandle.release(); } catch { /* swallow — entry may already be torn down */ }
-  activeCheckoutHandle = null;
+  if (permissionState.activeCheckoutHandle === null) return;
+  try { permissionState.activeCheckoutHandle.release(); } catch { /* swallow — entry may already be torn down */ }
+  permissionState.activeCheckoutHandle = null;
 }
 
 function disconnectActiveLiveTermResizeObserver(): void {
-  if (activeLiveTermResizeObserver === null) return;
-  try { activeLiveTermResizeObserver.disconnect(); } catch { /* swallow */ }
-  activeLiveTermResizeObserver = null;
+  if (permissionState.activeLiveTermResizeObserver === null) return;
+  try { permissionState.activeLiveTermResizeObserver.disconnect(); } catch { /* swallow */ }
+  permissionState.activeLiveTermResizeObserver = null;
 }
 
 /** HS-8206 v2 — total retry budget for the live-term fit. xterm's
@@ -386,14 +400,10 @@ function disconnectActiveLiveTermResizeObserver(): void {
 const LIVE_TERM_FIT_RETRY_INTERVAL_MS = 16;
 const LIVE_TERM_FIT_RETRY_MAX_ATTEMPTS = 30;
 
-/** HS-8206 v2 — pending retry timeout id so a re-run from the
- *  ResizeObserver doesn't stack up parallel retry chains. */
-let liveTermFitRetryTimer: ReturnType<typeof setTimeout> | null = null;
-
 function clearLiveTermFitRetryTimer(): void {
-  if (liveTermFitRetryTimer === null) return;
-  clearTimeout(liveTermFitRetryTimer);
-  liveTermFitRetryTimer = null;
+  if (permissionState.liveTermFitRetryTimer === null) return;
+  clearTimeout(permissionState.liveTermFitRetryTimer);
+  permissionState.liveTermFitRetryTimer = null;
 }
 
 /** HS-8206 v2 — drive `fit.proposeDimensions()` to a successful resize,
@@ -408,8 +418,8 @@ function runLiveTermFitWithRetry(forHandle: CheckoutHandle): void {
   clearLiveTermFitRetryTimer();
   let attempts = 0;
   function attempt(): void {
-    liveTermFitRetryTimer = null;
-    if (activeCheckoutHandle !== forHandle) return; // popup closed or re-checked-out.
+    permissionState.liveTermFitRetryTimer = null;
+    if (permissionState.activeCheckoutHandle !== forHandle) return; // popup closed or re-checked-out.
     attempts++;
     let proposed: { cols: number; rows: number } | undefined;
     try {
@@ -417,7 +427,7 @@ function runLiveTermFitWithRetry(forHandle: CheckoutHandle): void {
     } catch { /* term disposed mid-flight */ return; }
     if (proposed === undefined) {
       if (attempts >= LIVE_TERM_FIT_RETRY_MAX_ATTEMPTS) return;
-      liveTermFitRetryTimer = setTimeout(attempt, LIVE_TERM_FIT_RETRY_INTERVAL_MS);
+      permissionState.liveTermFitRetryTimer = setTimeout(attempt, LIVE_TERM_FIT_RETRY_INTERVAL_MS);
       return;
     }
     if (proposed.cols === forHandle.term.cols && proposed.rows === forHandle.term.rows) {
@@ -430,7 +440,7 @@ function runLiveTermFitWithRetry(forHandle: CheckoutHandle): void {
   if (typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(attempt);
   } else {
-    liveTermFitRetryTimer = setTimeout(attempt, 0);
+    permissionState.liveTermFitRetryTimer = setTimeout(attempt, 0);
   }
 }
 
@@ -459,7 +469,7 @@ export function getQueuedPermissionRequestIds(): string[] {
  * dismissed / minimized entries that became stale while waiting in the
  * queue, and mount the next valid one (if any). Called from every
  * popup-close path AFTER `clearPopupOnly()` (or equivalent state
- * reset) so the gate `if (activePopupRequestId !== null)` doesn't
+ * reset) so the gate `if (permissionState.activePopupRequestId !== null)` doesn't
  * block the new mount. Idempotent — safe to call when the stack is
  * empty or when no popup was active.
  */
@@ -471,7 +481,7 @@ function mountNextFromPendingStack(): void {
       continue;
     }
     // Pop the entry off the stack BEFORE calling showPermissionPopup
-    // so the activePopupRequestId !== null gate doesn't re-enqueue
+    // so the permissionState.activePopupRequestId !== null gate doesn't re-enqueue
     // it (which would just yield a no-op duplicate-on-stack check).
     pendingPermissionStack.pop();
     showPermissionPopup(next.secret, next.perm);
@@ -481,7 +491,7 @@ function mountNextFromPendingStack(): void {
 
 function showPermissionPopup(secret: string, perm: PermissionData) {
   // Already showing this exact request — no-op
-  if (activePopupRequestId === perm.request_id) return;
+  if (permissionState.activePopupRequestId === perm.request_id) return;
   // Already responded / dismissed / minimized — don't re-show.
   if (shouldSkipPermission(perm.request_id)) return;
   // HS-8219 — already queued on the pending stack? No-op (the active
@@ -498,7 +508,7 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // so the active popup is always the single source of truth +
   // surfaces the next permission immediately on dismiss without
   // waiting on a poll round-trip.
-  if (activePopupRequestId !== null) {
+  if (permissionState.activePopupRequestId !== null) {
     pendingPermissionStack.push({ secret, perm });
     return;
   }
@@ -507,11 +517,11 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // partway through (e.g. xterm constructor failing under WebGL
   // unavailability, `term.open` failing on a detached parking sink,
   // `formatEditDiff` choking on malformed JSON the truncation gate
-  // didn't pre-screen) doesn't leave `activePopupRequestId` stuck
-  // non-null. Pre-fix a partial-mount throw left `activePopupRequestId`
+  // didn't pre-screen) doesn't leave `permissionState.activePopupRequestId` stuck
+  // non-null. Pre-fix a partial-mount throw left `permissionState.activePopupRequestId`
   // set without a popup in the DOM, so every subsequent show-loop
   // call in `processPermissionPollResponse` early-returned at the
-  // `if (activePopupRequestId !== null) return;` gate — exactly the
+  // `if (permissionState.activePopupRequestId !== null) return;` gate — exactly the
   // "first popup briefly appears, no popups ever after" repro
   // ` user reported. The catch resets state + rethrows so the poll
   // loop's catch logs the original error.
@@ -521,13 +531,13 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // cycle, an unmount that didn't disconnect, etc.) only one
   // `.permission-popup` ever exists in the DOM at a time.
   document.querySelectorAll('.permission-popup').forEach(el => el.remove());
-  activePopupRequestId = perm.request_id;
-  activePopupOwnerSecret = secret;
+  permissionState.activePopupRequestId = perm.request_id;
+  permissionState.activePopupOwnerSecret = secret;
   try {
     showPermissionPopupBody(secret, perm);
   } catch (err) {
-    activePopupRequestId = null;
-    activePopupOwnerSecret = null;
+    permissionState.activePopupRequestId = null;
+    permissionState.activePopupOwnerSecret = null;
     releaseActiveCheckoutIfAny();
     document.querySelectorAll('.permission-popup').forEach(el => el.remove());
     // HS-8219 — try the next queued permission on partial-mount throw so
@@ -540,9 +550,9 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
 function showPermissionPopupBody(secret: string, perm: PermissionData) {
 
   // A permission request is proof Claude is actively working — extend busy timeout.
-  if (channelBusyTimeoutModule) {
-    clearTimeout(channelBusyTimeoutModule);
-    setChannelBusyTimeoutRefModule(setTimeout(() => {
+  if (permissionState.channelBusyTimeoutModule) {
+    clearTimeout(permissionState.channelBusyTimeoutModule);
+    permissionState.setChannelBusyTimeoutRefModule(setTimeout(() => {
       if (isChannelBusy()) setChannelBusy(false);
     }, TIMERS.CHANNEL_BUSY_TIMEOUT_MS));
   }
@@ -632,7 +642,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   }
 
   // HS-8171 v2 / HS-8182 — the checkout handle (if any) lives at module
-  // scope (`activeCheckoutHandle`) so the polling-loop's auto-dismiss
+  // scope (`permissionState.activeCheckoutHandle`) so the polling-loop's auto-dismiss
   // path can release it too. Every popup-close path inside this scope
   // routes through `releaseActiveCheckoutIfAny()` so the release is
   // idempotent + single-source-of-truth.
@@ -672,8 +682,8 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   }
 
   function clearPopupOnly() {
-    activePopupRequestId = null;
-    activePopupOwnerSecret = null;
+    permissionState.activePopupRequestId = null;
+    permissionState.activePopupOwnerSecret = null;
     if (tab) tab.classList.remove('permission-highlight');
   }
 
@@ -787,7 +797,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     // popup (e.g. the polling loop's auto-dismiss path was never
     // exercised), release it before claiming a new one. The `checkout`
     // call itself bumps the previous owner down, but releasing the
-    // stale handle first keeps `activeCheckoutHandle` the single
+    // stale handle first keeps `permissionState.activeCheckoutHandle` the single
     // source of truth for "the popup currently owning the live xterm".
     releaseActiveCheckoutIfAny();
     // HS-8207 — pass through the EXISTING entry's dims (when there is
@@ -807,7 +817,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     const existingDims = peekEntryDims(secret, 'default');
     const startCols = existingDims?.cols ?? 80;
     const startRows = existingDims?.rows ?? 24;
-    activeCheckoutHandle = checkout({
+    permissionState.activeCheckoutHandle = checkout({
       projectSecret: secret,
       terminalId: 'default',
       cols: startCols,
@@ -846,13 +856,13 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     // attempts; the proposed-vs-current short-circuit prevents the
     // well-known fit/observe feedback loop.
     disconnectActiveLiveTermResizeObserver();
-    runLiveTermFitWithRetry(activeCheckoutHandle);
+    runLiveTermFitWithRetry(permissionState.activeCheckoutHandle);
     if (typeof ResizeObserver !== 'undefined') {
-      activeLiveTermResizeObserver = new ResizeObserver(() => {
-        if (activeCheckoutHandle === null) return;
-        runLiveTermFitWithRetry(activeCheckoutHandle);
+      permissionState.activeLiveTermResizeObserver = new ResizeObserver(() => {
+        if (permissionState.activeCheckoutHandle === null) return;
+        runLiveTermFitWithRetry(permissionState.activeCheckoutHandle);
       });
-      activeLiveTermResizeObserver.observe(liveTermContainer);
+      permissionState.activeLiveTermResizeObserver.observe(liveTermContainer);
     }
   }
 
@@ -870,23 +880,22 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
 /** **TEST ONLY** — reset every module-level state slot back to its boot
  *  default so consecutive tests don't leak. Mirrors the convention in
  *  `terminalCheckout.tsx::_resetForTesting` + `bellPoll.ts::_resetDispatchStateForTesting`.
- *  Stops any in-flight polling loop too. */
+ *  Stops any in-flight polling loop too.
+ *
+ *  HS-8190 — runs disposers BEFORE assigning a fresh state so an in-flight
+ *  resize observer or fit-retry timer doesn't leak past the swap. The
+ *  collection-typed state (responded / dismissed / minimized / pending
+ *  stack) is cleared explicitly because those are separate const Set/Map/
+ *  Array containers, not part of the bundled state object. */
 export function _resetStateForTesting(): void {
-  permissionPollActive = false;
-  permissionVersion = 0;
+  disconnectActiveLiveTermResizeObserver();
+  clearLiveTermFitRetryTimer();
   respondedRequestIds.clear();
   dismissedRequestIds.clear();
   for (const rec of minimizedRequests.values()) clearTimeout(rec.timeoutId);
   minimizedRequests.clear();
-  activePopupRequestId = null;
-  activePopupOwnerSecret = null;
-  activeCheckoutHandle = null;
   pendingPermissionStack.length = 0;
-  disconnectActiveLiveTermResizeObserver();
-  clearLiveTermFitRetryTimer();
-  autoDismissMissCount = 0;
-  channelBusyTimeoutModule = null;
-  setChannelBusyTimeoutRefModule = () => {};
+  permissionState = freshPermissionOverlayState();
 }
 
 /** **TEST ONLY** — read-only snapshot of the module-level bookkeeping for
@@ -906,15 +915,15 @@ export function _inspectStateForTesting(): {
   autoDismissMissCount: number;
 } {
   return {
-    activePopupRequestId,
-    activePopupOwnerSecret,
-    activeCheckoutHandle: activeCheckoutHandle !== null,
-    activeLiveTermResizeObserver: activeLiveTermResizeObserver !== null,
+    activePopupRequestId: permissionState.activePopupRequestId,
+    activePopupOwnerSecret: permissionState.activePopupOwnerSecret,
+    activeCheckoutHandle: permissionState.activeCheckoutHandle !== null,
+    activeLiveTermResizeObserver: permissionState.activeLiveTermResizeObserver !== null,
     respondedRequestIds: [...respondedRequestIds],
     dismissedRequestIds: [...dismissedRequestIds],
     minimizedRequestIds: [...minimizedRequests.keys()],
     pendingPermissionStackIds: pendingPermissionStack.map(e => e.perm.request_id),
-    permissionVersion,
-    autoDismissMissCount,
+    permissionVersion: permissionState.permissionVersion,
+    autoDismissMissCount: permissionState.autoDismissMissCount,
   };
 }
