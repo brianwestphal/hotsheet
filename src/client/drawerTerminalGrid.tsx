@@ -66,30 +66,65 @@ export interface DrawerGridTileEntry {
   dynamic?: boolean;
 }
 
-let gridEl: HTMLElement | null = null;
-let toggleBtn: HTMLButtonElement | null = null;
-let sizerContainer: HTMLElement | null = null;
-let sizeSlider: HTMLInputElement | null = null;
-let hideBtn: HTMLButtonElement | null = null;
-/** HS-7826 — visibility-grouping `<select>` next to the eye icon. */
-let groupingSelect: HTMLSelectElement | null = null;
-/** HS-7661 — unsubscribe from hidden-terminal change events. Set when grid
- *  mode is entered, cleared on exit. */
-let hiddenChangeUnsubscribe: (() => void) | null = null;
-/** HS-7661 — empty-state placeholder rendered inside the grid when every
- *  terminal in the project is hidden. Kept as a separate node so we can
- *  add/remove it without disturbing other grid children. */
-let allHiddenPlaceholder: HTMLElement | null = null;
+/**
+ * HS-8223 — bundled module-level lifecycle state, mirroring the HS-8190
+ * pattern landed in `permissionOverlay.tsx` and the HS-8222 follow-up
+ * applied to `terminalDashboard.tsx`. Every mutable lifecycle ref (toolbar
+ * buttons, RAF + resize handles, long-poll subscriptions, the
+ * cached-entries snapshot) lives in one named container so a future audit
+ * can spot stale handles immediately.
+ *
+ * The local var is named `drawerGridState` (not `state`) to avoid
+ * shadowing the imported `state` module surface — matches the precedent
+ * set in HS-8190 where shadowing `./state.js` was hit and reverted.
+ */
+interface DrawerGridState {
+  gridEl: HTMLElement | null;
+  toggleBtn: HTMLButtonElement | null;
+  sizerContainer: HTMLElement | null;
+  sizeSlider: HTMLInputElement | null;
+  hideBtn: HTMLButtonElement | null;
+  /** HS-7826 — visibility-grouping `<select>` next to the eye icon. */
+  groupingSelect: HTMLSelectElement | null;
+  /** HS-7661 — unsubscribe from hidden-terminal change events. Set when
+   *  grid mode is entered, cleared on exit. */
+  hiddenChangeUnsubscribe: (() => void) | null;
+  /** HS-7661 — empty-state placeholder rendered inside the grid when every
+   *  terminal in the project is hidden. Kept as a separate node so we can
+   *  add/remove it without disturbing other grid children. */
+  allHiddenPlaceholder: HTMLElement | null;
+  gridHandle: TileGridHandle | null;
+  currentSnapPoints: SnapPoint[];
+  resizeRaf: number | null;
+  resizeListener: (() => void) | null;
+  drawerResizeObserver: ResizeObserver | null;
+  bellUnsubscribe: (() => void) | null;
+  lastKnownEntries: DrawerGridTileEntry[];
+  onExitGrid: () => void;
+}
 
-let gridHandle: TileGridHandle | null = null;
-let currentSnapPoints: SnapPoint[] = [];
-let resizeRaf: number | null = null;
-let resizeListener: (() => void) | null = null;
-let drawerResizeObserver: ResizeObserver | null = null;
-let bellUnsubscribe: (() => void) | null = null;
+function freshDrawerGridState(): DrawerGridState {
+  return {
+    gridEl: null,
+    toggleBtn: null,
+    sizerContainer: null,
+    sizeSlider: null,
+    hideBtn: null,
+    groupingSelect: null,
+    hiddenChangeUnsubscribe: null,
+    allHiddenPlaceholder: null,
+    gridHandle: null,
+    currentSnapPoints: [],
+    resizeRaf: null,
+    resizeListener: null,
+    drawerResizeObserver: null,
+    bellUnsubscribe: null,
+    lastKnownEntries: [],
+    onExitGrid: () => { /* replaced in initDrawerTerminalGrid */ },
+  };
+}
 
-let lastKnownEntries: DrawerGridTileEntry[] = [];
-let onExitGrid: () => void = () => { /* replaced in initDrawerTerminalGrid */ };
+let drawerGridState: DrawerGridState = freshDrawerGridState();
 
 export interface GridInitOptions {
   /** Restores whatever drawer tab was active before grid mode was entered. */
@@ -97,29 +132,29 @@ export interface GridInitOptions {
 }
 
 export function initDrawerTerminalGrid(opts: GridInitOptions): void {
-  onExitGrid = opts.onExitGrid;
+  drawerGridState.onExitGrid = opts.onExitGrid;
   // Tauri-only — per §22.11 / §36.8.
   if (getTauriInvoke() === null) return;
 
-  gridEl = byIdOrNull('drawer-terminal-grid');
-  toggleBtn = byIdOrNull<HTMLButtonElement>('drawer-grid-toggle');
-  sizerContainer = byIdOrNull('drawer-grid-sizer');
-  sizeSlider = byIdOrNull<HTMLInputElement>('drawer-grid-size-slider');
-  hideBtn = byIdOrNull<HTMLButtonElement>('drawer-grid-hide-btn');
-  groupingSelect = byIdOrNull<HTMLSelectElement>('drawer-grid-grouping-select');
-  if (groupingSelect !== null) {
+  drawerGridState.gridEl = byIdOrNull('drawer-terminal-grid');
+  drawerGridState.toggleBtn = byIdOrNull<HTMLButtonElement>('drawer-grid-toggle');
+  drawerGridState.sizerContainer = byIdOrNull('drawer-grid-sizer');
+  drawerGridState.sizeSlider = byIdOrNull<HTMLInputElement>('drawer-grid-size-slider');
+  drawerGridState.hideBtn = byIdOrNull<HTMLButtonElement>('drawer-grid-hide-btn');
+  drawerGridState.groupingSelect = byIdOrNull<HTMLSelectElement>('drawer-grid-grouping-select');
+  if (drawerGridState.groupingSelect !== null) {
     void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
       wireGroupingSelectChange({
-        selectEl: groupingSelect!,
+        selectEl: drawerGridState.groupingSelect!,
         getSecret: () => getActiveProject()?.secret ?? null,
       });
     });
   }
-  if (toggleBtn === null || gridEl === null) return;
+  if (drawerGridState.toggleBtn === null || drawerGridState.gridEl === null) return;
 
-  toggleBtn.style.display = '';
-  toggleBtn.addEventListener('click', () => {
-    if (toggleBtn?.disabled === true) return;
+  drawerGridState.toggleBtn.style.display = '';
+  drawerGridState.toggleBtn.addEventListener('click', () => {
+    if (drawerGridState.toggleBtn?.disabled === true) return;
     const project = getActiveProject();
     if (project === null) return;
     if (getProjectGridActive(project.secret)) exitGridModeInternal();
@@ -128,7 +163,7 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
 
   // HS-7661 — Show / Hide Terminals dialog opener. Single-project mode:
   // show only the active project's terminals, no grouping.
-  hideBtn?.addEventListener('click', () => {
+  drawerGridState.hideBtn?.addEventListener('click', () => {
     const project = getActiveProject();
     if (project === null) return;
     showHideTerminalDialog({
@@ -136,7 +171,7 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
       groups: [{
         secret: project.secret,
         name: project.name,
-        terminals: lastKnownEntries.map(e => ({
+        terminals: drawerGridState.lastKnownEntries.map(e => ({
           id: e.id,
           name: tileLabel(e),
         })),
@@ -144,23 +179,23 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
       onChange: () => {
         // Rebuild + repaint when state mutates so the user sees the
         // dashboard reflect the toggle without closing the dialog.
-        if (gridHandle !== null && getProjectGridActive(project.secret)) {
+        if (drawerGridState.gridHandle !== null && getProjectGridActive(project.secret)) {
           rebuildVisibleTiles();
         }
       },
     });
   });
 
-  sizeSlider?.addEventListener('input', () => {
-    if (sizeSlider === null) return;
+  drawerGridState.sizeSlider?.addEventListener('input', () => {
+    if (drawerGridState.sizeSlider === null) return;
     // HS-8176 — slider position is LTR (left=many, right=few); convert
     // to the user-facing column count via `sliderPositionToPerRow`
     // before persisting to state.
-    const parsed = Number.parseInt(sizeSlider.value, 10);
+    const parsed = Number.parseInt(drawerGridState.sizeSlider.value, 10);
     const sliderPos = Number.isFinite(parsed) ? parsed : perRowToSliderPosition(DEFAULT_TILES_PER_ROW);
     const project = getActiveProject();
     if (project !== null) setProjectGridColumnCount(project.secret, sliderPositionToPerRow(sliderPos));
-    if (gridHandle !== null) gridHandle.applySizing();
+    if (drawerGridState.gridHandle !== null) drawerGridState.gridHandle.applySizing();
   });
 
   // Esc routing — dedicated view → centered → bare-grid → exit grid mode.
@@ -176,16 +211,16 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
     // registered earlier on the document) and would exit grid mode entirely
     // before the dialog has a chance to close.
     if (document.querySelector('.hide-terminal-dialog-overlay') !== null) return;
-    if (gridHandle !== null && gridHandle.isDedicatedOpen()) {
+    if (drawerGridState.gridHandle !== null && drawerGridState.gridHandle.isDedicatedOpen()) {
       e.preventDefault();
       e.stopPropagation();
-      gridHandle.exitDedicatedView();
+      drawerGridState.gridHandle.exitDedicatedView();
       return;
     }
-    if (gridHandle !== null && gridHandle.isCentered()) {
+    if (drawerGridState.gridHandle !== null && drawerGridState.gridHandle.isCentered()) {
       e.preventDefault();
       e.stopPropagation();
-      gridHandle.uncenterTile();
+      drawerGridState.gridHandle.uncenterTile();
       return;
     }
     // Don't exit grid mode when an input is focused — Esc-to-blur (HS-7393)
@@ -198,7 +233,7 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
 }
 
 export function onTerminalListUpdated(entries: DrawerGridTileEntry[]): void {
-  lastKnownEntries = entries;
+  drawerGridState.lastKnownEntries = entries;
   updateToggleEnabledState();
   const project = getActiveProject();
   if (project === null) return;
@@ -206,13 +241,13 @@ export function onTerminalListUpdated(entries: DrawerGridTileEntry[]): void {
   if (!isActive) {
     // Project not in grid mode — make sure chrome is hidden + tiles disposed.
     hideGridChrome();
-    if (gridHandle !== null) {
-      gridHandle.dispose();
-      gridHandle = null;
+    if (drawerGridState.gridHandle !== null) {
+      drawerGridState.gridHandle.dispose();
+      drawerGridState.gridHandle = null;
     }
     return;
   }
-  if (gridEl === null) return;
+  if (drawerGridState.gridEl === null) return;
   if (entries.length < 2) {
     // Auto-exit if the project dropped below the 2-terminal minimum
     // mid-session — see §36.7.
@@ -228,7 +263,7 @@ export function onTerminalListUpdated(entries: DrawerGridTileEntry[]): void {
   updateToggleEnabledState();
 }
 
-/** HS-7661 — rebuild the grid handle's tiles from `lastKnownEntries`,
+/** HS-7661 — rebuild the grid handle's tiles from `drawerGridState.lastKnownEntries`,
  *  filtered to non-hidden terminals only. When ALL terminals are hidden
  *  but there are some configured, render the "All Terminals Hidden"
  *  placeholder inside the grid container so the user can see the state
@@ -236,22 +271,22 @@ export function onTerminalListUpdated(entries: DrawerGridTileEntry[]): void {
  *  `hideGridChrome` and recreated on every rebuild that needs it. */
 function rebuildVisibleTiles(): void {
   const project = getActiveProject();
-  if (project === null || gridHandle === null) return;
-  const visible = filterVisibleEntries(project.secret, lastKnownEntries);
-  gridHandle.rebuild(visible.map(toTileEntry(project.secret)));
+  if (project === null || drawerGridState.gridHandle === null) return;
+  const visible = filterVisibleEntries(project.secret, drawerGridState.lastKnownEntries);
+  drawerGridState.gridHandle.rebuild(visible.map(toTileEntry(project.secret)));
   // Show / hide the all-hidden placeholder. We render it as a sibling of
-  // the tiles inside `gridEl` because mountTileGrid owns the tile children
+  // the tiles inside `drawerGridState.gridEl` because mountTileGrid owns the tile children
   // but doesn't touch other elements in the container.
-  if (gridEl === null) return;
-  if (allHiddenPlaceholder !== null) {
-    allHiddenPlaceholder.remove();
-    allHiddenPlaceholder = null;
+  if (drawerGridState.gridEl === null) return;
+  if (drawerGridState.allHiddenPlaceholder !== null) {
+    drawerGridState.allHiddenPlaceholder.remove();
+    drawerGridState.allHiddenPlaceholder = null;
   }
-  if (visible.length === 0 && lastKnownEntries.length > 0) {
-    allHiddenPlaceholder = toElement(
+  if (visible.length === 0 && drawerGridState.lastKnownEntries.length > 0) {
+    drawerGridState.allHiddenPlaceholder = toElement(
       <div className="drawer-terminal-grid-all-hidden">All Terminals Hidden</div>
     );
-    gridEl.appendChild(allHiddenPlaceholder);
+    drawerGridState.gridEl.appendChild(drawerGridState.allHiddenPlaceholder);
   }
 }
 
@@ -260,11 +295,11 @@ function rebuildVisibleTiles(): void {
  *  HS-7823 — also refreshes the eye-icon hidden-count badge.
  *  HS-7826 — also refreshes the grouping selector dropdown. */
 function attachHiddenSubscription(): void {
-  if (hiddenChangeUnsubscribe !== null) return;
-  hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
+  if (drawerGridState.hiddenChangeUnsubscribe !== null) return;
+  drawerGridState.hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
     refreshHideBtnBadge();
     refreshDrawerGroupingSelect();
-    if (gridHandle !== null) rebuildVisibleTiles();
+    if (drawerGridState.gridHandle !== null) rebuildVisibleTiles();
   });
 }
 
@@ -272,10 +307,10 @@ function attachHiddenSubscription(): void {
  *  project's groupings. Called from the change subscription + on grid
  *  chrome show. Hides the select when only Default exists. */
 function refreshDrawerGroupingSelect(): void {
-  if (groupingSelect === null) return;
+  if (drawerGridState.groupingSelect === null) return;
   void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
     refreshGroupingSelect({
-      selectEl: groupingSelect!,
+      selectEl: drawerGridState.groupingSelect!,
       getSecret: () => getActiveProject()?.secret ?? null,
     });
   });
@@ -285,16 +320,16 @@ function refreshDrawerGroupingSelect(): void {
  *  project's hidden count. Called from the hidden-change subscription
  *  + when grid chrome shows so a project switch reflects immediately. */
 function refreshHideBtnBadge(): void {
-  if (hideBtn === null) return;
+  if (drawerGridState.hideBtn === null) return;
   const project = getActiveProject();
   const count = project === null ? 0 : countHiddenForProject(project.secret);
-  applyHideButtonBadge(hideBtn, count);
+  applyHideButtonBadge(drawerGridState.hideBtn, count);
 }
 
 function detachHiddenSubscription(): void {
-  if (hiddenChangeUnsubscribe === null) return;
-  hiddenChangeUnsubscribe();
-  hiddenChangeUnsubscribe = null;
+  if (drawerGridState.hiddenChangeUnsubscribe === null) return;
+  drawerGridState.hiddenChangeUnsubscribe();
+  drawerGridState.hiddenChangeUnsubscribe = null;
 }
 
 export function isDrawerGridActive(): boolean {
@@ -337,13 +372,13 @@ function tileLabel(entry: DrawerGridTileEntry): string {
 // -----------------------------------------------------------------------------
 
 function updateToggleEnabledState(): void {
-  if (toggleBtn === null) return;
-  const enabled = lastKnownEntries.length >= 2;
-  toggleBtn.disabled = !enabled;
-  toggleBtn.title = enabled
+  if (drawerGridState.toggleBtn === null) return;
+  const enabled = drawerGridState.lastKnownEntries.length >= 2;
+  drawerGridState.toggleBtn.disabled = !enabled;
+  drawerGridState.toggleBtn.title = enabled
     ? 'Terminal grid view'
     : 'Terminal grid view (add a second terminal to enable)';
-  toggleBtn.classList.toggle('active', isDrawerGridActive());
+  drawerGridState.toggleBtn.classList.toggle('active', isDrawerGridActive());
 }
 
 // -----------------------------------------------------------------------------
@@ -352,8 +387,8 @@ function updateToggleEnabledState(): void {
 
 function enterGridModeInternal(): void {
   const project = getActiveProject();
-  if (project === null || gridEl === null) return;
-  if (lastKnownEntries.length < 2) return;
+  if (project === null || drawerGridState.gridEl === null) return;
+  if (drawerGridState.lastKnownEntries.length < 2) return;
   setProjectGridActive(project.secret, true);
   showGridChrome();
   ensureGridHandle();
@@ -365,7 +400,7 @@ function enterGridModeInternal(): void {
   // HS-7657: refresh the terminal list so a dynamic terminal that was
   // spawned (via tab-strip click → WS attach → server lazy-spawn) AFTER the
   // last `/terminal/list` call is reflected in the tile state. Without this,
-  // `lastKnownEntries` is whatever was captured by the most recent call to
+  // `drawerGridState.lastKnownEntries` is whatever was captured by the most recent call to
   // `loadAndRenderTerminalTabs`, which doesn't fire on WS-driven lazy spawn
   // — the grid would show the dynamic as "Not yet started" even though the
   // user had been using it in the drawer's tab view. The list call refreshes
@@ -387,27 +422,27 @@ async function refreshTerminalListForGrid(): Promise<void> {
 function exitGridModeInternal(): void {
   const project = getActiveProject();
   if (project !== null) setProjectGridActive(project.secret, false);
-  if (gridHandle !== null) {
-    gridHandle.dispose();
-    gridHandle = null;
+  if (drawerGridState.gridHandle !== null) {
+    drawerGridState.gridHandle.dispose();
+    drawerGridState.gridHandle = null;
   }
-  if (allHiddenPlaceholder !== null) {
-    allHiddenPlaceholder.remove();
-    allHiddenPlaceholder = null;
+  if (drawerGridState.allHiddenPlaceholder !== null) {
+    drawerGridState.allHiddenPlaceholder.remove();
+    drawerGridState.allHiddenPlaceholder = null;
   }
   hideGridChrome();
   detachResizeHandlers();
   detachBellSubscription();
   detachHiddenSubscription();
   updateToggleEnabledState();
-  try { onExitGrid(); } catch { /* swallow — caller wiring is advisory */ }
+  try { drawerGridState.onExitGrid(); } catch { /* swallow — caller wiring is advisory */ }
 }
 
 function ensureGridHandle(): void {
-  if (gridHandle !== null) return;
-  if (gridEl === null) return;
-  gridHandle = mountTileGrid({
-    container: gridEl,
+  if (drawerGridState.gridHandle !== null) return;
+  if (drawerGridState.gridEl === null) return;
+  drawerGridState.gridHandle = mountTileGrid({
+    container: drawerGridState.gridEl,
     cssPrefix: 'drawer-terminal-grid',
     centerSizeFrac: 0.7,
     // HS-7659 — when a tile is enlarged (centered or in dedicated view) the
@@ -421,7 +456,7 @@ function ensureGridHandle(): void {
     // the expand button + slider are gone.
     centerScope: 'viewport',
     // Pass document.body as the centerReferenceEl so the dedicated overlay
-    // attaches there (rather than inside the drawer's gridEl) — combined
+    // attaches there (rather than inside the drawer's drawerGridState.gridEl) — combined
     // with `position: fixed` it covers the whole window cleanly. The
     // centered-tile positioning is computed against the visual viewport
     // anyway when centerScope === 'viewport', so this only affects where
@@ -478,20 +513,20 @@ async function showHideContextMenuAtPointer(e: MouseEvent, secret: string, termi
 }
 
 function showGridChrome(): void {
-  if (gridEl === null) return;
+  if (drawerGridState.gridEl === null) return;
   const panel = byIdOrNull('command-log-panel');
   if (panel !== null) {
     for (const child of panel.querySelectorAll<HTMLElement>('.drawer-tab-content')) {
       child.style.display = 'none';
     }
   }
-  gridEl.style.display = '';
-  if (sizerContainer !== null) sizerContainer.style.display = '';
-  if (hideBtn !== null) hideBtn.style.display = '';
-  if (sizeSlider !== null) {
+  drawerGridState.gridEl.style.display = '';
+  if (drawerGridState.sizerContainer !== null) drawerGridState.sizerContainer.style.display = '';
+  if (drawerGridState.hideBtn !== null) drawerGridState.hideBtn.style.display = '';
+  if (drawerGridState.sizeSlider !== null) {
     const project = getActiveProject();
     const perRow = project === null ? DEFAULT_TILES_PER_ROW : getProjectGridColumnCount(project.secret);
-    sizeSlider.value = String(perRowToSliderPosition(perRow));
+    drawerGridState.sizeSlider.value = String(perRowToSliderPosition(perRow));
   }
   refreshSnapPointIndicators();
   // HS-7823 — keep the eye-icon badge in sync when chrome shows (covers
@@ -500,18 +535,18 @@ function showGridChrome(): void {
   // HS-7826 — keep the grouping selector dropdown in sync (visibility
   // depends on the active project's grouping count).
   refreshDrawerGroupingSelect();
-  if (toggleBtn !== null) toggleBtn.classList.add('active');
+  if (drawerGridState.toggleBtn !== null) drawerGridState.toggleBtn.classList.add('active');
 }
 
 function hideGridChrome(): void {
-  if (gridEl !== null) {
-    gridEl.style.display = 'none';
-    gridEl.replaceChildren();
+  if (drawerGridState.gridEl !== null) {
+    drawerGridState.gridEl.style.display = 'none';
+    drawerGridState.gridEl.replaceChildren();
   }
-  if (sizerContainer !== null) sizerContainer.style.display = 'none';
-  if (hideBtn !== null) hideBtn.style.display = 'none';
-  if (groupingSelect !== null) groupingSelect.style.display = 'none';
-  if (toggleBtn !== null) toggleBtn.classList.remove('active');
+  if (drawerGridState.sizerContainer !== null) drawerGridState.sizerContainer.style.display = 'none';
+  if (drawerGridState.hideBtn !== null) drawerGridState.hideBtn.style.display = 'none';
+  if (drawerGridState.groupingSelect !== null) drawerGridState.groupingSelect.style.display = 'none';
+  if (drawerGridState.toggleBtn !== null) drawerGridState.toggleBtn.classList.remove('active');
 }
 
 // -----------------------------------------------------------------------------
@@ -519,55 +554,55 @@ function hideGridChrome(): void {
 // -----------------------------------------------------------------------------
 
 function attachResizeHandlers(): void {
-  if (resizeListener !== null) return;
-  resizeListener = (): void => {
-    if (resizeRaf !== null) return;
-    resizeRaf = requestAnimationFrame(() => {
-      resizeRaf = null;
-      if (gridHandle !== null) {
-        gridHandle.applySizing();
-        gridHandle.recenterTile();
+  if (drawerGridState.resizeListener !== null) return;
+  drawerGridState.resizeListener = (): void => {
+    if (drawerGridState.resizeRaf !== null) return;
+    drawerGridState.resizeRaf = requestAnimationFrame(() => {
+      drawerGridState.resizeRaf = null;
+      if (drawerGridState.gridHandle !== null) {
+        drawerGridState.gridHandle.applySizing();
+        drawerGridState.gridHandle.recenterTile();
       }
       refreshSnapPointIndicators();
     });
   };
-  window.addEventListener('resize', resizeListener);
+  window.addEventListener('resize', drawerGridState.resizeListener);
   const drawerPanel = byIdOrNull('command-log-panel');
   if (drawerPanel !== null && typeof ResizeObserver !== 'undefined') {
-    drawerResizeObserver = new ResizeObserver(() => {
-      if (resizeListener !== null) resizeListener();
+    drawerGridState.drawerResizeObserver = new ResizeObserver(() => {
+      if (drawerGridState.resizeListener !== null) drawerGridState.resizeListener();
     });
-    drawerResizeObserver.observe(drawerPanel);
+    drawerGridState.drawerResizeObserver.observe(drawerPanel);
   }
 }
 
 function detachResizeHandlers(): void {
-  if (resizeListener !== null) {
-    window.removeEventListener('resize', resizeListener);
-    resizeListener = null;
+  if (drawerGridState.resizeListener !== null) {
+    window.removeEventListener('resize', drawerGridState.resizeListener);
+    drawerGridState.resizeListener = null;
   }
-  if (drawerResizeObserver !== null) {
-    drawerResizeObserver.disconnect();
-    drawerResizeObserver = null;
+  if (drawerGridState.drawerResizeObserver !== null) {
+    drawerGridState.drawerResizeObserver.disconnect();
+    drawerGridState.drawerResizeObserver = null;
   }
 }
 
 function attachBellSubscription(): void {
-  if (bellUnsubscribe !== null) return;
-  bellUnsubscribe = subscribeToBellState((state) => {
-    if (gridHandle === null) return;
+  if (drawerGridState.bellUnsubscribe !== null) return;
+  drawerGridState.bellUnsubscribe = subscribeToBellState((state) => {
+    if (drawerGridState.gridHandle === null) return;
     const project = getActiveProject();
     if (project === null) return;
     const entry = state.get(project.secret);
     const pendingIds = new Set(entry?.terminalIds ?? []);
-    gridHandle.syncBellState(pendingIds);
+    drawerGridState.gridHandle.syncBellState(pendingIds);
   });
 }
 
 function detachBellSubscription(): void {
-  if (bellUnsubscribe !== null) {
-    bellUnsubscribe();
-    bellUnsubscribe = null;
+  if (drawerGridState.bellUnsubscribe !== null) {
+    drawerGridState.bellUnsubscribe();
+    drawerGridState.bellUnsubscribe = null;
   }
 }
 
@@ -576,19 +611,19 @@ function detachBellSubscription(): void {
 // -----------------------------------------------------------------------------
 
 function refreshSnapPointIndicators(): void {
-  if (sizerContainer === null || gridEl === null || sizeSlider === null) return;
-  const rootWidth = gridEl.clientWidth - 2 * ROOT_PADDING;
-  currentSnapPoints = computeColumnSnapPoints(rootWidth);
+  if (drawerGridState.sizerContainer === null || drawerGridState.gridEl === null || drawerGridState.sizeSlider === null) return;
+  const rootWidth = drawerGridState.gridEl.clientWidth - 2 * ROOT_PADDING;
+  drawerGridState.currentSnapPoints = computeColumnSnapPoints(rootWidth);
 
-  let ticksEl = sizerContainer.querySelector<HTMLElement>('.drawer-grid-sizer-ticks');
+  let ticksEl = drawerGridState.sizerContainer.querySelector<HTMLElement>('.drawer-grid-sizer-ticks');
   if (ticksEl === null) {
     ticksEl = toElement(
       <div className="drawer-grid-sizer-ticks" aria-hidden="true"></div>
     );
-    sizerContainer.appendChild(ticksEl);
+    drawerGridState.sizerContainer.appendChild(ticksEl);
   }
-  const sliderRect = sizeSlider.getBoundingClientRect();
-  const containerRect = sizerContainer.getBoundingClientRect();
+  const sliderRect = drawerGridState.sizeSlider.getBoundingClientRect();
+  const containerRect = drawerGridState.sizerContainer.getBoundingClientRect();
   ticksEl.style.left = `${sliderRect.left - containerRect.left}px`;
   ticksEl.style.width = `${sliderRect.width}px`;
   ticksEl.innerHTML = '';
@@ -596,9 +631,9 @@ function refreshSnapPointIndicators(): void {
   // thumb-width hint, same `tickLeftPx` shift to keep ticks centred under
   // the thumb at every snap value. HS-8176 — sliderValue is a 1..MAX
   // integer position; convert to 0..100 percentage for tickLeftPx.
-  const thumbWidthPx = parseFloat(getComputedStyle(sizeSlider).getPropertyValue('--range-thumb-w')) || 16;
+  const thumbWidthPx = parseFloat(getComputedStyle(drawerGridState.sizeSlider).getPropertyValue('--range-thumb-w')) || 16;
   const sliderRange = MAX_TILES_PER_ROW - MIN_TILES_PER_ROW;
-  for (const pt of currentSnapPoints) {
+  for (const pt of drawerGridState.currentSnapPoints) {
     const pctPosition = sliderRange === 0 ? 0 : ((pt.sliderValue - MIN_TILES_PER_ROW) / sliderRange) * 100;
     ticksEl.appendChild(toElement(
       <span className="drawer-grid-sizer-tick"
@@ -606,4 +641,27 @@ function refreshSnapPointIndicators(): void {
             title={`${pt.perRow} per row`}></span>
     ));
   }
+}
+
+/** **TEST ONLY** — reset every module-level state slot back to its boot
+ *  default so consecutive tests don't leak. Mirrors the HS-8190 convention
+ *  in `permissionOverlay.tsx::_resetStateForTesting`: runs disposers BEFORE
+ *  swapping in a fresh state so an in-flight RAF, ResizeObserver, or
+ *  long-poll subscription doesn't leak past the swap. */
+export function _resetStateForTesting(): void {
+  if (drawerGridState.resizeRaf !== null) cancelAnimationFrame(drawerGridState.resizeRaf);
+  if (drawerGridState.resizeListener !== null) window.removeEventListener('resize', drawerGridState.resizeListener);
+  if (drawerGridState.drawerResizeObserver !== null) {
+    try { drawerGridState.drawerResizeObserver.disconnect(); } catch { /* ignore */ }
+  }
+  if (drawerGridState.bellUnsubscribe !== null) {
+    try { drawerGridState.bellUnsubscribe(); } catch { /* ignore */ }
+  }
+  if (drawerGridState.hiddenChangeUnsubscribe !== null) {
+    try { drawerGridState.hiddenChangeUnsubscribe(); } catch { /* ignore */ }
+  }
+  if (drawerGridState.gridHandle !== null) {
+    try { drawerGridState.gridHandle.dispose(); } catch { /* ignore */ }
+  }
+  drawerGridState = freshDrawerGridState();
 }

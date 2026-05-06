@@ -177,11 +177,45 @@ interface ShellIntegrationState {
 const SHELL_INTEGRATION_RING_SIZE = 500;
 
 const instances = new Map<string, TerminalInstance>();
-let activeTerminalId: string | null = null;
-/** The project secret the current instances were built for. Changes trigger a full rebuild (HS-6309). */
-let currentProjectSecret: string | null = null;
-/** Populated on each loadAndRenderTerminalTabs(). Consumed by settings-refresh flows. */
-let lastKnownConfigs: { configured: TerminalTabConfig[]; dynamic: TerminalTabConfig[] } = { configured: [], dynamic: [] };
+
+/**
+ * HS-8224 — bundled module-level lifecycle state, mirroring the HS-8190
+ * pattern landed in `permissionOverlay.tsx` and the HS-8222 / HS-8223
+ * follow-ups applied to `terminalDashboard.tsx` + `drawerTerminalGrid.tsx`.
+ * Holds the active-terminal pointer, the project-secret the per-instance
+ * state was built for, the last-known config snapshot driven by every
+ * `/terminal/list` round-trip, the bell-subscription idempotency flag, and
+ * the in-flight tab-drag id.
+ *
+ * The local var is named `terminalState` (not `state`) to avoid shadowing
+ * the imported `state` from `./state.js` — matches the precedent set in
+ * HS-8190 where shadowing was hit and reverted.
+ */
+interface TerminalModuleState {
+  activeTerminalId: string | null;
+  /** The project secret the current instances were built for. Changes
+   *  trigger a full rebuild (HS-6309). */
+  currentProjectSecret: string | null;
+  /** Populated on each loadAndRenderTerminalTabs(). Consumed by
+   *  settings-refresh flows. */
+  lastKnownConfigs: { configured: TerminalTabConfig[]; dynamic: TerminalTabConfig[] };
+  /** Idempotency flag for `subscribeToBellState`. */
+  bellSubscribed: boolean;
+  /** HS-7827 — id of the tab being dragged across the drawer strip. */
+  tabDragFromId: string | null;
+}
+
+function freshTerminalModuleState(): TerminalModuleState {
+  return {
+    activeTerminalId: null,
+    currentProjectSecret: null,
+    lastKnownConfigs: { configured: [], dynamic: [] },
+    bellSubscribed: false,
+    tabDragFromId: null,
+  };
+}
+
+let terminalState: TerminalModuleState = freshTerminalModuleState();
 
 /** One-time DOM setup for the terminal area inside the drawer. Called from app init. */
 export function initTerminal(): void {
@@ -190,7 +224,7 @@ export function initTerminal(): void {
   // Keep in-drawer bell indicators in sync with bellPoll (HS-6603 §24.4.3).
   ensureBellSubscription();
   window.addEventListener('resize', () => {
-    const active = activeTerminalId === null ? null : instances.get(activeTerminalId);
+    const active = terminalState.activeTerminalId === null ? null : instances.get(terminalState.activeTerminalId);
     if (active !== null && active !== undefined && isTerminalTabActive(active)) doFit(active);
   });
 
@@ -218,7 +252,7 @@ export function initTerminal(): void {
   // editor's Appearance section saved), update the matching instance's
   // config snapshot from the latest list response so resolveInstanceAppearance
   // picks up the new theme / fontFamily / fontSize, then re-apply. We don't
-  // know the new values inline here, so refresh `lastKnownConfigs` first via
+  // know the new values inline here, so refresh `terminalState.lastKnownConfigs` first via
   // a lightweight /terminal/list fetch the next loadAndRenderTerminalTabs
   // would normally do anyway — but the editor has already PATCHed file-settings
   // by the time this event fires, so a quick re-resolve from the existing
@@ -252,7 +286,7 @@ export function initTerminal(): void {
   const drawerPanel = byIdOrNull('command-log-panel');
   if (drawerPanel !== null && typeof ResizeObserver !== 'undefined') {
     const ro = new ResizeObserver(() => {
-      const active = activeTerminalId === null ? null : instances.get(activeTerminalId);
+      const active = terminalState.activeTerminalId === null ? null : instances.get(terminalState.activeTerminalId);
       if (active !== null && active !== undefined && isTerminalTabActive(active)) doFit(active);
     });
     ro.observe(drawerPanel);
@@ -285,10 +319,10 @@ function reconcileProjectChange(activeSecret: string | null): void {
   // mounted xterm/ws is bound to the old project — tear them all down. Otherwise
   // `activateTerminal` would reuse stale instances keyed by id (a configured
   // `default` terminal in project A shadowing project B's `default`).
-  if (currentProjectSecret !== null && currentProjectSecret !== activeSecret) {
+  if (terminalState.currentProjectSecret !== null && terminalState.currentProjectSecret !== activeSecret) {
     disposeAllInstances();
   }
-  currentProjectSecret = activeSecret;
+  terminalState.currentProjectSecret = activeSecret;
 }
 
 function buildWantedMap(data: ListResponse): Map<string, ListEntry> {
@@ -354,7 +388,7 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   } catch {
     return;
   }
-  lastKnownConfigs = data;
+  terminalState.lastKnownConfigs = data;
   // HS-7276 — seed the module-level $HOME cache so the CWD chip can tildify
   // subsequent OSC 7 pushes. No-op after the first tick.
   cacheHomeDir(data.home);
@@ -392,8 +426,8 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   }
 
   // If the previously-active id no longer exists, default to the first terminal.
-  if (activeTerminalId !== null && !wanted.has(activeTerminalId)) {
-    activeTerminalId = null;
+  if (terminalState.activeTerminalId !== null && !wanted.has(terminalState.activeTerminalId)) {
+    terminalState.activeTerminalId = null;
   }
 
   // HS-6311 — hand the full list to the drawer-grid module.
@@ -423,10 +457,9 @@ function syncInstancesWithBellState(bellStates: Map<string, { terminalIds: strin
   }
 }
 
-let bellSubscribed = false;
 function ensureBellSubscription(): void {
-  if (bellSubscribed) return;
-  bellSubscribed = true;
+  if (terminalState.bellSubscribed) return;
+  terminalState.bellSubscribed = true;
   subscribeToBellState(syncInstancesWithBellState);
 }
 
@@ -443,7 +476,7 @@ export function activateTerminal(id: string): void {
   // and activates that tab's normal view). Delegate to the grid module so
   // its internal state + chrome visibility stay consistent.
   if (isDrawerGridActive()) exitDrawerGridMode();
-  activeTerminalId = id;
+  terminalState.activeTerminalId = id;
 
   // Hide other terminal panes; show this one. Clear the bell indicator on
   // the now-active tab — viewing the terminal counts as "the user has
@@ -511,8 +544,8 @@ export function deactivateAllTerminals(): void {
  * terminal has no WebSocket open, or when the xterm hasn't mounted yet.
  */
 export function resyncActiveTerminalPtySize(): void {
-  if (activeTerminalId === null) return;
-  const inst = instances.get(activeTerminalId);
+  if (terminalState.activeTerminalId === null) return;
+  const inst = instances.get(terminalState.activeTerminalId);
   if (inst === undefined) return;
   if (inst.checkout === null) return;
   // First refit so the xterm reflects the drawer's CURRENT pane size, then
@@ -528,7 +561,7 @@ export function resyncActiveTerminalPtySize(): void {
 
 /** Is the given instance the currently-active drawer tab? */
 function isTerminalTabActive(inst: TerminalInstance): boolean {
-  return activeTerminalId === inst.id && inst.pane.style.display !== 'none';
+  return terminalState.activeTerminalId === inst.id && inst.pane.style.display !== 'none';
 }
 
 // IMPORTANT: the custom JSX runtime renders to an HTML string, so DOM
@@ -731,10 +764,9 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
  *  Tracks the dragged terminal id at module scope and reorders the strip
  *  on drop. Configured-id reorder is persisted to settings.terminals via
  *  PATCH; dynamic-id reorder lives in memory only. */
-let tabDragFromId: string | null = null;
 function attachTabDragHandlers(tabBtn: HTMLElement, terminalId: string): void {
   tabBtn.addEventListener('dragstart', (e) => {
-    tabDragFromId = terminalId;
+    terminalState.tabDragFromId = terminalId;
     if (e.dataTransfer !== null) {
       e.dataTransfer.effectAllowed = 'move';
       // Required by Firefox to start the drag — payload itself is unused.
@@ -743,13 +775,13 @@ function attachTabDragHandlers(tabBtn: HTMLElement, terminalId: string): void {
     tabBtn.classList.add('dragging');
   });
   tabBtn.addEventListener('dragend', () => {
-    tabDragFromId = null;
+    terminalState.tabDragFromId = null;
     tabBtn.classList.remove('dragging');
     document.querySelectorAll('.drawer-terminal-tab.drag-over')
       .forEach(el => el.classList.remove('drag-over'));
   });
   tabBtn.addEventListener('dragover', (e) => {
-    if (tabDragFromId === null || tabDragFromId === terminalId) return;
+    if (terminalState.tabDragFromId === null || terminalState.tabDragFromId === terminalId) return;
     e.preventDefault();
     if (e.dataTransfer !== null) e.dataTransfer.dropEffect = 'move';
     tabBtn.classList.add('drag-over');
@@ -760,9 +792,9 @@ function attachTabDragHandlers(tabBtn: HTMLElement, terminalId: string): void {
   tabBtn.addEventListener('drop', (e) => {
     e.preventDefault();
     tabBtn.classList.remove('drag-over');
-    if (tabDragFromId === null || tabDragFromId === terminalId) return;
-    void reorderTabAfterDrop(tabDragFromId, terminalId);
-    tabDragFromId = null;
+    if (terminalState.tabDragFromId === null || terminalState.tabDragFromId === terminalId) return;
+    void reorderTabAfterDrop(terminalState.tabDragFromId, terminalId);
+    terminalState.tabDragFromId = null;
   });
 }
 
@@ -792,10 +824,10 @@ async function reorderTabAfterDrop(fromId: string, toId: string): Promise<void> 
   // Persist the configured-only subset to settings.terminals. Dynamic ids
   // are intentionally NOT persisted — their position in the strip is a
   // session-only concern (per the HS-7827 spec).
-  const canonicalIds = lastKnownConfigs.configured.map(c => c.id);
+  const canonicalIds = terminalState.lastKnownConfigs.configured.map(c => c.id);
   const newConfiguredOrder = configuredSubsetInStripOrder(nextOrder, canonicalIds);
   if (newConfiguredOrder.join('|') === canonicalIds.join('|')) return; // no change to persist
-  const reorderedConfigs = reorderConfigsById(lastKnownConfigs.configured, newConfiguredOrder);
+  const reorderedConfigs = reorderConfigsById(terminalState.lastKnownConfigs.configured, newConfiguredOrder);
   // Strip the runtime-only fields the cache carries from /terminal/list
   // (`bellPending`, `state`, `exitCode`, `notificationMessage`, `dynamic`)
   // before persisting — settings.terminals is the canonical config shape.
@@ -812,7 +844,7 @@ async function reorderTabAfterDrop(fromId: string, toId: string): Promise<void> 
   // Update the local cache so a subsequent rebuild before the PATCH
   // round-trips reflects the new order. /terminal/list will re-confirm
   // after the server applies the patch.
-  lastKnownConfigs = { ...lastKnownConfigs, configured: persistShape.map(c => ({ ...c, dynamic: false })) };
+  terminalState.lastKnownConfigs = { ...terminalState.lastKnownConfigs, configured: persistShape.map(c => ({ ...c, dynamic: false })) };
   try {
     await api('/file-settings', { method: 'PATCH', body: { terminals: persistShape } });
   } catch {
@@ -1585,24 +1617,24 @@ function removeTerminalInstance(id: string): void {
   inst.tabBtn.remove();
   inst.pane.remove();
   instances.delete(id);
-  if (activeTerminalId === id) activeTerminalId = null;
+  if (terminalState.activeTerminalId === id) terminalState.activeTerminalId = null;
 }
 
 /** Tear down every client-side terminal instance. The server-side PTYs are untouched. */
 function disposeAllInstances(): void {
   for (const id of [...instances.keys()]) removeTerminalInstance(id);
-  activeTerminalId = null;
+  terminalState.activeTerminalId = null;
 }
 
 /**
  * Called by the app when the active project has changed. Tears down the old
  * project's terminals on the next `loadAndRenderTerminalTabs()` and resets
- * the cached `activeTerminalId` so the new project starts clean (HS-6309).
+ * the cached `terminalState.activeTerminalId` so the new project starts clean (HS-6309).
  */
 export function onProjectSwitch(): void {
   disposeAllInstances();
-  currentProjectSecret = null;
-  lastKnownConfigs = { configured: [], dynamic: [] };
+  terminalState.currentProjectSecret = null;
+  terminalState.lastKnownConfigs = { configured: [], dynamic: [] };
 }
 
 function doFit(inst: TerminalInstance): void {
@@ -1718,7 +1750,7 @@ export async function refreshTerminalsAfterSettingsChange(): Promise<void> {
 
 /** Exposed for debugging / tests. */
 export function getLastKnownTerminalConfigs() {
-  return lastKnownConfigs;
+  return terminalState.lastKnownConfigs;
 }
 
 // --- Context menu (HS-6470) ---
@@ -1850,4 +1882,23 @@ function promptRenameTerminal(inst: TerminalInstance): void {
       updateTabLabel(inst);
     },
   });
+}
+
+
+/** **TEST ONLY** — reset every module-level state slot back to its boot
+ *  default so consecutive tests don't leak. Mirrors the HS-8190 convention
+ *  in `permissionOverlay.tsx::_resetStateForTesting`. The const collection
+ *  state (`instances`) is cleared explicitly because it is a separate
+ *  container, not part of the bundled state object. Per-instance teardown
+ *  is best-effort — tests that need a clean DOM should swap the page first.
+ */
+export function _resetStateForTesting(): void {
+  for (const inst of instances.values()) {
+    try {
+      if (inst.ws !== null) inst.ws.close();
+      if (inst.term !== null) inst.term.dispose();
+    } catch { /* ignore */ }
+  }
+  instances.clear();
+  terminalState = freshTerminalModuleState();
 }

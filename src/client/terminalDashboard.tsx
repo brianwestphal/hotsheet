@@ -101,60 +101,6 @@ export interface ProjectSectionData {
  *  resize, syncBellState, rebuild on list refresh) walk this map. */
 const gridHandles = new Map<string, TileGridHandle>();
 
-/** Cross-section centered-tile coordination: which handle currently has a
- *  centered tile? When the user clicks a tile in section B while section A
- *  has one centered, we uncenter A first via the `onTileEnlarge` hook. */
-let centeredHandle: TileGridHandle | null = null;
-
-/** Search widget mounted in the app-header `#terminal-dashboard-search-slot`
- *  while a dedicated view is open. Disposed via the `onDedicatedBarMount`
- *  return-value disposer pattern. */
-let dedicatedSearchHandle: TerminalSearchHandle | null = null;
-
-let active = false;
-let toggleButton: HTMLButtonElement | null = null;
-let rootElement: HTMLElement | null = null;
-let resizeHandler: (() => void) | null = null;
-let resizeRaf: number | null = null;
-let bellUnsubscribe: (() => void) | null = null;
-let appearanceUnsubscribe: (() => void) | null = null;
-
-let sizerContainer: HTMLElement | null = null;
-let sizeSlider: HTMLInputElement | null = null;
-let currentSnapPoints: SnapPoint[] = [];
-/** HS-7661 — Show / Hide Terminals dialog opener for the global dashboard. */
-let hideButton: HTMLButtonElement | null = null;
-/** HS-7826 — visibility-grouping `<select>` next to the eye icon. */
-let groupingSelect: HTMLSelectElement | null = null;
-
-function refreshDashboardGroupingSelect(): void {
-  if (groupingSelect === null) return;
-  void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
-    refreshGroupingSelect({
-      selectEl: groupingSelect!,
-      getSecret: () => lastSectionData[0]?.project.secret ?? null,
-    });
-  });
-}
-/** HS-7661 — last-fetched per-project section data, retained so the
- *  hide-state subscription can re-render without re-fetching `/projects`
- *  + per-project `/terminal/list` round-trips. */
-let lastSectionData: ProjectSectionData[] = [];
-/** HS-7661 — unsubscribe from hidden-state changes. Set on enterDashboard,
- *  cleared on exitDashboard. */
-let hiddenChangeUnsubscribe: (() => void) | null = null;
-
-/** Module-level column count persists across enter / exit calls. HS-8176
- *  default = `DEFAULT_TILES_PER_ROW` (4) — replaces the pre-HS-8176
- *  continuous-slider default of 33 (out of 100). Hydrated from
- *  `/file-settings` (`dashboard_columns_per_row`) on app boot and persisted
- *  (debounced) on every input change so the user's chosen scale survives
- *  reloads + relaunches. Legacy `dashboard_slider_value` (0..100) is
- *  migrated on read by `legacySliderValueToColumnCount`; new writes use
- *  the integer-keyed setting only. */
-let columnCount = DEFAULT_TILES_PER_ROW;
-let sliderValueLoadPromise: Promise<void> | null = null;
-let sliderPersistTimeout: ReturnType<typeof setTimeout> | null = null;
 const SLIDER_PERSIST_DEBOUNCE_MS = 250;
 
 /** HS-7662 — layout mode for the dashboard grid. `'sectioned'` renders one
@@ -163,45 +109,136 @@ const SLIDER_PERSIST_DEBOUNCE_MS = 250;
  *  order, with project-color badges to mark project boundaries. Persisted
  *  to `/file-settings` under `dashboard_layout_mode`. Default `'sectioned'`. */
 type LayoutMode = 'sectioned' | 'flow';
-let layoutMode: LayoutMode = 'sectioned';
-let layoutToggleButton: HTMLButtonElement | null = null;
-/** HS-7662 — cached layoutMode load promise, awaited inside
- *  `renderDashboardGrid` so the first paint always reflects the persisted
- *  mode (sectioned default never paints first then re-paints on fetch
- *  resolution). Subsequent calls return the cached promise. */
-let layoutModeLoadPromise: Promise<void> | null = null;
+
+/**
+ * HS-8222 — bundled module-level lifecycle state, mirroring the HS-8190
+ * pattern landed in `permissionOverlay.tsx`. The toolbar buttons, async
+ * load promises, debounce handles, cross-handle centered-tile pointer,
+ * and active-state flag all live here in a single named container so a
+ * future audit can spot stale handles immediately.
+ *
+ * The local var is named `dashboardState` (not `state`) to avoid shadowing
+ * the imported `state` module surface should one ever be added — matches
+ * the precedent set in HS-8190 where shadowing `./state.js` was hit and
+ * reverted.
+ */
+interface DashboardState {
+  /** Cross-section centered-tile coordination: which handle currently has
+   *  a centered tile? When the user clicks a tile in section B while
+   *  section A has one centered, we uncenter A first via `onTileEnlarge`. */
+  centeredHandle: TileGridHandle | null;
+  /** Search widget mounted in the app-header `#terminal-dashboard-search-slot`
+   *  while a dedicated view is open. Disposed via the `onDedicatedBarMount`
+   *  return-value disposer pattern. */
+  dedicatedSearchHandle: TerminalSearchHandle | null;
+  active: boolean;
+  toggleButton: HTMLButtonElement | null;
+  rootElement: HTMLElement | null;
+  resizeHandler: (() => void) | null;
+  resizeRaf: number | null;
+  bellUnsubscribe: (() => void) | null;
+  appearanceUnsubscribe: (() => void) | null;
+  sizerContainer: HTMLElement | null;
+  sizeSlider: HTMLInputElement | null;
+  currentSnapPoints: SnapPoint[];
+  /** HS-7661 — Show / Hide Terminals dialog opener for the global dashboard. */
+  hideButton: HTMLButtonElement | null;
+  /** HS-7826 — visibility-grouping `<select>` next to the eye icon. */
+  groupingSelect: HTMLSelectElement | null;
+  /** HS-7661 — last-fetched per-project section data, retained so the
+   *  hide-state subscription can re-render without re-fetching `/projects`
+   *  + per-project `/terminal/list` round-trips. */
+  lastSectionData: ProjectSectionData[];
+  /** HS-7661 — unsubscribe from hidden-state changes. Set on
+   *  `enterDashboard`, cleared on `exitDashboard`. */
+  hiddenChangeUnsubscribe: (() => void) | null;
+  /** Module-level column count persists across enter / exit calls. HS-8176
+   *  default = `DEFAULT_TILES_PER_ROW` (4). Hydrated from `/file-settings`
+   *  (`dashboard_columns_per_row`) on app boot and persisted (debounced)
+   *  on every input change. Legacy `dashboard_slider_value` (0..100) is
+   *  migrated on read by `legacySliderValueToColumnCount`. */
+  columnCount: number;
+  sliderValueLoadPromise: Promise<void> | null;
+  sliderPersistTimeout: ReturnType<typeof setTimeout> | null;
+  /** HS-7662 — current layout mode. */
+  layoutMode: LayoutMode;
+  layoutToggleButton: HTMLButtonElement | null;
+  /** HS-7662 — cached layoutMode load promise, awaited inside
+   *  `renderDashboardGrid` so the first paint always reflects the
+   *  persisted mode. */
+  layoutModeLoadPromise: Promise<void> | null;
+}
+
+function freshDashboardState(): DashboardState {
+  return {
+    centeredHandle: null,
+    dedicatedSearchHandle: null,
+    active: false,
+    toggleButton: null,
+    rootElement: null,
+    resizeHandler: null,
+    resizeRaf: null,
+    bellUnsubscribe: null,
+    appearanceUnsubscribe: null,
+    sizerContainer: null,
+    sizeSlider: null,
+    currentSnapPoints: [],
+    hideButton: null,
+    groupingSelect: null,
+    lastSectionData: [],
+    hiddenChangeUnsubscribe: null,
+    columnCount: DEFAULT_TILES_PER_ROW,
+    sliderValueLoadPromise: null,
+    sliderPersistTimeout: null,
+    layoutMode: 'sectioned',
+    layoutToggleButton: null,
+    layoutModeLoadPromise: null,
+  };
+}
+
+let dashboardState: DashboardState = freshDashboardState();
+
+function refreshDashboardGroupingSelect(): void {
+  if (dashboardState.groupingSelect === null) return;
+  void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
+    refreshGroupingSelect({
+      selectEl: dashboardState.groupingSelect!,
+      getSecret: () => dashboardState.lastSectionData[0]?.project.secret ?? null,
+    });
+  });
+}
 
 function bindGroupingSelect(): void {
-  if (groupingSelect === null) return;
+  if (dashboardState.groupingSelect === null) return;
   // HS-7826 — wire the grouping selector. Primary scope: the first project
   // in registered order. HS-7826 follow-up: `getAdditionalSecrets` returns
   // every other project so picking a different grouping in the dropdown
   // flips the active id across ALL projects.
   void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
     wireGroupingSelectChange({
-      selectEl: groupingSelect!,
-      getSecret: () => lastSectionData[0]?.project.secret ?? null,
-      getAdditionalSecrets: () => lastSectionData.slice(1).map(s => s.project.secret),
+      selectEl: dashboardState.groupingSelect!,
+      getSecret: () => dashboardState.lastSectionData[0]?.project.secret ?? null,
+      getAdditionalSecrets: () => dashboardState.lastSectionData.slice(1).map(s => s.project.secret),
     });
   });
 }
 
 function bindSizeSliderInput(): void {
-  sizeSlider?.addEventListener('input', () => {
-    if (sizeSlider === null) return;
+  dashboardState.sizeSlider?.addEventListener('input', () => {
+    if (dashboardState.sizeSlider === null) return;
     // HS-8176 — slider value is the LTR position (1=leftmost,
     // MAX=rightmost). The user's mental model is left=many small,
     // right=one big, so the column count is the inverse.
-    const parsed = Number.parseInt(sizeSlider.value, 10);
+    const parsed = Number.parseInt(dashboardState.sizeSlider.value, 10);
     const sliderPos = Number.isFinite(parsed) ? parsed : perRowToSliderPosition(DEFAULT_TILES_PER_ROW);
-    columnCount = sliderPositionToPerRow(sliderPos);
-    if (active) applyAllSizing();
+    dashboardState.columnCount = sliderPositionToPerRow(sliderPos);
+    if (dashboardState.active) applyAllSizing();
     schedulePersistSliderValue();
   });
 }
 
 function handleDashboardEscape(e: KeyboardEvent): void {
-  if (!active) return;
+  if (!dashboardState.active) return;
   if (e.key !== 'Escape') return;
   // HS-8011 — when a terminal is focused, plain Esc must reach the running
   // program; Opt+Esc still exits dedicated → centered → dashboard.
@@ -232,10 +269,10 @@ function handleDashboardEscape(e: KeyboardEvent): void {
       return;
     }
   }
-  if (centeredHandle !== null) {
+  if (dashboardState.centeredHandle !== null) {
     e.preventDefault();
     e.stopPropagation();
-    centeredHandle.uncenterTile();
+    dashboardState.centeredHandle.uncenterTile();
     return;
   }
   e.preventDefault();
@@ -245,21 +282,21 @@ function handleDashboardEscape(e: KeyboardEvent): void {
 export function initTerminalDashboard(): void {
   if (getTauriInvoke() === null) return;
 
-  toggleButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-toggle');
-  rootElement = byIdOrNull('terminal-dashboard-root');
-  if (toggleButton === null || rootElement === null) return;
+  dashboardState.toggleButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-toggle');
+  dashboardState.rootElement = byIdOrNull('terminal-dashboard-root');
+  if (dashboardState.toggleButton === null || dashboardState.rootElement === null) return;
 
-  toggleButton.style.display = '';
-  toggleButton.addEventListener('click', () => {
-    if (active) exitDashboard();
+  dashboardState.toggleButton.style.display = '';
+  dashboardState.toggleButton.addEventListener('click', () => {
+    if (dashboardState.active) exitDashboard();
     else enterDashboard();
   });
 
-  sizerContainer = byIdOrNull('terminal-dashboard-sizer');
-  sizeSlider = byIdOrNull<HTMLInputElement>('terminal-dashboard-size-slider');
-  hideButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-hide-btn');
-  groupingSelect = byIdOrNull<HTMLSelectElement>('terminal-dashboard-grouping-select');
-  layoutToggleButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-layout-toggle');
+  dashboardState.sizerContainer = byIdOrNull('terminal-dashboard-sizer');
+  dashboardState.sizeSlider = byIdOrNull<HTMLInputElement>('terminal-dashboard-size-slider');
+  dashboardState.hideButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-hide-btn');
+  dashboardState.groupingSelect = byIdOrNull<HTMLSelectElement>('terminal-dashboard-grouping-select');
+  dashboardState.layoutToggleButton = byIdOrNull<HTMLButtonElement>('terminal-dashboard-layout-toggle');
 
   bindGroupingSelect();
   // HS-7662 + HS-7948 — fire-and-forget eagerly load persisted layout mode +
@@ -268,17 +305,17 @@ export function initTerminalDashboard(): void {
   // callers.
   void loadLayoutMode();
   void loadSliderValue();
-  layoutToggleButton?.addEventListener('click', () => {
-    setLayoutMode(layoutMode === 'sectioned' ? 'flow' : 'sectioned');
+  dashboardState.layoutToggleButton?.addEventListener('click', () => {
+    setLayoutMode(dashboardState.layoutMode === 'sectioned' ? 'flow' : 'sectioned');
   });
   // HS-7661 — open the "Show / Hide Terminals" dialog in global mode (every
   // project grouped). State changes fire the hidden-changes subscription
   // (registered on `enterDashboard`) which re-runs `applyHiddenFiltering`
   // so tiles disappear / reappear without a fetch round-trip.
-  hideButton?.addEventListener('click', () => {
+  dashboardState.hideButton?.addEventListener('click', () => {
     showHideTerminalDialog({
       mode: 'global',
-      groups: lastSectionData.map(s => ({
+      groups: dashboardState.lastSectionData.map(s => ({
         secret: s.project.secret,
         name: s.project.name,
         terminals: s.terminals.map(t => ({ id: t.id, name: tileEntryLabel(t) })),
@@ -293,38 +330,38 @@ export function initTerminalDashboard(): void {
 }
 
 export function isDashboardActive(): boolean {
-  return active;
+  return dashboardState.active;
 }
 
 export function exitDashboard(): void {
-  if (!active) return;
-  active = false;
+  if (!dashboardState.active) return;
+  dashboardState.active = false;
   document.body.classList.remove(BODY_CLASS);
   teardownAllHandles();
-  if (rootElement !== null) {
-    rootElement.style.display = 'none';
-    rootElement.replaceChildren();
+  if (dashboardState.rootElement !== null) {
+    dashboardState.rootElement.style.display = 'none';
+    dashboardState.rootElement.replaceChildren();
   }
-  if (toggleButton !== null) toggleButton.classList.remove('active');
-  if (sizerContainer !== null) sizerContainer.style.display = 'none';
-  if (hideButton !== null) hideButton.style.display = 'none';
-  if (groupingSelect !== null) groupingSelect.style.display = 'none';
-  if (layoutToggleButton !== null) layoutToggleButton.style.display = 'none';
-  if (hiddenChangeUnsubscribe !== null) {
-    hiddenChangeUnsubscribe();
-    hiddenChangeUnsubscribe = null;
+  if (dashboardState.toggleButton !== null) dashboardState.toggleButton.classList.remove('active');
+  if (dashboardState.sizerContainer !== null) dashboardState.sizerContainer.style.display = 'none';
+  if (dashboardState.hideButton !== null) dashboardState.hideButton.style.display = 'none';
+  if (dashboardState.groupingSelect !== null) dashboardState.groupingSelect.style.display = 'none';
+  if (dashboardState.layoutToggleButton !== null) dashboardState.layoutToggleButton.style.display = 'none';
+  if (dashboardState.hiddenChangeUnsubscribe !== null) {
+    dashboardState.hiddenChangeUnsubscribe();
+    dashboardState.hiddenChangeUnsubscribe = null;
   }
-  if (resizeHandler !== null) {
-    window.removeEventListener('resize', resizeHandler);
-    resizeHandler = null;
+  if (dashboardState.resizeHandler !== null) {
+    window.removeEventListener('resize', dashboardState.resizeHandler);
+    dashboardState.resizeHandler = null;
   }
-  if (bellUnsubscribe !== null) {
-    bellUnsubscribe();
-    bellUnsubscribe = null;
+  if (dashboardState.bellUnsubscribe !== null) {
+    dashboardState.bellUnsubscribe();
+    dashboardState.bellUnsubscribe = null;
   }
-  if (appearanceUnsubscribe !== null) {
-    appearanceUnsubscribe();
-    appearanceUnsubscribe = null;
+  if (dashboardState.appearanceUnsubscribe !== null) {
+    dashboardState.appearanceUnsubscribe();
+    dashboardState.appearanceUnsubscribe = null;
   }
   // HS-7592 — re-claim the drawer terminal's PTY at drawer dims after the
   // dashboard's dedicated view may have resized it.
@@ -347,17 +384,17 @@ function parseLayoutMode(raw: unknown): LayoutMode {
  *  cache the resulting promise. Resolves silently on error so the dashboard
  *  still works when the settings endpoint is briefly unavailable. */
 function loadLayoutMode(): Promise<void> {
-  if (layoutModeLoadPromise !== null) return layoutModeLoadPromise;
-  layoutModeLoadPromise = (async () => {
+  if (dashboardState.layoutModeLoadPromise !== null) return dashboardState.layoutModeLoadPromise;
+  dashboardState.layoutModeLoadPromise = (async () => {
     try {
       const fs = await api<{ dashboard_layout_mode?: string }>('/file-settings');
-      layoutMode = parseLayoutMode(fs.dashboard_layout_mode);
+      dashboardState.layoutMode = parseLayoutMode(fs.dashboard_layout_mode);
     } catch {
-      layoutMode = 'sectioned';
+      dashboardState.layoutMode = 'sectioned';
     }
     applyLayoutToggleVisualState();
   })();
-  return layoutModeLoadPromise;
+  return dashboardState.layoutModeLoadPromise;
 }
 
 /** HS-7948 / HS-8176 — pure: parse a settings entry into a numeric column
@@ -391,22 +428,22 @@ export function parsePersistedColumnCount(rawNew: unknown, rawLegacy: unknown): 
  *  the load completes so the thumb reflects the persisted scale even if the
  *  user opens the dashboard before the fetch resolves. */
 function loadSliderValue(): Promise<void> {
-  if (sliderValueLoadPromise !== null) return sliderValueLoadPromise;
-  sliderValueLoadPromise = (async () => {
+  if (dashboardState.sliderValueLoadPromise !== null) return dashboardState.sliderValueLoadPromise;
+  dashboardState.sliderValueLoadPromise = (async () => {
     try {
       const fs = await api<{ dashboard_columns_per_row?: number | string; dashboard_slider_value?: number | string }>('/file-settings');
       const parsed = parsePersistedColumnCount(fs.dashboard_columns_per_row, fs.dashboard_slider_value);
       if (parsed !== null) {
-        columnCount = parsed;
-        if (sizeSlider !== null) sizeSlider.value = String(perRowToSliderPosition(columnCount));
-        if (active) applyAllSizing();
+        dashboardState.columnCount = parsed;
+        if (dashboardState.sizeSlider !== null) dashboardState.sizeSlider.value = String(perRowToSliderPosition(dashboardState.columnCount));
+        if (dashboardState.active) applyAllSizing();
       }
     } catch {
       // Keep the default — silent failure is the right call here, the same
       // way `loadLayoutMode` swallows.
     }
   })();
-  return sliderValueLoadPromise;
+  return dashboardState.sliderValueLoadPromise;
 }
 
 /** HS-7948 / HS-8176 — debounced persistence of the column count to
@@ -416,12 +453,12 @@ function loadSliderValue(): Promise<void> {
  *  code so older Hot Sheet versions that downgrade-then-reload will fall
  *  back to their default rather than seeing a stale 0..100 value. */
 function schedulePersistSliderValue(): void {
-  if (sliderPersistTimeout !== null) clearTimeout(sliderPersistTimeout);
-  sliderPersistTimeout = setTimeout(() => {
-    sliderPersistTimeout = null;
+  if (dashboardState.sliderPersistTimeout !== null) clearTimeout(dashboardState.sliderPersistTimeout);
+  dashboardState.sliderPersistTimeout = setTimeout(() => {
+    dashboardState.sliderPersistTimeout = null;
     void api('/file-settings', {
       method: 'PATCH',
-      body: { dashboard_columns_per_row: columnCount },
+      body: { dashboard_columns_per_row: dashboardState.columnCount },
     }).catch(() => { /* swallow — UI already reflects the new value */ });
   }, SLIDER_PERSIST_DEBOUNCE_MS);
 }
@@ -430,8 +467,8 @@ function schedulePersistSliderValue(): void {
  *  Triggers a full re-render of the dashboard root if currently active so
  *  the user sees the new layout immediately. */
 function setLayoutMode(next: LayoutMode): void {
-  if (next === layoutMode) return;
-  layoutMode = next;
+  if (next === dashboardState.layoutMode) return;
+  dashboardState.layoutMode = next;
   applyLayoutToggleVisualState();
   // Persist in the background — don't block the re-render on the network.
   void api('/file-settings', {
@@ -440,15 +477,15 @@ function setLayoutMode(next: LayoutMode): void {
   }).catch(() => { /* swallow — UI flip already happened */ });
   // Re-render with the cached section data when active so we don't
   // re-fetch /projects + /terminal/list on every toggle.
-  if (active && rootElement !== null && lastSectionData.length > 0) {
-    paintDashboardSections(rootElement, lastSectionData);
+  if (dashboardState.active && dashboardState.rootElement !== null && dashboardState.lastSectionData.length > 0) {
+    paintDashboardSections(dashboardState.rootElement, dashboardState.lastSectionData);
   }
 }
 
 function applyLayoutToggleVisualState(): void {
-  if (layoutToggleButton === null) return;
-  layoutToggleButton.classList.toggle('active', layoutMode === 'flow');
-  layoutToggleButton.title = layoutMode === 'flow'
+  if (dashboardState.layoutToggleButton === null) return;
+  dashboardState.layoutToggleButton.classList.toggle('active', dashboardState.layoutMode === 'flow');
+  dashboardState.layoutToggleButton.title = dashboardState.layoutMode === 'flow'
     ? 'Switch to sectioned layout'
     : 'Switch to flow layout';
 }
@@ -456,11 +493,11 @@ function applyLayoutToggleVisualState(): void {
 function teardownAllHandles(): void {
   for (const handle of gridHandles.values()) handle.dispose();
   gridHandles.clear();
-  centeredHandle = null;
+  dashboardState.centeredHandle = null;
   // Clear search slot if dedicated view was open at exit time.
-  if (dedicatedSearchHandle !== null) {
-    try { dedicatedSearchHandle.dispose(); } catch { /* ignore */ }
-    dedicatedSearchHandle = null;
+  if (dashboardState.dedicatedSearchHandle !== null) {
+    try { dashboardState.dedicatedSearchHandle.dispose(); } catch { /* ignore */ }
+    dashboardState.dedicatedSearchHandle = null;
   }
   const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
   if (searchSlot !== null) {
@@ -470,32 +507,32 @@ function teardownAllHandles(): void {
 }
 
 function enterDashboard(): void {
-  if (active) return;
+  if (dashboardState.active) return;
   restoreTicketList();
   closeDetail();
-  active = true;
+  dashboardState.active = true;
   document.body.classList.add(BODY_CLASS);
-  if (toggleButton !== null) toggleButton.classList.add('active');
-  if (sizerContainer !== null) sizerContainer.style.display = '';
-  if (hideButton !== null) hideButton.style.display = '';
-  if (layoutToggleButton !== null) layoutToggleButton.style.display = '';
+  if (dashboardState.toggleButton !== null) dashboardState.toggleButton.classList.add('active');
+  if (dashboardState.sizerContainer !== null) dashboardState.sizerContainer.style.display = '';
+  if (dashboardState.hideButton !== null) dashboardState.hideButton.style.display = '';
+  if (dashboardState.layoutToggleButton !== null) dashboardState.layoutToggleButton.style.display = '';
   applyLayoutToggleVisualState();
-  if (sizeSlider !== null) sizeSlider.value = String(perRowToSliderPosition(columnCount));
-  if (rootElement !== null) {
-    rootElement.style.display = '';
-    void renderDashboardGrid(rootElement);
+  if (dashboardState.sizeSlider !== null) dashboardState.sizeSlider.value = String(perRowToSliderPosition(dashboardState.columnCount));
+  if (dashboardState.rootElement !== null) {
+    dashboardState.rootElement.style.display = '';
+    void renderDashboardGrid(dashboardState.rootElement);
   }
-  resizeHandler = (): void => {
-    if (resizeRaf !== null) return;
-    resizeRaf = requestAnimationFrame(() => {
-      resizeRaf = null;
+  dashboardState.resizeHandler = (): void => {
+    if (dashboardState.resizeRaf !== null) return;
+    dashboardState.resizeRaf = requestAnimationFrame(() => {
+      dashboardState.resizeRaf = null;
       applyAllSizing();
       refreshSnapPointIndicators();
       // Re-center any centered tile against the new viewport.
       for (const handle of gridHandles.values()) handle.recenterTile();
     });
   };
-  window.addEventListener('resize', resizeHandler);
+  window.addEventListener('resize', dashboardState.resizeHandler);
   refreshSnapPointIndicators();
 
   // Cross-project bell long-poll subscription — forward filtered pending sets
@@ -504,7 +541,7 @@ function enterDashboard(): void {
   // FLOW_HANDLE_KEY sentinel (HS-7662) gets the union of every project's
   // pending bells since flow mode renders one handle for every project's
   // tiles in a single grid.
-  bellUnsubscribe = subscribeToBellState((state) => {
+  dashboardState.bellUnsubscribe = subscribeToBellState((state) => {
     for (const [secret, handle] of gridHandles.entries()) {
       if (secret === FLOW_HANDLE_KEY) {
         const allPending = new Set<string>();
@@ -527,26 +564,26 @@ function enterDashboard(): void {
   // centered / dedicated state because `rebuild` resets that anyway and the
   // user is changing project-default appearance from the Settings dialog
   // (which they wouldn't do mid-zoom). For now we just trigger a refresh.
-  appearanceUnsubscribe = subscribeToDefaultAppearanceChanges(() => {
+  dashboardState.appearanceUnsubscribe = subscribeToDefaultAppearanceChanges(() => {
     refreshDashboardGrid();
   });
 
-  // HS-7661 — re-render the sections (using cached lastSectionData) when
+  // HS-7661 — re-render the sections (using cached dashboardState.lastSectionData) when
   // hidden-terminal state changes. No fetch round-trip; the subscription
   // fires after every `setTerminalHidden` / `unhideAll*` call.
   // HS-7823 — refresh the eye-icon badge count alongside the re-render.
   // HS-7826 — refresh the grouping selector dropdown so adding / renaming
   // / deleting / switching groupings updates the chrome immediately.
-  hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
-    applyHideButtonBadge(hideButton, countHiddenAcrossAllProjects());
+  dashboardState.hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
+    applyHideButtonBadge(dashboardState.hideButton, countHiddenAcrossAllProjects());
     refreshDashboardGroupingSelect();
-    if (!active || rootElement === null) return;
-    paintDashboardSections(rootElement, lastSectionData);
+    if (!dashboardState.active || dashboardState.rootElement === null) return;
+    paintDashboardSections(dashboardState.rootElement, dashboardState.lastSectionData);
   });
   refreshDashboardGroupingSelect();
   // HS-7823 — initial paint of the badge so the count is correct on first
   // dashboard open even when no toggle has fired this session yet.
-  applyHideButtonBadge(hideButton, countHiddenAcrossAllProjects());
+  applyHideButtonBadge(dashboardState.hideButton, countHiddenAcrossAllProjects());
 }
 
 async function renderDashboardGrid(root: HTMLElement): Promise<void> {
@@ -557,12 +594,12 @@ async function renderDashboardGrid(root: HTMLElement): Promise<void> {
   // HS-7948 — also await the persisted slider value so the very first
   // paint applies the user's saved scale rather than the default 33.
   const [sections] = await Promise.all([fetchProjectSections(), loadLayoutMode(), loadSliderValue()]);
-  if (!active) return; // user exited during fetch
-  lastSectionData = sections;
+  if (!dashboardState.active) return; // user exited during fetch
+  dashboardState.lastSectionData = sections;
   paintDashboardSections(root, sections);
-  // HS-7970 — refresh the grouping selector NOW that `lastSectionData` is
+  // HS-7970 — refresh the grouping selector NOW that `dashboardState.lastSectionData` is
   // populated. `enterDashboard` ran `refreshDashboardGroupingSelect()` synchronously
-  // before this fetch resolved, when `lastSectionData` was still empty —
+  // before this fetch resolved, when `dashboardState.lastSectionData` was still empty —
   // which made the select think there was no scope project, so it hid
   // itself. Re-run with real data so a project that has multiple groupings
   // shows the dropdown next to the eye icon.
@@ -593,7 +630,7 @@ function paintDashboardSections(root: HTMLElement, sections: ProjectSectionData[
     return;
   }
 
-  if (layoutMode === 'flow') {
+  if (dashboardState.layoutMode === 'flow') {
     paintFlowLayout(root, sections);
   } else {
     paintSectionedLayout(root, sections);
@@ -667,10 +704,10 @@ function flattenSectionsToTiles(sections: ProjectSectionData[]): FlowTile[] {
 
 function setFlowChromeVisibility(visible: boolean): void {
   const display = visible ? '' : 'none';
-  if (sizerContainer !== null) sizerContainer.style.display = display;
-  if (layoutToggleButton !== null) layoutToggleButton.style.display = display;
-  if (hideButton !== null) hideButton.style.display = display;
-  if (groupingSelect !== null) groupingSelect.style.display = display;
+  if (dashboardState.sizerContainer !== null) dashboardState.sizerContainer.style.display = display;
+  if (dashboardState.layoutToggleButton !== null) dashboardState.layoutToggleButton.style.display = display;
+  if (dashboardState.hideButton !== null) dashboardState.hideButton.style.display = display;
+  if (dashboardState.groupingSelect !== null) dashboardState.groupingSelect.style.display = display;
 }
 
 function fillDedicatedLabel(label: HTMLElement, project: ProjectInfo, terminalLabel: string): void {
@@ -707,7 +744,7 @@ function buildFlowDedicatedBarMount(
       handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });
       searchSlot.replaceChildren(handleLocal.root);
       searchSlot.style.display = '';
-      dedicatedSearchHandle = handleLocal;
+      dashboardState.dedicatedSearchHandle = handleLocal;
     }
     return () => {
       try { handleLocal?.dispose(); } catch { /* ignore */ }
@@ -715,8 +752,8 @@ function buildFlowDedicatedBarMount(
         searchSlot.replaceChildren();
         searchSlot.style.display = 'none';
       }
-      dedicatedSearchHandle = null;
-      if (active) {
+      dashboardState.dedicatedSearchHandle = null;
+      if (dashboardState.active) {
         setFlowChromeVisibility(true);
         // HS-7826 — restore the grouping selector if it should be visible
         // (>1 grouping). refreshDashboardGroupingSelect handles the count
@@ -753,18 +790,18 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
     cssPrefix: 'terminal-dashboard',
     centerSizeFrac: 0.7,
     centerScope: 'viewport',
-    centerReferenceEl: rootElement ?? undefined,
-    getColumnCount: () => columnCount,
+    centerReferenceEl: dashboardState.rootElement ?? undefined,
+    getColumnCount: () => dashboardState.columnCount,
     onContextMenu: (entry, e) => {
       const project = projectFor(entry);
       if (project === null) return;
       onTileContextMenu(entry, project.secret, e);
     },
     onTileEnlarge: (_entry, target) => {
-      if (target === 'center') centeredHandle = handle;
+      if (target === 'center') dashboardState.centeredHandle = handle;
     },
     onTileShrink: () => {
-      if (centeredHandle === handle && !handle.isCentered()) centeredHandle = null;
+      if (dashboardState.centeredHandle === handle && !handle.isCentered()) dashboardState.centeredHandle = null;
     },
     // HS-7943 — flow-mode project-badge click → route to that project's
     // tab. Mirrors the HS-6832 project-tab-while-in-dashboard pattern:
@@ -867,10 +904,10 @@ function buildSectionedDedicatedBarMount(
   project: ProjectInfo,
 ): (bar: HTMLElement, entry: TileEntry, term: Terminal) => () => void {
   return (bar, entry, term) => {
-    if (sizerContainer !== null) sizerContainer.style.display = 'none';
+    if (dashboardState.sizerContainer !== null) dashboardState.sizerContainer.style.display = 'none';
     // HS-7826 — also hide the grouping selector while the dedicated view is
     // open; it shares the toolbar real estate with the sizer.
-    if (groupingSelect !== null) groupingSelect.style.display = 'none';
+    if (dashboardState.groupingSelect !== null) dashboardState.groupingSelect.style.display = 'none';
     const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
     if (label !== null) fillDedicatedLabel(label, project, entry.label);
     const search = new SearchAddon();
@@ -881,7 +918,7 @@ function buildSectionedDedicatedBarMount(
       handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });
       searchSlot.replaceChildren(handleLocal.root);
       searchSlot.style.display = '';
-      dedicatedSearchHandle = handleLocal;
+      dashboardState.dedicatedSearchHandle = handleLocal;
     }
     return () => {
       try { handleLocal?.dispose(); } catch { /* ignore */ }
@@ -889,10 +926,10 @@ function buildSectionedDedicatedBarMount(
         searchSlot.replaceChildren();
         searchSlot.style.display = 'none';
       }
-      dedicatedSearchHandle = null;
-      if (sizerContainer !== null && active) sizerContainer.style.display = '';
+      dashboardState.dedicatedSearchHandle = null;
+      if (dashboardState.sizerContainer !== null && dashboardState.active) dashboardState.sizerContainer.style.display = '';
       // HS-7826 — restore the grouping selector visibility (count-aware).
-      if (active) refreshDashboardGroupingSelect();
+      if (dashboardState.active) refreshDashboardGroupingSelect();
     };
   };
 }
@@ -903,8 +940,8 @@ function mountSectionGrid(grid: HTMLElement, data: ProjectSectionData, visible: 
     cssPrefix: 'terminal-dashboard',
     centerSizeFrac: 0.7,
     centerScope: 'viewport',
-    centerReferenceEl: rootElement ?? undefined,
-    getColumnCount: () => columnCount,
+    centerReferenceEl: dashboardState.rootElement ?? undefined,
+    getColumnCount: () => dashboardState.columnCount,
     onContextMenu: (entry, e) => { onTileContextMenu(entry, data.project.secret, e); },
     onTileEnlarge: (_entry, target) => {
       // Cross-section coordination: only one tile centered globally.
@@ -913,11 +950,11 @@ function mountSectionGrid(grid: HTMLElement, data: ProjectSectionData, visible: 
           if (otherSecret === data.project.secret) continue;
           if (otherHandle.isCentered()) otherHandle.uncenterTile();
         }
-        centeredHandle = handle;
+        dashboardState.centeredHandle = handle;
       }
     },
     onTileShrink: () => {
-      if (centeredHandle === handle && !handle.isCentered()) centeredHandle = null;
+      if (dashboardState.centeredHandle === handle && !handle.isCentered()) dashboardState.centeredHandle = null;
     },
     onDedicatedBarMount: buildSectionedDedicatedBarMount(data.project),
   });
@@ -1020,9 +1057,9 @@ async function createDashboardTerminal(secret: string, terminals: TerminalListEn
 }
 
 function refreshDashboardGrid(): void {
-  if (!active || rootElement === null) return;
+  if (!dashboardState.active || dashboardState.rootElement === null) return;
   teardownAllHandles();
-  void renderDashboardGrid(rootElement);
+  void renderDashboardGrid(dashboardState.rootElement);
 }
 
 // -----------------------------------------------------------------------------
@@ -1030,19 +1067,19 @@ function refreshDashboardGrid(): void {
 // -----------------------------------------------------------------------------
 
 function refreshSnapPointIndicators(): void {
-  if (sizerContainer === null || rootElement === null || sizeSlider === null) return;
-  const rootWidth = rootElement.clientWidth - 2 * ROOT_PADDING;
-  currentSnapPoints = computeColumnSnapPoints(rootWidth);
+  if (dashboardState.sizerContainer === null || dashboardState.rootElement === null || dashboardState.sizeSlider === null) return;
+  const rootWidth = dashboardState.rootElement.clientWidth - 2 * ROOT_PADDING;
+  dashboardState.currentSnapPoints = computeColumnSnapPoints(rootWidth);
 
-  let ticksEl = sizerContainer.querySelector<HTMLElement>('.terminal-dashboard-sizer-ticks');
+  let ticksEl = dashboardState.sizerContainer.querySelector<HTMLElement>('.terminal-dashboard-sizer-ticks');
   if (ticksEl === null) {
     ticksEl = toElement(
       <div className="terminal-dashboard-sizer-ticks" aria-hidden="true"></div>
     );
-    sizerContainer.appendChild(ticksEl);
+    dashboardState.sizerContainer.appendChild(ticksEl);
   }
-  const sliderRect = sizeSlider.getBoundingClientRect();
-  const containerRect = sizerContainer.getBoundingClientRect();
+  const sliderRect = dashboardState.sizeSlider.getBoundingClientRect();
+  const containerRect = dashboardState.sizerContainer.getBoundingClientRect();
   ticksEl.style.left = `${sliderRect.left - containerRect.left}px`;
   ticksEl.style.width = `${sliderRect.width}px`;
   ticksEl.innerHTML = '';
@@ -1052,9 +1089,9 @@ function refreshSnapPointIndicators(): void {
   // HS-8176 — `pt.sliderValue` is the LTR slider position (1..MAX) per
   // `perRowToSliderPosition`; `tickLeftPx` works in 0..100 percentage
   // space, so convert via `(sliderValue - MIN) / (MAX - MIN) * 100`.
-  const thumbWidthPx = parseFloat(getComputedStyle(sizeSlider).getPropertyValue('--range-thumb-w')) || 16;
+  const thumbWidthPx = parseFloat(getComputedStyle(dashboardState.sizeSlider).getPropertyValue('--range-thumb-w')) || 16;
   const sliderRange = MAX_TILES_PER_ROW - MIN_TILES_PER_ROW;
-  for (const pt of currentSnapPoints) {
+  for (const pt of dashboardState.currentSnapPoints) {
     const pctPosition = sliderRange === 0 ? 0 : ((pt.sliderValue - MIN_TILES_PER_ROW) / sliderRange) * 100;
     ticksEl.appendChild(toElement(
       <span className="terminal-dashboard-sizer-tick"
@@ -1201,4 +1238,31 @@ function openDashboardTileRename(entry: TileEntry): void {
       }
     },
   });
+}
+
+/** **TEST ONLY** — reset every module-level state slot back to its boot
+ *  default so consecutive tests don't leak. Mirrors the HS-8190 convention
+ *  in `permissionOverlay.tsx::_resetStateForTesting`: runs disposers BEFORE
+ *  swapping in a fresh state so an in-flight RAF, debounce timeout, or
+ *  long-poll subscription doesn't leak past the swap. The const collection
+ *  state (`gridHandles`) is cleared explicitly because it is a separate
+ *  container, not part of the bundled state object. */
+export function _resetStateForTesting(): void {
+  if (dashboardState.resizeRaf !== null) cancelAnimationFrame(dashboardState.resizeRaf);
+  if (dashboardState.resizeHandler !== null) window.removeEventListener('resize', dashboardState.resizeHandler);
+  if (dashboardState.bellUnsubscribe !== null) {
+    try { dashboardState.bellUnsubscribe(); } catch { /* ignore */ }
+  }
+  if (dashboardState.appearanceUnsubscribe !== null) {
+    try { dashboardState.appearanceUnsubscribe(); } catch { /* ignore */ }
+  }
+  if (dashboardState.hiddenChangeUnsubscribe !== null) {
+    try { dashboardState.hiddenChangeUnsubscribe(); } catch { /* ignore */ }
+  }
+  if (dashboardState.sliderPersistTimeout !== null) clearTimeout(dashboardState.sliderPersistTimeout);
+  for (const handle of gridHandles.values()) {
+    try { handle.dispose(); } catch { /* ignore */ }
+  }
+  gridHandles.clear();
+  dashboardState = freshDashboardState();
 }
