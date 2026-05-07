@@ -753,6 +753,32 @@ describe('applyHistoryReplay — clears buffer before replay (HS-8287)', () => {
 
     h.release();
   });
+
+  it('also calls clear() after reset() so xterm 6.0.0 scrollback is dropped explicitly (HS-8287 follow-up)', () => {
+    // The user reported the doubled-scrollback symptom persisted after
+    // the initial reset()-only fix landed in WKWebView. xterm.js 6.0.0's
+    // `reset()` runs the ESC c sequence but the visible buffer +
+    // scrollback handling varies by version + renderer; pairing reset()
+    // with clear() (which drops scrollback explicitly) closes that gap.
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 't');
+    expect(entry).not.toBeNull();
+
+    const order: string[] = [];
+    vi.spyOn(h.term, 'reset').mockImplementation(() => { order.push('reset'); });
+    vi.spyOn(h.term, 'clear').mockImplementation(() => { order.push('clear'); });
+    vi.spyOn(h.term, 'write').mockImplementation(() => { order.push('write'); });
+
+    applyHistoryReplay(entry!, { bytes: btoa('payload'), cols: 80, rows: 24 });
+
+    // Both reset and clear must have fired before write, in that order.
+    expect(order.indexOf('reset')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('clear')).toBeGreaterThan(order.indexOf('reset'));
+    expect(order.indexOf('write')).toBeGreaterThan(order.indexOf('clear'));
+
+    h.release();
+  });
 });
 
 /**

@@ -700,6 +700,29 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     tile.targetCols = term.cols;
     tile.targetRows = term.rows;
 
+    // HS-8288 — defence in depth against the cascading-refresh /
+    // race-during-mount class of bug. If `checkout()` returned but
+    // `reparentXtermInto` hit its `term.element === undefined` early-return
+    // (recorded as the `reparent.no-element` event in the HS-8287/8288
+    // diagnostic instrumentation), the xtermRoot is empty: no live xterm,
+    // no placeholder, no path to recovery. The user sees a blank tile and
+    // there's no entry-side state we'd ever clean up. Detect the broken
+    // mount immediately and recover: release the checkout (which collapses
+    // the entry if we're the only consumer, freeing it for a fresh
+    // re-mount), restore the alive placeholder so the tile shows a
+    // coherent visual, and bail. The next `term.onRender` won't fire
+    // (we never wire it below), but the IntersectionObserver's next cycle
+    // / a manual click on the tile will go through `ensureTileMounted` →
+    // `mountTileViaCheckout` again with a fresh attempt.
+    if (xtermRoot.children.length === 0) {
+      try { handle.release(); } catch { /* swallow — already torn down */ }
+      tile.checkout = null;
+      tile.xtermRoot = null;
+      tile.preview.style.backgroundColor = '';
+      tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
+      return;
+    }
+
     // HS-7097 → HS-8051 follow-up #2 — observe `.xterm-screen` so a
     // change in natural xterm dims (font / theme swap; consumer
     // hand-off) re-applies the CSS scale. Convergence on tile-native

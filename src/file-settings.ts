@@ -22,14 +22,6 @@ const JSON_VALUE_KEYS = new Set([
   'categories', 'custom_views', 'custom_commands', 'auto_context', 'terminals',
   // HS-7596 — quit-confirm exempt list (array of process basenames).
   'quit_confirm_exempt_processes',
-  // HS-7825 — persisted hidden-terminal ids (configured terminals only;
-  // dynamic terminals are session-only). Mirrors the active grouping's
-  // hiddenIds post-HS-7826 so older clients reading settings.json still
-  // see the user's filter.
-  'hidden_terminals',
-  // HS-7826 — visibility groupings (named visibility configurations).
-  // See docs/39-visibility-groupings.md.
-  'visibility_groupings',
   // HS-7952 — per-project permission allow-rules (auto-allow specific
   // tool/pattern pairs without showing the popup). See docs/47-richer-permission-overlay.md.
   'permission_allow_rules',
@@ -37,6 +29,25 @@ const JSON_VALUE_KEYS = new Set([
   // specific parser+question+choice signature without showing the §52
   // overlay). See docs/52-terminal-prompt-overlay.md §52.7.
   'terminal_prompt_allow_rules',
+]);
+
+/**
+ * HS-8290 — keys that USED to be stored per-project but moved to the
+ * global config (~/.hotsheet/config.json) under `dashboard.*`. These are
+ * stripped on read so an older settings.json still containing them stops
+ * surfacing the stale values, and the next write naturally drops them
+ * from disk via `writeFileSettings`'s read-merge-write flow.
+ *
+ * See docs/39-visibility-groupings.md (rewritten for HS-8290) +
+ * docs/25-terminal-dashboard.md.
+ */
+const HS_8290_DEAD_KEYS = new Set([
+  'dashboard_layout_mode',
+  'dashboard_columns_per_row',
+  'dashboard_slider_value',
+  'hidden_terminals',
+  'visibility_groupings',
+  'active_visibility_grouping_id',
 ]);
 
 export interface FileSettings {
@@ -64,7 +75,15 @@ export function readFileSettings(dataDir: string): FileSettings {
       console.warn(`[settings] Invalid settings.json in ${dataDir}: ${result.error.message}`);
       return {};
     }
-    return result.data;
+    // HS-8290 — strip dashboard keys that have moved to global config so
+    // callers never see stale per-project values. The next writeFileSettings
+    // will persist the cleaned shape (read-merge-write on disk).
+    const out: FileSettings = {};
+    for (const [k, v] of Object.entries(result.data)) {
+      if (HS_8290_DEAD_KEYS.has(k)) continue;
+      out[k] = v;
+    }
+    return out;
   } catch (err: unknown) {
     // HS-8087 — pre-fix this catch was silent: missing file (ENOENT) is
     // the documented "no settings yet" happy path, but real read errors
@@ -86,133 +105,6 @@ export function writeFileSettings(dataDir: string, updates: Partial<FileSettings
   const merged = { ...current, ...updates };
   writeFileSync(settingsPath(dataDir), JSON.stringify(merged, null, 2) + '\n', 'utf-8');
   return merged;
-}
-
-/**
- * HS-7829 — pure helper that returns the new `hidden_terminals` value after
- * pruning ids that are no longer present in the supplied configured-terminal
- * id set. Used by the `/file-settings` PATCH handler whenever the user
- * saves a new `terminals[]` array — without this, deleted terminals'
- * hidden-state ids would accumulate forever in `settings.json`.
- *
- * Returns null when no prune is needed (every existing hidden id is still
- * present, or the input is empty / unrecognised). The caller writes back
- * only when a non-null array is returned, so a no-op skips the disk
- * round-trip.
- *
- * Pure: no I/O.
- */
-export function prunedHiddenTerminals(
-  currentHidden: unknown,
-  configuredIds: ReadonlySet<string>,
-): string[] | null {
-  // Tolerate the legacy stringified-JSON shape for parity with how the
-  // /file-settings GET endpoint surfaced JSON-valued keys before HS-7825.
-  let raw: unknown = currentHidden;
-  if (typeof raw === 'string' && raw !== '') {
-    try { raw = JSON.parse(raw); } catch { return null; }
-  }
-  if (!Array.isArray(raw)) return null;
-  const ids: string[] = raw.filter((s): s is string => typeof s === 'string' && s !== '');
-  if (ids.length === 0) return null;
-  const pruned = ids.filter(id => configuredIds.has(id));
-  if (pruned.length === ids.length) return null; // nothing to prune
-  return pruned;
-}
-
-/**
- * HS-7826 — pure helper paralleling `prunedHiddenTerminals` but for the
- * new `visibility_groupings` shape. Walks every grouping's `hiddenIds`
- * and drops ids that are no longer in the configured-terminal set.
- * Returns null when no prune is needed; otherwise returns the new
- * groupings array. Tolerates the stringified-JSON shape and skips
- * malformed input as a no-op.
- */
-export function prunedVisibilityGroupings(
-  currentGroupings: unknown,
-  configuredIds: ReadonlySet<string>,
-): Array<{ id: string; name: string; hiddenIds: string[] }> | null {
-  let raw: unknown = currentGroupings;
-  if (typeof raw === 'string' && raw !== '') {
-    try { raw = JSON.parse(raw); } catch { return null; }
-  }
-  if (!Array.isArray(raw)) return null;
-  let changed = false;
-  const out: Array<{ id: string; name: string; hiddenIds: string[] }> = [];
-  for (const item of raw) {
-    if (typeof item !== 'object' || item === null) continue;
-    const obj = item as { id?: unknown; name?: unknown; hiddenIds?: unknown };
-    if (typeof obj.id !== 'string' || obj.id === '') continue;
-    const name = typeof obj.name === 'string' ? obj.name : '';
-    const ids: string[] = Array.isArray(obj.hiddenIds)
-      ? obj.hiddenIds.filter((s): s is string => typeof s === 'string' && s !== '')
-      : [];
-    const kept = ids.filter(id => configuredIds.has(id));
-    if (kept.length !== ids.length) changed = true;
-    out.push({ id: obj.id, name, hiddenIds: kept });
-  }
-  return changed ? out : null;
-}
-
-/**
- * HS-7949 — when a new terminal id appears in the configured set, it should
- * default to **hidden** in every non-Default grouping (and stay visible in
- * the Default grouping). Without this, a freshly-added terminal pops up in
- * every named grouping the user has built — undoing the curation that's the
- * whole point of having multiple groupings.
- *
- * Pure helper: takes the existing `visibility_groupings` (whatever shape
- * survived parsing — usually the post-prune array from
- * `prunedVisibilityGroupings`) plus the list of newly-added terminal ids,
- * and returns a new groupings array with each new id appended to every
- * non-Default grouping's `hiddenIds`. Returns `null` when no change is
- * required (no new ids OR no non-Default groupings exist OR every new id
- * is already in every non-Default grouping). Tolerates the
- * stringified-JSON shape and skips malformed input as a no-op.
- *
- * The Default grouping id is hard-coded to `'default'` here — same constant
- * the client uses (`DEFAULT_GROUPING_ID` in
- * `src/client/visibilityGroupings.ts`). The server has no other reason to
- * import client code, so duplicating the literal is preferable to a circular
- * dependency.
- */
-export function addNewTerminalsToNonDefaultGroupings(
-  currentGroupings: unknown,
-  newTerminalIds: readonly string[],
-): Array<{ id: string; name: string; hiddenIds: string[] }> | null {
-  if (newTerminalIds.length === 0) return null;
-  let raw: unknown = currentGroupings;
-  if (typeof raw === 'string' && raw !== '') {
-    try { raw = JSON.parse(raw); } catch { return null; }
-  }
-  if (!Array.isArray(raw)) return null;
-  let changed = false;
-  const out: Array<{ id: string; name: string; hiddenIds: string[] }> = [];
-  for (const item of raw) {
-    if (typeof item !== 'object' || item === null) continue;
-    const obj = item as { id?: unknown; name?: unknown; hiddenIds?: unknown };
-    if (typeof obj.id !== 'string' || obj.id === '') continue;
-    const name = typeof obj.name === 'string' ? obj.name : '';
-    const ids: string[] = Array.isArray(obj.hiddenIds)
-      ? obj.hiddenIds.filter((s): s is string => typeof s === 'string' && s !== '')
-      : [];
-    // The Default grouping is the user's "show everything" baseline — new
-    // terminals stay visible there. Every other grouping gets the new id
-    // appended to its hidden list.
-    if (obj.id === 'default') {
-      out.push({ id: obj.id, name, hiddenIds: ids });
-      continue;
-    }
-    const existing = new Set(ids);
-    const additions = newTerminalIds.filter(id => !existing.has(id));
-    if (additions.length === 0) {
-      out.push({ id: obj.id, name, hiddenIds: ids });
-      continue;
-    }
-    changed = true;
-    out.push({ id: obj.id, name, hiddenIds: [...ids, ...additions] });
-  }
-  return changed ? out : null;
 }
 
 /** Read project settings from settings.json as Record\<string, string\> for API compatibility.

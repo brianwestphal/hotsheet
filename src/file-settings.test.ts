@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { addNewTerminalsToNonDefaultGroupings, ensureSecret, getBackupDir, prunedHiddenTerminals, prunedVisibilityGroupings, readFileSettings, writeFileSettings } from './file-settings.js';
+import { ensureSecret, getBackupDir, readFileSettings, writeFileSettings } from './file-settings.js';
 
 let tempDir: string;
 
@@ -177,199 +177,50 @@ describe('writeFileSettings edge cases', () => {
 });
 
 /**
- * HS-7829 — `prunedHiddenTerminals` filters stale ids out of the persisted
- * `hidden_terminals` array whenever the configured `terminals[]` changes.
- * Pure helper, called from the `/file-settings` PATCH handler after a
- * terminals-list save.
+ * HS-8290 — six dashboard-related keys (visibility_groupings,
+ * active_visibility_grouping_id, hidden_terminals, dashboard_layout_mode,
+ * dashboard_columns_per_row, dashboard_slider_value) moved to global
+ * config (~/.hotsheet/config.json under `dashboard`). The reader strips
+ * them from the in-memory shape so old per-project settings.json files
+ * stop surfacing stale values; the next writeFileSettings then drops
+ * them from disk via the read-merge-write flow.
  */
-describe('prunedHiddenTerminals (HS-7829)', () => {
-  it('returns null when nothing is hidden', () => {
-    expect(prunedHiddenTerminals(undefined, new Set(['a', 'b']))).toBeNull();
-    expect(prunedHiddenTerminals([], new Set(['a', 'b']))).toBeNull();
+describe('HS-8290 — dashboard keys stripped on read + dropped on next write', () => {
+  const dataDir = join(tmpdir(), `hs-fs-8290-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  mkdirSync(dataDir, { recursive: true });
+
+  it('readFileSettings drops every HS-8290 dead key from the in-memory shape', () => {
+    const settingsPath = join(dataDir, 'settings.json');
+    writeFileSync(settingsPath, JSON.stringify({
+      appName: 'keepme',
+      visibility_groupings: [{ id: 'default', name: 'D', hiddenIds: ['x'] }],
+      active_visibility_grouping_id: 'default',
+      hidden_terminals: ['x'],
+      dashboard_layout_mode: 'flat',
+      dashboard_columns_per_row: 5,
+      dashboard_slider_value: 33,
+    }));
+    const out = readFileSettings(dataDir);
+    expect(out.appName).toBe('keepme');
+    expect(out.visibility_groupings).toBeUndefined();
+    expect(out.active_visibility_grouping_id).toBeUndefined();
+    expect(out.hidden_terminals).toBeUndefined();
+    expect(out.dashboard_layout_mode).toBeUndefined();
+    expect(out.dashboard_columns_per_row).toBeUndefined();
+    expect(out.dashboard_slider_value).toBeUndefined();
   });
 
-  it('returns null when every hidden id is still present in the configured list', () => {
-    expect(prunedHiddenTerminals(['a', 'b'], new Set(['a', 'b', 'c']))).toBeNull();
-  });
-
-  it('returns the pruned subset when one id no longer exists', () => {
-    expect(prunedHiddenTerminals(['a', 'gone', 'b'], new Set(['a', 'b'])))
-      .toEqual(['a', 'b']);
-  });
-
-  it('returns an empty array when every hidden id has been removed from the config', () => {
-    expect(prunedHiddenTerminals(['gone1', 'gone2'], new Set(['a'])))
-      .toEqual([]);
-  });
-
-  it('tolerates the legacy stringified-JSON shape (defense in depth)', () => {
-    // Pre-HS-7825 callers occasionally stored JSON-valued keys as strings.
-    // The helper should parse and apply the same prune.
-    expect(prunedHiddenTerminals('["a", "gone"]', new Set(['a'])))
-      .toEqual(['a']);
-  });
-
-  it('returns null when input is malformed (not array, not parseable JSON)', () => {
-    expect(prunedHiddenTerminals('not-json', new Set(['a']))).toBeNull();
-    expect(prunedHiddenTerminals(42, new Set(['a']))).toBeNull();
-    expect(prunedHiddenTerminals({ id: 'a' }, new Set(['a']))).toBeNull();
-  });
-
-  it('returns the pruned list when configured ids set is empty (every hidden id gone)', () => {
-    expect(prunedHiddenTerminals(['a', 'b'], new Set())).toEqual([]);
-  });
-
-  it('preserves order of remaining ids', () => {
-    expect(prunedHiddenTerminals(['z', 'a', 'm', 'gone', 'k'], new Set(['z', 'a', 'm', 'k'])))
-      .toEqual(['z', 'a', 'm', 'k']);
-  });
-});
-
-/**
- * HS-7826 — `prunedVisibilityGroupings` is the parallel of
- * `prunedHiddenTerminals` for the new groupings shape. Walks every
- * grouping's `hiddenIds`, drops ids no longer in the configured set,
- * returns null when no prune is needed.
- */
-describe('prunedVisibilityGroupings (HS-7826)', () => {
-  it('returns null when no grouping has stale ids', () => {
-    const groupings = [
-      { id: 'default', name: 'Default', hiddenIds: ['t1'] },
-      { id: 'g-1', name: 'Logs', hiddenIds: ['t1', 't2'] },
-    ];
-    expect(prunedVisibilityGroupings(groupings, new Set(['t1', 't2']))).toBeNull();
-  });
-
-  it('strips stale ids from every grouping and preserves grouping order + names', () => {
-    const groupings = [
-      { id: 'default', name: 'Default', hiddenIds: ['t1', 'gone'] },
-      { id: 'g-1', name: 'Logs', hiddenIds: ['gone', 't2'] },
-    ];
-    const next = prunedVisibilityGroupings(groupings, new Set(['t1', 't2']));
-    expect(next).toEqual([
-      { id: 'default', name: 'Default', hiddenIds: ['t1'] },
-      { id: 'g-1', name: 'Logs', hiddenIds: ['t2'] },
-    ]);
-  });
-
-  it('tolerates the stringified-JSON shape', () => {
-    const raw = JSON.stringify([{ id: 'default', name: 'Default', hiddenIds: ['gone', 't1'] }]);
-    const next = prunedVisibilityGroupings(raw, new Set(['t1']));
-    expect(next).toEqual([{ id: 'default', name: 'Default', hiddenIds: ['t1'] }]);
-  });
-
-  it('drops malformed grouping entries (missing id, wrong type)', () => {
-    const raw = [
-      { id: 'a', name: 'A', hiddenIds: ['t1', 'gone'] },
-      { name: 'no-id', hiddenIds: [] },
-      'string-not-object',
-    ];
-    const next = prunedVisibilityGroupings(raw, new Set(['t1']));
-    expect(next).toEqual([{ id: 'a', name: 'A', hiddenIds: ['t1'] }]);
-  });
-
-  it('returns null when input is malformed', () => {
-    expect(prunedVisibilityGroupings('not-json', new Set(['t1']))).toBeNull();
-    expect(prunedVisibilityGroupings(42, new Set(['t1']))).toBeNull();
-  });
-
-  it('returns an empty hiddenIds array per grouping when configured set is empty', () => {
-    const groupings = [{ id: 'a', name: 'A', hiddenIds: ['t1', 't2'] }];
-    expect(prunedVisibilityGroupings(groupings, new Set())).toEqual([
-      { id: 'a', name: 'A', hiddenIds: [] },
-    ]);
-  });
-});
-
-/**
- * HS-7949 — `addNewTerminalsToNonDefaultGroupings` is the post-prune step
- * that ensures a freshly-added terminal id starts hidden in every
- * non-Default grouping. Default keeps showing it. Pure helper, no I/O.
- */
-describe('addNewTerminalsToNonDefaultGroupings (HS-7949)', () => {
-  it('returns null when no new ids', () => {
-    const groupings = [
-      { id: 'default', name: 'Default', hiddenIds: [] },
-      { id: 'g-1', name: 'Logs', hiddenIds: ['t1'] },
-    ];
-    expect(addNewTerminalsToNonDefaultGroupings(groupings, [])).toBeNull();
-  });
-
-  it('appends each new id to every non-Default grouping; Default stays untouched', () => {
-    const groupings = [
-      { id: 'default', name: 'Default', hiddenIds: [] },
-      { id: 'g-logs', name: 'Logs', hiddenIds: ['t1'] },
-      { id: 'g-claude', name: 'Claude', hiddenIds: [] },
-    ];
-    const next = addNewTerminalsToNonDefaultGroupings(groupings, ['new-1', 'new-2']);
-    expect(next).toEqual([
-      { id: 'default', name: 'Default', hiddenIds: [] },
-      { id: 'g-logs', name: 'Logs', hiddenIds: ['t1', 'new-1', 'new-2'] },
-      { id: 'g-claude', name: 'Claude', hiddenIds: ['new-1', 'new-2'] },
-    ]);
-  });
-
-  it('skips an id already hidden in a non-Default grouping (idempotent)', () => {
-    const groupings = [
-      { id: 'default', name: 'Default', hiddenIds: [] },
-      { id: 'g-1', name: 'Logs', hiddenIds: ['t1'] },
-    ];
-    expect(addNewTerminalsToNonDefaultGroupings(groupings, ['t1'])).toBeNull();
-  });
-
-  it('partial-already-hidden case still appends only the genuinely-new id', () => {
-    const groupings = [
-      { id: 'default', name: 'Default', hiddenIds: [] },
-      { id: 'g-1', name: 'Logs', hiddenIds: ['t1'] },
-    ];
-    expect(addNewTerminalsToNonDefaultGroupings(groupings, ['t1', 't2'])).toEqual([
-      { id: 'default', name: 'Default', hiddenIds: [] },
-      { id: 'g-1', name: 'Logs', hiddenIds: ['t1', 't2'] },
-    ]);
-  });
-
-  it('returns null when there are no non-Default groupings to hide in', () => {
-    const groupings = [{ id: 'default', name: 'Default', hiddenIds: [] }];
-    expect(addNewTerminalsToNonDefaultGroupings(groupings, ['new'])).toBeNull();
-  });
-
-  it('tolerates the stringified-JSON shape', () => {
-    const raw = JSON.stringify([
-      { id: 'default', name: 'Default', hiddenIds: [] },
-      { id: 'g-1', name: 'Logs', hiddenIds: [] },
-    ]);
-    expect(addNewTerminalsToNonDefaultGroupings(raw, ['new'])).toEqual([
-      { id: 'default', name: 'Default', hiddenIds: [] },
-      { id: 'g-1', name: 'Logs', hiddenIds: ['new'] },
-    ]);
-  });
-
-  it('drops malformed grouping entries (missing id, wrong type)', () => {
-    const raw = [
-      { id: 'g-keep', name: 'Keep', hiddenIds: [] },
-      { name: 'no-id', hiddenIds: [] },
-      'string-not-object',
-    ];
-    expect(addNewTerminalsToNonDefaultGroupings(raw, ['new'])).toEqual([
-      { id: 'g-keep', name: 'Keep', hiddenIds: ['new'] },
-    ]);
-  });
-
-  it('returns null when input is malformed', () => {
-    expect(addNewTerminalsToNonDefaultGroupings('not-json', ['new'])).toBeNull();
-    expect(addNewTerminalsToNonDefaultGroupings(42, ['new'])).toBeNull();
-    expect(addNewTerminalsToNonDefaultGroupings(null, ['new'])).toBeNull();
-  });
-
-  it('preserves existing hiddenIds order (additions appended at the end)', () => {
-    const groupings = [
-      { id: 'default', name: 'Default', hiddenIds: [] },
-      { id: 'g-1', name: 'Logs', hiddenIds: ['existing-a', 'existing-b'] },
-    ];
-    const next = addNewTerminalsToNonDefaultGroupings(groupings, ['new-1']);
-    expect(next).toEqual([
-      { id: 'default', name: 'Default', hiddenIds: [] },
-      { id: 'g-1', name: 'Logs', hiddenIds: ['existing-a', 'existing-b', 'new-1'] },
-    ]);
+  it('next writeFileSettings persists the cleaned shape to disk', () => {
+    const settingsPath = join(dataDir, 'settings.json');
+    writeFileSync(settingsPath, JSON.stringify({
+      appName: 'keepme',
+      visibility_groupings: [{ id: 'default', name: 'D', hiddenIds: [] }],
+      hidden_terminals: ['stale'],
+    }));
+    writeFileSettings(dataDir, { appName: 'updated' });
+    const onDisk = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>;
+    expect(onDisk.appName).toBe('updated');
+    expect(onDisk.visibility_groupings).toBeUndefined();
+    expect(onDisk.hidden_terminals).toBeUndefined();
   });
 });

@@ -175,11 +175,27 @@ export const PrintSchema = z.object({
 
 // --- Global Config ---
 
+// HS-8290 — terminal-dashboard settings now live globally rather than
+// per-project; see docs/39-visibility-groupings.md.
+const VisibilityGroupingSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  hiddenByProject: z.record(z.string(), z.array(z.string())),
+});
+
+const DashboardConfigSchema = z.object({
+  layoutMode: z.enum(['sectioned', 'flat']).optional(),
+  columnsPerRow: z.number().optional(),
+  visibilityGroupings: z.array(VisibilityGroupingSchema).optional(),
+  activeVisibilityGroupingId: z.string().optional(),
+}).strict();
+
 export const GlobalConfigSchema = z.object({
   channelEnabled: z.boolean().optional(),
   shareTotalSeconds: z.number().optional(),
   shareLastPrompted: z.string().optional(),
   shareAccepted: z.boolean().optional(),
+  dashboard: DashboardConfigSchema.optional(),
 }).strict();
 
 // --- Plugin routes ---

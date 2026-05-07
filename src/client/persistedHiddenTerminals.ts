@@ -1,100 +1,83 @@
 /**
- * HS-7825 / HS-7826 — persistence layer for the visibility groupings (and
- * the legacy flat hidden_terminals shape it superseded). See
- * docs/38-terminal-visibility.md + docs/39-visibility-groupings.md.
+ * HS-7825 / HS-7826 / HS-8290 — persistence layer for visibility groupings.
+ * See docs/39-visibility-groupings.md.
  *
- * Wraps the in-memory module (`dashboardHiddenTerminals.ts`) so the rest
- * of the codebase can keep using the public API verbatim. The persistence
- * layer subscribes to changes and fires a debounced PATCH per project to
- * write the configured-id subset of the project's groupings to
- * `.hotsheet/settings.json` under `visibility_groupings` (HS-7826) +
- * `active_visibility_grouping_id`. A legacy `hidden_terminals` array is
- * also written, mirroring the active grouping's hiddenIds, so older
- * clients reading the same settings.json still see the user's filter.
+ * Wraps the in-memory module (`dashboardHiddenTerminals.ts`) so the rest of
+ * the codebase can keep using its public API verbatim. The persistence
+ * layer subscribes to changes and fires a single debounced PATCH to the
+ * global config endpoint (`/api/dashboard/global-config`) under
+ * `dashboard.visibilityGroupings` + `dashboard.activeVisibilityGroupingId`.
+ *
+ * **HS-8290 reshape.** Pre-HS-8290 each project had its own copy of the
+ * groupings stored under `visibility_groupings` in
+ * `.hotsheet/settings.json`, so this module ran a per-project debounce
+ * loop. Post-HS-8290 there is exactly one source of truth in
+ * `~/.hotsheet/config.json`; this module's debounce is a single global
+ * timer.
  *
  * Dynamic terminals (`dyn-*` ids) are intentionally NOT persisted — their
- * lifetime is per-session, so persisting them would mean stale ids
- * accumulating in settings.json forever.
- *
- * Initial hydration runs once at app boot via `initPersistedHiddenTerminals`
- * which fetches every registered project's `/file-settings` and seeds the
- * in-memory map via `hydratePersistedStateForProject` (or, when only the
- * legacy shape is present, the back-compat `hydratePersistedHiddenForProject`).
+ * lifetime is per-session.
  */
 
-import { apiWithSecret } from './api.js';
+import { api } from './api.js';
 import {
-  getActiveGroupingId,
-  getProjectVisibilityState,
-  hydratePersistedStateForProject,
+  getGlobalVisibilityState,
+  hydratePersistedGlobalState,
   isConfiguredTerminalId,
   subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
-import type { ProjectInfo } from './state.js';
 import {
   DEFAULT_GROUPING_ID,
   parsePersistedState,
   type VisibilityGrouping,
 } from './visibilityGroupings.js';
 
-// Per-project debounced write timers. Keyed by project secret.
-const writeTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-// Last-written serialised payload per project so we can short-circuit
-// no-op writes (e.g. tab switch back to the same active grouping).
-const lastPersisted = new Map<string, string>();
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+let lastPersisted: string | null = null;
 
 const DEBOUNCE_MS = 250;
 
 let subscriptionUnsub: (() => void) | null = null;
-let knownSecrets: ReadonlySet<string> = new Set();
 
 /**
- * Filter every grouping's `hiddenIds` to drop dynamic-terminal ids before
- * persistence. Pure: input is the in-memory groupings array, output is a
- * new array with sanitised ids and stable sort order so unchanged
- * payloads serialise byte-equally.
+ * Sanitise + sort each grouping's hidden ids so the serialised payload is
+ * byte-stable when the user's effective state hasn't changed (no-op
+ * writes short-circuit). Drops dynamic terminal ids and empty
+ * per-project entries.
  */
 export function computePersistedGroupings(groupings: readonly VisibilityGrouping[]): VisibilityGrouping[] {
   return groupings.map(g => {
-    const ids = g.hiddenIds.filter(isConfiguredTerminalId).sort();
-    return { id: g.id, name: g.name, hiddenIds: ids };
+    const hiddenByProject: Record<string, string[]> = {};
+    for (const [secret, ids] of Object.entries(g.hiddenByProject)) {
+      const filtered = ids.filter(isConfiguredTerminalId).sort();
+      if (filtered.length > 0) hiddenByProject[secret] = filtered;
+    }
+    return { id: g.id, name: g.name, hiddenByProject };
   });
 }
 
-/** Mirror of the active grouping's hiddenIds, also written under the
- *  legacy `hidden_terminals` key so older clients reading the same
- *  settings.json still see the user's filter (no migration step needed
- *  on downgrade). Sorted for serialised stability. */
-function legacyMirrorIds(groupings: readonly VisibilityGrouping[], activeId: string): string[] {
-  if (groupings.length === 0) return [];
-  const active = groupings.find(g => g.id === activeId) ?? groupings[0];
-  return active.hiddenIds.filter(isConfiguredTerminalId).sort();
+function scheduleWrite(): void {
+  if (writeTimer !== null) clearTimeout(writeTimer);
+  writeTimer = setTimeout(() => {
+    writeTimer = null;
+    void writeNow();
+  }, DEBOUNCE_MS);
 }
 
-function scheduleWrite(secret: string): void {
-  const existing = writeTimers.get(secret);
-  if (existing !== undefined) clearTimeout(existing);
-  writeTimers.set(secret, setTimeout(() => {
-    writeTimers.delete(secret);
-    void writeNow(secret);
-  }, DEBOUNCE_MS));
-}
-
-async function writeNow(secret: string): Promise<void> {
-  const state = getProjectVisibilityState(secret);
+async function writeNow(): Promise<void> {
+  const state = getGlobalVisibilityState();
   const persistedGroupings = computePersistedGroupings(state.groupings);
-  const legacyIds = legacyMirrorIds(persistedGroupings, state.activeId);
   const payload = {
-    visibility_groupings: persistedGroupings,
-    active_visibility_grouping_id: state.activeId,
-    hidden_terminals: legacyIds,
+    dashboard: {
+      visibilityGroupings: persistedGroupings,
+      activeVisibilityGroupingId: state.activeId,
+    },
   };
   const serialised = JSON.stringify(payload);
-  if (lastPersisted.get(secret) === serialised) return; // no-op
-  lastPersisted.set(secret, serialised);
+  if (lastPersisted === serialised) return;
+  lastPersisted = serialised;
   try {
-    await apiWithSecret('/file-settings', secret, { method: 'PATCH', body: payload });
+    await api('/dashboard/global-config', { method: 'PATCH', body: payload });
   } catch {
     // Best-effort. The change is still in memory; next toggle will
     // schedule another write attempt.
@@ -102,91 +85,60 @@ async function writeNow(secret: string): Promise<void> {
 }
 
 /**
- * Initialise the persistence layer: fetch each known project's
- * `/file-settings` to seed the in-memory map, then subscribe to subsequent
- * changes to write them back. Idempotent. The change subscription is
- * attached only once.
+ * Initialise the persistence layer: fetch the global dashboard config to
+ * seed in-memory state, then subscribe to subsequent changes to write
+ * them back. Idempotent — subsequent calls re-fetch but skip the
+ * subscription wiring.
  */
-export async function initPersistedHiddenTerminals(projects: ProjectInfo[]): Promise<void> {
-  knownSecrets = new Set(projects.map(p => p.secret));
-  await Promise.all(projects.map(async (p) => {
-    if (lastPersisted.has(p.secret)) return; // already hydrated this session
-    try {
-      const fs = await apiWithSecret<{
-        visibility_groupings?: unknown;
-        active_visibility_grouping_id?: unknown;
-        hidden_terminals?: string[] | string;
-      }>('/file-settings', p.secret);
-      const legacy = readLegacyHiddenTerminals(fs.hidden_terminals);
-      const state = parsePersistedState(fs.visibility_groupings, fs.active_visibility_grouping_id, legacy);
-      hydratePersistedStateForProject(p.secret, state);
-      // Stash the canonical serialised value so the change subscription
-      // doesn't immediately PATCH back the same payload.
-      const persistedGroupings = computePersistedGroupings(state.groupings);
-      const legacyIds = legacyMirrorIds(persistedGroupings, state.activeId);
-      lastPersisted.set(p.secret, JSON.stringify({
-        visibility_groupings: persistedGroupings,
-        active_visibility_grouping_id: state.activeId,
-        hidden_terminals: legacyIds,
-      }));
-    } catch {
-      // Network / older server — leave the in-memory state alone.
-    }
-  }));
+export async function initPersistedHiddenTerminals(): Promise<void> {
+  try {
+    const cfg = await api<{
+      dashboard?: {
+        visibilityGroupings?: unknown;
+        activeVisibilityGroupingId?: unknown;
+      };
+    }>('/dashboard/global-config');
+    const dashboard = cfg.dashboard ?? {};
+    const state = parsePersistedState(dashboard.visibilityGroupings, dashboard.activeVisibilityGroupingId);
+    hydratePersistedGlobalState(state);
+    // Stash the canonical serialised value so the first change-driven
+    // PATCH doesn't immediately re-write the same payload.
+    const persistedGroupings = computePersistedGroupings(state.groupings);
+    lastPersisted = JSON.stringify({
+      dashboard: {
+        visibilityGroupings: persistedGroupings,
+        activeVisibilityGroupingId: state.activeId,
+      },
+    });
+  } catch {
+    // Network / older server — leave the in-memory state alone.
+  }
 
   if (subscriptionUnsub === null) {
     subscriptionUnsub = subscribeToHiddenChanges(() => {
-      for (const secret of knownSecrets) scheduleWrite(secret);
+      scheduleWrite();
     });
   }
 }
 
-function readLegacyHiddenTerminals(raw: unknown): string[] | undefined {
-  if (Array.isArray(raw)) return raw.filter((s): s is string => typeof s === 'string' && s !== '');
-  if (typeof raw === 'string' && raw !== '') {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed.filter((s): s is string => typeof s === 'string' && s !== '');
-    } catch { /* ignore */ }
-  }
-  return undefined;
-}
-
-/** Test-only — flush every pending debounced write synchronously. */
+/** Test-only — flush the pending debounced write synchronously. */
 export function _flushForTests(): void {
-  for (const [secret, timer] of writeTimers) {
-    clearTimeout(timer);
-    writeTimers.delete(secret);
-    void writeNow(secret);
+  if (writeTimer !== null) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+    void writeNow();
   }
 }
 
-/** Test-only — drop every cached state so a fresh init starts clean. */
+/** Test-only — drop cached state so a fresh init starts clean. */
 export function _resetForTests(): void {
-  for (const t of writeTimers.values()) clearTimeout(t);
-  writeTimers.clear();
-  lastPersisted.clear();
-  knownSecrets = new Set();
+  if (writeTimer !== null) clearTimeout(writeTimer);
+  writeTimer = null;
+  lastPersisted = null;
   if (subscriptionUnsub !== null) {
     subscriptionUnsub();
     subscriptionUnsub = null;
   }
 }
 
-// Re-export for back-compat with the HS-7825 test that imported
-// `computePersistedIds` (the flat-list variant). New callers should use
-// `computePersistedGroupings`. The flat helper now reads the active
-// grouping's ids and is kept as a thin shim for the HS-7825 unit test.
-export function computePersistedIds(allHidden: ReadonlySet<string>): string[] {
-  const out: string[] = [];
-  for (const id of allHidden) if (isConfiguredTerminalId(id)) out.push(id);
-  out.sort();
-  return out;
-}
-
-// Mark the active-id helper as exported for the tests in
-// persistedHiddenTerminals.test.ts.
-export { getActiveGroupingId };
-// Mark the default-grouping sentinel re-export so callers don't have to
-// also import from visibilityGroupings.
 export { DEFAULT_GROUPING_ID };

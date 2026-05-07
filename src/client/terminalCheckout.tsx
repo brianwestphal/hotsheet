@@ -58,6 +58,92 @@ import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
  *  module use. */
 let xtermParkingSink: HTMLDivElement | null = null;
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * HS-8287 DIAGNOSTIC INSTRUMENTATION (temporary — remove once root-caused).
+ *
+ * The user reports the doubled-scrollback fix didn't take. To pin down
+ * whether the duplication is server-replay-driven (multiple history
+ * frames / multiple WS attaches) or upstream of us (server's ring buffer
+ * already holds N copies / Claude Code printing N times), this captures
+ * a ring buffer of every relevant event: WS open / close / reconnect,
+ * every `history` frame received, every `reset()` call, and term buffer
+ * dims pre/post replay.
+ *
+ * Dump in DevTools console:  __hs8287_dump()
+ * Inspect raw log:           window.__hs8287_log
+ * Disable:                   window.__hs8287_debug = false
+ * ───────────────────────────────────────────────────────────────────────── */
+type Hs8287Event = { t: number; key: string; ev: string; data: Record<string, unknown> };
+const HS8287_RING_MAX = 500;
+function hs8287Push(key: string, ev: string, data: Record<string, unknown> = {}): void {
+  if (typeof window === 'undefined') return;
+  const w = window as unknown as { __hs8287_debug?: boolean; __hs8287_log?: Hs8287Event[] };
+  if (w.__hs8287_debug === false) return;
+  const log: Hs8287Event[] = w.__hs8287_log ?? (w.__hs8287_log = []);
+  log.push({ t: Date.now(), key, ev, data });
+  if (log.length > HS8287_RING_MAX) log.shift();
+  console.log(`[HS-8287] ${ev} ${key}`, data);
+}
+function hs8287BufferLineCount(term: XTerm | null): number {
+  try {
+    const buf = term?.buffer.active;
+    return buf?.length ?? -1;
+  } catch { return -2; }
+}
+if (typeof window !== 'undefined') {
+  const w = window as unknown as {
+    __hs8287_dump?: () => Hs8287Event[];
+    __hs8287_log?: Hs8287Event[];
+    __hs8288_inspect?: () => unknown[];
+  };
+  if (typeof w.__hs8287_dump !== 'function') {
+    w.__hs8287_dump = () => {
+      const log = w.__hs8287_log ?? [];
+      console.table(log.map(e => ({
+        t: new Date(e.t).toISOString().slice(11, 23),
+        key: e.key,
+        ev: e.ev,
+        ...e.data,
+      })));
+      return log;
+    };
+  }
+  // HS-8288 — snapshot every checkout entry's stack + xterm element parent
+  // chain so we can tell which tile / pane each entry's xterm is currently
+  // parented under (or whether it's stranded in the parking sink / nowhere).
+  if (typeof w.__hs8288_inspect !== 'function') {
+    w.__hs8288_inspect = () => {
+      const out: unknown[] = [];
+      for (const [key, entry] of entries) {
+        const el = entry.term.element;
+        const parent = el?.parentElement ?? null;
+        out.push({
+          key,
+          stackLen: entry.stack.length,
+          stackMountInto: entry.stack.map(h => ({
+            tag: h._options.mountInto.tagName,
+            cls: h._options.mountInto.className,
+            connected: h._options.mountInto.isConnected,
+            childCount: h._options.mountInto.children.length,
+            firstChildClass: h._options.mountInto.firstElementChild?.className ?? null,
+          })),
+          termHasElement: el !== undefined,
+          termElementParentTag: parent?.tagName ?? null,
+          termElementParentId: parent?.id ?? null,
+          termElementParentClass: parent?.className ?? null,
+          termCols: entry.term.cols,
+          termRows: entry.term.rows,
+          intentionallyClosing: entry.intentionallyClosing,
+          noSpawn: entry.noSpawn,
+          wsState: entry.ws?.readyState ?? null,
+        });
+      }
+      console.log('[HS-8288] entries:', out);
+      return out;
+    };
+  }
+}
+
 function getOrCreateParkingSink(): HTMLDivElement {
   if (xtermParkingSink !== null) return xtermParkingSink;
   // HS-8098 — direct `document.createElement` is intentional here: the
@@ -367,24 +453,44 @@ function attachWebSocketToEntry(entry: StackEntry): void {
   const noSpawnQuery = entry.noSpawn ? '&noSpawn=1' : '';
   const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(entry.secret)}&terminal=${encodeURIComponent(entry.terminalId)}&cols=${entry.lastAppliedCols}&rows=${entry.lastAppliedRows}${noSpawnQuery}`;
 
+  const dbgKey = `${entry.secret.slice(0, 8)}::${entry.terminalId}`;
+  hs8287Push(dbgKey, 'ws.attach.begin', {
+    cols: entry.lastAppliedCols, rows: entry.lastAppliedRows,
+    noSpawn: entry.noSpawn, stackLen: entry.stack.length,
+    bufLinesNow: hs8287BufferLineCount(entry.term),
+  });
   let ws: WebSocket;
   try {
     ws = new WebSocket(url);
-  } catch {
+  } catch (e) {
     entry.ws = null;
+    hs8287Push(dbgKey, 'ws.construct.err', { err: String(e) });
     return;
   }
   ws.binaryType = 'arraybuffer';
   entry.ws = ws;
 
   ws.addEventListener('open', () => {
+    hs8287Push(dbgKey, 'ws.open', { cols: entry.lastAppliedCols, rows: entry.lastAppliedRows });
     try { ws.send(JSON.stringify({ type: 'resize', cols: entry.lastAppliedCols, rows: entry.lastAppliedRows })); } catch { /* socket may have closed already */ }
   });
 
+  let dbgBinaryFrames = 0;
+  let dbgBinaryBytes = 0;
+  let dbgHistoryFrames = 0;
   ws.addEventListener('message', (ev) => {
     const data: unknown = ev.data;
     if (data instanceof ArrayBuffer) {
       const bytes = new Uint8Array(data);
+      dbgBinaryFrames++;
+      dbgBinaryBytes += bytes.length;
+      // Sample first 5 frames + every 20th after to keep noise down.
+      if (dbgBinaryFrames <= 5 || dbgBinaryFrames % 20 === 0) {
+        hs8287Push(dbgKey, 'ws.binary', {
+          frameNum: dbgBinaryFrames, bytes: bytes.length,
+          totalBytes: dbgBinaryBytes,
+        });
+      }
       try { entry.term.write(bytes); } catch { /* term disposed mid-message */ }
       // HS-8175 — record the PTY echo so `shouldShowStallIndicator` can
       // hide the chip the moment output comes back. Subscribers re-evaluate.
@@ -408,6 +514,13 @@ function attachWebSocketToEntry(entry: StackEntry): void {
           }
         }
         if (msg.type === 'history' && typeof msg.bytes === 'string') {
+          dbgHistoryFrames++;
+          hs8287Push(dbgKey, 'history.frame', {
+            frameNum: dbgHistoryFrames,
+            b64Len: msg.bytes.length,
+            cols: msg.cols, rows: msg.rows,
+            noSession: (msg as { noSession?: boolean }).noSession === true,
+          });
           applyHistoryReplay(entry, msg);
         }
         // HS-8218 — server signalled "no session, didn't spawn". Mark
@@ -429,7 +542,13 @@ function attachWebSocketToEntry(entry: StackEntry): void {
     }
   });
 
-  ws.addEventListener('close', () => {
+  ws.addEventListener('close', (ev) => {
+    hs8287Push(dbgKey, 'ws.close', {
+      code: ev.code, reason: ev.reason, wasClean: ev.wasClean,
+      intentionallyClosing: entry.intentionallyClosing,
+      stackLen: entry.stack.length,
+      stillCurrent: entry.ws === ws,
+    });
     // HS-8044 — module-driven reconnect. Skip when (a) the user
     // explicitly released the entry (the dispose path flips the flag
     // before close) or (b) the stack is empty (no consumer needs the
@@ -446,8 +565,12 @@ function attachWebSocketToEntry(entry: StackEntry): void {
       // Re-check guards — the entry may have been disposed in the gap.
       if (entry.intentionallyClosing) return;
       if (entry.stack.length === 0) return;
+      hs8287Push(dbgKey, 'ws.reconnect', {});
       attachWebSocketToEntry(entry);
     });
+  });
+  ws.addEventListener('error', (e) => {
+    hs8287Push(dbgKey, 'ws.error', { type: e.type });
   });
 }
 
@@ -484,6 +607,14 @@ export function applyHistoryReplay(
   entry: StackEntry,
   msg: { bytes?: string; cols?: number; rows?: number },
 ): void {
+  const dbgKey = `${entry.secret.slice(0, 8)}::${entry.terminalId}`;
+  hs8287Push(dbgKey, 'history.recv', {
+    bytesB64Len: typeof msg.bytes === 'string' ? msg.bytes.length : -1,
+    msgCols: msg.cols, msgRows: msg.rows,
+    termColsBefore: entry.term.cols, termRowsBefore: entry.term.rows,
+    bufLinesBefore: hs8287BufferLineCount(entry.term),
+    lastAppliedCols: entry.lastAppliedCols, lastAppliedRows: entry.lastAppliedRows,
+  });
   if (typeof msg.bytes !== 'string') return;
   try {
     const targetCols = entry.lastAppliedCols;
@@ -495,7 +626,21 @@ export function applyHistoryReplay(
     // `reset()` makes the replay authoritative: term ends up showing only
     // what the server says was on screen. Must run BEFORE the capture-time
     // resize so HS-8064's reflow logic operates on a clean buffer.
-    try { entry.term.reset(); } catch { /* term disposed */ }
+    //
+    // HS-8287 follow-up — also call `clear()` after `reset()`. xterm.js
+    // 6.0.0's `reset()` runs the ESC c sequence which resets terminal
+    // state (cursor, attributes, alt-screen), but the visible buffer +
+    // scrollback handling varies by version + renderer (DOM vs canvas vs
+    // WebGL). The user reported the doubled-scrollback symptom persisted
+    // after the initial reset()-only fix landed in WKWebView; pairing
+    // reset() with clear() (which explicitly drops scrollback and makes
+    // the prompt line the new first line) closes that gap regardless of
+    // xterm internal behaviour.
+    try {
+      entry.term.reset();
+      entry.term.clear();
+      hs8287Push(dbgKey, 'reset.ok', { bufLinesAfterReset: hs8287BufferLineCount(entry.term) });
+    } catch (e) { hs8287Push(dbgKey, 'reset.err', { err: String(e) }); }
     if (typeof msg.cols === 'number' && typeof msg.rows === 'number'
         && msg.cols > 0 && msg.rows > 0) {
       try { entry.term.resize(msg.cols, msg.rows); } catch { /* term disposed */ }
@@ -504,6 +649,11 @@ export function applyHistoryReplay(
     const buf = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
     entry.term.write(buf);
+    hs8287Push(dbgKey, 'history.written', {
+      writtenBytes: buf.length,
+      bufLinesAfterWrite: hs8287BufferLineCount(entry.term),
+      termCols: entry.term.cols, termRows: entry.term.rows,
+    });
     // Snap term back to the consumer's intended dims. xterm reflows the
     // just-written scrollback to the consumer's pane width. The
     // synthetic `term.onResize` echo this fires also brings `lastApplied`
@@ -512,7 +662,7 @@ export function applyHistoryReplay(
     if (entry.term.cols !== targetCols || entry.term.rows !== targetRows) {
       try { entry.term.resize(targetCols, targetRows); } catch { /* term disposed */ }
     }
-  } catch { /* malformed history — drop */ }
+  } catch (e) { hs8287Push(dbgKey, 'history.err', { err: String(e) }); }
 }
 
 /** **TEST ONLY** — return the entry for `(secret, terminalId)` so the
@@ -564,10 +714,35 @@ function applyResizeIfChanged(entry: StackEntry, cols: number, rows: number): vo
 /** Move the live xterm element from its current parent into `mountInto`.
  *  Idempotent — re-mounting into the same container is a no-op. */
 function reparentXtermInto(entry: StackEntry, mountInto: HTMLElement): void {
+  const dbgKey = `${entry.secret.slice(0, 8)}::${entry.terminalId}`;
   const el = entry.term.element;
-  if (el === undefined) return;
-  if (el.parentElement === mountInto) return;
+  if (el === undefined) {
+    // HS-8288 — this is the suspected failing branch. If we hit here,
+    // mountInto stays empty: the dashboard tile's xtermRoot ends up
+    // childless (no xterm, no placeholder) — the user's reported
+    // symptom. Log enough context to know whether the term was
+    // disposed, never opened, or something stranger.
+    hs8287Push(dbgKey, 'reparent.no-element', {
+      mountIntoTag: mountInto.tagName,
+      mountIntoConnected: mountInto.isConnected,
+      stackLen: entry.stack.length,
+      intentionallyClosing: entry.intentionallyClosing,
+      noSpawn: entry.noSpawn,
+    });
+    return;
+  }
+  if (el.parentElement === mountInto) {
+    hs8287Push(dbgKey, 'reparent.same', { mountIntoConnected: mountInto.isConnected });
+    return;
+  }
+  const prevParentTag = el.parentElement?.tagName ?? null;
+  const prevParentId = el.parentElement?.id ?? null;
   mountInto.replaceChildren(el);
+  hs8287Push(dbgKey, 'reparent.ok', {
+    fromTag: prevParentTag, fromId: prevParentId,
+    toTag: mountInto.tagName, toClass: mountInto.className,
+    toConnected: mountInto.isConnected,
+  });
 }
 
 /**
@@ -651,7 +826,17 @@ function disposeEntry(entry: StackEntry): void {
  */
 export function checkout(opts: CheckoutOptions): CheckoutHandle {
   const key = entryKey(opts.projectSecret, opts.terminalId);
+  const dbgKey = `${opts.projectSecret.slice(0, 8)}::${opts.terminalId}`;
   let entry = entries.get(key);
+  hs8287Push(dbgKey, 'checkout.begin', {
+    cols: opts.cols, rows: opts.rows,
+    mountIntoTag: opts.mountInto.tagName,
+    mountIntoClass: opts.mountInto.className,
+    mountIntoConnected: opts.mountInto.isConnected,
+    entryExisted: entry !== undefined,
+    stackLenBefore: entry?.stack.length ?? 0,
+    noSpawn: opts.noSpawn === true,
+  });
   if (entry === undefined) {
     // HS-8218 — propagate `noSpawn` to the new entry so the WS URL
     // carries `?noSpawn=1`. When an entry already exists we ignore the

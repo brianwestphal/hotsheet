@@ -68,7 +68,7 @@ export async function initProjectTabs(): Promise<void> {
   // hydration is slower than the user's first toggle.
   void (async () => {
     const { initPersistedHiddenTerminals } = await import('./persistedHiddenTerminals.js');
-    await initPersistedHiddenTerminals(projectList);
+    await initPersistedHiddenTerminals();
   })();
 }
 
@@ -100,7 +100,7 @@ export async function refreshProjectTabs(): Promise<void> {
   // before the user opens the dashboard.
   void (async () => {
     const { initPersistedHiddenTerminals } = await import('./persistedHiddenTerminals.js');
-    await initPersistedHiddenTerminals(projectList);
+    await initPersistedHiddenTerminals();
   })();
 }
 

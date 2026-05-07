@@ -26,7 +26,6 @@ import { loadProjectDefaultAppearance, subscribeToDefaultAppearanceChanges } fro
 import {
   computeColumnSnapPoints,
   DEFAULT_TILES_PER_ROW,
-  legacySliderValueToColumnCount,
   MAX_TILES_PER_ROW,
   MIN_TILES_PER_ROW,
   perRowToSliderPosition,
@@ -201,25 +200,16 @@ let dashboardState: DashboardState = freshDashboardState();
 function refreshDashboardGroupingSelect(): void {
   if (dashboardState.groupingSelect === null) return;
   void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
-    refreshGroupingSelect({
-      selectEl: dashboardState.groupingSelect!,
-      getSecret: () => dashboardState.lastSectionData[0]?.project.secret ?? null,
-    });
+    refreshGroupingSelect({ selectEl: dashboardState.groupingSelect! });
   });
 }
 
 function bindGroupingSelect(): void {
   if (dashboardState.groupingSelect === null) return;
-  // HS-7826 — wire the grouping selector. Primary scope: the first project
-  // in registered order. HS-7826 follow-up: `getAdditionalSecrets` returns
-  // every other project so picking a different grouping in the dropdown
-  // flips the active id across ALL projects.
+  // HS-7826 → HS-8290 — wire the grouping selector. Post-HS-8290 the
+  // groupings are global, so a single read + write covers every project.
   void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
-    wireGroupingSelectChange({
-      selectEl: dashboardState.groupingSelect!,
-      getSecret: () => dashboardState.lastSectionData[0]?.project.secret ?? null,
-      getAdditionalSecrets: () => dashboardState.lastSectionData.slice(1).map(s => s.project.secret),
-    });
+    wireGroupingSelectChange({ selectEl: dashboardState.groupingSelect! });
   });
 }
 
@@ -380,15 +370,18 @@ function parseLayoutMode(raw: unknown): LayoutMode {
   return raw === 'flow' ? 'flow' : 'sectioned';
 }
 
-/** HS-7662 — load the persisted layout mode from `/file-settings` once and
- *  cache the resulting promise. Resolves silently on error so the dashboard
- *  still works when the settings endpoint is briefly unavailable. */
+/** HS-7662 → HS-8290 — load the persisted layout mode from
+ *  `/dashboard/global-config` once and cache the resulting promise.
+ *  Resolves silently on error so the dashboard still works when the
+ *  endpoint is briefly unavailable. Pre-HS-8290 this read from
+ *  `/file-settings.dashboard_layout_mode`; the key moved to global config
+ *  because the dashboard is inherently cross-project. */
 function loadLayoutMode(): Promise<void> {
   if (dashboardState.layoutModeLoadPromise !== null) return dashboardState.layoutModeLoadPromise;
   dashboardState.layoutModeLoadPromise = (async () => {
     try {
-      const fs = await api<{ dashboard_layout_mode?: string }>('/file-settings');
-      dashboardState.layoutMode = parseLayoutMode(fs.dashboard_layout_mode);
+      const cfg = await api<{ dashboard?: { layoutMode?: string } }>('/dashboard/global-config');
+      dashboardState.layoutMode = parseLayoutMode(cfg.dashboard?.layoutMode);
     } catch {
       dashboardState.layoutMode = 'sectioned';
     }
@@ -397,83 +390,64 @@ function loadLayoutMode(): Promise<void> {
   return dashboardState.layoutModeLoadPromise;
 }
 
-/** HS-7948 / HS-8176 — pure: parse a settings entry into a numeric column
- *  count (integer in `[MIN_TILES_PER_ROW, MAX_TILES_PER_ROW]`), returning
- *  `null` for any malformed input. Accepts the new `dashboard_columns_per_row`
- *  shape (integer 1..10) AND the legacy `dashboard_slider_value` shape
- *  (continuous 0..100, mapped via `legacySliderValueToColumnCount`).
- *  Exported for unit testing — DOM- and fetch-free. */
-export function parsePersistedColumnCount(rawNew: unknown, rawLegacy: unknown): number | null {
-  // Prefer the new key when present.
-  if (rawNew !== undefined && rawNew !== null) {
-    const parsed = typeof rawNew === 'number' ? rawNew : (typeof rawNew === 'string' ? Number.parseInt(rawNew, 10) : Number.NaN);
-    if (Number.isFinite(parsed) && parsed >= MIN_TILES_PER_ROW && parsed <= MAX_TILES_PER_ROW) {
-      return Math.round(parsed);
-    }
-  }
-  // Fall back to the legacy 0..100 key — migrate.
-  if (rawLegacy !== undefined && rawLegacy !== null) {
-    const parsed = typeof rawLegacy === 'number' ? rawLegacy : (typeof rawLegacy === 'string' ? Number.parseFloat(rawLegacy) : Number.NaN);
-    if (Number.isFinite(parsed)) {
-      return legacySliderValueToColumnCount(parsed);
-    }
+/** HS-7948 / HS-8176 / HS-8290 — pure: parse a value from
+ *  `dashboard.columnsPerRow` (integer 1..10) into the column count. Returns
+ *  `null` for any malformed input. Pre-HS-8290 this also handled the
+ *  legacy `dashboard_slider_value` 0..100 shape; that key was never
+ *  promoted to global config (per user direction "delete old data
+ *  automatically") so the legacy fallback was removed. Exported for unit
+ *  testing — DOM- and fetch-free. */
+export function parsePersistedColumnCount(raw: unknown): number | null {
+  if (raw === undefined || raw === null) return null;
+  const parsed = typeof raw === 'number' ? raw : (typeof raw === 'string' ? Number.parseInt(raw, 10) : Number.NaN);
+  if (Number.isFinite(parsed) && parsed >= MIN_TILES_PER_ROW && parsed <= MAX_TILES_PER_ROW) {
+    return Math.round(parsed);
   }
   return null;
 }
 
-/** HS-7948 / HS-8176 — load the persisted column count from
- *  `/file-settings` once and cache the resulting promise. Resolves silently
- *  on error so the dashboard still works when the settings endpoint is
- *  briefly unavailable. Updates the live `<input type="range">`'s value when
- *  the load completes so the thumb reflects the persisted scale even if the
- *  user opens the dashboard before the fetch resolves. */
+/** HS-7948 / HS-8176 / HS-8290 — load the persisted column count from
+ *  `/dashboard/global-config` once and cache the resulting promise. */
 function loadSliderValue(): Promise<void> {
   if (dashboardState.sliderValueLoadPromise !== null) return dashboardState.sliderValueLoadPromise;
   dashboardState.sliderValueLoadPromise = (async () => {
     try {
-      const fs = await api<{ dashboard_columns_per_row?: number | string; dashboard_slider_value?: number | string }>('/file-settings');
-      const parsed = parsePersistedColumnCount(fs.dashboard_columns_per_row, fs.dashboard_slider_value);
+      const cfg = await api<{ dashboard?: { columnsPerRow?: number } }>('/dashboard/global-config');
+      const parsed = parsePersistedColumnCount(cfg.dashboard?.columnsPerRow);
       if (parsed !== null) {
         dashboardState.columnCount = parsed;
         if (dashboardState.sizeSlider !== null) dashboardState.sizeSlider.value = String(perRowToSliderPosition(dashboardState.columnCount));
         if (dashboardState.active) applyAllSizing();
       }
     } catch {
-      // Keep the default — silent failure is the right call here, the same
-      // way `loadLayoutMode` swallows.
+      // Keep the default — silent failure matches `loadLayoutMode`.
     }
   })();
   return dashboardState.sliderValueLoadPromise;
 }
 
-/** HS-7948 / HS-8176 — debounced persistence of the column count to
- *  `/file-settings` under the new `dashboard_columns_per_row` key. Debounce
- *  keeps a fast drag from spamming the settings endpoint. The legacy
- *  `dashboard_slider_value` key is intentionally NOT written by the new
- *  code so older Hot Sheet versions that downgrade-then-reload will fall
- *  back to their default rather than seeing a stale 0..100 value. */
+/** HS-7948 / HS-8176 / HS-8290 — debounced persistence of the column count
+ *  to global config under `dashboard.columnsPerRow`. */
 function schedulePersistSliderValue(): void {
   if (dashboardState.sliderPersistTimeout !== null) clearTimeout(dashboardState.sliderPersistTimeout);
   dashboardState.sliderPersistTimeout = setTimeout(() => {
     dashboardState.sliderPersistTimeout = null;
-    void api('/file-settings', {
+    void api('/dashboard/global-config', {
       method: 'PATCH',
-      body: { dashboard_columns_per_row: dashboardState.columnCount },
+      body: { dashboard: { columnsPerRow: dashboardState.columnCount } },
     }).catch(() => { /* swallow — UI already reflects the new value */ });
   }, SLIDER_PERSIST_DEBOUNCE_MS);
 }
 
-/** HS-7662 — flip the layout mode and persist to `/file-settings`.
- *  Triggers a full re-render of the dashboard root if currently active so
- *  the user sees the new layout immediately. */
+/** HS-7662 / HS-8290 — flip the layout mode and persist to global config. */
 function setLayoutMode(next: LayoutMode): void {
   if (next === dashboardState.layoutMode) return;
   dashboardState.layoutMode = next;
   applyLayoutToggleVisualState();
   // Persist in the background — don't block the re-render on the network.
-  void api('/file-settings', {
+  void api('/dashboard/global-config', {
     method: 'PATCH',
-    body: { dashboard_layout_mode: next },
+    body: { dashboard: { layoutMode: next } },
   }).catch(() => { /* swallow — UI flip already happened */ });
   // Re-render with the cached section data when active so we don't
   // re-fetch /projects + /terminal/list on every toggle.
@@ -574,7 +548,27 @@ function enterDashboard(): void {
   // additionally check that the changed secret belongs to a project the
   // dashboard is currently displaying before doing any expensive work.
   dashboardState.appearanceUnsubscribe = subscribeToDefaultAppearanceChanges((changedSecret) => {
-    if (changedSecret !== '' && dashboardState.lastSectionData.length > 0) {
+    // HS-8288 — skip when the initial paint hasn't populated lastSectionData
+    // yet. Pre-fix, every project's first `loadProjectDefaultAppearance`
+    // (called per-project from `fetchProjectSections`) fired this event,
+    // and because lastSectionData was still empty during the initial fetch
+    // we fell through to `refreshDashboardGrid()` — once per project. Each
+    // refresh tore down every dashboard handle, started a fresh
+    // `renderDashboardGrid`, and synchronously cleared the dashboard root
+    // with a `<loading>` element. With multiple in-flight cascading
+    // renderDashboardGrids, tiles were torn down mid-mount: an
+    // IntersectionObserver callback from one paint would call
+    // `mountTileViaCheckout` on a tile whose section was about to be
+    // disposed, leaving the tile's `xtermRoot` div in `tile.preview` with
+    // an empty body (no live xterm + no placeholder + no entry in the
+    // checkout map) — the user-reported "Kerf goes blank, every other tile
+    // renders normally" symptom. The initial paint already sees the right
+    // appearance values because `setProjectDefault` writes the cache
+    // BEFORE dispatching the event; by the time `paintDashboardSections`
+    // runs, `getProjectDefault(secret)` returns the freshly loaded value
+    // for every project.
+    if (dashboardState.lastSectionData.length === 0) return;
+    if (changedSecret !== '') {
       const showingThisProject = dashboardState.lastSectionData.some(
         (section) => section.project.secret === changedSecret,
       );

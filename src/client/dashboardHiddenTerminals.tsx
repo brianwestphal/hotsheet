@@ -1,37 +1,44 @@
 /**
- * HS-7661 / HS-7825 / HS-7826 — Hidden-terminal state for both the global
- * Terminal Dashboard (§25) and the per-project Drawer Terminal Grid (§36).
+ * HS-7661 / HS-7825 / HS-7826 / HS-8290 — Hidden-terminal state for both
+ * the global Terminal Dashboard (§25) and the per-project Drawer Terminal
+ * Grid (§36).
  *
- * **State shape (HS-7826).** Per-project list of named *visibility
- * groupings*; each grouping carries its own `hiddenIds` array. The `Default`
- * grouping is always present and acts as the post-HS-7825 single-grouping
- * compatibility surface — pre-HS-7826 callers that only know about a flat
- * "(secret, terminalId) → isHidden" world continue to work via the helpers
- * below, which delegate to whichever grouping is currently active.
+ * **State shape (HS-8290).** Single global `GlobalVisibilityState` —
+ * `{ groupings: VisibilityGrouping[], activeId: string }` — held in a
+ * module-private variable. Each grouping's `hiddenByProject: Record<secret, string[]>`
+ * is the per-project hidden-id store; the grouping list itself + active id
+ * are global. Pre-HS-8290 each project had its own `ProjectVisibilityState`
+ * stored under `visibility_groupings` in `.hotsheet/settings.json`, which
+ * required a cross-project fan-out machinery to keep duplicated grouping
+ * lists aligned (§39.7). HS-8290 collapses that into one source of truth.
+ *
+ * The Default grouping is always present and acts as the post-HS-7825
+ * single-grouping compatibility surface — pre-HS-7826 callers that only
+ * know about a flat `(secret, terminalId) → isHidden` world continue to
+ * work via the helpers below, which delegate to whichever grouping is
+ * currently active.
  *
  * Subscribers (the dashboard, drawer-grid, dialog) receive change
  * notifications via `subscribeToHiddenChanges(handler)` for any change —
  * a row toggle, a tab switch, a grouping rename / delete / reorder, or a
  * persisted-state hydrate.
  *
- * **Persistence.** See docs/38-terminal-visibility.md (HS-7825) +
- * docs/39-visibility-groupings.md (HS-7826). The `persistedHiddenTerminals.ts`
- * module subscribes to changes and PATCHes the new shape
- * (`visibility_groupings` + `active_visibility_grouping_id`) plus a legacy
- * `hidden_terminals` for compatibility with older clients reading the same
- * settings.json.
+ * **Persistence.** See docs/39-visibility-groupings.md (HS-8290 rewrite).
+ * The `persistedHiddenTerminals.ts` module subscribes to changes and
+ * PATCHes the global config endpoint
+ * (`/api/dashboard/global-config` body `{ dashboard: { visibilityGroupings, activeVisibilityGroupingId } }`).
  */
 
 import { toElement } from './dom.js';
 import {
   addGrouping as addGroupingPure,
-  addGroupingWithId as addGroupingWithIdPure,
   DEFAULT_GROUPING_ID,
   deleteGrouping as deleteGroupingPure,
-  generateGroupingId as generateGroupingIdPure,
   getActiveGrouping,
-  initialProjectState,
-  type ProjectVisibilityState,
+  getHiddenIdsForProject,
+  type GlobalVisibilityState,
+  initialGlobalState,
+  pruneStaleIdsInGroupings,
   renameGrouping as renameGroupingPure,
   reorderGroupings as reorderGroupingsPure,
   setActiveGroupingId as setActiveGroupingIdPure,
@@ -40,7 +47,7 @@ import {
   type VisibilityGrouping,
 } from './visibilityGroupings.js';
 
-const projectStates = new Map<string, ProjectVisibilityState>();
+let globalState: GlobalVisibilityState = initialGlobalState();
 const subscribers = new Set<() => void>();
 
 function notify(): void {
@@ -49,89 +56,74 @@ function notify(): void {
   }
 }
 
-function getOrInit(secret: string): ProjectVisibilityState {
-  const existing = projectStates.get(secret);
-  if (existing !== undefined) return existing;
-  const fresh = initialProjectState();
-  projectStates.set(secret, fresh);
-  return fresh;
-}
-
-/** Replace the per-project state and fire change notifications when the
+/** Replace the global state and fire change notifications when the
  *  reference actually changed. Single source-of-truth for mutations. */
-function setProjectState(secret: string, next: ProjectVisibilityState): void {
-  const existing = projectStates.get(secret);
-  if (existing === next) return;
-  projectStates.set(secret, next);
+function setGlobalState(next: GlobalVisibilityState): void {
+  if (globalState === next) return;
+  globalState = next;
   notify();
 }
 
 // ---------------------------------------------------------------------------
 // Pre-HS-7826 single-grouping public API. Every helper delegates to the
-// active grouping, so callers that don't know about groupings keep working.
+// active grouping.
 // ---------------------------------------------------------------------------
 
 /** True when this `(secret, terminalId)` pair is hidden in the active
- *  grouping for the project. */
+ *  grouping. */
 export function isTerminalHidden(secret: string, terminalId: string): boolean {
-  const state = projectStates.get(secret);
-  if (state === undefined) return false;
-  return getActiveGrouping(state).hiddenIds.includes(terminalId);
+  const active = getActiveGrouping(globalState);
+  return getHiddenIdsForProject(active, secret).includes(terminalId);
 }
 
-/** Return a fresh set of hidden terminal ids in the project's active
+/** Return a fresh set of hidden terminal ids for `secret` in the active
  *  grouping. Returned set is a copy — mutating it does NOT affect module
  *  state; use `setTerminalHidden` to make changes. */
 export function getHiddenTerminals(secret: string): Set<string> {
-  const state = projectStates.get(secret);
-  if (state === undefined) return new Set();
-  return new Set(getActiveGrouping(state).hiddenIds);
+  const active = getActiveGrouping(globalState);
+  return new Set(getHiddenIdsForProject(active, secret));
 }
 
 /** Toggle the hidden state for a `(secret, terminalId)` pair against the
  *  active grouping. */
 export function setTerminalHidden(secret: string, terminalId: string, hide: boolean): void {
-  const state = getOrInit(secret);
-  const active = getActiveGrouping(state);
-  const next = updateGroupingById(state, active.id, g => toggleHiddenInGrouping(g, terminalId, hide));
-  setProjectState(secret, next);
+  const active = getActiveGrouping(globalState);
+  const next = updateGroupingById(globalState, active.id, g => toggleHiddenInGrouping(g, secret, terminalId, hide));
+  setGlobalState(next);
 }
 
-/** Filter a TileEntry-like list down to visible-only ids in the project's
- *  active grouping. */
+/** Filter a TileEntry-like list down to visible-only ids in `secret`'s
+ *  active-grouping hidden set. */
 export function filterVisible<T extends { id: string }>(secret: string, entries: T[]): T[] {
-  const state = projectStates.get(secret);
-  if (state === undefined) return entries;
-  const active = getActiveGrouping(state);
-  if (active.hiddenIds.length === 0) return entries;
-  const set = new Set(active.hiddenIds);
+  const active = getActiveGrouping(globalState);
+  const ids = getHiddenIdsForProject(active, secret);
+  if (ids.length === 0) return entries;
+  const set = new Set(ids);
   return entries.filter(e => !set.has(e.id));
 }
 
-/** Clear all hidden state for one project's active grouping. (Other
- *  groupings are untouched — to clear EVERY grouping use `unhideAllEverywhere`
- *  or call this on the active grouping after switching.) */
+/** Clear all hidden state for ONE project's active grouping. */
 export function unhideAllInProject(secret: string): void {
-  const state = projectStates.get(secret);
-  if (state === undefined) return;
-  const active = getActiveGrouping(state);
-  if (active.hiddenIds.length === 0) return;
-  const next = updateGroupingById(state, active.id, g => ({ ...g, hiddenIds: [] }));
-  setProjectState(secret, next);
+  const active = getActiveGrouping(globalState);
+  if (getHiddenIdsForProject(active, secret).length === 0) return;
+  const next = updateGroupingById(globalState, active.id, g => {
+    if ((g.hiddenByProject[secret] ?? []).length === 0) return g;
+    const nextByProject: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(g.hiddenByProject)) {
+      if (k !== secret) nextByProject[k] = v;
+    }
+    return { ...g, hiddenByProject: nextByProject };
+  });
+  setGlobalState(next);
 }
 
-/** Clear hidden state across every project's ACTIVE grouping. Used by the
- *  global Terminal Dashboard's "Show all" link. */
+/** Clear hidden state across EVERY project in the active grouping. Used
+ *  by the global Terminal Dashboard's "Show all" link. */
 export function unhideAllEverywhere(): void {
-  let changed = false;
-  for (const [secret, state] of projectStates) {
-    const active = getActiveGrouping(state);
-    if (active.hiddenIds.length === 0) continue;
-    const next = updateGroupingById(state, active.id, g => ({ ...g, hiddenIds: [] }));
-    projectStates.set(secret, next);
-    changed = true;
-  }
-  if (changed) notify();
+  const active = getActiveGrouping(globalState);
+  if (Object.keys(active.hiddenByProject).length === 0) return;
+  const next = updateGroupingById(globalState, active.id, g => ({ ...g, hiddenByProject: {} }));
+  setGlobalState(next);
 }
 
 /** Subscribe to hidden-state changes. Returns an unsubscribe function. */
@@ -140,18 +132,19 @@ export function subscribeToHiddenChanges(handler: () => void): () => void {
   return () => { subscribers.delete(handler); };
 }
 
-/** Total number of hidden terminals across every project's ACTIVE grouping. */
+/** Total number of hidden terminals across every project in the active
+ *  grouping. */
 export function countHiddenAcrossAllProjects(): number {
+  const active = getActiveGrouping(globalState);
   let total = 0;
-  for (const state of projectStates.values()) total += getActiveGrouping(state).hiddenIds.length;
+  for (const ids of Object.values(active.hiddenByProject)) total += ids.length;
   return total;
 }
 
 /** Number of hidden terminals scoped to a single project's active grouping. */
 export function countHiddenForProject(secret: string): number {
-  const state = projectStates.get(secret);
-  if (state === undefined) return 0;
-  return getActiveGrouping(state).hiddenIds.length;
+  const active = getActiveGrouping(globalState);
+  return getHiddenIdsForProject(active, secret).length;
 }
 
 /**
@@ -175,7 +168,7 @@ export function applyHideButtonBadge(button: HTMLElement | null, count: number):
 
 /** Clear ALL state — used by tests so each spec can start clean. */
 export function _resetForTests(): void {
-  projectStates.clear();
+  globalState = initialGlobalState();
   subscribers.clear();
 }
 
@@ -189,162 +182,115 @@ export function isConfiguredTerminalId(terminalId: string): boolean {
 }
 
 /**
- * HS-7825 — hydrate the in-memory hidden set for a project from a flat
- * list of persisted ids. Used during app boot when ONLY the legacy
- * `hidden_terminals` key is present (pre-HS-7826 settings.json). Modern
- * callers use `hydratePersistedStateForProject` (below) which carries the
- * full groupings shape.
+ * HS-8290 — hydrate the global state from a parsed `GlobalVisibilityState`
+ * (typically returned by `parsePersistedState` reading
+ * `dashboard.visibilityGroupings` + `dashboard.activeVisibilityGroupingId`
+ * from the global config endpoint). Dynamic ids are filtered out of every
+ * grouping's per-project hidden lists. Idempotent — equal-by-content
+ * hydrates short-circuit so subscribers don't fire spuriously.
  */
-export function hydratePersistedHiddenForProject(secret: string, ids: readonly string[]): void {
-  const configuredIds = ids.filter(isConfiguredTerminalId);
-  const next = initialProjectState(configuredIds);
-  // Cheap equality dodge so we don't notify when nothing actually changed.
-  const existing = projectStates.get(secret);
-  if (existing !== undefined && projectStateEquals(existing, next)) return;
-  setProjectState(secret, next);
-}
-
-/**
- * HS-7826 — hydrate the in-memory state for a project from a parsed
- * ProjectVisibilityState (typically returned by `parsePersistedState`
- * in `visibilityGroupings.ts`). The persistence layer calls this on
- * boot. Dynamic ids are filtered out of every grouping's hiddenIds.
- */
-export function hydratePersistedStateForProject(
-  secret: string,
-  state: ProjectVisibilityState,
-): void {
-  const sanitised: ProjectVisibilityState = {
-    groupings: state.groupings.map(g => ({
-      ...g,
-      hiddenIds: g.hiddenIds.filter(isConfiguredTerminalId),
-    })),
+export function hydratePersistedGlobalState(state: GlobalVisibilityState): void {
+  const sanitised: GlobalVisibilityState = {
+    groupings: state.groupings.map(g => {
+      const cleaned: Record<string, string[]> = {};
+      for (const [secret, ids] of Object.entries(g.hiddenByProject)) {
+        const kept = ids.filter(isConfiguredTerminalId);
+        if (kept.length > 0) cleaned[secret] = kept;
+      }
+      return { ...g, hiddenByProject: cleaned };
+    }),
     activeId: state.activeId,
   };
-  const existing = projectStates.get(secret);
-  if (existing !== undefined && projectStateEquals(existing, sanitised)) return;
-  setProjectState(secret, sanitised);
+  if (globalStateEquals(globalState, sanitised)) return;
+  setGlobalState(sanitised);
 }
 
-function projectStateEquals(a: ProjectVisibilityState, b: ProjectVisibilityState): boolean {
+function globalStateEquals(a: GlobalVisibilityState, b: GlobalVisibilityState): boolean {
   if (a.activeId !== b.activeId) return false;
   if (a.groupings.length !== b.groupings.length) return false;
   for (let i = 0; i < a.groupings.length; i++) {
     const ga = a.groupings[i];
     const gb = b.groupings[i];
     if (ga.id !== gb.id || ga.name !== gb.name) return false;
-    if (ga.hiddenIds.length !== gb.hiddenIds.length) return false;
-    // hiddenIds is set-like — compare without regard to order so a
-    // re-hydrate from the same persisted Set in a different iteration
-    // order doesn't fire a spurious notify.
-    const setA = new Set(ga.hiddenIds);
-    for (const id of gb.hiddenIds) if (!setA.has(id)) return false;
+    const aSecrets = Object.keys(ga.hiddenByProject);
+    const bSecrets = Object.keys(gb.hiddenByProject);
+    if (aSecrets.length !== bSecrets.length) return false;
+    const bSecretSet = new Set(bSecrets);
+    for (const secret of aSecrets) {
+      if (!bSecretSet.has(secret)) return false;
+      const aIds = ga.hiddenByProject[secret];
+      const bIds = gb.hiddenByProject[secret];
+      if (aIds.length !== bIds.length) return false;
+      const setA = new Set(aIds);
+      for (const id of bIds) if (!setA.has(id)) return false;
+    }
   }
   return true;
 }
 
 // ---------------------------------------------------------------------------
-// HS-7826 — grouping management API.
+// HS-7826 grouping management API. Post-HS-8290 these are global (no
+// `secret` parameter on grouping CRUD).
 // ---------------------------------------------------------------------------
 
-/** Read the current state for a project. Returns a frozen empty-Default
- *  initial state when the project hasn't been seen yet (caller never has
- *  to null-check). The returned object is the live state — callers MUST
- *  NOT mutate it; use the helpers below to make changes. */
-export function getProjectVisibilityState(secret: string): ProjectVisibilityState {
-  return projectStates.get(secret) ?? initialProjectState();
+/** Read the current global state. Live state — callers MUST NOT mutate;
+ *  use the helpers below to make changes. */
+export function getGlobalVisibilityState(): GlobalVisibilityState {
+  return globalState;
 }
 
-/** List the project's groupings (display order). */
-export function getGroupings(secret: string): VisibilityGrouping[] {
-  return getProjectVisibilityState(secret).groupings;
+/** List the global groupings (display order). */
+export function getGroupings(): VisibilityGrouping[] {
+  return globalState.groupings;
 }
 
-/** Active grouping id for the project. */
-export function getActiveGroupingId(secret: string): string {
-  return getProjectVisibilityState(secret).activeId;
+/** Active grouping id. */
+export function getActiveGroupingId(): string {
+  return globalState.activeId;
 }
 
-/** Switch the active grouping for the project. Fires the change
- *  subscription so the dashboard / drawer-grid filter re-applies. */
-export function setActiveGroupingForProject(secret: string, id: string): void {
-  const state = getOrInit(secret);
-  const next = setActiveGroupingIdPure(state, id);
-  setProjectState(secret, next);
+/** Switch the active grouping. Fires the change subscription so the
+ *  dashboard / drawer-grid filter re-applies. */
+export function setActiveGrouping(id: string): void {
+  setGlobalState(setActiveGroupingIdPure(globalState, id));
 }
 
-/** Add a new grouping to the project. Returns the new grouping (so the
- *  caller can immediately switch to it / focus its tab). */
-export function addGroupingForProject(secret: string, name: string): VisibilityGrouping {
-  const state = getOrInit(secret);
-  const { state: next, grouping } = addGroupingPure(state, name);
-  setProjectState(secret, next);
+/** Add a new grouping. Returns the new grouping (so the caller can
+ *  immediately switch to it / focus its tab). */
+export function addGrouping(name: string): VisibilityGrouping {
+  const { state: next, grouping } = addGroupingPure(globalState, name);
+  setGlobalState(next);
   return grouping;
-}
-
-/** HS-7826 follow-up — variant of `addGroupingForProject` that uses a
- *  caller-provided id, so the global Show / Hide Terminals dialog can fan a
- *  single grouping creation across every project under the SAME id. Without
- *  the shared id, switching the active grouping in the dropdown would only
- *  match in the project where it was originally created and the other
- *  projects would silently fall back to Default. */
-export function addGroupingForProjectWithId(secret: string, id: string, name: string): VisibilityGrouping {
-  const state = getOrInit(secret);
-  const { state: next, grouping } = addGroupingWithIdPure(state, id, name);
-  setProjectState(secret, next);
-  return grouping;
-}
-
-/** HS-7826 follow-up — generate a fresh grouping id that doesn't collide
- *  with any existing grouping across the supplied secrets. Used by the
- *  dialog's cross-project "Add grouping" path to mint a single id that's
- *  safe to use as the explicit id in `addGroupingForProjectWithId` for
- *  every secret. */
-export function generateGroupingIdAcrossProjects(secrets: readonly string[]): string {
-  const seen = new Set<string>();
-  for (const s of secrets) {
-    const st = projectStates.get(s);
-    if (st === undefined) continue;
-    for (const g of st.groupings) seen.add(g.id);
-  }
-  return generateGroupingIdPure(Array.from(seen).map(id => ({ id, name: '', hiddenIds: [] })));
 }
 
 /** Rename a grouping. No-op when name doesn't change after trimming. */
-export function renameGroupingForProject(secret: string, id: string, name: string): void {
-  const state = getOrInit(secret);
-  const next = renameGroupingPure(state, id, name);
-  setProjectState(secret, next);
+export function renameGrouping(id: string, name: string): void {
+  setGlobalState(renameGroupingPure(globalState, id, name));
 }
 
 /** Delete a grouping (Default is refused; activeId falls back to Default
  *  when the deleted grouping was active). */
-export function deleteGroupingForProject(secret: string, id: string): void {
+export function deleteGrouping(id: string): void {
   if (id === DEFAULT_GROUPING_ID) return;
-  const state = getOrInit(secret);
-  const next = deleteGroupingPure(state, id);
-  setProjectState(secret, next);
+  setGlobalState(deleteGroupingPure(globalState, id));
 }
 
 /** Reorder groupings (drag-and-drop) — moves fromId into toId's slot. */
-export function reorderGroupingsForProject(secret: string, fromId: string, toId: string): void {
-  const state = getOrInit(secret);
-  const next = reorderGroupingsPure(state, fromId, toId);
-  setProjectState(secret, next);
+export function reorderGroupings(fromId: string, toId: string): void {
+  setGlobalState(reorderGroupingsPure(globalState, fromId, toId));
 }
 
 /** Toggle a terminal's hidden state in a SPECIFIC grouping (not necessarily
- *  the active one). Used by the dialog when the user is on a non-active
- *  grouping's tab and toggles a row. */
+ *  the active one) for a SPECIFIC project. Used by the dialog when the
+ *  user is on a non-active grouping's tab and toggles a row. */
 export function setTerminalHiddenInGrouping(
   secret: string,
   groupingId: string,
   terminalId: string,
   hide: boolean,
 ): void {
-  const state = getOrInit(secret);
-  const next = updateGroupingById(state, groupingId, g => toggleHiddenInGrouping(g, terminalId, hide));
-  setProjectState(secret, next);
+  const next = updateGroupingById(globalState, groupingId, g => toggleHiddenInGrouping(g, secret, terminalId, hide));
+  setGlobalState(next);
 }
 
 /** Read whether a terminal is hidden in a SPECIFIC grouping (parallel to
@@ -354,114 +300,86 @@ export function isTerminalHiddenInGrouping(
   groupingId: string,
   terminalId: string,
 ): boolean {
-  const state = projectStates.get(secret);
-  if (state === undefined) return false;
-  const grouping = state.groupings.find(g => g.id === groupingId);
-  return grouping?.hiddenIds.includes(terminalId) === true;
+  const grouping = globalState.groupings.find(g => g.id === groupingId);
+  if (grouping === undefined) return false;
+  return getHiddenIdsForProject(grouping, secret).includes(terminalId);
 }
 
-/** Clear hidden state in a SPECIFIC grouping (used by the dialog's "Show
- *  all" link when the user is on a non-active tab). */
+/** Clear hidden state for `secret` in a SPECIFIC grouping. */
 export function unhideAllInGrouping(secret: string, groupingId: string): void {
-  const state = getOrInit(secret);
-  const next = updateGroupingById(state, groupingId, g => g.hiddenIds.length === 0 ? g : ({ ...g, hiddenIds: [] }));
-  setProjectState(secret, next);
+  const next = updateGroupingById(globalState, groupingId, g => {
+    if (!Object.prototype.hasOwnProperty.call(g.hiddenByProject, secret)) return g;
+    if (g.hiddenByProject[secret].length === 0) return g;
+    const nextByProject: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(g.hiddenByProject)) {
+      if (k !== secret) nextByProject[k] = v;
+    }
+    return { ...g, hiddenByProject: nextByProject };
+  });
+  setGlobalState(next);
 }
 
-/** HS-8063 — hide every supplied terminal id in a SPECIFIC grouping
- *  (mirror of `unhideAllInGrouping`). Used by the dialog's "Hide All"
- *  button. The dialog passes the union of every terminal id rendered
- *  in the body for `secret`, so the result is a fully-hidden grouping
- *  for that project. Idempotent — duplicates and already-hidden ids
- *  collapse via the underlying `toggleHiddenInGrouping` helper.
- *
- *  Note: a naive `g.hiddenIds = [...new Set([...g.hiddenIds, ...ids])]`
- *  would lose ordering across the existing `toggleHiddenInGrouping`
- *  contract, so we route every add through it. The helper short-
- *  circuits when the next array is reference-equal to the current
- *  one, so an all-already-hidden call is a no-op (no notify storm). */
+/** Clear hidden state across EVERY project in a SPECIFIC grouping. */
+export function unhideAllEverywhereInGrouping(groupingId: string): void {
+  const next = updateGroupingById(globalState, groupingId, g => {
+    if (Object.keys(g.hiddenByProject).length === 0) return g;
+    return { ...g, hiddenByProject: {} };
+  });
+  setGlobalState(next);
+}
+
+/** HS-8063 — hide every supplied terminal id for `secret` in a SPECIFIC
+ *  grouping. Used by the dialog's "Hide All" button. Idempotent. */
 export function hideAllInGrouping(
   secret: string,
   groupingId: string,
   terminalIds: readonly string[],
 ): void {
   if (terminalIds.length === 0) return;
-  const state = getOrInit(secret);
-  const next = updateGroupingById(state, groupingId, g => {
+  const next = updateGroupingById(globalState, groupingId, g => {
     let updated = g;
     for (const id of terminalIds) {
-      updated = toggleHiddenInGrouping(updated, id, true);
+      updated = toggleHiddenInGrouping(updated, secret, id, true);
     }
     return updated;
   });
-  setProjectState(secret, next);
+  setGlobalState(next);
 }
 
 /**
- * HS-8016 — drop any id from every grouping's `hiddenIds` that's not in
- * `knownIds`. Called whenever a fresh `/terminal/list` round-trip lands
- * (project switch + post-close + post-destroy + post-settings-save) so the
- * eye-icon count badge stops reflecting terminals that no longer exist.
- *
- * Pre-fix: a user who hid a terminal and then closed it (drawer X-button or
- * Settings → delete) saw the badge keep counting the closed terminal —
- * `hiddenIds` was never reconciled against the live set. The §38 persistence
- * layer carried the stale id forward into `hidden_terminals`, so the count
- * stayed wrong even after relaunch.
- *
- * No-op when `knownIds` covers every id in every grouping (the common case).
- * Notifies subscribers exactly once per project when at least one grouping
- * actually changed, so the badge re-paints immediately and persistence
- * follows in the same notify pass.
- *
- * Dynamic ids (`dyn-*`) are still skipped — they're session-only and don't
- * persist anyway, but they DO need pruning during the session because a
- * recently-hidden dynamic that was then closed should drop out of the badge.
- * Configured ids that simply don't appear in `knownIds` (because the user
- * deleted them in Settings) are pruned the same way.
+ * HS-8016 — drop any id from every grouping's `hiddenByProject[secret]`
+ * that's not in `knownIds`. Called whenever a fresh `/terminal/list`
+ * round-trip lands so the eye-icon count badge stops reflecting terminals
+ * that no longer exist. Notifies subscribers exactly once when at least
+ * one grouping actually changed.
  */
 export function pruneHiddenForProject(secret: string, knownIds: readonly string[]): void {
-  const state = projectStates.get(secret);
-  if (state === undefined) return;
   const knownSet = new Set(knownIds);
-  const groupings = state.groupings.map(g => {
-    const filtered = g.hiddenIds.filter(id => knownSet.has(id));
-    if (filtered.length === g.hiddenIds.length) return g;
-    return { ...g, hiddenIds: filtered };
-  });
-  // HS-8093 — `.map` returns the same reference when no change happened
-  // (we early-returned `g`), so identity comparison across the array is
-  // a clean "did anything actually move" gate without a separate
-  // `changed` flag (which TS can't track through the callback).
-  const anyChanged = groupings.some((g, i) => g !== state.groupings[i]);
-  if (!anyChanged) return;
-  setProjectState(secret, { groupings, activeId: state.activeId });
+  const pruned = pruneStaleIdsInGroupings(globalState.groupings, secret, knownSet);
+  if (pruned === null) return;
+  setGlobalState({ groupings: pruned, activeId: globalState.activeId });
 }
 
 /**
  * HS-7949 follow-up — mark a freshly-added terminal id as hidden in every
- * non-Default grouping for one project. Mirrors the server-side
- * `addNewTerminalsToNonDefaultGroupings` but operates on the in-memory
- * client state (because dynamic terminals don't go through the
- * `/file-settings` PATCH that fires the server-side helper). The
- * `subscribeToHiddenChanges` notify+PATCH chain persists the new state
- * automatically.
+ * non-Default grouping for one project. Mirrors the rule that pre-HS-8290
+ * lived server-side in `addNewTerminalsToNonDefaultGroupings`. Without
+ * this, a freshly-added terminal pops up in every named grouping.
  *
- * No-op when the project has only the Default grouping (or no groupings).
- * No-op when the id is already hidden in every non-Default grouping.
- *
- * Exported for unit tests.
+ * No-op when there are no non-Default groupings or the id is already
+ * hidden in every non-Default grouping. Exported for unit tests.
  */
 export function hideNewTerminalInNonDefaultGroupings(secret: string, terminalId: string): void {
-  const state = projectStates.get(secret);
-  if (state === undefined) return;
-  const groupings = state.groupings.map(g => {
-    if (g.id === 'default') return g;
-    if (g.hiddenIds.includes(terminalId)) return g;
-    return { ...g, hiddenIds: [...g.hiddenIds, terminalId] };
+  const groupings = globalState.groupings.map(g => {
+    if (g.id === DEFAULT_GROUPING_ID) return g;
+    const current = g.hiddenByProject[secret] ?? [];
+    if (current.includes(terminalId)) return g;
+    return {
+      ...g,
+      hiddenByProject: { ...g.hiddenByProject, [secret]: [...current, terminalId] },
+    };
   });
-  // HS-8093 — same identity-comparison pattern as `pruneHiddenForProject`.
-  const anyChanged = groupings.some((g, i) => g !== state.groupings[i]);
+  const anyChanged = groupings.some((g, i) => g !== globalState.groupings[i]);
   if (!anyChanged) return;
-  setProjectState(secret, { groupings, activeId: state.activeId });
+  setGlobalState({ groupings, activeId: globalState.activeId });
 }

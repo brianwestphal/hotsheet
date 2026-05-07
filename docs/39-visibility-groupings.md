@@ -1,131 +1,112 @@
-# 39. Visibility groupings (HS-7826)
+# 39. Visibility groupings (HS-7826 / HS-8290)
 
 ## 39.1 Overview
 
 The Show / Hide Terminals dialog (§25.10.6 / §36.6.5) and the persistence layer added in §38 (HS-7825) treat hidden state as **one** flat list per project. That works when a user has a single mental model — "these are the terminals I don't want to see." It breaks down when the user has multiple competing contexts: maybe the user wants a "claude only" view to focus on a coding session, a "server logs" view to triage a deploy, a "single app" view to keep one project front-and-center. Pre-HS-7826 the only option was to keep toggling rows back and forth as the focus changed.
 
-HS-7826 introduces named **visibility groupings**. Each grouping carries its own `hiddenIds` array and the user switches between them via a tab bar in the dialog and (when more than one grouping exists) a dropdown next to the eye icon in the dashboard / drawer-grid toolbar. The active grouping drives the dashboard / drawer-grid filter. State is per-project and persisted across app launches alongside the existing `hidden_terminals` shape.
+HS-7826 introduces named **visibility groupings**. Each grouping carries its own hidden ids and the user switches between them via a tab bar in the dialog and (when more than one grouping exists) a dropdown next to the eye icon in the dashboard / drawer-grid toolbar. The active grouping drives the dashboard / drawer-grid filter.
 
-## 39.2 Data model
+**HS-8290 reshape** — pre-HS-8290 each project had its own grouping list stored under `visibility_groupings` in `.hotsheet/settings.json`, and a cross-project fan-out machinery (§39.7 in the prior revision) mirrored every grouping CRUD operation across every project to keep duplicated lists aligned. Post-HS-8290 the grouping list is **a single global record** in `~/.hotsheet/config.json` under `dashboard.visibilityGroupings`, with each grouping carrying a `hiddenByProject: Record<secret, string[]>` map that holds per-project hidden ids. The fan-out machinery is gone.
 
-A grouping is `{ id, name, hiddenIds }`. Each project carries a list of groupings + an active id. The Default grouping is always present, identifiable by the literal id `'default'`, and refused for deletion (rename works since the id is the invariant — name is just a label).
+## 39.2 Data model (HS-8290)
+
+A grouping is `{ id, name, hiddenByProject }`. The grouping list + active id are global; per-project hidden ids live inside each grouping under `hiddenByProject[secret]`. The Default grouping is always present, identifiable by the literal id `'default'`, and refused for deletion (rename works since the id is the invariant — name is just a label).
 
 ```ts
 interface VisibilityGrouping {
   id: string;          // 'default' for the Default tab; `g-…` for user-added
   name: string;        // display name shown in the tab bar + dropdown
-  hiddenIds: string[]; // configured terminal ids hidden in this grouping
+  hiddenByProject: Record<string, string[]>; // secret → hiddenIds for that project
 }
 
-interface ProjectVisibilityState {
+interface GlobalVisibilityState {
   groupings: VisibilityGrouping[];
   activeId: string;
 }
 ```
 
-Pure helpers in `src/client/visibilityGroupings.ts` (`addGrouping`, `renameGrouping`, `deleteGrouping`, `reorderGroupings`, `setActiveGroupingId`, `toggleHiddenInGrouping`, `parsePersistedState`, `pruneStaleIdsInGroupings`) own every state transition. 42 unit tests in `visibilityGroupings.test.ts`.
+Pure helpers in `src/client/visibilityGroupings.ts` (`addGrouping`, `renameGrouping`, `deleteGrouping`, `reorderGroupings`, `setActiveGroupingId`, `toggleHiddenInGrouping`, `parsePersistedState`, `pruneStaleIdsInGroupings`) own every state transition. Unit tests in `visibilityGroupings.test.ts`.
 
-## 39.3 Persistence
+## 39.3 Persistence (HS-8290)
 
-Two new keys per project in `.hotsheet/settings.json` (both added to `JSON_VALUE_KEYS` in `src/file-settings.ts`):
+One global key set in `~/.hotsheet/config.json` under `dashboard`:
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `visibility_groupings` | `VisibilityGrouping[]` | `[{ id: 'default', name: 'Default', hiddenIds: [] }]` | One entry per grouping, displayed in array order. |
-| `active_visibility_grouping_id` | `string` | `'default'` | Id of the currently-active grouping. |
+| `dashboard.visibilityGroupings` | `VisibilityGrouping[]` | `[{ id: 'default', name: 'Default', hiddenByProject: {} }]` | One entry per grouping, displayed in array order. |
+| `dashboard.activeVisibilityGroupingId` | `string` | `'default'` | Id of the currently-active grouping. |
 
-**Backward compatibility.** `hidden_terminals` (HS-7825) is still written to settings.json — it mirrors the *active* grouping's `hiddenIds` so an older client reading the same settings.json continues to see the user's filter. Migration on first read: when `visibility_groupings` is absent but `hidden_terminals` is present, the persistence layer synthesises a single Default grouping seeded with the legacy ids (`parsePersistedState` handles the merge).
+Six per-project keys that USED to live in `.hotsheet/settings.json` (`visibility_groupings`, `active_visibility_grouping_id`, `hidden_terminals`, `dashboard_layout_mode`, `dashboard_columns_per_row`, `dashboard_slider_value`) are now reserved as **dead keys** in `src/file-settings.ts::HS_8290_DEAD_KEYS`. `readFileSettings` strips them on read, and the next `writeFileSettings` PATCH naturally drops them from disk via the read-merge-write flow. No migration step — per the HS-8290 ticket, existing values are dropped because the feature hasn't gone public.
 
-**Writing.** `src/client/persistedHiddenTerminals.ts` subscribes to every `subscribeToHiddenChanges` fire and PATCHes the new shape (groupings + active id + legacy mirror) with a 250 ms debounce per project. Dynamic-terminal ids (`dyn-*`) are filtered out at write time. Sorted hiddenIds keep the serialised payload byte-stable so unchanged sets short-circuit the network call.
+**Writing.** `src/client/persistedHiddenTerminals.ts` subscribes to every `subscribeToHiddenChanges` fire and PATCHes `dashboard.visibilityGroupings` + `dashboard.activeVisibilityGroupingId` to `/api/dashboard/global-config` with a 250 ms debounce (single global timer; pre-HS-8290 this was a per-project debounce loop). Dynamic-terminal ids (`dyn-*`) are filtered out at write time. Sorted ids per `hiddenByProject[secret]` keep the serialised payload byte-stable so unchanged sets short-circuit the network call.
 
-**HS-7947 — argument-order regression.** Pre-fix, both the boot-time GET and the change-time PATCH in `persistedHiddenTerminals.ts` invoked `apiWithSecret(secret, '/file-settings', …)` with the path and secret arguments swapped — so requests resolved to `/api/<secret>` (404 → silent catch in the GET; PATCH wrote nothing) and groupings never round-tripped to disk. Visible to the user as "I created a non-Default grouping and on relaunch it was gone." Fixed by passing the canonical `(path, secret, opts)` order. Regression-pinned by two new fetch-spy tests in `persistedHiddenTerminals.test.ts` that assert every observed URL contains `/api/file-settings` and that the `/api/<secret>` shape never appears.
+**Stale-id cleanup.** `pruneStaleIdsInGroupings(groupings, secret, configuredIds)` (in `src/client/visibilityGroupings.ts`) walks every grouping's `hiddenByProject[secret]` and drops ids that no longer correspond to a configured terminal. Called client-side from `pruneHiddenForProject` whenever a fresh `/terminal/list` round-trip lands. Pre-HS-8290 this lived server-side in `prunedVisibilityGroupings` (file-settings.ts) and fired from the `/file-settings` PATCH handler when `terminals[]` changed; HS-8290 moved it client-side because the data no longer lives per-project on disk.
 
-**Stale-id cleanup.** `prunedVisibilityGroupings(currentGroupings, configuredIds)` in `src/file-settings.ts` walks every grouping's `hiddenIds` and strips ids that no longer correspond to a configured terminal — same idea as `prunedHiddenTerminals` from HS-7829, generalised across groupings. The `/file-settings` PATCH handler runs both helpers whenever `terminals[]` changes, so deleting a configured terminal cleans every grouping in one shot.
+**HS-7949 follow-up — new terminals default to hidden in non-Default groupings.** `hideNewTerminalInNonDefaultGroupings(secret, terminalId)` in `dashboardHiddenTerminals.ts` runs after a new terminal is registered (settings save / drawer "+"-button). It appends the new id to every non-Default grouping's `hiddenByProject[secret]` so a freshly-added terminal doesn't pop into every named grouping. Default keeps showing it.
 
-**HS-7949 — new terminals default to hidden in non-Default groupings.** Companion rule to the stale-id cleanup. New helper `addNewTerminalsToNonDefaultGroupings(currentGroupings, newIds)` in `src/file-settings.ts` runs in the same `/file-settings` PATCH handler whenever `terminals[]` changes: the route snapshots the configured-terminal id set BEFORE the write (`previousConfiguredIds`), runs the write, then computes `newIds = currentIds - previousIds` and appends each new id to every non-Default grouping's `hiddenIds`. The Default grouping is intentionally untouched — it remains the user's "show everything" baseline. Without this rule, a newly-added terminal would pop up in every named grouping the user had built, undoing the curation that's the whole point of having multiple groupings. The two follow-up steps are composed left-to-right (prune first, then new-id-hide) so a stale id removed mid-PATCH cannot be re-added by the new-id step. Pure helper covered by 8 unit tests in `file-settings.test.ts`.
+## 39.4 Show / Hide Terminals dialog
 
-**HS-7949 follow-up — dynamic terminals (drawer "+").** The original HS-7949 rule only fired for configured terminals (Settings → Terminal save → `/file-settings` PATCH with `terminals[]`). Drawer "+"-button-created dynamic terminals (`dyn-*`) take a different path (`POST /api/terminal/create`) and bypassed the rule, so a fresh `dyn-foo` would still pop into every named grouping. New client helper `hideNewTerminalInNonDefaultGroupings(secret, terminalId)` in `dashboardHiddenTerminals.ts` mirrors the server-side rule against the in-memory project state; it's called from `terminal.tsx::createDynamicTerminal()` immediately after `/api/terminal/create` resolves. The existing `subscribeToHiddenChanges` → debounced PATCH chain persists the new state automatically. Note that the `dyn-*` id may end up persisted in `visibility_groupings.hiddenIds` until the next `terminals[]` PATCH triggers `prunedVisibilityGroupings` to clean it up — that's fine: a stale dyn id in a non-Default grouping has no behavioural effect (the terminal is gone, so there's nothing to filter against). 5 new unit tests in `dashboardHiddenTerminals.test.ts`.
+The dialog has a **tab bar** at the top, between the header and the body:
 
-## 39.4 Show / Hide Terminals dialog (HS-7826 changes)
-
-The dialog gains a **tab bar** at the top, between the header and the body:
-
-- **Default tab** — always present, leftmost in fresh projects, uppercase initial-cap label. Cannot be deleted (right-click menu greys the entry).
+- **Default tab** — always present, leftmost in fresh installs, uppercase initial-cap label. Cannot be deleted (right-click menu greys the entry).
 - **User-added tabs** — created via the trailing **+** button (Lucide `plus` glyph). Clicking the **+** opens a tiny in-app prompt for the new grouping's name.
-- **Tab strip is horizontally scrollable.** When the user has many groupings, the strip overflows with a thin scrollbar; the **+** button scrolls with the tabs.
-- **Right-click on a tab** → context menu with **Rename…** and **Delete** entries. Rename opens the same name prompt with the current name pre-selected; Delete confirms via the in-app `confirmDialog`. Delete is disabled (greyed) on the Default tab.
+- **Tab strip is horizontally scrollable.** When the user has many groupings, the strip overflows with a thin scrollbar.
+- **Right-click on a tab** → context menu with **Rename…** and **Delete** entries. Rename opens the name prompt with the current name pre-selected; Delete confirms via the in-app `confirmDialog`. Delete is disabled (greyed) on the Default tab.
 - **Drag tabs to reorder.** HTML5 drag-and-drop with `.dragging` (0.4 opacity on the dragged tab) + `.drag-over` (leading-edge accent inset) feedback. Default can be moved away from index 0 — its identity is the id, not its position.
 
-Switching tabs flips `state.activeId` for the project, fires the change subscription, and re-renders the body to reflect the new grouping's `hiddenIds`. Toggling a row in the body writes against the active grouping's `hiddenIds`, NOT the legacy flat shape. The footer carries paired bulk-toggle buttons: **Show All** (renamed from "Show all" in HS-7661, then "Show all in this grouping" in HS-7826, shortened in HS-8063 — full intent in the `title` attribute) clears every hidden id in the *active* grouping; **Hide All** (HS-8063) is the symmetric counterpart that hides every terminal currently rendered in the dialog body. Both operate only on the active grouping; other groupings are untouched.
+Switching tabs flips `globalState.activeId`, fires the change subscription, and re-renders the body. Toggling a row in the body writes against the active grouping's `hiddenByProject[group.secret]` (NOT a flat list). The footer carries paired bulk-toggle buttons:
+
+- **Show All** — clears `hiddenByProject` across every project in the active grouping (one global write — `unhideAllEverywhereInGrouping(activeId)`).
+- **Hide All** — hides every terminal currently rendered in the dialog body in the active grouping. Per-project (`hideAllInGrouping(secret, activeId, ids)` per group).
 
 ## 39.5 Grouping selector dropdown
 
-When a project has more than one grouping, a `<select>` element appears next to the eye icon in:
+When the global state has more than one grouping, a `<select>` appears next to the eye icon in:
 
-- **Dashboard header** — `#terminal-dashboard-grouping-select`. Scope: the first project in registered order (groupings are per-project, so cross-project mode picks one canonical project for the dropdown — typically the active project or the first registered one).
-- **Drawer-grid toolbar** — `#drawer-grid-grouping-select`. Scope: the active project.
+- **Dashboard header** — `#terminal-dashboard-grouping-select`.
+- **Drawer-grid toolbar** — `#drawer-grid-grouping-select`.
 
-Both dropdowns are populated by `src/client/visibilityGroupingSelect.ts` (`refreshGroupingSelect` + `wireGroupingSelectChange`). Hidden when `groupings.length === 1` (only Default exists) per the ticket: "when there are multiple visibility groupings, show a dropdown menu". Picking a different grouping fires `setActiveGroupingForProject`, which in turn triggers the same change subscription that re-renders the dashboard / drawer-grid filter.
+Both dropdowns are populated by `src/client/visibilityGroupingSelect.tsx` (`refreshGroupingSelect` + `wireGroupingSelectChange`). Hidden when `groupings.length === 1` (only Default exists). Picking a different grouping fires `setActiveGrouping(id)`, which triggers the same change subscription that re-renders the dashboard / drawer-grid filter and persists via the global PATCH.
 
 ## 39.6 Implementation
 
-- **Pure helpers** (`src/client/visibilityGroupings.ts`): `initialProjectState`, `generateGroupingId`, `getActiveGrouping`, `addGrouping`, `renameGrouping`, `deleteGrouping`, `reorderGroupings`, `setActiveGroupingId`, `toggleHiddenInGrouping`, `updateGroupingById`, `parsePersistedState`, `pruneStaleIdsInGroupings`. 42 unit tests.
-- **In-memory state** (`src/client/dashboardHiddenTerminals.ts`): refactored from the pre-HS-7826 flat `Map<secret, Set<terminalId>>` to a `Map<secret, ProjectVisibilityState>`. The pre-HS-7826 public API (`isTerminalHidden`, `setTerminalHidden`, `getHiddenTerminals`, `filterVisible`, `unhideAllInProject`, `unhideAllEverywhere`, `countHiddenForProject`, `countHiddenAcrossAllProjects`) all delegate to the active grouping, so callers that don't know about groupings keep working. New exports (`getGroupings`, `getActiveGroupingId`, `setActiveGroupingForProject`, `addGroupingForProject`, `renameGroupingForProject`, `deleteGroupingForProject`, `reorderGroupingsForProject`, `setTerminalHiddenInGrouping`, `isTerminalHiddenInGrouping`, `unhideAllInGrouping`, `hydratePersistedStateForProject`) drive the new dialog UI + persistence layer.
-- **Persistence** (`src/client/persistedHiddenTerminals.ts`): hydrates from the new shape on app boot, falls back to `parsePersistedState`'s legacy migration when only `hidden_terminals` is present. Writes the new shape + legacy mirror in a single PATCH per debounce window.
-- **Dialog UI** (`src/client/hideTerminalDialog.tsx`): tab bar with `<button class="hide-terminal-tab">` per grouping + `<button class="hide-terminal-tab-add">` plus button at end. Right-click context menu (`showTabContextMenu`) for rename / delete. Tiny in-app prompt for name input (`promptForName`).
-- **Dropdown helper** (`src/client/visibilityGroupingSelect.ts`): `refreshGroupingSelect({ selectEl, getSecret })` rebuilds the `<option>` list and toggles visibility based on count; `wireGroupingSelectChange` attaches a one-time `change` listener.
-- **Dashboard wiring** (`src/client/terminalDashboard.tsx`): `groupingSelect` element ref, `refreshDashboardGroupingSelect()` helper called from the change subscription + on dedicated-view exit. Hidden alongside other chrome on dedicated view.
-- **Drawer-grid wiring** (`src/client/drawerTerminalGrid.tsx`): same pattern — `groupingSelect` ref, `refreshDrawerGroupingSelect()` helper called from the change subscription + `showGridChrome()`. Hidden by `hideGridChrome()`.
-- **SCSS** (`src/client/styles.scss`): `.hide-terminal-dialog-tabs`, `.hide-terminal-tab` (+ `.is-active`, `.dragging`, `.drag-over`), `.hide-terminal-tab-label`, `.hide-terminal-tab-add`, `.context-menu-item.is-disabled`, `.grouping-prompt-overlay` + dialog, `.terminal-dashboard-grouping-select`, `.drawer-grid-grouping-select`.
+- **Pure helpers** (`src/client/visibilityGroupings.ts`): `initialGlobalState`, `generateGroupingId`, `getActiveGrouping`, `getHiddenIdsForProject`, `addGrouping`, `renameGrouping`, `deleteGrouping`, `reorderGroupings`, `setActiveGroupingId`, `toggleHiddenInGrouping`, `updateGroupingById`, `parsePersistedState`, `pruneStaleIdsInGroupings`.
+- **In-memory state** (`src/client/dashboardHiddenTerminals.tsx`): refactored from the pre-HS-8290 `Map<secret, ProjectVisibilityState>` to a single global `GlobalVisibilityState`. The pre-HS-7826 public API (`isTerminalHidden`, `setTerminalHidden`, `getHiddenTerminals`, `filterVisible`, `unhideAllInProject`, `unhideAllEverywhere`, `countHiddenForProject`, `countHiddenAcrossAllProjects`) all delegate to the active grouping's `hiddenByProject[secret]` slot, so callers that don't know about groupings keep working. Grouping CRUD (`getGroupings`, `getActiveGroupingId`, `setActiveGrouping`, `addGrouping`, `renameGrouping`, `deleteGrouping`, `reorderGroupings`) takes no `secret` parameter post-HS-8290. Per-grouping toggles (`setTerminalHiddenInGrouping`, `isTerminalHiddenInGrouping`, `unhideAllInGrouping`, `unhideAllEverywhereInGrouping`, `hideAllInGrouping`, `hideNewTerminalInNonDefaultGroupings`, `pruneHiddenForProject`) keep `secret` because they target a specific project's slot inside a grouping. Hydration via `hydratePersistedGlobalState`.
+- **Persistence** (`src/client/persistedHiddenTerminals.ts`): hydrates from `/api/dashboard/global-config` on app boot, writes back via a single global debounced PATCH. Pre-HS-8290 this was a per-project debounce loop hitting `/api/file-settings` for every registered project.
+- **Dialog UI** (`src/client/hideTerminalDialog.tsx`): tab bar with `<button class="hide-terminal-tab">` per grouping + `<button class="hide-terminal-tab-add">` plus button at end. Right-click context menu (`showTabContextMenu`) for rename / delete. Tiny in-app prompt for name input (`promptForName`). HS-8290 dropped the `dialogScopes` / `dialogSecret` / `getAdditionalSecrets` cross-project fan-out helpers — every CRUD op is now a single global call.
+- **Dropdown helper** (`src/client/visibilityGroupingSelect.tsx`): `refreshGroupingSelect({ selectEl })` rebuilds the `<option>` list and toggles visibility based on count; `wireGroupingSelectChange` attaches a one-time `change` listener that calls `setActiveGrouping`.
+- **Dashboard wiring** (`src/client/terminalDashboard.tsx`): single-secret-free invocation of `refreshGroupingSelect` / `wireGroupingSelectChange`. `dashboard.layoutMode` + `dashboard.columnsPerRow` also read from / write to global config (pre-HS-8290 these lived under per-project file-settings).
+- **Drawer-grid wiring** (`src/client/drawerTerminalGrid.tsx`): same pattern as dashboard.
+- **SCSS** (`src/client/styles.scss`): unchanged — the same selectors apply since the DOM shape didn't change.
 
-## 39.7 Cross-project fan-out (HS-7826 follow-up)
+## 39.7 Out of scope (deferred)
 
-Original v1 stored per-project state and the dialog wrote everything against the FIRST project's groupings (`dialogScope`). When the dashboard's eye icon opens the dialog in `'global'` mode (every project's terminals together), that meant a hide-toggle on a row from any project but the first wrote into the wrong project's state — the dashboard's per-project filter (`filterVisible(secret, …)`) reads each project's OWN active grouping, so the dialog said "hidden" while the dashboard kept showing the tile (the user-reported HS-7826 follow-up: "terminal visibility doesn't match what's described in dialog").
-
-The dialog now treats grouping CRUD operations as cross-project fan-out and routes visibility toggles to the terminal's actual project:
-
-- **`dialogScopes(opts)`** — deduplicated list of every secret in `opts.groups`. In `'single-project'` mode this is one secret; in `'global'` mode it's every project on the dashboard.
-- **Add grouping** — `generateGroupingIdAcrossProjects(scopes)` mints one id that doesn't collide in any scope; `addGroupingForProjectWithId(secret, id, name)` is then called for every scope. The shared id is what makes `setActiveGroupingForProject` (also fanned out) consistent across projects.
-- **Rename / delete / reorder grouping** — fanned out across every scope so the per-project tab order, names, and grouping list stay aligned.
-- **Activate grouping** (tab click + dropdown change) — fanned out across every scope. The dashboard's `<select>` wiring uses the new `getAdditionalSecrets` callback in `GroupingSelectOptions` to pick up every other section's project.
-- **Toggle visibility row** — uses `group.secret` (the terminal's own project) instead of `dialogScope`, so the toggle lands in the correct per-project grouping.
-- **Show All** — fanned out, so the footer button empties the active grouping in every project (consistent with the dashboard's cross-project view).
-- **Hide All** (HS-8063) — per-group, NOT fanned across projects: each rendered group's terminals are hidden in their OWN project's active grouping. (`hideAllInGrouping(secret, activeId, ids)` per group, where `activeId` comes from `getActiveGroupingId(dialogSecret(opts))`.) Every project's grouping ids stay aligned via the existing `dialogScopes` fan-out, so this works out symmetrically with Show All — both end up writing to the same logical grouping in every scope.
-
-The persistence layer is unchanged — each project still serialises its own `visibility_groupings` + `active_visibility_grouping_id` keys. The fan-out happens in the in-memory state layer and the dialog logic, not in the file shape. New tests in `dashboardHiddenTerminals.test.ts` (`generateGroupingIdAcrossProjects`, `addGroupingForProjectWithId` idempotence, the cross-project "active id stays aligned" + "toggle on terminal's own project" cases) plus the `addGroupingWithId` cases in `visibilityGroupings.test.ts` lock down the regression.
-
-`'single-project'` mode (drawer-grid eye icon) is functionally unchanged — `dialogScopes` returns one entry and the fan-out reduces to a single-project call. The drawer-grid's `<select>` wiring doesn't pass `getAdditionalSecrets`, so its change handler still flips only the active project.
-
-## 39.8 Out of scope (deferred)
-
-- **Duplicate grouping affordance** — copy an existing grouping's hiddenIds into a new one. Useful when the user wants a slight variant of an existing setup. Tracked as a follow-up.
+- **Duplicate grouping affordance** — copy an existing grouping's `hiddenByProject` into a new one. Useful when the user wants a slight variant of an existing setup.
 - **Keyboard shortcuts** for switching groupings (e.g. Cmd/Ctrl+1..9 to flip to the Nth tab).
-- **Cross-window sync** — when a second Hot Sheet window changes the active grouping, the first window's dropdown only updates after a settings reload. Live cross-window sync would require a long-poll subscription channel (out of scope for v1).
+- **Cross-window sync** — when a second Hot Sheet window changes the active grouping, the first window's dropdown only updates after a settings reload. Live cross-window sync would require a long-poll subscription channel.
 
-## 39.9 Manual test plan
+## 39.8 Manual test plan
 
-See [docs/manual-test-plan.md §13 (Show / Hide Terminals dialog)] for the existing flows. HS-7826 adds:
+See `docs/manual-test-plan.md §13` for the existing flows. HS-8290 adds:
 
 1. Default tab is always present. Right-clicking it → "Delete" entry is disabled / greyed.
 2. Click the trailing **+** button → name prompt → confirm with non-empty name → new tab appears + becomes active.
-3. Click the new tab → the dialog body shows that grouping's hidden state (initially empty → all visible). Toggling a row writes against this grouping's `hiddenIds` only.
-4. Switch back to Default → the Default grouping's hidden state is preserved verbatim (was untouched while the user was on the new tab).
+3. Click the new tab → the dialog body shows that grouping's hidden state (initially empty → all visible). Toggling a row writes against this grouping's `hiddenByProject[group.secret]`.
+4. Switch back to Default → the Default grouping's hidden state is preserved verbatim.
 5. Right-click the new tab → Rename → enter a different name → tab label updates.
 6. Right-click the new tab → Delete → confirm → tab disappears, active grouping falls back to Default.
 7. Drag a tab to a new position → strip reorders + persists.
-8. Reload Hot Sheet → tab bar order, names, and active id all restored.
-9. Quit + relaunch Hot Sheet → same as reload above.
-10. **Cross-project fan-out (HS-7826 follow-up)** — open the dashboard's eye icon dialog with multiple projects registered. Create a "Servers" grouping, click the new tab, then hide a terminal in EACH project. Close the dialog and confirm the dashboard tiles match the dialog: the hidden Claude / app terminals are gone in every project. Pre-fix, only the FIRST project's hidden state was honoured; everything else stayed visible.
-11. Same flow but switch the active grouping via the dashboard's `<select>` dropdown — every project's filter should swap together.
-10. Create a second grouping → grouping selector dropdown appears next to the eye icon (dashboard + drawer-grid). Pick a grouping in the dropdown → dashboard / drawer-grid filter updates.
-11. Delete every non-Default grouping → grouping selector disappears.
-12. Delete a configured terminal in Settings → Terminal → check `.hotsheet/settings.json`: the deleted id is gone from EVERY grouping's `hiddenIds`, not just `hidden_terminals`.
+8. Reload Hot Sheet → tab bar order, names, and active id all restored from `~/.hotsheet/config.json`.
+9. Quit + relaunch — same as reload.
+10. Dashboard's eye icon dialog with multiple projects registered. Create a "Servers" grouping, hide a terminal in EACH project. Close the dialog and confirm the dashboard tiles match: the hidden terminals are gone in every project. Pre-HS-8290 this required cross-project fan-out machinery to keep the per-project grouping lists aligned; post-HS-8290 there's one source of truth.
+11. Switch the active grouping via the dashboard's `<select>` dropdown → every project's filter swaps together (one global flip).
+12. Delete every non-Default grouping → grouping selector disappears.
 
 ## 39.9 Cross-references
 
-- §38 (Persisted terminal visibility) — single-grouping precursor; HS-7826 generalises §38's flat `hidden_terminals` shape.
+- §38 (Persisted terminal visibility) — single-grouping precursor; HS-7826 generalised §38's flat `hidden_terminals` shape; HS-8290 lifted both into global config.
 - §25.10 (Show / Hide Terminals dialog — global mode).
 - §36.6.5 (Show / Hide Terminals dialog — drawer-grid mode).
 - §22.10 (per-project terminal config; ids the persistence layer keys against).
 
-**Status:** Shipped (HS-7826).
+**Status:** Shipped (HS-7826 / HS-8290).

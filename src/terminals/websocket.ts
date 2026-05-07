@@ -134,6 +134,10 @@ function handleConnection(ws: WebSocket, secret: string, dataDir: string, termin
   // session existed), include the flag so the client can fall back without
   // having to infer it from `alive: false` (an exited session also has
   // `alive: false` but it has scrollback the consumer wants to see).
+  // HS-8287 DIAGNOSTIC — log every history frame the server emits so we can
+  // tell whether the user's doubled scrollback is server ring-buffer
+  // duplication vs. client replay-without-reset.
+  console.log(`[HS-8287:server] history.send terminal=${terminalId} bytes=${result.history.length} alive=${result.alive} exit=${result.exitCode ?? 'n/a'} cols=${result.cols} rows=${result.rows} noSession=${result.noSession === true}`);
   ws.send(JSON.stringify({
     type: 'history',
     bytes: result.history.toString('base64'),

@@ -1,19 +1,18 @@
 import { raw } from '../jsx-runtime.js';
 import { confirmDialog } from './confirm.js';
 import {
-  addGroupingForProjectWithId,
-  deleteGroupingForProject,
+  addGrouping,
+  deleteGrouping,
   filterVisible,
-  generateGroupingIdAcrossProjects,
   getActiveGroupingId,
   getGroupings,
   hideAllInGrouping,
   isTerminalHiddenInGrouping,
-  renameGroupingForProject,
-  reorderGroupingsForProject,
-  setActiveGroupingForProject,
+  renameGrouping,
+  reorderGroupings,
+  setActiveGrouping,
   setTerminalHiddenInGrouping,
-  unhideAllInGrouping,
+  unhideAllEverywhereInGrouping,
 } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
 import { ICON_PENCIL, ICON_TRASH } from './icons.js';
@@ -85,33 +84,6 @@ export function closeHideTerminalDialog(): void {
   overlay.remove();
 }
 
-/** HS-7826 — secret used to render the grouping tab bar. The dialog reads
- *  the tab list + the active id from this project. Grouping mutations
- *  (add/rename/delete/reorder/activate) and visibility toggles fan out
- *  across every scope returned by `dialogScopes(opts)` so the per-project
- *  state stays aligned across all groups in the dialog. */
-function dialogSecret(opts: ShowDialogOptions): string {
-  return opts.groups[0]?.secret ?? '';
-}
-
-/** HS-7826 follow-up — the deduplicated list of project secrets the dialog
- *  operates on. In `'global'` mode this is every group's secret; in
- *  `'single-project'` mode it's just the one. Used for fan-out: a grouping
- *  created / renamed / deleted / reordered / activated in the dialog has
- *  to be applied to every per-project state, otherwise the dashboard's
- *  per-project filter (each project reads its OWN active grouping) drifts
- *  away from what the dialog displays. */
-function dialogScopes(opts: ShowDialogOptions): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const g of opts.groups) {
-    if (g.secret === '' || seen.has(g.secret)) continue;
-    seen.add(g.secret);
-    out.push(g.secret);
-  }
-  return out;
-}
-
 function buildOverlay(opts: ShowDialogOptions): HTMLElement {
   const overlay = toElement(
     <div className="hide-terminal-dialog-overlay" style="z-index:2700">
@@ -138,23 +110,18 @@ function buildOverlay(opts: ShowDialogOptions): HTMLElement {
   });
   overlay.querySelector('[data-action="close"]')?.addEventListener('click', () => closeHideTerminalDialog());
   overlay.querySelector('[data-action="show-all"]')?.addEventListener('click', () => {
-    // HS-7826 follow-up — fan out across every dialog scope so "Show all in
-    // this grouping" empties the active grouping in EVERY project, not just
-    // the first one.
-    const scopes = dialogScopes(opts);
-    if (scopes.length === 0) return;
-    const activeId = getActiveGroupingId(scopes[0]);
-    for (const s of scopes) unhideAllInGrouping(s, activeId);
+    // HS-8290 — single global state, so "Show All" empties the active
+    // grouping's hidden ids across every project in one call.
+    unhideAllEverywhereInGrouping(getActiveGroupingId());
     rerenderBody(overlay, opts);
     if (opts.onChange) opts.onChange();
   });
   overlay.querySelector('[data-action="hide-all"]')?.addEventListener('click', () => {
     // HS-8063 — mirror of "Show All". Hide every terminal currently
     // rendered in the dialog body in the active grouping. Per-group
-    // (per-project) so cross-project dialogs route each terminal id to
-    // its own project's state. The body is rebuilt afterwards so every
-    // row immediately reflects the new hidden state.
-    const activeId = getActiveGroupingId(dialogSecret(opts));
+    // (per-project) so each terminal id is routed to its own project's
+    // hiddenByProject entry.
+    const activeId = getActiveGroupingId();
     for (const group of opts.groups) {
       if (group.terminals.length === 0) continue;
       hideAllInGrouping(group.secret, activeId, group.terminals.map(t => t.id));
@@ -171,14 +138,8 @@ function rerenderTabs(overlay: HTMLElement, opts: ShowDialogOptions): void {
   const tabsEl = overlay.querySelector<HTMLElement>('[data-role="tabs"]');
   if (tabsEl === null) return;
   tabsEl.replaceChildren();
-  const secret = dialogSecret(opts);
-  if (secret === '') return;
-  const groupings = getGroupings(secret);
-  const activeId = getActiveGroupingId(secret);
-
-  // Tab strip is horizontally scrollable when contents overflow — done
-  // via CSS. The trailing `+` button sits inside the same scroll container
-  // so it scrolls with the tabs.
+  const groupings = getGroupings();
+  const activeId = getActiveGroupingId();
   for (const grouping of groupings) {
     tabsEl.appendChild(buildTab(overlay, opts, grouping, activeId));
   }
@@ -204,11 +165,7 @@ function buildTab(
     </button>
   ) as HTMLButtonElement;
   tab.addEventListener('click', () => {
-    // HS-7826 follow-up — set the active grouping in EVERY scope so the
-    // dashboard's per-project filter and the dialog's view agree.
-    const scopes = dialogScopes(opts);
-    if (scopes.length === 0) return;
-    for (const s of scopes) setActiveGroupingForProject(s, grouping.id);
+    setActiveGrouping(grouping.id);
     rerenderTabs(overlay, opts);
     rerenderBody(overlay, opts);
     if (opts.onChange) opts.onChange();
@@ -244,15 +201,9 @@ function buildTab(
     e.preventDefault();
     tab.classList.remove('drag-over');
     if (dragFromGroupingId === null || dragFromGroupingId === grouping.id) return;
-    // HS-7826 follow-up — fan out the reorder so every project's grouping
-    // list ends up in the same order. Skipping this drift means the
-    // dashboard's dropdown order disagrees with the dialog's tab order.
-    const scopes = dialogScopes(opts);
-    if (scopes.length > 0) {
-      for (const s of scopes) reorderGroupingsForProject(s, dragFromGroupingId, grouping.id);
-      rerenderTabs(overlay, opts);
-      if (opts.onChange) opts.onChange();
-    }
+    reorderGroupings(dragFromGroupingId, grouping.id);
+    rerenderTabs(overlay, opts);
+    if (opts.onChange) opts.onChange();
     dragFromGroupingId = null;
   });
   return tab;
@@ -272,17 +223,10 @@ function buildAddTabButton(overlay: HTMLElement, opts: ShowDialogOptions): HTMLE
 }
 
 async function promptAddGrouping(overlay: HTMLElement, opts: ShowDialogOptions): Promise<void> {
-  const scopes = dialogScopes(opts);
-  if (scopes.length === 0) return;
   const name = await promptForName('New grouping', '');
   if (name === null) return;
-  // HS-7826 follow-up — generate ONE id that's safe across every scope, so
-  // the same grouping ends up under the same id in every per-project state.
-  // Without the shared id, switching tabs would only affect the project the
-  // grouping was originally created in.
-  const id = generateGroupingIdAcrossProjects(scopes);
-  for (const s of scopes) addGroupingForProjectWithId(s, id, name);
-  for (const s of scopes) setActiveGroupingForProject(s, id);
+  const grouping = addGrouping(name);
+  setActiveGrouping(grouping.id);
   rerenderTabs(overlay, opts);
   rerenderBody(overlay, opts);
   if (opts.onChange) opts.onChange();
@@ -330,11 +274,9 @@ async function promptRenameGrouping(
   opts: ShowDialogOptions,
   grouping: VisibilityGrouping,
 ): Promise<void> {
-  const scopes = dialogScopes(opts);
-  if (scopes.length === 0) return;
   const name = await promptForName('Rename grouping', grouping.name);
   if (name === null) return;
-  for (const s of scopes) renameGroupingForProject(s, grouping.id, name);
+  renameGrouping(grouping.id, name);
   rerenderTabs(overlay, opts);
   if (opts.onChange) opts.onChange();
 }
@@ -344,8 +286,6 @@ async function confirmDeleteGrouping(
   opts: ShowDialogOptions,
   grouping: VisibilityGrouping,
 ): Promise<void> {
-  const scopes = dialogScopes(opts);
-  if (scopes.length === 0) return;
   const ok = await confirmDialog({
     title: 'Delete grouping?',
     message: `Delete the "${grouping.name}" visibility grouping? Any hidden-state in this grouping will be lost. The Default grouping will become active.`,
@@ -353,7 +293,7 @@ async function confirmDeleteGrouping(
     danger: true,
   });
   if (!ok) return;
-  for (const s of scopes) deleteGroupingForProject(s, grouping.id);
+  deleteGrouping(grouping.id);
   rerenderTabs(overlay, opts);
   rerenderBody(overlay, opts);
   if (opts.onChange) opts.onChange();
@@ -407,8 +347,7 @@ function rerenderBody(overlay: HTMLElement, opts: ShowDialogOptions): void {
   const body = overlay.querySelector<HTMLElement>('[data-role="body"]');
   if (body === null) return;
   body.replaceChildren();
-  const dialogScope = dialogSecret(opts);
-  const activeGroupingId = dialogScope !== '' ? getActiveGroupingId(dialogScope) : DEFAULT_GROUPING_ID;
+  const activeGroupingId = getActiveGroupingId();
   if (opts.groups.every(g => g.terminals.length === 0)) {
     body.appendChild(toElement(<div className="hide-terminal-empty">No terminals registered.</div>));
     return;
@@ -421,15 +360,10 @@ function rerenderBody(overlay: HTMLElement, opts: ShowDialogOptions): void {
     const visibleCount = filterVisible(group.secret, group.terminals).length;
     void visibleCount;
     for (const term of group.terminals) {
-      // HS-7826 follow-up — read / write against the terminal's OWN project
-      // (group.secret) under the dialog's active grouping id (which is
-      // kept aligned across every scope by `dialogScopes` fan-out — see
-      // promptAddGrouping / setActiveGroupingForProject calls). Pre-fix this
-      // used dialogScope for every terminal, so toggling visibility on a
-      // terminal in any project but the first one wrote to the wrong
-      // project's state — the dashboard's per-project filter then ignored
-      // the change and the dialog said "hidden" while the dashboard kept
-      // showing the tile.
+      // HS-8290 — read / write against the terminal's own project secret in
+      // the active grouping's `hiddenByProject[secret]` slot. The grouping
+      // list itself is now global so there's no fan-out machinery to keep
+      // aligned.
       const groupingSecret = group.secret;
       const isHidden = isTerminalHiddenInGrouping(groupingSecret, activeGroupingId, term.id);
       const row = toElement(

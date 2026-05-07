@@ -144,10 +144,7 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
   drawerGridState.groupingSelect = byIdOrNull<HTMLSelectElement>('drawer-grid-grouping-select');
   if (drawerGridState.groupingSelect !== null) {
     void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
-      wireGroupingSelectChange({
-        selectEl: drawerGridState.groupingSelect!,
-        getSecret: () => getActiveProject()?.secret ?? null,
-      });
+      wireGroupingSelectChange({ selectEl: drawerGridState.groupingSelect! });
     });
   }
   if (drawerGridState.toggleBtn === null || drawerGridState.gridEl === null) return;
@@ -309,10 +306,7 @@ function attachHiddenSubscription(): void {
 function refreshDrawerGroupingSelect(): void {
   if (drawerGridState.groupingSelect === null) return;
   void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
-    refreshGroupingSelect({
-      selectEl: drawerGridState.groupingSelect!,
-      getSecret: () => getActiveProject()?.secret ?? null,
-    });
+    refreshGroupingSelect({ selectEl: drawerGridState.groupingSelect! });
   });
 }
 
