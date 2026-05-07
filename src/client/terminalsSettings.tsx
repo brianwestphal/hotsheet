@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { parseJsonArrayOr } from './json.js';
+import { getActiveProject } from './state.js';
 import type { TerminalTabConfig } from './terminal.js';
 import { getProjectDefault } from './terminalAppearance.js';
 import { clampFontSize, DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, TERMINAL_FONTS } from './terminalFonts.js';
@@ -268,7 +269,9 @@ function openEditor(
   // Per the user's clarifying answer (4/25/2026): no separate sentinel
   // option; just show the theme / font lists with the project default
   // pre-selected. Whatever the user picks gets saved verbatim.
-  const projectDefault = getProjectDefault();
+  // HS-8283 — settings UI is for the active project; per-project default
+  // cache is keyed by secret.
+  const projectDefault = getProjectDefault(getActiveProject()?.secret ?? '');
   const initialTheme = entry.theme ?? projectDefault.theme ?? DEFAULT_THEME_ID;
   const initialFontFamily = entry.fontFamily ?? projectDefault.fontFamily ?? 'system';
   const initialFontSize = clampFontSize(entry.fontSize ?? projectDefault.fontSize ?? DEFAULT_FONT_SIZE);

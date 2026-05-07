@@ -174,7 +174,7 @@ Persistent footer link: "Know someone who'd love this? Share Hot Sheet" (accent 
 
 ## 18. Plugin system (`18-plugins.md`)
 
-Extensible plugin system for external ticketing backends (GitHub, Linear, Jira, …) and custom UI. Build-time toggle `PLUGINS_ENABLED=false` disables the subsystem. Plugins installed under `~/.hotsheet/plugins/<id>/` (global); bundled plugins copied there if missing or outdated, tracked in `~/.hotsheet/dismissed-plugins.json`. Per-project enable state in DB `plugin_enabled:{id}`; reactivation on config change, sync, action, or push-ticket endpoints.
+Extensible plugin system for external ticketing backends (GitHub, Linear, Jira, …) and custom UI. Build-time toggle `PLUGINS_ENABLED=false` disables the subsystem. Plugins installed under `~/.hotsheet/plugins/<id>/` (global); bundled plugins copied there if missing or outdated, tracked in `~/.hotsheet/dismissed-plugins.json`. **Per-project enable state in DB `plugin_enabled:{id}`; default is DISABLED (HS-8284 inverted the previous "enabled unless explicitly false" semantics — a fresh project folder used to silently activate every installed plugin).** Reactivation on config change, sync, action, or push-ticket endpoints.
 
 - **Manifest fields:** id, name, version, description?, author?, entry?, icon? (inline SVG), preferences?, configLayout?.
 - **Preference types:** string, boolean, number, select, dropdown, combo. Optional: default, description, required, secret, scope (global|project), options.

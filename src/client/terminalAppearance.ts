@@ -156,41 +156,103 @@ export function resolveAppearanceBackground(appearance: TerminalAppearance): str
 // ---- Project-default state + loader --------------------------------------
 
 /**
- * Fetch the active project's `terminal_default` setting and cache it for
- * every mountXterm / mountTileXterm call to read. Fires the
- * default-changed event so already-mounted xterms re-resolve.
+ * HS-8283 — per-project default appearance cache, keyed by project secret.
  *
- * Called on app boot, on project switch (via loadAndRenderTerminalTabs), and
+ * Pre-fix this was a single module-level `Partial<TerminalAppearance>` shared
+ * across every consumer. The Terminal Dashboard ({@link
+ * subscribeToDefaultAppearanceChanges} subscriber) shows tiles for terminals
+ * across EVERY project simultaneously, but every tile resolved its appearance
+ * against that one shared cache — which only ever held the active project's
+ * default. Adding a new project folder kicked the cache to the new project's
+ * empty default, fired the change event, and the dashboard re-resolved every
+ * tile's appearance against the now-empty default — so tiles for other
+ * projects (whose terminals had no per-terminal override) flashed to
+ * {@link FALLBACK_APPEARANCE}. The user's symptom: "all my terminals
+ * temporarily revert to default coloring."
+ *
+ * Now keyed by secret. {@link getProjectDefault} defaults to the active
+ * project's secret when none is provided (preserves the pre-fix call shape
+ * for consumers that only care about the active project), but the dashboard
+ * passes each tile's project secret so cross-project tiles resolve against
+ * their own project's default.
+ */
+const projectDefaultsBySecret = new Map<string, Partial<TerminalAppearance>>();
+
+/**
+ * Fetch the given project's `terminal_default` setting and cache it under
+ * its secret. Fires the default-changed event so already-mounted xterms
+ * (whose project this is) re-resolve. Called on app boot, on project
+ * switch (via loadAndRenderTerminalTabs — no secret arg uses the active
+ * project), per-project from the dashboard's `fetchProjectSections`, and
  * after the Settings UI writes a new default.
  *
  * No-op on fetch failure — the cache keeps its prior value (falls back to
  * FALLBACK_APPEARANCE on first load).
+ *
+ * @param secret - Optional project secret. When omitted, fetches for the
+ *                  active project via the default `/file-settings` route.
+ *                  When provided and not the active project, uses
+ *                  `apiWithSecret` to address that project specifically.
  */
-export async function loadProjectDefaultAppearance(): Promise<void> {
+export async function loadProjectDefaultAppearance(secret?: string): Promise<void> {
   if (typeof fetch === 'undefined') return;
   try {
-    // Local import to avoid a circular dep between appearance <-> api.
-    const { api } = await import('./api.js');
-    const fs = await api<{ terminal_default?: unknown }>('/file-settings');
+    // Local imports to avoid a circular dep between appearance <-> api/state.
+    const { api, apiWithSecret } = await import('./api.js');
+    const { getActiveProject } = await import('./state.js');
+
+    const activeSecret = getActiveProject()?.secret ?? null;
+    const targetSecret = secret ?? activeSecret;
+    if (targetSecret === null) return; // no active project, nothing to cache
+
+    const fs = (secret !== undefined && secret !== activeSecret)
+      ? await apiWithSecret<{ terminal_default?: unknown }>('/file-settings', secret)
+      : await api<{ terminal_default?: unknown }>('/file-settings');
+
     const parsed = parseProjectDefault(fs.terminal_default);
-    setProjectDefault(parsed);
+    setProjectDefault(targetSecret, parsed);
   } catch {
     /* keep prior value */
   }
 }
 
 
-let projectDefault: Partial<TerminalAppearance> = {};
-
-/** Read the cached project default appearance. */
-export function getProjectDefault(): Partial<TerminalAppearance> {
-  return projectDefault;
+/**
+ * Read the cached project default appearance for a specific project.
+ *
+ * @param secret - Project secret. Empty string returns `{}` (caller has no
+ *                  active project / no secret known at the callsite). Unknown
+ *                  secrets also return `{}` so the resolve path always
+ *                  degrades to `FALLBACK_APPEARANCE` rather than throwing.
+ */
+export function getProjectDefault(secret: string): Partial<TerminalAppearance> {
+  if (secret === '') return {};
+  return projectDefaultsBySecret.get(secret) ?? {};
 }
 
-/** Replace the cached project default appearance and notify subscribers. */
-export function setProjectDefault(next: Partial<TerminalAppearance>): void {
-  projectDefault = { ...next };
-  notifyDefaultAppearanceChanged();
+/**
+ * Replace the cached project default appearance for a specific secret and
+ * notify subscribers. Dedups: skips notification when the new value
+ * shallow-equals the prior value (no observable consumer effect, but
+ * spurious re-renders would flicker the dashboard / drawer terminal during
+ * back-to-back project switches that don't actually change a default).
+ *
+ * @param secret - Project secret the value belongs to. Required — the
+ *                  pre-HS-8283 implementation took an unscoped global value;
+ *                  that's what the bug was.
+ * @param next - The new partial appearance.
+ */
+export function setProjectDefault(secret: string, next: Partial<TerminalAppearance>): void {
+  if (secret === '') return;
+  const prev = projectDefaultsBySecret.get(secret);
+  const sanitized = { ...next };
+  if (prev !== undefined && shallowEqualPartial(prev, sanitized)) return;
+  projectDefaultsBySecret.set(secret, sanitized);
+  notifyDefaultAppearanceChanged(secret);
+}
+
+function shallowEqualPartial(a: Partial<TerminalAppearance>, b: Partial<TerminalAppearance>): boolean {
+  return a.theme === b.theme && a.fontFamily === b.fontFamily && a.fontSize === b.fontSize;
 }
 
 /**
@@ -211,9 +273,9 @@ export function parseProjectDefault(raw: unknown): Partial<TerminalAppearance> {
   return out;
 }
 
-/** Test-only — reset the cached project default. */
+/** Test-only — reset every cached project default. */
 export function _resetProjectDefaultForTests(): void {
-  projectDefault = {};
+  projectDefaultsBySecret.clear();
 }
 
 // ---- Project-default change pub/sub --------------------------------------
@@ -221,20 +283,30 @@ export function _resetProjectDefaultForTests(): void {
 const DEFAULT_CHANGED_EVENT = 'hotsheet:terminal-default-changed';
 
 /**
- * Notify every mounted xterm that the project-default appearance changed —
- * fires when the Settings → Terminal "Default appearance" panel updates
- * `terminal_default` in `settings.json`. Listeners re-resolve their own
- * appearance and call applyAppearanceToTerm.
+ * Notify subscribers that the project-default appearance changed for a
+ * specific project. HS-8283 — pre-fix this carried no detail, so every
+ * subscriber re-rendered indiscriminately. Now carries the changed secret
+ * so subscribers can scope their work (drawer ignores non-active changes;
+ * dashboard re-renders only the affected project's section).
  */
-export function notifyDefaultAppearanceChanged(): void {
+export function notifyDefaultAppearanceChanged(secret: string): void {
   if (typeof document !== 'undefined') {
-    document.dispatchEvent(new CustomEvent(DEFAULT_CHANGED_EVENT));
+    document.dispatchEvent(new CustomEvent(DEFAULT_CHANGED_EVENT, { detail: { secret } }));
   }
 }
 
-export function subscribeToDefaultAppearanceChanges(handler: () => void): () => void {
+/**
+ * Subscribe to default-appearance changes. The handler receives the secret
+ * of the project whose default changed — subscribers should filter on it
+ * before doing any expensive re-render work.
+ */
+export function subscribeToDefaultAppearanceChanges(handler: (secret: string) => void): () => void {
   if (typeof document === 'undefined') return () => { /* no-op */ };
-  const listener = (): void => { handler(); };
+  const listener = (e: Event): void => {
+    const detail = (e as CustomEvent<{ secret?: unknown } | null>).detail;
+    const secret = detail != null && typeof detail.secret === 'string' ? detail.secret : '';
+    handler(secret);
+  };
   document.addEventListener(DEFAULT_CHANGED_EVENT, listener);
   return () => { document.removeEventListener(DEFAULT_CHANGED_EVENT, listener); };
 }

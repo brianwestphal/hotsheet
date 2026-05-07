@@ -602,7 +602,13 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     if (tile.entry.fontFamily !== undefined) configOverride.fontFamily = tile.entry.fontFamily;
     if (tile.entry.fontSize !== undefined) configOverride.fontSize = tile.entry.fontSize;
     return resolveAppearance({
-      projectDefault: getProjectDefault(),
+      // HS-8283 — resolve against the TILE's project default, not the
+      // active project's. The Terminal Dashboard shows tiles for terminals
+      // across every open project; pre-fix every tile resolved against the
+      // single shared cache (which only ever held the active project's
+      // value), so non-active projects' tiles flashed to defaults whenever
+      // the active project switched.
+      projectDefault: getProjectDefault(tile.entry.secret),
       configOverride,
       sessionOverride: getSessionOverride(tile.entry.id),
     });

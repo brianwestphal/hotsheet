@@ -190,6 +190,15 @@ describe('plugin status', () => {
 
 describe('plugin sync', () => {
   it('POST /plugins/:id/sync reactivates and runs sync', async () => {
+    // HS-8284 — opt-in default; explicitly enable the plugin for this project
+    // before exercising the sync route, which now rejects unenabled plugins.
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query(
+      'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
+      ['plugin_enabled:mock-plugin', 'true'],
+    );
+
     const { reactivatePlugin } = await import('../plugins/loader.js');
     const { runSync } = await import('../plugins/syncEngine.js');
     const res = await app.request('/api/plugins/mock-plugin/sync', { method: 'POST' });
@@ -199,6 +208,8 @@ describe('plugin sync', () => {
     expect(data.pulled).toBe(1);
     expect(reactivatePlugin).toHaveBeenCalled();
     expect(runSync).toHaveBeenCalledWith('mock-plugin');
+
+    await db.query("DELETE FROM settings WHERE key = 'plugin_enabled:mock-plugin'");
   });
 });
 
@@ -258,14 +269,28 @@ describe('backends', () => {
     await db.query("DELETE FROM settings WHERE key = 'plugin_enabled:mock-plugin'");
   }
 
-  it('GET /backends lists active backends when prefs are satisfied and project-enabled', async () => {
+  it('GET /backends lists active backends when prefs are satisfied AND project-enabled', async () => {
     await satisfyRequiredPrefs();
-    await clearProjectEnabled();
+    await setProjectEnabled(true);
     const res = await app.request('/api/backends');
     expect(res.status).toBe(200);
     const data = await res.json() as { id: string }[];
     expect(data.length).toBe(1);
     expect(data[0].id).toBe('mock-plugin');
+    await clearProjectEnabled();
+  });
+
+  // HS-8284 — opt-in default. New project folders have no `plugin_enabled:*`
+  // rows in their settings table; previously that meant every installed
+  // plugin was silently enabled (`value !== 'false'`). The check is now
+  // `value === 'true'`, so a fresh project starts with everything disabled.
+  it('GET /backends excludes plugin for a fresh project with no plugin_enabled row (HS-8284)', async () => {
+    await satisfyRequiredPrefs();
+    await clearProjectEnabled();
+    const res = await app.request('/api/backends');
+    expect(res.status).toBe(200);
+    const data = await res.json() as { id: string }[];
+    expect(data).toEqual([]);
   });
 
   it('GET /backends excludes plugin when a required project preference is missing (HS-8018)', async () => {
@@ -274,11 +299,12 @@ describe('backends', () => {
     await clearRequiredPrefs();
     const { getGlobalPluginSetting } = await import('../plugins/loader.js');
     vi.mocked(getGlobalPluginSetting).mockReturnValue('test-token');
-    await clearProjectEnabled();
+    await setProjectEnabled(true);
     const res = await app.request('/api/backends');
     expect(res.status).toBe(200);
     const data = await res.json() as { id: string }[];
     expect(data).toEqual([]);
+    await clearProjectEnabled();
   });
 
   it('GET /backends excludes plugin when a required global preference is missing (HS-8018)', async () => {
@@ -286,11 +312,12 @@ describe('backends', () => {
     await satisfyRequiredPrefs();
     const { getGlobalPluginSetting } = await import('../plugins/loader.js');
     vi.mocked(getGlobalPluginSetting).mockReturnValue(null);
-    await clearProjectEnabled();
+    await setProjectEnabled(true);
     const res = await app.request('/api/backends');
     expect(res.status).toBe(200);
     const data = await res.json() as { id: string }[];
     expect(data).toEqual([]);
+    await clearProjectEnabled();
   });
 
   it('GET /backends excludes plugin when disabled for the current project (HS-8018)', async () => {
@@ -301,6 +328,58 @@ describe('backends', () => {
     const data = await res.json() as { id: string }[];
     expect(data).toEqual([]);
     await clearProjectEnabled();
+  });
+});
+
+// HS-8284 — direct unit coverage for the per-project enabled lookup.
+// Guards against the regression where adding a fresh project folder
+// implicitly enabled every installed plugin because the default returned
+// `true` whenever no `plugin_enabled:{id}` row existed.
+describe('isPluginEnabledForProject (HS-8284)', () => {
+  it('returns false when no plugin_enabled row exists (fresh project)', async () => {
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query("DELETE FROM settings WHERE key = 'plugin_enabled:fresh-plugin'");
+    const { isPluginEnabledForProject } = await import('./plugins.js');
+    expect(await isPluginEnabledForProject('fresh-plugin')).toBe(false);
+  });
+
+  it('returns true when plugin_enabled row is the literal string "true"', async () => {
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query(
+      'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
+      ['plugin_enabled:opted-in', 'true'],
+    );
+    const { isPluginEnabledForProject } = await import('./plugins.js');
+    expect(await isPluginEnabledForProject('opted-in')).toBe(true);
+    await db.query("DELETE FROM settings WHERE key = 'plugin_enabled:opted-in'");
+  });
+
+  it('returns false when plugin_enabled row is the literal string "false"', async () => {
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query(
+      'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
+      ['plugin_enabled:opted-out', 'false'],
+    );
+    const { isPluginEnabledForProject } = await import('./plugins.js');
+    expect(await isPluginEnabledForProject('opted-out')).toBe(false);
+    await db.query("DELETE FROM settings WHERE key = 'plugin_enabled:opted-out'");
+  });
+
+  it('returns false for any non-"true" value (defence-in-depth against typos)', async () => {
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    const { isPluginEnabledForProject } = await import('./plugins.js');
+    for (const v of ['1', 'yes', 'TRUE', 'enabled', '']) {
+      await db.query(
+        'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
+        ['plugin_enabled:weird-value', v],
+      );
+      expect(await isPluginEnabledForProject('weird-value')).toBe(false);
+    }
+    await db.query("DELETE FROM settings WHERE key = 'plugin_enabled:weird-value'");
   });
 });
 

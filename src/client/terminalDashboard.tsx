@@ -22,7 +22,7 @@ import { shouldEscapeBypassHotsheet } from './shortcuts.js';
 import type { ProjectInfo } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { openRenameDialog } from './terminal/renameDialog.js';
-import { subscribeToDefaultAppearanceChanges } from './terminalAppearance.js';
+import { loadProjectDefaultAppearance, subscribeToDefaultAppearanceChanges } from './terminalAppearance.js';
 import {
   computeColumnSnapPoints,
   DEFAULT_TILES_PER_ROW,
@@ -564,7 +564,22 @@ function enterDashboard(): void {
   // centered / dedicated state because `rebuild` resets that anyway and the
   // user is changing project-default appearance from the Settings dialog
   // (which they wouldn't do mid-zoom). For now we just trigger a refresh.
-  dashboardState.appearanceUnsubscribe = subscribeToDefaultAppearanceChanges(() => {
+  // HS-8283 — only refresh when the changed project is one we're showing.
+  // Pre-fix this fired for every project switch / new-project add (which
+  // calls setProjectDefault for the active project), tearing down every
+  // tile across every project — and because the cache was global, tiles
+  // from other projects re-rendered against the wrong default and flashed
+  // to FALLBACK_APPEARANCE. Now that the cache is per-secret, the dedup
+  // gate inside setProjectDefault handles unchanged values, and we
+  // additionally check that the changed secret belongs to a project the
+  // dashboard is currently displaying before doing any expensive work.
+  dashboardState.appearanceUnsubscribe = subscribeToDefaultAppearanceChanges((changedSecret) => {
+    if (changedSecret !== '' && dashboardState.lastSectionData.length > 0) {
+      const showingThisProject = dashboardState.lastSectionData.some(
+        (section) => section.project.secret === changedSecret,
+      );
+      if (!showingThisProject) return;
+    }
     refreshDashboardGrid();
   });
 
@@ -852,6 +867,12 @@ async function fetchProjectSections(): Promise<ProjectSectionData[]> {
         ...listed.dynamic.map(t => ({ ...t, dynamic: true })),
       ];
     } catch { /* project's terminal list unavailable */ }
+    // HS-8283 — load each project's `terminal_default` into the per-secret
+    // cache so this project's tiles resolve their appearance against their
+    // OWN default (not whatever the active project's default happens to
+    // be). Fire-and-forget; setProjectDefault dedups when the value
+    // matches, and the change event is scope-filtered by subscribers.
+    void loadProjectDefaultAppearance(project.secret);
     // HS-8016 — reconcile this project's hidden state against the live list
     // so the dashboard's `countHiddenAcrossAllProjects` badge stops counting
     // terminals that no longer exist. Pre-fix the count drifted whenever the

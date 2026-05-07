@@ -6,14 +6,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  _resetProjectDefaultForTests,
   _resetSessionOverridesForTests,
   applyAppearanceToTerm,
   clearSessionOverride,
   FALLBACK_APPEARANCE,
+  getProjectDefault,
   getSessionOverride,
   notifyDefaultAppearanceChanged,
   resolveAppearance,
   resolveAppearanceBackground,
+  setProjectDefault,
   setSessionOverride,
   subscribeToDefaultAppearanceChanges,
   type XtermLikeForAppearance,
@@ -166,11 +169,11 @@ describe('project-default change pub/sub', () => {
   it('subscribe receives a notification on dispatch and unsubscribes cleanly', () => {
     let count = 0;
     const off = subscribeToDefaultAppearanceChanges(() => { count += 1; });
-    notifyDefaultAppearanceChanged();
-    notifyDefaultAppearanceChanged();
+    notifyDefaultAppearanceChanged('test-secret');
+    notifyDefaultAppearanceChanged('test-secret');
     expect(count).toBe(2);
     off();
-    notifyDefaultAppearanceChanged();
+    notifyDefaultAppearanceChanged('test-secret');
     expect(count).toBe(2);
   });
 
@@ -179,11 +182,94 @@ describe('project-default change pub/sub', () => {
     let b = 0;
     const offA = subscribeToDefaultAppearanceChanges(() => { a += 1; });
     const offB = subscribeToDefaultAppearanceChanges(() => { b += 1; });
-    notifyDefaultAppearanceChanged();
+    notifyDefaultAppearanceChanged('test-secret');
     expect(a).toBe(1);
     expect(b).toBe(1);
     offA();
     offB();
+  });
+});
+
+/**
+ * HS-8283 — per-project default appearance cache.
+ *
+ * Pre-fix the cache was a single shared `Partial<TerminalAppearance>`
+ * keyed by nothing. Adding a new project folder rewrote the cache to the
+ * new project's (empty) default, fired the change event, and the Terminal
+ * Dashboard re-rendered every tile across every project against the wrong
+ * default — producing the user-visible "all my terminals temporarily
+ * revert to default coloring" symptom. The fix keys the cache by project
+ * secret. These tests guard against the regression: changes for project A
+ * do not bleed into project B's cached default, and `setProjectDefault`
+ * dedups identical writes so spurious notifications don't fire.
+ */
+describe('per-project default cache (HS-8283)', () => {
+  beforeEach(() => { _resetProjectDefaultForTests(); });
+  afterEach(() => { _resetProjectDefaultForTests(); });
+
+  it('writes for two secrets stay independent', () => {
+    setProjectDefault('secret-A', { theme: 'dracula', fontFamily: 'jetbrains-mono', fontSize: 14 });
+    setProjectDefault('secret-B', { theme: 'nord', fontFamily: 'fira-code', fontSize: 16 });
+    expect(getProjectDefault('secret-A')).toEqual({ theme: 'dracula', fontFamily: 'jetbrains-mono', fontSize: 14 });
+    expect(getProjectDefault('secret-B')).toEqual({ theme: 'nord', fontFamily: 'fira-code', fontSize: 16 });
+  });
+
+  it('overwrites the same secret without affecting another', () => {
+    setProjectDefault('secret-A', { theme: 'dracula' });
+    setProjectDefault('secret-B', { theme: 'nord' });
+    setProjectDefault('secret-A', { theme: 'monokai' });
+    expect(getProjectDefault('secret-A')).toEqual({ theme: 'monokai' });
+    expect(getProjectDefault('secret-B')).toEqual({ theme: 'nord' });
+  });
+
+  it('returns {} for an unknown secret (degrades to FALLBACK_APPEARANCE via resolveAppearance)', () => {
+    expect(getProjectDefault('never-set')).toEqual({});
+  });
+
+  it('returns {} for an empty-string secret (caller had no secret available)', () => {
+    setProjectDefault('secret-A', { theme: 'dracula' });
+    expect(getProjectDefault('')).toEqual({});
+  });
+
+  it('setProjectDefault is a no-op when called with an empty secret (defence-in-depth)', () => {
+    setProjectDefault('', { theme: 'should-be-ignored' });
+    expect(getProjectDefault('')).toEqual({});
+  });
+
+  it('dedups: setting the same value twice does NOT fire the change event the second time', () => {
+    let count = 0;
+    const off = subscribeToDefaultAppearanceChanges(() => { count += 1; });
+    setProjectDefault('secret-A', { theme: 'dracula', fontFamily: 'jetbrains-mono', fontSize: 14 });
+    setProjectDefault('secret-A', { theme: 'dracula', fontFamily: 'jetbrains-mono', fontSize: 14 });
+    expect(count).toBe(1);
+    off();
+  });
+
+  it('fires the change event when the value actually changes', () => {
+    let count = 0;
+    const off = subscribeToDefaultAppearanceChanges(() => { count += 1; });
+    setProjectDefault('secret-A', { theme: 'dracula' });
+    setProjectDefault('secret-A', { theme: 'nord' });
+    setProjectDefault('secret-A', { theme: 'nord', fontFamily: 'fira-code' });
+    expect(count).toBe(3);
+    off();
+  });
+
+  it('change-event detail carries the secret of the changed project', () => {
+    const seen: string[] = [];
+    const off = subscribeToDefaultAppearanceChanges((s) => { seen.push(s); });
+    setProjectDefault('secret-A', { theme: 'dracula' });
+    setProjectDefault('secret-B', { theme: 'nord' });
+    expect(seen).toEqual(['secret-A', 'secret-B']);
+    off();
+  });
+
+  it('notifyDefaultAppearanceChanged forwards the secret to subscribers (manual fire)', () => {
+    let received = '';
+    const off = subscribeToDefaultAppearanceChanges((s) => { received = s; });
+    notifyDefaultAppearanceChanged('manually-fired-secret');
+    expect(received).toBe('manually-fired-secret');
+    off();
   });
 });
 

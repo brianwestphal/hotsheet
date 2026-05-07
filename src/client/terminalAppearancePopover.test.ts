@@ -44,12 +44,13 @@ function makeAnchor(): HTMLButtonElement {
 
 describe('mountAppearancePopover (HS-7896)', () => {
   it('seeds the theme/font/size selects from the configured override the caller exposes', () => {
-    setProjectDefault({ theme: 'default', fontFamily: 'system', fontSize: 14 });
+    setProjectDefault('test-secret', { theme: 'default', fontFamily: 'system', fontSize: 14 });
     const anchor = makeAnchor();
     const onApply = vi.fn();
     const onConfigOverrideChange = vi.fn();
 
     mountAppearancePopover({
+      projectSecret: "test-secret",
       anchor,
       terminalId: 'configured-1',
       isDynamic: false,
@@ -67,10 +68,11 @@ describe('mountAppearancePopover (HS-7896)', () => {
   });
 
   it('falls back to project default when no configured override is exposed', () => {
-    setProjectDefault({ theme: 'nord', fontFamily: 'jetbrains-mono', fontSize: 18 });
+    setProjectDefault('test-secret', { theme: 'nord', fontFamily: 'jetbrains-mono', fontSize: 18 });
     const anchor = makeAnchor();
 
     mountAppearancePopover({
+      projectSecret: "test-secret",
       anchor,
       terminalId: 'configured-2',
       isDynamic: false,
@@ -88,12 +90,13 @@ describe('mountAppearancePopover (HS-7896)', () => {
   });
 
   it('calls onConfigOverrideChange synchronously when the theme select changes (configured terminal)', () => {
-    setProjectDefault({});
+    setProjectDefault('test-secret', {});
     const anchor = makeAnchor();
     const onApply = vi.fn();
     const onConfigOverrideChange = vi.fn();
 
     mountAppearancePopover({
+      projectSecret: "test-secret",
       anchor,
       terminalId: 'configured-3',
       isDynamic: false,
@@ -117,11 +120,12 @@ describe('mountAppearancePopover (HS-7896)', () => {
   });
 
   it('calls onConfigOverrideChange synchronously when the font select changes', () => {
-    setProjectDefault({});
+    setProjectDefault('test-secret', {});
     const anchor = makeAnchor();
     const onConfigOverrideChange = vi.fn();
 
     mountAppearancePopover({
+      projectSecret: "test-secret",
       anchor,
       terminalId: 'configured-4',
       isDynamic: false,
@@ -137,11 +141,12 @@ describe('mountAppearancePopover (HS-7896)', () => {
   });
 
   it('calls onConfigOverrideChange when the +/- size buttons are clicked', () => {
-    setProjectDefault({ fontSize: 14 });
+    setProjectDefault('test-secret', { fontSize: 14 });
     const anchor = makeAnchor();
     const onConfigOverrideChange = vi.fn();
 
     mountAppearancePopover({
+      projectSecret: "test-secret",
       anchor,
       terminalId: 'configured-5',
       isDynamic: false,
@@ -160,11 +165,12 @@ describe('mountAppearancePopover (HS-7896)', () => {
   });
 
   it('reset-to-project-default fires onConfigOverrideChange with all-undefined values for configured terminals', () => {
-    setProjectDefault({ theme: 'default' });
+    setProjectDefault('test-secret', { theme: 'default' });
     const anchor = makeAnchor();
     const onConfigOverrideChange = vi.fn();
 
     mountAppearancePopover({
+      projectSecret: "test-secret",
       anchor,
       terminalId: 'configured-6',
       isDynamic: false,
@@ -186,11 +192,12 @@ describe('mountAppearancePopover (HS-7896)', () => {
   });
 
   it('does NOT call onConfigOverrideChange for dynamic terminals — those flow through session overrides only', () => {
-    setProjectDefault({});
+    setProjectDefault('test-secret', {});
     const anchor = makeAnchor();
     const onConfigOverrideChange = vi.fn();
 
     mountAppearancePopover({
+      projectSecret: "test-secret",
       anchor,
       terminalId: 'dynamic-1',
       isDynamic: true,

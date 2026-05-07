@@ -11,6 +11,7 @@
  */
 import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { getActiveProject } from './state.js';
 import {
   getProjectDefault,
   loadProjectDefaultAppearance,
@@ -48,7 +49,8 @@ function render(): void {
   const sizeInput = byIdOrNull<HTMLInputElement>('settings-terminal-default-size');
   if (themeSel === null || fontSel === null || sizeInput === null) return;
 
-  const current = getProjectDefault();
+  // HS-8283 — settings dialog edits the active project's default.
+  const current = getProjectDefault(getActiveProject()?.secret ?? '');
 
   // Populate options from the registries. Re-rendering on every open means a
   // freshly-added theme / font shows up without a page reload.
@@ -101,8 +103,10 @@ async function persistField(partial: Partial<TerminalAppearance>): Promise<void>
   // value immediately via notifyDefaultAppearanceChanged. The persistence
   // write races against that — if it fails, the in-memory value still
   // reflects the user's intent until the next /file-settings fetch.
-  const next = { ...getProjectDefault(), ...partial };
-  setProjectDefault(next); // fires the pub/sub event
+  // HS-8283 — settings dialog edits the active project; pass its secret.
+  const activeSecret = getActiveProject()?.secret ?? '';
+  const next = { ...getProjectDefault(activeSecret), ...partial };
+  setProjectDefault(activeSecret, next); // fires the pub/sub event with the active secret
 
   try {
     const fs = await api<{ terminal_default?: unknown }>('/file-settings');
@@ -113,5 +117,5 @@ async function persistField(partial: Partial<TerminalAppearance>): Promise<void>
   }
   // Re-fire in case the server write changed anything (e.g. clamping we
   // haven't foreseen). Cheap; subscribers are idempotent.
-  notifyDefaultAppearanceChanged();
+  notifyDefaultAppearanceChanged(activeSecret);
 }

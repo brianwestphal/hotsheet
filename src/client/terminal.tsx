@@ -242,7 +242,13 @@ export function initTerminal(): void {
   // HS-6307 — when the project-default appearance changes (Settings → Terminal),
   // re-resolve + re-apply on every mounted xterm. Per-terminal overrides stay
   // in place; only fields inherited from the default pick up the new value.
-  subscribeToDefaultAppearanceChanges(() => {
+  // HS-8283 — drawer instances belong to the active project; ignore change
+  // events for other projects' secrets so adding a new project folder
+  // doesn't trigger a redundant re-apply on the active project's drawer
+  // terminals using a cache that hasn't been updated for them.
+  subscribeToDefaultAppearanceChanges((changedSecret) => {
+    const activeSecret = getActiveProject()?.secret ?? '';
+    if (changedSecret !== '' && changedSecret !== activeSecret) return;
     for (const inst of instances.values()) {
       if (inst.term !== null) void reapplyAppearance(inst);
     }
@@ -667,6 +673,9 @@ function bindAppearanceBtn(inst: TerminalInstance, pane: HTMLElement): void {
     mountAppearancePopover({
       anchor: appearanceBtn,
       terminalId: inst.id,
+      // HS-8283 — drawer terminals belong to the active project; pass that
+      // secret so the popover resolves the default against the right cache.
+      projectSecret: getActiveProject()?.secret ?? '',
       isDynamic: inst.config.dynamic === true,
       onApply: () => { void reapplyAppearance(inst); },
       getCurrentConfigOverride: () => {
@@ -927,8 +936,11 @@ function resolveInstanceAppearance(inst: TerminalInstance) {
   if (inst.config.theme !== undefined) configOverride.theme = inst.config.theme;
   if (inst.config.fontFamily !== undefined) configOverride.fontFamily = inst.config.fontFamily;
   if (inst.config.fontSize !== undefined) configOverride.fontSize = inst.config.fontSize;
+  // HS-8283 — drawer terminals always belong to the active project, so
+  // resolve against the active project's per-secret cached default.
+  const activeSecret = getActiveProject()?.secret ?? '';
   return resolveAppearance({
-    projectDefault: getProjectDefault(),
+    projectDefault: getProjectDefault(activeSecret),
     configOverride,
     sessionOverride: getSessionOverride(inst.id),
   });

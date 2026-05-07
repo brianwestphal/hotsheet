@@ -39,6 +39,14 @@ export interface AppearancePopoverOptions {
   /** Terminal id — used to read/write the session override + look up the
    *  configured override in settings.json. */
   terminalId: string;
+  /**
+   * HS-8283 — project secret the terminal belongs to, used to look up the
+   *  per-project default appearance from the per-secret cache. Optional;
+   *  callers that omit it (older callers + tests) get `''` and the cache
+   *  returns `{}` (degrades gracefully to FALLBACK_APPEARANCE if no
+   *  configOverride / sessionOverride covers a field).
+   */
+  projectSecret?: string;
   /** True for dynamic (non-persisted) terminals; false for configured ones. */
   isDynamic: boolean;
   /** Called after any apply (theme / font / size / reset) so the caller can
@@ -130,7 +138,10 @@ function buildPopoverElement(opts: AppearancePopoverOptions): HTMLElement {
   // and made the post-edit reapply look broken).
   const configOverride = opts.getCurrentConfigOverride?.() ?? {};
   const current = resolveAppearance({
-    projectDefault: getProjectDefault(),
+    // HS-8283 — resolve against the popover's owning project's cached
+    // default. Caller (drawer terminal in terminal.tsx) passes the active
+    // project's secret; tests omit it and the lookup degrades to `{}`.
+    projectDefault: getProjectDefault(opts.projectSecret ?? ''),
     configOverride,
     sessionOverride: getSessionOverride(opts.terminalId),
   });
@@ -238,7 +249,10 @@ function buildPopoverElement(opts: AppearancePopoverOptions): HTMLElement {
     }
     // Update the popover controls to reflect the post-reset state.
     const next = resolveAppearance({
-      projectDefault: getProjectDefault(),
+      // HS-8283 — resolve against the popover's owning project's cached
+    // default. Caller (drawer terminal in terminal.tsx) passes the active
+    // project's secret; tests omit it and the lookup degrades to `{}`.
+    projectDefault: getProjectDefault(opts.projectSecret ?? ''),
       configOverride: {},
       sessionOverride: getSessionOverride(opts.terminalId),
     });

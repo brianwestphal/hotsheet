@@ -42,8 +42,11 @@ async function getActivatedBackend(pluginId: string): Promise<LoadedPlugin | nul
 export async function isPluginEnabledForProject(pluginId: string): Promise<boolean> {
   const db = await getDb();
   const result = await db.query<{ value: string }>('SELECT value FROM settings WHERE key = $1', [`plugin_enabled:${pluginId}`]);
-  // Default: enabled (unless explicitly disabled)
-  return result.rows[0]?.value !== 'false';
+  // HS-8284 — Default: DISABLED unless explicitly enabled. Adding a new
+  // project folder used to silently enable every installed plugin (because
+  // freshly-initialised settings tables have no `plugin_enabled:*` rows and
+  // the previous default was "enabled"). Plugins are now opt-in per project.
+  return result.rows[0]?.value === 'true';
 }
 
 async function setPluginEnabledForProject(pluginId: string, enabled: boolean): Promise<void> {
