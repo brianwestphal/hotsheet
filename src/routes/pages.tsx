@@ -759,3 +759,43 @@ pageRoutes.get('/', (c) => {
   );
   return c.html(html.toString());
 });
+
+// §63 reactivity migration demo — self-contained showcase of the proposed
+// signals + stores + morphdom + delegation primitive. NOT linked from the
+// main UI; navigate manually to /_demo/reactivity. Will be deleted when the
+// design in `docs/63-reactivity-demo-plan.md` is approved or rejected.
+pageRoutes.get('/_demo/reactivity', (c) => {
+  return c.html(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reactivity demo · Hot Sheet</title>
+  <link rel="stylesheet" href="/static/reactivity-demo.css" />
+</head>
+<body>
+  <div class="demo-page">
+    <header>
+      <h1>Reactivity migration demo</h1>
+      <p>
+        Self-contained showcase of the §63 reactivity primitive
+        (<code>signals</code> + <code>stores</code> + <code>morphdom</code> +
+        event delegation + SVG-aware <code>toElement</code>). Sections below
+        each exercise one concern. See
+        <code>docs/63-reactivity-demo-plan.md</code> for the proposed plan.
+      </p>
+    </header>
+
+    <section id="section-counter"></section>
+    <section id="section-cart"></section>
+    <section id="section-focus"></section>
+    <section id="section-list"></section>
+    <section id="section-skip"></section>
+    <section id="section-svg"></section>
+    <section id="section-tier2"></section>
+  </div>
+
+  <script src="/static/reactivity-demo.js"></script>
+</body>
+</html>`);
+});

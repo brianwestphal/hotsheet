@@ -76,6 +76,22 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     const js = readFileSync(join(distDir, 'app.global.js'), 'utf-8');
     return c.text(js, 200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' });
   });
+  // §63 reactivity demo bundle — self-contained, separate from app.js.
+  // Reachable via /_demo/reactivity (route registered in pageRoutes).
+  // Will be deleted when the demo is approved/rejected.
+  app.get('/static/reactivity-demo.js', (c) => {
+    const path = join(distDir, 'reactivity-demo.global.js');
+    if (!existsSync(path)) return c.notFound();
+    const js = readFileSync(path, 'utf-8');
+    return c.text(js, 200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' });
+  });
+  app.get('/static/reactivity-demo.css', (c) => {
+    const path = join(distDir, 'reactivity-demo.css');
+    if (!existsSync(path)) return c.notFound();
+    const css = readFileSync(path, 'utf-8');
+    return c.text(css, 200, { 'Content-Type': 'text/css', 'Cache-Control': 'no-cache' });
+  });
+
   app.get('/static/assets/:filename', (c) => {
     const filename = basename(c.req.param('filename'));
     const filePath = join(distDir, 'assets', filename);
