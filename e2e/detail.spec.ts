@@ -110,6 +110,60 @@ test.describe('Detail panel interactions', () => {
     await expect(page.locator('#detail-tags .tag-chip').filter({ hasText: 'Backend' })).toBeHidden({ timeout: 5000 });
   });
 
+  /**
+   * HS-8291 — long unbroken strings (URLs, commit hashes, base64 blobs) in a
+   * note body or the Details body must not push the detail panel wider than
+   * its container — pre-fix the panel acquired a horizontal scrollbar and
+   * the user had to scroll the whole panel sideways to read past the
+   * offending line. Fix is `overflow-wrap: anywhere` on `.note-text` and
+   * `.detail-details-rendered` so any character is a valid break point.
+   */
+  test('long unbroken string in a note does not horizontally scroll the detail panel (HS-8291)', async ({ page }) => {
+    await createTicket(page, 'HS-8291 long line ticket');
+    await openDetail(page, 'HS-8291 long line ticket');
+
+    // Add a note carrying a 600-char unbroken word — pathologically wider
+    // than any reasonable detail-panel column.
+    await page.locator('#detail-add-note-btn').click();
+    const noteEntry = page.locator('#detail-notes .note-entry').first();
+    const longString = 'a'.repeat(600);
+    await noteEntry.locator('textarea.note-edit-area').fill(longString);
+    await page.locator('#detail-body').click({ position: { x: 5, y: 5 } });
+    await expect(noteEntry.locator('.note-text')).toContainText(longString, { timeout: 5000 });
+
+    // The detail panel must not have a horizontal scrollbar — `scrollWidth`
+    // is the intrinsic content width, `clientWidth` is the visible-box
+    // width. They must be equal (modulo a 1-px sub-pixel rounding tolerance).
+    const overflow = await page.locator('#detail-panel').evaluate(el => ({
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+    }));
+    expect(overflow.scrollWidth - overflow.clientWidth).toBeLessThanOrEqual(1);
+  });
+
+  /**
+   * HS-8291 — same regression for the Details body. The rendered Details
+   * view (`.detail-details-rendered`) sits inside the detail panel and
+   * must wrap long strings the same way.
+   */
+  test('long unbroken string in Details body does not horizontally scroll the detail panel (HS-8291)', async ({ page }) => {
+    await createTicket(page, 'HS-8291 long details ticket');
+    await openDetail(page, 'HS-8291 long details ticket');
+
+    const longString = 'b'.repeat(600);
+    await page.locator('#detail-details').fill(longString);
+    // Wait for debounced save + the rendered swap to land.
+    await page.waitForTimeout(1500);
+    // Click outside the textarea so the wrap flips back to rendered mode.
+    await page.locator('#detail-body').click({ position: { x: 5, y: 5 } });
+
+    const overflow = await page.locator('#detail-panel').evaluate(el => ({
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+    }));
+    expect(overflow.scrollWidth - overflow.clientWidth).toBeLessThanOrEqual(1);
+  });
+
   test('add a note via add-note button', async ({ page }) => {
     await createTicket(page, 'Note add ticket');
     await openDetail(page, 'Note add ticket');

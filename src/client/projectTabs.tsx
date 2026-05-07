@@ -95,13 +95,17 @@ export async function refreshProjectTabs(): Promise<void> {
     projectList = [];
   }
   renderTabs();
-  // HS-7825 — re-hydrate persisted hidden-terminal state when the project
-  // list changes (a new project added) so its persisted filter is applied
-  // before the user opens the dashboard.
-  void (async () => {
-    const { initPersistedHiddenTerminals } = await import('./persistedHiddenTerminals.js');
-    await initPersistedHiddenTerminals();
-  })();
+  // HS-8293 — pre-fix this re-hydrated `dashboard.visibilityGroupings`
+  // from `/api/global-config` on every poll-driven `refreshProjectTabs`.
+  // Post-HS-8290 the visibility state lives entirely in the global config
+  // (no per-project bits), so a project-list change has nothing to
+  // re-hydrate. Worse, the re-hydrate destroyed in-flight in-memory
+  // toggles: if the user toggled a row between the moment the previous
+  // PATCH landed and the next poll's hydrate fired, the hydrate
+  // overwrote the toggle with the (now-stale) server snapshot, and the
+  // next debounced write's `lastPersisted` short-circuit suppressed the
+  // PATCH that would have rescued it. Initial hydration still happens
+  // exactly once from `initProjectTabs`.
 }
 
 /** Switch to the next or previous tab. */

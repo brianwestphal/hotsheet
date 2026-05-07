@@ -182,7 +182,7 @@ export function updateGroupingById(
 }
 
 /** Tolerant parser for the persisted shape returned by
- *  `GET /api/dashboard/global-config` under `dashboard.visibilityGroupings`.
+ *  `GET /api/global-config` under `dashboard.visibilityGroupings`.
  *  Unknown shapes / parse errors fall through to the empty-Default state. */
 export function parsePersistedState(
   rawGroupings: unknown,

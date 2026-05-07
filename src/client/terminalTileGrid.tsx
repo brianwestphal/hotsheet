@@ -189,11 +189,16 @@ export interface TileGridHandle {
   uncenterTile(): void;
   /** Programmatically exit the dedicated view. */
   exitDedicatedView(): void;
-  /** Sync per-tile bell indicators against a set of bellPending terminal IDs
-   *  (drawn from the cross-project bell-state long-poll subscription, or a
-   *  per-project subset). Tiles whose id is in `pendingIds` get `.has-bell`;
-   *  others have it removed. */
-  syncBellState(pendingIds: Set<string>): void;
+  /** Sync per-tile bell indicators against a set of bellPending tile keys
+   *  (composite `${secret}::${id}`, drawn from the cross-project bell-state
+   *  long-poll subscription). Tiles whose composite key is in
+   *  `pendingTileKeys` get `.has-bell`; others have it removed.
+   *
+   *  HS-8285 follow-up — the parameter used to be a plain `Set<terminalId>`,
+   *  which broke flow mode when two projects shared a terminal id (a bell
+   *  on project A's `default` lit up project B's `default` tile too).
+   *  The composite key disambiguates. */
+  syncBellState(pendingTileKeys: Set<string>): void;
   /** Move keyboard focus to the dedicated view's xterm (no-op when no
    *  dedicated view is open). Used by callsites' Esc handlers — when the
    *  user blurs an input within the dedicated view's chrome (e.g. the
@@ -299,19 +304,44 @@ const CENTER_ANIMATION_MS = 280;
 const SINGLE_CLICK_DELAY_MS = 220;
 
 export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
+  // HS-8285 follow-up — every internal Map below keys tiles by the
+  // composite `${secret}::${id}`, NOT just `id`. In flow mode (HS-7662 /
+  // §25.10.5) this single tile-grid handle holds tiles from EVERY
+  // registered project, and two different projects routinely have
+  // terminals with the same id (e.g. every project starts with a
+  // `default` terminal). Pre-fix the maps were keyed by `entry.id`
+  // alone, so the second project's `default` tile silently overwrote
+  // the first project's entry — the first tile was rendered into the
+  // DOM but completely absent from the registry, so its checkout was
+  // never released on rebuild and intersection / mouse / sizing
+  // lookups by id missed the orphan entirely. The user-reported
+  // "Terminal in use elsewhere" placeholder pinning onto a visible
+  // surface in flow mode was the orphan's stale handle still sitting
+  // on its checkout entry's stack, with the live xterm reparented
+  // through it.
   const tiles = new Map<string, InternalTile>();
   let centered: InternalTile | null = null;
   let centerBackdrop: HTMLElement | null = null;
   let dedicated: DedicatedView | null = null;
   let pendingSingleClickTimer: number | null = null;
 
-  // HS-7968 — virtualization state. One IntersectionObserver per grid; per-
-  // tile state lives in `virtState`. Pure decisions in
-  // `terminalTileVirtualization.ts`; this section just wires the DOM/timer
-  // side-effects to the state machine.
+  // HS-7968 / HS-8285 follow-up — virtualization state. Same composite
+  // `${secret}::${id}` keying as `tiles`.
   const virtState = new Map<string, TileVirtualState>();
   const virtTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const virtRootToId = new Map<Element, string>();
+
+  /** HS-8285 follow-up — composite tile registry key. See the `tiles` Map
+   *  comment above for why `entry.id` alone is unsafe in flow mode. The
+   *  key shape `${secret}::${id}` matches the checkout module's entry-key
+   *  format so a tile's registry key is also debuggable as a checkout
+   *  lookup string. */
+  function tileKey(secret: string, id: string): string {
+    return `${secret}::${id}`;
+  }
+  function tileKeyFor(entry: { secret: string; id: string }): string {
+    return tileKey(entry.secret, entry.id);
+  }
   const virtObserver = typeof IntersectionObserver !== 'undefined'
     ? new IntersectionObserver(handleIntersectionEntries, {
         root: null,
@@ -441,7 +471,8 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       screenObserver: null,
       termHandlerDisposers: [],
     };
-    tiles.set(entry.id, tile);
+    const key = tileKeyFor(entry);
+    tiles.set(key, tile);
 
     // HS-7968 — virtualized mount. Tile starts unmounted; the IntersectionObserver
     // drives mount/dispose based on viewport visibility. Tiles in non-alive
@@ -449,14 +480,14 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // mounts eagerly via `spawnAndEnlarge` below. When the observer is
     // unavailable (test envs without IO) we fall back to the eager-mount
     // behaviour so tests don't have to install a polyfill.
-    virtState.set(entry.id, initialTileState());
+    virtState.set(key, initialTileState());
     if (virtObserver !== null) {
-      virtRootToId.set(root, entry.id);
+      virtRootToId.set(root, key);
       virtObserver.observe(root);
     } else if (entry.state === 'alive') {
       mountTileViaCheckout(tile);
-      const s = virtState.get(entry.id);
-      if (s !== undefined) virtState.set(entry.id, { ...s, mounted: true });
+      const s = virtState.get(key);
+      if (s !== undefined) virtState.set(key, { ...s, mounted: true });
     }
 
     root.addEventListener('click', (e) => { onTileClick(tile, e); });
@@ -568,11 +599,12 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   function ensureTileMounted(tile: InternalTile): void {
     if (tile.checkout !== null) return;
     mountTileViaCheckout(tile);
-    const v = virtState.get(tile.entry.id);
-    if (v !== undefined) virtState.set(tile.entry.id, { ...v, mounted: true });
+    const key = tileKeyFor(tile.entry);
+    const v = virtState.get(key);
+    if (v !== undefined) virtState.set(key, { ...v, mounted: true });
     // If a dispose timer was pending (rare race), cancel it.
-    const t = virtTimers.get(tile.entry.id);
-    if (t !== undefined) { clearTimeout(t); virtTimers.delete(tile.entry.id); }
+    const t = virtTimers.get(key);
+    if (t !== undefined) { clearTimeout(t); virtTimers.delete(key); }
   }
 
   /** HS-7968 — fully forget the tile from the virtualization registry.
@@ -580,12 +612,13 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   function forgetVirtualization(tile: InternalTile): void {
     if (virtObserver !== null) virtObserver.unobserve(tile.root);
     virtRootToId.delete(tile.root);
-    const timer = virtTimers.get(tile.entry.id);
-    if (timer !== undefined) { clearTimeout(timer); virtTimers.delete(tile.entry.id); }
-    virtState.delete(tile.entry.id);
+    const key = tileKeyFor(tile.entry);
+    const timer = virtTimers.get(key);
+    if (timer !== undefined) { clearTimeout(timer); virtTimers.delete(key); }
+    virtState.delete(key);
     // HS-8046 — drop the viewport-membership flag too so a re-rendered
     // tile with the same id starts from a clean slate.
-    visibleTileIds.delete(tile.entry.id);
+    visibleTileIds.delete(key);
   }
 
   // --- xterm mount + WebSocket attach ---
@@ -741,7 +774,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       // viewing this tile in the unoccluded grid surface. Drop the
       // server-side bellPending flag too so other surfaces (project-tab
       // glyph, drawer tab) don't redundantly mark it.
-      if (isGridSurfaceUnoccluded() && visibleTileIds.has(tile.entry.id)) {
+      if (isGridSurfaceUnoccluded() && visibleTileIds.has(tileKeyFor(tile.entry))) {
         postClearBell(tile);
         return;
       }
@@ -884,8 +917,12 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       if (xtermRoot !== null && !tile.classList.contains('centered')) {
         applyTileScale(xtermRoot, tileWidth, tileHeight);
       }
+      // HS-8285 follow-up — read both `data-secret` and `data-terminal-id`
+      // so the lookup hits the per-(secret, id) tile rather than the wrong
+      // project's tile when two projects share an id (e.g., 'default').
+      const tsec = tile.dataset.secret ?? '';
       const tid = tile.dataset.terminalId ?? '';
-      const live = tiles.get(tid);
+      const live = tiles.get(tileKey(tsec, tid));
       if (live !== undefined) {
         live.gridPreviewWidth = tileWidth;
         live.gridPreviewHeight = tileHeight;
@@ -1008,10 +1045,11 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       tile.root.classList.remove(`${tileClass}-not_spawned`, `${tileClass}-exited`);
       tile.root.classList.add(`${tileClass}-alive`);
       mountTileViaCheckout(tile);
-      // HS-7968 — flag the tile as mounted in the virtualization state so
-      // an immediate viewport-exit triggers the dispose-debounce flow.
-      const v = virtState.get(tile.entry.id);
-      if (v !== undefined) virtState.set(tile.entry.id, { ...v, mounted: true });
+      // HS-7968 / HS-8285 follow-up — flag the tile as mounted in the
+      // virtualization state (composite key).
+      const key = tileKeyFor(tile.entry);
+      const v = virtState.get(key);
+      if (v !== undefined) virtState.set(key, { ...v, mounted: true });
     } catch (err) {
       console.error('terminalTileGrid: spawn failed', err);
       tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
@@ -1239,7 +1277,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
    *  this terminal — no reason to keep the bell indicator. */
   function maybeAutoClearTileBell(tile: InternalTile): void {
     if (!isGridSurfaceUnoccluded()) return;
-    if (!visibleTileIds.has(tile.entry.id)) return;
+    if (!visibleTileIds.has(tileKeyFor(tile.entry))) return;
     clearTileBell(tile);
   }
 
@@ -1655,15 +1693,16 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     recenterTile,
     uncenterTile,
     exitDedicatedView,
-    syncBellState(pendingIds) {
+    syncBellState(pendingTileKeys) {
       for (const tile of tiles.values()) {
-        const want = pendingIds.has(tile.entry.id);
+        const key = tileKeyFor(tile.entry);
+        const want = pendingTileKeys.has(key);
         const has = tile.root.classList.contains('has-bell');
         if (want && !has) {
           // HS-8046 — server-pushed bellPending lands on a tile the user
           // is already looking at. Drop the server flag instead of
           // rendering the indicator.
-          if (isGridSurfaceUnoccluded() && visibleTileIds.has(tile.entry.id)) {
+          if (isGridSurfaceUnoccluded() && visibleTileIds.has(key)) {
             postClearBell(tile);
           } else {
             tile.root.classList.add('has-bell');

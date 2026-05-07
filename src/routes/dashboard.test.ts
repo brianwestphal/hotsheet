@@ -161,6 +161,61 @@ describe('PATCH /global-config', () => {
     const res = await app.request('/api/global-config', patch({ unknownKey: 'bad' }));
     expect(res.status).toBe(400);
   });
+
+  /**
+   * HS-8290 follow-up. The HS-8290 client code originally PATCHed
+   * `/api/dashboard/global-config` (not `/api/global-config`) — that URL
+   * 404s in production because `dashboardRoutes` is mounted at `/` inside
+   * `apiRoutes`, NOT at `/dashboard`. The pre-existing client unit tests
+   * passed because they only inspected the URL fetched, never the actual
+   * server route. This regression test pins the working URL + asserts the
+   * mistakenly-named URL is NOT a valid endpoint, so future drift is
+   * caught here.
+   */
+  it('accepts the dashboard block at /api/global-config (HS-8290 regression)', async () => {
+    const res = await app.request('/api/global-config', patch({
+      dashboard: {
+        layoutMode: 'flow',
+        columnsPerRow: 3,
+        visibilityGroupings: [{ id: 'default', name: 'Default', hiddenByProject: { 's1': ['t1'] } }],
+        activeVisibilityGroupingId: 'default',
+      },
+    }));
+    expect(res.status).toBe(200);
+  });
+
+  it('does NOT serve /api/dashboard/global-config (HS-8290 regression)', async () => {
+    // The bug: client previously called `/api/dashboard/global-config` which
+    // is a 404 — there's no `/dashboard` prefix on dashboardRoutes.
+    const res = await app.request('/api/dashboard/global-config', patch({ dashboard: { layoutMode: 'flow' } }));
+    expect(res.status).toBe(404);
+  });
+
+  /**
+   * HS-8292 — pre-fix the schema enum was `['sectioned', 'flat']`, but the
+   * client emits `'flow'` from `terminalDashboard.tsx::setLayoutMode`. Every
+   * PATCH from the layout-toggle button silently 400'd, so flow mode never
+   * persisted across reloads.
+   */
+  it('accepts layoutMode: "flow" (HS-8292)', async () => {
+    // Pre-fix the schema enum was `['sectioned', 'flat']` so this PATCH
+    // 400'd, the writeGlobalConfig mock never ran, and flow mode never
+    // persisted. The dashboard test mocks writeGlobalConfig out, so the
+    // round-trip GET assertion lives in `global-config.test.ts::layoutMode
+    // round-trip`; here we just pin the validation gate.
+    const res = await app.request('/api/global-config', patch({ dashboard: { layoutMode: 'flow' } }));
+    expect(res.status).toBe(200);
+  });
+
+  it('accepts layoutMode: "sectioned" (HS-8292)', async () => {
+    const res = await app.request('/api/global-config', patch({ dashboard: { layoutMode: 'sectioned' } }));
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects an unknown layoutMode value with 400 (HS-8292)', async () => {
+    const res = await app.request('/api/global-config', patch({ dashboard: { layoutMode: 'flat' } }));
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('POST /ensure-skills', () => {

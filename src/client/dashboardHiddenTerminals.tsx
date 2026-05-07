@@ -26,7 +26,7 @@
  * **Persistence.** See docs/39-visibility-groupings.md (HS-8290 rewrite).
  * The `persistedHiddenTerminals.ts` module subscribes to changes and
  * PATCHes the global config endpoint
- * (`/api/dashboard/global-config` body `{ dashboard: { visibilityGroupings, activeVisibilityGroupingId } }`).
+ * (`/api/global-config` body `{ dashboard: { visibilityGroupings, activeVisibilityGroupingId } }`).
  */
 
 import { toElement } from './dom.js';

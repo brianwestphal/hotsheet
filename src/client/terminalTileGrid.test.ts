@@ -146,6 +146,52 @@ describe('terminalTileGrid — tile mounted via terminalCheckout (HS-8048)', () 
     expect(keys).toContain('proj-B::default');
     grid.dispose();
   });
+
+  /**
+   * HS-8285 follow-up — flow-mode regression. Pre-fix the internal `tiles`
+   * Map keyed by `entry.id` alone, so two tiles whose entries shared an id
+   * (e.g. project A's `default` + project B's `default` both visible in
+   * the same flow-mode tile-grid) silently overwrote each other in the
+   * registry. The first tile's checkout entry was never released on
+   * `rebuild()` / `dispose()` because `teardownAll()` iterates the map and
+   * the orphan wasn't in it. Fix: composite `${secret}::${id}` keying
+   * inside `mountTileGrid`. Without this, after a project reorder the
+   * stale entry sat on the next consumer's checkout stack and the live
+   * xterm reparented through it, leaving a "Terminal in use elsewhere"
+   * placeholder pinned onto a visible surface in flow mode.
+   */
+  it('rebuild releases BOTH tiles when two entries share a terminalId across projects (HS-8285)', () => {
+    const grid = mount([
+      makeEntry('proj-A', 'default'),
+      makeEntry('proj-B', 'default'),
+    ]);
+    expect(entryCount()).toBe(2);
+
+    // Rebuild with a completely different entry list (simulating a
+    // project-tab reorder or visibility-grouping change in flow mode).
+    grid.rebuild([makeEntry('proj-C', 'default')]);
+
+    // Both pre-rebuild entries must be fully gone — the bug was that
+    // `proj-A::default` lingered because it was overwritten in the
+    // tiles map and never released.
+    const keysAfter = _inspectStackForTesting().map(s => s.key);
+    expect(keysAfter).not.toContain('proj-A::default');
+    expect(keysAfter).not.toContain('proj-B::default');
+    expect(keysAfter).toContain('proj-C::default');
+    expect(entryCount()).toBe(1);
+    grid.dispose();
+    expect(entryCount()).toBe(0);
+  });
+
+  it('dispose tears down BOTH same-id-across-project tiles (HS-8285)', () => {
+    const grid = mount([
+      makeEntry('proj-A', 'default'),
+      makeEntry('proj-B', 'default'),
+    ]);
+    expect(entryCount()).toBe(2);
+    grid.dispose();
+    expect(entryCount()).toBe(0);
+  });
 });
 
 /**

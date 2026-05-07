@@ -588,8 +588,10 @@ function attachBellSubscription(): void {
     const project = getActiveProject();
     if (project === null) return;
     const entry = state.get(project.secret);
-    const pendingIds = new Set(entry?.terminalIds ?? []);
-    drawerGridState.gridHandle.syncBellState(pendingIds);
+    // HS-8285 follow-up — composite tile-key shape.
+    const pendingTileKeys = new Set<string>();
+    for (const id of entry?.terminalIds ?? []) pendingTileKeys.add(`${project.secret}::${id}`);
+    drawerGridState.gridHandle.syncBellState(pendingTileKeys);
   });
 }
 

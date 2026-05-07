@@ -754,6 +754,54 @@ describe('applyHistoryReplay — clears buffer before replay (HS-8287)', () => {
     h.release();
   });
 
+  /**
+   * HS-8287 follow-up #2 — the user reported the doubled-scrollback symptom
+   * persisted in WKWebView even after the reset+clear pairing landed; their
+   * `__hs8287_dump()` showed `reset.ok` firing on every history frame yet
+   * the screenshot still showed 5 stacked Claude Code banners. This test
+   * pins the *content* invariant (not just the call-order invariant the
+   * three tests above already cover): if the server replays a buffer of N
+   * banners onto a term that already has K banners, the term ends up with
+   * exactly N banners (NOT N+K). That isolates the question of "is the
+   * client doubling content?" from "is the server's ring buffer accumulating
+   * content?". A green here proves the client side is correct; a green +
+   * a real-app bug points at the server-side ring buffer or the upstream
+   * shell process emitting duplicate content.
+   */
+  it('replays a 5-banner history onto a term with 1 pre-existing banner without doubling (HS-8287 user repro)', async () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 't');
+    expect(entry).not.toBeNull();
+
+    // Pre-disconnect state: term has one banner on screen. xterm.js
+    // processes `write()` asynchronously (microtask-queued); use the
+    // callback form to wait for the parser to commit the bytes to the
+    // buffer before continuing.
+    await new Promise<void>(resolve => h.term.write('Claude Code v6.1.132\r\n', resolve));
+
+    // 5 banner copies — what the user's screenshot showed.
+    const fiveBanners = Array.from({ length: 5 }, () => 'Claude Code v6.1.132\r\n').join('');
+    applyHistoryReplay(entry!, { bytes: btoa(fiveBanners), cols: 80, rows: 24 });
+    // Drain the post-replay write before reading the buffer.
+    await new Promise<void>(resolve => h.term.write('', resolve));
+
+    // Walk the buffer and count occurrences of the banner string. Without
+    // the reset+clear pairing this would be 6 (1 pre + 5 replay).
+    let totalBanners = 0;
+    const buf = h.term.buffer.active;
+    for (let i = 0; i < buf.length; i++) {
+      const line = buf.getLine(i);
+      if (line === undefined) continue;
+      const text = line.translateToString(true);
+      if (text.includes('Claude Code v6.1.132')) totalBanners++;
+    }
+
+    expect(totalBanners).toBe(5);
+
+    h.release();
+  });
+
   it('also calls clear() after reset() so xterm 6.0.0 scrollback is dropped explicitly (HS-8287 follow-up)', () => {
     // The user reported the doubled-scrollback symptom persisted after
     // the initial reset()-only fix landed in WKWebView. xterm.js 6.0.0's

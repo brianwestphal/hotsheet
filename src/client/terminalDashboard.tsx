@@ -371,7 +371,7 @@ function parseLayoutMode(raw: unknown): LayoutMode {
 }
 
 /** HS-7662 → HS-8290 — load the persisted layout mode from
- *  `/dashboard/global-config` once and cache the resulting promise.
+ *  `/global-config` once and cache the resulting promise.
  *  Resolves silently on error so the dashboard still works when the
  *  endpoint is briefly unavailable. Pre-HS-8290 this read from
  *  `/file-settings.dashboard_layout_mode`; the key moved to global config
@@ -380,7 +380,7 @@ function loadLayoutMode(): Promise<void> {
   if (dashboardState.layoutModeLoadPromise !== null) return dashboardState.layoutModeLoadPromise;
   dashboardState.layoutModeLoadPromise = (async () => {
     try {
-      const cfg = await api<{ dashboard?: { layoutMode?: string } }>('/dashboard/global-config');
+      const cfg = await api<{ dashboard?: { layoutMode?: string } }>('/global-config');
       dashboardState.layoutMode = parseLayoutMode(cfg.dashboard?.layoutMode);
     } catch {
       dashboardState.layoutMode = 'sectioned';
@@ -407,12 +407,12 @@ export function parsePersistedColumnCount(raw: unknown): number | null {
 }
 
 /** HS-7948 / HS-8176 / HS-8290 — load the persisted column count from
- *  `/dashboard/global-config` once and cache the resulting promise. */
+ *  `/global-config` once and cache the resulting promise. */
 function loadSliderValue(): Promise<void> {
   if (dashboardState.sliderValueLoadPromise !== null) return dashboardState.sliderValueLoadPromise;
   dashboardState.sliderValueLoadPromise = (async () => {
     try {
-      const cfg = await api<{ dashboard?: { columnsPerRow?: number } }>('/dashboard/global-config');
+      const cfg = await api<{ dashboard?: { columnsPerRow?: number } }>('/global-config');
       const parsed = parsePersistedColumnCount(cfg.dashboard?.columnsPerRow);
       if (parsed !== null) {
         dashboardState.columnCount = parsed;
@@ -432,7 +432,7 @@ function schedulePersistSliderValue(): void {
   if (dashboardState.sliderPersistTimeout !== null) clearTimeout(dashboardState.sliderPersistTimeout);
   dashboardState.sliderPersistTimeout = setTimeout(() => {
     dashboardState.sliderPersistTimeout = null;
-    void api('/dashboard/global-config', {
+    void api('/global-config', {
       method: 'PATCH',
       body: { dashboard: { columnsPerRow: dashboardState.columnCount } },
     }).catch(() => { /* swallow — UI already reflects the new value */ });
@@ -445,7 +445,7 @@ function setLayoutMode(next: LayoutMode): void {
   dashboardState.layoutMode = next;
   applyLayoutToggleVisualState();
   // Persist in the background — don't block the re-render on the network.
-  void api('/dashboard/global-config', {
+  void api('/global-config', {
     method: 'PATCH',
     body: { dashboard: { layoutMode: next } },
   }).catch(() => { /* swallow — UI flip already happened */ });
@@ -516,18 +516,23 @@ function enterDashboard(): void {
   // pending bells since flow mode renders one handle for every project's
   // tiles in a single grid.
   dashboardState.bellUnsubscribe = subscribeToBellState((state) => {
+    // HS-8285 follow-up — `syncBellState` now keys on composite
+    // `${secret}::${id}` so two projects sharing a terminal id (e.g.
+    // `default`) don't cross-light each other's tiles in flow mode. Build
+    // the per-handle pending set with secret-scoped keys.
     for (const [secret, handle] of gridHandles.entries()) {
       if (secret === FLOW_HANDLE_KEY) {
         const allPending = new Set<string>();
-        for (const entry of state.values()) {
-          for (const id of entry.terminalIds) allPending.add(id);
+        for (const [projectSecret, entry] of state.entries()) {
+          for (const id of entry.terminalIds) allPending.add(`${projectSecret}::${id}`);
         }
         handle.syncBellState(allPending);
         continue;
       }
       const entry = state.get(secret);
-      const pendingIds = new Set(entry?.terminalIds ?? []);
-      handle.syncBellState(pendingIds);
+      const pendingTileKeys = new Set<string>();
+      for (const id of entry?.terminalIds ?? []) pendingTileKeys.add(`${secret}::${id}`);
+      handle.syncBellState(pendingTileKeys);
     }
   });
 

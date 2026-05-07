@@ -72,4 +72,21 @@ describe('writeGlobalConfig', () => {
     expect(result).toEqual({ channelEnabled: false });
     expect(readGlobalConfig()).toEqual({ channelEnabled: false });
   });
+
+  /**
+   * HS-8292 — pre-fix the schema enum was `['sectioned', 'flat']`, so a
+   * `dashboard.layoutMode = 'flow'` round-trip silently dropped the value
+   * (`readGlobalConfig` falls back to `{}` on schema-parse failure). The
+   * client emits `'flow'` from the layout-toggle button, so flow mode never
+   * persisted across reloads.
+   */
+  it('round-trips dashboard.layoutMode = "flow" (HS-8292)', () => {
+    writeGlobalConfig({ dashboard: { layoutMode: 'flow' } });
+    expect(readGlobalConfig().dashboard?.layoutMode).toBe('flow');
+  });
+
+  it('round-trips dashboard.layoutMode = "sectioned" (HS-8292)', () => {
+    writeGlobalConfig({ dashboard: { layoutMode: 'sectioned' } });
+    expect(readGlobalConfig().dashboard?.layoutMode).toBe('sectioned');
+  });
 });

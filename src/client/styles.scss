@@ -6545,6 +6545,13 @@ body.terminal-dashboard-active {
   font-size: 13px;
   color: var(--text);
   white-space: pre-wrap;
+  // HS-8291 — long unbroken strings (URLs, commit hashes, base64 blobs)
+  // would otherwise push `.note-entry` past the detail-panel bounds and
+  // scroll the whole detail surface horizontally. `overflow-wrap: anywhere`
+  // makes any character a valid break point; `pre` / `code` blocks keep
+  // their own `overflow-x: auto` (set under `.note-markdown` below) so a
+  // wide code line still scrolls inside the code box, not the panel.
+  overflow-wrap: anywhere;
 
   &.note-markdown {
     white-space: normal;
@@ -8331,6 +8338,14 @@ label.detail-details-label {
     color: var(--text);
     font-size: 13px;
     cursor: text;
+    // HS-8291 — same character-level fallback as `.note-text`. Without
+    // this, a long unbroken string in a Details body either pushes the
+    // detail panel wider (scrolling the whole panel horizontally) or
+    // forces this container's own overflow-x scroll to engage. The
+    // wrap is the better default for prose; `pre` / `code` inside the
+    // markdown render path keep their own `overflow-x: auto` from the
+    // shared `.note-markdown` rules.
+    overflow-wrap: anywhere;
 
     &:hover {
       border-color: color-mix(in srgb, var(--accent) 30%, var(--border));

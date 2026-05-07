@@ -184,7 +184,11 @@ const VisibilityGroupingSchema = z.object({
 });
 
 const DashboardConfigSchema = z.object({
-  layoutMode: z.enum(['sectioned', 'flat']).optional(),
+  // HS-8292 — pre-fix this enum was `['sectioned', 'flat']`, but the
+  // client emits `'flow'` (`src/client/terminalDashboard.tsx::LayoutMode`),
+  // so every PATCH from the layout-toggle button was rejected as a 400 and
+  // flow mode never persisted across reloads.
+  layoutMode: z.enum(['sectioned', 'flow']).optional(),
   columnsPerRow: z.number().optional(),
   visibilityGroupings: z.array(VisibilityGroupingSchema).optional(),
   activeVisibilityGroupingId: z.string().optional(),

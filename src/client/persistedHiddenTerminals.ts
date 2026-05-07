@@ -5,7 +5,7 @@
  * Wraps the in-memory module (`dashboardHiddenTerminals.ts`) so the rest of
  * the codebase can keep using its public API verbatim. The persistence
  * layer subscribes to changes and fires a single debounced PATCH to the
- * global config endpoint (`/api/dashboard/global-config`) under
+ * global config endpoint (`/api/global-config`) under
  * `dashboard.visibilityGroupings` + `dashboard.activeVisibilityGroupingId`.
  *
  * **HS-8290 reshape.** Pre-HS-8290 each project had its own copy of the
@@ -77,7 +77,7 @@ async function writeNow(): Promise<void> {
   if (lastPersisted === serialised) return;
   lastPersisted = serialised;
   try {
-    await api('/dashboard/global-config', { method: 'PATCH', body: payload });
+    await api('/global-config', { method: 'PATCH', body: payload });
   } catch {
     // Best-effort. The change is still in memory; next toggle will
     // schedule another write attempt.
@@ -87,17 +87,26 @@ async function writeNow(): Promise<void> {
 /**
  * Initialise the persistence layer: fetch the global dashboard config to
  * seed in-memory state, then subscribe to subsequent changes to write
- * them back. Idempotent — subsequent calls re-fetch but skip the
- * subscription wiring.
+ * them back.
+ *
+ * **HS-8293** — idempotent in the strict sense: once the subscription
+ * is wired the function bails immediately and does NOT re-fetch /
+ * re-hydrate. Pre-fix, `refreshProjectTabs` (called on every poll
+ * cycle) re-ran this function and the hydrate clobbered in-memory
+ * toggles the user had just made, which then short-circuited the
+ * pending debounced PATCH because `lastPersisted` already matched the
+ * post-hydrate state. Initial state belongs to whichever caller wins
+ * the race; subsequent callers must not stomp on live in-memory edits.
  */
 export async function initPersistedHiddenTerminals(): Promise<void> {
+  if (subscriptionUnsub !== null) return;
   try {
     const cfg = await api<{
       dashboard?: {
         visibilityGroupings?: unknown;
         activeVisibilityGroupingId?: unknown;
       };
-    }>('/dashboard/global-config');
+    }>('/global-config');
     const dashboard = cfg.dashboard ?? {};
     const state = parsePersistedState(dashboard.visibilityGroupings, dashboard.activeVisibilityGroupingId);
     hydratePersistedGlobalState(state);
@@ -114,11 +123,9 @@ export async function initPersistedHiddenTerminals(): Promise<void> {
     // Network / older server — leave the in-memory state alone.
   }
 
-  if (subscriptionUnsub === null) {
-    subscriptionUnsub = subscribeToHiddenChanges(() => {
-      scheduleWrite();
-    });
-  }
+  subscriptionUnsub = subscribeToHiddenChanges(() => {
+    scheduleWrite();
+  });
 }
 
 /** Test-only — flush the pending debounced write synchronously. */
