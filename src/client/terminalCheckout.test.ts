@@ -14,6 +14,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  _inspectServerBusyForTesting,
+  _resetServerBusyChipForTesting,
+} from './serverBusyChip.js';
+import {
   _getEntryForTesting,
   _inspectStackForTesting,
   _resetForTesting,
@@ -25,10 +29,12 @@ import {
 beforeEach(() => {
   document.body.innerHTML = '';
   _resetForTesting();
+  _resetServerBusyChipForTesting();
 });
 
 afterEach(() => {
   _resetForTesting();
+  _resetServerBusyChipForTesting();
   document.body.innerHTML = '';
 });
 
@@ -679,5 +685,264 @@ describe('applyHistoryReplay — restores consumer dims after replay (HS-8064)',
     expect(_inspectStackForTesting()[0].lastAppliedRows).toBe(40);
 
     h.release();
+  });
+});
+
+/**
+ * HS-8287 — `attachWebSocketToEntry` reuses the same `entry.term` on a
+ * WebSocket reconnect (network blip, suspend, etc.). Pre-fix, the server's
+ * history-frame replay was just `term.write(bytes)` against a term still
+ * carrying its pre-disconnect content — the bytes appended instead of
+ * replacing, doubling the visible scrollback. Fix calls `term.reset()` at
+ * the top of `applyHistoryReplay` so the replay is authoritative.
+ */
+describe('applyHistoryReplay — clears buffer before replay (HS-8287)', () => {
+  it('resets the term so a reconnect replay does not double existing content', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+
+    const entry = _getEntryForTesting('s', 't');
+    expect(entry).not.toBeNull();
+
+    // Simulate the pre-disconnect state: PTY has emitted some content
+    // and the term still holds it on-screen.
+    h.term.write('alpha\r\nbeta\r\ngamma\r\n');
+
+    const resetSpy = vi.spyOn(h.term, 'reset');
+    applyHistoryReplay(entry!, { bytes: btoa('replay-bytes'), cols: 80, rows: 24 });
+
+    // Reset must have fired exactly once before the bytes were written.
+    expect(resetSpy).toHaveBeenCalledTimes(1);
+
+    h.release();
+  });
+
+  it('reset runs BEFORE the capture-time resize so HS-8064 reflow lands on a clean buffer', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    h.resize(120, 40);
+
+    const order: string[] = [];
+    const entry = _getEntryForTesting('s', 't');
+    expect(entry).not.toBeNull();
+    vi.spyOn(h.term, 'reset').mockImplementation(() => { order.push('reset'); });
+    vi.spyOn(h.term, 'resize').mockImplementation(() => { order.push('resize'); });
+    vi.spyOn(h.term, 'write').mockImplementation(() => { order.push('write'); });
+
+    applyHistoryReplay(entry!, { bytes: btoa(' '), cols: 60, rows: 20 });
+
+    // reset → capture-time resize → bytes write → snap-back resize
+    expect(order[0]).toBe('reset');
+    expect(order[1]).toBe('resize');
+    expect(order[2]).toBe('write');
+
+    h.release();
+  });
+
+  it('still no-ops on malformed history (missing bytes) — no reset, no resize', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    h.resize(120, 40);
+
+    const resetSpy = vi.spyOn(h.term, 'reset');
+    const resizeSpy = vi.spyOn(h.term, 'resize');
+    const entry = _getEntryForTesting('s', 't');
+    applyHistoryReplay(entry!, { cols: 80, rows: 24 } as { bytes?: string; cols?: number; rows?: number });
+    expect(resetSpy).not.toHaveBeenCalled();
+    expect(resizeSpy).not.toHaveBeenCalled();
+
+    h.release();
+  });
+});
+
+/**
+ * HS-8285 — when a consumer's `mountInto` is detached from the document
+ * (e.g. a popup whose DOM was torn down by an outer error path, a tile
+ * whose section was re-rendered without flushing the per-tile dispose,
+ * a project tab reorder that rebuilt the strip without releasing every
+ * stale handle), the next legitimate consumer must NOT see the stale
+ * handle as the top of the stack — otherwise the placeholder pins onto
+ * the visible surface and the user reads "Terminal in use elsewhere"
+ * with nothing actually using it. The fix prunes detached-mountInto
+ * handles before evaluating bump-down + before reparenting on release.
+ */
+describe('detached-mountInto pruning (HS-8285)', () => {
+  it('checkout with a detached previous top does NOT write a placeholder onto the new mountInto', () => {
+    const detached = document.createElement('div');
+    // detached: never appended to document.body
+    const stale = checkout({
+      projectSecret: 's',
+      terminalId: 't',
+      cols: 80,
+      rows: 24,
+      mountInto: detached,
+    });
+    expect(stale.isTopOfStack()).toBe(true);
+
+    // Now a fresh consumer mounts. The stale handle's mountInto is
+    // detached → pruned out. The new consumer is the only top and sees
+    // the live xterm (NO placeholder).
+    const m = makeMount('m1');
+    const fresh = checkout({
+      projectSecret: 's',
+      terminalId: 't',
+      cols: 80,
+      rows: 24,
+      mountInto: m,
+    });
+    expect(fresh.isTopOfStack()).toBe(true);
+    expect(stale.isTopOfStack()).toBe(false);
+    // Live xterm element is in the fresh mount, not in the detached node.
+    expect(fresh.term.element?.parentElement).toBe(m);
+    // Fresh mount carries the xterm DOM, not the placeholder text.
+    expect(m.querySelector('.terminal-checkout-placeholder')).toBeNull();
+
+    fresh.release();
+    // stale.release() is a noop — the prune already marked it released.
+    stale.release();
+  });
+
+  it('release-the-top with a detached underlying handle reparents to the next CONNECTED handle', () => {
+    const m1 = makeMount('m1');
+    const h1 = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m1 });
+
+    // Second consumer's container is in the DOM at checkout time …
+    const m2 = makeMount('m2');
+    const h2 = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m2 });
+
+    // … but then gets removed without h2.release() running (the bug
+    // class HS-8285 protects against).
+    m2.remove();
+
+    // m1 mounts a new top. It should NOT see h2 as the previous top
+    // (h2's mountInto is detached). m1 was already in the stack at
+    // index 0; checkout for the same handle isn't typical, so we
+    // simulate the next legitimate-consumer path with a fresh mount.
+    const m3 = makeMount('m3');
+    const h3 = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m3 });
+
+    // h2 should be pruned; h1 should be bumped down (placeholder), h3 is top.
+    expect(h3.isTopOfStack()).toBe(true);
+    expect(h1.isTopOfStack()).toBe(false);
+    // m1 (the still-attached pre-existing consumer) should now show the
+    // placeholder, NOT m2 (which is detached anyway).
+    expect(m1.querySelector('.terminal-checkout-placeholder')).not.toBeNull();
+    // h3's mount carries the live xterm.
+    expect(h3.term.element?.parentElement).toBe(m3);
+
+    h3.release();
+    // After h3 release, the live xterm reparents to h1 (the only
+    // remaining connected consumer). h2 was pruned earlier.
+    expect(h1.term.element?.parentElement).toBe(m1);
+    h1.release();
+    h2.release();
+  });
+
+  it('release with ONLY detached handles below disposes the entry', () => {
+    const detached1 = document.createElement('div');
+    const stale1 = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: detached1 });
+
+    const m1 = makeMount('m1');
+    const h1 = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m1 });
+    // stale1 was pruned during checkout for h1. Releasing h1 leaves no
+    // consumers → entry disposes + map cleared.
+    h1.release();
+    expect(entryCount()).toBe(0);
+    stale1.release();
+  });
+});
+
+/**
+ * HS-8286 — per-pane / per-tile stall chip removed; the per-entry watcher
+ * inside `createEntry` now feeds the global server-slow banner via
+ * `trackPersistentSlowEvent` instead. When a terminal types past the
+ * 1.5 s no-echo threshold the global banner shows; when echo returns it
+ * hides. Disposal releases the token + the timer.
+ */
+describe('per-entry global stall watcher (HS-8286)', () => {
+  function mountBanner(): HTMLElement {
+    const el = document.createElement('div');
+    el.id = 'server-slow-banner';
+    el.className = 'server-slow-banner';
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  it('opens a global slow-event token while the entry is stalled and releases on echo', () => {
+    mountBanner();
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 't');
+    expect(entry).not.toBeNull();
+
+    // Simulate a keystroke 2 s ago with no echo since — past the 1.5 s
+    // stall threshold. The watcher fires on the next 250 ms tick OR on
+    // the next subscriber notification, both of which we simulate by
+    // calling the subscribers directly.
+    entry!.lastTypeTs = Date.now() - 2000;
+    entry!.lastEchoTs = 0;
+    for (const sub of entry!.stallSubscribers) sub();
+
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(1);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+
+    // Echo arrives. Subscriber re-evaluates → token released.
+    entry!.lastEchoTs = Date.now();
+    for (const sub of entry!.stallSubscribers) sub();
+
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+
+    h.release();
+  });
+
+  it('releases the token on entry dispose so a stalled-then-closed terminal does not pin the banner', () => {
+    mountBanner();
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 't');
+
+    entry!.lastTypeTs = Date.now() - 2000;
+    entry!.lastEchoTs = 0;
+    for (const sub of entry!.stallSubscribers) sub();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(1);
+
+    // Last consumer releases → entry disposes → token released.
+    h.release();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
+    expect(entryCount()).toBe(0);
+  });
+
+  it('two entries each track independently — banner stays up while either is stalled', () => {
+    mountBanner();
+    const m1 = makeMount('m1');
+    const m2 = makeMount('m2');
+    const h1 = checkout({ projectSecret: 's', terminalId: 't1', cols: 80, rows: 24, mountInto: m1 });
+    const h2 = checkout({ projectSecret: 's', terminalId: 't2', cols: 80, rows: 24, mountInto: m2 });
+    const e1 = _getEntryForTesting('s', 't1')!;
+    const e2 = _getEntryForTesting('s', 't2')!;
+
+    e1.lastTypeTs = Date.now() - 2000;
+    for (const sub of e1.stallSubscribers) sub();
+    e2.lastTypeTs = Date.now() - 2000;
+    for (const sub of e2.stallSubscribers) sub();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(2);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+
+    // Only e1 unstalls — banner stays up.
+    e1.lastEchoTs = Date.now();
+    for (const sub of e1.stallSubscribers) sub();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(1);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+
+    // Now e2 — banner clears.
+    e2.lastEchoTs = Date.now();
+    for (const sub of e2.stallSubscribers) sub();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+
+    h1.release();
+    h2.release();
   });
 });

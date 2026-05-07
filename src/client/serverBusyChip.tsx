@@ -130,6 +130,32 @@ export function trackServerRequest(url: string): () => void {
   };
 }
 
+/**
+ * HS-8286 — register an open-ended "the server is responding slowly"
+ * signal that does NOT correspond to a single HTTP request. Used by the
+ * terminal stall detection (`terminalCheckout.tsx`) so when a PTY stops
+ * echoing keystrokes, the same global banner surfaces — pre-fix the per-
+ * terminal `.terminal-stall-indicator` chip painted on the tile / drawer
+ * header instead, which the user found confusing because it suggested
+ * something was wrong with that ONE terminal rather than the server.
+ *
+ * The token is registered with a synthetic `startTs` 1 ms past the
+ * threshold so the banner shows immediately — the caller has already
+ * applied its own threshold (e.g. terminal stall = 1.5 s of no echo).
+ * Release the token when the slowness resolves.
+ */
+export function trackPersistentSlowEvent(): () => void {
+  const req: InFlightRequest = { startTs: Date.now() - SERVER_BUSY_THRESHOLD_MS - 1 };
+  inFlight.add(req);
+  startEvaluateTimer();
+  evaluate();
+  return () => {
+    inFlight.delete(req);
+    if (inFlight.size === 0) stopEvaluateTimerIfIdle();
+    else evaluate();
+  };
+}
+
 /** **TEST ONLY** — reset module-level state. Mirrors the convention in
  *  the other client modules (`_resetForTesting`). */
 export function _resetServerBusyChipForTesting(): void {

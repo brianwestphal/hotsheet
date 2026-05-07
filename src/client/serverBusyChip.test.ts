@@ -10,6 +10,7 @@ import {
   isLongPollUrl,
   SERVER_BUSY_THRESHOLD_MS,
   shouldShowServerBusyChip,
+  trackPersistentSlowEvent,
   trackServerRequest,
 } from './serverBusyChip.js';
 
@@ -128,5 +129,57 @@ describe('server-slow banner (HS-8226)', () => {
     const banner = mountBanner();
     banner.style.display = '';
     expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+  });
+});
+
+describe('trackPersistentSlowEvent (HS-8286)', () => {
+  /** HS-8286 — non-HTTP code paths (specifically: per-terminal stall in
+   *  `terminalCheckout.tsx`) feed the global banner via this helper.
+   *  The token registers a synthetic in-flight item with `startTs`
+   *  already past the threshold, so the banner shows immediately
+   *  without waiting another `SERVER_BUSY_THRESHOLD_MS` for the
+   *  threshold to cross. The caller has already applied its own
+   *  threshold (e.g. terminal stall = 1.5 s of no echo). */
+  function mountBanner(): HTMLElement {
+    const el = document.createElement('div');
+    el.id = 'server-slow-banner';
+    el.className = 'server-slow-banner';
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  afterEach(() => {
+    document.getElementById('server-slow-banner')?.remove();
+  });
+
+  it('shows the banner immediately and hides on release', () => {
+    mountBanner();
+    const release = trackPersistentSlowEvent();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(1);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+    release();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+  });
+
+  it('multiple persistent events stack — banner stays up until all are released', () => {
+    mountBanner();
+    const a = trackPersistentSlowEvent();
+    const b = trackPersistentSlowEvent();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(2);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+    a();
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+    b();
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+  });
+
+  it('release is idempotent — calling twice does not underflow the in-flight set', () => {
+    mountBanner();
+    const release = trackPersistentSlowEvent();
+    release();
+    release();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
   });
 });

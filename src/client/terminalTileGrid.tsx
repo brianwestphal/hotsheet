@@ -6,14 +6,13 @@ import { apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
 import { type NavRect, pickGridNeighbourIndex } from './gridNavGeometry.js';
 import { openExternalUrl } from './tauriIntegration.js';
-import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
 import {
   applyAppearanceToTerm,
   getProjectDefault,
   getSessionOverride,
   resolveAppearance,
 } from './terminalAppearance.js';
-import { checkout,type CheckoutHandle, peekStallTimestamps, subscribeStallState } from './terminalCheckout.js';
+import { checkout,type CheckoutHandle } from './terminalCheckout.js';
 import {
   computeTileScale,
   DASHBOARD_FALLBACK_COLS,
@@ -393,14 +392,9 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
             ? <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}><span className={`${cssPrefix}-tile-project-name`}>{badge.name}</span>{' › '}</span>
             : null}
           <span className={`${cssPrefix}-tile-name`}>{entry.label}</span>
-          {/* HS-8225 — per-tile stall chip; shares the drawer pane's
-              `.terminal-stall-indicator` class (HS-8175) so the SCSS pulse
-              + amber palette is reused. Toggled by the stall-state
-              subscription wired in mountTileViaCheckout. */}
-          <span className="terminal-stall-indicator" title="Server is slow to echo — your keystrokes were sent but the response hasn't returned yet" style="display:none">
-            <span className="terminal-stall-dot"></span>
-            <span className="terminal-stall-label">Server slow</span>
-          </span>
+          {/* HS-8286 — per-tile "Server slow" chip removed. Stall
+              detection feeds the global server-slow banner via the per-
+              entry watcher in `terminalCheckout.tsx::createEntry`. */}
         </div>
         {cwdLabel === ''
           ? null
@@ -756,32 +750,10 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     });
     tile.termHandlerDisposers.push(renderDispose);
 
-    // HS-8225 — wire the per-tile stall chip. Subscribes to type / echo
-    // updates from the checkout entry; ticks every 250 ms so the
-    // `now - lastTypeTs > 1500ms` boundary crosses without an event firing.
-    // Mirrors `terminal.tsx::attachStallIndicator` for the drawer pane.
-    const stallChip = tile.labelEl.querySelector<HTMLElement>('.terminal-stall-indicator');
-    if (stallChip !== null) {
-      const evaluateStall = (): void => {
-        const ts = peekStallTimestamps(tile.entry.secret, tile.entry.id);
-        if (ts === null) {
-          stallChip.style.display = 'none';
-          return;
-        }
-        const show = shouldShowStallIndicator(ts.lastTypeTs, ts.lastEchoTs, Date.now());
-        stallChip.style.display = show ? '' : 'none';
-      };
-      const stallUnsubscribe = subscribeStallState(tile.entry.secret, tile.entry.id, evaluateStall);
-      const stallTickHandle = window.setInterval(evaluateStall, 250);
-      tile.termHandlerDisposers.push({
-        dispose() {
-          stallUnsubscribe();
-          window.clearInterval(stallTickHandle);
-          stallChip.style.display = 'none';
-        },
-      });
-      evaluateStall();
-    }
+    // HS-8286 — per-tile stall chip wiring deleted. Stall detection now
+    // feeds the global server-slow banner via the per-entry watcher in
+    // `terminalCheckout.tsx::createEntry` so a slow server surfaces ONCE
+    // (banner) instead of N times (one chip per visible tile).
   }
 
   /** HS-8051 follow-up #2 — runs on every `term.onRender` for a tile.
@@ -919,7 +891,29 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     const naturalWidth = screen?.offsetWidth ?? 0;
     const naturalHeight = screen?.offsetHeight ?? 0;
     const scale = computeTileScale(tileWidth, tileHeight, naturalWidth, naturalHeight);
-    if (scale === null) return;
+    if (scale === null) {
+      // HS-8288 — when there's no live `.xterm-screen` in this xtermRoot
+      // (the consumer is currently bumped down — `mountInto` holds the
+      // `.terminal-checkout-placeholder` div instead of the live xterm)
+      // we still need to give the xtermRoot a definite box. Pre-fix the
+      // function bailed here AFTER clearing every inline size style, so
+      // xtermRoot rendered as 0×0 — and the placeholder's CSS
+      // `width: 100% / height: 100%` collapsed against the 0-height
+      // parent, leaving the user with a blank tile (or a totally
+      // missing tile in the layout, the "0x0 px" symptom). Snap to the
+      // tile slot dims so the placeholder fills the tile box just like
+      // the live xterm would. `position: relative` is required so the
+      // placeholder (which has its own `width: 100% / height: 100%`)
+      // resolves against this box. Tile dims of 0 (slot collapsed
+      // mid-relayout) still bail — let the next applySizing tick paint
+      // a real box.
+      if (tileWidth > 0 && tileHeight > 0) {
+        xtermRoot.style.position = 'relative';
+        xtermRoot.style.width = `${tileWidth}px`;
+        xtermRoot.style.height = `${tileHeight}px`;
+      }
+      return;
+    }
 
     xtermRoot.style.position = 'absolute';
     xtermRoot.style.left = `${scale.left}px`;

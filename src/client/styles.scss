@@ -1528,35 +1528,8 @@ input, select, textarea {
   white-space: nowrap;
   text-align: center;
 
-  // HS-8225 — the per-tile stall chip rides in the label area. Compact
-  // override of the drawer-pane chip's default styling so it stays
-  // proportional inside the small tile label band.
-  .terminal-stall-indicator {
-    font-size: 10px;
-    padding: 1px 6px;
-    margin-left: 6px;
-    vertical-align: middle;
-  }
-
-  .terminal-stall-dot {
-    width: 6px;
-    height: 6px;
-  }
-}
-
-// HS-8225 — same compact override for the §36 drawer-grid tile labels.
-.drawer-terminal-grid-tile-label {
-  .terminal-stall-indicator {
-    font-size: 10px;
-    padding: 1px 6px;
-    margin-left: 6px;
-    vertical-align: middle;
-  }
-
-  .terminal-stall-dot {
-    width: 6px;
-    height: 6px;
-  }
+  // HS-8286 — per-tile stall chip styles removed. Stall now feeds the
+  // global server-slow banner.
 }
 
 // HS-7278 — tile CWD badge rendered below the terminal label when the server
@@ -7171,32 +7144,10 @@ body.terminal-dashboard-active {
   }
 }
 
-// HS-8175 — per-terminal stall indicator. Shown when the user typed a
-// keystroke and the PTY hasn't echoed it back within
-// `STALL_INDICATOR_THRESHOLD_MS` (1500 ms). Toggled by the subscription
-// in `terminal.tsx::attachStallIndicator`. The pulsing dot makes the chip
-// readable without a strong colour cue.
-.terminal-stall-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.45);
-  color: rgb(180, 100, 0);
-  font-size: 11px;
-  user-select: none;
-  cursor: default;
-}
-
-.terminal-stall-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgb(245, 158, 11);
-  animation: terminal-stall-pulse 1.4s ease-in-out infinite;
-}
+// HS-8286 — per-terminal `.terminal-stall-indicator` / `.terminal-stall-dot`
+// styles removed. Stall detection now feeds the global server-slow
+// banner (`.server-slow-banner` below). The `terminal-stall-pulse`
+// keyframe is retained because the global banner's dot still uses it.
 
 @keyframes terminal-stall-pulse {
   0%, 100% { opacity: 1; }

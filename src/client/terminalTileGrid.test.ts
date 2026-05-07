@@ -297,6 +297,78 @@ describe('terminalTileGrid — preview bg cascade (HS-8059)', () => {
   });
 });
 
+/**
+ * HS-8288 — when a tile is bumped down (a competing checkout consumer
+ * holds the live xterm — e.g. dedicated view, quit-confirm preview, the
+ * permission popup), the placeholder div lives inside the tile's
+ * `xtermRoot`. Pre-fix `applyTileScale` cleared every inline size style
+ * at the top, then bailed early because it could not find a
+ * `.xterm-screen` (none lives in a placeholder) — leaving the xtermRoot
+ * with no inline width / height. The placeholder's own width / height
+ * 100% then collapsed against the 0-height parent and the user saw a
+ * blank tile (or, in extreme cases, a totally missing tile in the layout
+ * flow — the "0x0 px" symptom). Fix: when no `.xterm-screen` is
+ * present, snap xtermRoot to the tile slot dims so the placeholder fills
+ * the box just like a live xterm would.
+ */
+describe('terminalTileGrid — placeholder tiles keep their box (HS-8288)', () => {
+  it('a tile that gets bumped down keeps non-zero xtermRoot dimensions', () => {
+    // happy-dom doesn't run layout from inline styles, so clientWidth
+    // returns 0 by default — applySizing's `rootWidth <= 0` early-bail
+    // would short-circuit the path we're trying to exercise. Stub
+    // clientWidth on the container so applySizing can do its work.
+    const container = makeContainer();
+    Object.defineProperty(container, 'clientWidth', { value: 800, configurable: true });
+
+    const grid = mountTileGrid({
+      container,
+      cssPrefix: 'terminal-dashboard',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getColumnCount: () => 4,
+    });
+    grid.rebuild([makeEntry('s', 't1')]);
+    const tile = document.querySelector<HTMLElement>('.terminal-dashboard-tile');
+    const xtermRoot = tile!.querySelector<HTMLElement>('.terminal-dashboard-tile-xterm');
+    expect(xtermRoot).not.toBeNull();
+
+    // Bump the tile down — competing consumer becomes top of stack, the
+    // tile's mountInto (= xtermRoot) gets `replaceChildren(placeholder)`
+    // via writePlaceholderInto, and the live xterm element reparents
+    // out of xtermRoot into the competing consumer's mount.
+    const competingMount = document.createElement('div');
+    competingMount.style.width = '500px';
+    competingMount.style.height = '300px';
+    document.body.appendChild(competingMount);
+    const competing = checkout({
+      projectSecret: 's',
+      terminalId: 't1',
+      cols: 80,
+      rows: 24,
+      mountInto: competingMount,
+    });
+
+    // Re-run sizing (window resize / slider drag — the public surface
+    // routes through this method). Pre-fix this collapsed xtermRoot to
+    // 0x0 because applyTileScale bailed after clearing every inline
+    // style.
+    grid.applySizing();
+
+    // The xtermRoot must have a non-empty width / height inline style so
+    // the placeholder fills the tile box.
+    const w = xtermRoot!.style.width;
+    const h = xtermRoot!.style.height;
+    expect(w).not.toBe('');
+    expect(h).not.toBe('');
+    // And the parsed values must be > 0.
+    expect(parseFloat(w)).toBeGreaterThan(0);
+    expect(parseFloat(h)).toBeGreaterThan(0);
+
+    competing.release();
+    grid.dispose();
+  });
+});
+
 // HS-8157 — clicking a magnified (centered) tile should NOT uncenter it.
 // The user dismisses the magnified view by clicking the surrounding
 // backdrop. Pre-fix any click landing on the centered tile (text

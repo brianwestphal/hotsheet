@@ -47,6 +47,8 @@ import { Terminal as XTerm } from '@xterm/xterm';
 
 import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
+import { trackPersistentSlowEvent } from './serverBusyChip.js';
+import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
 
 /** Anchor element where the live xterm parks while no consumer is mounting
  *  it. xterm.js requires `term.open(container)` once at construction; we
@@ -210,6 +212,15 @@ interface StackEntry {
   /** HS-8175 — subscribers fire on every type / echo update so consumers
    *  (drawer pane, dashboard tile) can re-evaluate their stall chip. */
   stallSubscribers: Set<() => void>;
+  /** HS-8286 — release token returned by `trackPersistentSlowEvent` while
+   *  this entry is currently stalled. `null` when not stalled. The
+   *  per-entry stall watcher (set up in `createEntry`) flips this on/off
+   *  so the global server-slow banner surfaces a stalled terminal. */
+  globalStallToken: (() => void) | null;
+  /** HS-8286 — handle returned by `setInterval` for the per-entry stall
+   *  watcher. Cleared on `disposeEntry` so the timer doesn't outlive the
+   *  entry. */
+  globalStallTickHandle: number | null;
 }
 
 const entries = new Map<string, StackEntry>();
@@ -269,6 +280,8 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
     lastTypeTs: 0,
     lastEchoTs: 0,
     stallSubscribers: new Set(),
+    globalStallToken: null,
+    globalStallTickHandle: null,
   };
 
   // HS-8048 — wire `term.onData` ONCE at term construction. The handler
@@ -291,6 +304,32 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
   });
 
   attachWebSocketToEntry(entry);
+
+  // HS-8286 — wire the per-entry global-banner watcher. When this terminal
+  // crosses the typed-but-no-echo threshold (`shouldShowStallIndicator`),
+  // open a `trackPersistentSlowEvent` token so the global server-slow
+  // banner surfaces. Release the token when echo returns. Pre-fix the
+  // drawer header / dashboard tile painted a per-pane / per-tile chip
+  // instead — but the user reported that as confusing because the chip
+  // "looked like a single terminal had a problem" when the underlying
+  // cause is server-side (event-loop block, slow PTY echo, etc.). Routing
+  // through the global banner reuses the §HS-8226 banner UX and matches
+  // the user's mental model: "server slow" is global, not per-terminal.
+  const evaluateGlobalStall = (): void => {
+    const stalled = shouldShowStallIndicator(entry.lastTypeTs, entry.lastEchoTs, Date.now());
+    if (stalled && entry.globalStallToken === null) {
+      entry.globalStallToken = trackPersistentSlowEvent();
+    } else if (!stalled && entry.globalStallToken !== null) {
+      try { entry.globalStallToken(); } catch { /* swallow */ }
+      entry.globalStallToken = null;
+    }
+  };
+  entry.stallSubscribers.add(evaluateGlobalStall);
+  // 250 ms tick so the stall threshold crosses without a fresh keystroke /
+  // echo event firing — same cadence the per-pane chip used pre-fix.
+  if (typeof window !== 'undefined' && typeof window.setInterval === 'function') {
+    entry.globalStallTickHandle = window.setInterval(evaluateGlobalStall, 250);
+  }
 
   return entry;
 }
@@ -449,6 +488,14 @@ export function applyHistoryReplay(
   try {
     const targetCols = entry.lastAppliedCols;
     const targetRows = entry.lastAppliedRows;
+    // HS-8287 — clear buffer + scrollback + cursor + alt-screen state before
+    // replaying. The server's history frame carries the entire ring buffer,
+    // so writing it onto a term that already has the pre-disconnect content
+    // would APPEND, doubling the visible scrollback after a WS reconnect.
+    // `reset()` makes the replay authoritative: term ends up showing only
+    // what the server says was on screen. Must run BEFORE the capture-time
+    // resize so HS-8064's reflow logic operates on a clean buffer.
+    try { entry.term.reset(); } catch { /* term disposed */ }
     if (typeof msg.cols === 'number' && typeof msg.rows === 'number'
         && msg.cols > 0 && msg.rows > 0) {
       try { entry.term.resize(msg.cols, msg.rows); } catch { /* term disposed */ }
@@ -523,6 +570,37 @@ function reparentXtermInto(entry: StackEntry, mountInto: HTMLElement): void {
   mountInto.replaceChildren(el);
 }
 
+/**
+ * HS-8285 — release any handles in `entry.stack` whose `mountInto` element
+ * is no longer attached to the document. Such handles are stale — their
+ * consumer's container was torn down without `release()` running (e.g. a
+ * popup whose DOM was removed by an outer error path, a dashboard tile
+ * whose section was re-rendered before its dispose hook fired, a project
+ * tab reorder that rebuilt the tab strip without flushing every per-tab
+ * tear-down). Pre-fix these stale handles stayed at the top of the stack,
+ * so the next legitimate consumer's checkout fired the
+ * `writePlaceholderInto(previousTop.mountInto)` branch (writing a
+ * placeholder into a detached node nobody sees) AND the new consumer's
+ * own mountInto remained detached from the live xterm because the live
+ * xterm was reparenting into the SAME stale top's mountInto on every
+ * release attempt — producing the "Terminal in use elsewhere" symptom on
+ * the surface the user actually has on screen.
+ *
+ * Splicing detached handles out of the stack lets `checkout()` see the
+ * stack as empty (or the previous LIVE top) and proceed correctly.
+ * `_released` is flipped first so a late `release()` from the stale
+ * handle's owner is a no-op.
+ */
+function pruneDetachedHandles(entry: StackEntry): void {
+  for (let i = entry.stack.length - 1; i >= 0; i--) {
+    const handle = entry.stack[i];
+    if (!handle._options.mountInto.isConnected) {
+      handle._released = true;
+      entry.stack.splice(i, 1);
+    }
+  }
+}
+
 /** Tear down an entry that has no remaining consumers. */
 function disposeEntry(entry: StackEntry): void {
   // HS-8044 — flag intentional close BEFORE `entry.ws.close()` fires so
@@ -531,6 +609,17 @@ function disposeEntry(entry: StackEntry): void {
   // empty path would race against the auto-reconnect and re-spawn a
   // socket we just intentionally tore down.
   entry.intentionallyClosing = true;
+  // HS-8286 — release the global-banner token + clear the watcher's tick
+  // before tearing down the term. Otherwise an entry whose stall is
+  // currently active would leave the banner stuck on after dispose.
+  if (entry.globalStallToken !== null) {
+    try { entry.globalStallToken(); } catch { /* swallow */ }
+    entry.globalStallToken = null;
+  }
+  if (entry.globalStallTickHandle !== null) {
+    try { window.clearInterval(entry.globalStallTickHandle); } catch { /* swallow */ }
+    entry.globalStallTickHandle = null;
+  }
   // Park the xterm element back in the sink before dispose so the user's
   // `mountInto` (which the consumer is about to release) doesn't end up
   // with an orphaned xterm node. The sink is hidden + offscreen, so the
@@ -572,10 +661,18 @@ export function checkout(opts: CheckoutOptions): CheckoutHandle {
     // frame).
     entry = createEntry(opts.projectSecret, opts.terminalId, opts.cols, opts.rows, opts.noSpawn === true);
     entries.set(key, entry);
-  } else if (entry.stack.length > 0) {
-    const previousTop = entry.stack[entry.stack.length - 1];
-    writePlaceholderInto(previousTop._options.mountInto);
-    try { previousTop._options.onBumpedDown?.(); } catch { /* consumer error doesn't break the swap */ }
+  } else {
+    // HS-8285 — drop any stale handles whose mountInto is detached
+    // before evaluating "should we bump down the previous top?". A
+    // popup / tile / pane whose container was destroyed without
+    // release() running would otherwise pin the placeholder onto the
+    // surface the user is actually looking at.
+    pruneDetachedHandles(entry);
+    if (entry.stack.length > 0) {
+      const previousTop = entry.stack[entry.stack.length - 1];
+      writePlaceholderInto(previousTop._options.mountInto);
+      try { previousTop._options.onBumpedDown?.(); } catch { /* consumer error doesn't break the swap */ }
+    }
   }
 
   reparentXtermInto(entry, opts.mountInto);
@@ -613,6 +710,14 @@ function releaseInternal(handle: InternalCheckoutHandle): void {
   if (idx < 0) return;
   const wasTop = idx === entry.stack.length - 1;
   entry.stack.splice(idx, 1);
+
+  // HS-8285 — drop any stale handles whose mountInto is detached so the
+  // restore-on-release path lands on a consumer that actually has a
+  // visible container. Without this, releasing the live top while a
+  // detached handle sits at index 0 would reparent the xterm into a
+  // detached node, leaving every visible surface stuck on the
+  // placeholder.
+  pruneDetachedHandles(entry);
 
   if (entry.stack.length === 0) {
     // Last consumer — virtualization (§54.3.3) tears the entry down.
@@ -663,34 +768,11 @@ export function peekEntryDims(secret: string, terminalId: string): { cols: numbe
   return { cols: entry.term.cols, rows: entry.term.rows };
 }
 
-/**
- * HS-8175 — read the current `lastTypeTs` / `lastEchoTs` for an entry. Returns
- * null when no entry exists (consumers should hide their stall chip). Mostly
- * useful for the polling tick that drives the chip's CSS class — the chip
- * needs to RE-EVALUATE every ~250 ms because the threshold check is
- * `now - lastTypeTs > 1500` and `now` is constantly advancing.
- */
-export function peekStallTimestamps(secret: string, terminalId: string): { lastTypeTs: number; lastEchoTs: number } | null {
-  const entry = entries.get(entryKey(secret, terminalId));
-  if (entry === undefined) return null;
-  return { lastTypeTs: entry.lastTypeTs, lastEchoTs: entry.lastEchoTs };
-}
-
-/**
- * HS-8175 — subscribe to keystroke / echo timestamp updates. The handler
- * fires once per `term.onData` (keystroke send) and once per binary
- * `ws.message` (PTY echo) — those are the events that change whether the
- * stall threshold has been crossed. Consumers should ALSO tick on a timer
- * since the `now - lastTypeTs > threshold` boundary crosses without an
- * event firing. Returns an unsubscribe function. No-op when no entry
- * exists for `(secret, terminalId)` (returns a noop unsubscribe).
- */
-export function subscribeStallState(secret: string, terminalId: string, handler: () => void): () => void {
-  const entry = entries.get(entryKey(secret, terminalId));
-  if (entry === undefined) return () => { /* nothing to unsubscribe */ };
-  entry.stallSubscribers.add(handler);
-  return () => { entry.stallSubscribers.delete(handler); };
-}
+// HS-8286 — `peekStallTimestamps` / `subscribeStallState` exports
+// removed. Both were public helpers for the per-pane / per-tile stall
+// chip, which has been replaced by the global server-slow banner. The
+// per-entry `stallSubscribers` set survives because the in-module
+// `evaluateGlobalStall` watcher inside `createEntry` consumes it.
 
 function notifyStallSubscribers(entry: StackEntry): void {
   for (const handler of entry.stallSubscribers) {
@@ -774,6 +856,14 @@ export function _simulateNoSessionForTesting(secret: string, terminalId: string)
  *  into the next. Real consumers use `release()`. */
 export function _resetForTesting(): void {
   for (const entry of entries.values()) {
+    if (entry.globalStallToken !== null) {
+      try { entry.globalStallToken(); } catch { /* ignore */ }
+      entry.globalStallToken = null;
+    }
+    if (entry.globalStallTickHandle !== null) {
+      try { window.clearInterval(entry.globalStallTickHandle); } catch { /* ignore */ }
+      entry.globalStallTickHandle = null;
+    }
     try { entry.term.dispose(); } catch { /* ignore */ }
     if (entry.ws !== null) {
       try { entry.ws.close(); } catch { /* ignore */ }
