@@ -33,12 +33,19 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { NumberedMatch } from '../shared/terminalPrompt/parsers.js';
 // HS-8245 — type-only import for `vi.importActual<...>` below so the
 // `@typescript-eslint/consistent-type-imports` rule stays clean.
 import type * as BellPollModule from './bellPoll.js';
+// HS-8294 — type-only imports for the integration test at the bottom of
+// the file. Inline `import('...')` type annotations trip
+// `@typescript-eslint/consistent-type-imports`, so hoist them.
+import type { BellStateMap } from './bellPoll.js';
 import {
   _inspectStateForTesting,
+  _lastSeenPendingForTesting,
   _resetStateForTesting,
+  dismissChannelPermissionForSecret,
   dismissedRequestIds,
   dismissPermissionPopupForSecret,
   LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD,
@@ -1479,5 +1486,244 @@ describe('HS-8245 — AI-prompt suppression of §47', () => {
       });
       expect(document.querySelector('.permission-popup')).toBeNull();
     }
+  });
+});
+
+/**
+ * HS-8294 — when the user answers an AI-parser §52 prompt (e.g. clicks "1.
+ * Yes" on Claude's "Do you want to proceed?"), the channel server's MCP
+ * `permission_request` for the SAME Claude decision stays alive (Claude
+ * doesn't auto-cancel it within the 2-min `PERMISSION_TTL_MS`). Without
+ * the fix, the next channel-permission poll re-mounts §47 for the
+ * already-answered decision and the user sees a second popup. The fix:
+ *
+ *   1. `processPermissionPollResponse` records the per-secret pending
+ *      `request_id` into `lastSeenPendingBySecret` on every tick.
+ *   2. `bellPoll.tsx::onSend` (when an AI parser's numbered choice is
+ *      picked) calls `dismissChannelPermissionForSecret(secret)` which
+ *      adds the recorded request_id to `dismissedRequestIds` AND tears
+ *      down any currently-mounted §47 popup.
+ *
+ * These tests pin (a) the per-secret tracker is populated / cleared
+ * correctly, (b) `dismissChannelPermissionForSecret` adds to
+ * `dismissedRequestIds` AND tears down a mounted popup, (c) subsequent
+ * polls don't re-mount the dismissed request_id, AND (d) a fresh
+ * NEW request_id from the same project after the dismiss DOES surface
+ * (the dismiss is request-id-scoped, not project-scoped).
+ */
+describe('HS-8294 — dismissChannelPermissionForSecret', () => {
+  it('records the latest pending request_id per secret on each poll tick', () => {
+    expect(_lastSeenPendingForTesting().size).toBe(0);
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
+      v: 1,
+    });
+    expect(_lastSeenPendingForTesting().get('sec-a')).toBe('req-A');
+  });
+
+  it('overwrites the per-secret entry when a new request_id arrives for the same project', () => {
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
+      v: 1,
+    });
+    expect(_lastSeenPendingForTesting().get('sec-a')).toBe('req-A');
+    // First request gets responded — clears server-side. Then a second
+    // arrives. The tracker must reflect the LATEST.
+    respondedRequestIds.add('req-A');
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-B' }) },
+      v: 2,
+    });
+    expect(_lastSeenPendingForTesting().get('sec-a')).toBe('req-B');
+  });
+
+  it('drops the per-secret entry when the project reports null on a tick', () => {
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
+      v: 1,
+    });
+    expect(_lastSeenPendingForTesting().has('sec-a')).toBe(true);
+    processPermissionPollResponse({
+      permissions: { 'sec-a': null },
+      v: 2,
+    });
+    expect(_lastSeenPendingForTesting().has('sec-a')).toBe(false);
+  });
+
+  it('adds the recorded request_id to dismissedRequestIds + tears down the active popup', () => {
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
+      v: 1,
+    });
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-A');
+
+    dismissChannelPermissionForSecret('sec-a');
+    expect(dismissedRequestIds.has('req-A')).toBe(true);
+    expect(document.querySelector('.permission-popup')).toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
+  });
+
+  it('prevents subsequent polls from re-mounting the same request_id', () => {
+    // First poll mounts the popup.
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
+      v: 1,
+    });
+    // User answers via §52 — bellPoll.onSend calls our helper.
+    dismissChannelPermissionForSecret('sec-a');
+    expect(document.querySelector('.permission-popup')).toBeNull();
+
+    // Channel server still reports the same pending request (it doesn't
+    // know Claude proceeded via TUI). The poll must NOT re-mount because
+    // req-A is in dismissedRequestIds.
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
+      v: 2,
+    });
+    expect(document.querySelector('.permission-popup')).toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
+  });
+
+  it('does NOT suppress a NEW request_id from the same project after the dismiss', () => {
+    // Mount + dismiss req-A.
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
+      v: 1,
+    });
+    dismissChannelPermissionForSecret('sec-a');
+    // A genuinely new Claude decision arrives — different request_id.
+    // The dismiss is request-id-scoped, not project-scoped, so this MUST
+    // surface.
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-B' }) },
+      v: 2,
+    });
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-B');
+  });
+
+  it('is a no-op when no pending request was ever seen for the project', () => {
+    expect(_lastSeenPendingForTesting().has('sec-a')).toBe(false);
+    dismissChannelPermissionForSecret('sec-a');
+    // No throw, no DOM, no dismissedRequestIds entry.
+    expect(document.querySelector('.permission-popup')).toBeNull();
+    expect(dismissedRequestIds.size).toBe(0);
+  });
+
+  it('is scoped to the requested secret — other projects keep their popup', () => {
+    // Two pending permissions, in two different projects. Reset hasAi
+    // mock so neither is suppressed by §52.
+    hasAiPromptMock.mockReturnValue(false);
+    processPermissionPollResponse({
+      permissions: {
+        'sec-a': makePerm({ request_id: 'req-A' }),
+        'sec-b': makePerm({ request_id: 'req-B' }),
+      },
+      v: 1,
+    });
+    // Only one popup mounts at a time (active + queued). Identify the
+    // active and capture its req_id.
+    const activeBefore = _inspectStateForTesting().activePopupRequestId;
+    expect(activeBefore).not.toBeNull();
+    // Dismiss the OTHER secret. Active popup must survive.
+    const otherSecret = activeBefore === 'req-A' ? 'sec-b' : 'sec-a';
+    const otherReqId = activeBefore === 'req-A' ? 'req-B' : 'req-A';
+    dismissChannelPermissionForSecret(otherSecret);
+    expect(dismissedRequestIds.has(otherReqId)).toBe(true);
+    // Active popup is unchanged.
+    expect(_inspectStateForTesting().activePopupRequestId).toBe(activeBefore);
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+  });
+
+  it('clears the per-secret tracker on _resetStateForTesting', () => {
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm() },
+      v: 1,
+    });
+    expect(_lastSeenPendingForTesting().size).toBe(1);
+    _resetStateForTesting();
+    expect(_lastSeenPendingForTesting().size).toBe(0);
+  });
+});
+
+/**
+ * HS-8294 integration — end-to-end coverage of the positive case. The
+ * bellPoll-side test file mocks `./permissionOverlay.js`, but vitest's
+ * synchronous mock factory only intercepts ONE dynamic-import call site
+ * (`dispatchPendingPrompts`'s mount-time dismiss); the SECOND
+ * `import('./permissionOverlay.js')` from `openCrossProjectOverlay::onSend`
+ * resolves to the real module and bypasses the mock spy. Pinning the
+ * positive case there would yield false negatives. So we test it here
+ * from the un-mocked `permissionOverlay.test.ts` side: drive a real
+ * `processPermissionPollResponse` to populate `lastSeenPendingBySecret`,
+ * dispatch a real bellPoll §52 overlay, click the choice, and assert
+ * that `dismissedRequestIds` ends up with the right request_id. This
+ * exercises:
+ *
+ *   - `processPermissionPollResponse` populating `lastSeenPendingBySecret`,
+ *   - the real `bellPoll.tsx::openCrossProjectOverlay::onSend` firing
+ *     its dynamic import on AI-parser numbered choice,
+ *   - the real `dismissChannelPermissionForSecret` adding to
+ *     `dismissedRequestIds` AND tearing down the popup.
+ */
+describe('HS-8294 integration — bellPoll onSend → real dismissChannelPermissionForSecret', () => {
+  it('end-to-end: §52 click for an AI parser dismisses the §47 popup AND blocks re-mounting', async () => {
+    // Reset the bellPoll dispatcher's state so a stale activeOverlayKey
+    // from a prior test doesn't gate this dispatch.
+    const bellPoll = await import('./bellPoll.js');
+    bellPoll._resetDispatchStateForTesting();
+
+    // 1) Channel server reports a pending permission for sec-a — §47
+    //    mounts.
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
+      v: 1,
+    });
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-A');
+
+    // 2) Bell-state reports the same Claude decision as an in-terminal
+    //    prompt — §52 dispatches. The dispatcher's mount-time
+    //    `dismissPermissionPopupForSecret` tears down §47.
+    const numbered: NumberedMatch = {
+      parserId: 'claude-numbered',
+      shape: 'numbered',
+      question: 'Do you want to proceed?',
+      questionLines: ['Do you want to proceed?'],
+      signature: 'sig-A',
+      choices: [
+        { index: 0, label: 'Yes', highlighted: true },
+        { index: 1, label: 'No', highlighted: false },
+      ],
+    };
+    const state: BellStateMap = new Map([
+      ['sec-a', { anyTerminalPending: true, terminalIds: ['tA'], pendingPrompts: { tA: numbered } }],
+    ]);
+    bellPoll._dispatchPendingPromptsForTesting(state);
+    // Both surfaces co-exist briefly while the dispatcher's
+    // `dismissPermissionPopupForSecret` import resolves async; wait for
+    // §47 to come down.
+    await vi.waitFor(() => {
+      expect(document.querySelector('.permission-popup')).toBeNull();
+    }, { timeout: 200 });
+    expect(document.querySelector('.terminal-prompt-overlay')).not.toBeNull();
+
+    // 3) User picks "Yes" — §52 closes, AND the new HS-8294 wiring
+    //    fires `dismissChannelPermissionForSecret('sec-a')` so req-A
+    //    lands in `dismissedRequestIds`.
+    document.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice[data-choice-index="0"]')!.click();
+    await vi.waitFor(() => {
+      expect(dismissedRequestIds.has('req-A')).toBe(true);
+    }, { timeout: 200 });
+
+    // 4) Channel server STILL reports req-A pending (it doesn't know
+    //    Claude proceeded via TUI). The next poll must NOT re-mount §47.
+    processPermissionPollResponse({
+      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
+      v: 2,
+    });
+    expect(document.querySelector('.permission-popup')).toBeNull();
+    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
   });
 });

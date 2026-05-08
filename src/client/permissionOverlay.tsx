@@ -160,6 +160,30 @@ export const respondedRequestIds = new Set<string>();
 // polling will not re-show the popup until it disappears server-side (HS-6436).
 export const dismissedRequestIds = new Set<string>();
 
+/**
+ * HS-8294 — per-project map of the most recently observed pending channel-
+ * permission `request_id`, updated every `processPermissionPollResponse`
+ * tick. Read by `dismissChannelPermissionForSecret` so a §52 AI-prompt
+ * answer can mark the equivalent §47 request as dismissed without having
+ * to plumb the `request_id` through the bellPoll dispatcher.
+ *
+ * Pre-fix the user reported seeing TWO permission popups for one Claude
+ * decision (e.g. `mkdir -p /tmp/claude-permission-test` from
+ * /test-permission-write): §52 fires for the in-terminal prompt, the user
+ * picks Yes via TUI keystroke, Claude proceeds — but the channel server's
+ * MCP `permission_request` from the SAME decision was never explicitly
+ * answered (Claude doesn't propagate TUI answers back to the MCP server
+ * within the 2-min `PERMISSION_TTL_MS`), so the next channel-permission
+ * poll re-mounts §47 for the already-resolved decision.
+ *
+ * Recording the request_id per secret here lets `bellPoll.tsx`'s onSend
+ * path (when an AI parser numbered choice was picked) call
+ * `dismissChannelPermissionForSecret(secret)` which adds the latest
+ * pending request_id to `dismissedRequestIds` so subsequent polls don't
+ * re-mount it.
+ */
+const lastSeenPendingBySecret = new Map<string, string>();
+
 // Minimized popups — user clicked outside (or on the owning tab) without
 // responding. Indexed by request_id. The pulsating blue dot on the owning
 // project tab signals there is a waiting permission; clicking the tab
@@ -214,6 +238,40 @@ export function dismissPermissionPopupForSecret(secret: string): void {
   permissionState.activePopupRequestId = null;
   permissionState.activePopupOwnerSecret = null;
   permissionState.autoDismissMissCount = 0;
+}
+
+/**
+ * HS-8294 — when the user answers an AI-parser §52 in-terminal prompt
+ * (e.g. picks "1. Yes" on Claude's "Do you want to proceed?"), the same
+ * Claude decision's MCP `permission_request` stays alive on the channel
+ * server (Claude doesn't auto-cancel it within the 2-min
+ * `PERMISSION_TTL_MS`). Without this, the next channel-permission poll
+ * re-mounts §47 for the already-resolved decision and the user sees a
+ * second popup for the same Claude prompt — the exact symptom reported
+ * in HS-8294.
+ *
+ * "Mark dismissed" = add the latest seen pending request_id for `secret`
+ * to `dismissedRequestIds` so future `processPermissionPollResponse`
+ * iterations skip the mount, AND tear down any currently-mounted §47
+ * popup for the same project (idempotent — no-op when no popup is up).
+ *
+ * Idempotent for the no-pending case (returns early when
+ * `lastSeenPendingBySecret` has no entry for `secret`). The MCP request
+ * itself stays alive on the channel server until either Claude responds
+ * via MCP (typical for ALLOW paths where claude propagates the TUI
+ * answer back) or the 2-min TTL expires — we just stop showing it.
+ */
+export function dismissChannelPermissionForSecret(secret: string): void {
+  const requestId = lastSeenPendingBySecret.get(secret);
+  if (requestId !== undefined) {
+    dismissedRequestIds.add(requestId);
+  }
+  // Tear down the popup if it happens to be currently mounted for this
+  // project (race where §52 dispatched after §47 mounted and the user
+  // answered §52 immediately — at this point the dispatcher's own
+  // `dismissPermissionPopupForSecret` may have already fired, in which
+  // case this call is a no-op).
+  dismissPermissionPopupForSecret(secret);
 }
 
 /** HS-8183 — number of consecutive polls in which `state.permissionState.activePopupRequestId`
@@ -297,6 +355,10 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
     if (perm !== null) {
       pendingSecrets.add(secret);
       pendingRequestIds.add(perm.request_id);
+      // HS-8294 — record the per-secret pending request_id so a §52
+      // AI-prompt answer can mark the equivalent §47 request as
+      // dismissed via `dismissChannelPermissionForSecret(secret)`.
+      lastSeenPendingBySecret.set(secret, perm.request_id);
       markProjectAttention(secret);
       if (!respondedRequestIds.has(perm.request_id)
           && !dismissedRequestIds.has(perm.request_id)
@@ -305,6 +367,10 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
       }
     } else {
       clearProjectAttention(secret);
+      // HS-8294 — server reports null for this project (no pending
+      // permission). Drop from the per-secret tracker so a future
+      // dismiss call doesn't add a stale request_id to dismissedRequestIds.
+      lastSeenPendingBySecret.delete(secret);
     }
   }
   // Clear any attention dots for projects NOT in the response at all.
@@ -949,7 +1015,14 @@ export function _resetStateForTesting(): void {
   for (const rec of minimizedRequests.values()) clearTimeout(rec.timeoutId);
   minimizedRequests.clear();
   pendingPermissionStack.length = 0;
+  lastSeenPendingBySecret.clear();
   permissionState = freshPermissionOverlayState();
+}
+
+/** **TEST ONLY** (HS-8294) — read-only snapshot of the per-secret pending
+ *  request_id tracker so unit tests can assert the right entries land. */
+export function _lastSeenPendingForTesting(): ReadonlyMap<string, string> {
+  return new Map(lastSeenPendingBySecret);
 }
 
 /** **TEST ONLY** — read-only snapshot of the module-level bookkeeping for

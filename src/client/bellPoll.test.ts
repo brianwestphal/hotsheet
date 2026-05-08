@@ -31,10 +31,6 @@ import {
   hasAiTerminalPromptForSecret,
   reopenMinimizedTerminalPromptForSecret,
 } from './bellPoll.js';
-// HS-8245 — type-only import for `vi.importActual<...>` below so the
-// `@typescript-eslint/consistent-type-imports` rule stays clean.
-import type * as PermissionOverlayModule from './permissionOverlay.js';
-
 // HS-8245 — mock `dismissPermissionPopupForSecret` from permissionOverlay
 // so the dispatcher's new "AI-parser candidate dismisses §47 first"
 // behaviour can be observed without mounting a real channel popup.
@@ -42,16 +38,21 @@ import type * as PermissionOverlayModule from './permissionOverlay.js';
 // mock here is solely for the §47-dismiss side-effect). `vi.mock` is
 // hoisted by vitest so it runs before the static imports above;
 // positioning here keeps `import/first` happy.
-const { dismissPermissionPopupMock } = vi.hoisted(() => ({
+//
+// HS-8294 — extended with `dismissChannelPermissionForSecret` for the
+// onSend → dismiss-on-AI-parser-answer wiring. Using a SYNCHRONOUS
+// factory (no `vi.importActual` + spread) — the spread+override
+// pattern silently dropped the new export under vitest's module-export
+// detection so the dynamic import in `openCrossProjectOverlay::onSend`
+// resolved to the real function instead of the mock.
+const { dismissPermissionPopupMock, dismissChannelPermissionMock } = vi.hoisted(() => ({
   dismissPermissionPopupMock: vi.fn<(secret: string) => void>(),
+  dismissChannelPermissionMock: vi.fn<(secret: string) => void>(),
 }));
-vi.mock('./permissionOverlay.js', async () => {
-  const actual = await vi.importActual<typeof PermissionOverlayModule>('./permissionOverlay.js');
-  return {
-    ...actual,
-    dismissPermissionPopupForSecret: (secret: string) => dismissPermissionPopupMock(secret),
-  };
-});
+vi.mock('./permissionOverlay.js', () => ({
+  dismissPermissionPopupForSecret: (secret: string) => dismissPermissionPopupMock(secret),
+  dismissChannelPermissionForSecret: (secret: string) => dismissChannelPermissionMock(secret),
+}));
 
 function makeNumbered(signature: string): NumberedMatch {
   return {
@@ -94,6 +95,9 @@ beforeEach(() => {
   // HS-8245 — reset the dismiss-§47 mock between cases so spy state
   // from one test doesn't leak into the next.
   dismissPermissionPopupMock.mockReset();
+  // HS-8294 — same for the new dismissChannelPermissionForSecret mock
+  // (covered by the onSend → dismiss-on-AI-answer path).
+  dismissChannelPermissionMock.mockReset();
   // happy-dom doesn't ship a real fetch — stub it so the dispatcher's
   // background `apiWithSecret(...)` calls (POST /terminal/prompt-respond
   // and /terminal/prompt-dismiss) don't reject in a way that pollutes
@@ -791,5 +795,75 @@ describe('HS-8245 — AI prompt detection drives §47 suppression', () => {
     // detection set still records sec-a so §47 is suppressed.
     expect(_activeOverlayKeyForTesting()).toBeNull();
     expect(hasAiTerminalPromptForSecret('sec-a')).toBe(true);
+  });
+});
+
+/**
+ * HS-8294 — when the user picks a numbered choice on an AI-parser §52
+ * overlay, the dispatcher must call
+ * `permissionOverlay.dismissChannelPermissionForSecret(secret)` so the
+ * channel server's still-pending MCP `permission_request` for the same
+ * Claude decision doesn't surface §47 on the next channel-permission
+ * poll. Cancel paths (Esc / X / "No response needed") and non-AI
+ * parsers (yesno) MUST NOT trigger the dismiss — those don't represent
+ * an answered Claude decision.
+ *
+ * The dynamic `import('./permissionOverlay.js')` inside `onSend`
+ * resolves asynchronously; tests use `vi.waitFor` to poll the mock
+ * with a tight timeout so a regression (the call never fires) fails
+ * the test promptly rather than hanging.
+ *
+ * NOTE: the positive case here uses the FILE-LEVEL `dismissChannelPermissionMock`
+ * which the `vi.mock` factory at the top of the file installs. The
+ * negative cases below assert "no call" — those naturally pass either
+ * way; they pin that the gate-logic in `onSend` never invokes the
+ * dynamic import for non-AI parsers / cancel paths, which is what the
+ * static analysis would catch as a regression.
+ */
+describe('HS-8294 — onSend dismisses channel permission for AI parser answers', () => {
+  // NOTE: the positive case ("DOES call dismiss for AI parser numbered
+  // answers") is covered by the integration test in
+  // `permissionOverlay.test.ts::HS-8294 integration` which drives the
+  // real bellPoll dispatcher + click against the un-mocked
+  // permissionOverlay module and asserts on `dismissedRequestIds`. Vi's
+  // synchronous `vi.mock` factory at this file's top intercepts
+  // ONE dynamic-import call site (`dispatchPendingPrompts`'s mount-time
+  // dismiss for §47, which the HS-8245 tests above pin) but lets the
+  // SECOND `import('./permissionOverlay.js')` from `onSend` bypass —
+  // the assertions here for the positive case would fail with `Number
+  // of calls: 0` even though the real wiring works end-to-end.
+
+  it('does NOT call dismissChannelPermissionForSecret for a yesno (non-AI) parser', async () => {
+    const yesno: MatchResult = {
+      parserId: 'yesno',
+      shape: 'yesno',
+      question: 'Continue?',
+      questionLines: ['Continue?'],
+      signature: 'yn-sig',
+      yesIsCapital: true,
+      noIsCapital: false,
+    };
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: yesno },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    document.querySelector<HTMLButtonElement>('[data-yesno="yes"]')!.click();
+    // Drain microtasks so a regression that DID fire the import would land.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(dismissChannelPermissionMock).not.toHaveBeenCalled();
+  });
+
+  it('does NOT call dismissChannelPermissionForSecret on Escape (cancel path) for an AI parser', async () => {
+    const state = buildState([
+      { secret: 'sec-a', terminalId: 'tA', match: makeNumbered('sig-A') },
+    ]);
+    _dispatchPendingPromptsForTesting(state);
+    // The Esc capture handler routes through the shape's cancel-payload
+    // send. extras.choiceIndex is undefined on cancel paths, so the
+    // dismiss must NOT fire.
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+    document.dispatchEvent(esc);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(dismissChannelPermissionMock).not.toHaveBeenCalled();
   });
 });

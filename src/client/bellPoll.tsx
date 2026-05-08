@@ -529,6 +529,24 @@ function openCrossProjectOverlay(secret: string, terminalId: string, match: Matc
         choiceShape: buildChoiceShape(match),
         answeredAtMs: Date.now(),
       });
+      // HS-8294 — when the answered prompt is from an AI parser
+      // (claude-numbered etc.) AND the user picked a concrete numbered
+      // choice (cancel paths via Esc / X / cancel-button leave
+      // `extras.choiceIndex` undefined), dismiss the equivalent §47
+      // channel-permission popup for the same project. Both surfaces
+      // describe the same Claude decision; without this, the channel-
+      // server's MCP request stays alive (Claude doesn't auto-cancel
+      // it) and the next channel-permission poll re-mounts §47 for the
+      // already-resolved decision (HS-8294 user repro: /test-permission-
+      // write surfaced two popups for `mkdir -p /tmp/claude-permission-
+      // test`). Lazy import to avoid the bellPoll ↔ permissionOverlay
+      // static-import cycle, mirroring the dispatcher's pre-existing
+      // dismissPermissionPopupForSecret call site.
+      if (isAiParserId(match.parserId) && extras?.choiceIndex !== undefined) {
+        void import('./permissionOverlay.js')
+          .then(m => m.dismissChannelPermissionForSecret(secret))
+          .catch(() => { /* swallow — best-effort dedup */ });
+      }
       // We optimistically return true so the overlay closes immediately;
       // any real failure surfaces as a follow-up no-response. This
       // matches the prior client-detector behaviour (`onSend` was wired to
