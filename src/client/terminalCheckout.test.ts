@@ -802,6 +802,75 @@ describe('applyHistoryReplay — clears buffer before replay (HS-8287)', () => {
     h.release();
   });
 
+  /**
+   * HS-8287 follow-up #3 — the user reported the doubled-content symptom
+   * persists *even without a WS reconnect or replay*: simply resizing the
+   * drawer/dashboard tile causes content already in the buffer to appear
+   * duplicated in the visible viewport. They confirmed it happens with
+   * "any content in the terminal", not just Claude's TUI banner.
+   *
+   * This test isolates the resize path from every other code path:
+   *   - No WS attach, no `applyHistoryReplay`, no second consumer.
+   *   - Plain numbered lines (no ANSI cursor positioning, no SIGWINCH redraw).
+   *   - Drive `handle.resize(cols, rows)` directly through the same range
+   *     of dims a user dragging the drawer would produce.
+   *
+   * Reads the FULL term buffer (active screen + scrollback) and asserts
+   * each `LINE_N` token appears exactly once. A failure here proves the
+   * bug lives in xterm.js's reflow OR in our resize wiring; a green pins
+   * the symptom to a different code path (TUI redraw, server ring buffer,
+   * or some interaction we haven't isolated yet).
+   */
+  it('drawer-style resize cycles do NOT duplicate plain content in the term buffer (HS-8287 follow-up #3)', async () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+
+    // Write 30 unique numbered lines + drain the parser. xterm.js's write
+    // is microtask-queued; the callback form waits for the parser to
+    // commit each chunk to the buffer. Pad each line to ~120 chars so
+    // narrow-width resizes (cols=60, cols=36) FORCE the reflow path that
+    // unwraps + rewraps long lines — that's the exact algorithm complexity
+    // a plain `LINE_N\n` test would skip.
+    let payload = '';
+    for (let i = 1; i <= 30; i++) payload += `LINE_${i}_PADX_${'X'.repeat(120)}\r\n`;
+    await new Promise<void>(resolve => h.term.write(payload, resolve));
+
+    // Sanity — each token appears exactly once before any resize.
+    const countToken = (n: number): number => {
+      let count = 0;
+      const buf = h.term.buffer.active;
+      for (let i = 0; i < buf.length; i++) {
+        const text = buf.getLine(i)?.translateToString(true) ?? '';
+        if (text.includes(`LINE_${n}_PADX_`)) count++;
+      }
+      return count;
+    };
+    for (let i = 1; i <= 30; i++) {
+      expect(countToken(i), `pre-resize: LINE_${i} should appear exactly once`).toBe(1);
+    }
+
+    // Same range a user dragging the drawer between max and min height
+    // produces. Each call goes through `applyResizeIfChanged` →
+    // `term.resize(cols, rows)`. Width changes here (60→100 cycles) trigger
+    // xterm's reflow on the existing buffer content — exactly the path the
+    // user reported as buggy.
+    for (const [cols, rows] of [[100, 30], [60, 10], [120, 50], [70, 18], [90, 36]]) {
+      h.resize(cols, rows);
+      // Drain any post-resize parser activity.
+      await new Promise<void>(resolve => h.term.write('', resolve));
+    }
+
+    // Per-line assertion makes failures easy to read.
+    for (let i = 1; i <= 30; i++) {
+      expect(
+        countToken(i),
+        `post-resize: LINE_${i} should appear exactly once (theory B duplication if > 1)`,
+      ).toBe(1);
+    }
+
+    h.release();
+  });
+
   it('also calls clear() after reset() so xterm 6.0.0 scrollback is dropped explicitly (HS-8287 follow-up)', () => {
     // The user reported the doubled-scrollback symptom persisted after
     // the initial reset()-only fix landed in WKWebView. xterm.js 6.0.0's
