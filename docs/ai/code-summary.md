@@ -28,6 +28,7 @@
 3. Init PGLite + run schema migrations (`src/db/connection.ts`).
 4. Auto-cleanup (stale trash, attachments) — `src/cleanup.ts`.
 5. Start Hono server + mount routes (`src/routes/api.ts`).
+5a. Best-effort macOS QoS bump via `bumpProcessPriorityBestEffort()` (`src/processPriority.ts`) — `taskpolicy -p $$ -c user-interactive` so keystroke handling doesn't lag under heavy CPU load (HS-8308). No-op on Linux/Windows.
 6. Debounced markdown export (`src/sync/markdown.ts`) → `.hotsheet/worklist.md` (500ms), `.hotsheet/open-tickets.md` (5s).
 7. Generate AI skill files (Claude `.claude/skills/hotsheet`, Cursor, Copilot, Windsurf) — version-gated.
 8. Schedule 3-tier backups (`src/backup.ts`).
@@ -80,6 +81,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `gitignore.ts` | Ensure `.hotsheet/` is in `.gitignore` |
 | `migrate-settings.ts` | Upgrade older settings.json shapes |
 | `update-check.ts` | Version freshness check against npm |
+| `processPriority.ts` | HS-8308 — `bumpProcessPriorityBestEffort()` shells out to macOS `taskpolicy -p $$ -c user-interactive` at server boot so keystroke handling stays responsive under heavy CPU load (e.g. tests inside the embedded terminal). Pure helpers `shouldBumpProcessPriority(platform)` + `buildTaskpolicyArgs(pid, qosClass?)` for unit-test isolation. No-op on Linux/Windows. See docs/8-cli-server.md §8.10. |
 | `test-helpers.ts` | `setupTestDb` / `cleanupTestDb` for unit tests |
 
 ### `src/routes/`

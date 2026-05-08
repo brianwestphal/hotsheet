@@ -101,6 +101,13 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   const actualPort = await startServer(port, dataDir, { noOpen: true, strictPort });
   const secret = ensureSecret(dataDir, actualPort);
 
+  // HS-8308 — best-effort macOS QoS bump so keystroke handling stays
+  // responsive while heavy work (e.g. tests inside the embedded terminal)
+  // competes for CPU. macOS-only; no-op on Linux/Windows. See
+  // src/processPriority.ts for rationale + cross-platform notes.
+  const { bumpProcessPriorityBestEffort } = await import('./processPriority.js');
+  bumpProcessPriorityBestEffort();
+
   // HS-8054 v3 — server-side event-loop heartbeat. Detects Node-process
   // blocks ≥ 100 ms and appends them to `<dataDir>/freeze.log` next to the
   // client-detected entries POSTed via `/api/diagnostics/freeze`. Single

@@ -91,6 +91,8 @@ Three-tier automated backups (5-minute × 12 → ~1 hour retention; hourly × 12
 
 The `hotsheet` global CLI. Args: `--port` (default 4174), `--data-dir` (default `.hotsheet/`), `--no-open` (Tauri sidecar mode), `--strict-port` (fail rather than fall back), `--close` (unregister project), `--list` (show registered projects), `--check-for-updates`, `--demo:N` (scenarios 1–10 with pre-populated data), `--help`. Port fallback tries 20 consecutive ports (4174–4193). Multi-project: single server process; subsequent invocations join via `~/.hotsheet/instance.json`. Demo scenarios tune UI (scenario 6 → detail_position=bottom, 7 → layout=columns, 10 → registers 2 extra projects). 23-step documented startup sequence covering args, update check, lock, PGLite init, cleanup, server, markdown sync, skill generation, backup scheduler, project restoration, stale channel cleanup, heartbeat hooks, instance file, browser launch.
 
+**HS-8308 (2026-05-09)** — added §8.10 Process Priority. Best-effort macOS QoS bump via `taskpolicy -p $$ -c user-interactive` immediately after the Hono server starts; Linux/Windows no-op. Closes the user's keystroke-lag-under-test-load report — Terminal.app gets `user-interactive` implicitly, the Node sidecar didn't until this change. Implementation in `src/processPriority.ts` (pure helpers `shouldBumpProcessPriority` + `buildTaskpolicyArgs`, side-effecting `bumpProcessPriorityBestEffort`). 8 unit tests in `processPriority.test.ts`.
+
 **Status:** Shipped.
 
 ---

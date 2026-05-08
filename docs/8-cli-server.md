@@ -62,7 +62,8 @@ Project tabs are persisted to `~/.hotsheet/projects.json` and restored on restar
 9. Initialize the PGLite database and run schema migrations.
 10. Run auto-cleanup for old verified/deleted tickets and their attachment files (synchronous, blocking).
 11. Start the Hono HTTP server.
-12. Trigger initial markdown sync.
+12. Bump process priority to macOS QoS class `user-interactive` (HS-8308 — best-effort, macOS only; see §8.10).
+13. Trigger initial markdown sync.
 13. Generate/update AI tool skill files.
 14. Start the automatic backup scheduler.
 15. Restore previous projects from `~/.hotsheet/projects.json`.
@@ -133,3 +134,16 @@ Each scenario uses realistic e-commerce project data with a mix of categories, p
 - Port conflicts are handled gracefully with automatic fallback (unless strict mode).
 - Stale lock files from crashed processes are cleaned up automatically.
 - Schema migrations are idempotent and safe to re-run.
+
+### 8.10 Process Priority (HS-8308)
+
+On macOS, the Node server shells out to `taskpolicy -p $$ -c user-interactive` immediately after the HTTP server starts. `taskpolicy(8)` is bundled with macOS and does not require sudo; it bumps the process's Quality of Service class to `user-interactive` — the highest user-space tier and what Terminal.app implicitly runs with. Without the bump, a Node sidecar inherits the parent's QoS (typically `user-initiated` or lower) and keystroke handling competes with sibling processes for CPU under heavy load (e.g. `npm test` running inside the embedded terminal).
+
+Behaviour:
+
+- **Best-effort**. `bumpProcessPriorityBestEffort()` in `src/processPriority.ts` runs `taskpolicy` via `spawnSync` with a 2 s timeout. Non-zero exits, missing binary, or spawn errors log a single `[priority] …` warning and the server continues.
+- **macOS only**. `shouldBumpProcessPriority(process.platform)` short-circuits on Linux + Windows. Linux equivalent (`nice -n -10`) requires `CAP_SYS_NICE` / root; Windows would need a native-module shim for `SetPriorityClass`. Both are out of scope.
+- **Always-on** when the platform gate passes — no env-var opt-out. The `user-interactive` class is the safe ceiling for an interactive UI server; lowering it would re-introduce the lag the bump exists to fix.
+- **Logged on success** as `Process priority: macOS QoS class set to user-interactive` in the boot output, paralleling the existing `Data directory: …` line.
+
+Testing: pure helpers `shouldBumpProcessPriority(platform)` + `buildTaskpolicyArgs(pid, qosClass?)` are unit-tested in `src/processPriority.test.ts` (8 cases — platform gate × 6, argv builder × 4 incl. default-class constant pin). The actual `spawnSync` call is exercised in real macOS boots; mocking it adds no fidelity over the pure helpers.
