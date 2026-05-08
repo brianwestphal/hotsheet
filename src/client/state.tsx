@@ -158,13 +158,6 @@ export interface AppSettings {
    *  does not render. The server-side parser still runs and markers are
    *  tracked, so toggling back on reveals the UI without losing history. */
   shell_integration_ui: boolean;
-  /** HS-7988 (§52 Phase 4) — master switch for the terminal-prompt
-   *  detector. When false the §52 detector short-circuits entirely; no
-   *  parser runs, no overlay surfaces, no auto-allow gate. Existing
-   *  `terminal_prompt_allow_rules` are preserved (settings UI shows them
-   *  greyed-out for review) but inert. Default true so the feature is on
-   *  for everyone after upgrade. */
-  terminal_prompt_detection_enabled: boolean;
   /** HS-7984 (§53 Phase 4) — when false, the §53 streaming-shell-output
    *  partial render is suppressed on both client surfaces (sidebar row
    *  preview + Commands Log live `<pre>`). Server still buffers (cheap;
@@ -187,7 +180,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   auto_order: true,
   hide_verified_column: false,
   shell_integration_ui: true,
-  terminal_prompt_detection_enabled: true,
   shell_streaming_enabled: true,
 };
 

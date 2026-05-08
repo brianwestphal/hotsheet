@@ -33,21 +33,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { NumberedMatch } from '../shared/terminalPrompt/parsers.js';
-// HS-8245 — type-only import for `vi.importActual<...>` below so the
-// `@typescript-eslint/consistent-type-imports` rule stays clean.
-import type * as BellPollModule from './bellPoll.js';
-// HS-8294 — type-only imports for the integration test at the bottom of
-// the file. Inline `import('...')` type annotations trip
-// `@typescript-eslint/consistent-type-imports`, so hoist them.
-import type { BellStateMap } from './bellPoll.js';
 import {
   _inspectStateForTesting,
-  _lastSeenPendingForTesting,
   _resetStateForTesting,
-  dismissChannelPermissionForSecret,
   dismissedRequestIds,
-  dismissPermissionPopupForSecret,
   LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD,
   type PermissionData,
   processPermissionPollResponse,
@@ -63,23 +52,6 @@ import {
   checkout,
   entryCount,
 } from './terminalCheckout.js';
-
-// HS-8245 — mock `hasAiTerminalPromptForSecret` so the `showPermissionPopup`
-// gate that suppresses §47 when an AI terminal prompt is detected can be
-// exercised. Default is `false` (no AI prompt) so every pre-HS-8245 test
-// continues to behave the same way. `vi.mock` is hoisted by vitest so it
-// runs before the static `import { ... } from './permissionOverlay.js'`
-// above; positioning here keeps `import/first` happy.
-const { hasAiPromptMock } = vi.hoisted(() => ({
-  hasAiPromptMock: vi.fn<(secret: string) => boolean>(() => false),
-}));
-vi.mock('./bellPoll.js', async () => {
-  const actual = await vi.importActual<typeof BellPollModule>('./bellPoll.js');
-  return {
-    ...actual,
-    hasAiTerminalPromptForSecret: (secret: string) => hasAiPromptMock(secret),
-  };
-});
 
 // channelUI's mark/clearProjectAttention writes into module state we don't
 // care about for these tests — the polling code calls them, and we just
@@ -117,11 +89,6 @@ beforeEach(() => {
   document.body.innerHTML = '';
   _resetStateForTesting();
   resetCheckout();
-  // HS-8245 — reset the bellPoll mock so each test starts with no AI
-  // prompt detected. Tests that exercise the suppression path override
-  // explicitly.
-  hasAiPromptMock.mockReset();
-  hasAiPromptMock.mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -1358,7 +1325,15 @@ describe('showPermissionPopup — short bash stays static (HS-8217)', () => {
   // trigger the live-checkout path — the tight static `<pre>` is the
   // intended UX for one-liners.
 
-  it('renders the flat `<pre>` preview for a short single-line bash command', () => {
+  it('renders the HS-8299 Bash custom layout for a short single-line bash command (HS-8299 supersedes HS-8217 for Bash)', () => {
+    // HS-8299 (2026-05-08) — Bash tool now ALWAYS uses the dedicated
+    // `<pre class="permission-bash-command">` body + 3-stacked-button
+    // layout regardless of length, so `useLiveCheckout` no longer fires
+    // for short bash commands either. The pre-fix HS-8217 expectation
+    // (flat `.permission-popup-preview` `<pre>` for short commands) was
+    // replaced; the live-checkout suppression for short bash that
+    // HS-8217 verified is preserved (no `.permission-popup-live-terminal`,
+    // no checkout entry).
     processPermissionPollResponse({
       permissions: {
         'secret-A': {
@@ -1370,360 +1345,277 @@ describe('showPermissionPopup — short bash stays static (HS-8217)', () => {
       },
       v: 1,
     });
-    expect(document.querySelector('.permission-popup-preview')).not.toBeNull();
+    expect(document.querySelector('.permission-bash-command')).not.toBeNull();
+    expect(document.querySelector('.permission-popup-preview')).toBeNull();
     expect(document.querySelector('.permission-popup-live-terminal')).toBeNull();
     // No checkout entry was created for this popup since useLiveCheckout was false.
     expect(_inspectStackForTesting()).toHaveLength(0);
   });
 });
 
-/**
- * HS-8245 — when an AI tool's in-terminal prompt is detected for a project
- * (signalled by `bellPoll.hasAiTerminalPromptForSecret(secret) === true`),
- * the §47 channel-permission popup must NOT mount for the same project.
- * The §52 in-terminal overlay is the authoritative surface; the user
- * answers via the borrow-terminal keystrokes the AI's TUI is already
- * listening for. The MCP request stays alive on the channel server and
- * the next poll cycle's for-each will surface §47 naturally if the AI
- * prompt clears without resolving the MCP side.
- *
- * Inverts HS-8228's earlier "§47 wins" precedence — the user reported
- * that the channel popup and the in-terminal overlay describe the same
- * Claude decision and stacking them was a regression.
- */
-describe('HS-8245 — AI-prompt suppression of §47', () => {
-  it('does NOT mount the popup when hasAiTerminalPromptForSecret(secret) is true at mount time', () => {
-    hasAiPromptMock.mockImplementation((secret) => secret === 'sec-a');
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm() },
-      v: 1,
-    });
-    expect(document.querySelector('.permission-popup')).toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
-  });
-
-  it('still mounts the popup for OTHER projects even when one has an AI prompt', () => {
-    hasAiPromptMock.mockImplementation((secret) => secret === 'sec-a');
+describe('Bash custom layout (HS-8299)', () => {
+  // HS-8299 (2026-05-08) — Bash tool gets a dedicated layout: title
+  // "Allow Claude to run", scrollable `<pre>` body, 3-stacked-button
+  // actions (Yes / Yes-and-allow-always / No), with the live-terminal
+  // checkout + flat `<pre>` paths bypassed entirely. Tests pin the
+  // header copy + body shape + actions wiring + the suppression of the
+  // legacy two-icon-button + always-allow-affordance for Bash.
+  it('renders title "Allow Claude to run" + scrollable command + 3 stacked buttons for Bash', () => {
     processPermissionPollResponse({
       permissions: {
-        'sec-a': makePerm({ request_id: 'req-a' }),
-        'sec-b': makePerm({ request_id: 'req-b' }),
+        'secret-A': {
+          request_id: 'req-bash-custom-1',
+          tool_name: 'Bash',
+          description: 'List files',
+          input_preview: '{"command":"ls -la /tmp"}',
+        },
       },
       v: 1,
     });
-    // sec-a suppressed — sec-b mounts.
-    expect(document.querySelectorAll('.permission-popup').length).toBe(1);
-    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-b');
-    expect(_inspectStateForTesting().activePopupOwnerSecret).toBe('sec-b');
+    // Body: scrollable `<pre>` with the verbatim command.
+    const pre = document.querySelector<HTMLElement>('.permission-bash-command');
+    expect(pre).not.toBeNull();
+    expect(pre?.textContent).toBe('ls -la /tmp');
+    // Actions: 3 vertically-stacked buttons.
+    const stacked = document.querySelector<HTMLElement>('.permission-popup-actions-stacked');
+    expect(stacked).not.toBeNull();
+    expect(stacked?.querySelectorAll('button').length).toBe(3);
+    expect(stacked?.querySelector('.permission-popup-allow')?.textContent).toBe('Yes');
+    expect(stacked?.querySelector('.permission-popup-allow-always')?.textContent).toBe('Yes, and allow this command and similar in the future');
+    expect(stacked?.querySelector('.permission-popup-deny')?.textContent).toBe('No');
+    // Title: "Allow Claude to run".
+    const title = document.querySelector<HTMLElement>('.dialog-shell-title');
+    expect(title?.textContent ?? '').toContain('Allow Claude to run');
+    // Tool chip is suppressed for Bash (the title carries the verb).
+    expect(document.querySelector('.dialog-shell-tool')).toBeNull();
+    // Legacy two-icon-button row is NOT rendered for Bash.
+    expect(document.querySelector('.permission-popup-actions:not(.permission-popup-actions-stacked)')).toBeNull();
+    // Always-allow affordance is folded into the middle button — the
+    // legacy checkbox-style affordance is NOT rendered for Bash.
+    expect(document.querySelector('.permission-popup-always-allow')).toBeNull();
+    // No live-checkout, no flat `<pre>` preview.
+    expect(document.querySelector('.permission-popup-live-terminal')).toBeNull();
+    expect(document.querySelector('.permission-popup-preview')).toBeNull();
   });
 
-  it('mounts on the next poll cycle once the AI prompt clears', () => {
-    // First poll — AI detected for sec-a, popup suppressed.
-    hasAiPromptMock.mockImplementation((secret) => secret === 'sec-a');
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm() },
-      v: 1,
-    });
-    expect(document.querySelector('.permission-popup')).toBeNull();
-
-    // AI prompt clears. Server still has the MCP request pending; the
-    // next poll cycle's for-each calls showPermissionPopup again.
-    hasAiPromptMock.mockReturnValue(false);
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm() },
-      v: 2,
-    });
-    expect(document.querySelector('.permission-popup')).not.toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-1');
-  });
-
-  it('dismissPermissionPopupForSecret tears down the popup without responding to the MCP request', () => {
-    // First mount the popup (no AI prompt yet).
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm() },
-      v: 1,
-    });
-    expect(document.querySelector('.permission-popup')).not.toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-1');
-
-    // Now AI prompt fires for sec-a — bellPoll calls dismiss.
-    dismissPermissionPopupForSecret('sec-a');
-    expect(document.querySelector('.permission-popup')).toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
-    expect(_inspectStateForTesting().activePopupOwnerSecret).toBeNull();
-    // Request id NOT in respondedRequestIds — the MCP request is still
-    // alive on the server so the user can answer it via the in-terminal
-    // overlay or the popup can re-mount once the AI prompt clears.
-    expect(respondedRequestIds.has('req-1')).toBe(false);
-  });
-
-  it('dismissPermissionPopupForSecret is a no-op when the popup belongs to a different project', () => {
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm() },
-      v: 1,
-    });
-    expect(_inspectStateForTesting().activePopupOwnerSecret).toBe('sec-a');
-
-    dismissPermissionPopupForSecret('sec-other');
-    // sec-a's popup survives — only sec-other would have been torn down.
-    expect(document.querySelector('.permission-popup')).not.toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-1');
-  });
-
-  it('dismissPermissionPopupForSecret is a no-op when no popup is active', () => {
-    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
-    dismissPermissionPopupForSecret('sec-a');
-    expect(document.querySelector('.permission-popup')).toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
-  });
-
-  it('keeps the suppression effective across many poll ticks while the AI prompt remains live', () => {
-    hasAiPromptMock.mockImplementation((secret) => secret === 'sec-a');
-    for (let v = 1; v <= 5; v++) {
-      processPermissionPollResponse({
-        permissions: { 'sec-a': makePerm() },
-        v,
-      });
-      expect(document.querySelector('.permission-popup')).toBeNull();
-    }
-  });
-});
-
-/**
- * HS-8294 — when the user answers an AI-parser §52 prompt (e.g. clicks "1.
- * Yes" on Claude's "Do you want to proceed?"), the channel server's MCP
- * `permission_request` for the SAME Claude decision stays alive (Claude
- * doesn't auto-cancel it within the 2-min `PERMISSION_TTL_MS`). Without
- * the fix, the next channel-permission poll re-mounts §47 for the
- * already-answered decision and the user sees a second popup. The fix:
- *
- *   1. `processPermissionPollResponse` records the per-secret pending
- *      `request_id` into `lastSeenPendingBySecret` on every tick.
- *   2. `bellPoll.tsx::onSend` (when an AI parser's numbered choice is
- *      picked) calls `dismissChannelPermissionForSecret(secret)` which
- *      adds the recorded request_id to `dismissedRequestIds` AND tears
- *      down any currently-mounted §47 popup.
- *
- * These tests pin (a) the per-secret tracker is populated / cleared
- * correctly, (b) `dismissChannelPermissionForSecret` adds to
- * `dismissedRequestIds` AND tears down a mounted popup, (c) subsequent
- * polls don't re-mount the dismissed request_id, AND (d) a fresh
- * NEW request_id from the same project after the dismiss DOES surface
- * (the dismiss is request-id-scoped, not project-scoped).
- */
-describe('HS-8294 — dismissChannelPermissionForSecret', () => {
-  it('records the latest pending request_id per secret on each poll tick', () => {
-    expect(_lastSeenPendingForTesting().size).toBe(0);
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
-      v: 1,
-    });
-    expect(_lastSeenPendingForTesting().get('sec-a')).toBe('req-A');
-  });
-
-  it('overwrites the per-secret entry when a new request_id arrives for the same project', () => {
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
-      v: 1,
-    });
-    expect(_lastSeenPendingForTesting().get('sec-a')).toBe('req-A');
-    // First request gets responded — clears server-side. Then a second
-    // arrives. The tracker must reflect the LATEST.
-    respondedRequestIds.add('req-A');
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-B' }) },
-      v: 2,
-    });
-    expect(_lastSeenPendingForTesting().get('sec-a')).toBe('req-B');
-  });
-
-  it('drops the per-secret entry when the project reports null on a tick', () => {
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
-      v: 1,
-    });
-    expect(_lastSeenPendingForTesting().has('sec-a')).toBe(true);
-    processPermissionPollResponse({
-      permissions: { 'sec-a': null },
-      v: 2,
-    });
-    expect(_lastSeenPendingForTesting().has('sec-a')).toBe(false);
-  });
-
-  it('adds the recorded request_id to dismissedRequestIds + tears down the active popup', () => {
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
-      v: 1,
-    });
-    expect(document.querySelector('.permission-popup')).not.toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-A');
-
-    dismissChannelPermissionForSecret('sec-a');
-    expect(dismissedRequestIds.has('req-A')).toBe(true);
-    expect(document.querySelector('.permission-popup')).toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
-  });
-
-  it('prevents subsequent polls from re-mounting the same request_id', () => {
-    // First poll mounts the popup.
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
-      v: 1,
-    });
-    // User answers via §52 — bellPoll.onSend calls our helper.
-    dismissChannelPermissionForSecret('sec-a');
-    expect(document.querySelector('.permission-popup')).toBeNull();
-
-    // Channel server still reports the same pending request (it doesn't
-    // know Claude proceeded via TUI). The poll must NOT re-mount because
-    // req-A is in dismissedRequestIds.
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
-      v: 2,
-    });
-    expect(document.querySelector('.permission-popup')).toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
-  });
-
-  it('does NOT suppress a NEW request_id from the same project after the dismiss', () => {
-    // Mount + dismiss req-A.
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
-      v: 1,
-    });
-    dismissChannelPermissionForSecret('sec-a');
-    // A genuinely new Claude decision arrives — different request_id.
-    // The dismiss is request-id-scoped, not project-scoped, so this MUST
-    // surface.
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-B' }) },
-      v: 2,
-    });
-    expect(document.querySelector('.permission-popup')).not.toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-B');
-  });
-
-  it('is a no-op when no pending request was ever seen for the project', () => {
-    expect(_lastSeenPendingForTesting().has('sec-a')).toBe(false);
-    dismissChannelPermissionForSecret('sec-a');
-    // No throw, no DOM, no dismissedRequestIds entry.
-    expect(document.querySelector('.permission-popup')).toBeNull();
-    expect(dismissedRequestIds.size).toBe(0);
-  });
-
-  it('is scoped to the requested secret — other projects keep their popup', () => {
-    // Two pending permissions, in two different projects. Reset hasAi
-    // mock so neither is suppressed by §52.
-    hasAiPromptMock.mockReturnValue(false);
+  it('uses the Bash layout regardless of command length (no live-checkout fallback)', () => {
+    // HS-8299 Q1 (a) — Bash ALWAYS uses the new layout, even for the
+    // long-pipeline shapes that would have triggered HS-8217's live-
+    // checkout pre-HS-8299.
+    const longCommand = `mkdir -p /tmp/claude-permission-test && cd /tmp/claude-permission-test && printf 'one\\ntwo\\nthree\\nfour\\n' > long-run-input.txt && cat long-run-input.txt | awk '{ print NR":"$0 }' | sort -r | tee long-run-output.txt | wc -l && echo "long-run permission test finished at $(date -u +%Y-%m-%dT%H:%M:%SZ)"`;
     processPermissionPollResponse({
       permissions: {
-        'sec-a': makePerm({ request_id: 'req-A' }),
-        'sec-b': makePerm({ request_id: 'req-B' }),
+        'secret-A': {
+          request_id: 'req-bash-custom-2',
+          tool_name: 'Bash',
+          description: 'Long-run permission test',
+          input_preview: JSON.stringify({ command: longCommand }),
+        },
       },
       v: 1,
     });
-    // Only one popup mounts at a time (active + queued). Identify the
-    // active and capture its req_id.
-    const activeBefore = _inspectStateForTesting().activePopupRequestId;
-    expect(activeBefore).not.toBeNull();
-    // Dismiss the OTHER secret. Active popup must survive.
-    const otherSecret = activeBefore === 'req-A' ? 'sec-b' : 'sec-a';
-    const otherReqId = activeBefore === 'req-A' ? 'req-B' : 'req-A';
-    dismissChannelPermissionForSecret(otherSecret);
-    expect(dismissedRequestIds.has(otherReqId)).toBe(true);
-    // Active popup is unchanged.
-    expect(_inspectStateForTesting().activePopupRequestId).toBe(activeBefore);
-    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(document.querySelector('.permission-bash-command')?.textContent).toBe(longCommand);
+    expect(document.querySelector('.permission-popup-live-terminal')).toBeNull();
+    expect(_inspectStackForTesting()).toHaveLength(0);
   });
 
-  it('clears the per-secret tracker on _resetStateForTesting', () => {
+  it('clicking "No" responds with deny', async () => {
     processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm() },
+      permissions: {
+        'secret-A': {
+          request_id: 'req-bash-deny',
+          tool_name: 'Bash',
+          description: 'Whoami',
+          input_preview: '{"command":"whoami"}',
+        },
+      },
       v: 1,
     });
-    expect(_lastSeenPendingForTesting().size).toBe(1);
-    _resetStateForTesting();
-    expect(_lastSeenPendingForTesting().size).toBe(0);
-  });
-});
-
-/**
- * HS-8294 integration — end-to-end coverage of the positive case. The
- * bellPoll-side test file mocks `./permissionOverlay.js`, but vitest's
- * synchronous mock factory only intercepts ONE dynamic-import call site
- * (`dispatchPendingPrompts`'s mount-time dismiss); the SECOND
- * `import('./permissionOverlay.js')` from `openCrossProjectOverlay::onSend`
- * resolves to the real module and bypasses the mock spy. Pinning the
- * positive case there would yield false negatives. So we test it here
- * from the un-mocked `permissionOverlay.test.ts` side: drive a real
- * `processPermissionPollResponse` to populate `lastSeenPendingBySecret`,
- * dispatch a real bellPoll §52 overlay, click the choice, and assert
- * that `dismissedRequestIds` ends up with the right request_id. This
- * exercises:
- *
- *   - `processPermissionPollResponse` populating `lastSeenPendingBySecret`,
- *   - the real `bellPoll.tsx::openCrossProjectOverlay::onSend` firing
- *     its dynamic import on AI-parser numbered choice,
- *   - the real `dismissChannelPermissionForSecret` adding to
- *     `dismissedRequestIds` AND tearing down the popup.
- */
-describe('HS-8294 integration — bellPoll onSend → real dismissChannelPermissionForSecret', () => {
-  it('end-to-end: §52 click for an AI parser dismisses the §47 popup AND blocks re-mounting', async () => {
-    // Reset the bellPoll dispatcher's state so a stale activeOverlayKey
-    // from a prior test doesn't gate this dispatch.
-    const bellPoll = await import('./bellPoll.js');
-    bellPoll._resetDispatchStateForTesting();
-
-    // 1) Channel server reports a pending permission for sec-a — §47
-    //    mounts.
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
-      v: 1,
-    });
-    expect(document.querySelector('.permission-popup')).not.toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-A');
-
-    // 2) Bell-state reports the same Claude decision as an in-terminal
-    //    prompt — §52 dispatches. The dispatcher's mount-time
-    //    `dismissPermissionPopupForSecret` tears down §47.
-    const numbered: NumberedMatch = {
-      parserId: 'claude-numbered',
-      shape: 'numbered',
-      question: 'Do you want to proceed?',
-      questionLines: ['Do you want to proceed?'],
-      signature: 'sig-A',
-      choices: [
-        { index: 0, label: 'Yes', highlighted: true },
-        { index: 1, label: 'No', highlighted: false },
-      ],
-    };
-    const state: BellStateMap = new Map([
-      ['sec-a', { anyTerminalPending: true, terminalIds: ['tA'], pendingPrompts: { tA: numbered } }],
-    ]);
-    bellPoll._dispatchPendingPromptsForTesting(state);
-    // Both surfaces co-exist briefly while the dispatcher's
-    // `dismissPermissionPopupForSecret` import resolves async; wait for
-    // §47 to come down.
-    await vi.waitFor(() => {
-      expect(document.querySelector('.permission-popup')).toBeNull();
-    }, { timeout: 200 });
-    expect(document.querySelector('.terminal-prompt-overlay')).not.toBeNull();
-
-    // 3) User picks "Yes" — §52 closes, AND the new HS-8294 wiring
-    //    fires `dismissChannelPermissionForSecret('sec-a')` so req-A
-    //    lands in `dismissedRequestIds`.
-    document.querySelector<HTMLButtonElement>('.terminal-prompt-overlay-choice[data-choice-index="0"]')!.click();
-    await vi.waitFor(() => {
-      expect(dismissedRequestIds.has('req-A')).toBe(true);
-    }, { timeout: 200 });
-
-    // 4) Channel server STILL reports req-A pending (it doesn't know
-    //    Claude proceeded via TUI). The next poll must NOT re-mount §47.
-    processPermissionPollResponse({
-      permissions: { 'sec-a': makePerm({ request_id: 'req-A' }) },
-      v: 2,
-    });
+    const denyBtn = document.querySelector<HTMLButtonElement>('.permission-popup-deny')!;
+    expect(denyBtn).not.toBeNull();
+    denyBtn.click();
+    // Wait one microtask for the async respond path.
+    await Promise.resolve();
+    // Popup torn down — no `.permission-popup` left in the DOM.
     expect(document.querySelector('.permission-popup')).toBeNull();
-    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
+  });
+
+  it('clicking "Yes" responds with allow', async () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': {
+          request_id: 'req-bash-allow',
+          tool_name: 'Bash',
+          description: 'pwd',
+          input_preview: '{"command":"pwd"}',
+        },
+      },
+      v: 1,
+    });
+    const allowBtn = document.querySelector<HTMLButtonElement>('.permission-popup-allow')!;
+    expect(allowBtn).not.toBeNull();
+    allowBtn.click();
+    await Promise.resolve();
+    expect(document.querySelector('.permission-popup')).toBeNull();
+  });
+
+  it('non-Bash tool calls keep the legacy two-icon-button + always-allow-affordance layout', () => {
+    // Defence-in-depth — the new Bash branch must NOT leak across to
+    // tools that share the popup surface (Read / Glob / WebFetch /
+    // WebSearch / etc.). Pre-HS-8299 a Read permission rendered as
+    // `<pre class="permission-popup-preview">` with green-check + red-X
+    // icons + the always-allow-this affordance link below. Post-HS-8299
+    // that path is preserved unchanged.
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': {
+          request_id: 'req-read-custom',
+          tool_name: 'Read',
+          description: 'Read a file',
+          input_preview: '{"file_path":"/tmp/foo.txt"}',
+        },
+      },
+      v: 1,
+    });
+    expect(document.querySelector('.permission-bash-command')).toBeNull();
+    expect(document.querySelector('.permission-popup-actions-stacked')).toBeNull();
+    // Legacy two-button row IS present.
+    const legacyActions = document.querySelector<HTMLElement>('.permission-popup-actions');
+    expect(legacyActions).not.toBeNull();
+    expect(legacyActions?.querySelector('.permission-popup-allow')).not.toBeNull();
+    expect(legacyActions?.querySelector('.permission-popup-deny')).not.toBeNull();
+    // Always-allow affordance IS rendered for Read (it's allow-listable).
+    expect(document.querySelector('.permission-popup-always-allow')).not.toBeNull();
   });
 });
+
+describe('Write custom layout (HS-8296)', () => {
+  // HS-8296 (2026-05-08) — Write tool gets a parallel tool-specific
+  // layout to HS-8299's Bash redesign: title `Allow write to <path>?`,
+  // scrollable `<pre>` of the file content (or `Binary Data (NNN bytes)`
+  // for non-text), 3-stacked-button actions, no live-terminal checkout.
+  it('renders title `Allow write to <path>?` + scrollable content + 3 stacked buttons for Write (text)', () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': {
+          request_id: 'req-write-text',
+          tool_name: 'Write',
+          description: 'Write a config file',
+          input_preview: JSON.stringify({
+            file_path: '/tmp/claude-permission-test/foo.txt',
+            content: 'hello\nworld\n',
+          }),
+        },
+      },
+      v: 1,
+    });
+    // Title carries the path.
+    const title = document.querySelector<HTMLElement>('.dialog-shell-title');
+    expect(title?.textContent ?? '').toContain('Allow write to /tmp/claude-permission-test/foo.txt?');
+    // Tool chip suppressed (the title carries the verb already).
+    expect(document.querySelector('.dialog-shell-tool')).toBeNull();
+    // Body: scrollable `<pre>` with the verbatim content.
+    const pre = document.querySelector<HTMLElement>('.permission-write-content');
+    expect(pre).not.toBeNull();
+    expect(pre?.textContent).toBe('hello\nworld\n');
+    expect(pre?.classList.contains('permission-write-content-binary')).toBe(false);
+    // Actions: 3 vertically-stacked buttons.
+    const stacked = document.querySelector<HTMLElement>('.permission-popup-actions-stacked');
+    expect(stacked).not.toBeNull();
+    expect(stacked?.querySelectorAll('button').length).toBe(3);
+    expect(stacked?.querySelector('.permission-popup-allow')?.textContent).toBe('Yes');
+    // The middle-button label mirrors Claude's TUI copy and includes
+    // the parent dir of the target file.
+    const allowAlwaysLabel = stacked?.querySelector('.permission-popup-allow-always')?.textContent ?? '';
+    expect(allowAlwaysLabel).toContain('/tmp/claude-permission-test/');
+    expect(allowAlwaysLabel).toContain("don't ask again");
+    expect(allowAlwaysLabel).toContain('during this session');
+    expect(stacked?.querySelector('.permission-popup-deny')?.textContent).toBe('No');
+    // Legacy two-icon-button row + always-allow affordance NOT rendered.
+    expect(document.querySelector('.permission-popup-actions:not(.permission-popup-actions-stacked)')).toBeNull();
+    expect(document.querySelector('.permission-popup-always-allow')).toBeNull();
+    // No live-checkout, no flat `<pre>` preview.
+    expect(document.querySelector('.permission-popup-live-terminal')).toBeNull();
+    expect(document.querySelector('.permission-popup-preview')).toBeNull();
+  });
+
+  it('renders the binary-data marker for non-text Write content', () => {
+    // 100 NUL bytes inside a 200-char string — well above the 1% threshold.
+    const binaryContent = '\0'.repeat(100) + 'x'.repeat(100);
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': {
+          request_id: 'req-write-binary',
+          tool_name: 'Write',
+          description: 'Write binary',
+          input_preview: JSON.stringify({
+            file_path: '/tmp/foo.bin',
+            content: binaryContent,
+          }),
+        },
+      },
+      v: 1,
+    });
+    const pre = document.querySelector<HTMLElement>('.permission-write-content');
+    expect(pre).not.toBeNull();
+    expect(pre?.classList.contains('permission-write-content-binary')).toBe(true);
+    expect(pre?.textContent).toBe(`Binary Data (${binaryContent.length} bytes)`);
+  });
+
+  it('clicking "Yes" responds with allow', async () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': {
+          request_id: 'req-write-allow',
+          tool_name: 'Write',
+          description: 'Write a file',
+          input_preview: JSON.stringify({ file_path: '/tmp/a.txt', content: 'hi' }),
+        },
+      },
+      v: 1,
+    });
+    const allowBtn = document.querySelector<HTMLButtonElement>('.permission-popup-allow')!;
+    allowBtn.click();
+    await Promise.resolve();
+    expect(document.querySelector('.permission-popup')).toBeNull();
+  });
+
+  it('clicking "No" responds with deny', async () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': {
+          request_id: 'req-write-deny',
+          tool_name: 'Write',
+          description: 'Write a file',
+          input_preview: JSON.stringify({ file_path: '/tmp/b.txt', content: 'hi' }),
+        },
+      },
+      v: 1,
+    });
+    const denyBtn = document.querySelector<HTMLButtonElement>('.permission-popup-deny')!;
+    denyBtn.click();
+    await Promise.resolve();
+    expect(document.querySelector('.permission-popup')).toBeNull();
+  });
+
+  it('falls back to the legacy layout when input_preview is malformed (defence-in-depth)', () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': {
+          request_id: 'req-write-malformed',
+          tool_name: 'Write',
+          description: 'Write something',
+          input_preview: 'not-valid-json',
+        },
+      },
+      v: 1,
+    });
+    // No custom Write layout — extractWriteFields returned null, so the
+    // popup mounts the legacy two-icon-button surface.
+    expect(document.querySelector('.permission-write-content')).toBeNull();
+    expect(document.querySelector('.permission-popup-actions-stacked')).toBeNull();
+    // Legacy actions row IS present.
+    expect(document.querySelector('.permission-popup-actions:not(.permission-popup-actions-stacked)')).not.toBeNull();
+  });
+});
+

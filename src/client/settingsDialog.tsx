@@ -28,8 +28,6 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       // every settings-dialog open.
       if (target === 'permissions') {
         void import('./permissionAllowListUI.js').then(m => m.loadAndRenderAllowList());
-        // HS-7988 — same lazy load for the §52 terminal-prompt rules.
-        void import('./terminalPromptAllowListUI.js').then(m => m.loadAndRenderTerminalPromptAllowList());
       }
     });
   });
@@ -53,7 +51,6 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     byId<HTMLInputElement>('settings-auto-order').checked = state.settings.auto_order;
     byId<HTMLInputElement>('settings-hide-verified-column').checked = state.settings.hide_verified_column;
     byId<HTMLInputElement>('settings-shell-integration-ui').checked = state.settings.shell_integration_ui;
-    byId<HTMLInputElement>('settings-terminal-prompt-detection').checked = state.settings.terminal_prompt_detection_enabled;
     // HS-7984 — §53 Phase 4 streaming toggle.
     byId<HTMLInputElement>('settings-shell-streaming-enabled').checked = state.settings.shell_streaming_enabled;
     byId<HTMLSelectElement>('settings-notify-permission').value = state.settings.notify_permission;
@@ -226,18 +223,6 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   shellStreamingCheckbox.addEventListener('change', () => {
     state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
     void api('/settings', { method: 'PATCH', body: { shell_streaming_enabled: String(shellStreamingCheckbox.checked) } });
-  });
-
-  // HS-7988 — §52 master toggle. When false, the prompt detector's
-  // `isActive()` short-circuits and never fires the parser registry. The
-  // configured rules remain in settings.json (they render greyed-out in
-  // the Phase 4 list) but are inert.
-  const terminalPromptCheckbox = byId<HTMLInputElement>('settings-terminal-prompt-detection');
-  terminalPromptCheckbox.addEventListener('change', () => {
-    state.settings.terminal_prompt_detection_enabled = terminalPromptCheckbox.checked;
-    void api('/settings', { method: 'PATCH', body: { terminal_prompt_detection_enabled: String(terminalPromptCheckbox.checked) } });
-    // Re-render the rule list so the `is-disabled` class flips with the toggle.
-    void import('./terminalPromptAllowListUI.js').then(m => m.loadAndRenderTerminalPromptAllowList());
   });
 
   // Notification dropdowns

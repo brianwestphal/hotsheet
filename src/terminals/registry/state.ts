@@ -1,4 +1,3 @@
-import type { MatchResult } from '../../shared/terminalPrompt/parsers.js';
 import { DEFAULT_TERMINAL_ID } from '../config.js';
 import {
   DEFAULT_COLS,
@@ -11,8 +10,8 @@ import type { TerminalState, TerminalStatus } from './types.js';
 
 /**
  * HS-8189 — read-only query slice of the registry. Owns the bell / cwd /
- * pid / spinner / scanner-match / status getters that route handlers and
- * the Tauri shutdown path consume. Pre-fix all of this lived inline in
+ * pid / spinner / status getters that route handlers and the Tauri
+ * shutdown path consume. Pre-fix all of this lived inline in
  * `src/terminals/registry.ts`.
  */
 
@@ -144,49 +143,3 @@ export function listBellPendingForProject(secret: string): Array<{ terminalId: s
   return out;
 }
 
-/** HS-8034 Phase 2 — return every session's `pendingPrompt` for a single
- *  project so the bell-state long-poll can surface them cross-project. */
-export function listPendingPromptsForProject(secret: string): Array<{ terminalId: string; match: MatchResult }> {
-  const prefix = `${secret}::`;
-  const out: Array<{ terminalId: string; match: MatchResult }> = [];
-  for (const [key, session] of sessions.entries()) {
-    if (!key.startsWith(prefix)) continue;
-    if (session.pendingPrompt !== null) {
-      out.push({ terminalId: key.slice(prefix.length), match: session.pendingPrompt });
-    }
-  }
-  return out;
-}
-
-/** HS-8034 Phase 2 — clear `pendingPrompt` for a single session. */
-export function clearPendingPrompt(secret: string, terminalId: string): boolean {
-  const session = sessions.get(sessionKey(secret, terminalId));
-  if (!session) return false;
-  if (session.pendingPrompt === null) return false;
-  session.pendingPrompt = null;
-  return true;
-}
-
-/** HS-8034 Phase 2 — write a server-built response payload into the
- *  matching PTY. Returns false when the PTY is dead so the caller can
- *  surface a useful error to the client. */
-export function writePtyInput(secret: string, terminalId: string, payload: string): boolean {
-  const session = sessions.get(sessionKey(secret, terminalId));
-  if (!session || !session.pty) return false;
-  try {
-    session.pty.write(payload);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** HS-8034 Phase 2 — toggle the scanner's "Not a prompt" suppression flag.
- *  Returns false when the session doesn't exist. */
-export function setScannerSuppressed(secret: string, terminalId: string, suppressed: boolean): boolean {
-  const session = sessions.get(sessionKey(secret, terminalId));
-  if (!session) return false;
-  session.promptScanner.setSuppressed(suppressed);
-  if (suppressed) session.pendingPrompt = null;
-  return true;
-}

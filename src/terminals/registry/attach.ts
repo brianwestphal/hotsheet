@@ -138,15 +138,6 @@ export function writeInput(
 ): void {
   const s = sessions.get(sessionKey(secret, terminalId));
   if (s?.pty) s.pty.write(data);
-  // HS-8029 Phase 1 — user typing into the terminal clears any "Not a
-  // prompt" suppression on the scanner AND drops the stashed
-  // pendingPrompt (the user is interacting with the terminal directly,
-  // so the overlay's job is done). Mirrors the client detector's
-  // `notifyUserKeystroke`.
-  if (s !== undefined) {
-    s.promptScanner.notifyUserKeystroke();
-    s.pendingPrompt = null;
-  }
 }
 
 export function resizeTerminal(

@@ -1,7 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { extractPrimaryValue } from '../permissionAllowRules.js';
 import { api, apiWithSecret } from './api.js';
-import { hasAiTerminalPromptForSecret } from './bellPoll.js';
+import { buildBashPermissionPreview } from './bashPermissionPreview.js';
 import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
 import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
@@ -13,6 +13,7 @@ import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
 import { getProjectDefault, getSessionOverride, resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
 import { checkout, type CheckoutHandle, peekEntryDims } from './terminalCheckout.js';
+import { buildWritePermissionPreview } from './writePermissionPreview.js';
 
 /**
  * Claude permission-request UI. Historically there were two variants: a
@@ -136,6 +137,29 @@ interface PermissionOverlayState {
   liveTermFitRetryTimer: ReturnType<typeof setTimeout> | null;
 }
 
+/**
+ * HS-8296 — pure: extract `{file_path, content}` from a Write tool's
+ * `input_preview` JSON. Returns null when the JSON is malformed, the
+ * tool's primary fields are missing, or `file_path` is empty (the
+ * dialog title needs a real path to render usefully).
+ *
+ * Exported for unit-test isolation. The `content` field can legitimately
+ * be empty (Claude is asked to create an empty file) — the body
+ * renderer handles that case as "0 bytes" text rather than rejecting it.
+ */
+export function extractWriteFields(inputPreview: string): { filePath: string; content: string } | null {
+  if (inputPreview === '') return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(inputPreview); } catch { return null; }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  const filePath = obj.file_path;
+  const content = obj.content;
+  if (typeof filePath !== 'string' || filePath === '') return null;
+  if (typeof content !== 'string') return null;
+  return { filePath, content };
+}
+
 function freshPermissionOverlayState(): PermissionOverlayState {
   return {
     permissionPollActive: false,
@@ -161,30 +185,6 @@ export const respondedRequestIds = new Set<string>();
 // polling will not re-show the popup until it disappears server-side (HS-6436).
 export const dismissedRequestIds = new Set<string>();
 
-/**
- * HS-8294 — per-project map of the most recently observed pending channel-
- * permission `request_id`, updated every `processPermissionPollResponse`
- * tick. Read by `dismissChannelPermissionForSecret` so a §52 AI-prompt
- * answer can mark the equivalent §47 request as dismissed without having
- * to plumb the `request_id` through the bellPoll dispatcher.
- *
- * Pre-fix the user reported seeing TWO permission popups for one Claude
- * decision (e.g. `mkdir -p /tmp/claude-permission-test` from
- * /test-permission-write): §52 fires for the in-terminal prompt, the user
- * picks Yes via TUI keystroke, Claude proceeds — but the channel server's
- * MCP `permission_request` from the SAME decision was never explicitly
- * answered (Claude doesn't propagate TUI answers back to the MCP server
- * within the 2-min `PERMISSION_TTL_MS`), so the next channel-permission
- * poll re-mounts §47 for the already-resolved decision.
- *
- * Recording the request_id per secret here lets `bellPoll.tsx`'s onSend
- * path (when an AI parser numbered choice was picked) call
- * `dismissChannelPermissionForSecret(secret)` which adds the latest
- * pending request_id to `dismissedRequestIds` so subsequent polls don't
- * re-mount it.
- */
-const lastSeenPendingBySecret = new Map<string, string>();
-
 // Minimized popups — user clicked outside (or on the owning tab) without
 // responding. Indexed by request_id. The pulsating blue dot on the owning
 // project tab signals there is a waiting permission; clicking the tab
@@ -204,75 +204,6 @@ export function getMinimizedPermissionSecrets(): Set<string> {
   const secrets = new Set<string>();
   for (const rec of minimizedRequests.values()) secrets.add(rec.secret);
   return secrets;
-}
-
-/**
- * HS-8245 — tear down any §47 channel-permission popup belonging to
- * `secret` without responding to the underlying MCP request. Called
- * from `bellPoll.tsx`'s dispatcher when an AI-parser §52 overlay is
- * about to mount for the same project — the two surfaces describe the
- * same Claude decision and the §52 overlay (which answers via
- * keystrokes the TUI is already listening for) is the authoritative
- * one. The MCP request stays alive on the channel server; if the AI
- * prompt clears without resolving the MCP side, the next
- * `processPermissionPollResponse` for-each iteration will re-mount §47
- * naturally because `hasAiTerminalPromptForSecret(secret)` will then
- * return false. Inverts the HS-8228 `dismissTerminalPromptOverlayForSecret`
- * direction (which let §47 win — the user reported that was the wrong
- * choice for AI prompts).
- *
- * "Tear down" = remove the popup DOM, release the §54 checkout (so
- * the borrowed live xterm reparents back into its previous owner),
- * and clear `activePopupRequestId` / `activePopupOwnerSecret` so the
- * next mount can proceed. Idempotent — no-op when no popup is active
- * for `secret`. Minimized popups (DOM-not-present) are explicitly
- * preserved; the user already chose to defer that one.
- */
-export function dismissPermissionPopupForSecret(secret: string): void {
-  if (permissionState.activePopupOwnerSecret !== secret) return;
-  if (permissionState.activePopupRequestId === null) return;
-  // Release checkout BEFORE removing the popup DOM so the live xterm
-  // reparents back into the previous owner's `mountInto` rather than
-  // being orphaned in the removed-from-document subtree (HS-8182).
-  releaseActiveCheckoutIfAny();
-  document.querySelectorAll('.permission-popup').forEach(el => el.remove());
-  permissionState.activePopupRequestId = null;
-  permissionState.activePopupOwnerSecret = null;
-  permissionState.autoDismissMissCount = 0;
-}
-
-/**
- * HS-8294 — when the user answers an AI-parser §52 in-terminal prompt
- * (e.g. picks "1. Yes" on Claude's "Do you want to proceed?"), the same
- * Claude decision's MCP `permission_request` stays alive on the channel
- * server (Claude doesn't auto-cancel it within the 2-min
- * `PERMISSION_TTL_MS`). Without this, the next channel-permission poll
- * re-mounts §47 for the already-resolved decision and the user sees a
- * second popup for the same Claude prompt — the exact symptom reported
- * in HS-8294.
- *
- * "Mark dismissed" = add the latest seen pending request_id for `secret`
- * to `dismissedRequestIds` so future `processPermissionPollResponse`
- * iterations skip the mount, AND tear down any currently-mounted §47
- * popup for the same project (idempotent — no-op when no popup is up).
- *
- * Idempotent for the no-pending case (returns early when
- * `lastSeenPendingBySecret` has no entry for `secret`). The MCP request
- * itself stays alive on the channel server until either Claude responds
- * via MCP (typical for ALLOW paths where claude propagates the TUI
- * answer back) or the 2-min TTL expires — we just stop showing it.
- */
-export function dismissChannelPermissionForSecret(secret: string): void {
-  const requestId = lastSeenPendingBySecret.get(secret);
-  if (requestId !== undefined) {
-    dismissedRequestIds.add(requestId);
-  }
-  // Tear down the popup if it happens to be currently mounted for this
-  // project (race where §52 dispatched after §47 mounted and the user
-  // answered §52 immediately — at this point the dispatcher's own
-  // `dismissPermissionPopupForSecret` may have already fired, in which
-  // case this call is a no-op).
-  dismissPermissionPopupForSecret(secret);
 }
 
 /** HS-8183 — number of consecutive polls in which `state.permissionState.activePopupRequestId`
@@ -356,10 +287,6 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
     if (perm !== null) {
       pendingSecrets.add(secret);
       pendingRequestIds.add(perm.request_id);
-      // HS-8294 — record the per-secret pending request_id so a §52
-      // AI-prompt answer can mark the equivalent §47 request as
-      // dismissed via `dismissChannelPermissionForSecret(secret)`.
-      lastSeenPendingBySecret.set(secret, perm.request_id);
       markProjectAttention(secret);
       if (!respondedRequestIds.has(perm.request_id)
           && !dismissedRequestIds.has(perm.request_id)
@@ -368,10 +295,6 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
       }
     } else {
       clearProjectAttention(secret);
-      // HS-8294 — server reports null for this project (no pending
-      // permission). Drop from the per-secret tracker so a future
-      // dismiss call doesn't add a stale request_id to dismissedRequestIds.
-      lastSeenPendingBySecret.delete(secret);
     }
   }
   // Clear any attention dots for projects NOT in the response at all.
@@ -597,18 +520,6 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   if (permissionState.activePopupRequestId === perm.request_id) return;
   // Already responded / dismissed / minimized — don't re-show.
   if (shouldSkipPermission(perm.request_id)) return;
-  // HS-8245 — when an AI tool's in-terminal prompt is detected for this
-  // project (Claude / Codex / etc., per `AI_PARSER_IDS`), suppress the
-  // §47 channel-permission popup entirely. The §52 in-terminal overlay
-  // is the authoritative surface — its borrow-terminal interaction
-  // sends keystrokes the AI's TUI is already listening for. The MCP
-  // request stays alive on the channel server; the next
-  // `processPermissionPollResponse` for-each iteration will re-call
-  // `showPermissionPopup` (every 100ms) and naturally surface §47 if
-  // the AI prompt clears without resolving the MCP side. We don't
-  // push onto `pendingPermissionStack` because that's for "popup is
-  // already up, queue this one" — here no popup mounted at all.
-  if (hasAiTerminalPromptForSecret(secret)) return;
   // HS-8219 — already queued on the pending stack? No-op (the active
   // popup will pop it when dismissed). Prevents the polling loop's
   // for-each from re-pushing the same request_id every 100 ms.
@@ -663,13 +574,6 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
 }
 
 function showPermissionPopupBody(secret: string, perm: PermissionData) {
-  // HS-8245 — the precedence is now reversed from HS-8228: §52 (in-
-  // terminal overlay for AI prompts) wins, and §47 is suppressed at the
-  // gate in `showPermissionPopup` when `hasAiTerminalPromptForSecret`
-  // is true. There's no longer a `dismissTerminalPromptOverlayForSecret`
-  // call here — by the time we reach this body, the AI gate has
-  // already passed.
-
   // A permission request is proof Claude is actively working — extend busy timeout.
   if (permissionState.channelBusyTimeoutModule) {
     clearTimeout(permissionState.channelBusyTimeoutModule);
@@ -721,45 +625,100 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   // output, so the gate now also fires for any non-trivial preview
   // (Edit/Write tool with parseable diff, multi-line flat preview,
   // long single-line flat preview).
-  const useLiveCheckout = perm.input_preview !== undefined && shouldUseLiveCheckout(editDiff, previewText);
+  // HS-8299 — Bash gets a tool-specific layout: title "Allow Claude to
+  // run", body is a scrollable `<pre>` of the command (NOT a live-
+  // terminal checkout, NOT the flat-JSON dump), actions are three
+  // vertically-stacked buttons (Yes / Yes-and-allow-always / No). The
+  // middle button creates a `Bash(<command>)` always-allow rule via the
+  // same §47.4 mechanism the existing checkbox uses. We compute the
+  // primary value (the bash command) up-front since both the always-
+  // affordance default-skipping logic AND the new Bash layout need it.
+  const primaryValue = perm.input_preview !== undefined
+    ? extractPrimaryValue(perm.tool_name, perm.input_preview)
+    : null;
+  const isBashCustomLayout = perm.tool_name === 'Bash' && primaryValue !== null;
+
+  // HS-8296 — Write gets a parallel tool-specific layout: title
+  // `Allow write to <path>?`, body is a scrollable `<pre>` of the file
+  // content (or `Binary Data (NNN bytes)` for non-text), actions are
+  // the same three-stacked-button column as Bash. Live-checkout is
+  // bypassed entirely (per the user's Q4 = "replace" answer).
+  const writeFields = perm.tool_name === 'Write' && perm.input_preview !== undefined
+    ? extractWriteFields(perm.input_preview)
+    : null;
+  const isWriteCustomLayout = writeFields !== null;
+
+  // For Bash / Write, the live-checkout / diff / flat-preview pipeline
+  // is bypassed entirely — the tool-specific layouts own their own
+  // bodies. For every other tool, the existing HS-8217 heuristic still
+  // picks live-checkout for non-trivial previews.
+  const useLiveCheckout = !isBashCustomLayout
+    && !isWriteCustomLayout
+    && perm.input_preview !== undefined
+    && shouldUseLiveCheckout(editDiff, previewText);
 
   // HS-8069 — body slot: live-terminal checkout container (HS-8171 v2)
   // when truncation fired, else the diff DOM (HS-7951), else the
   // flat-JSON pre-tag preview, else nothing. Build the element first so
   // we can pass it to the shell as a slot.
+  // HS-8299 — when Bash, use the dedicated `bashPermissionPreview`
+  // helper; the helper returns BOTH the body and the actions slot, so
+  // the existing actions block + always-allow affordance below are
+  // skipped for this branch.
   let bodyElement: HTMLElement | undefined;
   let liveTermContainer: HTMLElement | null = null;
-  if (useLiveCheckout) {
-    liveTermContainer = toElement(<div className="permission-popup-live-terminal"></div>);
-    bodyElement = liveTermContainer;
-  } else if (editDiff !== null) {
-    bodyElement = renderEditDiffPreview(editDiff);
-  } else if (hasStringPreview) {
-    bodyElement = toElement(<pre className="permission-popup-preview">{previewText}</pre>);
-  }
-
-  // HS-8069 — actions slot: Allow / Deny icon buttons.
-  const actions = toElement(
-    <div className="permission-popup-actions">
-      <button className="permission-popup-allow" title="Allow">{raw(checkIcon)}</button>
-      <button className="permission-popup-deny" title="Deny">{raw(xIcon)}</button>
-    </div>
-  );
-
-  // HS-7953 / HS-8069 — "Always allow this" affordance. Skipped for
-  // non-allow-listable tools (Edit / Write / unknown) and when the
-  // primary-field value is empty. Confirming a new rule writes to
-  // settings.json then immediately invokes the allow-current-request path.
-  const primaryValue = perm.input_preview !== undefined
-    ? extractPrimaryValue(perm.tool_name, perm.input_preview)
-    : null;
+  let actions: HTMLElement;
   let alwaysAffordance: HTMLElement | null = null;
-  if (primaryValue !== null) {
-    alwaysAffordance = buildAlwaysAllowAffordance({
-      toolName: perm.tool_name,
-      primaryValue,
-      onCommit: () => { respondToPermission('allow'); },
+  let writeCustomTitle: string | null = null;
+  if (isBashCustomLayout) {
+    const parts = buildBashPermissionPreview({
+      command: primaryValue,
+      onAllow: () => { respondToPermission('allow'); },
+      onAllowAlways: () => { respondToPermission('allow'); },
+      onDeny: () => { respondToPermission('deny'); },
     });
+    bodyElement = parts.bodyElement;
+    actions = parts.actionsElement;
+  } else if (isWriteCustomLayout) {
+    const parts = buildWritePermissionPreview({
+      filePath: writeFields.filePath,
+      content: writeFields.content,
+      onAllow: () => { respondToPermission('allow'); },
+      onAllowAlways: () => { respondToPermission('allow'); },
+      onDeny: () => { respondToPermission('deny'); },
+    });
+    bodyElement = parts.bodyElement;
+    actions = parts.actionsElement;
+    writeCustomTitle = parts.title;
+  } else {
+    if (useLiveCheckout) {
+      liveTermContainer = toElement(<div className="permission-popup-live-terminal"></div>);
+      bodyElement = liveTermContainer;
+    } else if (editDiff !== null) {
+      bodyElement = renderEditDiffPreview(editDiff);
+    } else if (hasStringPreview) {
+      bodyElement = toElement(<pre className="permission-popup-preview">{previewText}</pre>);
+    }
+
+    // HS-8069 — actions slot: Allow / Deny icon buttons.
+    actions = toElement(
+      <div className="permission-popup-actions">
+        <button className="permission-popup-allow" title="Allow">{raw(checkIcon)}</button>
+        <button className="permission-popup-deny" title="Deny">{raw(xIcon)}</button>
+      </div>
+    );
+
+    // HS-7953 / HS-8069 — "Always allow this" affordance. Skipped for
+    // non-allow-listable tools (Edit / Write / unknown) and when the
+    // primary-field value is empty. Confirming a new rule writes to
+    // settings.json then immediately invokes the allow-current-request path.
+    if (primaryValue !== null) {
+      alwaysAffordance = buildAlwaysAllowAffordance({
+        toolName: perm.tool_name,
+        primaryValue,
+        onCommit: () => { respondToPermission('allow'); },
+      });
+    }
   }
 
   // HS-8171 v2 / HS-8182 — the checkout handle (if any) lives at module
@@ -879,11 +838,31 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   // to "No response needed" semantics (the existing §47 popup didn't have a
   // close X — adding the shell adds one, and the cleanest mapping is "user
   // dismissed without responding").
+  // HS-8299 / HS-8296 — Bash + Write use tool-specific dialog headers:
+  // - Bash: title "Allow Claude to run", no `toolChip` (the title
+  //   carries the verb so a separate `Bash` chip would be redundant)
+  // - Write: title `Allow write to <path>?` (computed inside
+  //   `writePermissionPreview.tsx`), no `toolChip` for the same reason
+  // Every other tool keeps the existing `${tool_name}` chip +
+  // description-as-title pairing.
+  let dialogTitle = perm.description;
+  let dialogToolChip: string | undefined = perm.tool_name;
+  let dialogAriaLabel = `Permission request: ${perm.tool_name} — ${perm.description}`;
+  if (isBashCustomLayout) {
+    dialogTitle = 'Allow Claude to run';
+    dialogToolChip = undefined;
+    dialogAriaLabel = 'Permission request: Allow Claude to run';
+  } else if (isWriteCustomLayout && writeCustomTitle !== null) {
+    dialogTitle = writeCustomTitle;
+    dialogToolChip = undefined;
+    dialogAriaLabel = `Permission request: ${writeCustomTitle}`;
+  }
+
   const handle = openPermissionDialogShell({
     rootClassName: 'permission-popup',
-    ariaLabel: `Permission request: ${perm.tool_name} — ${perm.description}`,
-    toolChip: perm.tool_name,
-    title: perm.description,
+    ariaLabel: dialogAriaLabel,
+    toolChip: dialogToolChip,
+    title: dialogTitle,
     bodyElement,
     actions,
     alwaysAffordance,
@@ -893,14 +872,19 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     projectSecret: secret,
   });
 
-  handle.overlay.querySelector('.permission-popup-allow')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    respondToPermission('allow');
-  });
-  handle.overlay.querySelector('.permission-popup-deny')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    respondToPermission('deny');
-  });
+  // HS-8299 / HS-8296 — Bash + Write layouts wire their buttons inside
+  // their own preview helpers; only the legacy two-icon-button path
+  // needs click wiring here.
+  if (!isBashCustomLayout && !isWriteCustomLayout) {
+    handle.overlay.querySelector('.permission-popup-allow')!.addEventListener('click', (e) => {
+      e.stopPropagation();
+      respondToPermission('allow');
+    });
+    handle.overlay.querySelector('.permission-popup-deny')!.addEventListener('click', (e) => {
+      e.stopPropagation();
+      respondToPermission('deny');
+    });
+  }
 
   // HS-8171 v2 — check out the live project terminal into the popup
   // body container. The checkout is synchronous: `checkout()` reparents
@@ -1032,14 +1016,7 @@ export function _resetStateForTesting(): void {
   for (const rec of minimizedRequests.values()) clearTimeout(rec.timeoutId);
   minimizedRequests.clear();
   pendingPermissionStack.length = 0;
-  lastSeenPendingBySecret.clear();
   permissionState = freshPermissionOverlayState();
-}
-
-/** **TEST ONLY** (HS-8294) — read-only snapshot of the per-secret pending
- *  request_id tracker so unit tests can assert the right entries land. */
-export function _lastSeenPendingForTesting(): ReadonlyMap<string, string> {
-  return new Map(lastSeenPendingBySecret);
 }
 
 /** **TEST ONLY** — read-only snapshot of the module-level bookkeeping for

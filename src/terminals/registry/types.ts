@@ -1,6 +1,4 @@
-import type { MatchResult } from '../../shared/terminalPrompt/parsers.js';
 import type { TerminalConfig } from '../config.js';
-import type { PromptScanner } from '../promptScanner.js';
 import type { RingBuffer } from '../ringBuffer.js';
 
 /**
@@ -10,8 +8,8 @@ import type { RingBuffer } from '../ringBuffer.js';
  * exports covering attach / detach / spawn / kill / destroy + bell + cwd
  * + pid + spinner + scanner-match + status. This file pulls out the
  * type/interface declarations so the four behavioural modules
- * (`./attach.ts` / `./lifecycle.ts` / `./state.ts` / `./scannerHandler.ts`)
- * can share them without circular imports.
+ * (`./attach.ts` / `./lifecycle.ts` / `./state.ts`) can share them without
+ * circular imports.
  */
 
 export type TerminalState = 'alive' | 'exited' | 'not_spawned';
@@ -94,8 +92,7 @@ export interface AttachOptions {
 /** Internal storage shape for one (secret, terminalId) session. Shared
  *  across the split modules so each can mutate the relevant slice
  *  (attach.ts adopts subscribers + adjusts cols/rows; lifecycle.ts
- *  spawns / kills the pty; state.ts reads bell / cwd / pid; scannerHandler.ts
- *  parks new prompt matches into pendingPrompt). */
+ *  spawns / kills the pty; state.ts reads bell / cwd / pid). */
 export interface SessionState {
   pty: PtyLike | null;
   ptyDisposables: { dispose(): void }[];
@@ -130,8 +127,4 @@ export interface SessionState {
   lastOutputAtMs: number | null;
   /** HS-6702 — wall-clock ms of the last chunk containing a Claude busy-spinner glyph. */
   lastSpinnerAtMs: number | null;
-  /** HS-8029 Phase 1 — per-session terminal-prompt scanner. */
-  promptScanner: PromptScanner;
-  /** HS-8029 Phase 1 — most recent unhandled match. */
-  pendingPrompt: MatchResult | null;
 }

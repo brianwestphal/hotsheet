@@ -148,10 +148,6 @@ interface TerminalInstance {
    *  see no layout change. `commands` is a bounded ring (500) of per-prompt
    *  records; `current` is the in-flight record between A and D. */
   shellIntegration: ShellIntegrationState;
-  /** HS-7986 / HS-8035 — terminal-header chip the user clicks to clear a
-   *  server-side scanner suppression. Hidden until the server reports a
-   *  suppressed scanner; click POSTs `/api/terminal/prompt-resume`. */
-  promptResumeChip: HTMLButtonElement;
 }
 
 interface CommandRecord {
@@ -625,11 +621,6 @@ function buildPaneEl(config: TerminalTabConfig, tabName: string): HTMLElement {
         {/* HS-7331 — terminal search slot. Mounted from terminalSearch.tsx on
             xterm attach. */}
         <span className="terminal-search-slot"></span>
-        {/* HS-7986 — prompt-detection resume chip. Hidden by default; shown
-            after a Not-a-prompt dismiss. */}
-        <button className="terminal-header-btn terminal-prompt-resume-chip" title="Prompt detection paused — click to resume" style="display:none">
-          <span className="terminal-prompt-resume-label">Detection paused — Resume</span>
-        </button>
         {/* HS-8286 — per-pane "Server slow" chip removed. Stall detection
             now feeds the global server-slow banner via the per-entry
             watcher in `terminalCheckout.tsx::createEntry`. */}
@@ -699,14 +690,6 @@ function bindAppearanceBtn(inst: TerminalInstance, pane: HTMLElement): void {
 }
 
 function bindPaneHeaderHandlers(inst: TerminalInstance, pane: HTMLElement): void {
-  // HS-7986 / HS-8035 — chip click POSTs `/api/terminal/prompt-resume` so the
-  // server-side scanner re-arms. Network errors swallowed.
-  inst.promptResumeChip.addEventListener('click', () => {
-    inst.promptResumeChip.style.display = 'none';
-    void api('/terminal/prompt-resume', { method: 'POST', body: { terminalId: inst.id } })
-      .catch(() => { /* swallow */ });
-  });
-
   pane.querySelector<HTMLButtonElement>('.terminal-power-btn')!.addEventListener('click', () => { void onPowerClick(inst); });
   pane.querySelector<HTMLButtonElement>('.terminal-clear-btn')!.addEventListener('click', () => { inst.term?.clear(); });
   bindAppearanceBtn(inst, pane);
@@ -757,7 +740,6 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
     runtimeCwd: null,
     hasBell: false,
     shellIntegration: { enabled: false, commands: [], current: null, nextId: 1 },
-    promptResumeChip: pane.querySelector<HTMLButtonElement>('.terminal-prompt-resume-chip')!,
   };
 
   bindPaneHeaderHandlers(inst, pane);
@@ -1025,14 +1007,6 @@ function attachDrawerKeyHandler(inst: TerminalInstance, term: XTerm): void {
 }
 
 function attachDrawerTermHandlers(inst: TerminalInstance, term: XTerm, handle: ReturnType<typeof checkout>): void {
-  // HS-8044 — keystroke-send is wired centrally inside checkout's WS handler.
-  // We DO still want the prompt-resume chip auto-hide on keystroke (HS-8035).
-  inst.termHandlerDisposers.push(term.onData(() => {
-    if (inst.promptResumeChip.style.display !== 'none') {
-      inst.promptResumeChip.style.display = 'none';
-    }
-  }));
-
   // HS-8044 — echo fit-driven dim changes through `handle.resize` so the WS
   // resize frame is sent and `lastApplied` bookkeeping stays current.
   inst.termHandlerDisposers.push(term.onResize(({ cols, rows }) => {

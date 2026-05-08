@@ -36,7 +36,6 @@ import { showTagsDialog } from './tagsDialog.js';
 import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
 import { initTerminal } from './terminal.js';
 import { initTerminalDashboard } from './terminalDashboard.js';
-import { loadAllowRules } from './terminalPrompt/allowRulesStore.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
 import { loadTicketPrefixes, reloadTicketPrefixes } from './ticketRefs.js';
@@ -105,10 +104,6 @@ async function reloadPluginToolbar() {
 
 async function reloadAppState() {
   await loadSettings();
-  // HS-7987 — hydrate the per-project terminal-prompt allow-rules cache so
-  // the §52 detector's auto-allow gate has the latest rules when the next
-  // chunk arrives. Failure leaves the cache empty (default-deny).
-  void loadAllowRules();
   // HS-8053 — drop the ticket-prefix cache and re-fetch for the new
   // project. Pre-fix `loadTicketPrefixes()` was only called at app init,
   // so a project with a non-`HS` prefix (e.g. Domotion's `DM`) never

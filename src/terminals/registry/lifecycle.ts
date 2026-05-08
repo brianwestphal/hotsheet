@@ -8,11 +8,9 @@ import { containsClaudeSpinner } from '../claudeSpinner.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from '../config.js';
 import { scanPtyChunk } from '../oscScanner.js';
 import { killProcessTreeBestEffort } from '../processInspect.js';
-import { createPromptScanner } from '../promptScanner.js';
 import { resolveTerminalCommand } from '../resolveCommand.js';
 import { RingBuffer } from '../ringBuffer.js';
 import { setupShellHistoryForSpawn } from '../shellHistory.js';
-import { handleScannerMatch } from './scannerHandler.js';
 import {
   DEFAULT_COLS,
   DEFAULT_ROWS,
@@ -38,22 +36,15 @@ export function setPtyFactory(factory: PtyFactory): PtyFactory {
   return prev;
 }
 
-/** Two-step session construction so the scanner's `onMatch` closure can
- *  capture the final `SessionState` reference before it's assigned to
- *  `state.promptScanner`. The `as unknown as` cast is the documented
- *  placeholder lifetime — see the explanatory comment below. */
 export function createSession(
-  secret: string,
+  _secret: string,
   dataDir: string,
   terminalId: string,
   configOverride: TerminalConfig | null,
   cols?: number,
   rows?: number,
 ): SessionState {
-  // HS-8029 Phase 1 — circular ref via closure: the scanner's `onMatch`
-  // captures `state` so it can stash the match into `state.pendingPrompt`.
-  // Constructed in two steps so the closure can refer to the final object.
-  const state: SessionState = {
+  return {
     pty: null,
     ptyDisposables: [],
     startedAt: null,
@@ -74,19 +65,7 @@ export function createSession(
     hasBeenAttached: false,
     lastOutputAtMs: null,
     lastSpinnerAtMs: null,
-    // HS-8088 — placeholder pattern that's left in place. The scanner
-    // construction below depends on the `state` reference being closed
-    // over by `onMatch`, so we can't assign `promptScanner` before
-    // `state` exists. Refactoring to a nullable type would force every
-    // reader to non-null-assert (the field is always real by the time
-    // anyone reads it — this function is the only assigner).
-    promptScanner: null as unknown as SessionState['promptScanner'],
-    pendingPrompt: null,
   };
-  state.promptScanner = createPromptScanner({
-    onMatch(match) { handleScannerMatch(state, secret, dataDir, match); },
-  });
-  return state;
 }
 
 export function spawnIntoSession(session: SessionState, dataDir: string): void {
@@ -163,10 +142,6 @@ export function spawnIntoSession(session: SessionState, dataDir: string): void {
       }
     }
     session.scrollback.push(chunk);
-    // HS-8029 Phase 1 — feed every PTY chunk into the per-session prompt
-    // scanner. The scanner debounces internally and runs the parser
-    // registry off the main hot path.
-    session.promptScanner.ingest(chunk);
     // HS-6702 — PTY-activity timestamp + Claude spinner detection.
     const nowMs = Date.now();
     session.lastOutputAtMs = nowMs;
@@ -295,17 +270,6 @@ export function restartTerminal(
     // process as "still busy".
     session.lastOutputAtMs = null;
     session.lastSpinnerAtMs = null;
-    // HS-8029 Phase 1 — drop any pending prompt match from the prior
-    // PTY and dispose + recreate the headless xterm scanner so its
-    // internal buffer doesn't leak previous-process state into the new
-    // one. HS-8034 Phase 2 — the recreated scanner uses the same
-    // auto-allow gate as the initial createSession path.
-    const restartedSession: SessionState = session;
-    restartedSession.pendingPrompt = null;
-    restartedSession.promptScanner.dispose();
-    restartedSession.promptScanner = createPromptScanner({
-      onMatch(match) { handleScannerMatch(restartedSession, secret, dataDir, match); },
-    });
   }
   spawnIntoSession(session, dataDir);
   if (bellFlipped) {
@@ -323,8 +287,6 @@ export function destroyTerminal(
   if (!session) return;
   teardownPty(session);
   session.subscribers.clear();
-  // HS-8029 Phase 1 — release the scanner's headless xterm + pending timer.
-  session.promptScanner.dispose();
   sessions.delete(key);
 }
 
@@ -333,9 +295,6 @@ export function destroyProjectTerminals(secret: string): void {
   const prefix = `${secret}::`;
   for (const key of [...sessions.keys()]) {
     if (key.startsWith(prefix)) {
-      const session = sessions.get(key);
-      // HS-8029 Phase 1 — release the per-session prompt scanner.
-      if (session) session.promptScanner.dispose();
       sessions.delete(key);
     }
   }
@@ -358,8 +317,6 @@ export function destroyAllTerminals(): void {
     if (!session) continue;
     teardownPty(session);
     session.subscribers.clear();
-    // HS-8029 Phase 1 — release the per-session prompt scanner.
-    session.promptScanner.dispose();
     sessions.delete(key);
   }
 }

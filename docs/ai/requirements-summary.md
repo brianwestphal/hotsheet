@@ -626,28 +626,6 @@ HS-7964 (investigation) / HS-7965 (implementation). Each Hot Sheet terminal gets
 
 **Cross-refs:** §22 (base terminal — where the spawn lives), §2 (settings.json schema home for the new key), HS-7964 (parent investigation).
 
----
-
-## 52. Terminal permission-prompt overlay (`52-terminal-prompt-overlay.md`)
-
-HS-7971. Surfaces interactive prompts emitted by tools running inside the embedded terminal (chiefly Claude Code's `1/2`-style choice screens emitted before the MCP relay is up — the dev-channels warning the screenshot in HS-7971 captures) through a Hot Sheet overlay anchored to the terminal pane, so the user can answer with the mouse + keyboard without typing back into the raw PTY. Closes the parity gap between MCP-relayed prompts (handled by §47.4 popup + allow-list) and PTY-resident prompts (today require terminal focus + correct keystrokes).
-
-**Detection.** Hooks into `ws.addEventListener('message', …)` in `src/client/terminal.tsx` AFTER `term.write()` lands the chunk. Debounced 100 ms scan of `term.buffer.active.getLine(i).translateToString()` for the last 10 visible rows — scanning rendered text rather than the raw PTY byte stream is the only sane substrate (raw stream is full of `\x1b[2K\x1b[1G` redraw noise from Ink). Active terminal only — no overlays for background terminals.
-
-**Parser registry.** Pluggable `src/client/terminalPrompt/parsers.ts` with three v1 parsers: `claude-numbered` (matches `> N. Foo / N+1. Bar / Enter to confirm · Esc to cancel`, payload = `(\x1b[B){index − highlightedIndex}\r` for arrow-nav), `yesno` (matches `[Yy]/[Nn]` regex on trailing line, payload = `y\r` or `n\r` matching surface case), `generic` fallback (heuristic-only signal: footer-must-be-trailing-line strings or trailing `?`; renders monospaced reproduction of last 10 rows + free-form `<input>`). `MatchResult` exposes `signature` for always-allow keying + `payloadFor(choice)` for write-back.
-
-**Overlay UI.** Non-modal, anchored to the active terminal canvas (drawer or dashboard). Three shapes: numbered (clickable list rows, highlighted option tinted), yesno (green Yes / red Deny mirroring §47 popup), generic (`<pre>` reproduction + text `<input>` + Submit). Footer: "Always allow this answer" checkbox (numbered/yesno only — never generic) + "Cancel" link (writes `\x1b`) + "Not a prompt — let me handle it" dismiss (suppresses further detector firings until next user keystroke).
-
-**Always-allow.** Per-project rules in `<dataDir>/settings.json::terminal_prompt_allow_rules`: `{id, parser_id, signature: parser_id+":"+hash(question)+":"+chosen-index, response_payload_b64, human_label, added_at, added_by}`. Auto-allow path writes payload directly to the PTY before the overlay renders + appends `Terminal prompt: <human_label> — Auto-allowed (rule <id>)` to `command_log`. Generic-fallback responses NEVER auto-allow (no stable signature). Settings → Permissions sub-section lists rules + `terminal_prompt_overlay_enabled` master toggle + delete affordance (no hand-add — rules only created from overlay's checkbox).
-
-**Reverses HS-6602.** That investigation rejected terminal scraping for non-MCP Claude prompts as too brittle. HS-7971 reverses the call after the user observed the dev-channels warning in real use; mitigations (master toggle, footer-must-be-trailing constraint, per-instance suppression on dismiss, generic-fallback-never-auto-responds) cap the false-positive blast radius. Pager prompts (`less`, `more`, `(--More--)`), shell-builtin `read -p`, and generic "press Enter to continue" sentinels are explicitly out of scope.
-
-**Status:** Shipped — Phase 1 + 1.5 + 2 + 3 + 4 (HS-7971 + HS-7980 + HS-7985 + HS-7986 + HS-7987 + HS-7988). All §52 design sections are implemented. Phase 1 ships: `src/client/terminalPrompt/parsers.ts` (claude-numbered parser + djb2 `hashQuestion` + `trimRows` + footer detector + `buildNumberedPayload`/`buildNumberedCancelPayload` arrow-nav payload builders) + `src/client/terminalPrompt/detector.ts` (per-instance debounced 100 ms scanner over the last 30 visible rows + `decideDispatch` pure helper + overlayOpen / suppressed / lastDispatchedSignature state) + `src/client/terminalPromptOverlay.tsx` (numbered-shape overlay anchored to `.terminal-body` with title bar, multi-line monospaced context block for HS-7980 diffs, clickable choice rows with `is-highlighted` accent tint, Cancel + capture-phase Esc + "Not a prompt" link). `terminal.tsx` wires `kickPromptDetector(inst)` from the WebSocket message handler + `notifyUserKeystroke(inst.promptDetector)` from `term.onData` + `disposeDetector(inst.promptDetector)` from teardown. SCSS block at `styles.scss:8502+`. 38 unit tests in `parsers.test.ts` (32) + `detector.test.ts` (6). Phase 2 (yesno + generic + suppression UX), Phase 3 (allow rules + auto-allow + audit log), Phase 4 (Settings UI + master toggle), Phase 1.5 (dashboard dedicated-view anchor) all not started. Doc-sync follow-up HS-7989 brought this entry + `code-summary.md` in line with shipped state.
-
-**Cross-refs:** §22 (embedded terminal — what the detector hooks into), §12.10 (sibling MCP-relayed permission popup — different transport, same overlay shape conventions), §47 (sibling allow-list design — §52.7 mirrors its settings shape and audit trail), HS-6602 (earlier rejection that this design overrides).
-
----
-
 ## 53. Streaming shell-command output (`53-streaming-shell-output.md`)
 
 **Status:** Shipped — Phase 1 + 2 + 3 + 4 (HS-7982 + HS-7983 + HS-7984). HS-7981 design spike picked Option A — periodic polling of partial output — over SSE / WebSocket / dedicated-stream alternatives because it composes with the existing `commandSidebar.tsx::startShellPoll` 2 s `setInterval` loop, requires zero new connections, and the 4 MB per-command cap keeps the simple full-buffer approach affordable. Closes the "60 s of nothing then everything lands at once" UX gap for custom shell commands run via `POST /api/shell/exec`.
@@ -749,28 +727,6 @@ HS-8168. Independent of §60 and §61. Addresses the third "honest pain point" H
 **What stays the same.** JSX surface (`<div>`), `SafeHtml` API, `raw(html)`, all call sites, server `pages.tsx`, the HS-6341 / HS-6342 'DOM-children-throw' defensive guard. Unchanged.
 
 **Status:** Design only. Cross-refs: §60 / §61 (independent tracks — no dependency either direction), HS-8165 (origin), HS-6341 / HS-6342 (defensive throw preserved), §17 of `docs/ai/code-summary.md` (JSX runtime + bundle entry).
-
----
-
-## 58. Channel auto-approve / known-channel allow-list (`58-channel-auto-approve.md`)
-
-HS-8210. Extends §52's terminal-prompt always-allow path with a Tier 0 matcher keyed on Claude's `Channels: server:<name>` line. Today the user's `--dangerously-load-development-channels` prompt re-fires every `claude` startup despite §52's existing four-tier matcher (HS-8071) — Claude's TUI rewrites the prompt prose between version bumps, so hash / preview / choice-shape / choice-label all drift across launches. The channel name is the user's actual *intent* signal ("I trust this channel") and is invariant against every text drift the user has reported.
-
-**Parser.** `claudeNumberedParser` extracts the channel via `/^Channels:\s+(\S+)/m` against the joined `questionLines` (after the existing strips) and exposes it as a new optional `channel?: string` field on `NumberedMatch`. Signature stays unchanged so existing rules keep matching.
-
-**Allow-rule.** `TerminalPromptAllowRule` gains an optional `match_channel?: string`. When set, it indexes Tier 0 of `findMatchingAllowRule` — fires before all four existing tiers regardless of question hash / preview / choice shape / choice label. Bounds-checks `choice_index` against the live `match.choices.length` so a 3-option rule can't auto-respond on a 2-option re-render. Empty `question_hash` is permitted only when `match_channel` is set.
-
-**Implicit creation.** First manual approval on a channel-bearing prompt automatically appends a `match_channel`-keyed rule — no checkbox required (user-confirmed UX 2026-05-06). Opt-out is a "Don't remember" footer checkbox surfaced only when `match.channel !== undefined`. The existing always-allow checkbox stays for non-channel prompts.
-
-**Settings UI.** Channel rules render with a `Channel: <match_channel>` label in the question column instead of the question preview. Audit-log entries include the channel name in the summary.
-
-**Status:** Shipped (HS-8211 / HS-8212 / HS-8213 / HS-8214 all landed 2026-05-06).
-
-**Out of scope.** Pre-seeding rules without first manual approval. Auto-approving non-channel-bearing prompts (security risk — generic always-allow stays opt-in). Multi-channel rules (one rule per channel). Cross-project channel rules (per-project scope mirrors existing rules).
-
-**Cross-refs.** §52 (parent surface — Tier 0 inserts into §52.4's matcher; §52.7's Settings UI gains the channel label). §47 §47.4 (sibling MCP-relayed allow-list — same conventions, different transport). HS-8208 (sibling — original report covered the "no popup at all" bug separately).
-
----
 
 ## 57. Shell custom-command-button spinner & stop (`57-shell-command-button-spinner.md`)
 
@@ -961,7 +917,6 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 44 — WASM pg_resetwal spike | Design only — deferred | HS-7901: four-option survey (patch PGLite bundle / standalone lazy-loaded WASM / TS port / status quo). Verdict = defer; keep §42's system-binary path until either PGLite upstream lands utility-binary support OR a real user hits the no-admin / Tauri-only wall. If forced to act sooner, Option 2 (standalone lazy-loaded WASM) is the recommended path |
 | 45 — PGLite robustness | Mostly shipped | HS-7902 design + HS-7931 graceful close + HS-7934 (lock-release fold-in + e2e harness + signal-escalation unit test) + HS-7935 (explicit fsync wraps) all shipped. Pipeline: HTTP close → PTY destroy → `closeAllDatabases()` (with per-instance fsyncDir) → `releaseAllLocks()` → instance file removal. HS-7933 (checkpoint-timeout benchmark) blocked upstream on HS-7936 |
 | 46 — service / client decoupling | Design only | HS-7938: detach service from client; multiple simultaneous clients (desktop + mobile) over WebSocket push. Six follow-ups: HS-7940 (server-side `--bind` + `isTrustedOrigin` + GET-secret), HS-7944 (`--service-only` + Tauri `--service-url` remote mode), HS-7945 (WebSocket push replacing `/api/poll`), HS-7946 (multi-client conflict UX), HS-7941 (PWA + mobile responsive), HS-7942 (Tailscale UX sugar) |
-| 52 — terminal-prompt overlay | Shipped | HS-7971 + HS-7980 + HS-7985 + HS-7986 + HS-7987 + HS-7988: claude-numbered + yesno + generic-fallback parsers, numbered/yesno/generic overlay shapes, dashboard + drawer-grid dedicated-view anchor with single-overlay-per-prompt gating, per-instance suppression resume chip, per-project `terminal_prompt_allow_rules` storage + auto-allow gate + always-allow overlay checkbox + `POST /api/terminal-prompt/audit` audit endpoint, Settings → Permissions sub-section with rule list + delete + `terminal_prompt_detection_enabled` master toggle. 103 unit tests across `terminalPrompt/` + `terminalDedicatedState.test.ts` + `routes/commandLog.test.ts`. |
 | 38 — terminal visibility | Shipped | HS-7825: per-project `hidden_terminals` survives reload + relaunch; dynamic `dyn-*` ids stay session-only. |
 | 39 — visibility groupings | Shipped | HS-7826 + HS-7826 follow-up: named per-project groupings, multi-tab Show / Hide dialog, grouping `<select>` next to the eye icon. |
 | 40 — search include rows | Shipped | HS-7756: gray "Include {N}" rows under the multi-select toolbar; `include_backlog` / `include_archive` flags + `/api/tickets/search-counts`. |
@@ -974,7 +929,6 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 55 — ticket cross-references | Shipped | HS-8036 + HS-8053: `HS-NNNN` linkifier, stacking modal, server prefix lookup; cache reload on project switch. |
 | 56 — magnified grid nav | Shipped | HS-8028 + HS-8028 follow-up #2: Shift+Cmd/Ctrl+Arrow grid-neighbour navigation while centered or dedicated; placeholder-rect fix when centered. |
 | 57 — shell-button spinner & stop | Shipped | HS-8060 Phase 1: per-button spinner with stop icon, click-to-confirm-then-kill, multiple concurrent commands tracked via `runningButtons: Map<commandKey, logId>`. |
-| 58 — channel auto-approve | Shipped | HS-8210 extended §52 with a Tier 0 channel-keyed allow-list. Parser extracts `Channels: server:<name>` into `NumberedMatch.channel?: string` (HS-8211); allow-rule schema gained `match_channel?: string` + Tier 0 matcher in `findMatchingAllowRule` (HS-8212); first manual approval implicitly creates a channel-keyed rule with "Don't remember" opt-out footer (HS-8213); Settings UI shows `Channel: <match_channel>` instead of the question preview, and audit-log entries include `(channel <match_channel>)` in the summary (HS-8214). Tier 0 wins over Tiers 1–4 so the channel rule is invariant against question/preview/choice-shape/choice-label drift across Claude versions. |
 | 60 — reactivity primitive | Design only | HS-8166: adopt `@preact/signals-core` + `bindText` / `bindAttr` / `bindList`. Phases: HS-8235 (primitive + helpers + project-tab trial + bundle-size gate), HS-8236 (high-traffic surfaces — ticket list, command log, terminals), HS-8237 (long tail). |
 | 61 — composable stores | Design only | HS-8167: `defineStore({initial, actions})` factory + `resetAllStores()` lifecycle hook on top of §60's signals primitive. Hard dependency on HS-8166. Phases: HS-8238 (factory + project-tab attention-dot trial), HS-8239 (atomic `ticketsStore`), HS-8240 (long tail — projects / terminals / commandLog / channel). |
 | 62 — unified JSX render targets | Design only | HS-8168: `JsxNode` AST + `astToHtml` (server, today's semantics) + `astToDom` (client, no `innerHTML` round-trip). Closes the SVG-namespace / entity / custom-attr / whitespace divergence bug class. Phases: HS-8241 (AST + dual consumers + 50-case corpus, `toElement` unchanged), HS-8242 (flip `toElement` → `astToDom`), HS-8243 (corpus in CI + lint rule). |

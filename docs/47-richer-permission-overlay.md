@@ -248,3 +248,59 @@ If the project has no terminal-backed Claude AT ALL (the PTY isn't running), the
 ### Tests
 
 `src/client/terminalCheckout.test.ts` (25 tests) covers the §54 LIFO-swap behaviour the v2 flow relies on. The previously-extant `src/client/terminalSnapshot.test.ts` (23 tests) was deleted alongside `terminalSnapshot.ts` in HS-8177. `src/client/permissionOverlay.test.ts` (HS-8183 / 8206 / 8207) covers the polling-lifecycle state machine: show / no-show gates, two-consecutive-miss auto-dismiss threshold, jitter-recovery, fresh-request-id-after-dismiss regression contract, dismissedRequestIds GC, partial-mount safety, the HS-8206 ResizeObserver install / disconnect lifecycle, the HS-8207 channel-unreachable signaling (owner-missing-doesn't-tick / present-null-ticks / counter-preserved-on-unreachable-mid-streak), and the HS-8207 dim-passthrough (existing-entry dims used at checkout to avoid double SIGWINCH). `e2e/permission-popup-live.spec.ts` (HS-8207, 8 tests) drives the real client polling loop via `page.route()` mocks: chrome rendering, no-churn-on-same-id, single-null-doesn't-dismiss, double-null-dismisses, **owner-missing-from-response-doesn't-dismiss** (channel-server-unreachable contract), Allow / Deny click → respond payload, truncated-input → live-terminal-checkout body slot. Manual coverage lives in `docs/manual-test-plan.md` §12 — see "Permission popup — live-terminal checkout (HS-8171 v2)".
+
+## 47.10 Bash-tool custom layout (HS-8299)
+
+User reported (2026-05-08) that the §47 popup was rendering a wall of unhelpful information for Bash tool calls — the live-borrowed terminal showed Claude's full TUI (banner + scrollback + prompt + choice list) inside the popup body, and the choice buttons rendered as ASCII-only `1.` / `2.` / `3.` rows the user couldn't click. The user's verdict: replace the live-borrow body with a clean tool-specific UI, replace the green-check / red-X icon buttons with a vertical column of clickable buttons, drop the `Bash` tool chip from the dialog header (the title carries the verb already).
+
+### 47.10.1 Layout
+
+- **Title**: "Allow Claude to run" (replaces the existing `description` text for Bash tool calls)
+- **Tool chip**: suppressed for Bash so the dialog header reads as just the title
+- **Body**: `<pre class="permission-bash-command">` rendering the verbatim command string (extracted via `extractPrimaryValue('Bash', input_preview)`). SCSS gives the `<pre>` `overflow-y: auto`, `max-height: 60vh`, `white-space: pre-wrap`, `word-break: break-all` so a long pipeline scrolls inside the box and unbroken tokens (paths, base64 args) wrap rather than overflow horizontally.
+- **Actions**: three vertically-stacked `<button>`s replace the icon-button row — `Yes` (primary, accent-coloured), `Yes, and allow this command and similar in the future`, `No`. Stack lives inside `.permission-popup-actions.permission-popup-actions-stacked` with `flex-direction: column; gap: 8px; align-items: stretch; width: 100%` so the buttons span the dialog width edge-to-edge.
+
+### 47.10.2 Live-checkout suppression
+
+The HS-8217 heuristic (`shouldUseLiveCheckout`) is bypassed entirely when `tool_name === 'Bash'` and the primary value extracts cleanly. Long Bash pipelines that pre-fix would have triggered the live-terminal borrow now render in the dedicated body instead. Per the user's feedback (HS-8299 Q1, answer "a"): replace § 47 popup body for ALL Bash tool calls — Bash always renders the new command-only layout, no live-terminal borrow.
+
+### 47.10.3 "Yes, and allow this command and similar in the future" button
+
+Re-uses the §47.4 always-allow-rule mechanism (auto-anchored `^${regexEscape(command)}$` pattern, `tool: 'Bash'`, `added_by: 'overlay'`) — the same rule the existing checkbox-style affordance creates, just promoted to a primary button. Implementation lives in `src/client/bashPermissionPreview.tsx::persistBashAlwaysAllowRule`; mirrors `permissionAllowListUI.tsx::saveRuleAndCommit` minus the form-error UI (the new button owns its own error display below the actions block). On success the button calls the caller's `onAllowAlways` (which routes to `respondToPermission('allow')`); on failure the button re-enables and an inline error chip appears so the user can retry or pick a different choice.
+
+The existing `buildAlwaysAllowAffordance` checkbox-style affordance is suppressed for Bash (folded into the middle button); other allow-listable tools (Read / Glob / WebFetch / WebSearch) keep the existing affordance unchanged.
+
+### 47.10.4 Allow-rule match semantics
+
+Per the user's feedback (HS-8299 Q3): when an existing `permission_allow_rules` entry matches a new Bash prompt, the auto-allow fires as a plain `Yes` (one-shot allow) — NOT as a re-affirmation of the "Yes, and allow more broadly" rule. This is already the existing §47.4 behaviour: matching auto-allow runs the same code path as the user clicking "Yes", which doesn't create a new rule. The HS-8299 button-row design preserves this: the middle button is the rule-creation path; matching is the no-rule-change path.
+
+### 47.10.5 Tests
+
+`src/client/permissionOverlay.test.ts` gained a new `describe('Bash custom layout (HS-8299)', ...)` block with 5 tests: title + scrollable command + 3-button shape; long-command-still-uses-Bash-layout (no live-checkout fallback); deny-button-tears-down-popup; allow-button-tears-down-popup; non-Bash tools keep the legacy two-icon-button + always-allow-affordance (defence-in-depth so the Bash branch doesn't leak across to Read / Glob / etc.). The pre-existing `'renders the flat <pre> preview for a short single-line bash command'` HS-8217 test was updated to assert the new `.permission-bash-command` body shape (HS-8299 supersedes HS-8217 for Bash).
+
+## 47.11 Write-tool custom layout (HS-8296)
+
+Parallel to HS-8299's Bash redesign. User reported (2026-05-08) that the §47 popup for Write tool calls was showing a lot of irrelevant chrome around an opaque flat-JSON / live-borrowed-terminal preview, with green-check / red-X icon buttons that didn't reflect Claude's actual three-choice TUI prompt. Per the user's feedback (Q1 = "yes" / Q2 + Q3 = "just mirror what claude says" / Q4 = "replace"): replace §47 entirely for Write with a tool-specific layout.
+
+### 47.11.1 Layout
+
+- **Title**: `Allow write to <path>?` (computed inside `writePermissionPreview.tsx` from `input_preview.file_path`; the dialog header carries the verb so `toolChip` is suppressed for Write).
+- **Body — text content**: `<pre class="permission-write-content">` rendering the verbatim file content (`input_preview.content`). Same SCSS shape as the HS-8299 Bash command box — `overflow-y: auto`, `max-height: 60vh`, `white-space: pre-wrap`, `word-break: break-all`. Empty content renders as a blank but still-bordered `<pre>` (legitimate Write target — `touch foo.txt` equivalent).
+- **Body — binary content**: when the content fails the binary-detection heuristic (`looksLikeBinaryContent`), the body becomes a centered, italic, muted `Binary Data (NNN bytes)` chip instead of the verbatim string. Threshold: \> 1 % of the first 4 KB of content is NUL or non-printable C0 control chars (excluding TAB / LF / CR which are common in plain text).
+- **Actions**: three vertically-stacked `<button>`s reusing `.permission-popup-actions-stacked` from HS-8299 — `Yes` (primary, accent-coloured), `Yes, and don't ask again for edits in <dir> during this session` (mirrors Claude's TUI copy verbatim per Q2 / Q3), `No`.
+
+### 47.11.2 Live-checkout suppression
+
+The HS-8217 heuristic (`shouldUseLiveCheckout`) is bypassed entirely when `tool_name === 'Write'` and `extractWriteFields(input_preview)` returns a non-null `{file_path, content}` shape. Per the user's Q4 = "replace" answer.
+
+The fallback to the legacy two-icon-button + always-allow-affordance layout fires when `extractWriteFields` returns null (malformed JSON, missing `file_path` / `content`, wrong types) — defence-in-depth so a malformed payload still surfaces the popup with SOMETHING actionable rather than throwing.
+
+### 47.11.3 "Yes, and don't ask again..." button
+
+V1 ships the UI without persisting a session-scoped rule — clicking the middle button just responds `allow` (same as the primary "Yes"). The label mirrors Claude's TUI copy verbatim per Q2 / Q3 ("just mirror what claude says"); the technical scope is Write-only and one-shot for now. Filed as a follow-up: a real session-bound directory allow-list that auto-allows future Write requests for files under the same directory until the session ends. The §47.4 rule schema is path-tool-only and skips Edit / Write deliberately because file-path alone doesn't capture write intent — a separate session-scoped store (cleared on app boot) would sit alongside `permission_allow_rules` rather than reusing it.
+
+### 47.11.4 Tests
+
+`src/client/permissionOverlay.test.ts` gained a new `describe('Write custom layout (HS-8296)', ...)` block with 5 tests: title + scrollable content + 3-button shape for text writes; binary-data-marker fires for non-text content (100 NUL bytes in 200-char string is well above 1 % threshold); allow-button-tears-down-popup; deny-button-tears-down-popup; **falls back to the legacy layout when input_preview is malformed** (defence-in-depth — confirms the popup still surfaces SOMETHING actionable for a malformed Write payload, doesn't throw).
+
+`src/client/writePermissionPreview.test.ts` (new file) gained a `describe('looksLikeBinaryContent (HS-8296)', ...)` block with 8 tests pinning the binary-classifier heuristic: pure ASCII text / multi-line UTF-8 / empty string / one-stray-bell / NUL-heavy content / control-char-heavy content / TAB/LF/CR whitelisted as text / 4 KB probe cap (binary garbage past the boundary doesn't flip the classification — perf guard so a 100 MB upload doesn't trigger a full scan).
