@@ -11,6 +11,7 @@ import { openPermissionDialogShell } from './permissionDialogShell.js';
 import { type EditDiffShape, formatEditDiff, formatInputPreview } from './permissionPreview.js';
 import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
+import { getProjectDefault, getSessionOverride, resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
 import { checkout, type CheckoutHandle, peekEntryDims } from './terminalCheckout.js';
 
 /**
@@ -937,12 +938,28 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     const existingDims = peekEntryDims(secret, 'default');
     const startCols = existingDims?.cols ?? 80;
     const startRows = existingDims?.rows ?? 24;
+    // HS-8295 — paint the §54 bumped-down placeholder with the project's
+    // resolved theme bg so when the popup releases and the drawer/dashboard
+    // tile briefly shows the placeholder mid-restore, the colour matches.
+    const popupAppearance = resolveAppearance({
+      projectDefault: getProjectDefault(secret),
+      sessionOverride: getSessionOverride('default'),
+    });
     permissionState.activeCheckoutHandle = checkout({
       projectSecret: secret,
       terminalId: 'default',
       cols: startCols,
       rows: startRows,
       mountInto: liveTermContainer,
+      placeholderBackground: resolveAppearanceBackground(popupAppearance),
+      // HS-8301 — embed the live terminal as read-only. The user can scroll
+      // the buffer / select / copy, but typed keystrokes are NOT delivered
+      // to the PTY while the popup is open. Prevents the user from
+      // accidentally injecting characters into Claude's prompt while
+      // they're answering the permission dialog. Reset to writable on
+      // release() via the new-top's readOnly flag (drawer pane / tile
+      // checkout do not pass readOnly).
+      readOnly: true,
       // HS-8218 — never spawn a fresh PTY for the popup. Pre-fix when
       // the project's claude was running under a NON-`'default'`
       // terminal id (and `'default'` had no live session), the

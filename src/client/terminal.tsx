@@ -1082,6 +1082,10 @@ function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void 
     cols: 80,
     rows: 24,
     mountInto: inst.canvasHost,
+    // HS-8295 — paint the §54 "Terminal in use elsewhere" placeholder with
+    // this terminal's resolved theme background so a §47 popup borrowing
+    // the live xterm doesn't flash the drawer canvas to `--bg-secondary`.
+    placeholderBackground: resolveAppearanceBackground(resolveInstanceAppearance(inst)),
     onControlMessage(msg) { handleControlMessage(inst, msg); },
     onRestoredToTop() {
       // HS-8206 v2 — when another consumer (e.g. the §47 permission popup

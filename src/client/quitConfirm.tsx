@@ -447,12 +447,18 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
       previewEl.style.fontSize = '';
       previewEl.style.fontStyle = '';
 
+      // HS-8295 — pass the pre-resolved theme bg so the §54 placeholder
+      // (when this preview is bumped down by another consumer claiming the
+      // shared xterm) paints with the terminal's own bg colour rather than
+      // `--bg-secondary`. Same source as the gutter-paint below.
+      const placeholderBg = bgByRowKey.get(`${secret}::${terminalId}`);
       currentCheckout = checkout({
         projectSecret: secret,
         terminalId,
         cols: QUIT_PREVIEW_COLS,
         rows: QUIT_PREVIEW_ROWS,
         mountInto: previewEl,
+        placeholderBackground: placeholderBg,
       });
 
       // HS-8058 — paint the pane background to match the live xterm's

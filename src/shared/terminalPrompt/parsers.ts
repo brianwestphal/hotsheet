@@ -277,8 +277,23 @@ export function pickTitleLine(lines: readonly string[]): string {
  * ` · <suffix>` clause. Specific enough that arbitrary docs/output lines
  * almost never start with these phrases on a trailing row, but
  * future-proof against further claude-side renames of the suffix.
+ *
+ * HS-8297 / HS-8304 (2026-05-08) — extended to also accept `Enter to select`
+ * (the footer Claude Code's `AskUserQuestion` tool renders, which uses a
+ * different verb than the permission-prompt path's `Enter to confirm`).
+ * Pre-fix the user reported that `/test-permission-yes-no` and
+ * `/test-permission-multiple-choice` rendered numbered-choice TUIs in the
+ * terminal but no §52 overlay ever appeared — root cause: AskUserQuestion's
+ * footer is `Enter to select  ↑↓ to navigate  Esc to cancel` (note: BOTH
+ * "Enter to select" AND a free-form middle segment with `↑↓ to navigate`
+ * before the trailing `Esc to cancel`). The regex now allows
+ * `Enter to select` as the leading verb AND tolerates one or more " · suffix" /
+ * "   suffix" (multi-space-separated) trailing clauses so the
+ * `↑↓ to navigate` middle clause doesn't break the match. We accept the
+ * prompt-specific multi-space-separator AND the original `·` separator so
+ * permission-prompt footers continue to match unchanged.
  */
-const NUMBERED_FOOTER_RX = /^(?:Enter to confirm|Esc to cancel)(?:\s+·\s+\S.*)?$/;
+const NUMBERED_FOOTER_RX = /^(?:Enter to (?:confirm|select)|Esc to cancel)(?:(?:\s+·\s+|\s{2,})\S.*)?$/;
 
 /** Used by both the detection footer test (§52.3.3) and the parser. The
  *  trailing footer can be wrapped in faint colour or have trailing
@@ -349,6 +364,16 @@ export const claudeNumberedParser: PromptParser = {
     let highlightedIndex = -1;
     const questionLines: string[] = [];
     let questionStartIdx = -1;
+    // HS-8297 / HS-8304 — track the leftmost numbered-option indent we've
+    // seen during the walk. Used to discriminate option-description rows
+    // (indented STRICTLY MORE than any option marker we've captured) from
+    // question-region rows (indented at-or-less than the leftmost option,
+    // e.g. the LingoGist Read-permission body where every line including
+    // the options sits at indent 1-3, or the dev-channels-warning body
+    // where everything is at indent 2). Description detection KEYS on
+    // strict greater-than so EQUAL-indent body rows (the dev-channels
+    // case) still break the walk into the question region.
+    let minOptionIndent = Infinity;
     for (let i = trimmed.length - 2; i >= 0; i--) {
       const line = trimmed[i];
       const m = NUMBERED_OPTION_RX.exec(line);
@@ -363,12 +388,38 @@ export const claudeNumberedParser: PromptParser = {
         // Push at the head so final order is top-to-bottom.
         choices.unshift({ index: digit - 1, label, highlighted: isHighlighted });
         if (isHighlighted) highlightedIndex = digit - 1;
+        // HS-8297 / HS-8304 — track leftmost option indent.
+        const optIndent = m[1].length;
+        if (optIndent < minOptionIndent) minOptionIndent = optIndent;
         continue;
       }
-      // First non-numbered row above the numbered block: remember where the
-      // question region might start. If choices is still empty, we haven't
-      // entered the numbered block yet (e.g. trailing blank between numbers
-      // and footer — claude renders this), so keep scanning upward.
+      // HS-8297 / HS-8304 — blank rows between numbered options are common in
+      // AskUserQuestion's renderer (one blank between every option pair); pre-
+      // fix the walk broke at the first such blank when ≥ 1 option had been
+      // captured, leaving partial captures that failed the contiguous-from-1
+      // sanity check below. Skipping blanks is safe: if the question region
+      // is itself blank-separated from the options (the existing claude-numbered
+      // shape), the walk continues past the blank to the question text and
+      // breaks there. Multi-blank "section break" detection still happens
+      // inside the question-region capture below, not here.
+      if (line.trim() === '') continue;
+      // HS-8297 / HS-8304 — AskUserQuestion renders each option's description
+      // on the line(s) below the numbered row, indented STRICTLY MORE than
+      // the option marker (e.g. `1. Yes` at indent 2, then `   Confirm and
+      // continue...` at indent 3). Skip these continuations during the walk
+      // so every numbered option is captured. We discriminate by indent
+      // depth so an indented but option-aligned body line (LingoGist " Do
+      // you want to proceed?" at indent 1, where option 1 is " ❯ 1. Yes"
+      // also at indent 1) is NOT treated as a description and DOES break
+      // the walk.
+      if (choices.length > 0) {
+        const indent = line.length - line.trimStart().length;
+        if (indent > minOptionIndent) continue;
+      }
+      // First non-numbered, non-blank, non-description row above the
+      // numbered block: the question region. If choices is still empty, we
+      // haven't entered the numbered block yet (e.g. trailing context above
+      // a not-yet-found options block), so keep scanning upward.
       if (choices.length === 0) continue;
       questionStartIdx = i;
       break;

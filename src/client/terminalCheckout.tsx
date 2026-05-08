@@ -222,6 +222,26 @@ export interface CheckoutOptions {
    *  `onNoLiveSession` being the late signal. Module-level: only fires
    *  when `noSpawn: true` was passed at checkout. */
   onNoLiveSession?: () => void;
+  /** HS-8295 — CSS color string painted as the placeholder's background
+   *  when this consumer is bumped down and its `mountInto` is filled
+   *  with the "Terminal in use elsewhere" placeholder. Pass the
+   *  terminal's resolved theme background (via
+   *  {@link resolveAppearanceBackground}) so the placeholder visually
+   *  reads as part of the terminal frame instead of jumping to the
+   *  app's `--bg-secondary` gray. Falls back to `--bg-secondary` when
+   *  unset. */
+  placeholderBackground?: string;
+  /** HS-8301 — when true, the live xterm has `disableStdin = true`
+   *  applied while this consumer is the top of the stack. The user can
+   *  still scroll the buffer + select text + use copy/paste, but typed
+   *  characters are NOT delivered to the PTY. Used by the §47
+   *  permission popup so the user can't accidentally inject keystrokes
+   *  into Claude's prompt while answering the dialog. The flag is
+   *  scoped to this consumer's stack frame: when this consumer is
+   *  bumped down or releases, the new top's `readOnly` value is
+   *  re-applied (so a non-readOnly consumer underneath gets typing
+   *  back). Defaults to false. */
+  readOnly?: boolean;
 }
 
 export interface CheckoutHandle {
@@ -320,18 +340,26 @@ function entryKey(secret: string, terminalId: string): string {
  *  rare paths that don't need icons). */
 const TERMINAL_SQUARE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>';
 
-function buildPlaceholder(): HTMLElement {
-  return toElement(
+function buildPlaceholder(background?: string): HTMLElement {
+  const el = toElement(
     <div className="terminal-checkout-placeholder">
       <div className="terminal-checkout-placeholder-icon">{raw(TERMINAL_SQUARE_ICON)}</div>
       <div className="terminal-checkout-placeholder-text">Terminal in use elsewhere</div>
     </div>,
   );
+  // HS-8295 — inline-paint the bumped consumer's terminal-theme background
+  // so the placeholder reads as a faded continuation of the terminal frame
+  // rather than the jarring `--bg-secondary` gray. Falls through to the
+  // SCSS default when the consumer didn't supply a colour.
+  if (background !== undefined && background !== '') {
+    el.style.backgroundColor = background;
+  }
+  return el;
 }
 
 /** Replace `mountInto`'s contents with a fresh placeholder div. */
-function writePlaceholderInto(mountInto: HTMLElement): void {
-  mountInto.replaceChildren(buildPlaceholder());
+function writePlaceholderInto(mountInto: HTMLElement, background?: string): void {
+  mountInto.replaceChildren(buildPlaceholder(background));
 }
 
 /** Construct the xterm + open the WebSocket. The xterm is `term.open()`'d
@@ -855,13 +883,17 @@ export function checkout(opts: CheckoutOptions): CheckoutHandle {
     pruneDetachedHandles(entry);
     if (entry.stack.length > 0) {
       const previousTop = entry.stack[entry.stack.length - 1];
-      writePlaceholderInto(previousTop._options.mountInto);
+      writePlaceholderInto(previousTop._options.mountInto, previousTop._options.placeholderBackground);
       try { previousTop._options.onBumpedDown?.(); } catch { /* consumer error doesn't break the swap */ }
     }
   }
 
   reparentXtermInto(entry, opts.mountInto);
   applyResizeIfChanged(entry, opts.cols, opts.rows);
+  // HS-8301 — apply this consumer's readOnly flag now that the term is
+  // mounted into their `mountInto`. The flag follows the top-of-stack:
+  // bumping down / releasing re-runs this against the new top's options.
+  applyTopReadOnly(entry, opts.readOnly === true);
 
   const stableEntry = entry;
   const handle: InternalCheckoutHandle = {
@@ -923,7 +955,19 @@ function releaseInternal(handle: InternalCheckoutHandle): void {
   const newTop = entry.stack[entry.stack.length - 1];
   reparentXtermInto(entry, newTop._options.mountInto);
   applyResizeIfChanged(entry, newTop._options.cols, newTop._options.rows);
+  // HS-8301 — re-apply the new top's readOnly flag. A read-only popup
+  // releasing must hand typing back to a non-readOnly underlying
+  // consumer (drawer pane / dashboard tile).
+  applyTopReadOnly(entry, newTop._options.readOnly === true);
   try { newTop._options.onRestoredToTop?.(); } catch { /* consumer error doesn't break the restore */ }
+}
+
+/** HS-8301 — toggle the live xterm's stdin gate to match the current top
+ *  consumer's `readOnly` flag. xterm.js honours `term.options.disableStdin`
+ *  for typed input (the buffer scroll + selection + copy/paste paths are
+ *  not affected). Idempotent — assigning the same value is a no-op. */
+function applyTopReadOnly(entry: StackEntry, readOnly: boolean): void {
+  entry.term.options.disableStdin = readOnly;
 }
 
 /** Number of currently-mounted entries. Useful for tests + sanity checks. */

@@ -686,6 +686,10 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       cols: TILE_INITIAL_COLS,
       rows: TILE_INITIAL_ROWS,
       mountInto: xtermRoot,
+      // HS-8295 — paint the §54 bumped-down placeholder with this tile's
+      // theme bg so a dedicated view / preview borrowing the live xterm
+      // doesn't flash the tile to `--bg-secondary`.
+      placeholderBackground: themeData.background,
       onBumpedDown() {
         // HS-8048 — another consumer (dedicated view, quit-confirm
         // preview, etc.) just took the live xterm. Disconnect the
@@ -1499,6 +1503,10 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       cols: TILE_INITIAL_COLS,
       rows: TILE_INITIAL_ROWS,
       mountInto: pane,
+      // HS-8295 — paint the §54 bumped-down placeholder with this terminal's
+      // theme bg so a quit-confirm preview / popup borrowing the live xterm
+      // doesn't flash the dedicated pane to `--bg-secondary`.
+      placeholderBackground: themeData.background,
       onRestoredToTop() {
         // HS-8073 — defer one frame so the pane has a current layout
         // box (the xterm element just reparented in synchronously, but

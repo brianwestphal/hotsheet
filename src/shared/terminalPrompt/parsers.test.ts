@@ -92,6 +92,104 @@ describe('isClaudeNumberedFooter (HS-7971)', () => {
     expect(isClaudeNumberedFooter('Esc to cancel the operation')).toBe(false);
     expect(isClaudeNumberedFooter('Enter to confirm and proceed')).toBe(false);
   });
+
+  // HS-8297 / HS-8304 (2026-05-08) — AskUserQuestion footer detection. The
+  // user reported `/test-permission-yes-no` and `/test-permission-multiple-
+  // choice` rendered numbered TUIs that §52 never overlaid. Root cause: the
+  // tool's footer is `Enter to select  ↑↓ to navigate  Esc to cancel`,
+  // which uses `Enter to select` (not `Enter to confirm`) AND multi-space
+  // separators between segments instead of ` · `.
+  it('matches the AskUserQuestion `Enter to select` verb (HS-8297 / HS-8304)', () => {
+    expect(isClaudeNumberedFooter('Enter to select')).toBe(true);
+  });
+  it('matches the AskUserQuestion footer with the ↑↓-to-navigate middle clause (HS-8297 / HS-8304)', () => {
+    // Multi-space separator (instead of the permission-prompt ` · ` separator)
+    // is the AskUserQuestion convention.
+    expect(isClaudeNumberedFooter('Enter to select  ↑↓ to navigate  Esc to cancel')).toBe(true);
+  });
+  it('matches the AskUserQuestion footer with extra trailing spaces (HS-8297 / HS-8304)', () => {
+    expect(isClaudeNumberedFooter('Enter to select  ↑↓ to navigate  Esc to cancel   ')).toBe(true);
+  });
+  it('rejects "Enter to select" lookalike with prose continuation (HS-8297 / HS-8304)', () => {
+    // Defence in depth — the regex still requires either a separator or
+    // end-of-string after the leading phrase, so a docs line starting
+    // with the verb doesn't accidentally match.
+    expect(isClaudeNumberedFooter('Enter to select an option from the menu below')).toBe(false);
+  });
+});
+
+describe('claudeNumberedParser — AskUserQuestion shape (HS-8297 / HS-8304)', () => {
+  // The user-reported case from HS-8297 / HS-8304 — AskUserQuestion renders
+  // a numbered prompt where each option has a description line below it,
+  // blank rows separate options, and the footer uses `Enter to select` +
+  // multi-space-separated middle/trailing clauses. Pre-fix the parser broke
+  // at the first description / inter-option blank and dropped the prompt.
+  it('parses a 2-option AskUserQuestion (HS-8297 yes-no skill repro)', () => {
+    const rows = [
+      'Proceed?',
+      '',
+      '> 1. Yes',
+      '   Confirm and continue with the test action.',
+      '  2. No',
+      '   Cancel — do not perform the test action.',
+      '',
+      'Enter to select  ↑↓ to navigate  Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    expect(result).not.toBeNull();
+    if (result?.shape !== 'numbered') return;
+    expect(result.choices).toHaveLength(2);
+    expect(result.choices[0]).toEqual({ index: 0, label: 'Yes', highlighted: true });
+    expect(result.choices[1]).toEqual({ index: 1, label: 'No', highlighted: false });
+    expect(result.question).toBe('Proceed?');
+  });
+
+  it('parses a 4-option AskUserQuestion with blank-separated option groups (HS-8304 multiple-choice skill repro)', () => {
+    // Mirrors the screenshot in HS-8304 — descriptions on first two options,
+    // bare options 3 and 4, blank between option pairs.
+    const rows = [
+      'Pick one',
+      '',
+      '> 1. Option A',
+      '   The first option — selecting it should be fast and uneventful.',
+      '  2. Option B',
+      '   The second option — a slightly different path with similar shape.',
+      '',
+      '  3. Option C',
+      '  4. Option D',
+      '',
+      'Enter to select  ↑↓ to navigate  Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    expect(result).not.toBeNull();
+    if (result?.shape !== 'numbered') return;
+    expect(result.choices).toHaveLength(4);
+    expect(result.choices.map(c => c.label)).toEqual(['Option A', 'Option B', 'Option C', 'Option D']);
+    expect(result.choices[0].highlighted).toBe(true);
+    expect(result.question).toBe('Pick one');
+  });
+
+  it('does not break the existing dev-channels permission-prompt shape (defence-in-depth)', () => {
+    // Same fixture as the original happy-path test — the HS-8297 / HS-8304
+    // walk-upward changes (skip blanks, skip indented descriptions) MUST
+    // continue to produce identical output for prompts that don't use either
+    // shape. Re-asserting here keeps the regression bar visible alongside
+    // the new fixtures.
+    const rows = [
+      'Loading development channels can pose a security risk',
+      '',
+      '> 1. I am using this for local development',
+      '  2. Exit',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ];
+    const result = claudeNumberedParser.match(rows);
+    expect(result).not.toBeNull();
+    if (result?.shape !== 'numbered') return;
+    expect(result.choices).toHaveLength(2);
+    expect(result.choices[0].label).toBe('I am using this for local development');
+    expect(result.question).toBe('Loading development channels can pose a security risk');
+  });
 });
 
 describe('claudeNumberedParser (HS-7971) — happy paths', () => {

@@ -98,6 +98,10 @@ When a consumer is bumped down, the module writes the placeholder into the consu
 
 `onBumpedDown()` lets the consumer apply additional UI cues (dim the surrounding tile, suppress hover highlights, etc.). The placeholder is plain text — no live ANSI rendering, no animation, no click affordance.
 
+**HS-8295 — placeholder background colour.** Each `checkout(...)` call may pass an optional `placeholderBackground: string` (any CSS colour). When the consumer is bumped down, the module paints that colour as an inline `style.backgroundColor` on the placeholder div, so the placeholder visually reads as a faded continuation of the terminal's theme bg rather than a jarring jump to `var(--bg-secondary)`. The drawer pane, dashboard tile, dashboard dedicated view, drawer-grid tile, drawer-grid dedicated view, §47 popup live-checkout, and quit-confirm preview all pass `resolveAppearanceBackground(...)` for their `(secret, terminalId)`. Consumers that don't supply the option fall back to the SCSS `var(--bg-secondary)` default.
+
+**HS-8301 — read-only consumers.** Each `checkout(...)` call may pass an optional `readOnly: boolean`. When true and this consumer is the top of the stack, the module sets `term.options.disableStdin = true` on the shared xterm — the user can still scroll the buffer, select text, and copy/paste, but typed characters are NOT delivered to the PTY. The flag is **scoped to the consumer's stack frame**: when this consumer is bumped down or releases, the new top's `readOnly` value is re-applied (so a non-read-only consumer underneath gets typing back). The §47 permission popup live-checkout passes `readOnly: true`; the drawer pane, dashboard tile, dashboard dedicated view, drawer-grid tile/dedicated view, and quit-confirm preview do not (default false). The flag is enforced at swap-time inside `checkout()` (after `reparentXtermInto` + `applyResizeIfChanged`) and inside `releaseInternal()` (after the new top's reparent), so every stack-shape change re-asserts the right state.
+
 ### 54.3.3 Virtualization on empty stack (decision 6)
 
 When the last `release()` empties the stack, the entry is fully torn down:

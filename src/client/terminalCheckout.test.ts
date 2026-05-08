@@ -227,6 +227,142 @@ describe('checkout — LIFO stack (HS-8031)', () => {
   });
 });
 
+describe('readOnly mode (HS-8301)', () => {
+  it('sets disableStdin = true on the shared term while a readOnly consumer is on top', () => {
+    const mA = makeMount('mA');
+    const handleA = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mA,
+      readOnly: true,
+    });
+    expect(handleA.term.options.disableStdin).toBe(true);
+    handleA.release();
+  });
+
+  it('defaults to disableStdin = false when readOnly is unset', () => {
+    const mA = makeMount('mA');
+    const handleA = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mA,
+    });
+    expect(handleA.term.options.disableStdin).toBe(false);
+    handleA.release();
+  });
+
+  it('a readOnly checkout pushed on top of a writable consumer toggles stdin off, then back on after release', () => {
+    const mA = makeMount('mA');
+    const mB = makeMount('mB');
+    const handleA = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mA,
+      // writable
+    });
+    expect(handleA.term.options.disableStdin).toBe(false);
+    const handleB = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mB,
+      readOnly: true,
+    });
+    // Both handles point at the same shared term; readOnly flag now applied.
+    expect(handleB.term.options.disableStdin).toBe(true);
+    expect(handleA.term.options.disableStdin).toBe(true);
+    // Releasing the readOnly top restores writable underneath.
+    handleB.release();
+    expect(handleA.term.options.disableStdin).toBe(false);
+    handleA.release();
+  });
+
+  it('a writable checkout pushed on top of a readOnly consumer toggles stdin on, then back off after release', () => {
+    const mA = makeMount('mA');
+    const mB = makeMount('mB');
+    const handleA = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mA,
+      readOnly: true,
+    });
+    expect(handleA.term.options.disableStdin).toBe(true);
+    const handleB = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mB,
+      // writable
+    });
+    expect(handleA.term.options.disableStdin).toBe(false);
+    handleB.release();
+    expect(handleA.term.options.disableStdin).toBe(true);
+    handleA.release();
+  });
+});
+
+describe('placeholder background (HS-8295)', () => {
+  it('paints the bumped-down placeholder with the consumer-provided background colour', () => {
+    const mA = makeMount('mA');
+    const mB = makeMount('mB');
+    const handleA = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mA,
+      placeholderBackground: 'rgb(40, 42, 54)', // Dracula bg
+    });
+    const handleB = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mB,
+    });
+    const placeholder = mA.querySelector<HTMLElement>('.terminal-checkout-placeholder');
+    expect(placeholder).not.toBeNull();
+    expect(placeholder?.style.backgroundColor).toBe('rgb(40, 42, 54)');
+    handleB.release();
+    handleA.release();
+  });
+
+  it('falls back to the SCSS default (no inline style) when no placeholderBackground is supplied', () => {
+    const mA = makeMount('mA');
+    const mB = makeMount('mB');
+    const handleA = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mA,
+      // intentionally no placeholderBackground
+    });
+    const handleB = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mB,
+    });
+    const placeholder = mA.querySelector<HTMLElement>('.terminal-checkout-placeholder');
+    expect(placeholder).not.toBeNull();
+    expect(placeholder?.style.backgroundColor).toBe('');
+    handleB.release();
+    handleA.release();
+  });
+});
+
 describe('checkout — resize policy (HS-8031 §54.3.1)', () => {
   it('updates lastApplied dims when the new top requests a different size', () => {
     const mA = makeMount('mA');
