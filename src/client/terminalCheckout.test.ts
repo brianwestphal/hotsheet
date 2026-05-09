@@ -1193,6 +1193,76 @@ describe('per-entry global stall watcher (HS-8286)', () => {
     expect(entryCount()).toBe(0);
   });
 
+  it('HS-8309 — dropped keystrokes (WS not OPEN) do NOT bump lastTypeTs and do NOT acquire the global token', () => {
+    // Regression for HS-8309 ("slow server notice shows up and doesn't go
+    // away automatically sometimes, even though I can see everything is
+    // processing quickly"). Pre-fix, `term.onData` updated `lastTypeTs`
+    // unconditionally, even when the keystroke was silently dropped
+    // because `entry.ws` was null / not OPEN. Combined with the per-entry
+    // stall watcher, a single dropped keystroke opened a
+    // `trackPersistentSlowEvent` token that could never resolve (no echo
+    // can come back for a keystroke the PTY never received). The token's
+    // synthetic `startTs = now - SERVER_BUSY_THRESHOLD_MS - 1` guaranteed
+    // the global-banner evaluator kept showing the banner until the entry
+    // was disposed — i.e. project switch or terminal close.
+    //
+    // happy-dom 20.9.0 ships a WebSocket constructor (the in-source
+    // comment about `typeof WebSocket === 'undefined'` is happy-dom-version
+    // -dependent and no longer holds). Force `entry.ws = null` after
+    // checkout so we deterministically exercise the production "WS
+    // down-window" shape — the same condition users hit during a real
+    // network blip OR when typing into a `noSpawn` entry that has no live
+    // PTY. Driving `term.paste('x')` fires the registered `onData`
+    // handler, which under the fix gates the `lastTypeTs` write on a
+    // successful `ws.send`.
+    mountBanner();
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 't')!;
+    entry.ws = null;
+    expect(entry.lastTypeTs).toBe(0);
+
+    // Fire a keystroke through the real onData handler.
+    entry.term.paste('x');
+
+    // Post-fix: lastTypeTs stays 0 because the keystroke was dropped.
+    expect(entry.lastTypeTs).toBe(0);
+
+    // Even after threshold elapses (simulated by directly invoking the
+    // 250 ms watcher), no token is acquired because the stall predicate
+    // requires `lastTypeTs > 0`.
+    for (const sub of entry.stallSubscribers) sub();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+
+    h.release();
+  });
+
+  it('HS-8309 — once the stall token is acquired, dispose-via-release tears it down (defence-in-depth)', () => {
+    // Belt-and-braces check that `disposeEntry` releases an outstanding
+    // token even if the stall watcher never gets to see the resolving
+    // echo. Ensures the leak surface is one path (the keystroke gate)
+    // and not two (a missed-dispose path).
+    mountBanner();
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 't')!;
+
+    entry.lastTypeTs = Date.now() - 2000;
+    entry.lastEchoTs = 0;
+    for (const sub of entry.stallSubscribers) sub();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(1);
+    expect(entry.globalStallToken).not.toBeNull();
+
+    // Release without ever feeding an echo. dispose path must clear
+    // the global token AND the 250 ms tick handle, otherwise the token
+    // would outlive the entry and pin the banner forever.
+    h.release();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+    expect(entryCount()).toBe(0);
+  });
+
   it('two entries each track independently — banner stays up while either is stalled', () => {
     mountBanner();
     const m1 = makeMount('m1');

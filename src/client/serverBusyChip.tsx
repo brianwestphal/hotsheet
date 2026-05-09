@@ -143,6 +143,17 @@ export function trackServerRequest(url: string): () => void {
  * threshold so the banner shows immediately — the caller has already
  * applied its own threshold (e.g. terminal stall = 1.5 s of no echo).
  * Release the token when the slowness resolves.
+ *
+ * **HS-8309 (2026-05-09) — leak-prevention contract.** Because the
+ * synthetic `startTs` always satisfies `now - startTs > threshold`, an
+ * unreleased token pins the banner indefinitely. The caller MUST
+ * guarantee one of: (a) the resolving condition will fire (e.g. real
+ * echo arrives in the terminal stall path), or (b) the token's release
+ * is invoked from the dispose / cleanup path even if the resolving
+ * condition never comes. The terminal stall watcher pre-HS-8309 leaked
+ * tokens on dropped keystrokes (no `ws` to send through → no echo can
+ * ever come back); fixed at the keystroke-gate in `terminalCheckout.tsx`
+ * so dropped input never opens a token in the first place.
  */
 export function trackPersistentSlowEvent(): () => void {
   const req: InFlightRequest = { startTs: Date.now() - SERVER_BUSY_THRESHOLD_MS - 1 };

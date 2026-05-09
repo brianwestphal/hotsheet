@@ -405,16 +405,27 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
   const encoder = new TextEncoder();
   term.onData((data) => {
     const ws = entry.ws;
+    let sent = false;
     if (ws !== null && ws.readyState === WebSocket.OPEN) {
-      try { ws.send(encoder.encode(data)); } catch { /* socket may have closed mid-send */ }
+      try {
+        ws.send(encoder.encode(data));
+        sent = true;
+      } catch { /* socket may have closed mid-send */ }
     }
-    // HS-8175 — record the keystroke send AFTER the WS send call so the
-    // timestamp reflects the moment the byte left the client. Subscribers
-    // re-evaluate the stall chip; they typically tick on a 250 ms timer
-    // anyway since `Date.now() - lastTypeTs` keeps creeping past the
-    // threshold without a fresh event.
-    entry.lastTypeTs = Date.now();
-    notifyStallSubscribers(entry);
+    // HS-8175 / HS-8309 — only treat the keystroke as "typed" when the
+    // bytes actually left the client. Pre-HS-8309, `lastTypeTs` updated
+    // unconditionally; combined with the per-entry stall watcher below
+    // and `trackPersistentSlowEvent`, a single keystroke during a WS
+    // down-window (or into a noSpawn entry that has no live PTY) opened
+    // a global-banner token that could never resolve — no echo can come
+    // back for a keystroke the PTY never received — and the slow-server
+    // banner stayed on indefinitely. Gating on `sent` is the root-cause
+    // fix: dropped keystrokes never bump `lastTypeTs` so the watcher
+    // never fires for them.
+    if (sent) {
+      entry.lastTypeTs = Date.now();
+      notifyStallSubscribers(entry);
+    }
   });
 
   attachWebSocketToEntry(entry);
