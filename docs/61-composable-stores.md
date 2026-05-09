@@ -2,7 +2,7 @@
 
 HS-8167. Follow-up to the HS-8165 investigation. Depends on [§60. Fine-grained reactivity primitive](60-reactivity-primitive.md) shipping first — stores are a thin convention layered on top of the signals primitive HS-8166 introduces.
 
-> **Status:** Phase 1 (HS-8238) shipped 2026-05-09. Phases 2 (HS-8239) + 3 (HS-8240) still queued.
+> **Status:** Phase 1 (HS-8238) shipped 2026-05-09. **HS-8240 (Phase 3 umbrella) closed 2026-05-10 as discharged into per-store sub-tickets HS-8317 (`projectsStore`), HS-8318 (`commandLogStore` + paired view-layer per the HS-8311 deferral), HS-8319 (`terminalsStore`), HS-8320 (`channelStore`).** HS-8321 added as prep for HS-8239 — defines the `ticketsStore` factory + types in isolation so HS-8239's atomic flip becomes a smaller, more reviewable diff. Phase 2 (HS-8239) itself still queued pending HS-8321.
 > **Verdict:** Adopt `defineStore` / `resetAllStores` from `kerfjs` (already pulled in for §60 — see HS-8235 / `docs/60-reactivity-primitive.md` §60.3). The local `defineStore()` factory described in §61.3 below is NOT implemented locally — kerf ships the same shape. The §61.3 module-surface description still applies as an *API* spec; the implementation is `kerfjs` re-exported through `src/client/reactive.ts`.
 
 ## 61.1 Problem statement
@@ -141,6 +141,13 @@ Big migration; budget 2–3 days including the test pass. Land it as a single PR
 
 Convert `projectsStore` / `terminalsStore` / `commandLogStore` / `channelStore` opportunistically. Each is its own sub-ticket when picked up, so the work can land in pieces.
 
+**HS-8240 closed 2026-05-10 as umbrella-discharged into per-store sub-tickets:**
+
+- **HS-8317** — `projectsStore` migration. Lowest risk (no paired view-layer migration since projectTabs already uses bindList from HS-8235). Recommended first.
+- **HS-8318** — `commandLogStore` + `commandLog.tsx::renderEntries` bindList migration (paired per the HS-8311 deferral). MEDIUM risk; ~full session.
+- **HS-8319** — `terminalsStore` migration. HIGH risk (multi-surface — drawer tabs + dashboard + drawer-grid + visibility groupings); 1-2 sessions including the shape-decision investigation (one store vs three).
+- **HS-8320** — `channelStore` migration. MEDIUM-HIGH risk (permission-overlay critical path); ~half-to-full session.
+
 ## 61.6 Test patterns
 
 The whole point of the store layer is testability. Every store gets its own `*.test.ts` with happy-dom env (or pure happy-dom-free if the store doesn't touch DOM):
@@ -190,8 +197,9 @@ Stores should be testable WITHOUT mounting any DOM. The DOM rendering is the §6
 
 - **HS-8167 — this design.** Status: design only; closes once the doc lands.
 - **HS-8238 — Phase 1: `defineStore` factory + trial.** Project-tab attention-dot the proposed trial.
-- **HS-8239 — Phase 2: `ticketsStore` migration.** Single atomic PR; biggest win.
-- **HS-8240 — Phase 3: long tail.** Opportunistic; each sub-store is its own sub-ticket.
+- **HS-8239 — Phase 2: `ticketsStore` migration.** Single atomic PR; biggest win. Prep work in HS-8321 (factory + types + tests, no consumers wired) lands first to shrink the atomic-flip surface.
+- **HS-8321 — Phase 2 prep: `ticketsStore` factory + types.** Pure addition; lands the store + tests in isolation so HS-8239's atomic flip is a smaller diff.
+- **HS-8240 — Phase 3: long tail.** Closed 2026-05-10 as umbrella-discharged into HS-8317 (`projectsStore`), HS-8318 (`commandLogStore` + view-layer), HS-8319 (`terminalsStore`), HS-8320 (`channelStore`). Each sub-ticket scheduleable independently.
 
 ## 61.13 Rejected alternative: nanostores as the backbone
 
