@@ -2,8 +2,8 @@
 
 HS-8166. Follow-up to the HS-8165 investigation ("would Solid be a better option than our custom JSX runtime?"). HS-8165's verdict was "don't migrate to Solid; the pain is manual rebuilds and ad-hoc state, not the JSX runtime." This document is the design for the reactivity half of that fix.
 
-> **Status:** Design only. No code under HS-8166 itself — phases ship under HS-8235 / HS-8236 / HS-8237 (filed alongside this doc).
-> **Verdict:** Adopt `@preact/signals-core` behind a thin re-export module, ship three keyed-binding helpers, migrate one trial callsite, then expand opportunistically. Keeps `jsx-runtime.ts` and `toElement(<jsx />)` unchanged.
+> **Status:** Phase 1 (HS-8235) shipped 2026-05-09. Phases 2 (HS-8236) + 3 (HS-8237) still queued. See §60.5 for what landed.
+> **Verdict:** Adopt `kerfjs` (sister project; re-exports `@preact/signals-core` for the four primitives PLUS ships `defineStore` / `resetAllStores` / `mount` / `each` — covers §60 + §61 + §62 deliverables in one dependency) behind a thin re-export module, ship three keyed-binding helpers, migrate one trial callsite, then expand opportunistically. Keeps `src/jsx-runtime.ts` and `toElement(<jsx />)` unchanged in Phase 1.
 
 ## 60.1 Problem statement
 
@@ -30,7 +30,22 @@ Everything we already have keeps working:
 
 The signals primitive only takes over the WHEN-to-re-mount question for the views that opt in.
 
-## 60.3 Library choice — `@preact/signals-core`
+## 60.3 Library choice — `kerfjs` (wraps `@preact/signals-core`)
+
+**Updated 2026-05-09 during HS-8235 implementation.** The original survey
+recommended `@preact/signals-core` direct. While shipping HS-8235 we
+re-evaluated and landed on `kerfjs` (sister project at
+`~/Documents/kerf`, published as `kerfjs` on npm — pinned at `^0.3.1`,
+matches `domotion`'s pin) instead. `kerfjs` re-exports
+`@preact/signals-core` verbatim for the four primitive functions, AND
+ships `defineStore` / `resetAllStores` (the §61 deliverable) PLUS
+`mount` / `each` / `toElement` / `SafeHtml` / `raw` / `Fragment`
+(relevant for §62). Adopting one dependency unblocks all three
+design-doc chains and avoids three rounds of "build a thin wrapper, then
+realise we want the same thing kerfjs already shipped." The Hot Sheet
+`src/client/reactive.ts` re-export still mediates so callsites depend on
+`'./reactive.js'` and the underlying lib remains swappable. Original
+survey kept below for context.
 
 Surveyed three:
 
@@ -93,12 +108,14 @@ The big-impact helper — keyed list reconciliation. Replaces every `parent.repl
 
 Incremental. Every existing manual rebuild keeps working until its callsite is migrated.
 
-### Phase 1 — primitive in place + one trial migration (HS-8235)
+### Phase 1 — primitive in place + one trial migration (HS-8235) — **shipped 2026-05-09**
 
-- Land `reactive.ts` + `reactive-bind.ts` + their unit tests under `src/client/`.
-- Pick ONE list view as the trial — proposed: project tabs in `src/client/projectTabs.tsx`. Small, contained, frequently rebuilt, low blast radius if the helper has a bug.
-- Convert the project-tabs state to a signal, replace its rebuild loop with `bindList`.
-- Validate the testing pattern AND measure the bundle-size impact on a real callsite before rolling out broadly.
+- ✅ `src/client/reactive.ts` re-exports `signal` / `computed` / `effect` / `batch` from `kerfjs`.
+- ✅ `src/client/reactive-bind.ts` ships `bindText` / `bindAttr` / `bindList`. Each returns a `() => void` disposer; `bindList` owns its rows' per-row disposers (caller doesn't manage row lifetimes).
+- ✅ Unit tests: `src/client/reactive.test.ts` (4 cases — primitive smoke) + `src/client/reactive-bind.test.ts` (16 cases — every helper, every disposer-contract bullet from §60.9).
+- ✅ Trial migration: `src/client/projectTabs.tsx`. `projectList` became `projectListSignal: Signal<readonly ProjectInfo[]>`; `activeSecretSignal: Signal<string | null>` mirrors `getActiveProject()?.secret` via a local `setActive()` wrapper around `setActiveProject`. Multi-tab path now mounts a `bindList` against the signal exactly once per single↔multi transition; per-row `effect()` flips the `.active` class without re-mounting the row. Single-project (h1) path stays imperative. Pre-fix `lastRenderedTabsFingerprint` short-circuit removed (the `bindList` keyed reconcile subsumes it). 7 integration tests in `src/client/projectTabs.test.ts` cover initial render / add / remove / reorder / active-flip-without-remount / multi↔single transitions.
+- ✅ ESLint rule: `no-restricted-syntax` selector `ExpressionStatement > CallExpression[callee.name=/^bind(Text|Attr|List)$/]` flags discarded disposers (the §60.6 footgun). `void bindText(...)` is the documented escape hatch for the rare deliberately-leaked case.
+- ⏭️ Bundle-size CI gate: skipped per user direction during HS-8235. Can be added later if a transitive bloat regression surfaces.
 
 ### Phase 2 — high-traffic surfaces (HS-8236)
 

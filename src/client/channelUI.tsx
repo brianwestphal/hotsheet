@@ -5,6 +5,7 @@ import { byId, byIdOrNull, toElement } from './dom.js';
 import {
   startPermissionPolling, stopPermissionPolling,
 } from './permissionOverlay.js';
+import { defineStore } from './reactive.js';
 import { getActiveProject, state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
 import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
@@ -156,12 +157,48 @@ export function setChannelAlive(alive: boolean) {
 }
 /** Per-project busy/attention tracking for tab status dots.
  *  busyProjects: projects with active Claude work. Modified by markProjectBusy/clearProjectBusy.
- *  attentionProjects: projects with pending permissions. Modified by markProjectAttention/clearProjectAttention + permission poll. */
+ *  attentionProjects: projects with pending permissions. Modified by markProjectAttention/clearProjectAttention + permission poll.
+ *
+ *  **HS-8238 (2026-05-09) — §61 Phase 1 trial.** Attention state moved
+ *  to a kerf `defineStore` to validate the §61 store API on a small,
+ *  contained piece of state (markAttention / clearAttention are the
+ *  only two named actions). `getProjectAttentionSecrets()` keeps its
+ *  existing `ReadonlySet<string>` shape so consumers
+ *  (`projectTabs.tsx::updateStatusDots`) don't need to change.
+ *  The downstream "make the
+ *  dots reactive off the store directly" step is HS-8240 (channelStore)
+ *  territory; for the trial we keep the `syncDots()` imperative call so
+ *  the migration is opt-in per consumer.
+ *
+ *  `busyProjects` stays a raw `Set` for now — its mutations are wrapped
+ *  in a 30 s heartbeat-timer dance (`extendBusyForProject`) that's its
+ *  own multi-step state machine; rolling it into a store is a worthwhile
+ *  follow-up (HS-8240's `channelStore`) but out of scope for §61 Phase
+ *  1's "small, contained, has clear actions" trial mandate. */
 const busyProjects = new Set<string>();
-const attentionProjects = new Set<string>();
+const projectAttentionStore = defineStore({
+  initial: () => ({ secrets: new Set<string>() as ReadonlySet<string> }),
+  actions: (set, get) => ({
+    markAttention: (secret: string) => {
+      const next = new Set(get().secrets);
+      next.add(secret);
+      set({ secrets: next });
+    },
+    clearAttention: (secret: string) => {
+      const next = new Set(get().secrets);
+      next.delete(secret);
+      set({ secrets: next });
+    },
+  }),
+});
 
 export function getProjectBusySecrets(): ReadonlySet<string> { return busyProjects; }
-export function getProjectAttentionSecrets(): ReadonlySet<string> { return attentionProjects; }
+export function getProjectAttentionSecrets(): ReadonlySet<string> { return projectAttentionStore.state.value.secrets; }
+
+/** **HS-8238 — TEST ONLY.** Direct read of the underlying store + reset
+ *  hook. Production code goes through `getProjectAttentionSecrets()` /
+ *  `markProjectAttention` / `clearProjectAttention`. */
+export const _projectAttentionStoreForTesting = projectAttentionStore;
 
 function syncDots() {
   // Lazy import to avoid circular dependency at module init time
@@ -227,12 +264,12 @@ export function clearBusyForProject(secret: string) {
 }
 
 export function markProjectAttention(secret: string) {
-  attentionProjects.add(secret);
+  projectAttentionStore.actions.markAttention(secret);
   syncDots();
 }
 
 export function clearProjectAttention(secret: string) {
-  attentionProjects.delete(secret);
+  projectAttentionStore.actions.clearAttention(secret);
   syncDots();
 }
 

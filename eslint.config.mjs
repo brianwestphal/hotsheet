@@ -49,6 +49,21 @@ export default tseslint.config(
       "import/newline-after-import": "error",
       "import/no-duplicates": "error",
       "tsdoc/syntax": "warn",
+      // HS-8235 / §60.6 — `bindText` / `bindAttr` / `bindList` return a
+      // disposer that MUST be captured. A top-level call expression
+      // (CallExpression as a direct child of ExpressionStatement) means
+      // the disposer was discarded — the effect will keep firing against
+      // a detached node forever. Assign to a const, push onto a disposer
+      // list, or — for the rare deliberately-leaked case — wrap with
+      // `void bindText(...)` which becomes a UnaryExpression and bypasses
+      // this rule.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ExpressionStatement > CallExpression[callee.name=/^bind(Text|Attr|List)$/]",
+          message: "bindText/bindAttr/bindList return a disposer; capture it (or use `void` to mark intentional leak).",
+        },
+      ],
     },
   },
 );

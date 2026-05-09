@@ -5,7 +5,9 @@ import { byIdOrNull, toElement } from './dom.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_FOLDER, ICON_X } from './icons.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { getMinimizedPermissionSecrets, reopenMinimizedForSecret } from './permissionOverlay.js';
-import { computeProjectTabsFingerprint } from './projectTabsFingerprint.js';
+import type { Signal } from './reactive.js';
+import { effect, signal } from './reactive.js';
+import { bindList } from './reactive-bind.js';
 import type { ProjectInfo } from './state.js';
 import { clearPerProjectSessionState, getActiveProject, setActiveProject } from './state.js';
 
@@ -26,8 +28,30 @@ export function setProjectFeedback(secret: string, hasFeedback: boolean) {
   updateStatusDots();
 }
 
-/** Cached project list from the server. */
-let projectList: ProjectInfo[] = [];
+/** Cached project list from the server.
+ *
+ * **HS-8235** — was a plain `let projectList: ProjectInfo[]`; now a kerf
+ * signal so `bindList` (in `renderTabs`) can reactively reconcile the
+ * tab-strip rows on every assignment without callers having to call
+ * `renderTabs()` themselves. Mutations MUST assign a fresh array
+ * (`projectListSignal.value = [...]`) — pushing to the existing array
+ * doesn't trigger reactivity (signals don't deep-watch). */
+const projectListSignal: Signal<readonly ProjectInfo[]> = signal([]);
+
+/** **HS-8235** — mirrors `getActiveProject()?.secret` so per-row effects
+ *  inside `bindList`'s row template can flip the `.active` class without
+ *  re-mounting the row. Updated alongside every `setActiveProject()`
+ *  call via the `setActive()` helper below. */
+const activeSecretSignal: Signal<string | null> = signal(null);
+
+/** **HS-8235** — wrap `setActiveProject` so the signal mirror always
+ *  stays in sync with `state.tsx`'s `activeProject`. Every production
+ *  caller of `setActiveProject` lives inside this module, so this is
+ *  the only seam needed. */
+function setActive(project: ProjectInfo): void {
+  setActiveProject(project);
+  activeSecretSignal.value = project.secret;
+}
 
 /**
  * Initialize project tabs. Fetches the project list, sets the active project,
@@ -39,20 +63,20 @@ export async function initProjectTabs(): Promise<void> {
     // HS-8085 — first call before `setActiveProject`, so the api helper
     // emits a plain GET with no `?project=` query (no active project to
     // auth against yet). That matches the pre-fix raw-fetch behaviour.
-    projectList = await api<ProjectInfo[]>('/projects');
+    projectListSignal.value = await api<ProjectInfo[]>('/projects');
   } catch {
-    projectList = [];
+    projectListSignal.value = [];
   }
 
-  if (projectList.length === 0) return;
+  if (projectListSignal.value.length === 0) return;
 
   const urlParams = new URLSearchParams(window.location.search);
   const requestedSecret = urlParams.get('project');
   const requestedProject = requestedSecret !== null
-    ? projectList.find(p => p.secret === requestedSecret)
+    ? projectListSignal.value.find(p => p.secret === requestedSecret)
     : undefined;
 
-  setActiveProject(requestedProject ?? projectList[0]);
+  setActive(requestedProject ?? projectListSignal.value[0]);
 
   if (requestedSecret !== null) {
     const url = new URL(window.location.href);
@@ -79,7 +103,7 @@ export async function switchProject(project: ProjectInfo): Promise<void> {
   // longtask observation includes the project switch in its context
   // line.
   recordInteraction(`project-switch:${project.name}`);
-  setActiveProject(project);
+  setActive(project);
   renderTabs();
   void api('/ensure-skills', { method: 'POST' });
   if (reloadCallback) {
@@ -90,9 +114,9 @@ export async function switchProject(project: ProjectInfo): Promise<void> {
 /** Re-fetch and re-render tabs (e.g., after adding/removing a project). */
 export async function refreshProjectTabs(): Promise<void> {
   try {
-    projectList = await api<ProjectInfo[]>('/projects');
+    projectListSignal.value = await api<ProjectInfo[]>('/projects');
   } catch {
-    projectList = [];
+    projectListSignal.value = [];
   }
   renderTabs();
   // HS-8293 — pre-fix this re-hydrated `dashboard.visibilityGroupings`
@@ -110,12 +134,13 @@ export async function refreshProjectTabs(): Promise<void> {
 
 /** Switch to the next or previous tab. */
 export function switchTabByOffset(offset: number): void {
-  if (projectList.length < 2) return;
+  const list = projectListSignal.value;
+  if (list.length < 2) return;
   const activeSecret = getActiveProject()?.secret;
-  const idx = projectList.findIndex(p => p.secret === activeSecret);
+  const idx = list.findIndex(p => p.secret === activeSecret);
   if (idx === -1) return;
-  const next = (idx + offset + projectList.length) % projectList.length;
-  void switchProject(projectList[next]);
+  const next = (idx + offset + list.length) % list.length;
+  void switchProject(list[next]);
 }
 
 /** Close the active tab. */
@@ -127,7 +152,7 @@ export function closeActiveTab(): void {
 // --- Remove helpers ---
 
 async function removeProject(project: ProjectInfo): Promise<void> {
-  if (projectList.length <= 1) return;
+  if (projectListSignal.value.length <= 1) return;
   try {
     // HS-8085 — DELETE auths via the URL `:secret` param, not the
     // `X-Hotsheet-Secret` header (see `src/routes/projects.ts:90`); the
@@ -136,7 +161,7 @@ async function removeProject(project: ProjectInfo): Promise<void> {
     await api(`/projects/${encodeURIComponent(project.secret)}`, { method: 'DELETE' });
     clearPerProjectSessionState(project.secret);
     if (getActiveProject()?.secret === project.secret) {
-      const remaining = projectList.filter(p => p.secret !== project.secret);
+      const remaining = projectListSignal.value.filter(p => p.secret !== project.secret);
       if (remaining.length > 0) await switchProject(remaining[0]);
     }
     await refreshProjectTabs();
@@ -146,7 +171,7 @@ async function removeProject(project: ProjectInfo): Promise<void> {
 }
 
 async function removeOtherProjects(keepProject: ProjectInfo): Promise<void> {
-  const toRemove = projectList.filter(p => p.secret !== keepProject.secret);
+  const toRemove = projectListSignal.value.filter(p => p.secret !== keepProject.secret);
   for (const p of toRemove) {
     await api(`/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
     clearPerProjectSessionState(p.secret);
@@ -158,9 +183,10 @@ async function removeOtherProjects(keepProject: ProjectInfo): Promise<void> {
 }
 
 async function removeProjectsInDirection(project: ProjectInfo, direction: 'left' | 'right'): Promise<void> {
-  const idx = projectList.findIndex(p => p.secret === project.secret);
+  const list = projectListSignal.value;
+  const idx = list.findIndex(p => p.secret === project.secret);
   if (idx === -1) return;
-  const toRemove = direction === 'left' ? projectList.slice(0, idx) : projectList.slice(idx + 1);
+  const toRemove = direction === 'left' ? list.slice(0, idx) : list.slice(idx + 1);
   for (const p of toRemove) {
     await api(`/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
     clearPerProjectSessionState(p.secret);
@@ -178,16 +204,17 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
   // Remove any existing context menu
   byIdOrNull('tab-context-menu')?.remove();
 
-  const idx = projectList.findIndex(p => p.secret === project.secret);
+  const list = projectListSignal.value;
+  const idx = list.findIndex(p => p.secret === project.secret);
   const hasLeft = idx > 0;
-  const hasRight = idx < projectList.length - 1;
-  const canClose = projectList.length > 1;
+  const hasRight = idx < list.length - 1;
+  const canClose = list.length > 1;
 
   // HS-7835 — Lucide icons on every entry (matches the §22 terminal-tab
   // context menu visually).
   const items: { label: string; action: () => void; disabled?: boolean; icon: string }[] = [
     { label: 'Close Tab', action: () => void removeProject(project), disabled: !canClose, icon: ICON_X },
-    { label: 'Close Other Tabs', action: () => void removeOtherProjects(project), disabled: projectList.length <= 1, icon: ICON_CLOSE_OTHERS },
+    { label: 'Close Other Tabs', action: () => void removeOtherProjects(project), disabled: list.length <= 1, icon: ICON_CLOSE_OTHERS },
     { label: 'Close Tabs to the Left', action: () => void removeProjectsInDirection(project, 'left'), disabled: !hasLeft, icon: ICON_CLOSE_LEFT },
     { label: 'Close Tabs to the Right', action: () => void removeProjectsInDirection(project, 'right'), disabled: !hasRight, icon: ICON_CLOSE_RIGHT },
   ];
@@ -304,21 +331,26 @@ function handleDrop(e: DragEvent, targetProject: ProjectInfo) {
   hideIndicator();
   if (dragSecret === null || dragSecret === targetProject.secret) return;
 
-  const fromIdx = projectList.findIndex(p => p.secret === dragSecret);
-  const toIdx = projectList.findIndex(p => p.secret === targetProject.secret);
+  // HS-8235 — immutable update so the signal write fires reactivity.
+  // Pre-fix this path mutated the array in place via two `splice` calls
+  // and called `renderTabs()` to force a rebuild; the new tab strip
+  // re-reconciles via `bindList` automatically on the signal write.
+  const next = [...projectListSignal.value];
+  const fromIdx = next.findIndex(p => p.secret === dragSecret);
+  const toIdx = next.findIndex(p => p.secret === targetProject.secret);
   if (fromIdx === -1 || toIdx === -1) return;
 
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
   const side = e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
-  const [moved] = projectList.splice(fromIdx, 1);
-  let insertIdx = projectList.findIndex(p => p.secret === targetProject.secret);
+  const [moved] = next.splice(fromIdx, 1);
+  let insertIdx = next.findIndex(p => p.secret === targetProject.secret);
   if (side === 'after') insertIdx++;
-  projectList.splice(insertIdx, 0, moved);
-  renderTabs();
+  next.splice(insertIdx, 0, moved);
+  projectListSignal.value = next;
 
   void api('/projects/reorder', {
     method: 'POST',
-    body: { secrets: projectList.map(p => p.secret) },
+    body: { secrets: next.map(p => p.secret) },
   });
 }
 
@@ -449,90 +481,105 @@ function setupScrollObserver() {
 
 // --- Render ---
 
-/** HS-7972 — fingerprint of the rendered tab strip. Skipping the DOM rebuild
- *  when the strip is identical eliminates the per-poll-tick teardown that
- *  was clearing the user's `:hover` state mid-hover (causing the visible
- *  outline flicker the user reported). */
-let lastRenderedTabsFingerprint: string | null = null;
+/** **HS-8235** — the multi-tab strip is wired through `bindList` against
+ *  `projectListSignal` exactly once per single↔multi transition. Tracks
+ *  the disposer + the live `<div class="project-tabs-inner">` parent so
+ *  subsequent `renderTabs()` calls are idempotent (no DOM thrash on
+ *  every project switch / poll tick). On a transition back to the
+ *  single-project h1 path, the disposer fires + `multiTabState` is
+ *  cleared so the next multi-project mount sets up cleanly. */
+let multiTabState: { dispose: () => void; parent: HTMLElement } | null = null;
 
-function computeTabsFingerprint(activeSecret: string | null): string {
-  return computeProjectTabsFingerprint(projectList, activeSecret);
+function tearDownMultiTabState(): void {
+  if (multiTabState !== null) {
+    try { multiTabState.dispose(); } catch { /* swallow */ }
+    multiTabState = null;
+  }
+}
+
+/** Render a single tab row + wire its event listeners + per-row reactive
+ *  effects (active-class flip via `activeSecretSignal`). Returns the
+ *  `bindList` row contract: the element + a `dispose` that tears down
+ *  the per-row `effect` so removed tabs don't keep firing.
+ *
+ *  Listeners reference the current `projectListSignal.value` lazily
+ *  (drag/drop etc. read the latest list inside `handleDrop`), so the
+ *  closure doesn't go stale across reorder. */
+function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
+  const row = toElement(
+    <div className="project-tab" data-secret={p.secret} draggable={true}>
+      <span className="project-tab-dot"></span>
+      <span className="project-tab-name">{p.name}</span>
+      <span className="project-tab-bell"></span>
+    </div>,
+  );
+
+  // Per-row reactive: flip the `.active` class whenever the active
+  // secret changes. Cheap on no-op (every row's effect re-runs on every
+  // active-change, but only the entering / leaving rows actually mutate
+  // a class). `bindList` calls the returned `dispose` when the row's
+  // key drops out of `projectListSignal`, so this never leaks.
+  const stopActive = effect(() => {
+    if (activeSecretSignal.value === p.secret) row.classList.add('active');
+    else row.classList.remove('active');
+  });
+
+  row.addEventListener('click', () => {
+    void (async () => {
+      // HS-6832: clicking a project tab while the terminal dashboard is
+      // active exits the dashboard first and then navigates to the clicked
+      // project's normal ticket view (docs/25-terminal-dashboard.md §25.3).
+      const { exitDashboard } = await import('./terminalDashboard.js');
+      exitDashboard();
+      await switchProject(p);
+      // HS-6637: if this tab has a minimized permission popup, bring it back.
+      reopenMinimizedForSecret(p.secret);
+    })();
+  });
+  row.addEventListener('contextmenu', (e) => showTabContextMenu(e as MouseEvent, p));
+  row.addEventListener('dragstart', (e) => handleDragStart(e, p));
+  row.addEventListener('dragover', (e) => handleDragOver(e));
+  row.addEventListener('drop', (e) => handleDrop(e, p));
+  row.addEventListener('dragend', (e) => handleDragEnd(e));
+
+  return { el: row, dispose: stopActive };
 }
 
 function renderTabs() {
   const titleArea = byIdOrNull('app-title-area');
   if (!titleArea) return;
 
-  if (projectList.length < 2) {
-    // Single project — show the project name as h1
-    const name = projectList.length === 1 ? projectList[0].name : 'Hot Sheet';
-    const fingerprint = computeTabsFingerprint(null);
-    if (lastRenderedTabsFingerprint === fingerprint && document.querySelector('#app-title-area h1') !== null) return;
-    lastRenderedTabsFingerprint = fingerprint;
+  if (projectListSignal.value.length < 2) {
+    // Single project — show the project name as h1. Imperative because
+    // the bindList path doesn't apply (one row, no keyed reconcile to
+    // do); also tear down any previous multi-tab state so the inner
+    // container's per-row effects don't keep firing against detached
+    // nodes if we just transitioned multi → single.
+    tearDownMultiTabState();
+    const name = projectListSignal.value.length === 1 ? projectListSignal.value[0].name : 'Hot Sheet';
     titleArea.innerHTML = '';
     titleArea.appendChild(toElement(<h1>{name}</h1>));
     titleArea.classList.remove('has-tabs');
     return;
   }
 
-  // HS-7972 — skip the DOM rebuild when the strip is identical to what's
-  // already there. Active-state changes are picked up by `setActiveProject`
-  // → `renderTabs` so the fingerprint includes the active secret. Status
-  // dots + bell glyphs are toggled in-place by `updateStatusDots` /
-  // `updateProjectBellIndicators` and don't go through this path, so they
-  // can't be missed by the fingerprint short-circuit.
-  const activeSecret = getActiveProject()?.secret ?? null;
-  const fingerprint = computeTabsFingerprint(activeSecret);
-  if (lastRenderedTabsFingerprint === fingerprint && document.querySelector('.project-tabs-inner') !== null) {
-    return;
-  }
-  lastRenderedTabsFingerprint = fingerprint;
-
-  titleArea.classList.add('has-tabs');
-  titleArea.innerHTML = '';
-
-  const tabList = toElement(
-    <div className="project-tabs-inner">
-      {projectList.map(p => (
-        <div
-          className={`project-tab${p.secret === getActiveProject()?.secret ? ' active' : ''}`}
-          data-secret={p.secret}
-        >
-          <span className="project-tab-dot"></span>
-          <span className="project-tab-name">{p.name}</span>
-          <span className="project-tab-bell"></span>
-        </div>
-      ))}
-    </div>
-  );
-
-  for (const tab of tabList.querySelectorAll('.project-tab')) {
-    const el = tab as HTMLElement;
-    el.draggable = true;
-    const secret = el.dataset.secret!;
-    const project = projectList.find(p => p.secret === secret);
-    if (!project) continue;
-
-    el.addEventListener('click', () => {
-      void (async () => {
-        // HS-6832: clicking a project tab while the terminal dashboard is
-        // active exits the dashboard first and then navigates to the clicked
-        // project's normal ticket view (docs/25-terminal-dashboard.md §25.3).
-        const { exitDashboard } = await import('./terminalDashboard.js');
-        exitDashboard();
-        await switchProject(project);
-        // HS-6637: if this tab has a minimized permission popup, bring it back.
-        reopenMinimizedForSecret(project.secret);
-      })();
-    });
-    el.addEventListener('contextmenu', (e) => showTabContextMenu(e as MouseEvent, project));
-    el.addEventListener('dragstart', (e) => handleDragStart(e, project));
-    el.addEventListener('dragover', (e) => handleDragOver(e));
-    el.addEventListener('drop', (e) => handleDrop(e, project));
-    el.addEventListener('dragend', (e) => handleDragEnd(e));
+  // Multi-tab path. Idempotent — set up the bindList exactly once per
+  // single→multi transition, then return early on every subsequent
+  // `renderTabs()` call. The bindList itself drives reconciliation off
+  // every `projectListSignal.value = ...` write; we don't need the
+  // pre-HS-8235 fingerprint short-circuit because the bindList only
+  // mutates the DOM when keys actually change, and per-row effects
+  // own their own attribute updates.
+  if (multiTabState === null || !multiTabState.parent.isConnected) {
+    if (multiTabState !== null) tearDownMultiTabState();
+    titleArea.classList.add('has-tabs');
+    titleArea.innerHTML = '';
+    const inner = toElement(<div className="project-tabs-inner"></div>);
+    titleArea.appendChild(inner);
+    const dispose = bindList(inner, projectListSignal, (p) => p.secret, renderTabRow);
+    multiTabState = { dispose, parent: inner };
   }
 
-  titleArea.appendChild(tabList);
   updateStatusDots();
   // Re-apply the cross-project bell indicators against the last-known snapshot.
   // bellPoll would overwrite this on its next tick anyway, but that tick might
@@ -542,4 +589,27 @@ function renderTabs() {
   // Scroll active tab into view after DOM settles
   requestAnimationFrame(scrollActiveTabIntoView);
   setupScrollObserver();
+}
+
+/** **HS-8235 — TEST ONLY.** Reset the multi-tab bindList state + the
+ *  signals so a unit test can drive `renderTabs()` from a clean slate
+ *  without the previous test's effects leaking across cases. */
+export function _resetProjectTabsForTesting(): void {
+  tearDownMultiTabState();
+  projectListSignal.value = [];
+  activeSecretSignal.value = null;
+}
+
+/** **HS-8235 — TEST ONLY.** Drive the signals from a unit test without
+ *  going through the api → setActiveProject path. */
+export function _setProjectsForTesting(projects: readonly ProjectInfo[], activeSecret: string | null): void {
+  projectListSignal.value = projects;
+  activeSecretSignal.value = activeSecret;
+}
+
+/** **HS-8235 — TEST ONLY.** Synchronous handle on `renderTabs()` for
+ *  unit-tests that don't want to round-trip through the async
+ *  `initProjectTabs` / `refreshProjectTabs` paths. */
+export function _renderTabsForTesting(): void {
+  renderTabs();
 }

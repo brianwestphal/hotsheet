@@ -2,8 +2,8 @@
 
 HS-8167. Follow-up to the HS-8165 investigation. Depends on [§60. Fine-grained reactivity primitive](60-reactivity-primitive.md) shipping first — stores are a thin convention layered on top of the signals primitive HS-8166 introduces.
 
-> **Status:** Design only. No code under HS-8167 itself — phases ship under HS-8238 / HS-8239 / HS-8240 (filed alongside this doc).
-> **Verdict:** Adopt a small `defineStore()` factory after HS-8166 Phase 1 lands. Convert one trial store, validate the testing pattern, then migrate `ticketsStore` end-to-end as the highest-impact win.
+> **Status:** Phase 1 (HS-8238) shipped 2026-05-09. Phases 2 (HS-8239) + 3 (HS-8240) still queued.
+> **Verdict:** Adopt `defineStore` / `resetAllStores` from `kerfjs` (already pulled in for §60 — see HS-8235 / `docs/60-reactivity-primitive.md` §60.3). The local `defineStore()` factory described in §61.3 below is NOT implemented locally — kerf ships the same shape. The §61.3 module-surface description still applies as an *API* spec; the implementation is `kerfjs` re-exported through `src/client/reactive.ts`.
 
 ## 61.1 Problem statement
 
@@ -37,20 +37,22 @@ A store is just a signal + helpers. The convention is the value, not the abstrac
 
 Single new client module. The shape below is the *target* API; exact field names tune during Phase 1.
 
-### `src/client/store.ts`
+### `src/client/reactive.ts` (re-export of `kerfjs`)
 
 ```ts
-// Conceptual — exact API tuned during HS-8238 Phase 1.
-export interface Store<TState, TActions> {
-  state: ReadonlySignal<TState>;     // read-only reactive view
-  actions: TActions;                  // mutators — the only way to change state
-  reset(): void;                      // for tests + project-switch lifecycle
-}
-
-export function defineStore<TState, TActions>(spec: {
-  initial: () => TState;
-  actions: (set: (next: TState) => void, get: () => TState) => TActions;
-}): Store<TState, TActions>;
+// Implementation lives in `kerfjs`; Hot Sheet re-exports through
+// `src/client/reactive.ts` per §61.3 / HS-8238.
+import { defineStore, resetAllStores } from 'kerfjs';
+import type { Store } from 'kerfjs';
+//   Store<TState, TActions>:
+//     state:   ReadonlySignal<TState>
+//     actions: TActions
+//     reset(): void
+//   defineStore<TState, TActions>({ initial: () => TState,
+//                                   actions: (set, get) => TActions })
+//     → Store<TState, TActions>
+//   resetAllStores(): walks every store registered via defineStore() and
+//                     calls each .reset(). For tests + lifecycle hooks.
 ```
 
 Three rules:
@@ -61,7 +63,9 @@ Three rules:
 
 ### `resetAllStores()` lifecycle hook
 
-A module-level registry tracks every store created via `defineStore()`. On project switch (`switchProject` / `reloadAppState`), `resetAllStores()` walks the registry and calls each `reset()`. This closes the lifetime hole called out in §61.1: today every per-feature reset is hand-wired and easy to miss; with the registry, opting *out* of project-switch reset is the explicit decision (and rare).
+A module-level registry tracks every store created via `defineStore()`. The registry walk is exposed via `resetAllStores()`.
+
+**HS-8238 implementation note (2026-05-09):** the original §61.3 design called for wiring `resetAllStores()` into `switchProject` / `reloadAppState` so per-project state resets automatically on switch. In practice, every Hot Sheet store landed so far holds *cross-project* state (attention dots, busy indicators, channel state) — none of which should reset on switch. So the hook is currently **not** wired into any production path; tests use it via `beforeEach(() => resetAllStores())` for isolation. If a future per-project store lands, it should NOT participate in `defineStore()` (kerf has no opt-out — see kerf §3.4); use a raw signal instead. Re-evaluate the production wiring once HS-8239 (`ticketsStore`) lands — that one IS per-project and is the natural first caller.
 
 ## 61.4 Candidate stores — ordered by pain today
 
@@ -113,11 +117,13 @@ Not every existing global needs a store. These should stay as plain values or si
 
 Phase 1 lands the factory. Phase 2 is the highest-impact migration. Phase 3 is opportunistic.
 
-### Phase 1 — store factory + one trial (HS-8238)
+### Phase 1 — store factory + one trial (HS-8238) — **shipped 2026-05-09**
 
-- Build `defineStore` + `resetAllStores` + their tests.
-- Convert ONE small global into a store. Suggested trial: **project-tab attention-dot state** (the per-tab "unseen events" indicator). Small, contained, has clear actions (`markAttention(secret)`, `clearAttention(secret)`), and the rendering surface is a single `bindList` already migrated by the §60 trial in HS-8235.
-- Ship the test pattern document — what an example store-test looks like, what `reset()` enables in test setup.
+- ✅ `src/client/reactive.ts` re-exports `defineStore` / `resetAllStores` / `Store` from `kerfjs` (NO local factory implementation — kerf provides the same shape per §61.3 above).
+- ✅ Trial migration: the project-tab attention-dot state in `src/client/channelUI.tsx`. `attentionProjects: Set<string>` became a `defineStore({ initial, actions: markAttention/clearAttention })`. Public surface (`getProjectAttentionSecrets()`, `markProjectAttention()`, `clearProjectAttention()`) unchanged — consumers still see a `ReadonlySet<string>`. New test-only export `_projectAttentionStoreForTesting` for direct `.reset()` access. Each action does an immutable update (`new Set(get().secrets)`) so downstream `effect()` consumers see a fresh reference per change.
+- ✅ Tests: 3 new cases under `reactive — defineStore / resetAllStores re-exports (HS-8238)` in `src/client/reactive.test.ts` cover the kerf re-export contract; 7 cases in `src/client/channelUI.test.ts` cover the attention-store migration end-to-end.
+- ⏭️ Production `resetAllStores()` wiring: skipped per §61.3 implementation note (no per-project store landed yet that would benefit). Re-evaluate during HS-8239.
+- 📄 Test pattern: documented inline at the top of `channelUI.test.ts` (`beforeEach(() => store.reset())` for isolation; `afterEach` mirrors it; tests assert against actions, not against direct state writes).
 
 ### Phase 2 — `ticketsStore` (HS-8239)
 
