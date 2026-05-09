@@ -474,3 +474,140 @@ describe('terminalTileGrid — magnified-tile click is a no-op (HS-8157)', () =>
     grid.dispose();
   });
 });
+
+/**
+ * HS-8313 — bindList migration. The load-bearing benefit is preserving
+ * DOM identity for surviving keys across `rebuild()`. Pre-fix every
+ * rebuild teardown'd every tile and re-created the DOM + checkout from
+ * scratch; post-fix the bindList reconciles add / remove / reorder
+ * against the previous list and a separate effect applies in-place
+ * property updates to surviving tiles.
+ */
+describe('terminalTileGrid — bindList preserves identity across rebuild (HS-8313)', () => {
+  it('rebuild with the same entry list preserves the tile root + checkout entry', () => {
+    const grid = mount([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+    const before = Array.from(document.querySelectorAll('.terminal-dashboard-tile'));
+    expect(before).toHaveLength(2);
+    const beforeEntries = _inspectStackForTesting().filter(e => e.key.startsWith('s::'));
+    expect(beforeEntries).toHaveLength(2);
+
+    // Rebuild with fresh objects but identical secret + id (poll-tick
+    // case — list refresh that reports the same terminals).
+    grid.rebuild([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+
+    // Pre-fix every tile's root would be a brand-new element. Post-fix
+    // the same DOM nodes survive because bindList reuses by key.
+    const after = Array.from(document.querySelectorAll('.terminal-dashboard-tile'));
+    expect(after).toHaveLength(2);
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[1]);
+
+    // Checkout entries also survive — pre-fix every tile released and
+    // re-mounted, churning the LIFO stack on every poll.
+    const afterEntries = _inspectStackForTesting().filter(e => e.key.startsWith('s::'));
+    expect(afterEntries).toHaveLength(2);
+
+    grid.dispose();
+  });
+
+  it('rebuild with the same entries in reversed order keeps DOM identity', () => {
+    const grid = mount([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+    const before = Array.from(document.querySelectorAll('.terminal-dashboard-tile'));
+    const t1Before = before[0];
+    const t2Before = before[1];
+
+    // Reorder: bindList reconciles via insertBefore, no destroy/recreate.
+    grid.rebuild([makeEntry('s', 't2'), makeEntry('s', 't1')]);
+    const after = Array.from(document.querySelectorAll('.terminal-dashboard-tile'));
+    expect(after[0]).toBe(t2Before);
+    expect(after[1]).toBe(t1Before);
+
+    grid.dispose();
+  });
+
+  it('rebuild preserves the tile checkout when entry properties change in place', () => {
+    const grid = mount([makeEntry('s', 't1')]);
+    const tileBefore = document.querySelector('.terminal-dashboard-tile');
+    const entriesBefore = _inspectStackForTesting().filter(e => e.key === 's::t1');
+    expect(entriesBefore).toHaveLength(1);
+
+    // Same key, different label — surviving tile, in-place label update.
+    grid.rebuild([{ ...makeEntry('s', 't1'), label: 'renamed' }]);
+    const tileAfter = document.querySelector('.terminal-dashboard-tile');
+    expect(tileAfter).toBe(tileBefore);
+
+    // Label DOM was updated in place (no remount).
+    const nameEl = tileAfter?.querySelector('.terminal-dashboard-tile-name');
+    expect(nameEl?.textContent).toBe('renamed');
+
+    // Checkout entry survives — same xterm, same WS.
+    const entriesAfter = _inspectStackForTesting().filter(e => e.key === 's::t1');
+    expect(entriesAfter).toHaveLength(1);
+
+    grid.dispose();
+  });
+
+  it('alive → exited state transition releases the checkout in place (no remount)', () => {
+    const grid = mount([makeEntry('s', 't1', 'alive')]);
+    const tileBefore = document.querySelector<HTMLElement>('.terminal-dashboard-tile');
+    expect(tileBefore?.classList.contains('terminal-dashboard-tile-alive')).toBe(true);
+    expect(_inspectStackForTesting().filter(e => e.key === 's::t1')).toHaveLength(1);
+
+    grid.rebuild([{ ...makeEntry('s', 't1', 'exited'), exitCode: 0 }]);
+
+    const tileAfter = document.querySelector<HTMLElement>('.terminal-dashboard-tile');
+    // Same DOM root — in-place transition.
+    expect(tileAfter).toBe(tileBefore);
+    // State CSS class flipped.
+    expect(tileAfter?.classList.contains('terminal-dashboard-tile-alive')).toBe(false);
+    expect(tileAfter?.classList.contains('terminal-dashboard-tile-exited')).toBe(true);
+    // Checkout was released — no live PTY for an exited tile.
+    expect(_inspectStackForTesting().filter(e => e.key === 's::t1')).toHaveLength(0);
+    // Placeholder shows the exit message.
+    const status = tileAfter?.querySelector('.terminal-dashboard-tile-placeholder-status');
+    expect(status?.textContent).toContain('Exited');
+
+    grid.dispose();
+  });
+
+  it('exited → alive transition re-mounts the checkout in place (eager-mount fallback)', () => {
+    const grid = mount([makeEntry('s', 't1', 'exited')]);
+    const tileBefore = document.querySelector('.terminal-dashboard-tile');
+    expect(_inspectStackForTesting().filter(e => e.key === 's::t1')).toHaveLength(0);
+
+    grid.rebuild([makeEntry('s', 't1', 'alive')]);
+
+    const tileAfter = document.querySelector('.terminal-dashboard-tile');
+    expect(tileAfter).toBe(tileBefore);
+    // happy-dom test env stubs IntersectionObserver to undefined; the
+    // not-alive → alive in-place transition takes the eager-mount path.
+    expect(_inspectStackForTesting().filter(e => e.key === 's::t1')).toHaveLength(1);
+
+    grid.dispose();
+  });
+
+  it('cwdLabel change adds the chip in place; clearing it removes the chip', () => {
+    const grid = mount([makeEntry('s', 't1')]);
+    const tile = document.querySelector('.terminal-dashboard-tile');
+    expect(tile?.querySelector('.terminal-dashboard-tile-cwd')).toBeNull();
+
+    grid.rebuild([{ ...makeEntry('s', 't1'), cwdLabel: '~/proj', cwdRaw: '/Users/u/proj' }]);
+    const chip = tile?.querySelector<HTMLElement>('.terminal-dashboard-tile-cwd');
+    expect(chip).not.toBeNull();
+    expect(chip?.textContent).toBe('~/proj');
+    expect(chip?.title).toBe('/Users/u/proj');
+
+    // Update text + raw in place — same chip element.
+    grid.rebuild([{ ...makeEntry('s', 't1'), cwdLabel: '~/proj/sub', cwdRaw: '/Users/u/proj/sub' }]);
+    const chip2 = tile?.querySelector<HTMLElement>('.terminal-dashboard-tile-cwd');
+    expect(chip2).toBe(chip);
+    expect(chip2?.textContent).toBe('~/proj/sub');
+    expect(chip2?.title).toBe('/Users/u/proj/sub');
+
+    // Clear cwdLabel — chip is removed.
+    grid.rebuild([makeEntry('s', 't1')]);
+    expect(tile?.querySelector('.terminal-dashboard-tile-cwd')).toBeNull();
+
+    grid.dispose();
+  });
+});

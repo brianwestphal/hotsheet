@@ -212,3 +212,162 @@ describe('initTerminal — DOM wiring (HS-8232)', () => {
     expect(calls).toContain('/terminal/create');
   });
 });
+
+/**
+ * HS-8312 — drawer tab strip + pane container reconciled via parallel
+ * bindLists. Pre-fix `loadAndRenderTerminalTabs` did
+ * `tabStrip.innerHTML = '' + for-loop appendChild` on every poll tick,
+ * churning DOM positions even when the terminal list was unchanged.
+ * Post-fix surviving ids keep their `inst.tabBtn` / `inst.pane`
+ * elements across rebuilds; removed ids drop; reorder shuffles via
+ * `insertBefore` without destroying nodes.
+ *
+ * Tests use mocked `/terminal/list` responses to drive
+ * `loadAndRenderTerminalTabs` without spinning up real xterm
+ * instances. `createInstance` itself only builds DOM (no `Terminal()`
+ * yet — that lands in `activateTerminal`), so it's safe under
+ * happy-dom.
+ */
+describe('loadAndRenderTerminalTabs — drawer bindList identity (HS-8312)', () => {
+  beforeEach(() => {
+    getTauriInvokeMock.mockReturnValue(() => Promise.resolve());
+  });
+
+  it('renders one tabBtn + pane per configured terminal in order', async () => {
+    apiMock.mockResolvedValue({
+      configured: [
+        { id: 't1', name: 'one', command: 'sh' },
+        { id: 't2', name: 'two', command: 'sh' },
+      ],
+      dynamic: [],
+      home: '/Users/test',
+    });
+    await loadAndRenderTerminalTabs();
+    const tabs = document.querySelectorAll('#drawer-terminal-tabs > *');
+    const panes = document.querySelectorAll('#drawer-terminal-panes > *');
+    expect(tabs.length).toBe(2);
+    expect(panes.length).toBe(2);
+    expect((tabs[0] as HTMLElement).dataset.terminalId).toBe('t1');
+    expect((tabs[1] as HTMLElement).dataset.terminalId).toBe('t2');
+  });
+
+  it('preserves tabBtn + pane DOM identity across a rebuild with the same list', async () => {
+    apiMock.mockResolvedValue({
+      configured: [
+        { id: 't1', name: 'one', command: 'sh' },
+        { id: 't2', name: 'two', command: 'sh' },
+      ],
+      dynamic: [],
+      home: '/Users/test',
+    });
+    await loadAndRenderTerminalTabs();
+    const tabsBefore = Array.from(document.querySelectorAll('#drawer-terminal-tabs > *'));
+    const panesBefore = Array.from(document.querySelectorAll('#drawer-terminal-panes > *'));
+
+    // Second poll tick — same list, fresh response object.
+    apiMock.mockResolvedValue({
+      configured: [
+        { id: 't1', name: 'one', command: 'sh' },
+        { id: 't2', name: 'two', command: 'sh' },
+      ],
+      dynamic: [],
+      home: '/Users/test',
+    });
+    await loadAndRenderTerminalTabs();
+
+    const tabsAfter = Array.from(document.querySelectorAll('#drawer-terminal-tabs > *'));
+    const panesAfter = Array.from(document.querySelectorAll('#drawer-terminal-panes > *'));
+    // Pre-fix every element would be a fresh node (innerHTML='' + re-append
+    // had nuked the children). Post-fix the bindList preserves identity
+    // for surviving ids → same element references survive the rebuild.
+    expect(tabsAfter[0]).toBe(tabsBefore[0]);
+    expect(tabsAfter[1]).toBe(tabsBefore[1]);
+    expect(panesAfter[0]).toBe(panesBefore[0]);
+    expect(panesAfter[1]).toBe(panesBefore[1]);
+  });
+
+  it('reorders surviving rows via insertBefore — same element instances, new positions', async () => {
+    apiMock.mockResolvedValue({
+      configured: [
+        { id: 't1', name: 'one', command: 'sh' },
+        { id: 't2', name: 'two', command: 'sh' },
+      ],
+      dynamic: [],
+      home: '/Users/test',
+    });
+    await loadAndRenderTerminalTabs();
+    const t1Before = document.querySelector('#drawer-terminal-tabs > [data-terminal-id="t1"]');
+    const t2Before = document.querySelector('#drawer-terminal-tabs > [data-terminal-id="t2"]');
+
+    // Reorder.
+    apiMock.mockResolvedValue({
+      configured: [
+        { id: 't2', name: 'two', command: 'sh' },
+        { id: 't1', name: 'one', command: 'sh' },
+      ],
+      dynamic: [],
+      home: '/Users/test',
+    });
+    await loadAndRenderTerminalTabs();
+
+    const tabsAfter = Array.from(document.querySelectorAll('#drawer-terminal-tabs > *'));
+    expect(tabsAfter[0]).toBe(t2Before);
+    expect(tabsAfter[1]).toBe(t1Before);
+  });
+
+  it('drops the tabBtn + pane for an id that disappears from the response', async () => {
+    apiMock.mockResolvedValue({
+      configured: [
+        { id: 't1', name: 'one', command: 'sh' },
+        { id: 't2', name: 'two', command: 'sh' },
+      ],
+      dynamic: [],
+      home: '/Users/test',
+    });
+    await loadAndRenderTerminalTabs();
+    expect(document.querySelectorAll('#drawer-terminal-tabs > *').length).toBe(2);
+
+    apiMock.mockResolvedValue({
+      configured: [{ id: 't1', name: 'one', command: 'sh' }],
+      dynamic: [],
+      home: '/Users/test',
+    });
+    await loadAndRenderTerminalTabs();
+    const tabs = document.querySelectorAll('#drawer-terminal-tabs > *');
+    const panes = document.querySelectorAll('#drawer-terminal-panes > *');
+    expect(tabs.length).toBe(1);
+    expect(panes.length).toBe(1);
+    expect((tabs[0] as HTMLElement).dataset.terminalId).toBe('t1');
+  });
+
+  it('appends a freshly-added id to the end of the strip without disturbing existing tabs', async () => {
+    apiMock.mockResolvedValue({
+      configured: [
+        { id: 't1', name: 'one', command: 'sh' },
+        { id: 't2', name: 'two', command: 'sh' },
+      ],
+      dynamic: [],
+      home: '/Users/test',
+    });
+    await loadAndRenderTerminalTabs();
+    const t1Before = document.querySelector('#drawer-terminal-tabs > [data-terminal-id="t1"]');
+    const t2Before = document.querySelector('#drawer-terminal-tabs > [data-terminal-id="t2"]');
+
+    apiMock.mockResolvedValue({
+      configured: [
+        { id: 't1', name: 'one', command: 'sh' },
+        { id: 't2', name: 'two', command: 'sh' },
+        { id: 't3', name: 'three', command: 'sh' },
+      ],
+      dynamic: [],
+      home: '/Users/test',
+    });
+    await loadAndRenderTerminalTabs();
+
+    const tabsAfter = Array.from(document.querySelectorAll('#drawer-terminal-tabs > *'));
+    expect(tabsAfter.length).toBe(3);
+    expect(tabsAfter[0]).toBe(t1Before);
+    expect(tabsAfter[1]).toBe(t2Before);
+    expect((tabsAfter[2] as HTMLElement).dataset.terminalId).toBe('t3');
+  });
+});

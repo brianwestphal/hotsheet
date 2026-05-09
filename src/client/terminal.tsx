@@ -17,6 +17,9 @@ import {
   onTerminalListUpdated,
 } from './drawerTerminalGrid.js';
 import { recordInteraction } from './longTaskObserver.js';
+import type { Signal } from './reactive.js';
+import { signal } from './reactive.js';
+import { bindList } from './reactive-bind.js';
 import { getActiveProject, state } from './state.js';
 import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 import { attachGutterHoverPopover } from './terminal/gutterPopover.js';
@@ -172,6 +175,47 @@ interface ShellIntegrationState {
 const SHELL_INTEGRATION_RING_SIZE = 500;
 
 const instances = new Map<string, TerminalInstance>();
+
+/**
+ * HS-8312 / §60 Phase 2 — drawer tab strip + pane container reconciled
+ * via two parallel bindLists keyed on terminal id. The `instances` Map
+ * above remains the imperative source of truth for xterm + WebSocket
+ * lifetime; these bindLists only decide WHERE in the strip / pane
+ * container each row sits. `removeTerminalInstance` handles xterm/WS
+ * teardown + DOM detach + the signal sync below, so the per-row
+ * dispose returned by the bindList render functions is a no-op.
+ *
+ * Pre-fix `loadAndRenderTerminalTabs` did a wholesale clear of
+ * `tabStrip` (`innerHTML = ''`) plus a per-pane `el.remove()` sweep on
+ * `paneContainer`, then re-appended every `inst.tabBtn` / `inst.pane`
+ * in order — which DID preserve the xterm + WS instances (those live
+ * in `instances`) but churned DOM positions on every poll tick.
+ * Post-fix surviving rows keep their DOM identity across reorder; the
+ * bindList only mutates the DOM for rows that actually moved,
+ * appeared, or disappeared.
+ */
+const drawerInstancesSignal: Signal<readonly TerminalInstance[]> = signal([]);
+let drawerTabsBindListDispose: (() => void) | null = null;
+let drawerPanesBindListDispose: (() => void) | null = null;
+
+function ensureDrawerBindLists(tabStrip: HTMLElement, paneContainer: HTMLElement): void {
+  if (drawerTabsBindListDispose === null) {
+    drawerTabsBindListDispose = bindList(
+      tabStrip,
+      drawerInstancesSignal,
+      (inst) => inst.id,
+      (inst) => ({ el: inst.tabBtn }),
+    );
+  }
+  if (drawerPanesBindListDispose === null) {
+    drawerPanesBindListDispose = bindList(
+      paneContainer,
+      drawerInstancesSignal,
+      (inst) => inst.id,
+      (inst) => ({ el: inst.pane }),
+    );
+  }
+}
 
 /**
  * HS-8224 — bundled module-level lifecycle state, mirroring the HS-8190
@@ -413,18 +457,24 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
   const activeProject = getActiveProject();
   if (activeProject !== null) pruneHiddenForProject(activeProject.secret, [...wanted.keys()]);
 
-  // Ensure an instance + DOM exists for every wanted terminal, in order.
-  tabStrip.innerHTML = '';
-  paneContainer.querySelectorAll('.drawer-terminal-pane').forEach(el => el.remove());
-
   // HS-7264 — fire OSC 9 toasts for any pending desktop notifications.
   fireToastsForActiveProject([...wanted.values()]);
 
+  // HS-8312 — build the ordered instance list (lazy create / config
+  // update via ensureInstanceForEntry), then write the signal. The two
+  // parallel bindLists set up in ensureDrawerBindLists reconcile
+  // tabStrip + paneContainer DOM positions: surviving ids keep their
+  // existing tabBtn + pane elements (no `innerHTML = ''` / re-append
+  // churn), new ids get rendered + appended, dropped ids were already
+  // removed via removeTerminalInstance above and the bindList self-
+  // heals on this write (its `live` Map drops the ids that aren't in
+  // survivors).
+  ensureDrawerBindLists(tabStrip, paneContainer);
+  const orderedInstances: TerminalInstance[] = [];
   for (const entry of wanted.values()) {
-    const inst = ensureInstanceForEntry(entry);
-    tabStrip.appendChild(inst.tabBtn);
-    paneContainer.appendChild(inst.pane);
+    orderedInstances.push(ensureInstanceForEntry(entry));
   }
+  drawerInstancesSignal.value = orderedInstances;
 
   // If the previously-active id no longer exists, default to the first terminal.
   if (terminalState.activeTerminalId !== null && !wanted.has(terminalState.activeTerminalId)) {
@@ -1569,10 +1619,30 @@ function removeTerminalInstance(id: string): void {
   inst.pane.remove();
   instances.delete(id);
   if (terminalState.activeTerminalId === id) terminalState.activeTerminalId = null;
+  // HS-8312 — keep the drawer bindLists' `live` Map in sync. Without
+  // this drop, a future signal write that does NOT include this id
+  // would still see the cached entry on the live Map; the removed
+  // tabBtn / pane (`parentNode === null` after `inst.tabBtn.remove()`
+  // above) would survive in the cache and a hypothetical re-creation
+  // of the same id with a fresh tabBtn would still resolve to the
+  // stale cached element. Filter conditionally so callers that
+  // remove-en-masse via disposeAllInstances (which sets the signal to
+  // [] up-front) don't fire N redundant signal writes.
+  const current = drawerInstancesSignal.value;
+  const filtered = current.filter(i => i.id !== id);
+  if (filtered.length !== current.length) {
+    drawerInstancesSignal.value = filtered;
+  }
 }
 
 /** Tear down every client-side terminal instance. The server-side PTYs are untouched. */
 function disposeAllInstances(): void {
+  // HS-8312 — flush the drawer bindLists' live Map up-front so the
+  // per-id removeTerminalInstance calls below don't cascade N signal
+  // writes (each would trigger a bindList effect run + DOM reconcile).
+  // After this assignment removeTerminalInstance's filter sees an
+  // already-empty signal and short-circuits the subsequent writes.
+  drawerInstancesSignal.value = [];
   for (const id of [...instances.keys()]) removeTerminalInstance(id);
   terminalState.activeTerminalId = null;
 }
@@ -1852,4 +1922,12 @@ export function _resetStateForTesting(): void {
   }
   instances.clear();
   terminalState = freshTerminalModuleState();
+  // HS-8312 — reset the drawer bindList wiring so the next test's
+  // setupDom creates a fresh tabStrip / paneContainer that the
+  // bindList re-binds to. Without this, the bindLists from a prior
+  // test stay bound to a now-detached DOM and the next signal write
+  // mutates nothing visible.
+  drawerInstancesSignal.value = [];
+  if (drawerTabsBindListDispose !== null) { drawerTabsBindListDispose(); drawerTabsBindListDispose = null; }
+  if (drawerPanesBindListDispose !== null) { drawerPanesBindListDispose(); drawerPanesBindListDispose = null; }
 }

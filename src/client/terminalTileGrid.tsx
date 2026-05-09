@@ -5,6 +5,9 @@ import type { Terminal as XTerm } from '@xterm/xterm';
 import { apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
 import { type NavRect, pickGridNeighbourIndex } from './gridNavGeometry.js';
+import type { Signal } from './reactive.js';
+import { effect, signal } from './reactive.js';
+import { bindList } from './reactive-bind.js';
 import { openExternalUrl } from './tauriIntegration.js';
 import {
   applyAppearanceToTerm,
@@ -1653,7 +1656,212 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     tile.cachedCellH = null;
   }
 
-  function teardownAll(): void {
+  // --- HS-8313 / §60 Phase 2 — bindList-driven rebuild ---
+
+  /** Source-of-truth for the tile list. `rebuild()` writes a fresh array
+   *  here; the `bindList` below reconciles add / remove / reorder against
+   *  the previous value, and the `propUpdateEffect` below it walks
+   *  surviving tiles to apply in-place property updates (state changes,
+   *  label / cwd / appearance changes). Pre-fix `rebuild()` did a full
+   *  teardown + re-render every poll tick — every tile, every checkout,
+   *  every screen observer reconstructed even when the entry list was
+   *  unchanged. The bindList migration preserves DOM identity for
+   *  surviving keys (the load-bearing benefit called out in HS-8313:
+   *  reorder no longer destroys + recreates every tile), and the
+   *  property-update effect preserves the property-change semantics the
+   *  old destroy-and-recreate path delivered. */
+  const entriesSignal: Signal<readonly TileEntry[]> = signal([]);
+
+  /** HS-8313 — `bindList` key is the registry `${secret}::${id}` so a
+   *  surviving terminal keeps its DOM + checkout + virtualization state
+   *  across rebuilds. State / exit-code / label / cwd / appearance
+   *  changes within a surviving key are NOT keyed — they're applied in
+   *  place by the `propUpdateEffect` below. The captured `tile`
+   *  reference (closed over at render time) is the dispose target so a
+   *  hypothetical successor under the same registry key wouldn't be
+   *  trashed (defensive — same-registry-key successors don't currently
+   *  arise because state changes update in place rather than remount). */
+  const bindListDispose = bindList(opts.container, entriesSignal, tileKeyFor, (entry) => {
+    const root = renderTile(entry);
+    const tile = tiles.get(tileKeyFor(entry))!;
+    return {
+      el: root,
+      dispose: () => {
+        disposeTile(tile);
+        const k = tileKeyFor(tile.entry);
+        if (tiles.get(k) === tile) tiles.delete(k);
+      },
+    };
+  });
+
+  /** HS-8313 — in-place property updates for surviving tiles. Fires on
+   *  every signal write; walks the current list, looks up tiles whose
+   *  entry reference changed, and applies diffs (state transition,
+   *  label / cwd / appearance updates) WITHOUT destroying the tile.
+   *  New tiles (just rendered) have `tile.entry === entry`, so the
+   *  guard skips them. Dropped tiles are absent from `tiles`, so the
+   *  guard skips them too. */
+  const propUpdateDispose = effect(() => {
+    const entries = entriesSignal.value;
+    for (const entry of entries) {
+      const t = tiles.get(tileKeyFor(entry));
+      if (t !== undefined && t.entry !== entry) {
+        updateTileFromEntry(t, entry);
+      }
+    }
+  });
+
+  /** HS-8313 — apply a fresh `TileEntry`'s property changes to a
+   *  surviving tile in place. Pre-fix every `rebuild()` destroyed and
+   *  re-created the tile, so all property changes propagated for free
+   *  via the renderTile path. The bindList migration preserves identity
+   *  for surviving keys, so we have to actively diff the entry fields
+   *  and update the matching DOM / checkout state. State transitions
+   *  (alive ↔ exited / not_spawned) are the most structural — they
+   *  release the checkout or re-mount it; the rest are cosmetic. */
+  function updateTileFromEntry(tile: InternalTile, newEntry: TileEntry): void {
+    const oldEntry = tile.entry;
+    tile.entry = newEntry;
+
+    const stateChanged = oldEntry.state !== newEntry.state;
+    const exitCodeChanged = oldEntry.exitCode !== newEntry.exitCode;
+
+    if (stateChanged) {
+      tile.root.classList.remove(`${tileClass}-${oldEntry.state}`);
+      tile.root.classList.add(`${tileClass}-${newEntry.state}`);
+      tile.state = newEntry.state;
+    }
+    if (exitCodeChanged) tile.exitCode = newEntry.exitCode;
+
+    if (stateChanged) {
+      if (oldEntry.state === 'alive' && newEntry.state !== 'alive') {
+        // alive → exited / not_spawned: release the live checkout, drop
+        // the preview to a placeholder. Reuses softDisposeTile, which
+        // leaves the tile in `tiles` + virtualization registries (same
+        // shape used by the off-screen virt-dispose path).
+        softDisposeTile(tile);
+      } else if (oldEntry.state !== 'alive' && newEntry.state === 'alive') {
+        // not-alive → alive: when IO is unavailable (test envs) the
+        // renderTile path eager-mounts; mirror that for in-place
+        // transitions so the new state is reflected immediately. With
+        // IO available, leave the mount to the next observer cycle —
+        // the tile may not be in the viewport, in which case eager-
+        // mounting would defeat virtualization. (Tile re-renders the
+        // alive placeholder via softDisposeTile-style cleanup of the
+        // stale exited / not_spawned placeholder.)
+        if (virtObserver === null) {
+          mountTileViaCheckout(tile);
+          const k = tileKeyFor(tile.entry);
+          const v = virtState.get(k);
+          if (v !== undefined) virtState.set(k, { ...v, mounted: true });
+        } else if (tile.checkout === null) {
+          // No live xterm — refresh placeholder so the visual matches
+          // the new alive state (will be replaced on next mount).
+          tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
+        }
+      } else if (tile.checkout === null) {
+        // exited ↔ not_spawned (both placeholder states): refresh the
+        // placeholder with the new label / icon.
+        tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
+      }
+    } else if (exitCodeChanged && newEntry.state !== 'alive' && tile.checkout === null) {
+      // Same not-alive state, exit code changed (e.g., a `not_spawned`
+      // becoming `exited` with the same outer state class — won't happen
+      // in practice but covered for completeness).
+      tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
+    }
+
+    // Label / projectBadge — re-render label area when either changed.
+    const oldBadgeName = oldEntry.projectBadge?.name ?? '';
+    const newBadgeName = newEntry.projectBadge?.name ?? '';
+    if (oldEntry.label !== newEntry.label || oldBadgeName !== newBadgeName) {
+      rerenderTileLabel(tile);
+    }
+
+    // CWD chip — add / remove / update the chip element.
+    const oldCwd = oldEntry.cwdLabel ?? '';
+    const newCwd = newEntry.cwdLabel ?? '';
+    const oldCwdRaw = oldEntry.cwdRaw ?? '';
+    const newCwdRaw = newEntry.cwdRaw ?? '';
+    if (oldCwd !== newCwd || oldCwdRaw !== newCwdRaw) {
+      updateTileCwdChip(tile, newCwd, newCwdRaw);
+    }
+
+    // Appearance — re-apply to the live xterm if mounted. (When not
+    // mounted, the next mountTileViaCheckout reads tile.entry directly
+    // via resolveTileAppearance so the new override values are picked
+    // up automatically without further work here.)
+    if (oldEntry.theme !== newEntry.theme
+        || oldEntry.fontFamily !== newEntry.fontFamily
+        || oldEntry.fontSize !== newEntry.fontSize) {
+      if (tile.checkout !== null) {
+        const appearance = resolveTileAppearance(tile);
+        const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
+        tile.checkout.term.options.theme = themeToXtermOptions(themeData);
+        void applyAppearanceToTerm(tile.checkout.term, appearance);
+        tile.preview.style.backgroundColor = themeData.background;
+      }
+    }
+  }
+
+  /** HS-8313 — rebuild the tile's labelEl content from `tile.entry`.
+   *  Mirrors the JSX in renderTile so flow-mode badge prefixes + the
+   *  inner clickable handler stay in sync across in-place label
+   *  updates. */
+  function rerenderTileLabel(tile: InternalTile): void {
+    const entry = tile.entry;
+    const badge = entry.projectBadge;
+    const fullLabelTitle = badge?.name !== undefined && badge.name !== ''
+      ? `${badge.name} › ${entry.label}`
+      : entry.label;
+    tile.labelEl.title = fullLabelTitle;
+
+    const newChildren: Element[] = [];
+    if (badge?.name !== undefined && badge.name !== '') {
+      const projectSpan = toElement(
+        <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}>
+          <span className={`${cssPrefix}-tile-project-name`}>{badge.name}</span>{' › '}
+        </span>,
+      );
+      if (opts.onProjectBadgeClick !== undefined) {
+        const onProjectBadgeClick = opts.onProjectBadgeClick;
+        projectSpan.addEventListener('click', (e) => {
+          e.stopPropagation();
+          onProjectBadgeClick(entry);
+        });
+      }
+      newChildren.push(projectSpan);
+    }
+    newChildren.push(toElement(<span className={`${cssPrefix}-tile-name`}>{entry.label}</span>));
+    tile.labelEl.replaceChildren(...newChildren);
+  }
+
+  /** HS-8313 — add / remove / update the optional CWD chip on a surviving
+   *  tile. The chip lives as a sibling of `tile.preview` + `tile.labelEl`
+   *  inside the tile root; renderTile only emits it when `cwdLabel` is
+   *  non-empty, so this helper has to handle the absent → present and
+   *  present → absent transitions in addition to text updates. */
+  function updateTileCwdChip(tile: InternalTile, cwdLabel: string, cwdRaw: string): void {
+    const cwdClass = `${cssPrefix}-tile-cwd`;
+    const existing = tile.root.querySelector<HTMLElement>(`.${cwdClass}`);
+    if (cwdLabel === '') {
+      existing?.remove();
+      return;
+    }
+    if (existing !== null) {
+      existing.textContent = cwdLabel;
+      existing.title = cwdRaw;
+    } else {
+      tile.root.appendChild(toElement(<div className={cwdClass} title={cwdRaw}>{cwdLabel}</div>));
+    }
+  }
+
+  /** HS-8313 — terminal cleanup that isn't tile-scoped. Tile teardown
+   *  happens through bindListDispose (which fires every per-row
+   *  dispose). Centered / dedicated state, the magnified-nav handler,
+   *  the single-click timer + virtualization registries / observer all
+   *  live above the per-tile layer and need explicit cleanup here. */
+  function teardownAmbientState(): void {
     if (dedicated !== null) exitDedicatedView();
     if (centered !== null) {
       if (centered.slotPlaceholder !== null) centered.slotPlaceholder.remove();
@@ -1668,16 +1876,16 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // idempotent.
     unbindMagnifiedNavHandler();
     removeCenterBackdrop();
-    for (const tile of tiles.values()) disposeTile(tile);
-    tiles.clear();
     if (pendingSingleClickTimer !== null) {
       window.clearTimeout(pendingSingleClickTimer);
       pendingSingleClickTimer = null;
     }
     // HS-7968 — drop every pending dispose timer + disconnect the observer.
-    // `disposeTile` already cleared per-tile state via `forgetVirtualization`,
-    // but the observer instance + any orphaned timers (none expected, but
-    // defensive) need an explicit disconnect.
+    // Per-tile virt state (virtState entries, virtRootToId entries,
+    // visibleTileIds entries) was already cleared by each tile's
+    // forgetVirtualization() inside disposeTile via the bindList row
+    // disposers; the observer instance + any orphaned timers (none
+    // expected, but defensive) need an explicit disconnect.
     for (const t of virtTimers.values()) clearTimeout(t);
     virtTimers.clear();
     virtState.clear();
@@ -1690,11 +1898,13 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
 
   return {
     rebuild(entries) {
-      teardownAll();
-      opts.container.replaceChildren();
-      for (const entry of entries) {
-        opts.container.appendChild(renderTile(entry));
-      }
+      // HS-8313 — pre-fix this teardown'd every tile + reconstructed
+      // them in order. Now: write the signal, let bindList reconcile
+      // add / remove / reorder, let propUpdateEffect apply in-place
+      // diffs to surviving tiles. applySizing() runs synchronously
+      // after the signal write because both effects fire synchronously
+      // on signal write per kerf's effect contract.
+      entriesSignal.value = [...entries];
       applySizing();
     },
     applySizing,
@@ -1726,6 +1936,15 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     },
     isCentered() { return centered !== null; },
     isDedicatedOpen() { return dedicated !== null; },
-    dispose() { teardownAll(); },
+    dispose() {
+      // HS-8313 — bindListDispose disposes every live row's per-row
+      // dispose (which runs disposeTile + tiles.delete), then
+      // teardownAmbientState handles centered / dedicated / virt
+      // observer / magnified-nav cleanup that lives above the tile
+      // layer.
+      bindListDispose();
+      propUpdateDispose();
+      teardownAmbientState();
+    },
   };
 }

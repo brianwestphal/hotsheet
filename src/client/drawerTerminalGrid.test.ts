@@ -93,6 +93,15 @@ vi.mock('./dashboardHiddenTerminals.js', () => ({
   filterVisible: (...args: [string, unknown[]]) => filterVisibleMock(...args),
   applyHideButtonBadge: (...args: unknown[]) => { applyHideButtonBadgeMock(...args); },
   countHiddenForProject: (...args: unknown[]) => countHiddenForProjectMock(...args),
+  // HS-8314 — `refreshDrawerGroupingSelect` does a `void import('./visibilityGroupingSelect.js').then(...)`
+  // dynamic import. vi.mock() of `./visibilityGroupingSelect.js` doesn't
+  // intercept that dynamic import in this test runner config, so the
+  // REAL `visibilityGroupingSelect.tsx` runs at promise-resolution time
+  // and calls `getGroupings()` from this module. Without a stub,
+  // vitest's mock-strictness throws an "undefined export" rejection.
+  // Returning [] keeps the real `refreshGroupingSelect` on the early-
+  // return branch (length <= 1).
+  getGroupings: () => [],
 }));
 
 vi.mock('./hideTerminalDialog.js', () => ({
@@ -386,5 +395,49 @@ describe('_resetStateForTesting (HS-8223 / HS-8231)', () => {
     // Subsequent init shouldn't throw.
     initDrawerTerminalGrid({ onExitGrid: () => { /* noop */ } });
     expect(isDrawerGridActive()).toBe(false);
+  });
+});
+
+/**
+ * HS-8314 — the bindList migration in HS-8313 lives inside `mountTileGrid`
+ * (the underlying `gridHandle.rebuild()` does keyed reconciliation
+ * instead of full teardown). The drawer-grid wrapping in this file
+ * delivers that benefit IFF the gridHandle survives across
+ * `onTerminalListUpdated` calls — pre-fix nothing forced full re-mount
+ * but a regression that disposes + re-creates the gridHandle on every
+ * list update would silently defeat the migration.
+ */
+describe('drawerTerminalGrid — gridHandle persists across rebuilds (HS-8314)', () => {
+  it('multiple onTerminalListUpdated calls reuse the same gridHandle and call rebuild (no dispose between)', async () => {
+    onTerminalListUpdated([makeEntry('t1'), makeEntry('t2')]);
+    (document.getElementById('drawer-grid-toggle') as HTMLButtonElement).click();
+    expect(isDrawerGridActive()).toBe(true);
+    // mountTileGrid called once on grid mode entry — the handle persists
+    // for every subsequent rebuild so HS-8313's bindList identity-
+    // preservation flows through this surface.
+    expect(mountTileGridMock).toHaveBeenCalledOnce();
+    expect(fakeTileGridHandle.dispose).not.toHaveBeenCalled();
+
+    const rebuildCallsAfterEntry = fakeTileGridHandle.rebuild.mock.calls.length;
+    expect(rebuildCallsAfterEntry).toBeGreaterThan(0);
+
+    // Subsequent list updates while grid mode stays active must call
+    // gridHandle.rebuild() WITHOUT disposing the handle. A regression
+    // that disposes + re-mounts the gridHandle on every poll tick would
+    // silently defeat the bindList migration even though the inner
+    // mountTileGrid still works correctly.
+    onTerminalListUpdated([makeEntry('t1'), makeEntry('t2'), makeEntry('t3')]);
+    expect(mountTileGridMock).toHaveBeenCalledOnce(); // still 1 — handle reused
+    expect(fakeTileGridHandle.dispose).not.toHaveBeenCalled();
+    expect(fakeTileGridHandle.rebuild.mock.calls.length).toBeGreaterThan(rebuildCallsAfterEntry);
+
+    // Drain microtasks so the dynamic-import-driven `refreshGroupingSelect`
+    // promise chains resolve while the DOM elements they reference are
+    // still attached. Without this, afterEach wipes the DOM before the
+    // chains run + surfaces a "Cannot read properties of null"
+    // unhandled rejection (the dynamic import bypasses vi.mock so the
+    // real `visibilityGroupingSelect` runs, then trips on the cleared
+    // `groupingSelect`).
+    await new Promise(resolve => setTimeout(resolve, 5));
   });
 });

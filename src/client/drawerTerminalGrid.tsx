@@ -302,11 +302,21 @@ function attachHiddenSubscription(): void {
 
 /** HS-7826 — repaint the drawer-grid grouping selector from the active
  *  project's groupings. Called from the change subscription + on grid
- *  chrome show. Hides the select when only Default exists. */
+ *  chrome show. Hides the select when only Default exists.
+ *
+ *  HS-8314 — capture `selectEl` SYNCHRONOUSLY before the dynamic import
+ *  resolves. Pre-fix the `drawerGridState.groupingSelect!` lookup ran
+ *  inside the `.then()` callback, so a project teardown / reset that
+ *  ran between the import dispatch and its resolution turned the
+ *  closure target into `null` and crashed inside `refreshGroupingSelect`
+ *  with "Cannot read properties of null (reading 'style')". Surfaced
+ *  by the HS-8314 unit-test additions; the bug is pre-existing and
+ *  could fire in production during a fast project switch. */
 function refreshDrawerGroupingSelect(): void {
-  if (drawerGridState.groupingSelect === null) return;
+  const selectEl = drawerGridState.groupingSelect;
+  if (selectEl === null) return;
   void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
-    refreshGroupingSelect({ selectEl: drawerGridState.groupingSelect! });
+    refreshGroupingSelect({ selectEl });
   });
 }
 
