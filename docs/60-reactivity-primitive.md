@@ -131,6 +131,8 @@ Each one is its own sub-ticket so the work can land in pieces and be reverted in
 
 Convert remaining manual-rebuild callsites opportunistically. **Not a hard requirement** to convert all 54 — some are mounted once and never rebuild, in which case a signal is overkill. The win is on the high-frequency rebuild paths; the low-frequency ones can stay imperative without anyone noticing.
 
+**Closed as effectively-discharged 2026-05-10.** Post-Phase-2 survey: every callsite that meets the high-frequency rebuild bar has already been migrated under a Phase 2 sub-ticket (project tabs HS-8235; drawer terminal tabs HS-8312; tile grid HS-8313 + drawer-grid HS-8314) or is owned by a queued ticket (ticket list HS-8239; command log + projects/terminals/channel stores HS-8240). The remaining ~50 `replaceChildren` / `innerHTML = ''` callsites are all low-frequency dialog / settings / mode-switch surfaces (settings categories, backups list, feedbackDialog file list, tagsDialog rows, dashboardMode swap, plugin settings, etc.) — exactly the carve-out this section calls out as "can stay imperative." Future opportunistic conversions, when triggered by an actual manual-rebuild bug or natural integration with other work, get filed as fresh tickets.
+
 ## 60.6 Memory-leak hardening
 
 `effect()` callbacks that aren't disposed when their owning DOM tree is removed leak — every signal write keeps re-running the effect against an orphaned element. This is the most common signals-primitive footgun and needs explicit attention before broad rollout.
@@ -191,7 +193,7 @@ Three layers of defence:
 - **HS-8166 — this design.** Status: design only; closes once the doc lands.
 - **HS-8235 — Phase 1: primitive + helpers + trial migration.** Project tabs the proposed trial. Includes lint rule, bundle measurement, equivalence tests.
 - **HS-8236 — Phase 2: high-traffic surfaces.** Will be split into per-surface sub-tickets when picked up (ticket list, command log, terminals).
-- **HS-8237 — Phase 3: long-tail conversions.** Opportunistic.
+- **HS-8237 — Phase 3: long-tail conversions.** Closed 2026-05-10 as effectively-discharged — every high-frequency rebuild surface was covered under Phase 2 sub-tickets (HS-8235 project tabs; HS-8312 drawer terminal tabs; HS-8313 tile grid; HS-8314 drawer-grid) or remains owned by HS-8239 (ticket list) / HS-8240 (command log + projects / terminals / channel stores). Remaining `replaceChildren` / `innerHTML = ''` callsites are the low-frequency dialog / settings / mode-switch surfaces this section explicitly carved out. New tickets get filed if a manual-rebuild bug surfaces or natural integration with other work makes a conversion cheap.
 
 ## 60.14 Cross-refs
 
