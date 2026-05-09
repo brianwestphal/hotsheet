@@ -4,8 +4,8 @@
  * functions are wired through `kerfjs` and behave as documented.
  *
  * Behavioural coverage of `effect` / `computed` / `batch` lives upstream
- * in `kerfjs`'s own test suite + `@preact/signals-core`'s; these tests
- * pin only the surface contract Hot Sheet relies on.
+ * in `kerfjs`'s own test suite; these tests pin only the surface contract
+ * Hot Sheet relies on.
  */
 import { describe, expect, it } from 'vitest';
 

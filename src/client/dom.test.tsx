@@ -9,7 +9,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { byId, byIdOrNull, requireChild } from './dom.js';
+import { raw, SafeHtml } from '../jsx-runtime.js';
+import { byId, byIdOrNull, requireChild, toElement } from './dom.js';
 
 beforeEach(() => { document.body.innerHTML = ''; });
 afterEach(() => { document.body.innerHTML = ''; });
@@ -90,5 +91,59 @@ describe('byId / byIdOrNull (HS-8083)', () => {
   it('byIdOrNull returns null when missing (no throw)', () => {
     document.body.innerHTML = '';
     expect(byIdOrNull('absent')).toBeNull();
+  });
+});
+
+describe('toElement (HS-8241 — kerf swap)', () => {
+  it('produces an HTMLElement for plain HTML JSX (the dominant case)', () => {
+    const el = toElement(new SafeHtml('<div class="x">hi</div>'));
+    expect(el.tagName).toBe('DIV');
+    expect(el.className).toBe('x');
+    expect(el.textContent).toBe('hi');
+  });
+
+  it('preserves children + attributes through the round-trip', () => {
+    const el = toElement(new SafeHtml('<button data-x="1" disabled><span>label</span></button>'));
+    expect(el.tagName).toBe('BUTTON');
+    expect(el.dataset.x).toBe('1');
+    expect(el.hasAttribute('disabled')).toBe(true);
+    expect(el.firstElementChild?.tagName).toBe('SPAN');
+    expect(el.firstElementChild?.textContent).toBe('label');
+  });
+
+  it('SVG inside an HTML wrapper via raw() — the standard Hot Sheet icon pattern — produces an HTML root with the SVG nested correctly', () => {
+    // This is what every `<span>{raw(ICON_X)}</span>` callsite produces.
+    // The OUTER element is an HTML span; the SVG lives inside.
+    const svgIcon = raw('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M0 0L24 24"/></svg>');
+    const el = toElement(<span className="icon-host">{svgIcon}</span>);
+    expect(el.tagName).toBe('SPAN');
+    expect(el.className).toBe('icon-host');
+    const svg = el.querySelector('svg');
+    expect(svg).not.toBeNull();
+    expect(svg!.querySelector('path')?.getAttribute('d')).toBe('M0 0L24 24');
+  });
+
+  it('SVG root passed directly to toElement now produces a proper SVGElement (HS-8241 / §62 bug-class fix)', () => {
+    // Pre-HS-8241 the local <template>.innerHTML path silently produced
+    // an HTMLUnknownElement for SVG roots and they never painted.
+    // Post-HS-8241 the kerf-routed implementation parses through
+    // DOMParser('image/svg+xml') so SVG roots get the correct namespace.
+    const el = toElement(new SafeHtml('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40"/></svg>'));
+    expect(el.tagName.toLowerCase()).toBe('svg');
+    expect(el.namespaceURI).toBe('http://www.w3.org/2000/svg');
+    const circle = el.querySelector('circle');
+    expect(circle).not.toBeNull();
+    expect(circle!.namespaceURI).toBe('http://www.w3.org/2000/svg');
+    expect(circle!.getAttribute('r')).toBe('40');
+  });
+
+  it('SVG fragment without an <svg> wrapper (e.g. raw <path>) produces a properly-namespaced SVG element (HS-8241 / §62 bug-class fix)', () => {
+    // Previously `<path .../>` through innerHTML became an
+    // HTMLUnknownElement; kerf wraps it with an svg root + parses + unwraps
+    // so the result has the SVG namespace.
+    const el = toElement(new SafeHtml('<path d="M10 10L90 90" stroke="red"/>'));
+    expect(el.tagName.toLowerCase()).toBe('path');
+    expect(el.namespaceURI).toBe('http://www.w3.org/2000/svg');
+    expect(el.getAttribute('d')).toBe('M10 10L90 90');
   });
 });

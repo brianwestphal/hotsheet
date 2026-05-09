@@ -89,31 +89,6 @@ export default defineConfig([
       appendFileSync('dist/client/styles.css', xtermCss);
     },
   },
-  // Reactivity demo bundle (§63 demo at /_demo/reactivity).
-  // Self-contained: separate iife from the main client bundle, separate
-  // SCSS compile, never imported by `src/client/app.tsx`. Will be deleted
-  // when the §63 demo is approved/rejected.
-  {
-    entry: ['src/client/reactivity-demo/reactivity-demo.tsx'],
-    format: 'iife',
-    outDir: 'dist/client',
-    target: 'es2020',
-    platform: 'browser',
-    splitting: false,
-    clean: false,
-    sourcemap: false,
-    minify: false,
-    esbuildOptions(options) {
-      options.jsx = 'automatic';
-      options.jsxImportSource = '#jsx';
-      options.alias = {
-        '#jsx/jsx-runtime': './src/jsx-runtime.ts',
-      };
-    },
-    onSuccess: async () => {
-      execSync('npx sass src/client/reactivity-demo/styles.scss dist/client/reactivity-demo.css --no-source-map', { stdio: 'inherit' });
-    },
-  },
   // Bundled plugins
   {
     entry: ['plugins/github-issues/src/index.ts'],

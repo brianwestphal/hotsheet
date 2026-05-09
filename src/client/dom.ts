@@ -1,10 +1,32 @@
+import { toElement as kerfToElement } from 'kerfjs';
+
 import type { SafeHtml } from '../jsx-runtime.js';
 
-/** Convert a JSX SafeHtml result to a DOM element */
+/** Convert a JSX SafeHtml result to a DOM element.
+ *
+ * **HS-8241 (2026-05-09):** routed through `kerfjs::toElement` so SVG
+ * roots / fragments get correct XML-namespace parsing via
+ * `DOMParser('image/svg+xml')` (the §62 bug class — orphan SVG
+ * fragments through `<template>.innerHTML` silently produce
+ * `HTMLUnknownElement` and never paint). For HTML JSX — the dominant
+ * case in this codebase, where SVG is always nested inside an HTML
+ * wrapper via `raw(svgString)` — kerf falls back to the same
+ * `<template>.innerHTML` path the local pre-fix implementation used,
+ * byte-for-byte equivalent.
+ *
+ * Return type kept as `HTMLElement` (kerf's signature is `Element`) for
+ * backwards-compat with the 244 existing callsites; SVG roots cast
+ * through but the underlying DOM works the same. If a future callsite
+ * legitimately needs the wider `Element` type for SVG handling, change
+ * the cast at that call-site. */
 export function toElement(jsx: SafeHtml): HTMLElement {
-  const t = document.createElement('template');
-  t.innerHTML = jsx.toString();
-  return t.content.firstElementChild as HTMLElement;
+  // Stringify at the boundary: kerf's TS signature wants kerf's
+  // `SafeHtml` class (with `__segment` + brand symbol) OR a plain
+  // string. Hot Sheet's local `SafeHtml` class has neither, but at
+  // runtime kerf just calls `.toString()` on non-string input — so
+  // pre-stringifying gives the identical runtime path while satisfying
+  // TS without a structural-cast hack.
+  return kerfToElement(jsx.toString()) as HTMLElement;
 }
 
 /**

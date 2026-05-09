@@ -2,8 +2,8 @@
 
 HS-8168. Follow-up to the HS-8165 investigation. Independent of [§60](60-reactivity-primitive.md) and [§61](61-composable-stores.md) — addresses a different class of bug (server vs client render-target divergence) and ships on its own track.
 
-> **Status:** Design only. No code under HS-8168 itself — phases ship under HS-8241 / HS-8242 / HS-8243 (filed alongside this doc).
-> **Verdict:** Adopt **Option B — unified runtime emitting an internal AST + `astToHtml` / `astToDom` consumers.** Higher upfront cost than a regression-test harness but permanently eliminates the divergence bug class, and the dual-consumer shape is also the more interesting open-source artifact if HS-8165's "open-source the JSX runtime" angle ever materialises.
+> **Status:** Re-scoped under HS-8315 (2026-05-09). Phase 1 (HS-8241) shipped 2026-05-09 via a much simpler path than the original plan; Phase 2 (HS-8242) merged into Phase 1; Phase 3 (HS-8243) reduced in scope.
+> **Verdict (updated 2026-05-09):** Original plan was **Option B — build a `JsxNode` AST + `astToHtml` / `astToDom` consumers + 50-case equivalence corpus** (~1.5–2 days). Post-kerf-adoption (HS-8315) the much simpler path is to route Hot Sheet's `toElement` through `kerfjs::toElement`, which already implements the SVG-namespace fix the original plan cared about (same `SVG_FRAGMENT_TAGS` set, same `DOMParser('image/svg+xml')` for SVG fragments, same `<template>.innerHTML` fallback for HTML — byte-for-byte equivalent for HTML JSX). The §62 bug class is closed by the kerf swap; the dual-consumer AST is no longer needed.
 
 ## 62.1 Problem statement
 
