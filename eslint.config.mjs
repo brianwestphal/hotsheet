@@ -57,6 +57,91 @@ export default tseslint.config(
       // list, or — for the rare deliberately-leaked case — wrap with
       // `void bindText(...)` which becomes a UnaryExpression and bypasses
       // this rule.
+      //
+      // HS-8243 / §62 Phase 3 — direct `xxx.innerHTML = yyy` assignments
+      // bypass the kerf-routed `toElement` parser path (see HS-8241), so
+      // SVG-namespace / entity / custom-attr divergences slip back in.
+      // New code should use `el.replaceChildren(toElement(<jsx />))` or
+      // `el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))`
+      // instead. Existing 35 client files (~93 callsites) are exempted
+      // via the file-path allowlist override below — flag-and-fix when
+      // those files are touched, no flag-day refactor required. Allowed
+      // exceptions inside the allowlisted files are documented in the
+      // override config block.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ExpressionStatement > CallExpression[callee.name=/^bind(Text|Attr|List)$/]",
+          message: "bindText/bindAttr/bindList return a disposer; capture it (or use `void` to mark intentional leak).",
+        },
+        {
+          selector: "AssignmentExpression[operator='='] > MemberExpression.left[property.name='innerHTML'][computed=false]",
+          message: "Direct `innerHTML = ` assignments bypass the kerf-routed `toElement` parser path (HS-8241 / §62) and lose the SVG-namespace + entity-handling fixes. Use `el.replaceChildren(toElement(<jsx />))` instead, or `el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))` for raw-HTML escape hatches. (HS-8243 / §62.6 Phase 3.)",
+        },
+      ],
+    },
+  },
+  // HS-8243 — file-path allowlist for the 35 production client files
+  // that already use `xxx.innerHTML = ` (~93 callsites total) PLUS
+  // every test file (where `document.body.innerHTML = '<...>'` is the
+  // standard happy-dom setup pattern and migrating to `replaceChildren`
+  // would just be noise). Re-defines the `no-restricted-syntax` rule
+  // for these files WITHOUT the innerHTML selector so existing code
+  // keeps lint-passing; the bind* disposer selector stays in force
+  // everywhere. Per the HS-8243 reduced scope (option 4 from the
+  // ticket's notes): flag NEW innerHTML across the codebase, fix
+  // existing instances opportunistically when those files are touched.
+  // Adding a NEW innerHTML assignment in a production file on this
+  // list will still slip through; remove the file from the list once
+  // its existing usages migrate so it gets full protection. A
+  // production file NOT on this list (including any new client module)
+  // gets the rule applied — the safety net for net-new code.
+  {
+    files: [
+      // Production client files with existing innerHTML usage.
+      "src/client/backups.tsx",
+      "src/client/channelUI.tsx",
+      "src/client/clipboardUtil.tsx",
+      "src/client/columnView.tsx",
+      "src/client/commandEditor.tsx",
+      "src/client/commandLog.tsx",
+      "src/client/commandLogFilter.tsx",
+      "src/client/commandSidebar.tsx",
+      "src/client/contextMenu.tsx",
+      "src/client/customViews.tsx",
+      "src/client/dashboard.tsx",
+      "src/client/dashboardMode.tsx",
+      "src/client/dbRepairUI.tsx",
+      "src/client/detail.tsx",
+      "src/client/drawerTerminalGrid.tsx",
+      "src/client/feedbackDialog.tsx",
+      "src/client/iconPicker.tsx",
+      "src/client/noteRenderer.tsx",
+      "src/client/openFolder.tsx",
+      "src/client/permissionDialogShell.tsx",
+      "src/client/pluginConfigDialog.tsx",
+      "src/client/pluginSettings.tsx",
+      "src/client/pluginUI.tsx",
+      "src/client/projectTabs.tsx",
+      "src/client/readerOverlay.tsx",
+      "src/client/settingsCategories.tsx",
+      "src/client/settingsDialog.tsx",
+      "src/client/settingsLoader.tsx",
+      "src/client/tags.tsx",
+      "src/client/tagsDialog.tsx",
+      "src/client/terminal.tsx",
+      "src/client/terminalDashboard.tsx",
+      "src/client/terminalDefaultAppearanceUI.tsx",
+      "src/client/terminalsSettings.tsx",
+      "src/client/ticketList.tsx",
+      // Tests legitimately use `document.body.innerHTML = '<...>'` to
+      // build the test DOM under happy-dom. The HS-8243 rule's intent
+      // is to protect the kerf-routed `toElement` parser path in
+      // production client code, not to police test scaffolding.
+      "**/*.test.ts",
+      "**/*.test.tsx",
+    ],
+    rules: {
       "no-restricted-syntax": [
         "error",
         {

@@ -2,7 +2,7 @@
 
 HS-8168. Follow-up to the HS-8165 investigation. Independent of [§60](60-reactivity-primitive.md) and [§61](61-composable-stores.md) — addresses a different class of bug (server vs client render-target divergence) and ships on its own track.
 
-> **Status:** Re-scoped under HS-8315 (2026-05-09). Phase 1 (HS-8241) shipped 2026-05-09 via a much simpler path than the original plan; Phase 2 (HS-8242) merged into Phase 1; Phase 3 (HS-8243) reduced in scope.
+> **Status:** Re-scoped under HS-8315 (2026-05-09). Phase 1 (HS-8241) shipped 2026-05-09 via a much simpler path than the original plan; Phase 2 (HS-8242) merged into Phase 1; Phase 3 (HS-8243) shipped 2026-05-10 in its reduced rule-only-with-allowlist form.
 > **Verdict (updated 2026-05-09):** Original plan was **Option B — build a `JsxNode` AST + `astToHtml` / `astToDom` consumers + 50-case equivalence corpus** (~1.5–2 days). Post-kerf-adoption (HS-8315) the much simpler path is to route Hot Sheet's `toElement` through `kerfjs::toElement`, which already implements the SVG-namespace fix the original plan cared about (same `SVG_FRAGMENT_TAGS` set, same `DOMParser('image/svg+xml')` for SVG fragments, same `<template>.innerHTML` fallback for HTML — byte-for-byte equivalent for HTML JSX). The §62 bug class is closed by the kerf swap; the dual-consumer AST is no longer needed.
 
 ## 62.1 Problem statement
@@ -140,6 +140,8 @@ Pure function. No globals. Testable in happy-dom directly.
 - Add a lint rule (or runtime guard) that warns on direct `innerHTML =` assignments outside the explicit raw-html allowlist (xterm parking, `<template>` adoption inside `astToDom`, etc.).
 - Phase 3 is the "make sure this stays working" phase. Once it lands, the divergence bug class is closed.
 
+**HS-8243 shipped 2026-05-10 in its reduced form.** Post-HS-8241 the equivalence-corpus harness is moot — kerf's `toElement` is one code path with its own upstream tests, so there's nothing to compare against. The reduced deliverable is the `no-restricted-syntax` lint rule alone, paired with a file-path allowlist for the 35 production client files (~93 callsites total) that already use `xxx.innerHTML = `. New files (and any production file not on the allowlist) trip the rule; existing usage stays lint-passing for opportunistic flag-and-fix-on-touch migration. Test files (`**/*.test.{ts,tsx}`) are exempt — `document.body.innerHTML = '<...>'` is the standard happy-dom setup pattern. CLAUDE.md's "Use `toElement()` instead of `document.createElement()`" section gained a sibling bullet documenting the convention. Full migration of the 93 existing callsites stays out of scope per HS-8243's prior reduced-scope notes (multi-day refactor with real regression risk; per-callsite verification needed).
+
 ## 62.7 What stays the same
 
 - The JSX surface that callers see (`<div className="foo">{children}</div>`) — unchanged.
@@ -179,7 +181,7 @@ Total: 2 days of focused work + smoke testing.
 - **HS-8168 — this design.** Status: design only; closes once the doc lands.
 - **HS-8241 — Phase 1: internal AST + dual consumers + corpus.** Doesn't change `toElement` yet.
 - **HS-8242 — Phase 2: switch `toElement` to `astToDom`.** Atomic flip; full e2e validation.
-- **HS-8243 — Phase 3: equivalence harness in CI + lint rule.** Hardening; closes the bug class permanently.
+- **HS-8243 — Phase 3: equivalence harness in CI + lint rule.** Shipped 2026-05-10 in reduced form: lint rule only (the equivalence harness was moot post-HS-8241's kerf swap), with a file-path allowlist for the 35 production client files that already use `innerHTML`. New code is protected; existing usage migrates opportunistically on-touch.
 
 ## 62.12 Cross-refs
 
