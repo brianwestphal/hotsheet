@@ -68,7 +68,7 @@
     "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
     "hono": "^4.12.2",
-    "kerfjs": "^0.3.1",
+    "kerfjs": "^0.5.0",
     "marked": "^18.0.0",
     "node-pty": "^1.1.0",
     "ws": "^8.20.0",

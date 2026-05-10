@@ -35,8 +35,8 @@ The signals primitive only takes over the WHEN-to-re-mount question for the view
 **Updated 2026-05-09 during HS-8235 implementation.** The original survey
 recommended `@preact/signals-core` direct. While shipping HS-8235 we
 re-evaluated and landed on `kerfjs` (sister project at
-`~/Documents/kerf`, published as `kerfjs` on npm — pinned at `^0.3.1`,
-matches `domotion`'s pin) instead. `kerfjs` re-exports
+`~/Documents/kerf`, published as `kerfjs` on npm — initially pinned at
+`^0.3.1`, bumped to `^0.5.0` under HS-8316 on 2026-05-10) instead. `kerfjs` re-exports
 `@preact/signals-core` verbatim for the four primitive functions, AND
 ships `defineStore` / `resetAllStores` (the §61 deliverable) PLUS
 `mount` / `each` / `toElement` / `SafeHtml` / `raw` / `Fragment`
