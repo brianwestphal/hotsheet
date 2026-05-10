@@ -1,5 +1,6 @@
 import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { api, apiWithSecret } from './api.js';
+import { channelStore } from './channelStore.js';
 import { TIMERS } from './constants/timers.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import {
@@ -11,22 +12,23 @@ import { requestAttention } from './tauriIntegration.js';
 import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
 
 // --- Claude Channel ---
+//
+// HS-8320 / §61 Phase 3d — `alive` / `busy` / `shellBusy` / `busySecrets` /
+// `channelAutoMode` / `autoModeByProject` / `channelAutoBackoff` /
+// `mostRecentSpinnerAtMs` migrated to `channelStore`. Lifecycle timer
+// handles (debounce / busy / auto-retry / auto-verify / heartbeat /
+// spinner-poll) stay as plain module-level refs — they're not reactive
+// state and have their own GC paths (`clearTimeout` / `clearInterval`).
 
-let channelAutoMode = false;
-const autoModeByProject = new Map<string, boolean>();
 let channelDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
-let channelBusy = false;
-let shellBusyState = false;
 
 // Spinner SVG shared by channel and shell indicator states (12x12)
 const SPINNER_12 = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
 
-/** HS-6702 — most-recent Claude busy-spinner timestamp across all alive
- *  terminals in the active project, polled every 2s while the channel is
- *  reporting busy. Null when we haven't polled yet or no spinner has been
- *  seen recently. The poll only runs while `isChannelBusy()` is true so
- *  it doesn't cost anything during idle periods. */
-let mostRecentSpinnerAtMs: number | null = null;
+/** HS-6702 — `mostRecentSpinnerAtMs` lives in `channelStore` (HS-8320).
+ *  Polled every 2s while the channel is reporting busy. The poll only
+ *  runs while `isChannelBusy()` is true so it doesn't cost anything during
+ *  idle periods. */
 let spinnerPollInterval: ReturnType<typeof setInterval> | null = null;
 
 async function refreshSpinnerActivity(): Promise<void> {
@@ -47,7 +49,7 @@ async function refreshSpinnerActivity(): Promise<void> {
       const t = e.lastSpinnerAtMs ?? null;
       if (t !== null && (newest === null || t > newest)) newest = t;
     }
-    mostRecentSpinnerAtMs = newest;
+    channelStore.actions.setMostRecentSpinnerAt(newest);
   } catch { /* network blip — keep last value */ }
 }
 
@@ -66,7 +68,7 @@ function stopSpinnerPoll(): void {
     clearInterval(spinnerPollInterval);
     spinnerPollInterval = null;
   }
-  mostRecentSpinnerAtMs = null;
+  channelStore.actions.setMostRecentSpinnerAt(null);
 }
 
 /** Unified status indicator renderer. Resolves channel vs. shell busy states
@@ -84,7 +86,7 @@ function updateStatusIndicator() {
     // HS-6702 — degraded-busy when the channel says busy but no Claude
     // spinner has been seen in the last 5 s. Different label + class so
     // the user knows the channel might be stuck.
-    const degraded = shouldShowDegradedBusy(true, mostRecentSpinnerAtMs, Date.now());
+    const degraded = shouldShowDegradedBusy(true, channelStore.state.value.mostRecentSpinnerAtMs, Date.now());
     if (degraded) {
       indicator.className = 'channel-status-indicator busy degraded';
       indicator.innerHTML = `${SPINNER_12} Claude idle (channel busy)`;
@@ -92,7 +94,7 @@ function updateStatusIndicator() {
       indicator.className = 'channel-status-indicator busy';
       indicator.innerHTML = `${SPINNER_12} Claude working`;
     }
-  } else if (shellBusyState) {
+  } else if (channelStore.state.value.shellBusy) {
     indicator.style.display = '';
     indicator.className = 'channel-status-indicator busy';
     indicator.innerHTML = `${SPINNER_12} Shell running`;
@@ -104,7 +106,7 @@ function updateStatusIndicator() {
 
 /** Set shell busy state. Called from commandSidebar when shell commands run. */
 export function setShellBusy(busy: boolean) {
-  shellBusyState = busy;
+  channelStore.actions.setShellBusy(busy);
   const indicator = byIdOrNull('channel-status-indicator');
   if (!indicator) return;
   if (busy) {
@@ -116,7 +118,7 @@ export function setShellBusy(busy: boolean) {
       indicator.className = 'channel-status-indicator';
       indicator.innerHTML = '\u2713 Shell done';
       setTimeout(() => {
-        if (!shellBusyState && !isChannelBusy()) indicator.style.display = 'none';
+        if (!channelStore.state.value.shellBusy && !isChannelBusy()) indicator.style.display = 'none';
       }, TIMERS.CHANNEL_IDLE_INDICATOR_MS);
     } else {
       // Channel is still busy, just update to show channel state
@@ -126,7 +128,6 @@ export function setShellBusy(busy: boolean) {
 }
 let channelBusyTimeout: ReturnType<typeof setTimeout> | null = null;
 let channelAutoRetryInterval: ReturnType<typeof setInterval> | null = null;
-let channelAutoBackoff = 0; // consecutive triggers where Claude didn't become busy
 let channelAutoVerifyTimeout: ReturnType<typeof setTimeout> | null = null;
 const CHANNEL_AUTO_BASE_DELAY = TIMERS.POLL_RETRY_MS; // 5 s — same cadence as poll-retry; also the base for the auto-retry backoff
 const CHANNEL_AUTO_MAX_DELAY = 120000; // 2 minutes
@@ -134,16 +135,14 @@ const CHANNEL_AUTO_MAX_DELAY = 120000; // 2 minutes
 export function isChannelBusy(): boolean {
   // Check per-project busy state rather than global flag
   const secret = getActiveProject()?.secret;
-  return secret !== undefined && secret !== '' ? busyProjects.has(secret) : channelBusy;
+  return secret !== undefined && secret !== '' ? channelStore.state.value.busySecrets.has(secret) : channelStore.state.value.busy;
 }
-export function isChannelAlive(): boolean { return channelAliveLocal; }
-
-let channelAliveLocal = false;
+export function isChannelAlive(): boolean { return channelStore.state.value.alive; }
 
 /** Update alive state — called from initChannel and checkChannelDone */
 export function setChannelAlive(alive: boolean) {
-  const wasAlive = channelAliveLocal;
-  channelAliveLocal = alive;
+  const wasAlive = channelStore.state.value.alive;
+  channelStore.actions.setAlive(alive);
   const warning = byIdOrNull('channel-disconnected');
   if (!warning) return;
   const section = byIdOrNull('channel-play-section');
@@ -156,8 +155,12 @@ export function setChannelAlive(alive: boolean) {
   }
 }
 /** Per-project busy/attention tracking for tab status dots.
- *  busyProjects: projects with active Claude work. Modified by markProjectBusy/clearProjectBusy.
- *  attentionProjects: projects with pending permissions. Modified by markProjectAttention/clearProjectAttention + permission poll.
+ *  busySecrets: projects with active Claude work — now lives in
+ *  `channelStore.state.value.busySecrets` (HS-8320 / §61 Phase 3d).
+ *  attentionSecrets: projects with pending permissions — kept here in
+ *  `projectAttentionStore` (HS-8238 Phase 1 trial) to avoid disturbing
+ *  the working trial; the two stores are kept deliberately separate
+ *  per the HS-8320 FEEDBACK NEEDED design decision.
  *
  *  **HS-8238 (2026-05-09) — §61 Phase 1 trial.** Attention state moved
  *  to a kerf `defineStore` to validate the §61 store API on a small,
@@ -165,17 +168,11 @@ export function setChannelAlive(alive: boolean) {
  *  only two named actions). `getProjectAttentionSecrets()` keeps its
  *  existing `ReadonlySet<string>` shape so consumers
  *  (`projectTabs.tsx::updateStatusDots`) don't need to change.
- *  The downstream "make the
- *  dots reactive off the store directly" step is HS-8240 (channelStore)
- *  territory; for the trial we keep the `syncDots()` imperative call so
- *  the migration is opt-in per consumer.
  *
- *  `busyProjects` stays a raw `Set` for now — its mutations are wrapped
- *  in a 30 s heartbeat-timer dance (`extendBusyForProject`) that's its
- *  own multi-step state machine; rolling it into a store is a worthwhile
- *  follow-up (HS-8240's `channelStore`) but out of scope for §61 Phase
- *  1's "small, contained, has clear actions" trial mandate. */
-const busyProjects = new Set<string>();
+ *  **HS-8320 (2026-05-11) — §61 Phase 3d.** `busyProjects` rolled into
+ *  `channelStore.busySecrets` alongside the rest of the channel-state
+ *  bundle. The 30 s heartbeat-timer machinery (`extendBusyForProject`)
+ *  remains imperative — timer handles aren't reactive state. */
 const projectAttentionStore = defineStore({
   initial: () => ({ secrets: new Set<string>() as ReadonlySet<string> }),
   actions: (set, get) => ({
@@ -192,7 +189,7 @@ const projectAttentionStore = defineStore({
   }),
 });
 
-export function getProjectBusySecrets(): ReadonlySet<string> { return busyProjects; }
+export function getProjectBusySecrets(): ReadonlySet<string> { return channelStore.state.value.busySecrets; }
 export function getProjectAttentionSecrets(): ReadonlySet<string> { return projectAttentionStore.state.value.secrets; }
 
 /** **HS-8238 — TEST ONLY.** Direct read of the underlying store + reset
@@ -208,12 +205,12 @@ function syncDots() {
 }
 
 function markProjectBusy(secret: string) {
-  busyProjects.add(secret);
+  channelStore.actions.markBusySecret(secret);
   syncDots();
 }
 
 function clearProjectBusy(secret: string) {
-  busyProjects.delete(secret);
+  channelStore.actions.clearBusySecret(secret);
   syncDots();
 }
 
@@ -228,7 +225,7 @@ export function extendBusyForProject(secret: string) {
   // Also set the global busy flag if this is the active project
   const activeSecret = getActiveProject()?.secret;
   if (secret === activeSecret) {
-    channelBusy = true;
+    channelStore.actions.setBusy(true);
     // HS-6702 — start the spinner-activity poll while the channel is busy
     // for the active project so `updateStatusIndicator` can decide between
     // "Claude working" (recent spinner) and "Claude idle (channel busy)".
@@ -242,7 +239,7 @@ export function extendBusyForProject(secret: string) {
     clearProjectBusy(secret);
     heartbeatTimers.delete(secret);
     if (secret === getActiveProject()?.secret) {
-      channelBusy = false;
+      channelStore.actions.setBusy(false);
       stopSpinnerPoll();
       updateStatusIndicator();
     }
@@ -257,7 +254,7 @@ export function clearBusyForProject(secret: string) {
   clearProjectBusy(secret);
   const activeSecret = getActiveProject()?.secret;
   if (secret === activeSecret) {
-    channelBusy = false;
+    channelStore.actions.setBusy(false);
     stopSpinnerPoll();
     updateStatusIndicator();
   }
@@ -274,7 +271,7 @@ export function clearProjectAttention(secret: string) {
 }
 
 export function setChannelBusy(busy: boolean) {
-  channelBusy = busy;
+  channelStore.actions.setBusy(busy);
   // Keep per-project busy tracking in sync with the indicator
   const activeSecret = getActiveProject()?.secret;
   if (activeSecret !== undefined && activeSecret !== '') {
@@ -293,7 +290,7 @@ export function setChannelBusy(busy: boolean) {
   }
   if (busy) {
     // Claude picked up work — reset exponential backoff (HS-2049)
-    channelAutoBackoff = 0;
+    channelStore.actions.setChannelAutoBackoff(0);
     if (channelAutoVerifyTimeout) { clearTimeout(channelAutoVerifyTimeout); channelAutoVerifyTimeout = null; }
     updateStatusIndicator();
   } else {
@@ -301,13 +298,13 @@ export function setChannelBusy(busy: boolean) {
       requestAttention(state.settings.notify_completed);
     }
     // If shell is also idle, show "Claude idle" briefly then hide
-    if (!shellBusyState) {
+    if (!channelStore.state.value.shellBusy) {
       indicator.style.display = '';
       indicator.className = 'channel-status-indicator';
       indicator.innerHTML = '\u2713 Claude idle';
       // Auto-hide after 5 seconds
       setTimeout(() => {
-        if (!isChannelBusy() && !shellBusyState) indicator.style.display = 'none';
+        if (!isChannelBusy() && !channelStore.state.value.shellBusy) indicator.style.display = 'none';
       }, TIMERS.CHANNEL_IDLE_INDICATOR_MS);
     } else {
       // Shell is still busy, update indicator to show shell state
@@ -315,8 +312,8 @@ export function setChannelBusy(busy: boolean) {
     }
     // In auto mode, check for more work when Claude becomes idle (HS-1453)
     // Reset backoff since Claude successfully completed a task
-    if (channelAutoMode) {
-      channelAutoBackoff = 0;
+    if (channelStore.state.value.channelAutoMode) {
+      channelStore.actions.setChannelAutoBackoff(0);
       channelAutoTrigger();
     }
   }
@@ -402,10 +399,11 @@ export async function initChannel() {
     // We don't have the previous project secret, so we rely on the current autoMode
     // being saved by toggleAutoMode when it changes. Just restore for the new project.
     const activeSecret = getActiveProject()?.secret ?? '';
-    channelAutoMode = autoModeByProject.get(activeSecret) ?? false;
+    const restoredAuto = channelStore.state.value.autoModeByProject.get(activeSecret) ?? false;
+    channelStore.actions.setChannelAutoMode(restoredAuto);
     if (channelDebounceTimeout) { clearTimeout(channelDebounceTimeout); channelDebounceTimeout = null; }
     // Update the play button UI to reflect the restored auto-mode state
-    if (channelAutoMode) {
+    if (restoredAuto) {
       playIcon.style.display = 'none';
       autoIcon.style.display = '';
       btn.classList.add('auto-mode');
@@ -455,7 +453,7 @@ export async function initChannel() {
     } else {
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        if (channelAutoMode) {
+        if (channelStore.state.value.channelAutoMode) {
           // Single click while in auto mode: turn off
           toggleAutoMode(btn, playIcon, autoIcon);
         } else {
@@ -468,15 +466,16 @@ export async function initChannel() {
 }
 
 function toggleAutoMode(btn: HTMLElement, playIcon: HTMLElement, autoIcon: HTMLElement) {
-  channelAutoMode = !channelAutoMode;
+  const next = !channelStore.state.value.channelAutoMode;
+  channelStore.actions.setChannelAutoMode(next);
   // Persist per-project
   const secret = getActiveProject()?.secret ?? '';
-  if (secret !== '') autoModeByProject.set(secret, channelAutoMode);
-  if (channelAutoMode) {
+  if (secret !== '') channelStore.actions.setAutoModeForProject(secret, next);
+  if (next) {
     btn.classList.add('auto-mode');
     playIcon.style.display = 'none';
     autoIcon.style.display = '';
-    channelAutoBackoff = 0;
+    channelStore.actions.setChannelAutoBackoff(0);
     // Immediately trigger Claude when entering auto mode, then continue auto-monitoring
     triggerChannelAndMarkBusy();
   } else {
@@ -487,22 +486,23 @@ function toggleAutoMode(btn: HTMLElement, playIcon: HTMLElement, autoIcon: HTMLE
     if (channelDebounceTimeout) { clearTimeout(channelDebounceTimeout); channelDebounceTimeout = null; }
     if (channelAutoRetryInterval) { clearInterval(channelAutoRetryInterval); channelAutoRetryInterval = null; }
     if (channelAutoVerifyTimeout) { clearTimeout(channelAutoVerifyTimeout); channelAutoVerifyTimeout = null; }
-    channelAutoBackoff = 0;
+    channelStore.actions.setChannelAutoBackoff(0);
   }
 }
 
 /** Returns the current auto-trigger delay with exponential backoff.
  *  Base: 5s. Doubles with each consecutive failed trigger. Max: 2 minutes. */
 function autoTriggerDelay(): number {
-  if (channelAutoBackoff === 0) return CHANNEL_AUTO_BASE_DELAY;
-  return Math.min(CHANNEL_AUTO_BASE_DELAY * Math.pow(2, channelAutoBackoff), CHANNEL_AUTO_MAX_DELAY);
+  const backoff = channelStore.state.value.channelAutoBackoff;
+  if (backoff === 0) return CHANNEL_AUTO_BASE_DELAY;
+  return Math.min(CHANNEL_AUTO_BASE_DELAY * Math.pow(2, backoff), CHANNEL_AUTO_MAX_DELAY);
 }
 
 /** Called when entering auto mode or when a ticket's up_next changes.
  *  Debounces, then attempts to trigger. Restarts debounce on new up-next items. (HS-1453)
  *  Uses exponential backoff if triggers don't result in Claude becoming busy. (HS-2049) */
 export function channelAutoTrigger() {
-  if (!channelAutoMode) return;
+  if (!channelStore.state.value.channelAutoMode) return;
   // Restart the debounce (new up-next items restart the timer and reset backoff)
   if (channelDebounceTimeout) clearTimeout(channelDebounceTimeout);
   // Clear any existing retry interval — fresh debounce takes priority
@@ -516,7 +516,7 @@ export function channelAutoTrigger() {
 
 /** After debounce, try to trigger Claude. If busy, retry with backoff until idle. (HS-1453, HS-2049) */
 async function attemptAutoTrigger() {
-  if (!channelAutoMode) return;
+  if (!channelStore.state.value.channelAutoMode) return;
 
   // Check if there are up-next items (skip check if auto-prioritize will handle it)
   try {
@@ -533,16 +533,16 @@ async function attemptAutoTrigger() {
     if (channelAutoVerifyTimeout) clearTimeout(channelAutoVerifyTimeout);
     channelAutoVerifyTimeout = setTimeout(() => {
       channelAutoVerifyTimeout = null;
-      if (!isChannelBusy() && channelAutoMode) {
+      if (!isChannelBusy() && channelStore.state.value.channelAutoMode) {
         // Claude didn't pick up — increase backoff for next attempt
-        channelAutoBackoff++;
+        channelStore.actions.incrementChannelAutoBackoff();
       }
     }, TIMERS.CHANNEL_AUTO_VERIFY_MS);
   } else if (!channelAutoRetryInterval) {
     // Claude is busy — start retrying with current backoff delay
     const delay = autoTriggerDelay();
     channelAutoRetryInterval = setInterval(() => {
-      if (!channelAutoMode) {
+      if (!channelStore.state.value.channelAutoMode) {
         clearInterval(channelAutoRetryInterval!);
         channelAutoRetryInterval = null;
         return;

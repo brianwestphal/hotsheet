@@ -2,6 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { extractPrimaryValue } from '../permissionAllowRules.js';
 import { api, apiWithSecret } from './api.js';
 import { buildBashPermissionPreview } from './bashPermissionPreview.js';
+import { channelStore } from './channelStore.js';
 import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
 import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
@@ -99,10 +100,18 @@ export function shouldUseLiveCheckout(
  * via `_resetStateForTesting()` (assigns `freshState()` after running the
  * disposers).
  *
- * The `respondedRequestIds` / `dismissedRequestIds` / `minimizedRequests` /
- * `pendingPermissionStack` collections stay separate const Set/Map/Arrays —
- * they're long-lived containers, not single-slot mutable refs, and they have
+ * The `respondedRequestIds` / `dismissedRequestIds` / `minimizedRequests`
+ * collections stay separate const Set/Map containers — they're long-lived
+ * dedup/lifecycle stores, not single-slot mutable refs, and they have
  * their own GC paths inside `processPermissionPollResponse`.
+ *
+ * **HS-8320 / §61 Phase 3d.** The pending-permission stack and the
+ * `Set<string>` projection of `minimizedRequests` moved to
+ * `channelStore` (`pendingPermissions` / `minimizedSecrets`). The
+ * underlying `minimizedRequests` Map stays here as the source of truth
+ * for per-request metadata (timer handles); the store mirrors only the
+ * secret-projection slice so reactive consumers (project-tab dots,
+ * future subscribers) have one place to read from.
  */
 interface PermissionOverlayState {
   /** True while the long-poll loop in `startPermissionPolling` is running. */
@@ -322,11 +331,7 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
   // server aged it out, etc.). Keeps the stack from accumulating
   // entries across a long-running session and prevents a never-going-
   // to-be-shown popup from popping when the active is dismissed.
-  for (let i = pendingPermissionStack.length - 1; i >= 0; i--) {
-    if (!pendingRequestIds.has(pendingPermissionStack[i].perm.request_id)) {
-      pendingPermissionStack.splice(i, 1);
-    }
-  }
+  channelStore.actions.retainPendingPermissions(pendingRequestIds);
 }
 
 export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof setTimeout> | null, setChannelBusyTimeoutRef: (t: ReturnType<typeof setTimeout> | null) => void) {
@@ -368,6 +373,15 @@ export function reopenMinimizedForSecret(secret: string): boolean {
 }
 
 function syncMinimizedDots() {
+  // HS-8320 — mirror the `Map<requestId, MinimizedRecord>` keys into
+  // `channelStore.minimizedSecrets` as a Set<secret> projection so the
+  // store's consumers (project-tab dot updater + future reactive
+  // subscribers) read from one place. The Map stays the source of
+  // truth for the per-request metadata (timer handles) — only the
+  // secret projection is in the store.
+  const secrets = new Set<string>();
+  for (const rec of minimizedRequests.values()) secrets.add(rec.secret);
+  channelStore.actions.setMinimizedSecrets(secrets);
   // Lazy import to avoid circular dep at module-init time.
   import('./projectTabs.js').then(m => m.updateStatusDots()).catch(() => {});
 }
@@ -400,9 +414,16 @@ function syncMinimizedDots() {
  * so a permission resolved on the channel server (e.g. user typed a
  * response directly into the terminal) is dropped from the stack
  * without ever being shown.
+ *
+ * **HS-8320 / §61 Phase 3d.** The stack now lives in
+ * `channelStore.state.value.pendingPermissions`; the actions
+ * `pushPendingPermission`, `popPendingPermission`, and
+ * `retainPendingPermissions` are the only legal mutations. The push
+ * action's same-request_id dedup gate matches HS-8219's
+ * `pendingPermissionStack.some(...)` check verbatim. Reads still flow
+ * through this file (the popup code is the only consumer of the queue
+ * semantics).
  */
-type StackedPermission = { secret: string; perm: PermissionData };
-const pendingPermissionStack: StackedPermission[] = [];
 
 function releaseActiveCheckoutIfAny(): void {
   disconnectActiveLiveTermResizeObserver();
@@ -487,7 +508,7 @@ export function shouldSkipPermission(requestId: string): boolean {
  *  to pop after the active is dismissed). Exported for tests + the
  *  status-dot updater. */
 export function getQueuedPermissionRequestIds(): string[] {
-  return pendingPermissionStack.map(e => e.perm.request_id);
+  return channelStore.state.value.pendingPermissions.map(e => e.perm.request_id);
 }
 
 /**
@@ -500,17 +521,15 @@ export function getQueuedPermissionRequestIds(): string[] {
  * empty or when no popup was active.
  */
 function mountNextFromPendingStack(): void {
-  while (pendingPermissionStack.length > 0) {
-    const next = pendingPermissionStack[pendingPermissionStack.length - 1];
-    if (shouldSkipPermission(next.perm.request_id)) {
-      pendingPermissionStack.pop();
-      continue;
-    }
-    // Pop the entry off the stack BEFORE calling showPermissionPopup
-    // so the permissionState.activePopupRequestId !== null gate doesn't re-enqueue
-    // it (which would just yield a no-op duplicate-on-stack check).
-    pendingPermissionStack.pop();
-    showPermissionPopup(next.secret, next.perm);
+  while (channelStore.state.value.pendingPermissions.length > 0) {
+    const top = channelStore.actions.popPendingPermission();
+    if (top === null) return;
+    if (shouldSkipPermission(top.perm.request_id)) continue;
+    // The top entry was popped off the store BEFORE calling
+    // showPermissionPopup so the activePopupRequestId !== null gate
+    // inside showPermissionPopup doesn't re-enqueue it (which would
+    // just yield a no-op duplicate-on-stack check).
+    showPermissionPopup(top.secret, top.perm);
     return;
   }
 }
@@ -523,7 +542,10 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // HS-8219 — already queued on the pending stack? No-op (the active
   // popup will pop it when dismissed). Prevents the polling loop's
   // for-each from re-pushing the same request_id every 100 ms.
-  if (pendingPermissionStack.some(e => e.perm.request_id === perm.request_id)) return;
+  // (Handled inside `channelStore.actions.pushPendingPermission` too —
+  // the explicit check here is the early-return so callers can
+  // distinguish "queued" from "active" cleanly.)
+  if (channelStore.state.value.pendingPermissions.some(e => e.perm.request_id === perm.request_id)) return;
   // HS-8219 — another popup is already showing. Push onto the stack;
   // it'll mount when the active popup closes (any path —
   // respondToPermission / cleanupAndDismiss / cleanupAndMinimize /
@@ -535,7 +557,7 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // surfaces the next permission immediately on dismiss without
   // waiting on a poll round-trip.
   if (permissionState.activePopupRequestId !== null) {
-    pendingPermissionStack.push({ secret, perm });
+    channelStore.actions.pushPendingPermission({ secret, perm });
     return;
   }
 
@@ -1015,7 +1037,13 @@ export function _resetStateForTesting(): void {
   dismissedRequestIds.clear();
   for (const rec of minimizedRequests.values()) clearTimeout(rec.timeoutId);
   minimizedRequests.clear();
-  pendingPermissionStack.length = 0;
+  // HS-8320 — `pendingPermissions` + `minimizedSecrets` now live in
+  // `channelStore`; clear them explicitly so consecutive tests don't
+  // leak. Other channelStore fields (alive / busy / busySecrets / etc.)
+  // are NOT touched here — they're outside this file's reset scope; a
+  // test that depends on them should reset the channelStore directly.
+  channelStore.actions.retainPendingPermissions(new Set<string>());
+  channelStore.actions.setMinimizedSecrets(new Set<string>());
   permissionState = freshPermissionOverlayState();
 }
 
@@ -1043,7 +1071,7 @@ export function _inspectStateForTesting(): {
     respondedRequestIds: [...respondedRequestIds],
     dismissedRequestIds: [...dismissedRequestIds],
     minimizedRequestIds: [...minimizedRequests.keys()],
-    pendingPermissionStackIds: pendingPermissionStack.map(e => e.perm.request_id),
+    pendingPermissionStackIds: channelStore.state.value.pendingPermissions.map(e => e.perm.request_id),
     permissionVersion: permissionState.permissionVersion,
     autoDismissMissCount: permissionState.autoDismissMissCount,
   };
