@@ -1,3 +1,5 @@
+import { activeProjectSignal, projectsStore } from './projectsStore.js';
+
 export interface ProjectInfo {
   name: string;
   dataDir: string;
@@ -5,9 +7,16 @@ export interface ProjectInfo {
 }
 
 // Active project context — use getActiveProject() in modules that need the current value
-// (esbuild IIFE bundling may not preserve ESM live bindings)
-export let activeProject: ProjectInfo | null = null;
-export function getActiveProject(): ProjectInfo | null { return activeProject; }
+// (esbuild IIFE bundling may not preserve ESM live bindings).
+//
+// HS-8317 (2026-05-10) — `activeProject` is now derived from the kerf
+// `projectsStore` (in `projectsStore.ts`) via the `activeProjectSignal`
+// computed. The accessor functions below are unchanged in their public
+// contract; they delegate to the store so the two surfaces (the store +
+// the projectTabs UI) stay in sync.
+export function getActiveProject(): ProjectInfo | null {
+  return activeProjectSignal.value;
+}
 
 /** Per-project saved view state (keyed by project secret). */
 const projectViews = new Map<string, string>();
@@ -24,17 +33,25 @@ const projectGridActive = new Map<string, boolean>();
  *  slider value; the new integer-only slider stores `perRow` directly. */
 const projectGridColumnCount = new Map<string, number>();
 
-/** Switch active project, saving and restoring the sidebar view. */
+/** Switch active project, saving and restoring the sidebar view.
+ *
+ *  HS-8317 — the active-secret + project list both live in the kerf
+ *  `projectsStore` now. This wrapper preserves the per-project view +
+ *  search save/restore side effect (which is NOT store state — those
+ *  Maps are session-only render-state by-project). The store action
+ *  is a single secret-pointer update; everything else here is the
+ *  view/search persistence dance the pre-fix function already owned. */
 export function setActiveProject(project: ProjectInfo) {
   // Save current project's view + search query + drawer-grid state
-  if (activeProject != null) {
-    projectViews.set(activeProject.secret, state.view);
-    projectSearches.set(activeProject.secret, state.search);
+  const previous = activeProjectSignal.value;
+  if (previous != null) {
+    projectViews.set(previous.secret, state.view);
+    projectSearches.set(previous.secret, state.search);
     // HS-6311 — grid state maps are the canonical store; we never mirror
     // them into `state` so there's nothing else to save here. Grid-mode
     // module reads them directly via getProjectGridActive / Slider helpers.
   }
-  activeProject = project;
+  projectsStore.actions.setActive(project);
   // Restore the new project's saved view (default to 'all') + search query
   // (default to '' — a fresh project tab starts with an empty search).
   state.view = projectViews.get(project.secret) ?? 'all';

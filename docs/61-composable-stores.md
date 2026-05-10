@@ -143,7 +143,7 @@ Convert `projectsStore` / `terminalsStore` / `commandLogStore` / `channelStore` 
 
 **HS-8240 closed 2026-05-10 as umbrella-discharged into per-store sub-tickets:**
 
-- **HS-8317** — `projectsStore` migration. Lowest risk (no paired view-layer migration since projectTabs already uses bindList from HS-8235). Recommended first.
+- **HS-8317** — `projectsStore` migration. **Shipped 2026-05-10.** New `src/client/projectsStore.ts` consolidates the pre-fix `state.tsx::activeProject` raw `let` + `projectTabs.tsx::projectListSignal` + `activeSecretSignal` (HS-8235) into a single kerf `defineStore`. Public surface (`getActiveProject()` / `setActiveProject(project)`) unchanged — the 88 callsites across 18 files see no behavioural change. Per-row active-class effect in `renderTabRow` reads from the new `activeProjectSignal` computed; the bindList parent uses a thin `projectsListSignal = computed(() => projectsStore.state.value.projects)` wrapper. 15 unit tests in `projectsStore.test.ts` + every existing `state.test.ts` / `projectTabs.test.ts` / `channelUI.test.ts` case still passes.
 - **HS-8318** — `commandLogStore` + `commandLog.tsx::renderEntries` bindList migration (paired per the HS-8311 deferral). MEDIUM risk; ~full session.
 - **HS-8319** — `terminalsStore` migration. HIGH risk (multi-surface — drawer tabs + dashboard + drawer-grid + visibility groupings); 1-2 sessions including the shape-decision investigation (one store vs three).
 - **HS-8320** — `channelStore` migration. MEDIUM-HIGH risk (permission-overlay critical path); ~half-to-full session.
