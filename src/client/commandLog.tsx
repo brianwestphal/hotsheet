@@ -1,11 +1,19 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { activeFilterTypes, ALL_FILTER_TYPES, dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
+import { dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
+import {
+  type AnnotatedEntry,
+  commandLogStore,
+  filteredEntriesSignal,
+  getEntrySignals,
+} from './commandLogStore.js';
 import { maybeFireShellStreamFirstUseToast, SHELL_PARTIAL_OUTPUT_EVENT,type ShellPartialOutputEvent } from './commandSidebar.js';
 import { TIMERS } from './constants/timers.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { resolveDrawerTabForTauri } from './drawerTabGating.js';
 import { recordInteraction } from './longTaskObserver.js';
+import { effect } from './reactive.js';
+import { bindList } from './reactive-bind.js';
 import { state } from './state.js';
 import { stripAnsi, tailLines } from './stripAnsi.js';
 import { getTauriInvoke } from './tauriIntegration.js';
@@ -30,32 +38,22 @@ export function writePartialIntoPre(pre: HTMLElement, partial: string): void {
   }
 }
 
-let runningShellIds: number[] = [];
 const cancelingShellIds = new Set<number>();
-/**
- * HS-8015 — module-level cache of the most recent partial output for every
- * running shell, keyed on the command_log entry id. Refilled from
- * `/shell/running`'s `outputs` field on every `loadEntries` tick AND from
- * `hotsheet:shell-partial-output` events between ticks. Read by
- * `hydrateRenderedShellPartials` immediately after `renderEntries` so the
- * live `<pre data-shell-partial-id>` survives the periodic re-render that
- * pre-fix wiped its textContent every 5 s.
- */
-const latestPartialOutputs = new Map<number, string>();
 
-interface LogEntry {
-  id: number;
-  event_type: string;
-  direction: string;
-  summary: string;
-  detail: string;
-  created_at: string;
-}
+/** Server-shape command-log entry. HS-8318 / §61 Phase 3b — the store's
+ *  `AnnotatedEntry` wraps this with an `isRunningShell` flag baked in at
+ *  reconcile time. Within this file the rendering code consumes the
+ *  annotated form throughout. */
+type LogEntry = AnnotatedEntry;
 
 let panelOpen = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastSeenId = 0;
-let currentSearch = '';
+/** HS-8318 — top-level bindList disposer + per-row effect cleanups for
+ *  the Commands Log entries container. Mounted once per
+ *  `#command-log-entries` lifetime via `mountEntriesBindList()` and torn
+ *  down on test reset. */
+let entriesBindListDispose: (() => void) | null = null;
 /**
  * Active drawer tab id. `commands-log` selects the log pane; anything else is
  * interpreted as `terminal:<id>` and routed through the embedded terminal module.
@@ -71,7 +69,6 @@ export function getActiveDrawerTab(): string {
 
 const selectedLogIds = new Set<number>();
 let lastClickedId: number | null = null;
-let currentEntries: LogEntry[] = [];
 const expandedEntryIds = new Set<number>();
 
 /**
@@ -104,20 +101,17 @@ export function shouldAutoScrollToBottom(
 }
 
 /**
- * HS-7983 — apply a single `hotsheet:shell-partial-output` event to the
- * Commands Log entries DOM. Exported so happy-dom unit tests can drive
- * the live-render path without bootstrapping `initCommandLog`'s full
- * suite of side-effects. The actual `window.addEventListener` wiring is
- * a one-liner inside `initCommandLog` that delegates here.
+ * HS-7983 — apply a single `hotsheet:shell-partial-output` event. HS-8318
+ * §61 Phase 3b refactor: writes through the `commandLogStore` instead of
+ * mutating module-level Maps + walking the DOM. The store fires the
+ * per-entry `partial` signal which the per-row bindList effect reads;
+ * the row's `<pre>` updates in place via that effect — no broadcast to
+ * sibling rows. Sticky-bottom scroll lives inside the per-row effect
+ * (captures pinned-state before the textContent write).
  *
- * Behaviour:
- * - No `#command-log-entries` container or no matching
- *   `data-shell-partial-id` `<pre>` → no-op (defensive; the entry might
- *   not be rendered yet, e.g. if a chunk arrives before `loadEntries`).
- * - Sticky-bottom auto-scroll: pinned-state is captured BEFORE the
- *   textContent swap because the text change grows `scrollHeight`,
- *   which would otherwise always make the post-write threshold look
- *   bigger than pre-write.
+ * Public export retained so the existing wire-up in `initCommandLog`
+ * (`window.addEventListener(SHELL_PARTIAL_OUTPUT_EVENT, applyShellPartialEvent)`)
+ * keeps a one-liner shape.
  */
 export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
   // HS-7984 — gate Commands Log live-render on the §53 Phase 4 setting.
@@ -125,38 +119,39 @@ export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
   // no-ops. Re-enabling mid-run picks up at the next chunk because the
   // server-side partial buffer survives the gate flip.
   if (!state.settings.shell_streaming_enabled) return;
-  // HS-8015 — keep the latest partial in the module cache regardless of
-  // whether the entry is currently rendered. The 5 s loadEntries tick
-  // re-renders every entry from scratch (textContent goes back to ''),
-  // and `hydrateRenderedShellPartials` repaints from this cache after
-  // every render so the live preview no longer flickers empty between
-  // ticks.
-  latestPartialOutputs.set(detail.id, detail.partial);
+  // HS-8015 — sole survivor of the previous dual-render path. The
+  // first-use discoverability toast fires once per session when the
+  // user first sees a live partial-output chunk, pointing them at the
+  // Commands Log feature. Idempotent — the toast helper short-circuits
+  // after the first invocation.
+  maybeFireShellStreamFirstUseToast();
+  // HS-8318 — primary write goes to the store; the per-row bindList
+  // effect picks it up and mutates the row's `<pre>` in place. The
+  // legacy DOM-write below is a defence-in-depth fallback that fires
+  // ALSO when the bindList isn't mounted yet (e.g. a chunk arrives
+  // between the drawer-open + first `loadEntries`, or in happy-dom
+  // tests that hand-craft a `<pre data-shell-partial-id>` without
+  // bootstrapping the full bindList). The two writes are idempotent
+  // on the same `<pre>`.
+  commandLogStore.actions.setRunningOutput(detail.id, detail.partial);
   const container = byIdOrNull('command-log-entries');
   if (container === null) return;
-  // HS-8015 follow-up #2 — running-shell rows now render twin pres
-  // (preview = trailing N lines / full = entire buffer) so the row is
-  // collapsible while running. Both pres carry the same
-  // `data-shell-partial-id` and we update both — the writer dispatches
-  // on the per-pre `data-shell-partial-mode` attribute.
   const partialEls = container.querySelectorAll<HTMLElement>(`pre.command-log-shell-partial[data-shell-partial-id="${detail.id}"]`);
   if (partialEls.length === 0) return;
-  // HS-8015 — sole survivor of the previous dual-render path. The
-  // first-use discoverability toast used to fire from the (now-removed)
-  // sidebar preview; relocated here so users still get the one-time
-  // nudge that streaming exists, pointing them at the Commands Log.
-  maybeFireShellStreamFirstUseToast();
   const wasPinned = shouldAutoScrollToBottom(container.scrollTop, container.clientHeight, container.scrollHeight);
   for (const pre of partialEls) writePartialIntoPre(pre, detail.partial);
   if (wasPinned) container.scrollTop = container.scrollHeight;
 }
 
 /**
- * HS-8015 — repopulate every rendered `<pre.command-log-shell-partial>`
- * from `latestPartialOutputs`. Called immediately after `renderEntries`
- * so the wholesale re-render that loadEntries triggers every 5 s no
- * longer flickers the live preview empty between ticks. Exported for
- * unit tests.
+ * HS-8015 → HS-8318 — historically read from a separate module-level
+ * `latestPartialOutputs` Map and re-painted every `<pre data-shell-partial-id>`
+ * after the wholesale `renderEntries` re-render. Post-HS-8318 the
+ * per-row bindList effect keeps the `<pre>`s in sync automatically, so
+ * this function is a thin compat that reads from the store's per-entry
+ * partial signals and writes to any matching `<pre>` in the DOM.
+ * Retained for the existing happy-dom test suite that hand-crafts
+ * `<pre data-shell-partial-id>` elements without mounting the bindList.
  */
 export function hydrateRenderedShellPartials(): void {
   if (!state.settings.shell_streaming_enabled) return;
@@ -166,7 +161,8 @@ export function hydrateRenderedShellPartials(): void {
   for (const el of pres) {
     const id = Number(el.dataset.shellPartialId);
     if (!Number.isFinite(id)) continue;
-    const cached = latestPartialOutputs.get(id);
+    const sigs = getEntrySignals(id);
+    const cached = sigs?.partial.value;
     if (cached === undefined || cached === '') continue;
     writePartialIntoPre(el, cached);
   }
@@ -321,7 +317,12 @@ function computeLogEntryRenderState(entry: LogEntry): LogEntryRenderState {
   const detailLines = displayDetail.split('\n');
   const preview = detailLines.slice(0, 3).join('\n');
   const hasMore = detailLines.length > 3 || displayDetail.length > 300;
-  const isRunningShell = entry.event_type === 'shell_command' && runningShellIds.includes(entry.id);
+  // HS-8318 — `isRunningShell` is baked into the annotated entry at
+  // store-reconcile time, not derived ad-hoc here. Pre-fix every render
+  // read from a module-level `runningShellIds` Array that was rebuilt
+  // wholesale on every poll tick; post-fix the per-entry signal carries
+  // the flag and the row's effect re-runs only when it actually flips.
+  const isRunningShell = entry.isRunningShell;
   const isCanceling = cancelingShellIds.has(entry.id);
   return { displayDetail, preview, hasMore, isRunningShell, isCanceling, shellParts };
 }
@@ -435,7 +436,6 @@ function applyExpansion(el: HTMLElement, entry: LogEntry, hasMore: boolean, isRu
 function bindEntryClickHandler(
   el: HTMLElement,
   entry: LogEntry,
-  filtered: LogEntry[],
   hasMore: boolean,
   isRunningShell: boolean,
 ): void {
@@ -452,7 +452,10 @@ function bindEntryClickHandler(
     }
 
     if (e.shiftKey && lastClickedId !== null) {
-      const ids = filtered.map(e2 => e2.id);
+      // HS-8318 — read the current filtered list from the store at click
+      // time so shift+click ranges target the live filter, not a stale
+      // closure capture from row-mount time.
+      const ids = filteredEntriesSignal.value.map(e2 => e2.id);
       const startIdx = ids.indexOf(lastClickedId);
       const endIdx = ids.indexOf(entry.id);
       if (startIdx !== -1 && endIdx !== -1) {
@@ -471,9 +474,15 @@ function bindEntryClickHandler(
   });
 }
 
-function bindEntryContextMenu(el: HTMLElement, entry: LogEntry, filtered: LogEntry[]): void {
+function bindEntryContextMenu(el: HTMLElement, entry: LogEntry): void {
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    // HS-8318 — read the current filtered list from the store at click
+    // time instead of relying on a closure-captured snapshot. Pre-fix
+    // the wholesale-rerender pattern handed every renderLogEntry call a
+    // fresh `filtered` Array; post-fix bindList preserves DOM identity
+    // so the row's handler closure outlives any single filter pass.
+    const filtered = filteredEntriesSignal.value;
     const entriesToCopy = (selectedLogIds.size > 0 && selectedLogIds.has(entry.id))
       ? filtered.filter(e2 => selectedLogIds.has(e2.id))
       : [entry];
@@ -481,120 +490,151 @@ function bindEntryContextMenu(el: HTMLElement, entry: LogEntry, filtered: LogEnt
   });
 }
 
-function renderLogEntry(entry: LogEntry, filtered: LogEntry[]): HTMLElement {
-  const s = computeLogEntryRenderState(entry);
-  const el = buildLogEntryEl(entry, s);
-  if (s.isRunningShell) bindStopButtonHandler(el, entry);
-  bindEntryClickHandler(el, entry, filtered, s.hasMore, s.isRunningShell);
-  bindEntryContextMenu(el, entry, filtered);
-  return el;
-}
+/**
+ * HS-8318 / §61 Phase 3b — per-row bindList render. Builds the wrapper
+ * once for each entry id; per-row effects (a) rebuild the inner DOM
+ * when the entry's `detail` / `summary` / `isRunningShell` change, and
+ * (b) write partial-output chunks into the running-shell `<pre>` in
+ * place. Surviving rows keep their wrapper across poll ticks, so click
+ * handlers + selection + expansion state all persist.
+ *
+ * Returns the `bindList` row contract (`{ el, dispose }`); the disposer
+ * tears down both per-row effects so a row that drops off the rolling-
+ * 100 buffer doesn't keep firing against a detached wrapper.
+ */
+function renderEntryRow(entry: LogEntry): { el: Element; dispose: () => void } {
+  const sigs = getEntrySignals(entry.id);
+  // Initial paint — every per-row effect below treats this as the
+  // baseline and only rebuilds on subsequent signal changes.
+  const initial = computeLogEntryRenderState(entry);
+  const wrapper = buildLogEntryEl(entry, initial);
+  if (initial.isRunningShell) bindStopButtonHandler(wrapper, entry);
+  bindEntryClickHandler(wrapper, entry, initial.hasMore, initial.isRunningShell);
+  bindEntryContextMenu(wrapper, entry);
 
-function renderEntries(entries: LogEntry[]) {
-  currentEntries = entries;
-  const container = byIdOrNull('command-log-entries');
-  if (!container) return;
-
-  // Apply client-side type filter
-  const filtered = activeFilterTypes.size === ALL_FILTER_TYPES.length
-    ? entries
-    : entries.filter(e => activeFilterTypes.has(e.event_type));
-
-  if (filtered.length === 0) {
-    container.innerHTML = '';
-    container.appendChild(toElement(
-      <div className="command-log-empty">No log entries</div>
-    ));
-    return;
-  }
-
-  // Build new content in a fragment first, only clear container on success
-  const fragment = document.createDocumentFragment();
-  for (const entry of filtered) {
-    fragment.appendChild(renderLogEntry(entry, filtered));
-  }
-
-  // Replace content atomically — if anything above threw, the old content remains
-  container.innerHTML = '';
-  container.appendChild(fragment);
-
-  // Restore expanded state from previous render
-  for (const id of expandedEntryIds) {
-    const el = container.querySelector<HTMLElement>(`.command-log-entry[data-id="${id}"]`);
-    if (el !== null) {
-      el.classList.add('expanded');
-      const detailEls = el.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
-      const fullEl = el.querySelector<HTMLElement>('.command-log-detail-full');
+  // Per-row "shape" effect: when the entry signal value changes
+  // structurally (running → done transition, summary edit on a re-fetch),
+  // replace the wrapper's inner content + re-attach the click / stop /
+  // context handlers. Selection + expansion classes on the wrapper itself
+  // survive — they live on the outer `<div class="command-log-entry">`,
+  // not on the inner content we rebuild.
+  let firstShapeRun = true;
+  const disposeShape = effect(() => {
+    const current = sigs?.entry.value ?? entry;
+    if (firstShapeRun) { firstShapeRun = false; return; }
+    const s = computeLogEntryRenderState(current);
+    const fresh = buildLogEntryEl(current, s);
+    wrapper.replaceChildren(...Array.from(fresh.childNodes));
+    if (s.isRunningShell) bindStopButtonHandler(wrapper, current);
+    bindEntryClickHandler(wrapper, current, s.hasMore, s.isRunningShell);
+    // contextmenu: no need to re-bind — the existing handler already
+    // reads `filteredEntriesSignal.value` at click time.
+    // Restore expansion state on the fresh inner content.
+    if (expandedEntryIds.has(current.id)) {
+      wrapper.classList.add('expanded');
+      const detailEls = wrapper.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
+      const fullEl = wrapper.querySelector<HTMLElement>('.command-log-detail-full');
       for (const d of detailEls) (d as HTMLElement).style.display = 'none';
       if (fullEl) fullEl.style.display = '';
     }
-  }
+  });
 
-  // HS-8015 — repaint live shell-partial pres from the cache so the 5 s
-  // poll-driven re-render doesn't flicker the live preview empty between
-  // ticks. Runs AFTER the expanded-state restore so the data-shell-partial-id
-  // pres are in the live tree.
-  hydrateRenderedShellPartials();
+  // Per-row partial-output effect: subscribes to the per-entry `partial`
+  // signal and writes the latest chunk into the row's
+  // `<pre data-shell-partial-id>` slots. Sticky-bottom scroll lives
+  // here — captures pinned-state BEFORE the textContent write so the
+  // post-write `scrollHeight` doesn't fool the threshold check.
+  let firstPartialRun = true;
+  const disposePartial = effect(() => {
+    const partial = sigs?.partial.value ?? '';
+    if (firstPartialRun) { firstPartialRun = false; return; }
+    if (!state.settings.shell_streaming_enabled) return;
+    const partialEls = wrapper.querySelectorAll<HTMLElement>('pre.command-log-shell-partial');
+    if (partialEls.length === 0) return;
+    const container = byIdOrNull('command-log-entries');
+    const wasPinned = container !== null
+      ? shouldAutoScrollToBottom(container.scrollTop, container.clientHeight, container.scrollHeight)
+      : false;
+    for (const pre of partialEls) writePartialIntoPre(pre, partial);
+    if (wasPinned && container !== null) container.scrollTop = container.scrollHeight;
+  });
+
+  return {
+    el: wrapper,
+    dispose: () => { disposeShape(); disposePartial(); },
+  };
+}
+
+/** Mount the bindList against the entries container. Idempotent —
+ *  subsequent calls no-op once the bindList is wired up. Returns
+ *  whether the bindList is mounted (false when the container isn't in
+ *  the DOM yet). */
+function mountEntriesBindList(): boolean {
+  if (entriesBindListDispose !== null) return true;
+  const container = byIdOrNull('command-log-entries');
+  if (container === null) return false;
+  container.innerHTML = '';
+  entriesBindListDispose = bindList(
+    container,
+    filteredEntriesSignal,
+    (entry) => entry.id,
+    renderEntryRow,
+  );
+  return true;
 }
 
 // --- Load entries from API ---
 
 async function loadEntries() {
-  let entries: LogEntry[];
+  let entries: { id: number; event_type: string; direction: string; summary: string; detail: string; created_at: string }[];
+  let running: { ids: number[]; outputs?: Record<number, string> };
   try {
     const params = new URLSearchParams();
     params.set('limit', '100');
+    const currentSearch = commandLogStore.state.value.filter.search;
     if (currentSearch !== '') params.set('search', currentSearch);
 
     // Fetch entries and running shell processes in parallel
-    const [fetchedEntries, running] = await Promise.all([
-      api<LogEntry[]>(`/command-log?${params.toString()}`),
+    const [fetchedEntries, fetchedRunning] = await Promise.all([
+      api<typeof entries>(`/command-log?${params.toString()}`),
       api<{ ids: number[]; outputs?: Record<number, string> }>('/shell/running').catch(() => ({ ids: [] as number[], outputs: {} as Record<number, string> })),
     ]);
     entries = fetchedEntries;
-    runningShellIds = running.ids;
-    // HS-8015 — keep the latest server-side partial buffer in a module
-    // cache so `renderEntries` can repaint the live `<pre>` immediately
-    // after every poll-driven re-render. Pre-fix the 5 s `loadEntries`
-    // tick wiped the partial pre's textContent (renderLogEntry rebuilds
-    // every entry from scratch) and the user saw the live preview flicker
-    // empty → fill → empty as the slower live event re-populated it on
-    // the next chunk. Server-side `partialOutputs` is the source of truth;
-    // both `applyShellPartialEvent` (sub-tick) and the post-render
-    // hydrate (post-tick) read from it.
-    //
-    // Drop cache entries for any id that's no longer running so the
-    // `<pre>` doesn't keep showing stale partial output after the shell
-    // finishes (the completed-shell branch in `renderLogEntry` takes
-    // over once the entry's detail string contains the SHELL_OUTPUT
-    // separator).
-    const runningSet = new Set(running.ids);
-    for (const id of [...latestPartialOutputs.keys()]) {
-      if (!runningSet.has(id)) latestPartialOutputs.delete(id);
-    }
-    if (running.outputs !== undefined) {
-      for (const idStr of Object.keys(running.outputs)) {
-        const idNum = Number(idStr);
-        if (!Number.isFinite(idNum)) continue;
-        const fromServer = running.outputs[idNum] ?? '';
-        // Use the longer of (cached, server) so a chunk that arrived via
-        // the live `applyShellPartialEvent` between this tick's request
-        // dispatch and its response doesn't get clobbered by the older
-        // poll snapshot. Partial buffers are monotonic on the server,
-        // so length is a safe proxy for "is newer".
-        const cached = latestPartialOutputs.get(idNum) ?? '';
-        latestPartialOutputs.set(idNum, fromServer.length >= cached.length ? fromServer : cached);
-      }
-    }
-    // Clean up canceling state for processes that are no longer running
-    for (const id of cancelingShellIds) {
-      if (!running.ids.includes(id)) cancelingShellIds.delete(id);
-    }
-    renderEntries(entries);
+    running = fetchedRunning;
   } catch {
     // Don't clear the display on load errors — keep showing the last entries
     return;
   }
+
+  // HS-8318 — feed the store. `setEntries` reconciles by id (per-entry
+  // signals survive surviving ids), then `setRunningOutput` writes the
+  // server-side `partialOutputs` snapshot into the per-entry partial
+  // signals (only fires effects for entries whose output actually changed
+  // since the last tick). The bindList view-layer re-renders only the
+  // rows whose shape or partial signal moved.
+  commandLogStore.actions.setEntries(entries, running.ids);
+  if (running.outputs !== undefined) {
+    for (const idStr of Object.keys(running.outputs)) {
+      const idNum = Number(idStr);
+      if (!Number.isFinite(idNum)) continue;
+      const fromServer = running.outputs[idNum] ?? '';
+      const sigs = getEntrySignals(idNum);
+      const cached = sigs?.partial.value ?? '';
+      // Use the longer of (cached, server) so a chunk that arrived via
+      // the live `applyShellPartialEvent` between this tick's request
+      // dispatch and its response doesn't get clobbered by the older
+      // poll snapshot. Partial buffers are monotonic on the server, so
+      // length is a safe proxy for "is newer".
+      const next = fromServer.length >= cached.length ? fromServer : cached;
+      if (next !== cached) commandLogStore.actions.setRunningOutput(idNum, next);
+    }
+  }
+  // Clean up canceling state for processes that are no longer running
+  for (const id of cancelingShellIds) {
+    if (!running.ids.includes(id)) cancelingShellIds.delete(id);
+  }
+  // Make sure the bindList is mounted now that the container is in the DOM.
+  mountEntriesBindList();
 
   // Track latest seen ID for badge
   if (entries.length > 0 && entries[0].id > lastSeenId) {
@@ -918,7 +958,7 @@ let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 function onSearchInput(value: string) {
   if (searchTimeout) clearTimeout(searchTimeout);
   searchTimeout = setTimeout(() => {
-    currentSearch = value;
+    commandLogStore.actions.setFilterSearch(value);
     void loadEntries();
   }, 300);
 }
@@ -953,8 +993,13 @@ export function initCommandLog() {
   // Clear button
   byIdOrNull('command-log-clear')?.addEventListener('click', () => { void clearLogEntries(); });
 
-  // Filter button (HS-2550)
-  byIdOrNull('command-log-filter-btn')?.addEventListener('click', () => { showFilterDropdown(() => renderEntries(currentEntries)); });
+  // Filter button (HS-2550). HS-8318 — the dropdown's `onFilterChange`
+  // is now a no-op because `commandLogFilter`'s toggle handlers write
+  // directly into `commandLogStore.actions.setFilterTypes`, which fires
+  // the `filteredEntriesSignal` and re-renders via bindList. The
+  // dropdown still calls the callback for back-compat, but there's no
+  // imperative `renderEntries` left to call.
+  byIdOrNull('command-log-filter-btn')?.addEventListener('click', () => { showFilterDropdown(() => { /* bindList covers it */ }); });
 
   // Search input
   const searchEl = byIdOrNull<HTMLInputElement>('command-log-search');

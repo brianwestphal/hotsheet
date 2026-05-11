@@ -1,8 +1,17 @@
 import { raw } from '../jsx-runtime.js';
+import { commandLogStore } from './commandLogStore.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_CHECK } from './icons.js';
 
 // --- Multi-select filter (HS-2550) ---
+//
+// HS-8318 / §61 Phase 3b — `activeFilterTypes` now reads from + writes
+// through `commandLogStore.state.value.filter.types`. The dropdown UI's
+// click handlers go through `commandLogStore.actions.setFilterTypes()`,
+// which fires the `filteredEntriesSignal` and re-renders via bindList in
+// `commandLog.tsx`. Pre-fix this file owned the mutable `Set<string>`
+// directly and the caller (`commandLog.tsx::renderEntries`) re-read it
+// every render.
 
 export const ALL_FILTER_TYPES = [
   { value: 'trigger', label: 'Triggers' },
@@ -11,17 +20,22 @@ export const ALL_FILTER_TYPES = [
   { value: 'shell_command', label: 'Shell Commands' },
 ];
 
-export const activeFilterTypes = new Set<string>(ALL_FILTER_TYPES.map(t => t.value));
+/** Read the live `Set<string>` of selected filter types from the store. */
+function getActiveFilterTypes(): ReadonlySet<string> {
+  return commandLogStore.state.value.filter.types;
+}
+
 let filterDropdownOpen = false;
 
 export function getFilterLabel(): string {
-  if (activeFilterTypes.size === ALL_FILTER_TYPES.length) return 'All types';
-  if (activeFilterTypes.size === 0) return 'None';
-  if (activeFilterTypes.size === 1) {
-    const val = [...activeFilterTypes][0];
+  const active = getActiveFilterTypes();
+  if (active.size === ALL_FILTER_TYPES.length) return 'All types';
+  if (active.size === 0) return 'None';
+  if (active.size === 1) {
+    const val = [...active][0];
     return ALL_FILTER_TYPES.find(t => t.value === val)?.label ?? val;
   }
-  return `${activeFilterTypes.size} types`;
+  return `${active.size} types`;
 }
 
 export function dismissFilterDropdown() {
@@ -54,7 +68,7 @@ export function showFilterDropdown(onFilterChange: () => void) {
     <div className="command-log-filter-dropdown">
       {ALL_FILTER_TYPES.map(t =>
         <div className="filter-option" data-type={t.value}>
-          <span className="filter-check">{activeFilterTypes.has(t.value) ? raw(ICON_CHECK) : ''}</span>
+          <span className="filter-check">{getActiveFilterTypes().has(t.value) ? raw(ICON_CHECK) : ''}</span>
           <span>{t.label}</span>
         </div>
       )}
@@ -65,7 +79,7 @@ export function showFilterDropdown(onFilterChange: () => void) {
 
   // Set toggle text
   const toggleEl = dropdown.querySelector('.filter-toggle-all') as HTMLElement;
-  const allSelected = activeFilterTypes.size === ALL_FILTER_TYPES.length;
+  const allSelected = getActiveFilterTypes().size === ALL_FILTER_TYPES.length;
   toggleEl.textContent = allSelected ? 'Deselect All' : 'Select All';
 
   // Bind option clicks
@@ -73,15 +87,18 @@ export function showFilterDropdown(onFilterChange: () => void) {
     opt.addEventListener('click', () => {
       const type = (opt as HTMLElement).dataset.type!;
       const check = opt.querySelector('.filter-check') as HTMLElement;
-      if (activeFilterTypes.has(type)) {
-        activeFilterTypes.delete(type);
+      const cur = getActiveFilterTypes();
+      const next = new Set(cur);
+      if (cur.has(type)) {
+        next.delete(type);
         check.innerHTML = '';
       } else {
-        activeFilterTypes.add(type);
+        next.add(type);
         check.innerHTML = ICON_CHECK;
       }
+      commandLogStore.actions.setFilterTypes(next);
       // Update toggle label
-      const nowAll = activeFilterTypes.size === ALL_FILTER_TYPES.length;
+      const nowAll = next.size === ALL_FILTER_TYPES.length;
       toggleEl.textContent = nowAll ? 'Deselect All' : 'Select All';
       updateFilterButtonLabel();
       onFilterChange();
@@ -90,19 +107,18 @@ export function showFilterDropdown(onFilterChange: () => void) {
 
   // Toggle all / deselect all
   toggleEl.addEventListener('click', () => {
-    const nowAll = activeFilterTypes.size === ALL_FILTER_TYPES.length;
-    if (nowAll) {
-      activeFilterTypes.clear();
-    } else {
-      for (const t of ALL_FILTER_TYPES) activeFilterTypes.add(t.value);
-    }
+    const nowAll = getActiveFilterTypes().size === ALL_FILTER_TYPES.length;
+    const next = nowAll
+      ? new Set<string>()
+      : new Set<string>(ALL_FILTER_TYPES.map(t => t.value));
+    commandLogStore.actions.setFilterTypes(next);
     // Update checkmarks
     for (const opt of dropdown.querySelectorAll('.filter-option')) {
       const type = (opt as HTMLElement).dataset.type!;
       const check = opt.querySelector('.filter-check') as HTMLElement;
-      check.innerHTML = activeFilterTypes.has(type) ? ICON_CHECK : '';
+      check.innerHTML = next.has(type) ? ICON_CHECK : '';
     }
-    toggleEl.textContent = activeFilterTypes.size === ALL_FILTER_TYPES.length ? 'Deselect All' : 'Select All';
+    toggleEl.textContent = next.size === ALL_FILTER_TYPES.length ? 'Deselect All' : 'Select All';
     updateFilterButtonLabel();
     onFilterChange();
   });
