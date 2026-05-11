@@ -4,6 +4,7 @@ import { renderColumnView, renderPreviewColumnView, updateColumnSelectionClasses
 import { syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
+import { effect } from './reactive.js';
 import { bindList } from './reactive-bind.js';
 import { renderSearchExtraRows } from './searchExtraRows.js';
 import type { SyncedTicketInfo,Ticket  } from './state.js';
@@ -57,34 +58,55 @@ function canUseColumnView(): boolean {
 }
 
 /**
- * HS-8331 / §61 Phase 2 default-list-view bindList rewrite. The
+ * HS-8331 / §61 Phase 2 default-list-view bindList rewrite +
+ * HS-8333 (2026-05-11) trash + backup-preview bindList rewrite. The
  * `<div class="ticket-list-rows">` sub-container inside `#ticket-list`
  * is owned by a persistent bindList against `ticketsSignal`. Surviving
  * row ids preserve DOM identity across re-renders, which makes the
  * focus / cursor / editing-value preservation dance below nearly
  * trivial — the input element survives unchanged.
  *
- * The bindList is mounted exactly once per default-list-view
- * lifetime — `ensureListViewMount` is idempotent. Transitions from
- * column / trash / preview views dispose the bindList via
- * `unmountListViewBindList`, and the next `ensureListViewMount` call
- * re-creates everything.
+ * The bindList is mounted exactly once per (variant, lifecycle) pair
+ * where variant is one of 'default' / 'trash' / 'preview'. The mounted
+ * variant is tracked in `mountedVariant`; when `renderTicketList`
+ * computes a new variant that doesn't match, `ensureBindListMount`
+ * tears down the existing bindList + its empty-state effect and
+ * remounts with the appropriate row-factory (`createTicketRow` /
+ * `createTrashRow` / `createPreviewRow`). Transitions to column view
+ * dispose the bindList via `unmountBindList`, and the next
+ * `ensureBindListMount` call re-creates everything.
  *
- * Trash and backup-preview views are deferred to HS-8333 (sub #3 of
- * the HS-8326 umbrella); for now they keep the pre-fix wholesale
- * rebuild path (container.innerHTML = '' + for-loop). Column view is
- * HS-8332 (sub #2).
+ * Why variant-at-mount-time instead of dispatching inside the row
+ * factory: per-row dispatch would not recreate surviving rows when
+ * the view changes (the bindList preserves DOM identity by key). For
+ * default ↔ trash transitions the ticket-id sets don't overlap, so
+ * dispatch would happen to work, but for default ↔ preview the
+ * preview snapshot may include the same ids as the live state; a
+ * surviving row would render with the wrong variant. Tearing down on
+ * variant transition avoids the class entirely.
+ *
+ * Trash + preview ticket data lives in the same `ticketsSignal` —
+ * `loadPreviewTickets` writes its filtered snapshot through
+ * `ticketsStore.actions.setTickets(...)` exactly like `loadTickets`
+ * does for the live view, so the bindList subscribes to a single
+ * source and the variant only switches the row factory + the empty-
+ * state message.
+ *
+ * Column view (HS-8332 sub #2) is still deferred — it has its own
+ * status-grouped rebuild loop in `columnView.tsx`. Transitions to /
+ * from column view call `unmountBindList` so the list-view bindList
+ * doesn't leak.
  *
  * HS-8336 (2026-05-11) — FLIP animation restored via
  * `setTicketsAnimated` wrapper below. The wrapper captures the
  * snapshot BEFORE the setTickets write (so the bindList reconcile
  * sits BETWEEN snapshot and flipAnimate), which is the correct
- * sequencing for the synchronous-reconcile path. `renderTicketList`'s
- * own captureSnapshot / flipAnimate stays — it still drives FLIP for
- * the column / trash / preview branches (which mutate DOM inside
- * `renderTicketList` itself, not via the bindList).
+ * sequencing for the synchronous-reconcile path.
  */
+type BindListVariant = 'default' | 'trash' | 'preview';
 let listViewBindListDispose: (() => void) | null = null;
+let listViewEmptyEffectDispose: (() => void) | null = null;
+let mountedVariant: BindListVariant | null = null;
 
 /**
  * HS-8336 — wrapper around `ticketsStore.actions.setTickets(...)` that
@@ -97,56 +119,116 @@ let listViewBindListDispose: (() => void) | null = null;
  * already in its new layout. Capturing the snapshot BEFORE the call +
  * running `flipAnimate` AFTER gives FLIP its pre/post pair.
  *
- * For the column / trash / preview branches this wrapper is a slight
- * pessimisation (an extra snapshot capture) but not a correctness
- * problem — those branches don't use bindList, so the snapshot here
- * captures the pre-data-change DOM, the data changes but the DOM
- * doesn't yet, and `flipAnimate` here is a near-no-op (dx,dy ≈ 0).
- * Their REAL FLIP animation still runs from `renderTicketList`'s own
- * captureSnapshot / flipAnimate pair which brackets the wholesale
- * rebuild.
+ * HS-8333 (2026-05-11) — also handles variant transitions. By the
+ * time `loadTickets` / `loadPreviewTickets` calls this, `state.view`
+ * /  `state.backupPreview` already reflects the target variant. If
+ * that target differs from `mountedVariant`, the existing bindList is
+ * using the wrong row factory — reconciling new data through it
+ * would create rows with the wrong variant (wasted DOM allocation,
+ * wrong click handlers, wrong shape). Preemptive `unmountBindList`
+ * disposes the bindList's listener before the store write so the
+ * reconcile doesn't happen at all; `renderTicketList`'s subsequent
+ * `ensureBindListMount(targetVariant)` does the wipe + remount with
+ * the correct factory.
  *
- * Only used by `loadTickets`. `loadPreviewTickets` is deferred to
- * HS-8333 (which moves preview to bindList).
+ * The intermediate-DOM (between `setTickets` and `renderTicketList`)
+ * never paints — it's all on the same synchronous call stack — so
+ * this is a perf optimisation, not a correctness fix. But the
+ * unmount is also cheap: it's a no-op when the variant doesn't
+ * change (the dominant case).
+ *
+ * For the column branch this wrapper is a slight pessimisation (an
+ * extra snapshot capture) but not a correctness problem — that branch
+ * doesn't use bindList; the variant check returns 'default' / 'trash'
+ * / 'preview' but the column path has already torn down the bindList
+ * via `unmountBindList` at the top of `renderTicketList`, so
+ * `mountedVariant` is null and the preemptive unmount short-circuits.
  */
 export function setTicketsAnimated(tickets: readonly Ticket[]): void {
   const snapshot = captureSnapshot();
+  if (mountedVariant !== null && mountedVariant !== computeTargetVariant()) {
+    unmountBindList();
+  }
   ticketsStore.actions.setTickets(tickets);
   flipAnimate(snapshot);
 }
 
-function unmountListViewBindList(): void {
+function computeTargetVariant(): BindListVariant {
+  if (state.backupPreview?.active === true) return 'preview';
+  if (state.view === 'trash') return 'trash';
+  return 'default';
+}
+
+function unmountBindList(): void {
   if (listViewBindListDispose !== null) {
     try { listViewBindListDispose(); } catch { /* swallow */ }
     listViewBindListDispose = null;
   }
+  if (listViewEmptyEffectDispose !== null) {
+    try { listViewEmptyEffectDispose(); } catch { /* swallow */ }
+    listViewEmptyEffectDispose = null;
+  }
+  mountedVariant = null;
 }
 
-function ensureListViewMount(container: HTMLElement): void {
-  let rowsContainer = container.querySelector<HTMLElement>(':scope > .ticket-list-rows');
-  if (rowsContainer !== null && listViewBindListDispose !== null) {
-    // Already mounted. Ensure the draft row is in place at the top.
-    if (container.querySelector(':scope > .draft-row') === null) {
-      container.insertBefore(createDraftRow(), rowsContainer);
+function rowFactoryFor(variant: BindListVariant): (ticket: Ticket) => HTMLElement {
+  if (variant === 'trash') return createTrashRow;
+  if (variant === 'preview') return createPreviewRow;
+  return createTicketRow;
+}
+
+function ensureBindListMount(container: HTMLElement, variant: BindListVariant): void {
+  // Same variant + already mounted — only ensure the variant-specific
+  // structural elements are in place (default needs a draft row at the
+  // top; trash + preview have no extra structure).
+  if (mountedVariant === variant && listViewBindListDispose !== null) {
+    if (variant === 'default' && container.querySelector(':scope > .draft-row') === null) {
+      const rows = container.querySelector<HTMLElement>(':scope > .ticket-list-rows');
+      if (rows !== null) container.insertBefore(createDraftRow(), rows);
     }
     return;
   }
 
-  // First mount or transition from column / trash / preview — wipe
-  // the container, lay out the structure (draft row + rows sub-
-  // container), and mount the bindList against the sub-container.
-  unmountListViewBindList();
+  // Variant transition or first mount — wipe + relay out + remount.
+  unmountBindList();
   container.innerHTML = '';
   container.classList.remove('ticket-list-columns');
-  container.appendChild(createDraftRow());
-  rowsContainer = toElement(<div className="ticket-list-rows"></div>);
+  if (variant === 'default') {
+    container.appendChild(createDraftRow());
+  }
+  const rowsContainer = toElement(<div className="ticket-list-rows"></div>);
   container.appendChild(rowsContainer);
+
+  // Empty-state element kept always-mounted; an effect toggles its
+  // visibility based on `ticketsSignal.value.length`. Default variant
+  // doesn't show one (matches pre-HS-8333 behaviour); trash + preview
+  // each get their own message.
+  const emptyEl = toElement(<div className="ticket-list-empty"></div>);
+  emptyEl.style.display = 'none';
+  container.appendChild(emptyEl);
+
+  const factory = rowFactoryFor(variant);
   listViewBindListDispose = bindList(
     rowsContainer,
     ticketsSignal,
     (ticket) => ticket.id,
-    (ticket) => ({ el: createTicketRow(ticket) }),
+    (ticket) => ({ el: factory(ticket) }),
   );
+
+  if (variant !== 'default') {
+    const message = variant === 'trash' ? 'Trash is empty' : 'No tickets match this view';
+    listViewEmptyEffectDispose = effect(() => {
+      const count = ticketsSignal.value.length;
+      if (count === 0) {
+        emptyEl.textContent = message;
+        emptyEl.style.display = '';
+      } else {
+        emptyEl.style.display = 'none';
+      }
+    });
+  }
+
+  mountedVariant = variant;
 }
 
 export function renderTicketList() {
@@ -168,8 +250,8 @@ export function renderTicketList() {
 
   if (state.layout === 'columns' && canUseColumnView()) {
     // Column view path — tear down the list-view bindList if it was
-    // mounted from a prior default-list-view render.
-    unmountListViewBindList();
+    // mounted from a prior list-view render.
+    unmountBindList();
     if (isPreview) { renderPreviewColumnView(); flipAnimate(snapshot); return; }
     renderColumnView();
     // Restore draft focus after column view rebuild
@@ -184,8 +266,6 @@ export function renderTicketList() {
     flipAnimate(snapshot);
     return;
   }
-
-  const isTrash = state.view === 'trash';
 
   // Preserve in-progress title edits and cursor position (HS-199, HS-1454, HS-2113)
   let editingValue: string | null = null;
@@ -208,29 +288,11 @@ export function renderTicketList() {
   const container = byId('ticket-list');
   const scrollTop = container.scrollTop;
 
-  if (isTrash || isPreview) {
-    // HS-8333 (deferred) — trash + backup-preview views keep the pre-fix
-    // wholesale rebuild path. Tear down the list-view bindList if it was
-    // mounted from a prior default-list-view render.
-    unmountListViewBindList();
-    container.innerHTML = '';
-    container.classList.remove('ticket-list-columns');
-    if (state.tickets.length === 0) {
-      const emptyMsg = isTrash ? 'Trash is empty' : 'No tickets match this view';
-      container.appendChild(toElement(<div className="ticket-list-empty">{emptyMsg}</div>));
-    }
-    for (const ticket of state.tickets) {
-      if (isPreview) container.appendChild(createPreviewRow(ticket));
-      else container.appendChild(createTrashRow(ticket));
-    }
-  } else {
-    // HS-8331 — default list view: bindList path. The rows sub-container
-    // + its bindList survive across `renderTicketList` calls; the
-    // ticketsSignal (which fires inside `ticketsStore.actions.setTickets(...)`)
-    // drives row reconciliation. This call updates the draft row +
-    // empty state at the parent level only.
-    ensureListViewMount(container);
-  }
+  // HS-8331 (default) / HS-8333 (trash + preview) — all three list-
+  // view variants are bindList-driven against `ticketsSignal`. The
+  // mount manager tears down + remounts on variant transitions so
+  // each variant gets its correct row factory + empty-state message.
+  ensureBindListMount(container, computeTargetVariant());
 
   container.scrollTop = scrollTop;
 
@@ -510,7 +572,7 @@ function loadPreviewTickets() {
     );
   }
 
-  ticketsStore.actions.setTickets(tickets);
+  setTicketsAnimated(tickets);
   renderTicketList();
 }
 
