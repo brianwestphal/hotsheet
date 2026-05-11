@@ -14,7 +14,7 @@ import {
 registerCallbacks,
 setDraftTitle, setSuppressFocusSelect} from './ticketListState.js';
 import { cancelPendingSave as _cancelPendingSave, createPreviewRow, createTicketRow, createTrashRow } from './ticketRow.js';
-import { ticketsSignal, ticketsStore } from './ticketsStore.js';
+import { filteredTickets, ticketsStore } from './ticketsStore.js';
 
 // --- Re-exports (preserves the public API of this module) ---
 
@@ -59,12 +59,15 @@ function canUseColumnView(): boolean {
 
 /**
  * HS-8331 / §61 Phase 2 default-list-view bindList rewrite +
- * HS-8333 (2026-05-11) trash + backup-preview bindList rewrite. The
- * `<div class="ticket-list-rows">` sub-container inside `#ticket-list`
- * is owned by a persistent bindList against `ticketsSignal`. Surviving
- * row ids preserve DOM identity across re-renders, which makes the
- * focus / cursor / editing-value preservation dance below nearly
- * trivial — the input element survives unchanged.
+ * HS-8333 (2026-05-11) trash + backup-preview bindList rewrite +
+ * HS-8334 (2026-05-11) consumer-side switch from `ticketsSignal` to
+ * `filteredTickets` (the per-view narrowed signal — now the single
+ * source of filter truth). The `<div class="ticket-list-rows">`
+ * sub-container inside `#ticket-list` is owned by a persistent
+ * bindList against `filteredTickets`. Surviving row ids preserve DOM
+ * identity across re-renders, which makes the focus / cursor /
+ * editing-value preservation dance below nearly trivial — the input
+ * element survives unchanged.
  *
  * The bindList is mounted exactly once per (variant, lifecycle) pair
  * where variant is one of 'default' / 'trash' / 'preview'. The mounted
@@ -85,12 +88,12 @@ function canUseColumnView(): boolean {
  * surviving row would render with the wrong variant. Tearing down on
  * variant transition avoids the class entirely.
  *
- * Trash + preview ticket data lives in the same `ticketsSignal` —
- * `loadPreviewTickets` writes its filtered snapshot through
+ * Trash + preview ticket data lives in the same store —
+ * `loadPreviewTickets` writes the full backup snapshot through
  * `ticketsStore.actions.setTickets(...)` exactly like `loadTickets`
- * does for the live view, so the bindList subscribes to a single
- * source and the variant only switches the row factory + the empty-
- * state message.
+ * does for the live view; `filteredTickets`'s `applyViewFilter`
+ * branches on `filter.view` to render either the live trash subset or
+ * the preview snapshot's deleted subset depending on `state.view`.
  *
  * Column view (HS-8332 sub #2) is still deferred — it has its own
  * status-grouped rebuild loop in `columnView.tsx`. Transitions to /
@@ -200,9 +203,10 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
   container.appendChild(rowsContainer);
 
   // Empty-state element kept always-mounted; an effect toggles its
-  // visibility based on `ticketsSignal.value.length`. Default variant
-  // doesn't show one (matches pre-HS-8333 behaviour); trash + preview
-  // each get their own message.
+  // visibility based on `filteredTickets.value.length` (the narrowed
+  // signal — HS-8334). Default variant doesn't show one (matches the
+  // pre-HS-8333 behaviour where the default list just had empty rows);
+  // trash + preview each get their own message.
   const emptyEl = toElement(<div className="ticket-list-empty"></div>);
   emptyEl.style.display = 'none';
   container.appendChild(emptyEl);
@@ -210,7 +214,7 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
   const factory = rowFactoryFor(variant);
   listViewBindListDispose = bindList(
     rowsContainer,
-    ticketsSignal,
+    filteredTickets,
     (ticket) => ticket.id,
     (ticket) => ({ el: factory(ticket) }),
   );
@@ -218,7 +222,7 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
   if (variant !== 'default') {
     const message = variant === 'trash' ? 'Trash is empty' : 'No tickets match this view';
     listViewEmptyEffectDispose = effect(() => {
-      const count = ticketsSignal.value.length;
+      const count = filteredTickets.value.length;
       if (count === 0) {
         emptyEl.textContent = message;
         emptyEl.style.display = '';
@@ -288,10 +292,11 @@ export function renderTicketList() {
   const container = byId('ticket-list');
   const scrollTop = container.scrollTop;
 
-  // HS-8331 (default) / HS-8333 (trash + preview) — all three list-
-  // view variants are bindList-driven against `ticketsSignal`. The
-  // mount manager tears down + remounts on variant transitions so
-  // each variant gets its correct row factory + empty-state message.
+  // HS-8331 (default) / HS-8333 (trash + preview) / HS-8334 (signal
+  // switched to `filteredTickets`) — all three list-view variants are
+  // bindList-driven against the narrowed `filteredTickets`. The mount
+  // manager tears down + remounts on variant transitions so each
+  // variant gets its correct row factory + empty-state message.
   ensureBindListMount(container, computeTargetVariant());
 
   container.scrollTop = scrollTop;
@@ -461,30 +466,23 @@ export async function loadTickets() {
     return;
   }
 
+  // HS-8334 (2026-05-11) — server fetch is for the COARSE SCOPE only.
+  // The per-view narrowing (`up-next` / `open` / `completed` / etc.)
+  // and the `category:*` / `priority:*` filters now happen client-side
+  // in `filteredTickets`. Three coarse scopes:
+  //   - active scope (default for everything in the active-set views)
+  //   - trash, backlog, archive (separate scopes, not in active set)
+  // Custom views took the early-return branch above and aren't here.
   const params = new URLSearchParams();
-
   if (state.view === 'trash') {
     params.set('status', 'deleted');
-  } else if (state.view === 'up-next') {
-    params.set('up_next', 'true');
-  } else if (state.view === 'open') {
-    params.set('status', 'open');
-  } else if (state.view === 'completed') {
-    params.set('status', 'completed');
-  } else if (state.view === 'non-verified') {
-    params.set('status', 'non_verified');
-  } else if (state.view === 'verified') {
-    params.set('status', 'verified');
   } else if (state.view === 'backlog') {
     params.set('status', 'backlog');
   } else if (state.view === 'archive') {
     params.set('status', 'archive');
-  } else if (state.view.startsWith('category:')) {
-    params.set('category', state.view.split(':')[1]);
-  } else if (state.view.startsWith('priority:')) {
-    params.set('priority', state.view.split(':')[1]);
   } else {
-    // 'all' view — exclude backlog, archive, deleted
+    // 'all' / 'up-next' / 'open' / 'completed' / 'non-verified' /
+    // 'verified' / 'category:*' / 'priority:*' — all active scope.
     params.set('status', 'active');
   }
 
@@ -531,48 +529,19 @@ export async function loadTickets() {
   }
 }
 
+/**
+ * HS-8334 (2026-05-11) — preview path simplified. Pre-fix this
+ * function duplicated the entire view-filter switch + search-filter
+ * pass from `loadTickets`'s URL-construction site (against the
+ * `state.backupPreview.tickets` snapshot instead of the server). Post-
+ * fix it just writes the full backup snapshot through `setTicketsAnimated`;
+ * `filteredTickets` (the canonical view-narrowing computed) does the
+ * view + include + search filtering identically for live + preview
+ * data. The `loadPreviewTickets`'s pre-fix client-side filter pass is
+ * the single largest dedup HS-8334 ships.
+ */
 function loadPreviewTickets() {
-  let tickets = [...(state.backupPreview?.tickets || [])];
-
-  // Apply view filters
-  if (state.view === 'trash') {
-    tickets = tickets.filter(t => t.status === 'deleted');
-  } else if (state.view === 'up-next') {
-    tickets = tickets.filter(t => t.up_next && t.status !== 'deleted');
-  } else if (state.view === 'open') {
-    tickets = tickets.filter(t => t.status === 'not_started' || t.status === 'started');
-  } else if (state.view === 'completed') {
-    tickets = tickets.filter(t => t.status === 'completed');
-  } else if (state.view === 'non-verified') {
-    tickets = tickets.filter(t => t.status !== 'verified' && t.status !== 'deleted' && t.status !== 'backlog' && t.status !== 'archive');
-  } else if (state.view === 'verified') {
-    tickets = tickets.filter(t => t.status === 'verified');
-  } else if (state.view === 'backlog') {
-    tickets = tickets.filter(t => t.status === 'backlog');
-  } else if (state.view === 'archive') {
-    tickets = tickets.filter(t => t.status === 'archive');
-  } else if (state.view.startsWith('category:')) {
-    const cat = state.view.split(':')[1];
-    tickets = tickets.filter(t => t.category === cat && t.status !== 'deleted' && t.status !== 'backlog' && t.status !== 'archive');
-  } else if (state.view.startsWith('priority:')) {
-    const pri = state.view.split(':')[1];
-    tickets = tickets.filter(t => t.priority === pri && t.status !== 'deleted' && t.status !== 'backlog' && t.status !== 'archive');
-  } else {
-    // 'all' view — exclude backlog, archive, deleted
-    tickets = tickets.filter(t => t.status !== 'deleted' && t.status !== 'backlog' && t.status !== 'archive');
-  }
-
-  // Apply search
-  if (state.search !== '') {
-    const q = state.search.toLowerCase();
-    tickets = tickets.filter(t =>
-      t.title.toLowerCase().includes(q) ||
-      t.ticket_number.toLowerCase().includes(q) ||
-      (t.details !== '' && t.details.toLowerCase().includes(q))
-    );
-  }
-
-  setTicketsAnimated(tickets);
+  setTicketsAnimated([...(state.backupPreview?.tickets ?? [])]);
   renderTicketList();
 }
 

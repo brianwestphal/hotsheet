@@ -141,30 +141,39 @@ export const ticketsStore = defineStore({
 /**
  * Derived signal — tickets matching the current `filter`. Recomputes
  * on every `tickets` or `filter` write thanks to kerf's `computed()`
- * tracking. The body is intentionally minimal for the prep ticket;
- * HS-8239 folds in the full filter logic from `ticketList.tsx` (view
- * selection, include-backlog / include-archive bucket mixing,
- * up-next promotion, etc.) when rewiring the consumer.
+ * tracking. **HS-8334 (2026-05-11) — extended to be the single source
+ * of filter truth.** Pre-HS-8334 this only narrowed by `filter.search`;
+ * post-fix it also narrows by `filter.view` (active sub-views
+ * `up-next` / `open` / `completed` / `non-verified` / `verified` /
+ * `category:*` / `priority:*`; cross-scope `trash` / `backlog` /
+ * `archive`; custom-view passthrough) and by the
+ * `includeBacklogInSearch` / `includeArchiveInSearch` toggles. The
+ * client server-fetch now sends `?status=active` (or
+ * `?status=trash`/`backlog`/`archive`) for the coarse scope only —
+ * the per-view narrowing happens here. See `applyViewFilter` for
+ * the per-view branches.
  */
 export const filteredTickets: ReadonlySignal<readonly Ticket[]> = computed(() => {
   const { tickets, filter } = ticketsStore.state.value;
-  if (filter.search === '') return tickets;
+  const viewFiltered = applyViewFilter(
+    tickets,
+    filter.view,
+    filter.includeBacklogInSearch,
+    filter.includeArchiveInSearch,
+  );
+  if (filter.search === '') return viewFiltered;
   const lc = filter.search.toLowerCase();
-  return tickets.filter(t => ticketMatchesSearch(t, lc));
+  return viewFiltered.filter(t => ticketMatchesSearch(t, lc));
 });
 
 /**
- * HS-8331 — derived signal that simply mirrors `state.value.tickets`.
- * Exists as the `Signal<readonly Ticket[]>` handle the default-list-view
- * `bindList` in `ticketList.tsx` subscribes to. Pre-fix `bindList`
- * would need to take the store's full state signal + a derive
- * function inline; this thin computed lifts that derive to the
- * store module so the binding callsite reads cleanly.
- *
- * The extended view / includeBacklog / includeArchive filter logic
- * lands in HS-8334 (sub #4) — for now this matches the pre-fix
- * behaviour where the server pre-filters via `?status=...` query
- * params and the client just renders what the server returned.
+ * HS-8331 — derived signal that simply mirrors `state.value.tickets`
+ * unfiltered. Exists as the raw `Signal<readonly Ticket[]>` handle
+ * for consumers that want the full store contents without view
+ * narrowing (e.g., HS-8332's per-status column-view bindLists, which
+ * will derive `ticketsByStatusSignal` from this). The default-list-
+ * view bindList itself switched to `filteredTickets` in HS-8334
+ * (since that's the canonical "what's visible" signal).
  */
 export const ticketsSignal: ReadonlySignal<readonly Ticket[]> = computed(() =>
   ticketsStore.state.value.tickets,
@@ -174,6 +183,77 @@ function ticketMatchesSearch(t: Ticket, lcSearch: string): boolean {
   return t.title.toLowerCase().includes(lcSearch)
     || t.details.toLowerCase().includes(lcSearch)
     || t.ticket_number.toLowerCase().includes(lcSearch);
+}
+
+/**
+ * HS-8334 — per-view narrowing helper. Mirrors the pre-fix
+ * `loadTickets` URL-construction switch (which built the
+ * `?status=...` / `?up_next=...` / `?category=...` / `?priority=...`
+ * query params) plus the pre-fix `loadPreviewTickets` client-side
+ * filter pass. Now a single function, used by both fetch paths.
+ *
+ * Three scope tiers:
+ *
+ * 1. **Cross-scope views** (`trash` / `backlog` / `archive`) —
+ *    narrow to that exact status. For server-fetched data the server
+ *    already returns only that status (we send `?status=trash` etc.),
+ *    so this branch is an identity pass on live data; for the backup
+ *    preview snapshot (which contains every status), it does the
+ *    actual narrowing.
+ *
+ * 2. **Custom views** (`custom:*`) — passthrough. The server's
+ *    `/tickets/query` endpoint already evaluates the view's
+ *    `conditions` / `logic` and returns the exact matched set;
+ *    re-applying client-side narrowing would either double-filter
+ *    (correct but wasteful) or, worse, conflict if the custom
+ *    conditions don't fit one of the known sub-view shapes.
+ *
+ * 3. **Active scope** (`all` / `up-next` / `open` / `completed` /
+ *    `non-verified` / `verified` / `category:*` / `priority:*`) —
+ *    first exclude `deleted` / `backlog` / `archive` (the include
+ *    flags can put backlog or archive back), then apply the
+ *    sub-view's specific narrowing.
+ */
+function applyViewFilter(
+  tickets: readonly Ticket[],
+  view: string,
+  includeBacklog: boolean,
+  includeArchive: boolean,
+): readonly Ticket[] {
+  if (view.startsWith('custom:')) return tickets;
+  if (view === 'trash') return tickets.filter(t => t.status === 'deleted');
+  if (view === 'backlog') return tickets.filter(t => t.status === 'backlog');
+  if (view === 'archive') return tickets.filter(t => t.status === 'archive');
+
+  // Active scope — exclude deleted; backlog/archive in only when the
+  // include flags say so. (Matches the server-side `status=active`
+  // semantics that exclude deleted/backlog/archive by default + the
+  // OR-in of backlog/archive when `include_backlog=true` /
+  // `include_archive=true` query params are set.)
+  const activeScope = tickets.filter(t => {
+    if (t.status === 'deleted') return false;
+    if (t.status === 'backlog') return includeBacklog;
+    if (t.status === 'archive') return includeArchive;
+    return true;
+  });
+
+  if (view === 'up-next') return activeScope.filter(t => t.up_next);
+  if (view === 'open') return activeScope.filter(t => t.status === 'not_started' || t.status === 'started');
+  if (view === 'completed') return activeScope.filter(t => t.status === 'completed');
+  if (view === 'non-verified') {
+    return activeScope.filter(t => t.status === 'not_started' || t.status === 'started' || t.status === 'completed');
+  }
+  if (view === 'verified') return activeScope.filter(t => t.status === 'verified');
+  if (view.startsWith('category:')) {
+    const cat = view.split(':')[1];
+    return activeScope.filter(t => t.category === cat);
+  }
+  if (view.startsWith('priority:')) {
+    const pri = view.split(':')[1];
+    return activeScope.filter(t => t.priority === pri);
+  }
+  // 'all' (or any unrecognised view): full active scope.
+  return activeScope;
 }
 
 /** **TEST ONLY.** Direct handle on the underlying store for unit tests
