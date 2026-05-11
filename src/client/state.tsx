@@ -1,4 +1,5 @@
 import { activeProjectSignal, projectsStore } from './projectsStore.js';
+import { ticketsStore } from './ticketsStore.js';
 
 export interface ProjectInfo {
   name: string;
@@ -238,6 +239,10 @@ export interface AppState {
 }
 
 export const state: AppState = {
+  // HS-8239 (2026-05-11) — `tickets` is installed below as a getter+setter
+  // that delegates to `ticketsStore`. The dummy `[]` here is required by
+  // the type-literal shape but immediately overwritten by the
+  // `Object.defineProperty` call after the object is created.
   tickets: [],
   customViews: [],
   categories: [
@@ -263,6 +268,39 @@ export const state: AppState = {
   viewModeBeforeSearchInclude: null,
   searchExtraCounts: { backlog: 0, archive: 0 },
 };
+
+// HS-8239 (2026-05-11) — §61 Phase 2 data-source flip. `state.tickets` is
+// installed here as a getter+setter that delegates to the kerf
+// `ticketsStore`. All ~82 read sites across 20 client files keep working
+// unchanged — the getter returns the live readonly array (cast to
+// `Ticket[]` to keep the AppState interface byte-identical so the
+// callsite types don't all need to be touched in this atomic flip).
+// All 5 write sites (`ticketList.tsx::loadTickets` × 4 + the inline-edit
+// remove path in `ticketRow.tsx`) go through the setter which calls
+// `ticketsStore.actions.setTickets(value)`. No mixed-source state — the
+// store is the single source of truth.
+//
+// Per the FEEDBACK NEEDED design call on HS-8239 (option b): the
+// `bindList` rewrite of `renderTicketList` + the filter-state migration
+// are deferred to follow-up tickets (HS-XXXX / HS-XXXX). Those follow-
+// ups can land independently because the data source is already
+// unified — they're orthogonal view-layer + filter-state changes, not
+// source-of-truth changes.
+Object.defineProperty(state, 'tickets', {
+  configurable: true,
+  enumerable: true,
+  get(): Ticket[] {
+    // The store keeps `tickets: readonly Ticket[]`; cast back to
+    // `Ticket[]` so the AppState interface contract (`tickets: Ticket[]`)
+    // is satisfied for the 82 callsites. The cast is safe because the
+    // store always replaces the array wholesale via `setTickets` — no
+    // callsite mutates in place.
+    return ticketsStore.state.value.tickets as Ticket[];
+  },
+  set(value: readonly Ticket[]): void {
+    ticketsStore.actions.setTickets(value);
+  },
+});
 
 const LUCIDE_14 = 'xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
 

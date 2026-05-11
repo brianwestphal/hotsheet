@@ -16,6 +16,7 @@ import {
 setSaveTimeout,
 setSuppressFocusSelect,
   suppressFocusSelect, } from './ticketListState.js';
+import { ticketsStore } from './ticketsStore.js';
 import { recordTextChange, trackedDelete, trackedPatch, trackedRestore } from './undo/actions.js';
 
 /** Check if a ticket has pending feedback (last note is a FEEDBACK NEEDED prefix). */
@@ -413,7 +414,11 @@ async function deleteTicketAndFocus(id: number) {
   } else {
     await api(`/tickets/${id}`, { method: 'DELETE' });
   }
-  state.tickets = state.tickets.filter(t => t.id !== id);
+  // HS-8239 — use the typed `removeTicket` action instead of an
+  // imperative `state.tickets = state.tickets.filter(...)`. Matches
+  // `applyServerUpdate` / `optimisticUpdate` in shape so future
+  // single-ticket mutation paths can swap in similarly.
+  ticketsStore.actions.removeTicket(id);
   state.selectedIds.delete(id);
   callRenderTicketList();
 

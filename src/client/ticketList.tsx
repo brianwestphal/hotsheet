@@ -12,6 +12,7 @@ import {
 registerCallbacks,
 setDraftTitle, setSuppressFocusSelect} from './ticketListState.js';
 import { cancelPendingSave as _cancelPendingSave, createPreviewRow, createTicketRow, createTrashRow } from './ticketRow.js';
+import { ticketsStore } from './ticketsStore.js';
 
 // --- Re-exports (preserves the public API of this module) ---
 
@@ -280,7 +281,7 @@ export async function loadTickets() {
     const view = state.customViews.find(v => v.id === viewId);
     if (view) {
       const viewTag = view.tag;
-      state.tickets = await api<Ticket[]>('/tickets/query', {
+      ticketsStore.actions.setTickets(await api<Ticket[]>('/tickets/query', {
         method: 'POST',
         body: {
           logic: view.logic,
@@ -290,9 +291,9 @@ export async function loadTickets() {
           ...(viewTag !== undefined && viewTag !== '' ? { required_tag: viewTag } : {}),
           ...(view.includeArchived === true ? { include_archived: true } : {}),
         },
-      });
+      }));
     } else {
-      state.tickets = [];
+      ticketsStore.actions.setTickets([]);
     }
     renderTicketList();
     return;
@@ -345,7 +346,7 @@ export async function loadTickets() {
   params.set('sort_dir', state.sortDir);
 
   const query = params.toString();
-  state.tickets = await api<Ticket[]>(`/tickets${query ? '?' + query : ''}`);
+  ticketsStore.actions.setTickets(await api<Ticket[]>(`/tickets${query ? '?' + query : ''}`));
   // Fetch sync map before rendering so icons appear on first render
   try {
     setSyncedTicketMap(await api<Record<number, SyncedTicketInfo>>('/sync/tickets'));
@@ -409,7 +410,7 @@ function loadPreviewTickets() {
     );
   }
 
-  state.tickets = tickets;
+  ticketsStore.actions.setTickets(tickets);
   renderTicketList();
 }
 

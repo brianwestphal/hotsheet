@@ -1,6 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
+import { commandLogSelectionStore } from './commandLogSelectionStore.js';
 import {
   type AnnotatedEntry,
   commandLogStore,
@@ -65,11 +66,15 @@ export function getActiveDrawerTab(): string {
   return activeTab;
 }
 
-// --- Selection state (HS-2544) ---
-
-const selectedLogIds = new Set<number>();
-let lastClickedId: number | null = null;
-const expandedEntryIds = new Set<number>();
+// --- Selection state (HS-2544 / HS-8324) ---
+//
+// HS-8324 — selection + expansion state lives in `commandLogSelectionStore`.
+// The legacy `selectedLogIds: Set<number>` + `lastClickedId: number | null`
+// + `expandedEntryIds: Set<number>` are replaced by store reads through
+// `commandLogSelectionStore.state.value.{selected,lastClicked,expanded}`.
+// Per-row effects in `renderEntryRow` flip the `.selected` + `.expanded`
+// classes declaratively; the imperative `updateSelectionClasses()` sweep
+// + the post-shape-rebuild `applyExpansion()` re-apply are gone.
 
 /**
  * HS-7983 — sticky-bottom auto-scroll threshold (px). When the scroll
@@ -125,47 +130,12 @@ export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
   // Commands Log feature. Idempotent — the toast helper short-circuits
   // after the first invocation.
   maybeFireShellStreamFirstUseToast();
-  // HS-8318 — primary write goes to the store; the per-row bindList
-  // effect picks it up and mutates the row's `<pre>` in place. The
-  // legacy DOM-write below is a defence-in-depth fallback that fires
-  // ALSO when the bindList isn't mounted yet (e.g. a chunk arrives
-  // between the drawer-open + first `loadEntries`, or in happy-dom
-  // tests that hand-craft a `<pre data-shell-partial-id>` without
-  // bootstrapping the full bindList). The two writes are idempotent
-  // on the same `<pre>`.
+  // HS-8324 — the per-row bindList effect writes to the `<pre>` in
+  // place when the store's per-entry partial signal fires. No more
+  // legacy DOM-write fallback (HS-8318 retained one for the existing
+  // happy-dom test suite; that suite has been migrated to drive
+  // through bindList).
   commandLogStore.actions.setRunningOutput(detail.id, detail.partial);
-  const container = byIdOrNull('command-log-entries');
-  if (container === null) return;
-  const partialEls = container.querySelectorAll<HTMLElement>(`pre.command-log-shell-partial[data-shell-partial-id="${detail.id}"]`);
-  if (partialEls.length === 0) return;
-  const wasPinned = shouldAutoScrollToBottom(container.scrollTop, container.clientHeight, container.scrollHeight);
-  for (const pre of partialEls) writePartialIntoPre(pre, detail.partial);
-  if (wasPinned) container.scrollTop = container.scrollHeight;
-}
-
-/**
- * HS-8015 → HS-8318 — historically read from a separate module-level
- * `latestPartialOutputs` Map and re-painted every `<pre data-shell-partial-id>`
- * after the wholesale `renderEntries` re-render. Post-HS-8318 the
- * per-row bindList effect keeps the `<pre>`s in sync automatically, so
- * this function is a thin compat that reads from the store's per-entry
- * partial signals and writes to any matching `<pre>` in the DOM.
- * Retained for the existing happy-dom test suite that hand-crafts
- * `<pre data-shell-partial-id>` elements without mounting the bindList.
- */
-export function hydrateRenderedShellPartials(): void {
-  if (!state.settings.shell_streaming_enabled) return;
-  const container = byIdOrNull('command-log-entries');
-  if (container === null) return;
-  const pres = container.querySelectorAll<HTMLElement>('pre.command-log-shell-partial[data-shell-partial-id]');
-  for (const el of pres) {
-    const id = Number(el.dataset.shellPartialId);
-    if (!Number.isFinite(id)) continue;
-    const sigs = getEntrySignals(id);
-    const cached = sigs?.partial.value;
-    if (cached === undefined || cached === '') continue;
-    writePartialIntoPre(el, cached);
-  }
 }
 
 // --- Relative time helper ---
@@ -288,17 +258,6 @@ function showContextMenu(x: number, y: number, entries: LogEntry[]) {
   }, 0);
 }
 
-// --- Selection helpers ---
-
-function updateSelectionClasses() {
-  const container = byIdOrNull('command-log-entries');
-  if (!container) return;
-  for (const el of container.querySelectorAll('.command-log-entry')) {
-    const id = parseInt((el as HTMLElement).dataset.id ?? '0', 10);
-    el.classList.toggle('selected', selectedLogIds.has(id));
-  }
-}
-
 // --- Render entries ---
 
 /** Create the DOM element for a single log entry, including event handlers. */
@@ -334,7 +293,7 @@ function buildLogEntryEl(entry: LogEntry, s: LogEntryRenderState): HTMLElement {
   const time = relativeTime(entry.created_at);
   const { shellParts, displayDetail, preview, hasMore, isRunningShell, isCanceling } = s;
   return toElement(
-    <div className={`command-log-entry${selectedLogIds.has(entry.id) ? ' selected' : ''}`} data-id={String(entry.id)}>
+    <div className="command-log-entry" data-id={String(entry.id)}>
       <div className="command-log-entry-header">
         <span className="command-log-direction" style={`color:${dir.color}`}>{dir.symbol}</span>
         <span className="command-log-type-badge" style={`background:${badgeColor}`}>{badgeLabel}</span>
@@ -418,13 +377,17 @@ function bindStopButtonHandler(el: HTMLElement, entry: LogEntry): void {
  *  full-pre alongside the line-clamped preview. Pre-fix `hasMore`
  *  (computed from the command line alone) was false and the click
  *  did nothing for a running shell. */
-function applyExpansion(el: HTMLElement, entry: LogEntry, hasMore: boolean, isRunningShell: boolean): void {
-  if (!(hasMore || isRunningShell)) return;
-  const isExpanded = el.classList.toggle('expanded');
-  if (isExpanded) expandedEntryIds.add(entry.id); else expandedEntryIds.delete(entry.id);
+/** HS-8324 — apply the current expansion state to a row's inner
+ *  display swaps. Called from the per-row expansion effect; reads
+ *  `expanded` as the desired state rather than toggling a class.
+ *  The pre-fix `hasMore || isRunningShell` gate (decided whether
+ *  expand was meaningful at all) has moved into the click handler
+ *  since the store's expanded-state is only ever set for expandable
+ *  rows. */
+function applyExpansionDisplay(el: HTMLElement, expanded: boolean): void {
   const detailEls = el.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
   const fullEl = el.querySelector<HTMLElement>('.command-log-detail-full');
-  if (isExpanded) {
+  if (expanded) {
     for (const d of detailEls) (d as HTMLElement).style.display = 'none';
     if (fullEl) fullEl.style.display = '';
   } else {
@@ -444,33 +407,36 @@ function bindEntryClickHandler(
     if (target.closest('.command-log-stop-btn')) return;
 
     if (e.metaKey || e.ctrlKey) {
-      if (selectedLogIds.has(entry.id)) selectedLogIds.delete(entry.id);
-      else selectedLogIds.add(entry.id);
-      lastClickedId = entry.id;
-      updateSelectionClasses();
+      commandLogSelectionStore.actions.toggleSelected(entry.id);
       return;
     }
 
-    if (e.shiftKey && lastClickedId !== null) {
-      // HS-8318 — read the current filtered list from the store at click
-      // time so shift+click ranges target the live filter, not a stale
-      // closure capture from row-mount time.
-      const ids = filteredEntriesSignal.value.map(e2 => e2.id);
-      const startIdx = ids.indexOf(lastClickedId);
-      const endIdx = ids.indexOf(entry.id);
-      if (startIdx !== -1 && endIdx !== -1) {
-        const [lo, hi] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
-        for (let idx = lo; idx <= hi; idx++) selectedLogIds.add(ids[idx]);
-        updateSelectionClasses();
-        return;
+    if (e.shiftKey) {
+      const last = commandLogSelectionStore.state.value.lastClicked;
+      if (last !== null) {
+        // HS-8318 — read the current filtered list from the store at click
+        // time so shift+click ranges target the live filter, not a stale
+        // closure capture from row-mount time.
+        const ids = filteredEntriesSignal.value.map(e2 => e2.id);
+        const startIdx = ids.indexOf(last);
+        const endIdx = ids.indexOf(entry.id);
+        if (startIdx !== -1 && endIdx !== -1) {
+          const [lo, hi] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+          commandLogSelectionStore.actions.addToSelection(ids.slice(lo, hi + 1));
+          return;
+        }
       }
     }
 
-    selectedLogIds.clear();
-    selectedLogIds.add(entry.id);
-    lastClickedId = entry.id;
-    updateSelectionClasses();
-    applyExpansion(el, entry, hasMore, isRunningShell);
+    commandLogSelectionStore.actions.selectOnly(entry.id);
+    // Pre-fix `applyExpansion(el, entry, hasMore, isRunningShell)` did
+    // the class-toggle + dataset update inline. With the per-row
+    // expansion effect (HS-8324), the store's expanded-set is the
+    // source of truth: toggle it, the effect picks it up and flips
+    // the row's `.expanded` class + child `display` swaps.
+    if (hasMore || isRunningShell) {
+      commandLogSelectionStore.actions.toggleExpanded(entry.id);
+    }
   });
 }
 
@@ -483,8 +449,9 @@ function bindEntryContextMenu(el: HTMLElement, entry: LogEntry): void {
     // fresh `filtered` Array; post-fix bindList preserves DOM identity
     // so the row's handler closure outlives any single filter pass.
     const filtered = filteredEntriesSignal.value;
-    const entriesToCopy = (selectedLogIds.size > 0 && selectedLogIds.has(entry.id))
-      ? filtered.filter(e2 => selectedLogIds.has(e2.id))
+    const selected = commandLogSelectionStore.state.value.selected;
+    const entriesToCopy = (selected.size > 0 && selected.has(entry.id))
+      ? filtered.filter(e2 => selected.has(e2.id))
       : [entry];
     showContextMenu(e.clientX, e.clientY, entriesToCopy);
   });
@@ -515,9 +482,10 @@ function renderEntryRow(entry: LogEntry): { el: Element; dispose: () => void } {
   // Per-row "shape" effect: when the entry signal value changes
   // structurally (running → done transition, summary edit on a re-fetch),
   // replace the wrapper's inner content + re-attach the click / stop /
-  // context handlers. Selection + expansion classes on the wrapper itself
-  // survive — they live on the outer `<div class="command-log-entry">`,
-  // not on the inner content we rebuild.
+  // context handlers. HS-8324 — the selection + expansion classes are
+  // driven by their own per-row effects below; the shape rebuild here
+  // doesn't need to reapply them (the effects will refire when the
+  // inner DOM changes).
   let firstShapeRun = true;
   const disposeShape = effect(() => {
     const current = sigs?.entry.value ?? entry;
@@ -529,14 +497,30 @@ function renderEntryRow(entry: LogEntry): { el: Element; dispose: () => void } {
     bindEntryClickHandler(wrapper, current, s.hasMore, s.isRunningShell);
     // contextmenu: no need to re-bind — the existing handler already
     // reads `filteredEntriesSignal.value` at click time.
-    // Restore expansion state on the fresh inner content.
-    if (expandedEntryIds.has(current.id)) {
-      wrapper.classList.add('expanded');
-      const detailEls = wrapper.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
-      const fullEl = wrapper.querySelector<HTMLElement>('.command-log-detail-full');
-      for (const d of detailEls) (d as HTMLElement).style.display = 'none';
-      if (fullEl) fullEl.style.display = '';
-    }
+    // The expansion effect below will re-fire and re-apply display
+    // swaps to the fresh inner DOM because `commandLogSelectionStore`'s
+    // expanded set is a stable signal (untouched by the shape change).
+    applyExpansionDisplay(wrapper, commandLogSelectionStore.state.value.expanded.has(current.id));
+  });
+
+  // HS-8324 per-row `.selected` class effect. The pre-fix imperative
+  // `updateSelectionClasses()` swept every row in the DOM after each
+  // click; this effect flips the class only when this row's
+  // membership in `selected` actually changes.
+  const disposeSelected = effect(() => {
+    const isSelected = commandLogSelectionStore.state.value.selected.has(entry.id);
+    wrapper.classList.toggle('selected', isSelected);
+  });
+
+  // HS-8324 per-row `.expanded` class effect. Drives the `.expanded`
+  // class toggle + child `display` swaps off the store. Pre-fix the
+  // `applyExpansion()` call in the click handler did both inline; now
+  // the click handler just calls `commandLogSelectionStore.actions.toggleExpanded(id)`
+  // and this effect reacts.
+  const disposeExpanded = effect(() => {
+    const isExpanded = commandLogSelectionStore.state.value.expanded.has(entry.id);
+    wrapper.classList.toggle('expanded', isExpanded);
+    applyExpansionDisplay(wrapper, isExpanded);
   });
 
   // Per-row partial-output effect: subscribes to the per-entry `partial`
@@ -561,7 +545,7 @@ function renderEntryRow(entry: LogEntry): { el: Element; dispose: () => void } {
 
   return {
     el: wrapper,
-    dispose: () => { disposeShape(); disposePartial(); },
+    dispose: () => { disposeShape(); disposeSelected(); disposeExpanded(); disposePartial(); },
   };
 }
 
@@ -581,6 +565,24 @@ function mountEntriesBindList(): boolean {
     renderEntryRow,
   );
   return true;
+}
+
+/** **HS-8324 — TEST ONLY.** Mount the bindList against a hand-supplied
+ *  container (creates `<div id="command-log-entries">` in `document.body`
+ *  if missing). Returns true once mounted. Production paths go through
+ *  `loadEntries` which calls `mountEntriesBindList()` after the container
+ *  exists in the live DOM. */
+export function _mountEntriesBindListForTesting(): boolean {
+  return mountEntriesBindList();
+}
+
+/** **HS-8324 — TEST ONLY.** Tear down the bindList + its per-row
+ *  effects so consecutive tests start with a clean slate. */
+export function _unmountEntriesBindListForTesting(): void {
+  if (entriesBindListDispose !== null) {
+    try { entriesBindListDispose(); } catch { /* swallow */ }
+    entriesBindListDispose = null;
+  }
 }
 
 // --- Load entries from API ---
@@ -840,14 +842,12 @@ export function showLogEntryById(logId: number) {
     const entry = document.querySelector<HTMLElement>(`.command-log-entry[data-id="${logId}"]`);
     if (entry !== null) {
       entry.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      // Auto-expand if not already
-      if (!entry.classList.contains('expanded')) {
-        entry.click();
-      }
-      // Highlight briefly
-      entry.classList.add('selected');
-      selectedLogIds.clear();
-      selectedLogIds.add(logId);
+      // Auto-expand if not already. HS-8324 — go through the store so
+      // the per-row expansion effect picks it up rather than firing the
+      // click handler (which would also toggle selection).
+      commandLogSelectionStore.actions.setExpanded(logId, true);
+      // Highlight: selecting also pins the range anchor.
+      commandLogSelectionStore.actions.selectOnly(logId);
     }
   }, 500);
 }
@@ -967,7 +967,7 @@ function onSearchInput(value: string) {
 
 async function clearLogEntries() {
   await api('/command-log', { method: 'DELETE' });
-  selectedLogIds.clear();
+  commandLogSelectionStore.actions.clearSelected();
   void loadEntries();
 }
 

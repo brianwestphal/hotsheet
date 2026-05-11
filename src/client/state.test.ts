@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   clearPerProjectSessionState,
@@ -14,7 +14,9 @@ import {
   setProjectGridColumnCount,
   shouldResetStatusOnUpNext,
   state,
+  type Ticket,
 } from './state.js';
+import { _ticketsStoreForTesting, ticketsStore } from './ticketsStore.js';
 
 describe('getCategoryColor', () => {
   it('returns correct colors for all categories', () => {
@@ -237,5 +239,65 @@ describe('per-project drawer grid state (HS-6311)', () => {
     setActiveProject(projB);
     expect(getProjectGridActive('grid-b')).toBe(false);
     expect(getProjectGridColumnCount('grid-b')).toBe(4);
+  });
+});
+
+describe('state.tickets — kerf store delegate (HS-8239)', () => {
+  beforeEach(() => {
+    _ticketsStoreForTesting.reset();
+  });
+
+  afterEach(() => {
+    _ticketsStoreForTesting.reset();
+  });
+
+  function mkTicket(id: number, overrides: Partial<Ticket> = {}): Ticket {
+    return {
+      id,
+      ticket_number: `HS-${id}`,
+      title: `Ticket ${id}`,
+      details: '',
+      category: 'task',
+      priority: 'default',
+      status: 'not_started',
+      up_next: false,
+      created_at: '2026-05-11T00:00:00Z',
+      updated_at: '2026-05-11T00:00:00Z',
+      completed_at: null,
+      verified_at: null,
+      deleted_at: null,
+      notes: '',
+      tags: '[]',
+      last_read_at: null,
+      ...overrides,
+    };
+  }
+
+  it('reading state.tickets returns the store value', () => {
+    ticketsStore.actions.setTickets([mkTicket(1), mkTicket(2)]);
+    expect(state.tickets.map(t => t.id)).toEqual([1, 2]);
+  });
+
+  it('writing state.tickets = X writes through to the store via setTickets', () => {
+    state.tickets = [mkTicket(7), mkTicket(8)];
+    expect(ticketsStore.state.value.tickets.map(t => t.id)).toEqual([7, 8]);
+  });
+
+  it('writes are immediately readable through state.tickets', () => {
+    state.tickets = [mkTicket(42)];
+    expect(state.tickets[0].id).toBe(42);
+  });
+
+  it('writing state.tickets = [] clears via the store', () => {
+    state.tickets = [mkTicket(1)];
+    state.tickets = [];
+    expect(state.tickets).toEqual([]);
+    expect(ticketsStore.state.value.tickets).toEqual([]);
+  });
+
+  it('readonly Array methods on state.tickets (find / filter / map) work normally', () => {
+    state.tickets = [mkTicket(1, { title: 'A' }), mkTicket(2, { title: 'B' })];
+    expect(state.tickets.find(t => t.id === 2)?.title).toBe('B');
+    expect(state.tickets.filter(t => t.title === 'A').map(t => t.id)).toEqual([1]);
   });
 });
