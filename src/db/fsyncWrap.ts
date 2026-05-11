@@ -18,7 +18,7 @@
  *
  * Best-effort. Per-file failures are logged but don't fail the helper.
  */
-import { closeSync, existsSync, fsyncSync, openSync, readdirSync, statSync } from 'fs';
+import { closeSync, existsSync, fsyncSync, openSync, promises as fsp, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
 /**
@@ -27,6 +27,14 @@ import { join } from 'path';
  * module's frozen exports.
  */
 export type FsyncFn = (fd: number) => void;
+
+/**
+ * Async counterpart of `FsyncFn` — HS-8351 added async variants of `fsyncDir`
+ * / `fsyncDbDir` so the fsync syscalls run on libuv's threadpool instead
+ * of the main event loop. Tests inject a stub of this shape.
+ */
+export type AsyncFsyncFn = (handle: fsp.FileHandle) => Promise<void>;
+const defaultAsyncFsyncFn: AsyncFsyncFn = (handle) => handle.sync();
 
 /**
  * Recursively fsync every regular file under `path` to flush pending
@@ -98,4 +106,71 @@ function walkAndFsync(dir: string, counters: { filesFlushed: number; errors: num
  */
 export function fsyncDbDir(dataDir: string, fsyncFn: FsyncFn = fsyncSync): { filesFlushed: number; errors: number } {
   return fsyncDir(join(dataDir, 'db'), fsyncFn);
+}
+
+/**
+ * HS-8351 — async variant of `fsyncDir`. Same recursive walk, same per-file
+ * error tolerance, same return shape — but every `fs.promises` call runs on
+ * libuv's threadpool so the main event loop stays free during the fsync
+ * train. Per HS-8330 freeze.log analysis, the sync `fsyncDbDir` was the #1
+ * cause of event-loop blocking during backup cycles (94% of instrumented
+ * sync stalls; p95 4579 ms across 118 events in 2.5 days). With 9
+ * registered projects serialized through HS-8229's global mutex the chain
+ * blocked the loop for 30-60 s every 5 minutes; the async version makes
+ * that chain invisible to the loop while preserving wall-clock latency +
+ * durability semantics.
+ *
+ * Same `AsyncFsyncFn` injection seam as the sync version's `FsyncFn` so
+ * tests can spy on call counts + simulate failures without monkey-patching
+ * `fs.promises`.
+ */
+export async function fsyncDirAsync(path: string, fsyncFn: AsyncFsyncFn = defaultAsyncFsyncFn): Promise<{ filesFlushed: number; errors: number }> {
+  if (!existsSync(path)) return { filesFlushed: 0, errors: 0 };
+  const counters = { filesFlushed: 0, errors: 0 };
+  await walkAndFsyncAsync(path, counters, fsyncFn);
+  return counters;
+}
+
+async function walkAndFsyncAsync(dir: string, counters: { filesFlushed: number; errors: number }, fsyncFn: AsyncFsyncFn): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(dir);
+  } catch (err) {
+    console.error(`[fsyncWrap] readdir ${dir} failed:`, err);
+    counters.errors++;
+    return;
+  }
+  for (const name of entries) {
+    const p = join(dir, name);
+    let stats;
+    try {
+      stats = await fsp.stat(p);
+    } catch (err) {
+      console.error(`[fsyncWrap] stat ${p} failed:`, err);
+      counters.errors++;
+      continue;
+    }
+    if (stats.isDirectory()) {
+      await walkAndFsyncAsync(p, counters, fsyncFn);
+    } else if (stats.isFile()) {
+      let handle: fsp.FileHandle | null = null;
+      try {
+        handle = await fsp.open(p, 'r');
+        await fsyncFn(handle);
+        counters.filesFlushed++;
+      } catch (err) {
+        console.error(`[fsyncWrap] fsync ${p} failed:`, err);
+        counters.errors++;
+      } finally {
+        if (handle !== null) {
+          try { await handle.close(); } catch { /* handle already invalid */ }
+        }
+      }
+    }
+  }
+}
+
+/** HS-8351 — async counterpart of `fsyncDbDir`. */
+export async function fsyncDbDirAsync(dataDir: string, fsyncFn: AsyncFsyncFn = defaultAsyncFsyncFn): Promise<{ filesFlushed: number; errors: number }> {
+  return fsyncDirAsync(join(dataDir, 'db'), fsyncFn);
 }

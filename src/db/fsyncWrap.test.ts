@@ -18,7 +18,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fsyncDbDir, fsyncDir } from './fsyncWrap.js';
+import type { AsyncFsyncFn } from './fsyncWrap.js';
+import { fsyncDbDir, fsyncDbDirAsync, fsyncDir, fsyncDirAsync } from './fsyncWrap.js';
 
 let tempRoot: string;
 
@@ -179,4 +180,148 @@ describe('fsyncDir against a real PGLite cluster (HS-7935 integration)', () => {
       await db.close();
     }
   }, 60_000);
+});
+
+describe('fsyncDirAsync (HS-8351)', () => {
+  it('fsyncs every regular file via the async syscall path', async () => {
+    writeFileSync(join(tempRoot, 'a.txt'), 'A');
+    writeFileSync(join(tempRoot, 'b.txt'), 'B');
+    writeFileSync(join(tempRoot, 'c.txt'), 'C');
+
+    const fsyncFn = vi.fn<AsyncFsyncFn>(() => Promise.resolve());
+    const stats = await fsyncDirAsync(tempRoot, fsyncFn);
+    expect(stats.filesFlushed).toBe(3);
+    expect(stats.errors).toBe(0);
+    expect(fsyncFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('walks subdirectories recursively', async () => {
+    const sub = join(tempRoot, 'pg_wal');
+    mkdirSync(sub);
+    writeFileSync(join(tempRoot, 'PG_VERSION'), '17');
+    writeFileSync(join(sub, 'segment'), 'wal');
+
+    const fsyncFn = vi.fn<AsyncFsyncFn>(() => Promise.resolve());
+    const stats = await fsyncDirAsync(tempRoot, fsyncFn);
+    expect(stats.filesFlushed).toBe(2);
+    expect(stats.errors).toBe(0);
+  });
+
+  it('tolerates per-file fsync failures without aborting the walk', async () => {
+    writeFileSync(join(tempRoot, 'good.txt'), 'good');
+    writeFileSync(join(tempRoot, 'bad.txt'), 'bad');
+    writeFileSync(join(tempRoot, 'also-good.txt'), 'also good');
+
+    const fsyncFn = vi.fn<AsyncFsyncFn>((handle) => {
+      // Reject for the file we tag — but only for that one
+      const fd = handle.fd;
+      // can't tell which file from the handle alone without extra plumbing,
+      // so the test asserts the count semantics: with 1 rejecting call we
+      // expect 2 successes + 1 error.
+      if (fsyncFn.mock.calls.length === 2) return Promise.reject(new Error('simulated'));
+      void fd;
+      return Promise.resolve();
+    });
+    const stats = await fsyncDirAsync(tempRoot, fsyncFn);
+    expect(stats.filesFlushed).toBe(2);
+    expect(stats.errors).toBe(1);
+  });
+
+  it('walks through symlinks that resolve to files (stat follows links — same as sync version)', async () => {
+    writeFileSync(join(tempRoot, 'real.txt'), 'real');
+    symlinkSync(join(tempRoot, 'real.txt'), join(tempRoot, 'link.txt'));
+
+    const fsyncFn = vi.fn<AsyncFsyncFn>(() => Promise.resolve());
+    const stats = await fsyncDirAsync(tempRoot, fsyncFn);
+    // `fsp.stat` follows symlinks (matches `statSync` semantics); the
+    // helper visits both the real file and the symlink target. The
+    // regression we're protecting against is a thrown error or a hang
+    // — two flushes against the same inode is fine.
+    expect(stats.filesFlushed).toBe(2);
+    expect(stats.errors).toBe(0);
+  });
+
+  it('returns empty stats when the path does not exist', async () => {
+    const ghost = join(tempRoot, 'ghost');
+    const fsyncFn = vi.fn<AsyncFsyncFn>(() => Promise.resolve());
+    const stats = await fsyncDirAsync(ghost, fsyncFn);
+    expect(stats).toEqual({ filesFlushed: 0, errors: 0 });
+    expect(fsyncFn).not.toHaveBeenCalled();
+  });
+
+  it('returns zero filesFlushed for an empty directory', async () => {
+    const empty = join(tempRoot, 'empty');
+    mkdirSync(empty);
+    const fsyncFn = vi.fn<AsyncFsyncFn>(() => Promise.resolve());
+    const stats = await fsyncDirAsync(empty, fsyncFn);
+    expect(stats).toEqual({ filesFlushed: 0, errors: 0 });
+  });
+
+  it('hands the injected fsyncFn a real FileHandle whose fd is a positive integer', async () => {
+    writeFileSync(join(tempRoot, 'leaf.txt'), 'leaf');
+    const fdsSeen: number[] = [];
+    const fsyncFn = vi.fn<AsyncFsyncFn>((handle) => {
+      fdsSeen.push(handle.fd);
+      return Promise.resolve();
+    });
+    await fsyncDirAsync(tempRoot, fsyncFn);
+    expect(fdsSeen).toHaveLength(1);
+    expect(Number.isInteger(fdsSeen[0])).toBe(true);
+    expect(fdsSeen[0]).toBeGreaterThan(0);
+  });
+
+  it('does not block the event loop — setImmediate callbacks scheduled mid-walk fire before the walk resolves', async () => {
+    // Plant enough files that the walk has real work to do.
+    for (let i = 0; i < 50; i++) {
+      writeFileSync(join(tempRoot, `f${i.toString()}.bin`), 'x');
+    }
+
+    let immediateCount = 0;
+    // Inject an fsyncFn that yields control to the event loop between
+    // every file via setImmediate, mirroring real-world threadpool
+    // behavior where each fsync syscall releases the loop.
+    const fsyncFn: AsyncFsyncFn = () => new Promise(resolve => setImmediate(resolve));
+
+    // Start a ticker via setImmediate self-rescheduling. setImmediate
+    // callbacks fire after I/O callbacks within the same loop turn, so
+    // the count strictly tracks the number of turns the loop completed
+    // while the walk was awaiting. If the walk blocked the loop, this
+    // counter would stay at 0.
+    let stop = false;
+    function tick(): void {
+      if (stop) return;
+      immediateCount++;
+      setImmediate(tick);
+    }
+    setImmediate(tick);
+
+    await fsyncDirAsync(tempRoot, fsyncFn);
+    stop = true;
+
+    // 50 files × at least one yield per file → at least 10 loop turns
+    // observed by the ticker. Loose bound so a slow CI box doesn't trip
+    // the test on a couple of dropped ticks.
+    expect(immediateCount).toBeGreaterThan(10);
+  });
+});
+
+describe('fsyncDbDirAsync (HS-8351 convenience wrapper)', () => {
+  it('fsyncs <dataDir>/db/ recursively via the async path', async () => {
+    const dbDir = join(tempRoot, 'db');
+    mkdirSync(dbDir);
+    writeFileSync(join(dbDir, 'PG_VERSION'), '17');
+    mkdirSync(join(dbDir, 'pg_wal'));
+    writeFileSync(join(dbDir, 'pg_wal', 'segment'), 'wal');
+
+    const fsyncFn = vi.fn<AsyncFsyncFn>(() => Promise.resolve());
+    const stats = await fsyncDbDirAsync(tempRoot, fsyncFn);
+    expect(stats.filesFlushed).toBe(2);
+    expect(fsyncFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('is a silent no-op when <dataDir>/db/ does not exist (e.g. pre-init)', async () => {
+    const fsyncFn = vi.fn<AsyncFsyncFn>(() => Promise.resolve());
+    const stats = await fsyncDbDirAsync(tempRoot, fsyncFn);
+    expect(stats).toEqual({ filesFlushed: 0, errors: 0 });
+  });
 });

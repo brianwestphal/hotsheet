@@ -148,16 +148,20 @@ export async function closeAllDatabases(): Promise<void> {
   databases.clear();
   // Lazy-import the fsync helper so test files that mock the module don't
   // have to know about it.
-  const { fsyncDir } = await import('./fsyncWrap.js');
+  // HS-8351 — async variant so the graceful-shutdown fsync doesn't block
+  // the event loop on a slow `<dataDir>/db/` (the main event loop is
+  // mostly idle by this point — server is closing — but adding one
+  // `await` for free correctness is the right shape).
+  const { fsyncDirAsync } = await import('./fsyncWrap.js');
   for (const [dbPath, db] of entries) {
     try {
       await db.close();
     } catch (err) {
       console.error(`[db] close failed for ${dbPath}:`, err);
     }
-    // Best-effort flush. Per-file errors are logged inside fsyncDir.
+    // Best-effort flush. Per-file errors are logged inside fsyncDirAsync.
     try {
-      fsyncDir(dbPath);
+      await fsyncDirAsync(dbPath);
     } catch (err) {
       console.error(`[db] fsync failed for ${dbPath}:`, err);
     }

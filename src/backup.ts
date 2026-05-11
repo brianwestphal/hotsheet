@@ -11,9 +11,9 @@ import {
   writeManifestAtomically,
 } from './attachmentBackup.js';
 import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
-import { fsyncDbDir } from './db/fsyncWrap.js';
+import { fsyncDbDirAsync } from './db/fsyncWrap.js';
 import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from './dbJsonExport.js';
-import { instrumentAsync, instrumentSync } from './diagnostics/freezeLogger.js';
+import { instrumentAsync } from './diagnostics/freezeLogger.js';
 import { getBackupDir } from './file-settings.js';
 
 export interface BackupInfo {
@@ -174,7 +174,14 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     // HS-8160 — wrap fsyncDbDir; on a slow filesystem (e.g. user's
     // Google Drive backupDir per HS-8174) this is the most likely
     // sync-side stall.
-    instrumentSync(dataDir, `fsyncDbDir:backup:${tier}`, () => { fsyncDbDir(dataDir); });
+    // HS-8351 — switched to `fsyncDbDirAsync` + `instrumentAsync` so the
+    // fsync syscalls run on libuv's threadpool instead of blocking the
+    // main event loop. Pre-fix this was the #1 cause of slow-server
+    // banner triggers (94% of instrumented sync stalls per HS-8330
+    // analysis); post-fix the wall-clock latency is unchanged but the
+    // event loop stays free for keystrokes / WS frames / HTTP traffic.
+    // Label preserved so HS-8160 freeze.log analysis still resolves.
+    await instrumentAsync(dataDir, `fsyncDbDir:backup:${tier}`, () => fsyncDbDirAsync(dataDir));
     const blob = await db.dumpDataDir('gzip');
     const buffer = Buffer.from(await blob.arrayBuffer());
 
@@ -211,7 +218,12 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     // tarball.
     try {
       const backupRoot = backupsDir(dataDir);
-      const manifest = await buildAttachmentManifest(db, backupRoot, filename);
+      // HS-8353 — instrument so freeze.log attributes any stall here
+      // to the manifest-build pass instead of leaving it as anonymous
+      // server-heartbeat noise. Includes streaming hashing of every
+      // attachment blob + link-then-copy into the shared store, which
+      // touches every attachment file once per backup.
+      const manifest = await instrumentAsync(dataDir, `attachmentBackup.buildManifest:${tier}`, () => buildAttachmentManifest(db, backupRoot, filename));
       const manifestPath = join(dir, manifestSiblingFilename(filename));
       // HS-8160 / HS-8178 — wrap the attachment-manifest write (write
       // + fsync inside, both async via fs.promises post-HS-8178).
@@ -413,7 +425,10 @@ export async function restoreBackup(dataDir: string, tier: string, filename: str
     if (manifest !== null) {
       const blobsDir = attachmentBlobsDir(backupsDir(dataDir));
       const liveAttachmentsDir = join(dataDir, 'attachments');
-      const restored = await restoreAttachmentsFromManifest(manifest, blobsDir, liveAttachmentsDir);
+      // HS-8353 — instrument the restore-path re-hydration. User-initiated
+      // so blocking is acceptable per HS-8178 scope, but a stall here
+      // would otherwise appear as anonymous server-heartbeat noise.
+      const restored = await instrumentAsync(dataDir, 'attachmentBackup.restoreFromManifest', () => restoreAttachmentsFromManifest(manifest, blobsDir, liveAttachmentsDir));
       // Update each restored attachments row's `stored_path` so it resolves
       // to whatever final filename we landed on (handles the
       // `-restored-<TS>` suffix case).
@@ -486,7 +501,13 @@ export function initBackupScheduler(dataDir: string): void {
   // Runs once; manifests are written by the normal backup path going
   // forward, so re-analysis only matters at boot.
   setTimeout(() => {
-    void reanalyzeMissingManifests(backupsDir(dataDir)).then(stats => {
+    // HS-8353 — instrument the manifest re-analysis pass. Iterates every
+    // historical tarball lacking a manifest sibling + rebuilds it from
+    // the JSON co-save + cross-references sibling manifests' blob shas.
+    // Cross-tier readdir + per-blob hashing makes this the most
+    // expensive single attachmentBackup operation; on a fresh boot with
+    // many historical backups it can run for several seconds.
+    void instrumentAsync(dataDir, 'attachmentBackup.reanalyzeMissingManifests', () => reanalyzeMissingManifests(backupsDir(dataDir))).then(stats => {
       if (stats.rebuilt > 0 || stats.failed > 0) {
         console.log(`[attachmentBackup] reanalyze: rebuilt=${stats.rebuilt} skipped=${stats.skipped} failed=${stats.failed}`);
       }
@@ -501,7 +522,10 @@ export function initBackupScheduler(dataDir: string): void {
   // GC is a no-op when `<backupRoot>/attachments/` doesn't exist (e.g.
   // before any backup has fired) so the startup call is cheap.
   setTimeout(() => {
-    void runAttachmentGc(backupsDir(dataDir)).then(stats => {
+    // HS-8353 — instrument startup orphan GC. Cross-tier scan of every
+    // backup tarball manifest + a readdir of the blob store; on a slow
+    // filesystem this can stall the event loop.
+    void instrumentAsync(dataDir, 'attachmentBackup.orphanGc:startup', () => runAttachmentGc(backupsDir(dataDir))).then(stats => {
       if (stats.deleted > 0) {
         console.log(`[attachmentBackup] GC: reclaimed ${stats.deleted} blob(s), ${(stats.bytesReclaimed / 1024 / 1024).toFixed(2)} MB`);
       }
@@ -510,7 +534,9 @@ export function initBackupScheduler(dataDir: string): void {
     });
   }, 30_000);
   state.attachmentGcInterval = setInterval(() => {
-    void runAttachmentGc(backupsDir(dataDir)).then(stats => {
+    // HS-8353 — instrument daily orphan GC. Same shape as the startup
+    // run but recurring every 24 h.
+    void instrumentAsync(dataDir, 'attachmentBackup.orphanGc:daily', () => runAttachmentGc(backupsDir(dataDir))).then(stats => {
       if (stats.deleted > 0) {
         console.log(`[attachmentBackup] GC: reclaimed ${stats.deleted} blob(s), ${(stats.bytesReclaimed / 1024 / 1024).toFixed(2)} MB`);
       }
