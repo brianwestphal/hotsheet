@@ -1,5 +1,7 @@
 import { spawnSync } from 'child_process';
+import { join } from 'path';
 
+import { instrumentSync } from '../diagnostics/freezeLogger.js';
 import { getGitRoot, isGitRepo } from '../gitignore.js';
 
 /**
@@ -73,6 +75,18 @@ const defaultInvoker: GitInvoker = (args, cwd) => {
  */
 export function getGitStatus(projectRoot: string, invoker: GitInvoker = defaultInvoker): GitStatus | null {
   if (!isGitRepo(projectRoot)) return null;
+  // HS-8362 — instrument the spawnSync chain (up to 5 git invocations
+  // serialized, each a synchronous block while git runs). `dataDir` is
+  // derived from `projectRoot` by the standard `<projectRoot>/.hotsheet`
+  // convention; non-Hot-Sheet projectRoots silently no-op the freeze.log
+  // append because `freezeLogger.appendFreezeLog` catches the directory-
+  // missing error and warns to console without throwing. The label is
+  // `git.getStatus` (no per-project suffix — projectRoot is captured
+  // implicitly by the dataDir routing).
+  return instrumentSync(join(projectRoot, '.hotsheet'), 'git.getStatus', () => getGitStatusUnwrapped(projectRoot, invoker));
+}
+
+function getGitStatusUnwrapped(projectRoot: string, invoker: GitInvoker): GitStatus | null {
   const root = getGitRoot(projectRoot) ?? projectRoot;
 
   const branchRes = invoker(['symbolic-ref', '--short', 'HEAD'], root);
@@ -259,10 +273,17 @@ export interface GitStatusFiles {
  *  a git repo or git fails. */
 export function getGitStatusFiles(projectRoot: string, invoker: GitInvoker = defaultInvoker): GitStatusFiles | null {
   if (!isGitRepo(projectRoot)) return null;
-  const root = getGitRoot(projectRoot) ?? projectRoot;
-  const res = invoker(['status', '--porcelain=v1', '--no-renames', '-z'], root);
-  if (res.status !== 0) return null;
-  return bucketPorcelainFiles(res.stdout);
+  // HS-8362 — single spawnSync (smaller surface than `getGitStatus`'s
+  // 5-call chain), still wrapped for completeness so freeze.log can show
+  // whether the expanded-popover file-list endpoint is contributing to
+  // any observed stall. Triggered on demand by the gitStatusChip popover
+  // click in the sidebar.
+  return instrumentSync(join(projectRoot, '.hotsheet'), 'git.getStatusFiles', () => {
+    const root = getGitRoot(projectRoot) ?? projectRoot;
+    const res = invoker(['status', '--porcelain=v1', '--no-renames', '-z'], root);
+    if (res.status !== 0) return null;
+    return bucketPorcelainFiles(res.stdout);
+  });
 }
 
 /** Pure: parse `git status --porcelain=v1 -z` output into per-bucket file

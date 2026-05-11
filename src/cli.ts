@@ -24,6 +24,22 @@ import { initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
 import { checkForUpdates } from './update-check.js';
 import { getErrorMessage } from './utils/errorMessage.js';
 
+// HS-8361 — bump libuv's threadpool cap from the default 4 to 16. libuv
+// reads UV_THREADPOOL_SIZE lazily on the FIRST `uv_queue_work` call
+// (every `fs.promises` syscall, plus DNS / zlib / crypto async ops); it
+// then allocates threads up to the cap on demand, so the cost is zero
+// until threads are actually needed. Lifts the queueing wall for
+// concurrent fs operations across N registered projects' backup trains
+// (HS-8351 async fsync + HS-8353 instrumented attachment pipeline) — the
+// 5th + concurrent operation no longer waits behind the 4th. ESM module
+// imports do not themselves invoke libuv async work (they load modules
+// synchronously), so setting the env var at the top of cli.ts's body —
+// AFTER imports per ESLint `import/first` but BEFORE any function call —
+// is sufficient. Honors a user override if the env var is already set.
+if (process.env.UV_THREADPOOL_SIZE === undefined || process.env.UV_THREADPOOL_SIZE === '') {
+  process.env.UV_THREADPOOL_SIZE = '16';
+}
+
 /**
  * Handle early exit flags: --close, --list, --version, --help.
  * Returns true if the process should exit.

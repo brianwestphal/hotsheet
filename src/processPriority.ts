@@ -22,10 +22,16 @@
  */
 import { spawnSync } from 'child_process';
 
-/** macOS QoS class names accepted by `taskpolicy -c`. We always pass
- *  `user-interactive` — the highest user-space tier — but the constant
- *  is named so a future ticket can lower the bar (e.g. for a headless
- *  server-only mode where `user-initiated` is more appropriate). */
+/** HS-8358 — kept for documentation / call sites that historically named
+ *  the target QoS class. The macOS `taskpolicy(8)` `-c <clamp>` flag does
+ *  NOT accept QoS class names (only `utility` / `background`) AND is only
+ *  valid on form-1 (wrapping a new program), not form-2 (`-p <pid>`),
+ *  which the original HS-8308 implementation tried to use. The constant
+ *  records what we'd LIKE the running process to be scheduled as; the
+ *  actual taskpolicy invocation below uses `-B -t 0 -l 0 -p <pid>` —
+ *  clear-background + highest throughput tier + best latency tier — which
+ *  is the closest available approximation to `user-interactive` via the
+ *  form-2 interface. */
 export const TASKPOLICY_QOS_CLASS = 'user-interactive';
 
 /** Pure: should this platform attempt a QoS bump? Currently darwin only.
@@ -34,10 +40,21 @@ export function shouldBumpProcessPriority(platform: NodeJS.Platform): boolean {
   return platform === 'darwin';
 }
 
-/** Pure: argv to spawn for the given pid + QoS class. Exported so the
- *  unit test can pin the exact command without invoking `spawnSync`. */
-export function buildTaskpolicyArgs(pid: number, qosClass: string = TASKPOLICY_QOS_CLASS): string[] {
-  return ['-p', String(pid), '-c', qosClass];
+/**
+ * Pure: argv to spawn for the given pid. Exported so the unit test can
+ * pin the exact command without invoking `spawnSync`.
+ *
+ * HS-8358 — the pre-fix form `['-p', '<pid>', '-c', 'user-interactive']`
+ * triggered macOS taskpolicy's "Could not parse 'user-interactive' as a
+ * QoS clamp" + a usage dump on every boot (exit 64). Two bugs in one
+ * call: (1) `-c <clamp>` accepts only `utility` / `background`, never QoS
+ * class names; (2) `-c` is not a valid flag on form-2 (`-p <pid>`) — the
+ * man page restricts form-2 to `[-b|-B] [-t <tier>] [-l <tier>] -p pid`.
+ * Post-fix uses the form-2 maximum-priority combination — clear
+ * background mode + throughput tier 0 (highest) + latency tier 0 (best).
+ */
+export function buildTaskpolicyArgs(pid: number): string[] {
+  return ['-B', '-t', '0', '-l', '0', '-p', String(pid)];
 }
 
 /**
@@ -70,6 +87,6 @@ export function bumpProcessPriorityBestEffort(): boolean {
     console.warn(`[priority] taskpolicy exited ${result.status}${stderr !== '' ? `: ${stderr}` : ''}`);
     return false;
   }
-  console.log(`  Process priority: macOS QoS class set to ${TASKPOLICY_QOS_CLASS}`);
+  console.log(`  Process priority: macOS taskpolicy boost applied (-B -t 0 -l 0, targeting ${TASKPOLICY_QOS_CLASS} equivalent)`);
   return true;
 }

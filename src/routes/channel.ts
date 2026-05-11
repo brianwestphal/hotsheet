@@ -64,6 +64,7 @@ channelRoutes.get('/channel/status', async (c) => {
 
 channelRoutes.post('/channel/trigger', async (c) => {
   const { triggerChannel } = await import('../channel-config.js');
+  const { instrumentAsync } = await import('../diagnostics/freezeLogger.js');
   const dataDir = c.get('dataDir');
   const serverPort = parseInt(new URL(c.req.url).port || '4174', 10);
   const raw: unknown = await c.req.json().catch(() => ({}));
@@ -71,10 +72,19 @@ channelRoutes.post('/channel/trigger', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   channelDoneFlags.delete(c.get('projectSecret')); // Reset done flag on new trigger
   loggedPermissionRequests.clear(); // Reset dedup set for new session
-  // Flush pending markdown syncs so worklist/open-tickets are up to date before Claude reads them
-  const { flushPendingSyncs } = await import('../sync/markdown.js');
-  await flushPendingSyncs(dataDir);
-  const ok = await triggerChannel(dataDir, serverPort, parsed.data.message);
+  // HS-8362 — instrument the heaviest channel route. `triggerChannel` shells
+  // out to spawn the channel server subprocess (or wakes the existing one
+  // over its localhost HTTP port); `flushPendingSyncs` is already covered
+  // by the HS-8360 phase 1 wraps but the outer trigger pass includes the
+  // serial waterfall (sync flush → spawn → log entry) so the route-level
+  // wrap captures the cumulative wall-clock if any of the inner phases
+  // stalls in a way the per-phase instrumentation didn't expect.
+  const ok = await instrumentAsync(dataDir, 'channel.trigger', async () => {
+    // Flush pending markdown syncs so worklist/open-tickets are up to date before Claude reads them
+    const { flushPendingSyncs } = await import('../sync/markdown.js');
+    await flushPendingSyncs(dataDir);
+    return triggerChannel(dataDir, serverPort, parsed.data.message);
+  });
   const summary = parsed.data.message !== undefined && parsed.data.message !== '' ? parsed.data.message.slice(0, 200) : 'Worklist trigger';
   addLogEntry('trigger', 'outgoing', summary, parsed.data.message ?? '').catch(() => {});
   return c.json({ ok });

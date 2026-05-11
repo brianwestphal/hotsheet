@@ -257,6 +257,23 @@ function isManifestEntry(raw: unknown): raw is AttachmentManifestEntry {
  * Per the design, those rows already point at a missing file; there's no
  * blob to capture.
  */
+/**
+ * HS-8359 — yield to the event loop between async hot-path iterations.
+ * `await new Promise<void>(resolve => setImmediate(resolve))` flushes the
+ * I/O phase + timers + the heartbeat watchdog before the next iteration
+ * starts, so a long sequence of CPU-bound `hashFile` calls in the manifest
+ * builder doesn't starve WS frames / HTTP handlers / freeze-log heartbeats
+ * across the whole backup window. Each individual `hashFile` still blocks
+ * the loop for ITS chunk-hash duration (streaming SHA-256's `update(chunk)`
+ * is on-loop work between async I/O yields) — option 2 of the HS-8359
+ * decision; HS-8364 captures the option-1 worker-thread design for the
+ * full-fix follow-up if measurement post-deploy shows option 2 is
+ * insufficient.
+ */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>(resolve => setImmediate(resolve));
+}
+
 export async function buildAttachmentManifest(
   db: AttachmentRowSource,
   backupRoot: string,
@@ -288,6 +305,10 @@ export async function buildAttachmentManifest(
       console.error(`[attachmentBackup] failed to capture attachment ${row.id}:`, err);
       // Skip — single attachment failure must not block the whole manifest.
     }
+    // HS-8359 — drain pending I/O + timers between attachments so the
+    // freeze-log heartbeat / WS frames / HTTP requests aren't starved
+    // across a multi-file backup window.
+    await yieldToEventLoop();
   }
   return {
     schemaVersion: ATTACHMENT_MANIFEST_VERSION,
@@ -578,6 +599,12 @@ async function rebuildManifestFromJsonCosave(
       sha: sha,
       size: size!,
     });
+    // HS-8359 — same yield pattern as `buildAttachmentManifest`. The
+    // boot-time reanalyze pass iterates every historical tarball lacking
+    // a manifest sibling and hashes its live attachments; on a fresh boot
+    // with many historical backups this can run for several seconds —
+    // exactly the surface where loop-starvation hurts most.
+    await yieldToEventLoop();
   }
 
   return {

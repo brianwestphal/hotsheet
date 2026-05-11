@@ -196,6 +196,43 @@ describe('buildAttachmentManifest (HS-7929)', () => {
     expect(m.entries).toHaveLength(1);
     expect(m.entries[0]?.attachmentId).toBe(1);
   });
+
+  it('drains the event loop between attachments (HS-8359 setImmediate yield)', async () => {
+    // Plant enough attachments that the per-iteration yield has a real
+    // signal to count. 30 files × ~hash + ensureBlob = enough iterations
+    // for a self-rescheduling setImmediate ticker to observe loop-turn
+    // progress. Pre-fix the entire loop ran without yielding, so the
+    // ticker observed near-zero ticks across the buildManifest run; post-
+    // fix the explicit yield between iterations means the ticker fires
+    // every loop-turn.
+    const rows: { id: number; ticket_id: number; original_filename: string; stored_path: string }[] = [];
+    for (let i = 0; i < 30; i++) {
+      const p = join(liveAttachmentsDir, `bulk_${i.toString()}.bin`);
+      writeFileSync(p, `payload-${i.toString()}`);
+      rows.push({ id: i + 1, ticket_id: i + 1, original_filename: `bulk_${i.toString()}.bin`, stored_path: p });
+    }
+    const db = makeStubDb(rows);
+
+    let immediateCount = 0;
+    let stop = false;
+    function tick(): void {
+      if (stop) return;
+      immediateCount++;
+      setImmediate(tick);
+    }
+    setImmediate(tick);
+
+    const m = await buildAttachmentManifest(db, backupRoot, 'backup-yield.tar.gz');
+    stop = true;
+
+    expect(m.entries).toHaveLength(30);
+    // 30 files × at least one yield per file → at least ~10 loop turns
+    // observed by the ticker. Loose lower bound so a slow CI box doesn't
+    // trip the test on a couple of dropped ticks. Pre-fix the value
+    // would be near 0 (the only ticks would be the ones between awaited
+    // I/O inside hashFile / ensureBlobInStore which already exist).
+    expect(immediateCount).toBeGreaterThan(10);
+  });
 });
 
 describe('runAttachmentGc (HS-7929)', () => {

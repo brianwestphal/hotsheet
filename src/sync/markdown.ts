@@ -3,6 +3,7 @@ import { join } from 'path';
 
 import { runWithDataDir } from '../db/connection.js';
 import { getAttachments, getCategories, getSettings, getTickets } from '../db/queries.js';
+import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
 import type { Ticket } from '../types.js';
 
@@ -51,8 +52,12 @@ export function scheduleWorklistSync(dir?: string) {
   if (!state) return;
   if (state.worklistTimeout) clearTimeout(state.worklistTimeout);
   state.worklistTimeout = setTimeout(() => {
-    // Run with the correct project's DB context (sync runs outside HTTP request scope)
-    void runWithDataDir(state.dataDir, () => syncWorklist(state));
+    // Run with the correct project's DB context (sync runs outside HTTP request scope).
+    // HS-8360 — instrument so freeze.log attributes any stall to this exact pass
+    // instead of leaving it in the anonymous server-heartbeat bucket. Markdown
+    // sync fires on every ticket mutation (500 ms debounce) and iterates every
+    // Up Next ticket through `formatTicket` + auto-context lookup.
+    void runWithDataDir(state.dataDir, () => instrumentAsync(state.dataDir, 'markdown.syncWorklist', () => syncWorklist(state)));
   }, WORKLIST_DEBOUNCE);
 }
 
@@ -61,7 +66,11 @@ export function scheduleOpenTicketsSync(dir?: string) {
   if (!state) return;
   if (state.openTicketsTimeout) clearTimeout(state.openTicketsTimeout);
   state.openTicketsTimeout = setTimeout(() => {
-    void runWithDataDir(state.dataDir, () => syncOpenTickets(state));
+    // HS-8360 — instrument; the open-tickets sync iterates every open ticket
+    // (potentially hundreds) through `formatTicket` so it's a likely culprit on
+    // projects with large open-ticket sets. 5 s debounce means it fires less
+    // frequently than worklist sync but each pass does more work.
+    void runWithDataDir(state.dataDir, () => instrumentAsync(state.dataDir, 'markdown.syncOpenTickets', () => syncOpenTickets(state)));
   }, OPEN_TICKETS_DEBOUNCE);
 }
 
@@ -79,12 +88,14 @@ export async function flushPendingSyncs(dir?: string): Promise<void> {
   if (state.worklistTimeout) {
     clearTimeout(state.worklistTimeout);
     state.worklistTimeout = null;
-    promises.push(runWithDataDir(state.dataDir, () => syncWorklist(state)));
+    // HS-8360 — same instrumentation as the scheduled path so the flush path
+    // is also visible in freeze.log if it stalls.
+    promises.push(runWithDataDir(state.dataDir, () => instrumentAsync(state.dataDir, 'markdown.syncWorklist:flush', () => syncWorklist(state))));
   }
   if (state.openTicketsTimeout) {
     clearTimeout(state.openTicketsTimeout);
     state.openTicketsTimeout = null;
-    promises.push(runWithDataDir(state.dataDir, () => syncOpenTickets(state)));
+    promises.push(runWithDataDir(state.dataDir, () => instrumentAsync(state.dataDir, 'markdown.syncOpenTickets:flush', () => syncOpenTickets(state))));
   }
   await Promise.all(promises);
 }

@@ -26,10 +26,18 @@ export function startScheduledSync(pluginId: string, intervalMs: number, dataDir
     // Run in the correct project context
     if (dataDir != null && dataDir !== '') {
       const { runWithDataDir } = await import('../db/connection.js');
-      await runWithDataDir(dataDir, async () => {
+      const { instrumentAsync } = await import('../diagnostics/freezeLogger.js');
+      await runWithDataDir(dataDir, () => instrumentAsync(dataDir, `plugin.scheduledSync:${pluginId}`, async () => {
+        // HS-8360 — instrument the scheduled-sync setInterval body.
+        // Pull-from-remote + push-to-remote each issue HTTP calls to the
+        // configured ticketing backend (Linear / GitHub / Plane / etc.);
+        // JSON parsing + conflict resolution + DB writes happen on the
+        // main thread. The interval fires per-plugin per-project so on a
+        // multi-project workstation the cumulative load is the dominant
+        // candidate for the continuous unattributed block stream.
         await reactivatePlugin(pluginId);
         await runSync(pluginId);
-      });
+      }));
     } else {
       void runSync(pluginId);
     }
