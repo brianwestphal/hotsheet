@@ -1,12 +1,12 @@
 import { raw } from '../jsx-runtime.js';
 import { suppressAnimation } from './animate.js';
-import { getCutTicketIds } from './clipboard.js';
+import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { createDraftRow } from './draftRow.js';
 import type { ReadonlySignal } from './reactive.js';
-import { computed } from './reactive.js';
+import { computed, effect } from './reactive.js';
 import { bindList, bindText } from './reactive-bind.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, state, syncedTicketMap } from './state.js';
@@ -15,7 +15,7 @@ import {
   draggedTicketIds, setDraggedTicketIds,
 } from './ticketListState.js';
 import { getIndicatorDotType, showCategoryMenu, showPriorityMenu, toggleUpNext  } from './ticketRow.js';
-import { ticketsByStatusSignal } from './ticketsStore.js';
+import { getTicketSignals, ticketsByStatusSignal } from './ticketsStore.js';
 import { trackedBatch } from './undo/actions.js';
 
 // --- Column scroll state ---
@@ -354,11 +354,18 @@ export function renderColumnView() {
     // Per-column bindList against the derived signal. Surviving row ids
     // preserve DOM identity; status changes move cards between columns
     // (tear down in old column's bindList, fresh create in new column).
+    // HS-8335 — each card installs per-row effects via
+    // `setupColumnCardEffects` so category / priority / up_next /
+    // title in-place edits update the SAME-column card without
+    // requiring a column-view rebuild.
     const bindListDispose = bindList(
       body,
       columnSignal,
       (ticket) => ticket.id,
-      (ticket) => ({ el: createColumnCard(ticket) }),
+      (ticket) => {
+        const el = createColumnCard(ticket);
+        return { el, dispose: setupColumnCardEffects(el, ticket) };
+      },
     );
     columnDisposers.push(bindListDispose);
 
@@ -517,4 +524,132 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
   });
 
   return card;
+}
+
+/**
+ * HS-8335 — `setupColumnCardEffects(card, ticket)` mirrors
+ * `setupTicketRowEffects` from `ticketRow.tsx` but targets the
+ * column-card DOM shape: category badge color + label, priority
+ * indicator color + icon, star button active class + ★/☆ text +
+ * title, `.up-next` / `.cut-pending` classes on the card root,
+ * unread / feedback dot inside `.column-card-title`, title text. The
+ * `status-X` class on the card root is NOT made reactive — a status
+ * change moves the card to a different column (different per-column
+ * signal in `ticketsByStatusSignal`'s consumer), which tears down
+ * the old card and creates a fresh one in the destination column
+ * with the correct `status-X` class at JSX-literal time. The
+ * `.selected` class stays imperative (driven by `state.selectedIds`
+ * via `updateColumnSelectionClasses()`).
+ */
+export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () => void {
+  const sigs = getTicketSignals(ticket.id);
+  if (sigs === undefined) return () => { /* no-op */ };
+
+  const disposers: Array<() => void> = [];
+  let firstRun = true;
+  let lastAppliedTitle: string = ticket.title;
+
+  const catBadge = card.querySelector<HTMLElement>('.ticket-category-badge');
+  const priIndicator = card.querySelector<HTMLElement>('.ticket-priority-indicator');
+  const starBtn = card.querySelector<HTMLElement>('.ticket-star');
+  const titleHost = card.querySelector<HTMLElement>('.column-card-title');
+
+  disposers.push(effect(() => {
+    const t = sigs.ticket.value;
+    if (firstRun) {
+      firstRun = false;
+      lastAppliedTitle = t.title;
+      return;
+    }
+
+    // .up-next class on the card root
+    card.classList.toggle('up-next', t.up_next);
+
+    // Category badge
+    if (catBadge !== null) {
+      const color = getCategoryColor(t.category);
+      if (catBadge.style.backgroundColor !== color) catBadge.style.backgroundColor = color;
+      const label = getCategoryLabel(t.category);
+      if (catBadge.textContent !== label) catBadge.textContent = label;
+    }
+
+    // Priority indicator — color + icon via createContextualFragment
+    if (priIndicator !== null) {
+      const color = getPriorityColor(t.priority);
+      if (priIndicator.style.color !== color) priIndicator.style.color = color;
+      const frag = document.createRange().createContextualFragment(getPriorityIcon(t.priority));
+      priIndicator.replaceChildren(frag);
+    }
+
+    // Star button
+    if (starBtn !== null) {
+      starBtn.classList.toggle('active', t.up_next);
+      const starTitle = t.up_next ? 'Remove from Up Next' : 'Add to Up Next';
+      if (starBtn.getAttribute('title') !== starTitle) starBtn.setAttribute('title', starTitle);
+      const starText = t.up_next ? '★' : '☆';
+      if (starBtn.textContent !== starText) starBtn.textContent = starText;
+    }
+
+    // Column-card title — rebuild children when the title text changes;
+    // otherwise just sync the unread/feedback dot. Column cards have
+    // no inline title editing so there's no cursor / focus state to
+    // preserve through the rebuild.
+    if (titleHost !== null && t.title !== lastAppliedTitle) {
+      rebuildColumnCardTitleHost(titleHost, t);
+      lastAppliedTitle = t.title;
+    } else if (titleHost !== null) {
+      syncColumnCardUnreadDot(titleHost, t);
+    }
+  }));
+
+  // .cut-pending — separate signal, separate effect.
+  disposers.push(effect(() => {
+    const cutIds = cutTicketIdsSignal.value;
+    card.classList.toggle('cut-pending', cutIds.has(ticket.id));
+  }));
+
+  return () => {
+    for (const d of disposers) {
+      try { d(); } catch { /* swallow */ }
+    }
+  };
+}
+
+/** Rebuild `.column-card-title` children — sync icon (if any), unread
+ *  dot (if any), then the title text. Matches the JSX literal
+ *  ordering in `createColumnCard`. */
+function rebuildColumnCardTitleHost(host: HTMLElement, ticket: Ticket): void {
+  host.replaceChildren();
+  if (ticket.id in syncedTicketMap) {
+    host.appendChild(toElement(<span className="ticket-sync-icon">{raw(syncedTicketMap[ticket.id].icon ?? '')}</span>));
+  }
+  const dotType = getIndicatorDotType(ticket);
+  if (dotType !== null) {
+    host.appendChild(toElement(<span className={`ticket-unread-dot${dotType === 'feedback' ? ' feedback' : ''}`}></span>));
+  }
+  host.appendChild(document.createTextNode(ticket.title));
+}
+
+/** Sync the `.ticket-unread-dot` element inside a column-card title
+ *  host without disturbing the surrounding sync-icon / title text. */
+function syncColumnCardUnreadDot(host: HTMLElement, ticket: Ticket): void {
+  const dotType = getIndicatorDotType(ticket);
+  const existing = host.querySelector<HTMLElement>('.ticket-unread-dot');
+  if (dotType === null) {
+    if (existing !== null) existing.remove();
+    return;
+  }
+  if (existing !== null) {
+    existing.classList.toggle('feedback', dotType === 'feedback');
+    return;
+  }
+  const syncIcon = host.querySelector('.ticket-sync-icon');
+  const dot = toElement(<span className={`ticket-unread-dot${dotType === 'feedback' ? ' feedback' : ''}`}></span>);
+  if (syncIcon !== null && syncIcon.nextSibling !== null) {
+    host.insertBefore(dot, syncIcon.nextSibling);
+  } else if (host.firstChild !== null) {
+    host.insertBefore(dot, host.firstChild);
+  } else {
+    host.appendChild(dot);
+  }
 }

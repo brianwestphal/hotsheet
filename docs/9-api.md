@@ -23,6 +23,19 @@ Mutation requests (POST, PATCH, PUT, DELETE) can include an `X-Hotsheet-User-Act
 - Tickets that are currently unread (explicitly marked via "Mark as Unread") retain their unread state.
 - The browser client automatically adds this header to all mutation requests.
 
+### 9.0.2 Project Selection (multi-project instances)
+
+A single Hot Sheet server can host multiple projects. EVERY request — including read-only `GET` calls — must identify which project's data it's reading or it falls back to the default project (the one Hot Sheet was first launched against this process). For an external caller, that fallback is almost never what you want.
+
+Two equivalent ways to identify the project, both checked by the request middleware in `src/server.ts`:
+
+- **`X-Hotsheet-Secret: <secret>` header.** Preferred for `POST` / `PATCH` / `PUT` / `DELETE` (also serves the CSRF check). Use the project's secret from `<dataDir>/.hotsheet/settings.json::secret` or read it from `GET /api/projects`'s `secret` field.
+- **`?project=<secret>` query param.** The Hot Sheet browser client uses this for `GET` requests (since browsers can't trivially add custom headers to `<a href>` / `<img src>` requests, the query-param shape keeps the server-side code path uniform).
+
+If BOTH are present, the header takes precedence. If NEITHER is present, the server falls back to the default project — which for an external caller hitting a multi-project Hot Sheet is almost certainly the wrong project's data.
+
+**Anti-pattern (HS-8340):** authing the `GET /api/tickets/:id` per-id endpoint and the `POST /api/tickets` create endpoint but forgetting to auth `GET /api/tickets` (the LIST endpoint). The LIST endpoint resolves the same way as every other endpoint: no auth → default project. Per-id and POST happen to "work" because the caller authed them; the LIST silently returns the default project's data. Always add the auth (`X-Hotsheet-Secret` header OR `?project=<secret>` query param) to EVERY request that touches per-project data. See `src/routes/multiProjectIsolation.test.ts` for the regression-guard test suite that pins this contract.
+
 ### 9.1 Ticket Endpoints
 
 | Method | Path | Description |

@@ -13,22 +13,27 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { effect } from './reactive.js';
 import type { Ticket } from './state.js';
 import {
+  _clearPerTicketSignalsForTesting,
   _ticketsStoreForTesting,
   DEFAULT_FILTER,
   filteredTickets,
   type FilterState,
+  getTicketSignals,
   ticketsByStatusSignal,
   ticketsStore,
 } from './ticketsStore.js';
 
 beforeEach(() => {
   _ticketsStoreForTesting.reset();
+  _clearPerTicketSignalsForTesting();
 });
 
 afterEach(() => {
   _ticketsStoreForTesting.reset();
+  _clearPerTicketSignalsForTesting();
 });
 
 function makeTicket(id: number, overrides: Partial<Ticket> = {}): Ticket {
@@ -470,5 +475,116 @@ describe('ticketsStore — ticketsByStatusSignal partitioning (HS-8332)', () => 
     ]);
     ticketsStore.actions.patchFilter({ search: 'no-match-zzzz' });
     expect(Object.keys(ticketsByStatusSignal.value)).toEqual([]);
+  });
+});
+
+/**
+ * HS-8335 — per-ticket signal infrastructure. The signal Map lives
+ * outside the store's reactive state so updates to one ticket don't
+ * churn the outer state ref (which would re-fire every consumer of
+ * the store's top-level state + every list-level computed). Each
+ * action that mutates ticket data also reconciles / fires / disposes
+ * the per-ticket signal so the per-row effects in `createTicketRow`
+ * / `createColumnCard` stay in sync.
+ */
+describe('ticketsStore — per-ticket signals (HS-8335)', () => {
+  it('setTickets creates per-ticket signals for each id', () => {
+    ticketsStore.actions.setTickets([makeTicket(1), makeTicket(2)]);
+    expect(getTicketSignals(1)?.ticket.value.id).toBe(1);
+    expect(getTicketSignals(2)?.ticket.value.id).toBe(2);
+  });
+
+  it('getTicketSignals returns undefined for unknown ids', () => {
+    ticketsStore.actions.setTickets([makeTicket(1)]);
+    expect(getTicketSignals(99)).toBeUndefined();
+  });
+
+  it('setTickets preserves signal identity across calls for surviving ids', () => {
+    ticketsStore.actions.setTickets([makeTicket(1, { title: 'Original' })]);
+    const before = getTicketSignals(1);
+    ticketsStore.actions.setTickets([makeTicket(1, { title: 'Updated' })]);
+    const after = getTicketSignals(1);
+    expect(after).toBe(before);
+    expect(after?.ticket.value.title).toBe('Updated');
+  });
+
+  it('setTickets fires the per-ticket signal when reactive fields change', () => {
+    ticketsStore.actions.setTickets([makeTicket(1, { title: 'A' })]);
+    const sigs = getTicketSignals(1);
+    expect(sigs).toBeDefined();
+    let fires = 0;
+    const stop = effect(() => {
+      // Touch the signal to subscribe; skip the initial fire.
+      const _ = sigs!.ticket.value;
+      void _;
+      fires++;
+    });
+    expect(fires).toBe(1);
+    ticketsStore.actions.setTickets([makeTicket(1, { title: 'B' })]);
+    expect(fires).toBe(2);
+    stop();
+  });
+
+  it('setTickets does NOT fire the per-ticket signal when only ignored fields change', () => {
+    ticketsStore.actions.setTickets([makeTicket(1, { title: 'A', details: 'x' })]);
+    const sigs = getTicketSignals(1);
+    let fires = 0;
+    const stop = effect(() => {
+      void sigs!.ticket.value;
+      fires++;
+    });
+    expect(fires).toBe(1);
+    // `details` is NOT in `ticketEqualForRender`'s field list — the
+    // per-ticket signal shouldn't fire for a details-only change.
+    ticketsStore.actions.setTickets([makeTicket(1, { title: 'A', details: 'y' })]);
+    expect(fires).toBe(1);
+    stop();
+  });
+
+  it('setTickets removes signals for ids no longer in the list', () => {
+    ticketsStore.actions.setTickets([makeTicket(1), makeTicket(2)]);
+    expect(getTicketSignals(1)).toBeDefined();
+    expect(getTicketSignals(2)).toBeDefined();
+    ticketsStore.actions.setTickets([makeTicket(1)]);
+    expect(getTicketSignals(1)).toBeDefined();
+    expect(getTicketSignals(2)).toBeUndefined();
+  });
+
+  it('applyServerUpdate fires the per-ticket signal', () => {
+    ticketsStore.actions.setTickets([makeTicket(1, { up_next: false })]);
+    const sigs = getTicketSignals(1);
+    let fires = 0;
+    const stop = effect(() => {
+      void sigs!.ticket.value.up_next;
+      fires++;
+    });
+    expect(fires).toBe(1);
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { up_next: true }));
+    expect(fires).toBe(2);
+    expect(sigs?.ticket.value.up_next).toBe(true);
+    stop();
+  });
+
+  it('optimisticUpdate fires the per-ticket signal', () => {
+    ticketsStore.actions.setTickets([makeTicket(1, { status: 'not_started' })]);
+    const sigs = getTicketSignals(1);
+    let fires = 0;
+    const stop = effect(() => {
+      void sigs!.ticket.value.status;
+      fires++;
+    });
+    expect(fires).toBe(1);
+    ticketsStore.actions.optimisticUpdate(1, { status: 'started' });
+    expect(fires).toBe(2);
+    expect(sigs?.ticket.value.status).toBe('started');
+    stop();
+  });
+
+  it('removeTicket disposes the per-ticket signal', () => {
+    ticketsStore.actions.setTickets([makeTicket(1), makeTicket(2)]);
+    expect(getTicketSignals(1)).toBeDefined();
+    ticketsStore.actions.removeTicket(1);
+    expect(getTicketSignals(1)).toBeUndefined();
+    expect(getTicketSignals(2)).toBeDefined();
   });
 });

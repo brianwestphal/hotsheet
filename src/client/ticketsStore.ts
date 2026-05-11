@@ -28,8 +28,8 @@
  * The intent here is "establish the computed-derived shape;
  * leave the body extension to the atomic-flip ticket."
  */
-import type { ReadonlySignal } from './reactive.js';
-import { computed, defineStore } from './reactive.js';
+import type { ReadonlySignal, Signal } from './reactive.js';
+import { computed, defineStore, signal } from './reactive.js';
 import type { Ticket } from './state.js';
 
 /** Filter state slice used by the `filteredTickets` derived signal +
@@ -70,6 +70,67 @@ export interface TicketsStoreState {
   selectedId: number | null;
 }
 
+/**
+ * HS-8335 (2026-05-11) — per-ticket reactive bundle. Lives outside
+ * the store's `state` object so `setTickets` / `applyServerUpdate` /
+ * `optimisticUpdate` can update one ticket's signal without churning
+ * the outer state reference (which would re-fire every consumer of
+ * the store's top-level state + every list-level computed like
+ * `filteredTickets` / `ticketsByStatusSignal`).
+ *
+ * Modeled on HS-8318's `commandLogStore` per-entry-signals pattern.
+ * Each ticket gets a single `Signal<Ticket>` slot; per-row effects
+ * inside `createTicketRow` / `createColumnCard` subscribe to it and
+ * update the relevant DOM slot (category badge, priority icon, status
+ * button, star, completed/up-next/cut-pending classes, unread dot,
+ * title input). Status changes that move a ticket between columns
+ * are handled by the bindList key-reconcile (different per-column
+ * signal → tear down + create), so the per-ticket signal only drives
+ * SAME-row reactivity.
+ */
+interface TicketSignals {
+  ticket: Signal<Ticket>;
+}
+
+const perTicketSignals = new Map<number, TicketSignals>();
+
+/** Structural equality on the per-row reactive fields. Fields not
+ *  visible to the row's per-row effects (e.g., `details`, `notes`
+ *  arrays, `created_at`) are excluded — they don't drive any DOM
+ *  update so firing the signal for them would be wasted work. */
+function ticketEqualForRender(a: Ticket, b: Ticket): boolean {
+  return a.status === b.status
+    && a.category === b.category
+    && a.priority === b.priority
+    && a.up_next === b.up_next
+    && a.title === b.title
+    && a.ticket_number === b.ticket_number
+    && a.tags === b.tags
+    && a.last_read_at === b.last_read_at
+    && a.updated_at === b.updated_at
+    && a.notes === b.notes;
+}
+
+/** Reconcile the per-ticket signal Map against a new ticket list.
+ *  Surviving ids keep their signals (value updated only if data
+ *  changed); new ids get fresh signals; removed ids drop. */
+function reconcilePerTicketSignals(newTickets: readonly Ticket[]): void {
+  const incoming = new Set(newTickets.map(t => t.id));
+  for (const id of [...perTicketSignals.keys()]) {
+    if (!incoming.has(id)) perTicketSignals.delete(id);
+  }
+  for (const t of newTickets) {
+    const existing = perTicketSignals.get(t.id);
+    if (existing !== undefined) {
+      if (!ticketEqualForRender(existing.ticket.value, t)) {
+        existing.ticket.value = t;
+      }
+    } else {
+      perTicketSignals.set(t.id, { ticket: signal(t) });
+    }
+  }
+}
+
 export const ticketsStore = defineStore({
   initial: (): TicketsStoreState => ({
     tickets: [],
@@ -77,10 +138,12 @@ export const ticketsStore = defineStore({
     selectedId: null,
   }),
   actions: (set, get) => ({
-    /** Replace the entire ticket list. Used by the (future) async
-     *  `loadTickets(force?)` helper in HS-8239 after the API fetch
-     *  resolves. */
+    /** Replace the entire ticket list. Used by the async
+     *  `loadTickets(force?)` helper in `ticketList.tsx` after the API
+     *  fetch resolves. HS-8335: also reconciles the per-ticket signal
+     *  Map (keyed-merge, structural-compare update). */
     setTickets: (tickets: readonly Ticket[]) => {
+      reconcilePerTicketSignals(tickets);
       set({ ...get(), tickets });
     },
     /** Replace the filter wholesale. */
@@ -102,7 +165,9 @@ export const ticketsStore = defineStore({
     },
     /** Apply a server-pushed update for a single ticket. Replaces the
      *  matching entry by id; no-ops if the id isn't in the current
-     *  list (e.g., the ticket was removed mid-fetch). */
+     *  list (e.g., the ticket was removed mid-fetch). HS-8335: also
+     *  fires the per-ticket signal so per-row effects update in
+     *  place. */
     applyServerUpdate: (updated: Ticket) => {
       const current = get();
       // Two-pass to keep the no-op short-circuit free of a `let
@@ -110,12 +175,14 @@ export const ticketsStore = defineStore({
       // `always false` inside the closure context.
       if (!current.tickets.some(t => t.id === updated.id)) return;
       const next = current.tickets.map(t => t.id === updated.id ? updated : t);
+      const sigs = perTicketSignals.get(updated.id);
+      if (sigs !== undefined && !ticketEqualForRender(sigs.ticket.value, updated)) {
+        sigs.ticket.value = updated;
+      }
       set({ ...current, tickets: next });
     },
     /** Drop a ticket from the list by id. No-ops if the id isn't
-     *  present. Matches the existing imperative `removeTicket(id)`
-     *  contract in `ticketList.tsx`. Also clears `selectedId` if it
-     *  was pointing at the dropped ticket. */
+     *  present. HS-8335: also disposes the per-ticket signal. */
     removeTicket: (id: number) => {
       const current = get();
       const nextTickets = current.tickets.filter(t => t.id !== id);
@@ -123,16 +190,25 @@ export const ticketsStore = defineStore({
       const ticketsChanged = nextTickets.length !== current.tickets.length;
       const selectedChanged = nextSelected !== current.selectedId;
       if (!ticketsChanged && !selectedChanged) return;
+      if (ticketsChanged) perTicketSignals.delete(id);
       set({ ...current, tickets: nextTickets, selectedId: nextSelected });
     },
     /** Optimistically merge a patch into the ticket without an
      *  intervening server round-trip. Used for instant-UI flows like
      *  status flip, star toggle, category change — the server reply
-     *  later replaces the ticket via `applyServerUpdate`. */
+     *  later replaces the ticket via `applyServerUpdate`. HS-8335:
+     *  also fires the per-ticket signal so per-row effects update
+     *  before the server round-trip completes. */
     optimisticUpdate: (id: number, patch: Partial<Ticket>) => {
       const current = get();
-      if (!current.tickets.some(t => t.id === id)) return;
-      const next = current.tickets.map(t => t.id === id ? { ...t, ...patch } : t);
+      const existingIdx = current.tickets.findIndex(t => t.id === id);
+      if (existingIdx === -1) return;
+      const merged: Ticket = { ...current.tickets[existingIdx], ...patch };
+      const next = current.tickets.map(t => t.id === id ? merged : t);
+      const sigs = perTicketSignals.get(id);
+      if (sigs !== undefined && !ticketEqualForRender(sigs.ticket.value, merged)) {
+        sigs.ticket.value = merged;
+      }
       set({ ...current, tickets: next });
     },
   }),
@@ -290,7 +366,26 @@ function applyViewFilter(
   return activeScope;
 }
 
+/**
+ * HS-8335 — read-only handle on the per-ticket signal bundle for
+ * `createTicketRow` / `createColumnCard`'s per-row effects. Returns
+ * `undefined` for ids the store doesn't know about (race against a
+ * mid-render GC pass — the bindList key-reconcile holds a strong ref
+ * during the row's lifetime, so this only happens during teardown).
+ */
+export function getTicketSignals(id: number): { ticket: ReadonlySignal<Ticket> } | undefined {
+  return perTicketSignals.get(id);
+}
+
 /** **TEST ONLY.** Direct handle on the underlying store for unit tests
  *  to call `.reset()` between cases. Production code goes through the
  *  named exports above. */
 export const _ticketsStoreForTesting = ticketsStore;
+
+/** **HS-8335 — TEST ONLY.** Clear the per-ticket signal map. The
+ *  store's `.reset()` puts state back to `initial()` but doesn't
+ *  dispose the per-ticket signal Map (which lives outside store
+ *  state). Tests that need a fully-clean slate call this too. */
+export function _clearPerTicketSignalsForTesting(): void {
+  perTicketSignals.clear();
+}

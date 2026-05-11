@@ -1,11 +1,12 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
-import { getCutTicketIds } from './clipboard.js';
+import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { parseJsonArrayOr } from './json.js';
+import { effect } from './reactive.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, getStatusIcon, shouldResetStatusOnUpNext, state, syncedTicketMap, VERIFIED_SVG } from './state.js';
 import {
@@ -16,8 +17,178 @@ import {
 setSaveTimeout,
 setSuppressFocusSelect,
   suppressFocusSelect, } from './ticketListState.js';
-import { ticketsStore } from './ticketsStore.js';
+import { getTicketSignals, ticketsStore } from './ticketsStore.js';
 import { recordTextChange, trackedDelete, trackedPatch, trackedRestore } from './undo/actions.js';
+
+/**
+ * HS-8335 — replace an element's children with the DOM parsed from
+ * an SVG-or-HTML string, without using `innerHTML =` directly (which
+ * the ESLint `no-restricted-syntax` rule from HS-8243 / §62.6 flags
+ * for production client files). `createContextualFragment` parses in
+ * the document's context, which preserves the SVG xmlns from the
+ * source string.
+ */
+function replaceWithSvg(el: Element, html: string): void {
+  const frag = document.createRange().createContextualFragment(html);
+  el.replaceChildren(frag);
+}
+
+/**
+ * HS-8335 (2026-05-11) — per-row reactive effects for `createTicketRow`.
+ * Subscribes to the per-ticket signal exposed by `ticketsStore.ts`
+ * (the kerf signal that fires when a ticket's status / category /
+ * priority / up_next / title / tags / last_read_at / notes /
+ * updated_at change) and the `cutTicketIdsSignal` from `clipboard.ts`,
+ * then mutates the row's DOM slots in place. The returned disposer is
+ * called when the row is removed from the list (via `bindList`'s
+ * per-row dispose hook) so the effects don't leak after row teardown.
+ *
+ * Skipped — `.selected` class: still updated imperatively via
+ * `updateSelectionClasses()` (selection is not part of the per-ticket
+ * signal). Sync icon (`syncedTicketMap`): rarely changes mid-render
+ * and isn't part of the per-ticket signal; pre-existing
+ * `setSyncedTicketMap` triggers `renderTicketList` which is now a
+ * near-no-op, so sync-icon staleness is a separate small bug; not in
+ * HS-8335's scope.
+ */
+export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => void {
+  const sigs = getTicketSignals(ticket.id);
+  if (sigs === undefined) return () => { /* no-op — race with mid-render GC */ };
+
+  const disposers: Array<() => void> = [];
+  let firstRun = true;
+
+  // Track the last-applied title so we know what the server-side state
+  // was at the last effect fire; if the input.value differs from this
+  // AND the user is focused, they're mid-edit and we shouldn't clobber.
+  let lastAppliedTitle: string = ticket.title;
+
+  const catBadge = row.querySelector<HTMLElement>('.ticket-category-badge');
+  const statusBtn = row.querySelector<HTMLElement>('.ticket-status-btn');
+  const titleInput = row.querySelector<HTMLInputElement>('.ticket-title-input');
+  const priIndicator = row.querySelector<HTMLElement>('.ticket-priority-indicator');
+  const starBtn = row.querySelector<HTMLElement>('.ticket-star');
+
+  // Single combined effect — reads sigs.ticket.value once and updates
+  // every dependent DOM slot. Splitting into per-slot effects would
+  // give finer per-field re-fire control, but every field already
+  // funnels through one signal write, so a single effect fires the
+  // same number of times either way. Keeping it consolidated saves
+  // ~7× effect-overhead per row update.
+  disposers.push(effect(() => {
+    const t = sigs.ticket.value;
+    if (firstRun) {
+      // The initial DOM render in the JSX literal below already
+      // reflects the current ticket state — no need to re-write the
+      // same values back. Skipping the first run avoids ~9 DOM writes
+      // per row at mount time on a list of ~100 tickets.
+      firstRun = false;
+      lastAppliedTitle = t.title;
+      return;
+    }
+
+    // .completed class
+    const done = t.status === 'completed' || t.status === 'verified';
+    row.classList.toggle('completed', done);
+
+    // .up-next class
+    row.classList.toggle('up-next', t.up_next);
+
+    // Category badge — color + title attr + textContent
+    if (catBadge !== null) {
+      const color = getCategoryColor(t.category);
+      if (catBadge.style.backgroundColor !== color) catBadge.style.backgroundColor = color;
+      if (catBadge.getAttribute('title') !== t.category) catBadge.setAttribute('title', t.category);
+      const label = getCategoryLabel(t.category);
+      if (catBadge.textContent !== label) catBadge.textContent = label;
+    }
+
+    // Status button — verified class + title attr + icon SVG
+    if (statusBtn !== null) {
+      const isVerified = t.status === 'verified';
+      statusBtn.classList.toggle('verified', isVerified);
+      const statusTitle = t.status.replace('_', ' ');
+      if (statusBtn.getAttribute('title') !== statusTitle) statusBtn.setAttribute('title', statusTitle);
+      replaceWithSvg(statusBtn, isVerified ? VERIFIED_SVG : getStatusIcon(t.status));
+    }
+
+    // Title input — write only when the user isn't editing the input.
+    // Comparing to `lastAppliedTitle` (last server-pushed value) rather
+    // than to `titleInput.value` (current input) lets us detect "server
+    // changed AND user has not made local changes since the last
+    // server-push" — that's when we want to update. If both server and
+    // user changed, the user's edit wins until they blur (which fires
+    // the debounced save, eventually reconciling).
+    if (titleInput !== null) {
+      const newTitle = t.title;
+      const focused = document.activeElement === titleInput;
+      if (newTitle !== lastAppliedTitle && !focused && titleInput.value !== newTitle) {
+        titleInput.value = newTitle;
+      }
+      lastAppliedTitle = newTitle;
+    }
+
+    // Priority indicator — color + title attr + icon SVG
+    if (priIndicator !== null) {
+      const color = getPriorityColor(t.priority);
+      if (priIndicator.style.color !== color) priIndicator.style.color = color;
+      if (priIndicator.getAttribute('title') !== t.priority) priIndicator.setAttribute('title', t.priority);
+      replaceWithSvg(priIndicator, getPriorityIcon(t.priority));
+    }
+
+    // Star button — active class + title attr + ★/☆ text
+    if (starBtn !== null) {
+      starBtn.classList.toggle('active', t.up_next);
+      const starTitle = t.up_next ? 'Remove from Up Next' : 'Add to Up Next';
+      if (starBtn.getAttribute('title') !== starTitle) starBtn.setAttribute('title', starTitle);
+      const starText = t.up_next ? '★' : '☆';
+      if (starBtn.textContent !== starText) starBtn.textContent = starText;
+    }
+
+    // Unread / feedback dot — toggle DOM element presence + variant class
+    syncUnreadDot(row, t);
+  }));
+
+  // Cut-pending class — separate effect because it subscribes to a
+  // different signal (`cutTicketIdsSignal` from `clipboard.ts`), not
+  // the per-ticket signal. Firing the combined effect on cut-state
+  // changes would re-write 8 unrelated DOM slots; isolating this
+  // effect keeps the cut-toggle a single class flip.
+  disposers.push(effect(() => {
+    const cutIds = cutTicketIdsSignal.value;
+    row.classList.toggle('cut-pending', cutIds.has(ticket.id));
+  }));
+
+  return () => {
+    for (const d of disposers) {
+      try { d(); } catch { /* swallow — kerf cleanup */ }
+    }
+  };
+}
+
+/** Insert / update / remove the `.ticket-unread-dot` element on a row
+ *  based on the ticket's current indicator-dot type. The dot's
+ *  presence + variant class are reactive via the parent combined
+ *  effect above. */
+function syncUnreadDot(row: HTMLElement, ticket: Ticket): void {
+  const dotType = getIndicatorDotType(ticket);
+  const existing = row.querySelector<HTMLElement>('.ticket-unread-dot');
+  if (dotType === null) {
+    if (existing !== null) existing.remove();
+    return;
+  }
+  const titleText = dotType === 'feedback' ? 'Feedback needed' : 'Unread changes';
+  if (existing !== null) {
+    existing.classList.toggle('feedback', dotType === 'feedback');
+    if (existing.getAttribute('title') !== titleText) existing.setAttribute('title', titleText);
+    return;
+  }
+  // Insert before the title input (matches the JSX literal ordering).
+  const titleInput = row.querySelector('.ticket-title-input');
+  const dot = toElement(<span className={`ticket-unread-dot${dotType === 'feedback' ? ' feedback' : ''}`} title={titleText}></span>);
+  if (titleInput !== null) row.insertBefore(dot, titleInput);
+  else row.appendChild(dot);
+}
 
 /** Check if a ticket has pending feedback (last note is a FEEDBACK NEEDED prefix). */
 export function hasPendingFeedback(ticket: Ticket): boolean {

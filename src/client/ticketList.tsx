@@ -13,7 +13,7 @@ import {
   draggedTicketIds as _draggedTicketIds,
 registerCallbacks,
 setDraftTitle, setSuppressFocusSelect} from './ticketListState.js';
-import { cancelPendingSave as _cancelPendingSave, createPreviewRow, createTicketRow, createTrashRow } from './ticketRow.js';
+import { cancelPendingSave as _cancelPendingSave, createPreviewRow, createTicketRow, createTrashRow, setupTicketRowEffects } from './ticketRow.js';
 import { filteredTickets, ticketsStore } from './ticketsStore.js';
 
 // --- Re-exports (preserves the public API of this module) ---
@@ -211,12 +211,24 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
   emptyEl.style.display = 'none';
   container.appendChild(emptyEl);
 
+  // HS-8335 — only the `default` variant installs per-row reactive
+  // effects (category badge, priority indicator, status icon, star
+  // button, .completed / .up-next / .cut-pending classes, title input
+  // with edit-guard, unread/feedback dot). Trash + preview rows are
+  // either read-only (preview) or interaction-minimal (trash) — the
+  // mutations that would dirty them are rare enough that the cost of
+  // installing the effect closures isn't justified.
   const factory = rowFactoryFor(variant);
   listViewBindListDispose = bindList(
     rowsContainer,
     filteredTickets,
     (ticket) => ticket.id,
-    (ticket) => ({ el: factory(ticket) }),
+    variant === 'default'
+      ? (ticket) => {
+          const el = factory(ticket);
+          return { el, dispose: setupTicketRowEffects(el, ticket) };
+        }
+      : (ticket) => ({ el: factory(ticket) }),
   );
 
   if (variant !== 'default') {
