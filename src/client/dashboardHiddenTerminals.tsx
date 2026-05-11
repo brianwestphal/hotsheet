@@ -1,16 +1,25 @@
 /**
- * HS-7661 / HS-7825 / HS-7826 / HS-8290 — Hidden-terminal state for both
- * the global Terminal Dashboard (§25) and the per-project Drawer Terminal
- * Grid (§36).
+ * HS-7661 / HS-7825 / HS-7826 / HS-8290 / HS-8319 — Hidden-terminal state
+ * for both the global Terminal Dashboard (§25) and the per-project Drawer
+ * Terminal Grid (§36).
  *
  * **State shape (HS-8290).** Single global `GlobalVisibilityState` —
- * `{ groupings: VisibilityGrouping[], activeId: string }` — held in a
- * module-private variable. Each grouping's `hiddenByProject: Record<secret, string[]>`
- * is the per-project hidden-id store; the grouping list itself + active id
- * are global. Pre-HS-8290 each project had its own `ProjectVisibilityState`
- * stored under `visibility_groupings` in `.hotsheet/settings.json`, which
- * required a cross-project fan-out machinery to keep duplicated grouping
- * lists aligned (§39.7). HS-8290 collapses that into one source of truth.
+ * `{ groupings: VisibilityGrouping[], activeId: string }`. Each grouping's
+ * `hiddenByProject: Record<secret, string[]>` is the per-project hidden-id
+ * store; the grouping list itself + active id are global. Pre-HS-8290 each
+ * project had its own `ProjectVisibilityState` stored under
+ * `visibility_groupings` in `.hotsheet/settings.json`, which required a
+ * cross-project fan-out machinery to keep duplicated grouping lists aligned
+ * (§39.7). HS-8290 collapses that into one source of truth.
+ *
+ * **HS-8319 / §61 Phase 3c (narrowed).** The pre-fix `let globalState` +
+ * `const subscribers: Set<() => void>` bespoke pub/sub has been lifted onto
+ * a kerf `defineStore` in `visibilityGroupingsStore.ts`. This file remains
+ * the public API surface — every export below stays byte-identical for
+ * callers; reads delegate to `visibilityGroupingsStore.state.value`, writes
+ * go through `visibilityGroupingsStore.actions.setState(next)`.
+ * `subscribeToHiddenChanges(handler)` keeps no-fire-on-subscribe semantics
+ * via the skip-first guard inside `subscribeToVisibilityGroupings`.
  *
  * The Default grouping is always present and acts as the post-HS-7825
  * single-grouping compatibility surface — pre-HS-7826 callers that only
@@ -37,7 +46,6 @@ import {
   getActiveGrouping,
   getHiddenIdsForProject,
   type GlobalVisibilityState,
-  initialGlobalState,
   pruneStaleIdsInGroupings,
   renameGrouping as renameGroupingPure,
   reorderGroupings as reorderGroupingsPure,
@@ -46,22 +54,26 @@ import {
   updateGroupingById,
   type VisibilityGrouping,
 } from './visibilityGroupings.js';
+import {
+  _resetSubscribersForTesting,
+  _visibilityGroupingsStoreForTesting,
+  subscribeToVisibilityGroupings,
+  visibilityGroupingsStore,
+} from './visibilityGroupingsStore.js';
 
-let globalState: GlobalVisibilityState = initialGlobalState();
-const subscribers = new Set<() => void>();
-
-function notify(): void {
-  for (const handler of subscribers) {
-    try { handler(); } catch { /* swallow — subscriber callbacks are advisory */ }
-  }
+/** Read the live `GlobalVisibilityState` reference. Internal helper used
+ *  by every read site; matches the pre-HS-8319 raw `globalState` read.
+ *  Note: callers MUST NOT mutate — the store's reference is shared across
+ *  every `effect()` subscriber. Use `setGlobalState` to write. */
+function currentVisibility(): GlobalVisibilityState {
+  return visibilityGroupingsStore.state.value;
 }
 
-/** Replace the global state and fire change notifications when the
- *  reference actually changed. Single source-of-truth for mutations. */
+/** Replace the global state. Matches the pre-HS-8319 single-source-of-truth
+ *  contract; the store action short-circuits a same-reference no-op so a
+ *  redundant call doesn't churn `effect()` subscribers. */
 function setGlobalState(next: GlobalVisibilityState): void {
-  if (globalState === next) return;
-  globalState = next;
-  notify();
+  visibilityGroupingsStore.actions.setState(next);
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +84,7 @@ function setGlobalState(next: GlobalVisibilityState): void {
 /** True when this `(secret, terminalId)` pair is hidden in the active
  *  grouping. */
 export function isTerminalHidden(secret: string, terminalId: string): boolean {
-  const active = getActiveGrouping(globalState);
+  const active = getActiveGrouping(currentVisibility());
   return getHiddenIdsForProject(active, secret).includes(terminalId);
 }
 
@@ -80,22 +92,22 @@ export function isTerminalHidden(secret: string, terminalId: string): boolean {
  *  grouping. Returned set is a copy — mutating it does NOT affect module
  *  state; use `setTerminalHidden` to make changes. */
 export function getHiddenTerminals(secret: string): Set<string> {
-  const active = getActiveGrouping(globalState);
+  const active = getActiveGrouping(currentVisibility());
   return new Set(getHiddenIdsForProject(active, secret));
 }
 
 /** Toggle the hidden state for a `(secret, terminalId)` pair against the
  *  active grouping. */
 export function setTerminalHidden(secret: string, terminalId: string, hide: boolean): void {
-  const active = getActiveGrouping(globalState);
-  const next = updateGroupingById(globalState, active.id, g => toggleHiddenInGrouping(g, secret, terminalId, hide));
+  const active = getActiveGrouping(currentVisibility());
+  const next = updateGroupingById(currentVisibility(), active.id, g => toggleHiddenInGrouping(g, secret, terminalId, hide));
   setGlobalState(next);
 }
 
 /** Filter a TileEntry-like list down to visible-only ids in `secret`'s
  *  active-grouping hidden set. */
 export function filterVisible<T extends { id: string }>(secret: string, entries: T[]): T[] {
-  const active = getActiveGrouping(globalState);
+  const active = getActiveGrouping(currentVisibility());
   const ids = getHiddenIdsForProject(active, secret);
   if (ids.length === 0) return entries;
   const set = new Set(ids);
@@ -104,9 +116,9 @@ export function filterVisible<T extends { id: string }>(secret: string, entries:
 
 /** Clear all hidden state for ONE project's active grouping. */
 export function unhideAllInProject(secret: string): void {
-  const active = getActiveGrouping(globalState);
+  const active = getActiveGrouping(currentVisibility());
   if (getHiddenIdsForProject(active, secret).length === 0) return;
-  const next = updateGroupingById(globalState, active.id, g => {
+  const next = updateGroupingById(currentVisibility(), active.id, g => {
     if ((g.hiddenByProject[secret] ?? []).length === 0) return g;
     const nextByProject: Record<string, string[]> = {};
     for (const [k, v] of Object.entries(g.hiddenByProject)) {
@@ -120,22 +132,25 @@ export function unhideAllInProject(secret: string): void {
 /** Clear hidden state across EVERY project in the active grouping. Used
  *  by the global Terminal Dashboard's "Show all" link. */
 export function unhideAllEverywhere(): void {
-  const active = getActiveGrouping(globalState);
+  const active = getActiveGrouping(currentVisibility());
   if (Object.keys(active.hiddenByProject).length === 0) return;
-  const next = updateGroupingById(globalState, active.id, g => ({ ...g, hiddenByProject: {} }));
+  const next = updateGroupingById(currentVisibility(), active.id, g => ({ ...g, hiddenByProject: {} }));
   setGlobalState(next);
 }
 
-/** Subscribe to hidden-state changes. Returns an unsubscribe function. */
+/** Subscribe to hidden-state changes. Returns an unsubscribe function.
+ *  HS-8319 — thin compat wrapper around `subscribeToVisibilityGroupings`
+ *  (the kerf `effect()`-backed subscribe in `visibilityGroupingsStore.ts`).
+ *  Preserves the pre-HS-8319 no-fire-on-subscribe contract — the handler
+ *  fires only on state changes, never on register. */
 export function subscribeToHiddenChanges(handler: () => void): () => void {
-  subscribers.add(handler);
-  return () => { subscribers.delete(handler); };
+  return subscribeToVisibilityGroupings(handler);
 }
 
 /** Total number of hidden terminals across every project in the active
  *  grouping. */
 export function countHiddenAcrossAllProjects(): number {
-  const active = getActiveGrouping(globalState);
+  const active = getActiveGrouping(currentVisibility());
   let total = 0;
   for (const ids of Object.values(active.hiddenByProject)) total += ids.length;
   return total;
@@ -143,7 +158,7 @@ export function countHiddenAcrossAllProjects(): number {
 
 /** Number of hidden terminals scoped to a single project's active grouping. */
 export function countHiddenForProject(secret: string): number {
-  const active = getActiveGrouping(globalState);
+  const active = getActiveGrouping(currentVisibility());
   return getHiddenIdsForProject(active, secret).length;
 }
 
@@ -166,10 +181,15 @@ export function applyHideButtonBadge(button: HTMLElement | null, count: number):
   if (badge.textContent !== text) badge.textContent = text;
 }
 
-/** Clear ALL state — used by tests so each spec can start clean. */
+/** Clear ALL state — used by tests so each spec can start clean. HS-8319
+ *  delegates the state reset to the kerf store's `.reset()` (which restores
+ *  `initialGlobalState()`); `_resetSubscribersForTesting` then disposes
+ *  every live `subscribeToVisibilityGroupings` subscription so a test that
+ *  forgot to unsub doesn't leak its handler into the next test (matches the
+ *  pre-HS-8319 `subscribers.clear()` semantics). */
 export function _resetForTests(): void {
-  globalState = initialGlobalState();
-  subscribers.clear();
+  _visibilityGroupingsStoreForTesting.reset();
+  _resetSubscribersForTesting();
 }
 
 /**
@@ -201,11 +221,11 @@ export function hydratePersistedGlobalState(state: GlobalVisibilityState): void 
     }),
     activeId: state.activeId,
   };
-  if (globalStateEquals(globalState, sanitised)) return;
+  if (visibilityStateEquals(currentVisibility(), sanitised)) return;
   setGlobalState(sanitised);
 }
 
-function globalStateEquals(a: GlobalVisibilityState, b: GlobalVisibilityState): boolean {
+function visibilityStateEquals(a: GlobalVisibilityState, b: GlobalVisibilityState): boolean {
   if (a.activeId !== b.activeId) return false;
   if (a.groupings.length !== b.groupings.length) return false;
   for (let i = 0; i < a.groupings.length; i++) {
@@ -236,48 +256,48 @@ function globalStateEquals(a: GlobalVisibilityState, b: GlobalVisibilityState): 
 /** Read the current global state. Live state — callers MUST NOT mutate;
  *  use the helpers below to make changes. */
 export function getGlobalVisibilityState(): GlobalVisibilityState {
-  return globalState;
+  return currentVisibility();
 }
 
 /** List the global groupings (display order). */
 export function getGroupings(): VisibilityGrouping[] {
-  return globalState.groupings;
+  return currentVisibility().groupings;
 }
 
 /** Active grouping id. */
 export function getActiveGroupingId(): string {
-  return globalState.activeId;
+  return currentVisibility().activeId;
 }
 
 /** Switch the active grouping. Fires the change subscription so the
  *  dashboard / drawer-grid filter re-applies. */
 export function setActiveGrouping(id: string): void {
-  setGlobalState(setActiveGroupingIdPure(globalState, id));
+  setGlobalState(setActiveGroupingIdPure(currentVisibility(), id));
 }
 
 /** Add a new grouping. Returns the new grouping (so the caller can
  *  immediately switch to it / focus its tab). */
 export function addGrouping(name: string): VisibilityGrouping {
-  const { state: next, grouping } = addGroupingPure(globalState, name);
+  const { state: next, grouping } = addGroupingPure(currentVisibility(), name);
   setGlobalState(next);
   return grouping;
 }
 
 /** Rename a grouping. No-op when name doesn't change after trimming. */
 export function renameGrouping(id: string, name: string): void {
-  setGlobalState(renameGroupingPure(globalState, id, name));
+  setGlobalState(renameGroupingPure(currentVisibility(), id, name));
 }
 
 /** Delete a grouping (Default is refused; activeId falls back to Default
  *  when the deleted grouping was active). */
 export function deleteGrouping(id: string): void {
   if (id === DEFAULT_GROUPING_ID) return;
-  setGlobalState(deleteGroupingPure(globalState, id));
+  setGlobalState(deleteGroupingPure(currentVisibility(), id));
 }
 
 /** Reorder groupings (drag-and-drop) — moves fromId into toId's slot. */
 export function reorderGroupings(fromId: string, toId: string): void {
-  setGlobalState(reorderGroupingsPure(globalState, fromId, toId));
+  setGlobalState(reorderGroupingsPure(currentVisibility(), fromId, toId));
 }
 
 /** Toggle a terminal's hidden state in a SPECIFIC grouping (not necessarily
@@ -289,7 +309,7 @@ export function setTerminalHiddenInGrouping(
   terminalId: string,
   hide: boolean,
 ): void {
-  const next = updateGroupingById(globalState, groupingId, g => toggleHiddenInGrouping(g, secret, terminalId, hide));
+  const next = updateGroupingById(currentVisibility(), groupingId, g => toggleHiddenInGrouping(g, secret, terminalId, hide));
   setGlobalState(next);
 }
 
@@ -300,14 +320,14 @@ export function isTerminalHiddenInGrouping(
   groupingId: string,
   terminalId: string,
 ): boolean {
-  const grouping = globalState.groupings.find(g => g.id === groupingId);
+  const grouping = currentVisibility().groupings.find(g => g.id === groupingId);
   if (grouping === undefined) return false;
   return getHiddenIdsForProject(grouping, secret).includes(terminalId);
 }
 
 /** Clear hidden state for `secret` in a SPECIFIC grouping. */
 export function unhideAllInGrouping(secret: string, groupingId: string): void {
-  const next = updateGroupingById(globalState, groupingId, g => {
+  const next = updateGroupingById(currentVisibility(), groupingId, g => {
     if (!Object.prototype.hasOwnProperty.call(g.hiddenByProject, secret)) return g;
     if (g.hiddenByProject[secret].length === 0) return g;
     const nextByProject: Record<string, string[]> = {};
@@ -321,7 +341,7 @@ export function unhideAllInGrouping(secret: string, groupingId: string): void {
 
 /** Clear hidden state across EVERY project in a SPECIFIC grouping. */
 export function unhideAllEverywhereInGrouping(groupingId: string): void {
-  const next = updateGroupingById(globalState, groupingId, g => {
+  const next = updateGroupingById(currentVisibility(), groupingId, g => {
     if (Object.keys(g.hiddenByProject).length === 0) return g;
     return { ...g, hiddenByProject: {} };
   });
@@ -336,7 +356,7 @@ export function hideAllInGrouping(
   terminalIds: readonly string[],
 ): void {
   if (terminalIds.length === 0) return;
-  const next = updateGroupingById(globalState, groupingId, g => {
+  const next = updateGroupingById(currentVisibility(), groupingId, g => {
     let updated = g;
     for (const id of terminalIds) {
       updated = toggleHiddenInGrouping(updated, secret, id, true);
@@ -355,9 +375,9 @@ export function hideAllInGrouping(
  */
 export function pruneHiddenForProject(secret: string, knownIds: readonly string[]): void {
   const knownSet = new Set(knownIds);
-  const pruned = pruneStaleIdsInGroupings(globalState.groupings, secret, knownSet);
+  const pruned = pruneStaleIdsInGroupings(currentVisibility().groupings, secret, knownSet);
   if (pruned === null) return;
-  setGlobalState({ groupings: pruned, activeId: globalState.activeId });
+  setGlobalState({ groupings: pruned, activeId: currentVisibility().activeId });
 }
 
 /**
@@ -370,7 +390,7 @@ export function pruneHiddenForProject(secret: string, knownIds: readonly string[
  * hidden in every non-Default grouping. Exported for unit tests.
  */
 export function hideNewTerminalInNonDefaultGroupings(secret: string, terminalId: string): void {
-  const groupings = globalState.groupings.map(g => {
+  const groupings = currentVisibility().groupings.map(g => {
     if (g.id === DEFAULT_GROUPING_ID) return g;
     const current = g.hiddenByProject[secret] ?? [];
     if (current.includes(terminalId)) return g;
@@ -379,7 +399,7 @@ export function hideNewTerminalInNonDefaultGroupings(secret: string, terminalId:
       hiddenByProject: { ...g.hiddenByProject, [secret]: [...current, terminalId] },
     };
   });
-  const anyChanged = groupings.some((g, i) => g !== globalState.groupings[i]);
+  const anyChanged = groupings.some((g, i) => g !== currentVisibility().groupings[i]);
   if (!anyChanged) return;
-  setGlobalState({ groupings, activeId: globalState.activeId });
+  setGlobalState({ groupings, activeId: currentVisibility().activeId });
 }

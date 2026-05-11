@@ -215,6 +215,19 @@ export function getMinimizedPermissionSecrets(): Set<string> {
   return secrets;
 }
 
+/** HS-8323 — strip the `.permission-highlight` class from a project's
+ *  tab (the light-blue rounded-pill background applied while a permission
+ *  popup is mounted). Looked up fresh by `data-secret` rather than via a
+ *  closure-captured DOM ref so a tab strip re-render between popup-mount
+ *  and popup-dismiss can't leave a stale node receiving the cleanup.
+ *  No-op when `secret` is null or the matching tab isn't in the DOM (the
+ *  removal target is the LIVE node, not the one captured at mount time). */
+function clearTabPermissionHighlight(secret: string | null): void {
+  if (secret === null) return;
+  const tab = document.querySelector<HTMLElement>(`.project-tab[data-secret="${secret}"]`);
+  if (tab !== null) tab.classList.remove('permission-highlight');
+}
+
 /** HS-8183 — number of consecutive polls in which `state.permissionState.activePopupRequestId`
  *  must be missing from `data.permissions` before the auto-dismiss path
  *  fires. Pre-fix the auto-dismiss fired on the first missed poll, which
@@ -277,6 +290,13 @@ export function processPermissionPollResponse(data: PermissionPollResponse): voi
         // there should never be more than one in DOM, but cheap
         // insurance).
         document.querySelectorAll('.permission-popup').forEach(el => el.remove());
+        // HS-8323 — strip the `.permission-highlight` class from the
+        // owner tab BEFORE clearing `activePopupOwnerSecret`. Pre-fix
+        // the auto-dismiss path released the checkout + removed the
+        // popup DOM + cleared the state slots but never stripped the
+        // tab's blue-pill background; symptom = the user comes back
+        // to find a previously-active tab "stuck" looking active.
+        clearTabPermissionHighlight(permissionState.activePopupOwnerSecret);
         permissionState.activePopupRequestId = null;
         permissionState.activePopupOwnerSecret = null;
         permissionState.autoDismissMissCount = 0;
@@ -584,6 +604,12 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   try {
     showPermissionPopupBody(secret, perm);
   } catch (err) {
+    // HS-8323 — strip the `.permission-highlight` class before clearing
+    // the owner secret so a partial-mount throw (line 612 added the class
+    // before the body finished mounting) doesn't strand the tab in the
+    // blue-pill state. Mirrors the same defensive removal in the auto-
+    // dismiss + `clearPopupOnly` paths.
+    clearTabPermissionHighlight(permissionState.activePopupOwnerSecret);
     permissionState.activePopupRequestId = null;
     permissionState.activePopupOwnerSecret = null;
     releaseActiveCheckoutIfAny();
@@ -786,7 +812,13 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   function clearPopupOnly() {
     permissionState.activePopupRequestId = null;
     permissionState.activePopupOwnerSecret = null;
-    if (tab) tab.classList.remove('permission-highlight');
+    // HS-8323 — fresh lookup by data-secret instead of using the
+    // closure-captured `tab` ref. The tab strip's bindList (HS-8235 /
+    // HS-8317) preserves DOM identity per secret in the common case, but
+    // a multi → single → multi project-count transition tears down + re-
+    // creates rows, leaving the closure-captured ref detached. Fresh
+    // lookup targets the LIVE node either way.
+    clearTabPermissionHighlight(secret);
   }
 
   function cleanupAndDismiss() {

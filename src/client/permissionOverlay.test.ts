@@ -735,6 +735,95 @@ describe('processPermissionPollResponse — channel-unreachable signaling (HS-82
   });
 });
 
+describe('processPermissionPollResponse — `.permission-highlight` tab cleanup (HS-8323)', () => {
+  // HS-8323 — user reported a project tab stuck with the light-blue rounded-pill
+  // background after the permission popup auto-dismissed. Root cause: the
+  // auto-dismiss path in `processPermissionPollResponse` removed the popup DOM
+  // + cleared the state slots but never stripped `.permission-highlight` from
+  // the owner tab. `clearPopupOnly()` (the normal-dismiss / minimize / respond
+  // paths) DID remove the class, but the polling-loop auto-dismiss is a
+  // separate teardown that didn't share the cleanup. Same gap also existed in
+  // the partial-mount throw recovery in `showPermissionPopup`. Fix: a shared
+  // `clearTabPermissionHighlight(secret)` helper called from every teardown
+  // path, with a fresh `data-secret` lookup so a tab-strip re-render between
+  // popup-mount and popup-dismiss doesn't leak a stale node.
+  //
+  // Test fixture: drop a `<div class="project-tab" data-secret="secret-A">`
+  // into the DOM before each test so the helper has something to find.
+
+  function installProjectTab(secret: string): HTMLElement {
+    const tab = document.createElement('div');
+    tab.className = 'project-tab';
+    tab.dataset.secret = secret;
+    document.body.appendChild(tab);
+    return tab;
+  }
+
+  it('strips .permission-highlight from the owner tab on auto-dismiss', () => {
+    const tab = installProjectTab('secret-A');
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makePerm() },
+      v: 1,
+    });
+    expect(tab.classList.contains('permission-highlight')).toBe(true);
+
+    processPermissionPollResponse({ permissions: { 'secret-A': null }, v: 2 });
+    processPermissionPollResponse({ permissions: { 'secret-A': null }, v: 3 });
+
+    expect(document.querySelector('.permission-popup')).toBeNull();
+    expect(tab.classList.contains('permission-highlight')).toBe(false);
+  });
+
+  it('strips .permission-highlight on the normal-dismiss path too (regression test for `clearPopupOnly` lookup)', () => {
+    const tab = installProjectTab('secret-A');
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makePerm() },
+      v: 1,
+    });
+    expect(tab.classList.contains('permission-highlight')).toBe(true);
+
+    // Simulate the user clicking "No response needed" (the shell's onClose
+    // callback runs `cleanupAndDismiss` which routes through `clearPopupOnly`).
+    document.querySelector<HTMLElement>('.dialog-shell-close')?.click();
+
+    expect(tab.classList.contains('permission-highlight')).toBe(false);
+  });
+
+  it('does NOT strip .permission-highlight on a transient unreachable poll (counter does not tick)', () => {
+    const tab = installProjectTab('secret-A');
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makePerm() },
+      v: 1,
+    });
+    expect(tab.classList.contains('permission-highlight')).toBe(true);
+
+    // Owner missing from response → transient unreachable per HS-8207. The
+    // popup must NOT tear down, and the tab must KEEP its highlight class.
+    processPermissionPollResponse({ permissions: {}, v: 2 });
+
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(tab.classList.contains('permission-highlight')).toBe(true);
+  });
+
+  it('cleanup is targeted — a SECOND project tab with no highlight stays untouched', () => {
+    const tabA = installProjectTab('secret-A');
+    const tabB = installProjectTab('secret-B');
+    // tabB starts with no highlight; it must stay clean across the whole flow.
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makePerm() },
+      v: 1,
+    });
+    expect(tabA.classList.contains('permission-highlight')).toBe(true);
+    expect(tabB.classList.contains('permission-highlight')).toBe(false);
+
+    processPermissionPollResponse({ permissions: { 'secret-A': null }, v: 2 });
+    processPermissionPollResponse({ permissions: { 'secret-A': null }, v: 3 });
+
+    expect(tabA.classList.contains('permission-highlight')).toBe(false);
+    expect(tabB.classList.contains('permission-highlight')).toBe(false);
+  });
+});
+
 describe('showPermissionPopup — checkout dim pass-through (HS-8207)', () => {
   // HS-8207 — when the popup borrows the live xterm via §54 checkout,
   // it must pass the EXISTING entry's dims so the swap-time
