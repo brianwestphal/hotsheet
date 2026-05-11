@@ -11,7 +11,7 @@ import {
   manifestSiblingFilename,
   readManifest,
 } from './attachmentBackup.js';
-import { _resetGlobalBackupLockForTesting, type BackupInfo, createBackup, findOverdueTiers, listBackups, triggerMissedBackups, withGlobalBackupLock } from './backup.js';
+import { _resetGlobalBackupLockForTesting, type BackupInfo, createBackup, findOverdueTiers, jitteredFirstTickMs, listBackups, triggerMissedBackups, withGlobalBackupLock } from './backup.js';
 import { addAttachment } from './db/attachments.js';
 import { getDb, SCHEMA_VERSION } from './db/connection.js';
 import { createTicket } from './db/queries.js';
@@ -340,6 +340,53 @@ describe('withGlobalBackupLock (HS-8229)', () => {
       return 42;
     });
     expect(result).toBe(42);
+  });
+});
+
+describe('jitteredFirstTickMs (HS-8352)', () => {
+  const FIVE_MIN_MS = 5 * 60 * 1000;
+
+  it('returns intervalMs * 0.5 when rng() === 0', () => {
+    expect(jitteredFirstTickMs(FIVE_MIN_MS, () => 0)).toBe(FIVE_MIN_MS * 0.5);
+  });
+
+  it('returns intervalMs * 1.5 when rng() === 0.9999... (sup bound)', () => {
+    // 0.9999... → 1.4999..., rounded to 449_970 ms for a 5-min interval.
+    const result = jitteredFirstTickMs(FIVE_MIN_MS, () => 0.9999);
+    expect(result).toBeGreaterThan(FIVE_MIN_MS * 1.49);
+    expect(result).toBeLessThan(FIVE_MIN_MS * 1.5);
+  });
+
+  it('returns intervalMs * 1.0 when rng() === 0.5 (median)', () => {
+    expect(jitteredFirstTickMs(FIVE_MIN_MS, () => 0.5)).toBe(FIVE_MIN_MS);
+  });
+
+  it('stays inside [intervalMs * 0.5, intervalMs * 1.5] across 1000 real-Math.random samples', () => {
+    const lo = FIVE_MIN_MS * 0.5;
+    const hi = FIVE_MIN_MS * 1.5;
+    for (let i = 0; i < 1000; i++) {
+      const v = jitteredFirstTickMs(FIVE_MIN_MS);
+      expect(v).toBeGreaterThanOrEqual(lo);
+      expect(v).toBeLessThanOrEqual(hi);
+    }
+  });
+
+  it('spreads samples across the window — 1000 draws cover the full range', () => {
+    // Sanity check that we're getting actual jitter, not a degenerate
+    // constant: bucket 1000 draws into the lower / middle / upper third
+    // of the [0.5, 1.5] window and assert each bucket has hits.
+    const lowerEdge = FIVE_MIN_MS * (0.5 + 1 / 3);
+    const upperEdge = FIVE_MIN_MS * (0.5 + 2 / 3);
+    let lower = 0, middle = 0, upper = 0;
+    for (let i = 0; i < 1000; i++) {
+      const v = jitteredFirstTickMs(FIVE_MIN_MS);
+      if (v < lowerEdge) lower++;
+      else if (v < upperEdge) middle++;
+      else upper++;
+    }
+    expect(lower).toBeGreaterThan(0);
+    expect(middle).toBeGreaterThan(0);
+    expect(upper).toBeGreaterThan(0);
   });
 });
 

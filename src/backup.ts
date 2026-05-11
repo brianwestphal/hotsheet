@@ -448,12 +448,36 @@ export async function restoreBackup(dataDir: string, tier: string, filename: str
   }
 }
 
-function scheduleFiveMinBackup(dataDir: string): void {
+/**
+ * HS-8352 — random-jitter scaler for the first 5-min tick. Pre-fix every
+ * project boots its scheduler at the same hard-coded `+10 s` offset from
+ * `initBackupScheduler`, then schedules the first regular tick at exactly
+ * `intervalMs`. On a workstation with N registered projects the result is
+ * N backups queued head-to-tail every 5 min, all contending for the
+ * HS-8229 global mutex + the libuv threadpool. Jittering the first tick
+ * across `[0.5x, 1.5x]` of `intervalMs` spreads the projects over a
+ * 2.5-7.5 min window; subsequent ticks are scheduled from inside
+ * `createBackup(...).then()`, so each project's completion time becomes
+ * its own offset and the steady-state cadence stays spread.
+ *
+ * `rng` is injected so tests can pin `Math.random()` without monkey-
+ * patching the global. Default uses `Math.random` per HS-8330's
+ * recommendation (option 1: simpler than hash-based deterministic offset,
+ * indistinguishable in practice).
+ */
+export function jitteredFirstTickMs(intervalMs: number, rng: () => number = Math.random): number {
+  return Math.round(intervalMs * (0.5 + rng()));
+}
+
+function scheduleFiveMinBackup(dataDir: string, options: { jitter?: boolean; rng?: () => number } = {}): void {
   const state = getOrCreateState(dataDir);
   if (state.fiveMinTimer) clearTimeout(state.fiveMinTimer);
+  const delayMs = options.jitter === true
+    ? jitteredFirstTickMs(TIERS['5min'].intervalMs, options.rng)
+    : TIERS['5min'].intervalMs;
   state.fiveMinTimer = setTimeout(() => {
     void createBackup(dataDir, '5min').then(() => scheduleFiveMinBackup(dataDir));
-  }, TIERS['5min'].intervalMs);
+  }, delayMs);
 }
 
 /** Trigger an immediate 5-min tier backup and reset the timer. Returns null if one is already in progress. */
@@ -486,7 +510,13 @@ export function initBackupScheduler(dataDir: string): void {
   // fires for a typical dev workstation. The catch-up creates one
   // backup per overdue tier (5min, hourly, daily) sequentially.
   setTimeout(() => {
-    void triggerMissedBackups(dataDir).then(() => scheduleFiveMinBackup(dataDir));
+    // HS-8352 — jitter the FIRST regular 5-min tick across [0.5x, 1.5x]
+    // of intervalMs so a multi-project workstation spreads its backup
+    // train across a 2.5-7.5 min window instead of clustering every
+    // project on the same offset-from-boot. Subsequent ticks recurse
+    // via `createBackup(...).then(() => scheduleFiveMinBackup(dataDir))`
+    // without jitter — the completion-time offset preserves the spread.
+    void triggerMissedBackups(dataDir).then(() => scheduleFiveMinBackup(dataDir, { jitter: true }));
   }, 10_000);
 
   // Recurring hourly + daily intervals keep firing while the process is
