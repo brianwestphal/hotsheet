@@ -301,3 +301,63 @@ describe('state.tickets — kerf store delegate (HS-8239)', () => {
     expect(state.tickets.filter(t => t.title === 'A').map(t => t.id)).toEqual([1]);
   });
 });
+
+describe('state filter-state — kerf store delegate (HS-8327)', () => {
+  beforeEach(() => {
+    _ticketsStoreForTesting.reset();
+  });
+
+  afterEach(() => {
+    _ticketsStoreForTesting.reset();
+  });
+
+  it('reading state.view returns the store filter.view', () => {
+    ticketsStore.actions.patchFilter({ view: 'completed' });
+    expect(state.view).toBe('completed');
+  });
+
+  it('writing state.view writes through patchFilter', () => {
+    state.view = 'verified';
+    expect(ticketsStore.state.value.filter.view).toBe('verified');
+  });
+
+  it('reading state.search returns the store filter.search', () => {
+    ticketsStore.actions.patchFilter({ search: 'hello' });
+    expect(state.search).toBe('hello');
+  });
+
+  it('writing state.search writes through patchFilter', () => {
+    state.search = 'world';
+    expect(ticketsStore.state.value.filter.search).toBe('world');
+  });
+
+  it('writing state.includeBacklogInSearch + state.includeArchiveInSearch writes through', () => {
+    state.includeBacklogInSearch = true;
+    state.includeArchiveInSearch = true;
+    expect(ticketsStore.state.value.filter.includeBacklogInSearch).toBe(true);
+    expect(ticketsStore.state.value.filter.includeArchiveInSearch).toBe(true);
+  });
+
+  it('the four filter fields are independently settable (one does not clobber another)', () => {
+    state.view = 'up-next';
+    state.search = 'aaa';
+    state.includeBacklogInSearch = true;
+    state.includeArchiveInSearch = true;
+    expect(state.view).toBe('up-next');
+    expect(state.search).toBe('aaa');
+    expect(state.includeBacklogInSearch).toBe(true);
+    expect(state.includeArchiveInSearch).toBe(true);
+  });
+
+  it('reset() restores all four filter fields to their defaults', () => {
+    state.view = 'completed';
+    state.search = 'foo';
+    state.includeBacklogInSearch = true;
+    state.includeArchiveInSearch = true;
+    _ticketsStoreForTesting.reset();
+    expect(state.view).toBe('all');
+    expect(state.search).toBe('');
+    expect(state.includeBacklogInSearch).toBe(false);
+    expect(state.includeArchiveInSearch).toBe(false);
+  });
+});

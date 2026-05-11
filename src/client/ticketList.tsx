@@ -4,6 +4,7 @@ import { renderColumnView, renderPreviewColumnView, updateColumnSelectionClasses
 import { syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
+import { bindList } from './reactive-bind.js';
 import { renderSearchExtraRows } from './searchExtraRows.js';
 import type { SyncedTicketInfo,Ticket  } from './state.js';
 import { setSyncedTicketMap, state } from './state.js';
@@ -12,7 +13,7 @@ import {
 registerCallbacks,
 setDraftTitle, setSuppressFocusSelect} from './ticketListState.js';
 import { cancelPendingSave as _cancelPendingSave, createPreviewRow, createTicketRow, createTrashRow } from './ticketRow.js';
-import { ticketsStore } from './ticketsStore.js';
+import { ticketsSignal, ticketsStore } from './ticketsStore.js';
 
 // --- Re-exports (preserves the public API of this module) ---
 
@@ -55,6 +56,70 @@ function canUseColumnView(): boolean {
   return view !== 'completed' && view !== 'verified' && view !== 'trash' && view !== 'backlog' && view !== 'archive';
 }
 
+/**
+ * HS-8331 / §61 Phase 2 default-list-view bindList rewrite. The
+ * `<div class="ticket-list-rows">` sub-container inside `#ticket-list`
+ * is owned by a persistent bindList against `ticketsSignal`. Surviving
+ * row ids preserve DOM identity across re-renders, which makes the
+ * focus / cursor / editing-value preservation dance below nearly
+ * trivial — the input element survives unchanged.
+ *
+ * The bindList is mounted exactly once per default-list-view
+ * lifetime — `ensureListViewMount` is idempotent. Transitions from
+ * column / trash / preview views dispose the bindList via
+ * `unmountListViewBindList`, and the next `ensureListViewMount` call
+ * re-creates everything.
+ *
+ * Trash and backup-preview views are deferred to HS-8333 (sub #3 of
+ * the HS-8326 umbrella); for now they keep the pre-fix wholesale
+ * rebuild path (container.innerHTML = '' + for-loop). Column view is
+ * HS-8332 (sub #2).
+ *
+ * FLIP animation in the default branch is a known regression in this
+ * ticket — the bindList reconciles synchronously inside the
+ * `ticketsStore.actions.setTickets(...)` call (which runs BEFORE
+ * `renderTicketList` is invoked by the call site), so the snapshot
+ * captured at the top of `renderTicketList` is taken AFTER the
+ * reconcile and `flipAnimate` is a no-op. Restoring FLIP requires a
+ * `setTicketsAnimated` wrapper that captures snapshot, mutates, then
+ * animates — filed as a follow-up.
+ */
+let listViewBindListDispose: (() => void) | null = null;
+
+function unmountListViewBindList(): void {
+  if (listViewBindListDispose !== null) {
+    try { listViewBindListDispose(); } catch { /* swallow */ }
+    listViewBindListDispose = null;
+  }
+}
+
+function ensureListViewMount(container: HTMLElement): void {
+  let rowsContainer = container.querySelector<HTMLElement>(':scope > .ticket-list-rows');
+  if (rowsContainer !== null && listViewBindListDispose !== null) {
+    // Already mounted. Ensure the draft row is in place at the top.
+    if (container.querySelector(':scope > .draft-row') === null) {
+      container.insertBefore(createDraftRow(), rowsContainer);
+    }
+    return;
+  }
+
+  // First mount or transition from column / trash / preview — wipe
+  // the container, lay out the structure (draft row + rows sub-
+  // container), and mount the bindList against the sub-container.
+  unmountListViewBindList();
+  container.innerHTML = '';
+  container.classList.remove('ticket-list-columns');
+  container.appendChild(createDraftRow());
+  rowsContainer = toElement(<div className="ticket-list-rows"></div>);
+  container.appendChild(rowsContainer);
+  listViewBindListDispose = bindList(
+    rowsContainer,
+    ticketsSignal,
+    (ticket) => ticket.id,
+    (ticket) => ({ el: createTicketRow(ticket) }),
+  );
+}
+
 export function renderTicketList() {
   const snapshot = captureSnapshot();
   const isPreview = state.backupPreview?.active === true;
@@ -73,6 +138,9 @@ export function renderTicketList() {
   }
 
   if (state.layout === 'columns' && canUseColumnView()) {
+    // Column view path — tear down the list-view bindList if it was
+    // mounted from a prior default-list-view render.
+    unmountListViewBindList();
     if (isPreview) { renderPreviewColumnView(); flipAnimate(snapshot); return; }
     renderColumnView();
     // Restore draft focus after column view rebuild
@@ -110,26 +178,29 @@ export function renderTicketList() {
 
   const container = byId('ticket-list');
   const scrollTop = container.scrollTop;
-  container.innerHTML = '';
-  container.classList.remove('ticket-list-columns');
 
-  if (!isTrash && !isPreview) {
-    container.appendChild(createDraftRow());
-  }
-
-  if (state.tickets.length === 0) {
-    const emptyMsg = isTrash ? 'Trash is empty' : isPreview ? 'No tickets match this view' : '';
-    if (emptyMsg) container.appendChild(toElement(<div className="ticket-list-empty">{emptyMsg}</div>));
-  }
-
-  for (const ticket of state.tickets) {
-    if (isPreview) {
-      container.appendChild(createPreviewRow(ticket));
-    } else if (isTrash) {
-      container.appendChild(createTrashRow(ticket));
-    } else {
-      container.appendChild(createTicketRow(ticket));
+  if (isTrash || isPreview) {
+    // HS-8333 (deferred) — trash + backup-preview views keep the pre-fix
+    // wholesale rebuild path. Tear down the list-view bindList if it was
+    // mounted from a prior default-list-view render.
+    unmountListViewBindList();
+    container.innerHTML = '';
+    container.classList.remove('ticket-list-columns');
+    if (state.tickets.length === 0) {
+      const emptyMsg = isTrash ? 'Trash is empty' : 'No tickets match this view';
+      container.appendChild(toElement(<div className="ticket-list-empty">{emptyMsg}</div>));
     }
+    for (const ticket of state.tickets) {
+      if (isPreview) container.appendChild(createPreviewRow(ticket));
+      else container.appendChild(createTrashRow(ticket));
+    }
+  } else {
+    // HS-8331 — default list view: bindList path. The rows sub-container
+    // + its bindList survive across `renderTicketList` calls; the
+    // ticketsSignal (which fires inside `ticketsStore.actions.setTickets(...)`)
+    // drives row reconciliation. This call updates the draft row +
+    // empty state at the parent level only.
+    ensureListViewMount(container);
   }
 
   container.scrollTop = scrollTop;

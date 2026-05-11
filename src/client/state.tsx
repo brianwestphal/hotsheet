@@ -256,6 +256,11 @@ export const state: AppState = {
   selectedIds: new Set(),
   lastClickedId: null,
   activeTicketId: null,
+  // HS-8327 (2026-05-11) — `view` / `search` / `includeBacklogInSearch` /
+  // `includeArchiveInSearch` are installed below as getter+setter
+  // delegates to `ticketsStore.filter`. The dummy values here are
+  // required by the type-literal shape but immediately overwritten by
+  // the `Object.defineProperty` calls after the object is created.
   view: 'all',
   layout: 'list',
   sortBy: 'created',
@@ -300,6 +305,48 @@ Object.defineProperty(state, 'tickets', {
   set(value: readonly Ticket[]): void {
     ticketsStore.actions.setTickets(value);
   },
+});
+
+// HS-8327 (2026-05-11) — §61 Phase 2 filter-state delegate flip. Same
+// pattern as the HS-8239 `state.tickets` delegate above. The four
+// filter-state fields (`view` / `search` / `includeBacklogInSearch` /
+// `includeArchiveInSearch`) become getter+setter delegates that
+// read/write through `ticketsStore.state.value.filter` /
+// `ticketsStore.actions.patchFilter({...})`. All ~110 read sites across
+// ~12 client files keep working unchanged via the getters. The ~24
+// production write sites land in `patchFilter` under the hood. No
+// mixed-source state — the store is the single source of truth for the
+// filter slice.
+//
+// Per the HS-8327 ticket description, extending the `filteredTickets`
+// computed body with view / includeBacklog / includeArchive filter
+// logic is deferred to HS-8326 (where it has a real consumer via
+// `bindList`). Extending the computed without a consumer would just
+// create an unused alternate view; HS-8326's bindList wiring is what
+// makes the extended computed body load-bearing.
+Object.defineProperty(state, 'view', {
+  configurable: true,
+  enumerable: true,
+  get(): string { return ticketsStore.state.value.filter.view; },
+  set(value: string): void { ticketsStore.actions.patchFilter({ view: value }); },
+});
+Object.defineProperty(state, 'search', {
+  configurable: true,
+  enumerable: true,
+  get(): string { return ticketsStore.state.value.filter.search; },
+  set(value: string): void { ticketsStore.actions.patchFilter({ search: value }); },
+});
+Object.defineProperty(state, 'includeBacklogInSearch', {
+  configurable: true,
+  enumerable: true,
+  get(): boolean { return ticketsStore.state.value.filter.includeBacklogInSearch; },
+  set(value: boolean): void { ticketsStore.actions.patchFilter({ includeBacklogInSearch: value }); },
+});
+Object.defineProperty(state, 'includeArchiveInSearch', {
+  configurable: true,
+  enumerable: true,
+  get(): boolean { return ticketsStore.state.value.filter.includeArchiveInSearch; },
+  set(value: boolean): void { ticketsStore.actions.patchFilter({ includeArchiveInSearch: value }); },
 });
 
 const LUCIDE_14 = 'xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';

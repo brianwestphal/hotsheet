@@ -153,6 +153,23 @@ export const filteredTickets: ReadonlySignal<readonly Ticket[]> = computed(() =>
   return tickets.filter(t => ticketMatchesSearch(t, lc));
 });
 
+/**
+ * HS-8331 — derived signal that simply mirrors `state.value.tickets`.
+ * Exists as the `Signal<readonly Ticket[]>` handle the default-list-view
+ * `bindList` in `ticketList.tsx` subscribes to. Pre-fix `bindList`
+ * would need to take the store's full state signal + a derive
+ * function inline; this thin computed lifts that derive to the
+ * store module so the binding callsite reads cleanly.
+ *
+ * The extended view / includeBacklog / includeArchive filter logic
+ * lands in HS-8334 (sub #4) — for now this matches the pre-fix
+ * behaviour where the server pre-filters via `?status=...` query
+ * params and the client just renders what the server returned.
+ */
+export const ticketsSignal: ReadonlySignal<readonly Ticket[]> = computed(() =>
+  ticketsStore.state.value.tickets,
+);
+
 function ticketMatchesSearch(t: Ticket, lcSearch: string): boolean {
   return t.title.toLowerCase().includes(lcSearch)
     || t.details.toLowerCase().includes(lcSearch)
