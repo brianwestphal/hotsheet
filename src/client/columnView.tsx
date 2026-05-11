@@ -5,6 +5,9 @@ import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { createDraftRow } from './draftRow.js';
+import type { ReadonlySignal } from './reactive.js';
+import { computed } from './reactive.js';
+import { bindList, bindText } from './reactive-bind.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, getPriorityColor, getPriorityIcon, state, syncedTicketMap } from './state.js';
 import {
@@ -12,6 +15,7 @@ import {
   draggedTicketIds, setDraggedTicketIds,
 } from './ticketListState.js';
 import { getIndicatorDotType, showCategoryMenu, showPriorityMenu, toggleUpNext  } from './ticketRow.js';
+import { ticketsByStatusSignal } from './ticketsStore.js';
 import { trackedBatch } from './undo/actions.js';
 
 // --- Column scroll state ---
@@ -93,39 +97,136 @@ export function getColumnsForView(): { status: string; label: string }[] {
   return cols;
 }
 
+// --- Column-view mount manager (HS-8332 §61 Phase 2) ---
+
+/**
+ * HS-8332 (2026-05-11) — column-view bindList rewrite. Each visible
+ * column owns a `bindList` against a per-column derived signal that
+ * pulls from `ticketsByStatusSignal` (the per-status partitioner in
+ * `ticketsStore.ts`). The per-column signal applies column-specific
+ * fallback logic — the first column also picks up tickets with
+ * statuses not in the column set (so nothing is silently dropped),
+ * and the `hide_verified_column` setting causes the `completed`
+ * column to absorb the `verified` bucket.
+ *
+ * Mount is idempotent: when called with the same columns config + the
+ * same preview-vs-live mode, no-op. When the config changes (view
+ * change, `hide_verified_column` toggle, preview enter/exit), tear
+ * down all per-column bindLists + column-count effects + drop
+ * handlers and rebuild.
+ *
+ * On the per-row freshness limitation: when a ticket's data changes
+ * but its id + status stay the same (e.g., category / priority /
+ * up_next / title edit), the bindList re-uses the existing card DOM
+ * (same key). The card's content reflects the value at
+ * `createColumnCard` time and goes stale until the next status
+ * change (which moves the card to a different column = new bindList
+ * = fresh card) or a column-view remount. Same limitation as the
+ * HS-8331 list-view bindList — both filled by HS-8335's per-row
+ * effects on the column card.
+ */
+type ColumnConfig = ReturnType<typeof getColumnsForView>;
+
+let columnDisposers: Array<() => void> = [];
+let mountedColumnsKey: string | null = null;
+
+function computeColumnsKey(columns: ColumnConfig, isPreview: boolean): string {
+  const hideVerified = state.settings.hide_verified_column ? '1' : '0';
+  return `${isPreview ? 'preview' : 'live'}|hv${hideVerified}|${columns.map(c => c.status).join(',')}`;
+}
+
+export function unmountColumnView(): void {
+  for (const dispose of columnDisposers) {
+    try { dispose(); } catch { /* swallow — caller's bug, don't block teardown */ }
+  }
+  columnDisposers = [];
+  mountedColumnsKey = null;
+}
+
+function makeColumnSignal(
+  col: { status: string },
+  isFirstCol: boolean,
+  knownStatuses: ReadonlySet<string>,
+  includeVerifiedHere: boolean,
+): ReadonlySignal<readonly Ticket[]> {
+  return computed(() => {
+    const grouped = ticketsByStatusSignal.value;
+    const result: Ticket[] = [];
+    const main = grouped[col.status];
+    if (main !== undefined) result.push(...main);
+    if (isFirstCol) {
+      for (const status of Object.keys(grouped)) {
+        if (!knownStatuses.has(status)) {
+          const extras = grouped[status];
+          if (extras !== undefined) result.push(...extras);
+        }
+      }
+    }
+    if (includeVerifiedHere) {
+      const verified = grouped.verified;
+      if (verified !== undefined) result.push(...verified);
+    }
+    return result;
+  });
+}
+
 // --- Preview column view ---
 
 export function renderPreviewColumnView() {
   const container = byId('ticket-list');
+  const columns = getColumnsForView();
+  const key = computeColumnsKey(columns, true);
+  if (mountedColumnsKey === key) {
+    // Same config — bindLists are still live + reacting to data; no rebuild.
+    const toolbar = byIdOrNull('batch-toolbar');
+    if (toolbar) toolbar.style.display = 'none';
+    void updateStats();
+    return;
+  }
   const savedScrolls = saveColumnScrollState(container);
+  unmountColumnView();
   container.innerHTML = '';
   container.classList.add('ticket-list-columns');
 
-  const columns = getColumnsForView();
   const knownStatuses = new Set(columns.map(c => c.status));
   // When verified column is hidden, verified items go into the completed column
   if (state.settings.hide_verified_column) knownStatuses.add('verified');
   const columnsContainer = toElement(<div className="columns-container"></div>);
 
-  for (const col of columns) {
-    const includeVerified = state.settings.hide_verified_column && col.status === 'completed';
-    const colTickets = col === columns[0]
-      ? state.tickets.filter(t => t.status === col.status || !knownStatuses.has(t.status))
-      : state.tickets.filter(t => t.status === col.status || (includeVerified && t.status === 'verified'));
+  for (let i = 0; i < columns.length; i++) {
+    const col = columns[i];
+    const isFirstCol = i === 0;
+    const includeVerifiedHere = state.settings.hide_verified_column && col.status === 'completed';
+    const columnSignal = makeColumnSignal(col, isFirstCol, knownStatuses, includeVerifiedHere);
+
     const column = toElement(
       <div className="column" data-status={col.status}>
         <div className="column-header">
           <span className="column-title">{col.label}</span>
-          <span className="column-count">{String(colTickets.length)}</span>
+          <span className="column-count"></span>
         </div>
         <div className="column-body"></div>
       </div>
     );
 
     const body = column.querySelector('.column-body')!;
-    for (const ticket of colTickets) {
-      body.appendChild(createPreviewColumnCard(ticket));
-    }
+    const countEl = column.querySelector('.column-count')!;
+
+    // Per-column bindList against the derived signal.
+    const bindListDispose = bindList(
+      body,
+      columnSignal,
+      (ticket) => ticket.id,
+      (ticket) => ({ el: createPreviewColumnCard(ticket) }),
+    );
+    columnDisposers.push(bindListDispose);
+
+    // Reactive count display — derives length from the same signal the
+    // bindList subscribes to so column-count stays in sync with the
+    // rendered cards without a second computed.
+    const countSignal = computed(() => String(columnSignal.value.length));
+    const countDispose = bindText(countEl, countSignal);
+    columnDisposers.push(countDispose);
 
     columnsContainer.appendChild(column);
   }
@@ -136,6 +237,7 @@ export function renderPreviewColumnView() {
   const toolbar = byIdOrNull('batch-toolbar');
   if (toolbar) toolbar.style.display = 'none';
   void updateStats();
+  mountedColumnsKey = key;
 }
 
 export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
@@ -184,37 +286,48 @@ export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
 
 export function renderColumnView() {
   const container = byId('ticket-list');
+  const columns = getColumnsForView();
+  const key = computeColumnsKey(columns, false);
+  if (mountedColumnsKey === key) {
+    // Same config — bindLists still live + reacting; no rebuild.
+    callUpdateBatchToolbar();
+    void updateStats();
+    return;
+  }
   const savedScrolls = saveColumnScrollState(container);
+  unmountColumnView();
   container.innerHTML = '';
   container.classList.add('ticket-list-columns');
 
   container.appendChild(createDraftRow());
 
-  const columns = getColumnsForView();
   const knownStatuses = new Set(columns.map(c => c.status));
   // When verified column is hidden, verified items go into the completed column
   if (state.settings.hide_verified_column) knownStatuses.add('verified');
   const columnsContainer = toElement(<div className="columns-container"></div>);
 
-  for (const col of columns) {
-    // First column also gets tickets with unrecognized statuses so nothing is silently dropped
-    const includeVerified = state.settings.hide_verified_column && col.status === 'completed';
-    const colTickets = col === columns[0]
-      ? state.tickets.filter(t => t.status === col.status || !knownStatuses.has(t.status))
-      : state.tickets.filter(t => t.status === col.status || (includeVerified && t.status === 'verified'));
+  for (let i = 0; i < columns.length; i++) {
+    const col = columns[i];
+    const isFirstCol = i === 0;
+    const includeVerifiedHere = state.settings.hide_verified_column && col.status === 'completed';
+    const columnSignal = makeColumnSignal(col, isFirstCol, knownStatuses, includeVerifiedHere);
+
     const column = toElement(
       <div className="column" data-status={col.status}>
         <div className="column-header">
           <span className="column-title">{col.label}</span>
-          <span className="column-count">{String(colTickets.length)}</span>
+          <span className="column-count"></span>
         </div>
         <div className="column-body"></div>
       </div>
     );
 
-    // Click column header to select/deselect all tickets in this column
+    // Click column header to select/deselect all tickets in this column.
+    // Reads `columnSignal.value` at click time so the selection reflects
+    // the live narrowed set, not a snapshot from column-mount time.
     column.querySelector('.column-header')!.addEventListener('click', (ev) => {
       const e = ev as MouseEvent;
+      const colTickets = columnSignal.value;
       const colIds = new Set(colTickets.map(t => t.id));
       const allSelected = colIds.size > 0 && [...colIds].every(id => state.selectedIds.has(id));
 
@@ -235,30 +348,44 @@ export function renderColumnView() {
       syncDetailPanel();
     });
 
-    const body = column.querySelector('.column-body')!;
-    for (const ticket of colTickets) {
-      body.appendChild(createColumnCard(ticket));
-    }
+    const body: HTMLElement = column.querySelector('.column-body')!;
+    const countEl = column.querySelector('.column-count')!;
+
+    // Per-column bindList against the derived signal. Surviving row ids
+    // preserve DOM identity; status changes move cards between columns
+    // (tear down in old column's bindList, fresh create in new column).
+    const bindListDispose = bindList(
+      body,
+      columnSignal,
+      (ticket) => ticket.id,
+      (ticket) => ({ el: createColumnCard(ticket) }),
+    );
+    columnDisposers.push(bindListDispose);
+
+    // Reactive count display.
+    const countSignal = computed(() => String(columnSignal.value.length));
+    const countDispose = bindText(countEl, countSignal);
+    columnDisposers.push(countDispose);
 
     // Drop target for status changes. HS-7492: skip when the drag carries
     // Files — the document-level handler in app.tsx takes care of file
     // drops onto individual cards, and we don't want the whole column lit
     // up as a reorder target for a file-attachment drop.
     body.addEventListener('dragover', (e) => {
-      const de = e as DragEvent;
+      const de = e;
       if (de.dataTransfer?.types.includes('Files') === true) return;
       e.preventDefault();
       de.dataTransfer!.dropEffect = 'move';
       column.classList.add('column-drop-target');
     });
     body.addEventListener('dragleave', (e) => {
-      const related = (e as DragEvent).relatedTarget as Node | null;
+      const related = (e).relatedTarget as Node | null;
       if (!related || !body.contains(related)) {
         column.classList.remove('column-drop-target');
       }
     });
     body.addEventListener('drop', (e) => {
-      const de = e as DragEvent;
+      const de = e;
       if (de.dataTransfer?.types.includes('Files') === true) return;
       e.preventDefault();
       column.classList.remove('column-drop-target');
@@ -281,6 +408,7 @@ export function renderColumnView() {
   restoreColumnScrollState(container, savedScrolls);
   callUpdateBatchToolbar();
   void updateStats();
+  mountedColumnsKey = key;
 }
 
 export function createColumnCard(ticket: Ticket): HTMLElement {

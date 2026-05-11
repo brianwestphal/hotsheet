@@ -19,6 +19,7 @@ import {
   DEFAULT_FILTER,
   filteredTickets,
   type FilterState,
+  ticketsByStatusSignal,
   ticketsStore,
 } from './ticketsStore.js';
 
@@ -393,5 +394,81 @@ describe('ticketsStore — filteredTickets per-view narrowing (HS-8334)', () => 
     const completedCount = filteredTickets.value.length;
     expect(allCount).toBe(5);
     expect(completedCount).toBe(1);
+  });
+});
+
+/**
+ * HS-8332 — `ticketsByStatusSignal` partitions `filteredTickets` (the
+ * narrowed visible set, not raw `ticketsSignal`) by `ticket.status`.
+ * Used by the column-view per-column bindLists in `columnView.tsx`.
+ */
+describe('ticketsStore — ticketsByStatusSignal partitioning (HS-8332)', () => {
+  it('partitions tickets by status key', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(1, { status: 'not_started' }),
+      makeTicket(2, { status: 'started' }),
+      makeTicket(3, { status: 'started' }),
+      makeTicket(4, { status: 'completed' }),
+    ]);
+    const grouped = ticketsByStatusSignal.value;
+    expect(grouped['not_started']?.map(t => t.id)).toEqual([1]);
+    expect(grouped['started']?.map(t => t.id)).toEqual([2, 3]);
+    expect(grouped['completed']?.map(t => t.id)).toEqual([4]);
+    expect(grouped['verified']).toBeUndefined();
+  });
+
+  it('preserves insertion order within each bucket', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(10, { status: 'started' }),
+      makeTicket(5, { status: 'started' }),
+      makeTicket(20, { status: 'started' }),
+    ]);
+    expect(ticketsByStatusSignal.value['started']?.map(t => t.id)).toEqual([10, 5, 20]);
+  });
+
+  it('respects the upstream filteredTickets narrowing', () => {
+    // Setting up tickets that should be excluded by the default view filter:
+    // 'deleted' is always excluded; in default view='all' it shouldn't appear.
+    ticketsStore.actions.setTickets([
+      makeTicket(1, { status: 'not_started' }),
+      makeTicket(2, { status: 'deleted' }),
+      makeTicket(3, { status: 'backlog' }),
+    ]);
+    // Default filter view='all' excludes deleted/backlog/archive by HS-8334.
+    const grouped = ticketsByStatusSignal.value;
+    expect(grouped['not_started']?.map(t => t.id)).toEqual([1]);
+    expect(grouped['deleted']).toBeUndefined();
+    expect(grouped['backlog']).toBeUndefined();
+  });
+
+  it('exposes trash bucket when view=trash narrows the source', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(1, { status: 'not_started' }),
+      makeTicket(2, { status: 'deleted' }),
+    ]);
+    ticketsStore.actions.patchFilter({ view: 'trash' });
+    const grouped = ticketsByStatusSignal.value;
+    expect(grouped['deleted']?.map(t => t.id)).toEqual([2]);
+    expect(grouped['not_started']).toBeUndefined();
+  });
+
+  it('recomputes on view change without setTickets', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(1, { status: 'not_started' }),
+      makeTicket(2, { status: 'completed' }),
+    ]);
+    const allKeys = Object.keys(ticketsByStatusSignal.value).sort();
+    ticketsStore.actions.patchFilter({ view: 'completed' });
+    const completedKeys = Object.keys(ticketsByStatusSignal.value);
+    expect(allKeys).toEqual(['completed', 'not_started']);
+    expect(completedKeys).toEqual(['completed']);
+  });
+
+  it('returns an empty object when no tickets match the filter', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(1, { status: 'not_started', title: 'foo' }),
+    ]);
+    ticketsStore.actions.patchFilter({ search: 'no-match-zzzz' });
+    expect(Object.keys(ticketsByStatusSignal.value)).toEqual([]);
   });
 });

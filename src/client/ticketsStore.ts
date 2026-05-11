@@ -170,14 +170,48 @@ export const filteredTickets: ReadonlySignal<readonly Ticket[]> = computed(() =>
  * HS-8331 — derived signal that simply mirrors `state.value.tickets`
  * unfiltered. Exists as the raw `Signal<readonly Ticket[]>` handle
  * for consumers that want the full store contents without view
- * narrowing (e.g., HS-8332's per-status column-view bindLists, which
- * will derive `ticketsByStatusSignal` from this). The default-list-
- * view bindList itself switched to `filteredTickets` in HS-8334
- * (since that's the canonical "what's visible" signal).
+ * narrowing. The default-list-view bindList itself switched to
+ * `filteredTickets` in HS-8334 (since that's the canonical "what's
+ * visible" signal).
  */
 export const ticketsSignal: ReadonlySignal<readonly Ticket[]> = computed(() =>
   ticketsStore.state.value.tickets,
 );
+
+/**
+ * HS-8332 (2026-05-11) — per-status partitioning of `filteredTickets`
+ * (the narrowed visible set, not raw `ticketsSignal`). Map keyed by
+ * the literal `ticket.status` value (e.g., `'not_started'`,
+ * `'started'`, `'completed'`, `'verified'`, `'deleted'`,
+ * `'backlog'`, `'archive'`, or any future status string). The
+ * derived signal returns a fresh `Record` on each recompute — the
+ * per-status arrays are also fresh.
+ *
+ * Consumers: the §61 Phase 2 column-view rewrite mounts one
+ * `bindList` per visible column subscribed to a per-column derived
+ * signal that pulls from this partitioner (with column-specific
+ * fallback logic for the first column's unrecognised-statuses sink
+ * + the `hide_verified_column` setting that merges verified into
+ * completed). See `columnView.tsx` for the consumer pattern.
+ *
+ * Derived from `filteredTickets`, not `ticketsSignal` — so view
+ * narrowing (HS-8334) + search + include flags all apply BEFORE the
+ * partitioning. The column view sees only the tickets the user
+ * has currently filtered to (matches the pre-HS-8332 wholesale-
+ * rebuild behaviour where the rebuild loop iterated `state.tickets`
+ * which post-HS-8334 IS already the filtered set in the store).
+ */
+export const ticketsByStatusSignal: ReadonlySignal<Partial<Record<string, readonly Ticket[]>>> = computed(() => {
+  const tickets = filteredTickets.value;
+  const grouped: Partial<Record<string, Ticket[]>> = {};
+  for (const t of tickets) {
+    if (grouped[t.status] === undefined) {
+      grouped[t.status] = [];
+    }
+    grouped[t.status]!.push(t);
+  }
+  return grouped;
+});
 
 function ticketMatchesSearch(t: Ticket, lcSearch: string): boolean {
   return t.title.toLowerCase().includes(lcSearch)

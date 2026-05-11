@@ -1,6 +1,6 @@
 import { captureSnapshot, flipAnimate } from './animate.js';
 import { api } from './api.js';
-import { renderColumnView, renderPreviewColumnView, updateColumnSelectionClasses } from './columnView.js';
+import { renderColumnView, renderPreviewColumnView, unmountColumnView, updateColumnSelectionClasses } from './columnView.js';
 import { syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
@@ -254,7 +254,10 @@ export function renderTicketList() {
 
   if (state.layout === 'columns' && canUseColumnView()) {
     // Column view path — tear down the list-view bindList if it was
-    // mounted from a prior list-view render.
+    // mounted from a prior list-view render. The column-view's own
+    // mount manager (HS-8332) is idempotent: `renderColumnView` /
+    // `renderPreviewColumnView` no-op on same-config re-renders and
+    // rebuild on view / preview / hide_verified_column changes.
     unmountBindList();
     if (isPreview) { renderPreviewColumnView(); flipAnimate(snapshot); return; }
     renderColumnView();
@@ -297,6 +300,10 @@ export function renderTicketList() {
   // bindList-driven against the narrowed `filteredTickets`. The mount
   // manager tears down + remounts on variant transitions so each
   // variant gets its correct row factory + empty-state message.
+  // HS-8332 (2026-05-11) — also tear down any column-view bindLists
+  // left over from a prior column-view render. Symmetric with the
+  // column branch's `unmountBindList()` above.
+  unmountColumnView();
   ensureBindListMount(container, computeTargetVariant());
 
   container.scrollTop = scrollTop;
