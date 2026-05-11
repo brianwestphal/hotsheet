@@ -350,7 +350,7 @@ describe('killAllRunningShellCommands (HS-8040)', () => {
 
     const child = lastSpawnedChild;
     // Override `kill` so neither SIGTERM nor SIGKILL auto-emits 'close'
-    // through the mock's default behaviour — we want to drive the close
+    // through the mock's default behavior — we want to drive the close
     // manually below, simulating the real OS flow where SIGTERM is what
     // settles the child (not the SIGKILL grace-period escalation).
     child.kill = () => { /* swallow */ };

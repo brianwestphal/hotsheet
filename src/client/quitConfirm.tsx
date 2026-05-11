@@ -331,7 +331,7 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
     const previewEl = overlay.querySelector<HTMLElement>('.quit-confirm-detail-preview');
     const rows = Array.from(overlay.querySelectorAll<HTMLButtonElement>('.quit-confirm-row'));
 
-    // HS-8059 follow-up — pre-resolve the bg colour for every (secret,
+    // HS-8059 follow-up — pre-resolve the bg color for every (secret,
     // terminalId) shown in the dialog, keyed `${secret}::${terminalId}`,
     // BEFORE the user clicks a row. This way `selectRow` paints the
     // gutter synchronously from a known-good value rather than reading
@@ -449,7 +449,7 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
 
       // HS-8295 — pass the pre-resolved theme bg so the §54 placeholder
       // (when this preview is bumped down by another consumer claiming the
-      // shared xterm) paints with the terminal's own bg colour rather than
+      // shared xterm) paints with the terminal's own bg color rather than
       // `--bg-secondary`. Same source as the gutter-paint below.
       const placeholderBg = bgByRowKey.get(`${secret}::${terminalId}`);
       currentCheckout = checkout({
@@ -472,7 +472,7 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
       // of terminal bounds". The SCSS `.xterm`/`.xterm-viewport`/
       // `.xterm-screen { background: inherit }` rule lets xterm's own
       // layered elements participate in the cascade so there's no
-      // colour seam between the canvas and the gutter.
+      // color seam between the canvas and the gutter.
       //
       // HS-8059 follow-up — read the bg from the pre-resolved
       // `bgByRowKey` map keyed off the project secret + terminal id.

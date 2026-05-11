@@ -274,7 +274,7 @@ export const ticketsSignal: ReadonlySignal<readonly Ticket[]> = computed(() =>
  * narrowing (HS-8334) + search + include flags all apply BEFORE the
  * partitioning. The column view sees only the tickets the user
  * has currently filtered to (matches the pre-HS-8332 wholesale-
- * rebuild behaviour where the rebuild loop iterated `state.tickets`
+ * rebuild behavior where the rebuild loop iterated `state.tickets`
  * which post-HS-8334 IS already the filtered set in the store).
  */
 export const ticketsByStatusSignal: ReadonlySignal<Partial<Record<string, readonly Ticket[]>>> = computed(() => {

@@ -89,7 +89,7 @@ function spawnHotSheet(): SpawnedHotSheet {
     env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, PLUGINS_ENABLED: 'false' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  // Buffer stdout/stderr so individual tests can synchronise on log lines
+  // Buffer stdout/stderr so individual tests can synchronize on log lines
   // (HS-7939 — the double-SIGINT test waits for `gracefulShutdown(...) — starting`
   // before firing the second signal, replacing the timing-window guess with a
   // deterministic stdout-driven handoff).
@@ -212,7 +212,7 @@ describe.skipIf(!canSpawnTsxChild)('graceful shutdown e2e (HS-7934) (skipped: ts
     // mitigation will drop the leftover pid file at this point — what we
     // care about is that gracefulShutdown's CHECKPOINT step preserved the
     // rows we just wrote. If `db.close()` had been skipped (pre-HS-7931
-    // behaviour), the WAL might not have been flushed and freshly-written
+    // behavior), the WAL might not have been flushed and freshly-written
     // rows could PANIC the open or be rolled back.
     const reSpawnDataDir = child.dataDir;
     const reSpawnPort = pickRandomPort();
@@ -294,7 +294,7 @@ describe.skipIf(!canSpawnTsxChild)('graceful shutdown e2e (HS-7934) (skipped: ts
     await new Promise(r => setTimeout(r, 250));
 
     child.proc.kill('SIGINT');
-    // Synchronisation point: the `— starting` line is logged at the top of
+    // Synchronization point: the `— starting` line is logged at the top of
     // `runShutdownPipeline`, before the first await. Once we see it the
     // shutdown is in flight and pinned by the long-poll connection.
     await child.waitForOutput('[lifecycle] gracefulShutdown(SIGINT) — starting', 10_000);

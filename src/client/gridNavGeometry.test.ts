@@ -58,7 +58,7 @@ describe('pickGridNeighbourIndex (HS-8028 follow-up — strict grid neighbour)',
     expect(pickGridNeighbourIndex(D, [A, B, C, E, F], 'down')).toBe(-1);
   });
 
-  // The KEY behavioural change from the prior cone-metric: arrow-down from
+  // The KEY behavioral change from the prior cone-metric: arrow-down from
   // C MUST land on F (same column directly below), NOT on E even though
   // E might be closer by Euclidean distance with the previous weighting.
   // This pins the user's HS-8028 follow-up requirement: "if i click left

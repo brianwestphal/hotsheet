@@ -368,7 +368,7 @@ describe('isPluginEnabledForProject (HS-8284)', () => {
     await db.query("DELETE FROM settings WHERE key = 'plugin_enabled:opted-out'");
   });
 
-  it('returns false for any non-"true" value (defence-in-depth against typos)', async () => {
+  it('returns false for any non-"true" value (defense-in-depth against typos)', async () => {
     const { getDb } = await import('../db/connection.js');
     const db = await getDb();
     const { isPluginEnabledForProject } = await import('./plugins.js');

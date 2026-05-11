@@ -21,7 +21,7 @@ import { authenticate, wireTerminalWebSocket } from './websocket.js';
 class FakePty implements PtyLike {
   static last: FakePty | null = null;
   // HS-8179 — pid stays at 0 so the prod-side `rootPid > 0` guard skips
-  // killProcessTreeBestEffort entirely (defence in depth on top of the
+  // killProcessTreeBestEffort entirely (defense in depth on top of the
   // ancestor-walk guard inside the helper itself).
   pid = 0;
   cols: number;

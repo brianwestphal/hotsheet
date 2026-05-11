@@ -16,7 +16,7 @@ import { showToast } from './toast.js';
  * stack (each one offset by 30px so the user can see depth).
  *
  * **Read-only for v1** per the implementation note in HS-8036's
- * completion: full editable behaviour requires refactoring `detail.tsx`
+ * completion: full editable behavior requires refactoring `detail.tsx`
  * (~30 `getElementById` callsites, scattered globals) into a reusable
  * component. Read-only ships the navigation value (drill into chains
  * of references) plus an "Open in detail panel" button that one-clicks

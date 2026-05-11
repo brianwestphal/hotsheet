@@ -52,7 +52,7 @@ describe('exitCodeGutterClass (HS-7267)', () => {
     expect(exitCodeGutterClass(137)).toBe('failure');
     expect(exitCodeGutterClass(-1)).toBe('failure');
   });
-  it('maps null (no exit code reported) → neutral (grey dot)', () => {
+  it('maps null (no exit code reported) → neutral (gray dot)', () => {
     expect(exitCodeGutterClass(null)).toBe('neutral');
   });
 });

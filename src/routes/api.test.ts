@@ -734,7 +734,7 @@ describe('terminal route', () => {
     expect(entry?.state).toBe('alive');
   });
 
-  // Control case: omitting `spawn` keeps the previous lazy behaviour so the
+  // Control case: omitting `spawn` keeps the previous lazy behavior so the
   // drawer's `+` button flow (which relies on lazy-on-WS-attach) is unchanged.
   it('POST /api/terminal/create without spawn stays lazy — state is not_spawned until attach', async () => {
     const create = await app.request('/api/terminal/create', { method: 'POST' });

@@ -46,7 +46,7 @@ A single vertically-scrolling flex-wrap grid fills the drawer body. Every tile i
 
 - `tileWidthFromColumnCount(perRow, drawerBodyWidth - 2 * padding)` picks the tile width (HS-8176; pre-HS-8176 was `tileWidthFromSlider(sliderValue, ...)`).
 - `computeTileScale(tileWidth, tileHeight, naturalWidth, naturalHeight)` computes the uniform scale for the xterm's natural pixel size.
-- `tileNativeGridFromCellMetrics(cellW, cellH)` picks the tile-native 4:3 cols × rows from measured cell metrics (same HS-7097 follow-up behaviour as the dashboard).
+- `tileNativeGridFromCellMetrics(cellW, cellH)` picks the tile-native 4:3 cols × rows from measured cell metrics (same HS-7097 follow-up behavior as the dashboard).
 
 **Unlike the dashboard, there is no per-project section heading.** All tiles in the grid belong to the same project, so the heading would be redundant. The grid is a single flex-wrap strip.
 
@@ -68,7 +68,7 @@ A single vertically-scrolling flex-wrap grid fills the drawer body. Every tile i
 
 Exactly mirrors §25.7 + §25.8 with the drawer's bounds as the "viewport":
 
-- **Single-click on a live tile.** Animates the tile to a centered overlay at ~90 % of the drawer body's width / height (both dimensions, keeping 4:3). 90 % rather than the dashboard's 70 % because the drawer is already short; 70 % would leave a ~20 px border which doesn't add polish and costs readable text. A FLIP animation (HS-6867) keeps the tile visibly growing out of its grid slot — a grey placeholder is inserted in the tile's grid slot before the real tile is promoted to a fixed-position overlay, the outer transform interpolates from the placeholder's rect to the centered target rect, and the xterm scale is pinned to the final centered size so the whole thing grows together.
+- **Single-click on a live tile.** Animates the tile to a centered overlay at ~90 % of the drawer body's width / height (both dimensions, keeping 4:3). 90 % rather than the dashboard's 70 % because the drawer is already short; 70 % would leave a ~20 px border which doesn't add polish and costs readable text. A FLIP animation (HS-6867) keeps the tile visibly growing out of its grid slot — a gray placeholder is inserted in the tile's grid slot before the real tile is promoted to a fixed-position overlay, the outer transform interpolates from the placeholder's rect to the centered target rect, and the xterm scale is pinned to the final centered size so the whole thing grows together.
 
   While centered:
   - The centered tile is the only interactive terminal; its xterm helper textarea accepts keyboard input. Backdrop dims the rest of the grid.
@@ -168,7 +168,7 @@ Deliberately not in the first iteration — revisit if the feature lands and use
 
 ## 36.10.5 Tile virtualization (HS-7968)
 
-Identical to §25.9.1 — the drawer-grid uses the same shared `terminalTileGrid.tsx` module and inherits its `IntersectionObserver`-driven lazy mount + 8 s-debounced dispose behaviour. At drawer-grid scales (typically 8–20 visible tiles per project) the perceived benefit is smaller than the dashboard's, but the code path is shared so there's no extra cost. See [25-terminal-dashboard.md §25.9.1](25-terminal-dashboard.md#2591-tile-virtualization-hs-7968) for the full design.
+Identical to §25.9.1 — the drawer-grid uses the same shared `terminalTileGrid.tsx` module and inherits its `IntersectionObserver`-driven lazy mount + 8 s-debounced dispose behavior. At drawer-grid scales (typically 8–20 visible tiles per project) the perceived benefit is smaller than the dashboard's, but the code path is shared so there's no extra cost. See [25-terminal-dashboard.md §25.9.1](25-terminal-dashboard.md#2591-tile-virtualization-hs-7968) for the full design.
 
 ## 36.11 Manual test plan
 

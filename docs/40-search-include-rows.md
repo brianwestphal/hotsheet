@@ -101,7 +101,7 @@ When the user types an exact ticket-number reference in the search box (e.g. `HS
 
 **Detection** — pure helper `isExactTicketIdSearch(s)` in `src/db/tickets.ts`. Matches `^\s*[A-Za-z][A-Za-z0-9_]*-\d+\s*$` (case-insensitive, trims whitespace). Same shape as `ticketRefs.ts::buildTicketRefRegex`'s inline-link pattern, anchored to the full string so a query like `HS-100 fix me` (free text containing a ticket id) is NOT treated as exact.
 
-**Server behaviour** in `buildTicketWhereClause`:
+**Server behavior** in `buildTicketWhereClause`:
 - The default `status NOT IN ('deleted', 'backlog', 'archive')` guard is dropped — every bucket is visible.
 - The search predicate switches from substring `ILIKE %q%` (which would have pulled `HS-1000` for an `HS-1` query) to strict `LOWER(ticket_number) = LOWER($q)` so `HS-1` resolves to exactly that one ticket.
 - Other filters (category / priority / up_next) still apply.

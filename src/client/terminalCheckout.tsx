@@ -350,7 +350,7 @@ function buildPlaceholder(background?: string): HTMLElement {
   // HS-8295 — inline-paint the bumped consumer's terminal-theme background
   // so the placeholder reads as a faded continuation of the terminal frame
   // rather than the jarring `--bg-secondary` gray. Falls through to the
-  // SCSS default when the consumer didn't supply a colour.
+  // SCSS default when the consumer didn't supply a color.
   if (background !== undefined && background !== '') {
     el.style.backgroundColor = background;
   }
@@ -472,7 +472,7 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
  * (`'history'` control message on attach) re-paints whatever was on
  * screen so transient network blips don't lose state. Pre-HS-8044 each
  * consumer of `terminalCheckout` would have had to wire its own
- * reconnect — making the module the natural home centralises the
+ * reconnect — making the module the natural home centralizes the
  * concern AND lets the drawer pane (HS-8044 / §22) drop its own
  * reconnect-on-close path entirely.
  */
@@ -674,7 +674,7 @@ export function applyHistoryReplay(
     // after the initial reset()-only fix landed in WKWebView; pairing
     // reset() with clear() (which explicitly drops scrollback and makes
     // the prompt line the new first line) closes that gap regardless of
-    // xterm internal behaviour.
+    // xterm internal behavior.
     try {
       entry.term.reset();
       entry.term.clear();
@@ -853,7 +853,7 @@ function disposeEntry(entry: StackEntry): void {
  * caller's `mountInto`. Synchronously returns a `CheckoutHandle`. The
  * scrollback replay arrives asynchronously via the WebSocket's `history`
  * control message — the xterm shows nothing until the bytes land,
- * matching the existing drawer-pane behaviour during a fresh attach.
+ * matching the existing drawer-pane behavior during a fresh attach.
  *
  * Calling sequence per §54.3:
  * 1. Look up the entry (or create one — opens the xterm + WebSocket).

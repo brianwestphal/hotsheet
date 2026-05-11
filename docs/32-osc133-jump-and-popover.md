@@ -39,7 +39,7 @@ The popover has three buttons:
 - **Copy output** — reads `record.outputStart` → `record.commandEnd` (C→D) via `readRecordOutput(term, record)`. When D is missing (still running) falls back to current cursor position + 1.
 - **Rerun** — calls `term.paste(readRecordCommand(term, record).replace(/\n+$/,'') + '\r')`. Uses xterm's public `paste` API so the bytes go through the same `onData` → WS path as normal typing, bypassing any custom key handler. The trailing `\r` fires the shell's Enter.
 
-Close behaviour: `mouseleave` on either the glyph OR the popover starts a 200 ms close timer (`scheduleGutterPopoverClose`). Moving the cursor from glyph to popover cancels the timer via the popover's `mouseenter` handler, so users can leave the glyph and click a button without the popover vanishing. Clicking a button fires the action then closes immediately.
+Close behavior: `mouseleave` on either the glyph OR the popover starts a 200 ms close timer (`scheduleGutterPopoverClose`). Moving the cursor from glyph to popover cancels the timer via the popover's `mouseenter` handler, so users can leave the glyph and click a button without the popover vanishing. Clicking a button fires the action then closes immediately.
 
 A single module-level `gutterPopoverEl` is reused — hovering a different glyph retargets the same position. Only one popover is ever in the DOM.
 
@@ -88,7 +88,7 @@ The clipboard is stubbed in `addInitScript` before bundle load (push-onto-`windo
 - **Jump to first / last command.** `Home` / `End` already scroll to buffer top / bottom via xterm's default; Cmd/Ctrl+Home/End is left to xterm too.
 - **Visual scroll flash.** The jump is an instantaneous viewport move; no easing animation. Adds complexity without clear user benefit.
 - **Show command text on hover of a glyph.** The popover's "Copy command" is one click away; a tooltip with the full command text is redundant and would collide with the native `title` attribute.
-- **Copy colour codes.** Everything goes through `translateToString(true)` which flattens cell colours to plain text, same as Phase 1b.
+- **Copy color codes.** Everything goes through `translateToString(true)` which flattens cell colors to plain text, same as Phase 1b.
 - **Popover keyboard navigation.** The popover is mouse-only; Tab/Enter handling adds framework cost without meaningful benefit (hover is the common case).
 
 ## 32.8 Manual test plan (add to `docs/manual-test-plan.md` §26)

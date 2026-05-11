@@ -35,7 +35,7 @@ diagnosticsRoutes.post('/diagnostics/freeze', async (c) => {
 
 /**
  * Pure: validate + normalise a client-supplied freeze entry. Rejects any
- * shape we don't recognise so a malformed payload can't poison freeze.log
+ * shape we don't recognize so a malformed payload can't poison freeze.log
  * with garbage. Caller-supplied `source` is constrained to the client
  * detector tags (`client-observer` / `client-heartbeat`) — server tags
  * are produced server-side only.

@@ -91,7 +91,7 @@ interface TerminalInstance {
    *  per-entry FitAddon. `term`, `fit`, `search`, `searchHandle` are
    *  cleared when the consumer is disposed (tab closed, project
    *  switched away, drawer terminated). The handle is `null` until the
-   *  tab is first activated (lazy mount, matches pre-fix behaviour). */
+   *  tab is first activated (lazy mount, matches pre-fix behavior). */
   checkout: CheckoutHandle | null;
   /** HS-8044 — disposers for `term.onResize`, `term.onTitleChange`,
    *  `term.onBell`, OSC 7 / OSC 133 parser hooks. Captured so a tab
@@ -989,7 +989,7 @@ async function reapplyAppearance(inst: TerminalInstance): Promise<void> {
   const appearance = resolveInstanceAppearance(inst);
   // HS-7960 — paint the body's padded gutter with the new theme background
   // synchronously, BEFORE the async font load runs, so a slow font fetch
-  // doesn't leave the gutter in the previous theme's colour mid-flight.
+  // doesn't leave the gutter in the previous theme's color mid-flight.
   inst.body.style.backgroundColor = resolveAppearanceBackground(appearance);
   await applyAppearanceToTerm(inst.term, appearance);
 }
@@ -1006,7 +1006,7 @@ async function reapplyAppearance(inst: TerminalInstance): Promise<void> {
  * Replaces pre-fix `mountXterm(inst, secret)` + `connect(inst)` (which
  * each constructed their own xterm + WebSocket and managed the per-
  * instance reconnect-on-close loop). The checkout module's
- * `attachWebSocketToEntry` now centralises the WS lifecycle including
+ * `attachWebSocketToEntry` now centralizes the WS lifecycle including
  * reconnect on transient close, so the drawer's old `scheduleReconnect`
  * path is gone.
  */
@@ -1320,7 +1320,7 @@ function disposeCommandRecord(r: CommandRecord): void {
 /** Render the exit-code gutter glyph for a completed command (green check /
  *  red x / neutral dot depending on exitCode). Idempotent — a second call
  *  on the same record re-attaches after disposing the previous decoration
- *  (used when a dangling A record is retroactively finalised as exitCode=-1
+ *  (used when a dangling A record is retroactively finalized as exitCode=-1
  *  by the NEXT prompt's A handler).
  *
  *  HS-7269 — gated on `shell_integration_ui`: when the setting is off we

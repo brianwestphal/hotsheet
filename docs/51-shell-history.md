@@ -59,9 +59,9 @@ New per-project file-settings key:
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `terminal_history_scope` | `'per-terminal'` \| `'inherit'` | `'per-terminal'` | `'inherit'` falls back to the pre-HS-7965 behaviour (no `HISTFILE` injection → user's rc default). Pure helper `normaliseHistoryScope(raw)` accepts unknown / non-string values and falls back to the default. |
+| `terminal_history_scope` | `'per-terminal'` \| `'inherit'` | `'per-terminal'` | `'inherit'` falls back to the pre-HS-7965 behavior (no `HISTFILE` injection → user's rc default). Pure helper `normaliseHistoryScope(raw)` accepts unknown / non-string values and falls back to the default. |
 
-No UI for this in v1 — the default Just Works; power users who want the global-history behaviour back can edit `settings.json` by hand. A Settings → Terminal toggle is a follow-up if the user reports friction.
+No UI for this in v1 — the default Just Works; power users who want the global-history behavior back can edit `settings.json` by hand. A Settings → Terminal toggle is a follow-up if the user reports friction.
 
 ## 51.7 Lifecycle
 

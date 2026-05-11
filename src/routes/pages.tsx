@@ -625,7 +625,7 @@ pageRoutes.get('/', (c) => {
                   <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
                   <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
                   {/* HS-7984 — per-project toggle for the §53 streaming
-                      shell-output behaviour. When off, the server still
+                      shell-output behavior. When off, the server still
                       buffers (cheap; no point in conditional buffering
                       complexity) but the client gates rendering, so the
                       sidebar preview stays hidden and the Commands Log
@@ -704,7 +704,7 @@ pageRoutes.get('/', (c) => {
                       <textarea>'s natural inline-block layout). Wrapped in a
                       block <div> so it always lands on its own line, and the
                       `settings-link-action` class drops the border + uses the
-                      muted secondary text colour. */}
+                      muted secondary text color. */}
                   <div className="settings-quit-confirm-reset-row">
                     <button type="button" id="settings-quit-confirm-reset" className="settings-link-action">Reset exempt list to defaults</button>
                   </div>

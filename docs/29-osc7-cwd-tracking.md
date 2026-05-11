@@ -89,7 +89,7 @@ Validation pipeline:
 Tauri's `open_url` command could take a `file://` URL directly. Two reasons we route through the server:
 
 1. **Existence + directory validation.** The shell might have `cd`'d into a tmp dir that was then deleted; clicking a stale chip should 404 cleanly, not pop a confused Finder window.
-2. **Cross-platform parity.** The server's `openInFileManager` already handles macOS / Windows / Linux differences. Reusing it keeps the behaviour consistent with the project-tab reveal flow.
+2. **Cross-platform parity.** The server's `openInFileManager` already handles macOS / Windows / Linux differences. Reusing it keeps the behavior consistent with the project-tab reveal flow.
 
 No new privilege is granted vs. the shell running `open .` itself — the user has already authenticated with the secret.
 

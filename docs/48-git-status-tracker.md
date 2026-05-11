@@ -10,7 +10,7 @@ The originating ticket asked: *"maybe this should be a built-in plugin?"* The an
 
 - **Hot Sheet is for developers, and developers' projects are git repos.** Almost every Hot Sheet `dataDir` will be inside a git working tree. Making git tracking opt-in via a plugin install creates friction for the 95% case to no benefit.
 - **The plugin system (§18) is built around ticketing-backend integrations** — pull/push/conflict-resolve/comment sync. Git status tracking has none of that surface; bolting it onto the same lifecycle is awkward.
-- **Existing helpers already exist in core.** `src/gitignore.ts` has `isGitRepo`, `getGitRoot`, and the `.hotsheet/` gitignore-check codepath. Adding a `src/git/status.ts` next to it follows the existing organisation rather than carving out a new boundary.
+- **Existing helpers already exist in core.** `src/gitignore.ts` has `isGitRepo`, `getGitRoot`, and the `.hotsheet/` gitignore-check codepath. Adding a `src/git/status.ts` next to it follows the existing organization rather than carving out a new boundary.
 - **Auto-detection is the right escape hatch.** If `isGitRepo(projectRoot)` returns `false`, the entire feature stays silent — no chip, no API calls, no errors. Non-git projects pay zero cost. This delivers the plugin's "opt out for free" value without the plugin's setup overhead.
 - **A user who genuinely doesn't want it** gets a `git_tracking_enabled` boolean in Settings → General to suppress (§48.6.1).
 
@@ -95,7 +95,7 @@ A noisy editor that touches `.git/index.lock` should NOT trigger a re-render. Th
 
 A `<div id="sidebar-git-chip" className="sidebar-git-chip">` row rendered ABOVE the channel play button in `src/routes/pages.tsx`. Originally HS-7954 placed it between `#channel-commands-container` and the Views section with bordered chrome and tinted backgrounds; HS-7975 moved it above the play button and restyled it as a borderless full-width sidebar row that highlights only on hover. When git tracking is disabled OR the project isn't a git repo, the row is `display: none`.
 
-Layout (HS-7975): full sidebar width, padding `4px 12px`, no border, transparent background. The branch label `flex: 1`, the count pill is `margin-left: auto` so it right-aligns. The tint classes (`is-clean`, `is-dirty`, `is-conflicted`, `is-ahead`, `is-behind`) colour the text + count pill only — the row chrome is plain unless hovered.
+Layout (HS-7975): full sidebar width, padding `4px 12px`, no border, transparent background. The branch label `flex: 1`, the count pill is `margin-left: auto` so it right-aligns. The tint classes (`is-clean`, `is-dirty`, `is-conflicted`, `is-ahead`, `is-behind`) color the text + count pill only — the row chrome is plain unless hovered.
 
 Layout:
 ```

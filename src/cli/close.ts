@@ -2,7 +2,7 @@
  * HS-8089 — CLI close / list / join flows extracted from `src/cli.ts`.
  *
  * `handleClose` (--close), `handleList` (--list), `joinRunningInstance`
- * (default behaviour when an instance is already running on this port),
+ * (default behavior when an instance is already running on this port),
  * and `shutdownRunningInstance` (--replace's wait-for-port-free helper)
  * all share the same pattern: read `~/.hotsheet/instance.json`, talk to
  * the running instance over HTTP, exit cleanly.

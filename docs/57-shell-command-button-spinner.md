@@ -21,7 +21,7 @@ The button is already the user's mental anchor for the action. Showing the spinn
 | State | Layout | Notes |
 |---|---|---|
 | **Idle** | Existing — icon, label, transparent right padding | Unchanged from §15. |
-| **Running** | Idle layout + a spinner-with-stop-icon overlay anchored `position: absolute` to the button's right edge. The spinner has the SAME background colour as the button so it visually "punches" into the button rather than floating beside it. The spinner element is `position: absolute` so it does NOT cause the button to reflow — long button labels are partially obscured by the spinner instead. | First user-visible signal that the click took. |
+| **Running** | Idle layout + a spinner-with-stop-icon overlay anchored `position: absolute` to the button's right edge. The spinner has the SAME background color as the button so it visually "punches" into the button rather than floating beside it. The spinner element is `position: absolute` so it does NOT cause the button to reflow — long button labels are partially obscured by the spinner instead. | First user-visible signal that the click took. |
 | **Confirming stop** | Same as Running. The confirm dialog opens on top via §53's `confirmDialog`; no extra button-level visual. | The user clicks the button (or the spinner specifically — both routes work because the spinner is `pointer-events: none` and the button itself owns the click handler). |
 | **Stopping** | Spinner stays. Button click is debounced for ~500 ms after the user confirms so a double-click on the confirm button doesn't immediately fire a new run. | Server-side: `POST /api/shell/kill` returns immediately; the SIGTERM-then-SIGKILL-after-3s logic is unchanged. |
 
@@ -29,9 +29,9 @@ The button is already the user's mental anchor for the action. Showing the spinn
 
 - 14×14 px (matches the button's icon size).
 - Pinned `right: 6px; top: 50%; transform: translateY(-50%)`.
-- Background: same as the button colour (`background: inherit` — the button itself paints the colour, the spinner is `position: absolute` inside the button so `inherit` returns the button's value).
-- Spinner ring: 2 px stroke, animated rotation, colour = the button's `contrastColor()` foreground. Identical visual language to the existing channel-busy indicator.
-- Inside the spinner ring: a 8×8 px Lucide `square` (filled) glyph in the contrast colour. Click target is the entire button — the spinner is `pointer-events: none`.
+- Background: same as the button color (`background: inherit` — the button itself paints the color, the spinner is `position: absolute` inside the button so `inherit` returns the button's value).
+- Spinner ring: 2 px stroke, animated rotation, color = the button's `contrastColor()` foreground. Identical visual language to the existing channel-busy indicator.
+- Inside the spinner ring: a 8×8 px Lucide `square` (filled) glyph in the contrast color. Click target is the entire button — the spinner is `pointer-events: none`.
 - Reflow guard: the spinner element is `position: absolute` so it never contributes to the button's intrinsic width. A long button label that visually clips behind the spinner is the accepted tradeoff (§57.4 Out of scope mentions an alternative if the user disagrees).
 
 ### 57.3.3 Stop confirmation dialog
@@ -75,7 +75,7 @@ Custom commands don't have stable ids in the saved JSON — the existing structu
 ## 57.4 Out of scope (potential follow-ups)
 
 - **Stop-button pulsing animation.** A subtle scale pulse on the stop icon would communicate "click me to stop" more strongly. Skipped to ship Phase 1 lean.
-- **Reflow-respecting layout** (giving the spinner a guaranteed width slot via `padding-right: 24px` on the button). The user explicitly asked for the no-reflow behaviour with the partial-text-obscure tradeoff, so the spec follows that. If they later prefer the reflow variant, swap to `padding-right` on the running-state class.
+- **Reflow-respecting layout** (giving the spinner a guaranteed width slot via `padding-right: 24px` on the button). The user explicitly asked for the no-reflow behavior with the partial-text-obscure tradeoff, so the spec follows that. If they later prefer the reflow variant, swap to `padding-right` on the running-state class.
 - **Per-button output preview** in the Running state (the existing §53 streaming output goes to the Commands Log; surfacing the latest line of output in the button itself would clutter the sidebar). Defer.
 - **Stop ALL running** affordance somewhere global. Defer until users actually run >2 commands concurrently.
 

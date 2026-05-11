@@ -1079,7 +1079,7 @@ describe('pendingPermissionStack — single-popup contract (HS-8219)', () => {
   // data structure". Pre-fix new permissions arriving while one was
   // showing were dropped at the gate; the polling loop's next 100 ms
   // iteration re-introduced them via the for-each. Post-fix the
-  // pending-permission stack centralises the queue + mounts the next
+  // pending-permission stack centralizes the queue + mounts the next
   // entry immediately on every popup-close path.
 
   it('shows the first popup and queues subsequent permissions on the stack', () => {
@@ -1297,7 +1297,7 @@ describe('pendingPermissionStack — single-popup contract (HS-8219)', () => {
 describe('shouldUseLiveCheckout — pure heuristic (HS-8217)', () => {
   // HS-8217 — the user reported that the static `<pre>` / DOM diff path
   // for non-truncated previews was hard to follow vs the actual claude
-  // TUI's coloured output. The heuristic now triggers live-borrow for
+  // TUI's colored output. The heuristic now triggers live-borrow for
   // any non-trivial preview, not just truncation.
 
   function diff(overrides: Partial<EditDiffShape> = {}): EditDiffShape {
@@ -1313,7 +1313,7 @@ describe('shouldUseLiveCheckout — pure heuristic (HS-8217)', () => {
 
   it('triggers for ANY parseable Edit/Write diff — even single-line', () => {
     // The user's HS-8217 example: a single-line function-signature
-    // change. Pre-fix this would render as the static colour-coded
+    // change. Pre-fix this would render as the static color-coded
     // HTML diff (`+`/`−` rows); the user finds the real claude TUI's
     // rendering significantly easier to scan.
     expect(shouldUseLiveCheckout(diff({
@@ -1549,7 +1549,7 @@ describe('Bash custom layout (HS-8299)', () => {
   });
 
   it('non-Bash tool calls keep the legacy two-icon-button + always-allow-affordance layout', () => {
-    // Defence-in-depth — the new Bash branch must NOT leak across to
+    // Defense-in-depth — the new Bash branch must NOT leak across to
     // tools that share the popup surface (Read / Glob / WebFetch /
     // WebSearch / etc.). Pre-HS-8299 a Read permission rendered as
     // `<pre class="permission-popup-preview">` with green-check + red-X
@@ -1687,7 +1687,7 @@ describe('Write custom layout (HS-8296)', () => {
     expect(document.querySelector('.permission-popup')).toBeNull();
   });
 
-  it('falls back to the legacy layout when input_preview is malformed (defence-in-depth)', () => {
+  it('falls back to the legacy layout when input_preview is malformed (defense-in-depth)', () => {
     processPermissionPollResponse({
       permissions: {
         'secret-A': {

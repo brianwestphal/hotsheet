@@ -10,7 +10,7 @@ describe('stripAnsi (HS-7969)', () => {
     expect(stripAnsi('\x1b[2J\x1b[Hhello')).toBe('hello');
   });
 
-  it('removes a coloured prompt', () => {
+  it('removes a colored prompt', () => {
     expect(stripAnsi('\x1b[31mERROR\x1b[0m: oops')).toBe('ERROR: oops');
   });
 

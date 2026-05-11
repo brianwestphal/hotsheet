@@ -137,7 +137,7 @@ Convert remaining manual-rebuild callsites opportunistically. **Not a hard requi
 
 `effect()` callbacks that aren't disposed when their owning DOM tree is removed leak — every signal write keeps re-running the effect against an orphaned element. This is the most common signals-primitive footgun and needs explicit attention before broad rollout.
 
-Three layers of defence:
+Three layers of defense:
 
 1. **`bindList` owns its rows' disposers.** When a row is removed (key drops out of the signal's value array), the row's effect tree is torn down before the node detaches. Callers don't manage row lifetimes.
 2. **`bindText` / `bindAttr` return a disposer.** Caller is responsible for invoking it when the bound element leaves the DOM. Most callsites that opt in already manage their own teardown (`termHandlerDisposers`, `releaseHandle`, etc.) — adding the disposer to the existing list is a one-liner.

@@ -5,7 +5,7 @@
  * pre-migration lived as a raw `let activeProject` in `state.tsx`
  * plus the `projectListSignal` + `activeSecretSignal` HS-8235 signals
  * in `projectTabs.tsx`. These tests pin the action contract +
- * derived-signal behaviour in isolation; integration with
+ * derived-signal behavior in isolation; integration with
  * `getActiveProject()` / `setActiveProject()` is covered by
  * `state.test.ts`, and integration with the bindList tab strip is
  * covered by `projectTabs.test.ts`.

@@ -1,6 +1,6 @@
 /**
  * HS-8189 — `src/terminals/registry.ts` is now a thin re-export facade
- * over the behavioural slices under `src/terminals/registry/`. Splitting:
+ * over the behavioral slices under `src/terminals/registry/`. Splitting:
  *
  * - `registry/types.ts` — public types + the internal `SessionState` shape
  * - `registry/sessionStore.ts` — `sessions` Map + `sessionKey` + constants

@@ -537,7 +537,7 @@ describe('filtering', () => {
       expect(counts).toEqual({ backlog: 0, archive: 0 });
     });
 
-    it('non-exact searches (partial number, free text) keep the pre-fix behaviour', async () => {
+    it('non-exact searches (partial number, free text) keep the pre-fix behavior', async () => {
       const t = await createTicket('Free-text bucket-restricted target');
       await updateTicket(t.id, { status: 'backlog' });
       // Free-text search → status filter still excludes backlog.
@@ -545,7 +545,7 @@ describe('filtering', () => {
       expect(out.map(x => x.id)).not.toContain(t.id);
     });
 
-    it('isExactTicketIdSearch recognises common shapes + rejects free text', async () => {
+    it('isExactTicketIdSearch recognizes common shapes + rejects free text', async () => {
       const { isExactTicketIdSearch } = await import('./tickets.js');
       expect(isExactTicketIdSearch('HS-100')).toBe(true);
       expect(isExactTicketIdSearch('hs-100')).toBe(true);

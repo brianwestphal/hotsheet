@@ -108,7 +108,7 @@ The HS-6998 v1 / HS-7558 dialog rendered a visible `+ Add response here` button 
 
 **Iteration 1.** The first pass reduced the button to a hover-fade — at rest, a 14 px gap with the label hidden; on hover, a thin 1 px bar plus the "+ Add response here" label faded in. The user reported (a) the label stuck around after the cursor left and (b) the visible 14 px gap looked like blank padding when no insertion was intended.
 
-**Iteration 2 (current).** The dialog now collapses the gap to a 6 px zero-content hover zone with NO button text or icon at all. On hover the slot lights a 2 px accent-coloured bar (drop-target style) marking the exact split point a click would target. Cursor stays pointer. The whole affordance disappears the moment the cursor leaves — there's no labelled button to linger.
+**Iteration 2 (current).** The dialog now collapses the gap to a 6 px zero-content hover zone with NO button text or icon at all. On hover the slot lights a 2 px accent-colored bar (drop-target style) marking the exact split point a click would target. Cursor stays pointer. The whole affordance disappears the moment the cursor leaves — there's no labeled button to linger.
 
 - `.feedback-insert-slot { min-height: 6px; padding: 0; }` — invisible at rest, clickable everywhere in the gap.
 - `.feedback-insert-slot::before` — 2 px solid `#3b82f6` bar, `opacity: 0` at rest, `opacity: 1` on `:hover`, 100 ms transition.
@@ -154,7 +154,7 @@ Sometimes the user wants to flag a comment to Claude proactively, without waitin
 - The note has a `FEEDBACK NEEDED:` or `IMMEDIATE FEEDBACK NEEDED:` prefix — those are Claude → user requests, not user → Claude proactive comments. The user responds via the existing feedback dialog.
 - The note is empty (`text.trim() === ''`) — there's nothing to send.
 
-**Click behaviour.**
+**Click behavior.**
 1. Verify channel is enabled — if not, show a `.note-megaphone-warning` toast: "Channel feature not enabled in Settings → Experimental." Don't proceed.
 2. Verify channel is alive (Claude is connected) — if not, show "Claude is not connected. Launch Claude Code with channel support first." Don't proceed.
 3. Otherwise, fire `triggerChannelAndMarkBusy(framedMessage)` where `framedMessage` mirrors the §21.7 wording but adds the note text + ticket context as an anchor: `"An unsolicited comment was added to ticket {ticketNumber} ({ticketTitle}). Please re-read the worklist and continue work on this ticket. The user's comment was:\n\n{noteText}"`.

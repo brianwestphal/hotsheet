@@ -204,7 +204,7 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
       console.error(`JSON co-save failed (${tier}):`, jsonErr);
     }
 
-    // HS-7929: capture each attachment blob into the centralised
+    // HS-7929: capture each attachment blob into the centralized
     // hash-addressed store at `<backupRoot>/attachments/<sha>` and write a
     // `backup-<TS>.attachments.json` manifest sibling. Same best-effort
     // policy as the JSON co-save — failures here log but don't fail the

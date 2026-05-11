@@ -6,7 +6,7 @@
  * neither carries the binary blobs under `.hotsheet/attachments/`, only the
  * `attachments` table rows.
  *
- * Design: see `docs/43-attachment-backups.md`. Hash-addressed centralised
+ * Design: see `docs/43-attachment-backups.md`. Hash-addressed centralized
  * store at `<backupRoot>/attachments/<sha256-hex>` + per-backup
  * `backup-<TS>.attachments.json` manifest sibling. Daily orphan GC walks the
  * union of every manifest's `entries[].sha` and deletes anything outside
@@ -110,7 +110,7 @@ export async function hashFile(path: string): Promise<{ sha: string; size: numbe
 }
 
 /**
- * Return the directory holding the centralised hash-addressed blob pool
+ * Return the directory holding the centralized hash-addressed blob pool
  * for a given `backupRoot` (typically `<dataDir>/backups/` or a custom
  * `backupDir` per `getBackupDir`).
  */

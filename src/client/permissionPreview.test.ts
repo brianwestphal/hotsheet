@@ -91,7 +91,7 @@ describe('formatInputPreview (HS-6634)', () => {
     expect(formatInputPreview('Read', raw)).toBe('/tmp/a/very/long/pa…');
   });
 
-  it('keeps raw text when truncated JSON has no recognised primary field', () => {
+  it('keeps raw text when truncated JSON has no recognized primary field', () => {
     const raw = '{"description":"half a string';
     expect(formatInputPreview('Bash', raw)).toBe(raw);
   });

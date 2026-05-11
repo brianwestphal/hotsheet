@@ -439,7 +439,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // listener is wired only when the callsite passes a handler (sectioned
     // mode never renders the badge prefix, so its tiles get no listener
     // either — checking the callback at attach time keeps the hover
-    // affordance consistent with the actual behaviour). `stopPropagation`
+    // affordance consistent with the actual behavior). `stopPropagation`
     // beats the tile-center click handler that sits on the tile root.
     if (opts.onProjectBadgeClick !== undefined && badge?.name !== undefined && badge.name !== '') {
       const projectEl = root.querySelector<HTMLElement>(`.${cssPrefix}-tile-project`);
@@ -482,7 +482,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // state never auto-mount (no PTY to attach to); spawn-and-enlarge still
     // mounts eagerly via `spawnAndEnlarge` below. When the observer is
     // unavailable (test envs without IO) we fall back to the eager-mount
-    // behaviour so tests don't have to install a polyfill.
+    // behavior so tests don't have to install a polyfill.
     virtState.set(key, initialTileState());
     if (virtObserver !== null) {
       virtRootToId.set(root, key);
@@ -740,7 +740,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     tile.targetCols = term.cols;
     tile.targetRows = term.rows;
 
-    // HS-8288 — defence in depth against the cascading-refresh /
+    // HS-8288 — defense in depth against the cascading-refresh /
     // race-during-mount class of bug. If `checkout()` returned but
     // `reparentXtermInto` hit its `term.element === undefined` early-return
     // (recorded as the `reparent.no-element` event in the HS-8287/8288
@@ -858,7 +858,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     const native = tileNativeGridFromCellMetrics(cellW, cellH);
     if (term.cols === native.cols && term.rows === native.rows) {
       // Already at native — sync the bookkeeping so a future
-      // `release()` → `restore()` round-trip's safe-stop also recognises
+      // `release()` → `restore()` round-trip's safe-stop also recognizes
       // convergence.
       tile.targetCols = native.cols;
       tile.targetRows = native.rows;
@@ -1467,7 +1467,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // here so it could mount inside the dedicated view. It now mounts on
     // `document.body` and anchors below the project tab, so the closure
     // no longer needs an in-pane anchor. `dedicatedBody` is still used
-    // below to apply the per-theme background colour.
+    // below to apply the per-theme background color.
     backBtn.addEventListener('click', () => { exitDedicatedView(); });
 
     const appearance = resolveTileAppearance(tile);

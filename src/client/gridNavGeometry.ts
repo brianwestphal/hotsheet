@@ -4,7 +4,7 @@
  * Pre-fix `terminalTileGrid.tsx::findNextTileInDirection` used a
  * perpendicular-weighted cone metric that would reach into a different
  * row when no same-row neighbour existed. The user's reply on HS-8028
- * pinned the desired behaviour: arrow-left lands on the tile *immediately
+ * pinned the desired behavior: arrow-left lands on the tile *immediately
  * to the left in the SAME ROW* — no row-jumping. If no tile shares the
  * row / column AND lies in the indicated direction, the action is a
  * no-op.

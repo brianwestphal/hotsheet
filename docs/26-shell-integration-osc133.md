@@ -2,7 +2,7 @@
 
 ## 26.1 Status
 
-**Phase 1a shipped (HS-7267):** the OSC 133 parser hook, `CommandRecord` ring (bounded at 500), A/B/C/D state machine, gutter-glyph decoration, reset-on-restart, and dangling-record cleanup on PTY exit are all in `src/client/terminal.tsx`. Pure helpers extracted to `src/client/terminalOsc133.ts` (`parseOsc133ExitCode`, `exitCodeGutterClass`) with 11 unit tests covering bare-D / D;N / VS Code 633 D;N;key=value / non-numeric rejection / exit-code → CSS class mapping. CSS under `.terminal-osc133-gutter-{success,failure,neutral}` renders green check / red X / grey dot per command.
+**Phase 1a shipped (HS-7267):** the OSC 133 parser hook, `CommandRecord` ring (bounded at 500), A/B/C/D state machine, gutter-glyph decoration, reset-on-restart, and dangling-record cleanup on PTY exit are all in `src/client/terminal.tsx`. Pure helpers extracted to `src/client/terminalOsc133.ts` (`parseOsc133ExitCode`, `exitCodeGutterClass`) with 11 unit tests covering bare-D / D;N / VS Code 633 D;N;key=value / non-numeric rejection / exit-code → CSS class mapping. CSS under `.terminal-osc133-gutter-{success,failure,neutral}` renders green check / red X / gray dot per command.
 
 **Phase 1b shipped (HS-7268):** a copy-last-output toolbar button that reads the most recent command's output via `computeLastOutputRange` (pure helper in `terminalOsc133.ts`, 12 new unit tests) and writes to `navigator.clipboard`. The button is hidden until the first OSC 133 escape arrives (`applyShellIntegrationToolbarVisibility`) and re-hides on PTY restart. See [31-osc133-copy-last-output.md](31-osc133-copy-last-output.md).
 
@@ -36,10 +36,10 @@ Once a host knows where each command starts and ends, it can expose:
 1. **Jump to previous / next command** (keyboard shortcut, scroll-like glyphs in a gutter). Today scrolling the drawer or a dashboard tile means eyeball-scanning walls of output.
 2. **Copy last command output** — single click, grabs the range between the most recent C and the next A. Massively reduces friction for "send me the error" / "paste the logs" flows.
 3. **Rerun last command** — re-send the captured B→C range as input.
-4. **Exit-code glyph in the gutter** (green check / red X / grey "running") next to each command. A one-glance view of "which commands in this scrollback failed".
+4. **Exit-code glyph in the gutter** (green check / red X / gray "running") next to each command. A one-glance view of "which commands in this scrollback failed".
 5. **AI-assisted command analysis** — with structured command + output + exit code ranges, the Claude Channel can be handed "the last failed command and its full output" as a single blob, unlocking "ask Claude why this failed" from the toolbar. This is the strongest unique-to-Hot-Sheet angle since Hot Sheet already has the channel wired up.
 
-Developers who cite "the integrated terminal" as VS Code's killer feature are almost always citing OSC 133 behaviours (1)–(4). Item (5) is the Hot-Sheet-specific wedge.
+Developers who cite "the integrated terminal" as VS Code's killer feature are almost always citing OSC 133 behaviors (1)–(4). Item (5) is the Hot-Sheet-specific wedge.
 
 ## 26.4 Protocol coverage assessment
 
@@ -85,7 +85,7 @@ Ship across three phases so we can land value incrementally and re-evaluate.
 
 ### Phase 1 — Gutter glyphs + "copy last output"
 
-- Add a 12-px gutter column on the left side of the xterm pane. Green check (exit 0), red X (non-zero), grey spinner (running). Glyphs attached via `registerDecoration` to the `promptStart` marker.
+- Add a 12-px gutter column on the left side of the xterm pane. Green check (exit 0), red X (non-zero), gray spinner (running). Glyphs attached via `registerDecoration` to the `promptStart` marker.
 - Toolbar button: **Copy last output**. Reads the row range between the most recent `outputStart` and the most recent `commandEnd` (or current line if running), converts to plain text via `term.buffer.active.getLine(row).translateToString()`, writes to clipboard.
 - No new scrollback widgets, no keybindings — keep the first phase visually calm.
 - Decision point: only render the gutter when `shellIntegration.enabled === true`, so users who don't opt into shell integration see no layout change.

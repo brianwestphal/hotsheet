@@ -1,6 +1,6 @@
 # 46. Service / Client Decoupling (Design Spike)
 
-HS-7938. Detach the Hot Sheet **service** (HTTP server + dataDir + plugins + backups + channel sidecar) from the Tauri desktop **client** so multiple clients of varying form factors (desktop browser, Tauri shell, mobile browser, future iOS app) can connect simultaneously to a single service instance over WebSocket for near-real-time synchronisation. The original ticket scope ("iPhone remote access") becomes one form factor of a broader architecture.
+HS-7938. Detach the Hot Sheet **service** (HTTP server + dataDir + plugins + backups + channel sidecar) from the Tauri desktop **client** so multiple clients of varying form factors (desktop browser, Tauri shell, mobile browser, future iOS app) can connect simultaneously to a single service instance over WebSocket for near-real-time synchronization. The original ticket scope ("iPhone remote access") becomes one form factor of a broader architecture.
 
 > **Status:** Design only. Implementation phased into HS-7940 (server-side `--bind` opt-in + auth), HS-7944 (service-only mode + Tauri shell with `--service-url`), HS-7945 (WebSocket push replacing `/api/poll`), HS-7946 (multi-client conflict UX), HS-7941 (mobile client / PWA), HS-7942 (Tailscale UX sugar).
 
@@ -14,7 +14,7 @@ Today's architecture is single-process: the Tauri desktop window owns the Hono s
 - Multiple users / collaborators can't share a Hot Sheet workspace
 - The "view-only auxiliary screen" pattern (e.g. a dashboard on a side monitor) requires running a second full instance
 
-The user's revised goal: **the Hot Sheet service is detachable from the client.** One service, many clients, WebSocket push for synchronisation. The desktop client stays the primary form factor; the mobile client is a first-class secondary; multiple simultaneous clients of either type are allowed.
+The user's revised goal: **the Hot Sheet service is detachable from the client.** One service, many clients, WebSocket push for synchronization. The desktop client stays the primary form factor; the mobile client is a first-class secondary; multiple simultaneous clients of either type are allowed.
 
 ## 46.2 Architectural shift
 
@@ -33,12 +33,12 @@ The user's revised goal: **the Hot Sheet service is detachable from the client.*
 
 The Tauri desktop app becomes either:
 
-- **Co-located mode** (today's behaviour, mostly preserved) — the Tauri process spawns the service as a sidecar; the webview connects to `localhost:<port>`. Single-machine users get one-click launch with no setup.
+- **Co-located mode** (today's behavior, mostly preserved) — the Tauri process spawns the service as a sidecar; the webview connects to `localhost:<port>`. Single-machine users get one-click launch with no setup.
 - **Remote mode** (new) — the Tauri shell is started with `--service-url <url>` (or via an in-app setting). It does NOT spawn a sidecar; instead the webview points at the remote service. Useful for "I keep my workspace on the home server but I'm on my laptop today" workflows.
 
 A pure web client (Mobile Safari, Chrome on a guest machine) is just the same JS bundle served by the service over HTTP — no Tauri shell needed.
 
-## 46.3 Synchronisation model
+## 46.3 Synchronization model
 
 **Today's polling.** Clients hit `GET /api/poll?version=<N>` (long-poll, 30s timeout, returns when `version > N` or on timeout). Mutations bump a process-local version counter via `bumpChangeVersion()`. The polling client refetches the relevant lists. Every client roundtrips a full ticket list on every mutation — wasteful at one client, untenable at many.
 
@@ -80,7 +80,7 @@ Multiple clients editing the same record concurrently:
 
 Carry forward from the original §46 v1 + extend:
 
-- Per-project `X-Hotsheet-Secret` header for HTTP (today's behaviour, unchanged)
+- Per-project `X-Hotsheet-Secret` header for HTTP (today's behavior, unchanged)
 - Same secret as a query param OR `Sec-WebSocket-Protocol` subprotocol on the WebSocket connect — both accepted; the subprotocol path is preferred (doesn't leak into URL access logs)
 - `--bind` opt-in for non-localhost (HS-7940)
 - `isTrustedOrigin(origin)` helper covering localhost + Tailscale 100.64.0.0/10 + user-configured `trustedOrigins` (HS-7940)
@@ -121,7 +121,7 @@ Single-machine users still want the convenience of "double-click the app, your w
 - Quitting the Tauri window stops the sidecar (HS-7931 graceful shutdown applies; HS-7934 e2e covers it)
 - Multiple Tauri windows on the same machine connect to the SAME sidecar — second-launch detects the running instance via `~/.hotsheet/instance.json` and the second window points at the existing service instead of spawning its own
 
-The single-machine user with multiple monitors gets multi-client behaviour for free: open Hot Sheet on each screen, both connect to the local service, both see live updates.
+The single-machine user with multiple monitors gets multi-client behavior for free: open Hot Sheet on each screen, both connect to the local service, both see live updates.
 
 ## 46.8 Service-only mode
 

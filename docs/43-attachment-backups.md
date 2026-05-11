@@ -9,10 +9,10 @@ HS-7900. Companion to [41. Backup JSON co-save](41-backup-json-cosave.md) and [7
 1. **Every attachment blob is captured at least once** in a place that survives the live `.hotsheet/attachments/` dir being deleted, replaced, or restored from an older tarball.
 2. **Restore from any backup re-hydrates its attachments** — paths in restored DB rows resolve to real files even if the live dir is younger than the backup.
 3. **Backup folder stays the source of truth.** Custom `backupDir` (e.g. a Google Drive folder per the HS-7891 incident) covers attachments too — no separate "attachment backup root" knob.
-4. **Per-user direction (HS-7900 ticket notes):** centralised hash-addressed store, per-backup manifest, daily orphan GC. Disk size is not a concern.
+4. **Per-user direction (HS-7900 ticket notes):** centralized hash-addressed store, per-backup manifest, daily orphan GC. Disk size is not a concern.
 
 Non-goals:
-- Bandwidth optimisation when `backupDir` is a slow remote filesystem (Google Drive, OneDrive). The user accepted this trade-off explicitly: re-uploading the same blob multiple times to a remote drive is fine because the hash store dedups within the drive itself.
+- Bandwidth optimization when `backupDir` is a slow remote filesystem (Google Drive, OneDrive). The user accepted this trade-off explicitly: re-uploading the same blob multiple times to a remote drive is fine because the hash store dedups within the drive itself.
 - Encryption-at-rest. Attachments live unencrypted today and the backup mirror inherits that property.
 - Cross-machine sync of the hash store. Each machine's backup root is independent.
 

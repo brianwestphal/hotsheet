@@ -17,7 +17,7 @@ describe('stripAnsi (HS-7983)', () => {
     expect(stripAnsi('\x1b[2J\x1b[Hhello')).toBe('hello');
   });
 
-  it('removes SGR colour codes', () => {
+  it('removes SGR color codes', () => {
     expect(stripAnsi('\x1b[31mERROR\x1b[0m: oops')).toBe('ERROR: oops');
   });
 

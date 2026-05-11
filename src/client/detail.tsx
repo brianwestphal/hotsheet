@@ -94,7 +94,7 @@ export function bindDetailDetailsRenderToggle(): void {
     // ran again afterward. The explicit `.ticket-ref` ancestor check
     // catches the case before linkify wraps the text in an anchor — the
     // capture-phase global handler in `ticketRefDialog.tsx` is the
-    // primary defence; this is the safety net.
+    // primary defense; this is the safety net.
     const targetEl = e.target as HTMLElement | null;
     if (targetEl !== null && targetEl.closest('.ticket-ref') !== null) return;
     // Let internal links navigate normally.

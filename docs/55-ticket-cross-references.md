@@ -14,8 +14,8 @@ The ticket also asks the dialog to surface the same content as the inline detail
 - **Surfaces.** Anywhere markdown is rendered (notes, details, reader-mode body, the stacking dialog itself). Inside `<code>` / `<pre>` blocks too — the user explicitly opted into that on the assumption that simpler beats stricter.
 - **Self-references.** A ticket viewing itself with `HS-1234` in its own notes does NOT linkify — clicking would just re-open the same ticket the user is already looking at. Link-detection skips matches equal to the current ticket's number.
 - **Stale references.** Clicking `HS-9999` (no such ticket) shows a transient toast "Ticket HS-9999 not found" via the standard `showToast` helper. No persistent error UI.
-- **Modal behaviour.** Stacking, modal-ish — each new dialog mounts on top of the previous one, offset by 30px in both axes so the underlying dialogs' edges peek out and the user can see depth. Backdrop click + Escape both dismiss the TOP dialog only (one level). The "Open in detail panel" header button dismisses the entire stack and switches the main detail panel to that ticket.
-- **Editable in v1?** **No** — read-only display with an "Open in detail panel" CTA. Full editable behaviour requires refactoring `detail.tsx` (~30 `getElementById` callsites, scattered globals) into a parameterizable component. Read-only ships the navigation value (drill into chains of references) plus a one-click escape to edit. Editable-inline filed as a follow-up ticket.
+- **Modal behavior.** Stacking, modal-ish — each new dialog mounts on top of the previous one, offset by 30px in both axes so the underlying dialogs' edges peek out and the user can see depth. Backdrop click + Escape both dismiss the TOP dialog only (one level). The "Open in detail panel" header button dismisses the entire stack and switches the main detail panel to that ticket.
+- **Editable in v1?** **No** — read-only display with an "Open in detail panel" CTA. Full editable behavior requires refactoring `detail.tsx` (~30 `getElementById` callsites, scattered globals) into a parameterizable component. Read-only ships the navigation value (drill into chains of references) plus a one-click escape to edit. Editable-inline filed as a follow-up ticket.
 
 ## 55.3 Architecture
 
@@ -31,7 +31,7 @@ Two new endpoints in `src/routes/tickets.ts`:
 Pure helper module with three exports:
 
 - **`loadTicketPrefixes(): Promise<string[]>`** — fetches `/api/tickets/prefixes` once and caches. Concurrent callers share the in-flight promise. On error, falls back to `['HS']` so the linkify pass still works.
-- **`reloadTicketPrefixes(): Promise<string[]>`** — drops the cache + re-runs `loadTicketPrefixes`. Wired into `app.tsx::reloadAppState` so every project switch picks up the new project's prefixes (HS-8053). Pre-fix the cache was populated once at app boot from whichever project the user landed on, so a project with a non-`HS` prefix (e.g. Domotion's `DM`) never had its prefixes recognised — `DM-123` references stayed plain text. The cache is cleared synchronously before the fetch starts, so any concurrent `linkifyWithCachedPrefixes(...)` call between the clear and the resolve safely sees `null` and returns the input unchanged.
+- **`reloadTicketPrefixes(): Promise<string[]>`** — drops the cache + re-runs `loadTicketPrefixes`. Wired into `app.tsx::reloadAppState` so every project switch picks up the new project's prefixes (HS-8053). Pre-fix the cache was populated once at app boot from whichever project the user landed on, so a project with a non-`HS` prefix (e.g. Domotion's `DM`) never had its prefixes recognized — `DM-123` references stayed plain text. The cache is cleared synchronously before the fetch starts, so any concurrent `linkifyWithCachedPrefixes(...)` call between the clear and the resolve safely sees `null` and returns the input unchanged.
 - **`buildTicketRefRegex(prefixes): RegExp`** — builds a global, case-sensitive regex matching `\b(PREFIX1|PREFIX2|...)-\d+\b`. Prefixes are sorted longest-first so e.g. `BUG-` beats a hypothetical `B-` in the alternation. Regex metacharacters in prefixes are escaped (defensive — prefix is user-configurable via Settings).
 - **`linkifyTicketRefs(html, prefixes, currentTicketNumber?)`** — post-processes a rendered HTML string. Splits on tags via `/<[^>]*>/`, scans only the text-content runs (skips attribute values), wraps each match in `<a class="ticket-ref" data-ticket-number="HS-1234" href="javascript:void(0)">HS-1234</a>`. `currentTicketNumber` is the self-ref skip key.
 
@@ -75,7 +75,7 @@ The global handler approach (vs per-render delegation) has two benefits: (a) any
 
 ## 55.4 SCSS
 
-`.ticket-ref` is a thin-underlined accent-colour token with a 2-px-padding chip-ish hover state. `.ticket-ref-dialog-*` mirrors the structure of the `.reader-mode-*` overlay (HS-7957 / §49) with its own z-index range starting at 2600.
+`.ticket-ref` is a thin-underlined accent-color token with a 2-px-padding chip-ish hover state. `.ticket-ref-dialog-*` mirrors the structure of the `.reader-mode-*` overlay (HS-7957 / §49) with its own z-index range starting at 2600.
 
 ## 55.5 Tests
 

@@ -4,7 +4,7 @@
 
 Investigation of whether/how to stream `child_process.spawn` output for custom shell commands so command rows in the sidebar (and the Commands Log entry) update incrementally instead of jumping from "running" to "done" with all output appearing at the end.
 
-## §53.1 Today's behaviour
+## §53.1 Today's behavior
 
 - User clicks a custom shell command in `commandSidebar.tsx`. The client `POST /api/shell/exec` returns the new log entry id.
 - `src/routes/shell.ts` spawns the child via `child_process.spawn`. Stdout/stderr accumulate into a single `output` string; `child.on('close')` writes the FINAL output as the log entry's `detail` and calls `notifyChange()`.
@@ -89,7 +89,7 @@ Reasoning:
 
 ### Phase 3 — Client wiring **[shipped HS-7983]**
 
-- `commandSidebar.tsx::startShellPoll` reads `outputs` and dispatches `hotsheet:shell-partial-output` events with `{ id, partial }`. Pure helper `decideShellPartialEvents(response, cache)` (exported for tests) does the per-id last-seen-length deduplication so a stalled command doesn't thrash subscribers every 2 s tick. `SHELL_PARTIAL_OUTPUT_EVENT` constant + `ShellPartialOutputEvent` interface centralise the event shape.
+- `commandSidebar.tsx::startShellPoll` reads `outputs` and dispatches `hotsheet:shell-partial-output` events with `{ id, partial }`. Pure helper `decideShellPartialEvents(response, cache)` (exported for tests) does the per-id last-seen-length deduplication so a stalled command doesn't thrash subscribers every 2 s tick. `SHELL_PARTIAL_OUTPUT_EVENT` constant + `ShellPartialOutputEvent` interface centralize the event shape.
 - ~~**Sidebar row preview.**~~ **Removed in HS-8015.** The original Phase 3 attached a faded `tailLines(stripAnsi(partial), 2)` preview directly under the originating sidebar button via `attachShellPreviewToButton(btn, runningLogId)`. Users found the in-sidebar duplicate cluttered — they wanted live updates *only* in the Commands Log entry "just like they do when the command is finished." HS-8015 deleted `attachShellPreviewToButton`, the `btnEl` parameter on `runShellCommand`, the `onComplete` parameter on `startShellPoll`, and the `.channel-command-preview` SCSS block. The `tailLines` helper in `src/client/stripAnsi.ts` was its only client-side caller and was removed alongside it; `stripAnsi` itself stays because the Commands Log live render still strips ANSI before writing the partial. Server still buffers + dispatches `hotsheet:shell-partial-output` events identically — only the consumer count dropped from two to one (Commands Log).
 - **Commands Log entry live render.** `renderLogEntry` adds a third branch for shell entries that are running but haven't yet picked up the `---SHELL_OUTPUT---` separator: render the command-as-shell-input + a divider + a dedicated `<pre class="command-log-shell-partial" data-shell-partial-id={id}></pre>` (empty until the first chunk; `:empty { display: none }` collapses zero-height). `initCommandLog` registers a single window-level listener that delegates to the exported `applyShellPartialEvent(detail)` helper. Sticky-bottom auto-scroll: pinned-state captured BEFORE the textContent swap (the swap grows scrollHeight, which would always make the post-write distance look larger) via the pure `shouldAutoScrollToBottom(scrollTop, clientHeight, scrollHeight, threshold = 8)` helper. Once the user scrolls up past the 8 px threshold the listener stops auto-following — Terminal.app convention.
 - **Flicker-free re-render (HS-8015 follow-up).** Pre-fix the live `<pre>`'s textContent only lived inside the DOM — the 5 s `loadEntries` poll ran `renderEntries` which rebuilt every entry from scratch, wiping the partial pre's text and forcing the user to wait for the next `hotsheet:shell-partial-output` chunk to repaint it. Result: a visible flicker every 5 s where the live preview disappeared and reappeared. Fix: a module-level `latestPartialOutputs: Map<number, string>` cache in `commandLog.tsx` that both `applyShellPartialEvent` (sub-tick) AND the `loadEntries` tick (which already pulls `running.outputs` from `/api/shell/running`) write to. After every `renderEntries`, `hydrateRenderedShellPartials()` walks every `<pre.command-log-shell-partial[data-shell-partial-id]>` and writes the cached partial via `stripAnsi`. Stale ids (no longer in `running.ids`) are dropped from the cache on each tick. Because partials are monotonic on the server, the tick-side write keeps the longer of `(cached, server)` so a chunk that arrived between request dispatch and response doesn't get clobbered by an older snapshot.
@@ -114,13 +114,13 @@ Phase 3: e2e — run a custom command emitting `Stage 1\nStage 2\nStage 3\n` ove
 ## §53.7 Out of scope
 
 - **Streaming over PTY-style channels** — that's what the embedded terminal already does. Custom shell commands aren't interactive (no stdin), so spawn-with-streamed-output is enough.
-- **Coloured ANSI rendering** in the live Commands Log preview — strip with `stripAnsi` before display. The full completed Commands Log entry can keep colour (xterm.js / Anser-like rendering is a separate ticket if requested). HS-8015 removed the sidebar preview entirely so the no-colour decision now applies to a single surface.
+- **Colored ANSI rendering** in the live Commands Log preview — strip with `stripAnsi` before display. The full completed Commands Log entry can keep color (xterm.js / Anser-like rendering is a separate ticket if requested). HS-8015 removed the sidebar preview entirely so the no-color decision now applies to a single surface.
 - **Cross-session resume** — if the user reloads mid-command, the partial buffer is lost. The completed log entry is still written on `child.close`. Acceptable for v1.
 
 ## §53.8 Open questions
 
 1. Should the sidebar row render the entire partial (limited to the most recent N lines for height), or just a count like "3 lines emitted"?
 2. Should the Commands Log entry auto-scroll to the bottom when partial chunks arrive, or only scroll when the user is already at the bottom (Terminal.app-style "pin to bottom unless I've scrolled up")?
-3. Should `shell_streaming_enabled` default `true` or `false`? Streaming is a behaviour change — `true` means existing users get it implicitly; `false` is more conservative but invisible.
+3. Should `shell_streaming_enabled` default `true` or `false`? Streaming is a behavior change — `true` means existing users get it implicitly; `false` is more conservative but invisible.
 
 Recommend default-on with a toast on first use ("Shell command output now streams as it arrives — Settings → Commands to disable") so the change is discoverable but reversible.

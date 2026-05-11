@@ -77,7 +77,7 @@ export const _visibilityGroupingsStoreForTesting = visibilityGroupingsStore;
 
 /** **HS-8319 — TEST ONLY.** Dispose every live
  *  `subscribeToVisibilityGroupings` subscription. Matches the
- *  pre-HS-8319 `subscribers.clear()` behaviour so a test that forgot
+ *  pre-HS-8319 `subscribers.clear()` behavior so a test that forgot
  *  to unsub doesn't leak its handler into the next test. */
 export function _resetSubscribersForTesting(): void {
   for (const dispose of [...liveSubscriberDisposers]) dispose();

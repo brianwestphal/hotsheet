@@ -421,7 +421,7 @@ describe('GET /projects/bell-state', () => {
 // HS-7596 / §37 — /api/projects/quit-summary aggregator.
 describe('GET /projects/quit-summary', () => {
   it('labels dynamic terminals via the in-memory dynamic-config registry, not just the persisted list (HS-7789)', async () => {
-    // Persisted (configured) terminals: a "default" terminal labelled "Claude".
+    // Persisted (configured) terminals: a "default" terminal labeled "Claude".
     mockConfiguredTerminals.set('test-secret-123', [
       { id: 'default', name: 'Claude', command: 'claude' },
     ]);

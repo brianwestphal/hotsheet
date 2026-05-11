@@ -136,7 +136,7 @@ let mountedVariant: BindListVariant | null = null;
  *
  * The intermediate-DOM (between `setTickets` and `renderTicketList`)
  * never paints — it's all on the same synchronous call stack — so
- * this is a perf optimisation, not a correctness fix. But the
+ * this is a perf optimization, not a correctness fix. But the
  * unmount is also cheap: it's a no-op when the variant doesn't
  * change (the dominant case).
  *
@@ -205,7 +205,7 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
   // Empty-state element kept always-mounted; an effect toggles its
   // visibility based on `filteredTickets.value.length` (the narrowed
   // signal — HS-8334). Default variant doesn't show one (matches the
-  // pre-HS-8333 behaviour where the default list just had empty rows);
+  // pre-HS-8333 behavior where the default list just had empty rows);
   // trash + preview each get their own message.
   const emptyEl = toElement(<div className="ticket-list-empty"></div>);
   emptyEl.style.display = 'none';

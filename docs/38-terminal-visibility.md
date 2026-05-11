@@ -30,7 +30,7 @@ The persistence layer also stashes the canonical sorted-and-serialised payload p
 `subscribeToHiddenChanges` fires after every `setTerminalHidden` / `unhideAllInProject` / `unhideAllEverywhere` call. The persistence layer schedules a per-project debounced PATCH (250 ms) that:
 
 1. Reads the project's full hidden set from the in-memory map.
-2. Computes the configured-only sorted subset via `computePersistedIds` — pure helper, sorted output stabilises serialised payload bytes so unchanged sets short-circuit the network call.
+2. Computes the configured-only sorted subset via `computePersistedIds` — pure helper, sorted output stabilizes serialised payload bytes so unchanged sets short-circuit the network call.
 3. Compares the serialised payload against the last-persisted value. No-op when identical.
 4. PATCHes `/api/file-settings` with `{ hidden_terminals: ids }` via `apiWithSecret(secret, …)`.
 
@@ -81,7 +81,7 @@ See [docs/manual-test-plan.md §13 (Show / Hide Terminals dialog)] for the exist
 1. Hide a configured terminal → reload → it stays hidden.
 2. Hide a configured terminal → quit and relaunch Hot Sheet → it stays hidden.
 3. "Show All" inside the dialog → reload → every terminal shows.
-4. Hide a dynamic terminal (`dyn-*`) → reload → it shows again (session-only behaviour preserved).
+4. Hide a dynamic terminal (`dyn-*`) → reload → it shows again (session-only behavior preserved).
 5. Multi-project: hide a terminal in project A, switch to project B, reload, switch back to A — A's filter is restored.
 6. (HS-7829) Hide a configured terminal → delete that terminal in Settings → Terminal → save → check `.hotsheet/settings.json`: the deleted id is gone from `hidden_terminals`.
 7. (HS-7830) With at least one terminal hidden, open Settings → Terminal → status reads "{N} terminals are currently hidden..."; click Reset visibility → confirm → all terminals visible, button disables, status reads "No terminals hidden for this project."

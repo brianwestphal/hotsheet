@@ -162,7 +162,7 @@ Pure function. No globals. Testable in happy-dom directly.
 ## 62.9 Open questions / deferred decisions
 
 - **Fragment shorthand `<>...</>`** — currently supported via the JSX runtime's Fragment symbol. Stays. AST represents a fragment as `{tag: FRAGMENT_SYMBOL, …}`; `astToDom` returns a `DocumentFragment`.
-- **JSX boolean attributes** (`<button disabled>`) — already handled per §62.5. No new behaviour.
+- **JSX boolean attributes** (`<button disabled>`) — already handled per §62.5. No new behavior.
 - **Server-side `astToDom`** — pointless. Server uses `astToHtml`. If anyone tries to import `astToDom` from server code, the import resolves to a stub that throws. Easy with `tsup`'s aliasing or `package.json` `exports` map.
 - **Reactivity integration** — orthogonal to §60. `astToDom` produces real DOM nodes; signals can `bindText` / `bindAttr` against them just as they do today. No special integration needed.
 - **AST visitor pattern** — out of scope. If a future use case wants generic AST transforms (e.g. dev-mode injection of accessibility lints), a small `walk(node, visitor)` helper drops in trivially. Don't pre-build it.

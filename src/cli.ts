@@ -350,7 +350,7 @@ async function setupInstanceLifecycle(actualPort: number): Promise<void> {
 
 /** Resolve demo mode: validate the scenario id and switch the data dir to a
  *  fresh temp directory. Process-exits with status 1 if the scenario id
- *  isn't recognised. */
+ *  isn't recognized. */
 function resolveDemoDataDir(demo: number): string {
   const scenario = DEMO_SCENARIOS.find(s => s.id === demo);
   if (!scenario) {

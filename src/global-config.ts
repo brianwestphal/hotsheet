@@ -59,7 +59,7 @@ export function readGlobalConfig(): GlobalConfig {
     // HS-8087 — pre-fix this catch was silent. Surface non-ENOENT read
     // errors (permission denied, disk I/O failures, JSON parse on a
     // partial write) so the user notices instead of getting a silent
-    // empty-config + behavioural reset.
+    // empty-config + behavioral reset.
     if (err instanceof Error && (err as NodeJS.ErrnoException).code !== 'ENOENT') {
       console.warn(`[config] Failed to read config.json: ${err.message}`);
     }

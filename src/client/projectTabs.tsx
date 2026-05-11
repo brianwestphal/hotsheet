@@ -52,7 +52,7 @@ export async function initProjectTabs(): Promise<void> {
   try {
     // HS-8085 — first call before `setActiveProject`, so the api helper
     // emits a plain GET with no `?project=` query (no active project to
-    // auth against yet). That matches the pre-fix raw-fetch behaviour.
+    // auth against yet). That matches the pre-fix raw-fetch behavior.
     projectsStore.actions.setProjects(await api<ProjectInfo[]>('/projects'));
   } catch {
     projectsStore.actions.setProjects([]);

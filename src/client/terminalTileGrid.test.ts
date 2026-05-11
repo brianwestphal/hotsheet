@@ -4,7 +4,7 @@
  * heavily DOM-driven (xterm canvas, IntersectionObserver, ResizeObserver)
  * and has historically been Playwright-only — happy-dom can't render
  * xterm natively (no canvas). These tests pin the migration's key
- * stack-level invariants without trying to assert visual behaviour.
+ * stack-level invariants without trying to assert visual behavior.
  *
  * All assertions go through `_inspectStackForTesting()` + `entryCount()`
  * from `terminalCheckout`, mirroring how `quitConfirm.test.ts` validates

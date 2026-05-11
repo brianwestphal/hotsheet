@@ -180,14 +180,14 @@ export function bindKeyboardShortcuts() {
       // the program running inside it. Pre-fix this branch unconditionally
       // blurred xterm's helper-textarea (which {@link isEditableTarget}
       // matches) — claude code / vim / less never saw the keystroke. Opt+Esc
-      // still falls through to Hot Sheet's blur-and-deselect behaviour.
+      // still falls through to Hot Sheet's blur-and-deselect behavior.
       if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
       // HS-7393 — any focused INPUT / TEXTAREA should blur on Esc without
       // also clearing ticket selection or the input's value. Previously this
       // branch only covered detail-panel inputs, so Esc in the app search or
       // a terminal search widget blurred-and-deselected at the same time.
       // The app-level search and terminal-search Esc-clear-and-close
-      // behaviours have also been removed (sidebar.tsx, terminalSearch.tsx)
+      // behaviors have also been removed (sidebar.tsx, terminalSearch.tsx)
       // so Esc is now consistently just "lose focus" across every input.
       const active = document.activeElement as HTMLElement | null;
       if (active && isEditableTarget(active)) {
@@ -353,7 +353,7 @@ export function bindKeyboardShortcuts() {
           const btn = byIdOrNull<HTMLButtonElement>('drawer-grid-toggle');
           if (btn !== null && !btn.disabled) btn.click();
           // If the drawer-grid toggle is disabled (≤1 terminal), silently
-          // ignore — matches the click behaviour of the disabled button.
+          // ignore — matches the click behavior of the disabled button.
         } else {
           // Dashboard toggle is unconditionally enabled (when Tauri-stubbed
           // visible at all). Click it whether dashboard is currently open or
@@ -590,7 +590,7 @@ export function isNewTerminalShortcut(e: { metaKey: boolean; ctrlKey: boolean; a
  * has the `drawer-tab` class but no `data-drawer-tab`).
  *
  * Exported so the unit test can pin down the selection + wrap-around
- * behaviour without running the live keyboard handler.
+ * behavior without running the live keyboard handler.
  */
 export function pickNextDrawerTabId(
   tabs: ReadonlyArray<{ active: boolean; tabId: string }>,

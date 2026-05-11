@@ -102,7 +102,7 @@ Anatomy:
 
 **Body.** A scroll-bounded `<div class="reader-mode-body note-markdown">` rendering the markdown HTML. The `note-markdown` class reuses the same CSS that styles inline-rendered notes, so headings / lists / code blocks / blockquotes / tables look identical to how they render in the panel — just at width.
 
-**Read-only.** No textarea, no contenteditable, no inline edit affordance. Selecting + copying text works (browser-default behaviour). Right-click context menu is the browser default.
+**Read-only.** No textarea, no contenteditable, no inline edit affordance. Selecting + copying text works (browser-default behavior). Right-click context menu is the browser default.
 
 **Dismiss.** Three paths, all equivalent:
 1. Click the `×` in the header.

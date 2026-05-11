@@ -52,7 +52,7 @@ export const LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD = 80;
  * Triggers (any one — short-circuit OR):
  *   - **Edit / Write parseable** — `editDiff !== null`. Edit/Write diffs
  *     are inherently multi-line and benefit substantially from the real
- *     claude TUI's coloured rendering (file-name header + dim-faded
+ *     claude TUI's colored rendering (file-name header + dim-faded
  *     unchanged context + green added rows + red removed rows + the
  *     numbered choices list directly below) over the static
  *     `renderEditDiffPreview` HTML diff. User report HS-8217: "the text
@@ -419,7 +419,7 @@ function syncMinimizedDots() {
  * two `.permission-popup` elements somehow ended up in the DOM at once
  * (the user reported "it's sometimes showing multiple permissions
  * popups at once -- it should only show one at a time -- using a stack
- * data structure"). The stack centralises the "next to show" queue so
+ * data structure"). The stack centralizes the "next to show" queue so
  * the active popup is always the single source of truth, AND every
  * popup-close path pops the next directly without waiting for the
  * 100 ms poll reschedule. Combined with the `querySelectorAll`
@@ -572,7 +572,7 @@ function showPermissionPopup(secret: string, perm: PermissionData) {
   // auto-dismiss — calls `mountNextFromPendingStack`). Pre-HS-8219 we
   // simply returned and waited for the next 100 ms poll cycle to
   // re-introduce the permission via the for-each in
-  // `processPermissionPollResponse`. The stack centralises the queue
+  // `processPermissionPollResponse`. The stack centralizes the queue
   // so the active popup is always the single source of truth +
   // surfaces the next permission immediately on dismiss without
   // waiting on a poll round-trip.
@@ -641,7 +641,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   const xIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 
   // HS-7951 — when the permission is for an Edit / Write tool with parseable
-  // `old_string` / `new_string`, render a colour-coded inline unified diff
+  // `old_string` / `new_string`, render a color-coded inline unified diff
   // instead of the flat-JSON dump. Falls back to the existing string preview
   // for every other tool + for malformed Edit/Write payloads.
   const editDiff = perm.input_preview !== undefined
@@ -668,8 +668,8 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   // sampled stale or empty content. A real checkout sidesteps the
   // sampling problem entirely. See `shouldUseLiveCheckout` for the
   // pure heuristic — pre-HS-8217 only truncation triggered live; the
-  // user reported (HS-8217) that the static colour-coded HTML diff
-  // was still hard to follow vs the actual claude TUI's coloured
+  // user reported (HS-8217) that the static color-coded HTML diff
+  // was still hard to follow vs the actual claude TUI's colored
   // output, so the gate now also fires for any non-trivial preview
   // (Edit/Write tool with parseable diff, multi-line flat preview,
   // long single-line flat preview).
@@ -978,7 +978,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     const startRows = existingDims?.rows ?? 24;
     // HS-8295 — paint the §54 bumped-down placeholder with the project's
     // resolved theme bg so when the popup releases and the drawer/dashboard
-    // tile briefly shows the placeholder mid-restore, the colour matches.
+    // tile briefly shows the placeholder mid-restore, the color matches.
     const popupAppearance = resolveAppearance({
       projectDefault: getProjectDefault(secret),
       sessionOverride: getSessionOverride('default'),

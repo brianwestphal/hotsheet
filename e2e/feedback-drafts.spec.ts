@@ -104,7 +104,7 @@ test.describe('Feedback drafts + dont-close-on-clickaway (HS-7599)', () => {
 
   test('Save Draft persists the in-progress response and renders it inline below the FEEDBACK NEEDED note', async ({ page }) => {
     await createTicket(page, 'Save draft ticket');
-    const { noteId } = await addFeedbackNote(page, 'Save draft ticket', 'What is your favourite colour?');
+    const { noteId } = await addFeedbackNote(page, 'Save draft ticket', 'What is your favorite color?');
     await page.reload();
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await openDetail(page, 'Save draft ticket');

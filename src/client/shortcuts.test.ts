@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 /**
  * HS-7927 — drawer tab cycling now spans Commands Log + every terminal,
- * not just the terminal tabs (the original HS-6472 behaviour).
+ * not just the terminal tabs (the original HS-6472 behavior).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 

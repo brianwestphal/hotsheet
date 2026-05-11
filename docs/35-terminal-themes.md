@@ -129,7 +129,7 @@ Three layers, checked in order:
    }
    ```
 
-4. **Hard-coded fallback** — `{ theme: 'default', fontFamily: 'system', fontSize: 13 }`. Matches the pre-HS-6307 behaviour so terminals look identical on first run after the upgrade.
+4. **Hard-coded fallback** — `{ theme: 'default', fontFamily: 'system', fontSize: 13 }`. Matches the pre-HS-6307 behavior so terminals look identical on first run after the upgrade.
 
 Resolution is field-wise: each of `theme`, `fontFamily`, `fontSize` is picked independently from the highest layer that sets it. A configured terminal with `{ theme: 'dracula' }` but no font override inherits `terminal_default.fontFamily` (else System).
 
@@ -192,7 +192,7 @@ Every xterm instance resolves appearance from the same three-layer stack:
 
 When the user changes appearance in one surface, every surface for that terminal picks it up — the terminal's `TerminalInstance` holds the currently-resolved appearance and every `term.options.*` assignment goes through `applyAppearanceToTerm(term, appearance)` so the three canvases stay in sync.
 
-The existing CSS-var-derived `readXtermTheme()` (HS-7330) is replaced by a call to `themeToXtermOptions(resolvedTheme)`. For the `default` theme the two return identical values, so no terminal changes colour on upgrade.
+The existing CSS-var-derived `readXtermTheme()` (HS-7330) is replaced by a call to `themeToXtermOptions(resolvedTheme)`. For the `default` theme the two return identical values, so no terminal changes color on upgrade.
 
 ## 35.8 Implementation notes
 
@@ -229,7 +229,7 @@ Deliberately left for follow-ups — file tickets if they become missed:
 
 **E2E.**
 
-- `e2e/terminal-appearance.spec.ts` — open the drawer, click the gear icon, select "Dracula" from the theme dropdown, assert xterm's background canvas becomes Dracula's `#282a36`. (Canvas colour read via a `page.evaluate` that samples the rendered pixel.)
+- `e2e/terminal-appearance.spec.ts` — open the drawer, click the gear icon, select "Dracula" from the theme dropdown, assert xterm's background canvas becomes Dracula's `#282a36`. (Canvas color read via a `page.evaluate` that samples the rendered pixel.)
 
 **Manual.**
 
@@ -240,5 +240,5 @@ Deliberately left for follow-ups — file tickets if they become missed:
 - [22-terminal.md](22-terminal.md) — base embedded-terminal feature; the appearance popover sits on the same toolbar.
 - [25-terminal-dashboard.md](25-terminal-dashboard.md) — dashboard tiles and dedicated view share the same appearance resolution.
 - [32-osc133-jump-and-popover.md](32-osc133-jump-and-popover.md) — hover popover pattern (dismissal, anchoring) reused by the appearance popover.
-- [HS-7330](https://example.com) — the CSS-var-derived theme this feature generalises. The `default` theme preserves the HS-7330 behaviour exactly.
+- [HS-7330](https://example.com) — the CSS-var-derived theme this feature generalises. The `default` theme preserves the HS-7330 behavior exactly.
 - **Tickets:** HS-6307 (this doc).

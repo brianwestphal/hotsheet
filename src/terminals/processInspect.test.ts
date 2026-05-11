@@ -445,7 +445,7 @@ describe('killProcessTreeBestEffort (HS-8140)', () => {
   // integration test below — it spawns a real `sh` wrapper whose pid
   // IS our direct child. Adding a guard-passes-AND-signals unit test
   // here using `process.pid` would SIGTERM sibling vitest workers,
-  // which is exactly the destructive behaviour HS-8179 fixes.
+  // which is exactly the destructive behavior HS-8179 fixes.
 });
 
 describe('killProcessTreeBestEffort + spawned subprocess (HS-8140 integration)', () => {

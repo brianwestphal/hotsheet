@@ -4,7 +4,7 @@
  *
  * Covers the dynamic-terminal path: open the drawer, click the gear button,
  * pick Dracula from the theme dropdown, and assert that xterm's `ITheme`
- * background colour (exposed via `term.options.theme.background` on the live
+ * background color (exposed via `term.options.theme.background` on the live
  * instance) becomes `#282a36`. The second test asserts Reset-to-default
  * clears the session override so the appearance falls back to the default
  * theme — the gear popover is the single entry point, so a round-trip here

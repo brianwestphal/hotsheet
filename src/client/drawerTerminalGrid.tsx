@@ -452,7 +452,7 @@ function ensureGridHandle(): void {
     // HS-7659 — when a tile is enlarged (centered or in dedicated view) the
     // overlay should cover the whole app, not just the narrow drawer band.
     // We use viewport-scope: the centered tile + backdrop are positioned
-    // against the visual viewport (matching §25's behaviour) and the
+    // against the visual viewport (matching §25's behavior) and the
     // dedicated overlay's CSS is `position: fixed; inset: 0` so it pops out
     // of the drawer's stacking context. The drawer panel itself stays in
     // whatever expanded state the user had set — we never touch it. The

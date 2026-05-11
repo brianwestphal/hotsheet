@@ -269,7 +269,7 @@ function writeAtomic(path: string, content: string): void {
     writeFileSync(path, content, 'utf-8');
   } catch {
     // Best-effort. A spawn that lands without the per-terminal history
-    // override degrades to today's behaviour (shared HISTFILE) rather than
+    // override degrades to today's behavior (shared HISTFILE) rather than
     // failing the spawn outright.
   }
 }

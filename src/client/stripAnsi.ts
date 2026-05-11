@@ -3,7 +3,7 @@
  * live render. Mirrors `src/terminals/scrollbackSnapshot.ts`'s
  * implementation; kept client-local so the bundler doesn't pull in the
  * server-side `Buffer`-using `buildScrollbackPreview`. The regex set is
- * conservative — it only collapses sequences we recognise; unknown
+ * conservative — it only collapses sequences we recognize; unknown
  * escapes stay in place rather than corrupting characters.
  *
  * `tailLines` was originally deleted with HS-8015's sidebar-preview

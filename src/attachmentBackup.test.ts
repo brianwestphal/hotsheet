@@ -98,7 +98,7 @@ describe('hashFile (HS-7929)', () => {
 });
 
 describe('ensureBlobInStore (HS-7929)', () => {
-  it('writes a new blob into the centralised store', async () => {
+  it('writes a new blob into the centralized store', async () => {
     const blobsDir = attachmentBlobsDir(backupRoot);
     const src = join(liveAttachmentsDir, 'a.bin');
     const buf = Buffer.from('payload-A');
@@ -418,7 +418,7 @@ describe('reanalyzeMissingManifests (HS-7937)', () => {
     expect(manifest!.entries[0]?.attachmentId).toBe(1);
     expect(manifest!.entries[0]?.sha).toBe(expectedSha(Buffer.from('payload-A')));
 
-    // The blob must also have been deposited into the centralised store.
+    // The blob must also have been deposited into the centralized store.
     const blobsDir = attachmentBlobsDir(backupRoot);
     expect(existsSync(join(blobsDir, manifest!.entries[0].sha))).toBe(true);
   });

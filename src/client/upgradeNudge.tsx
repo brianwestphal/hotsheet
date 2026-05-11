@@ -146,7 +146,7 @@ export function maybeShowUpgradeNudge(): void {
   // Tauri build — already installed, skip.
   if (getTauriInvoke() !== null) return;
 
-  // Platform we don't recognise — skip rather than render a generic button.
+  // Platform we don't recognize — skip rather than render a generic button.
   const platform = detectPlatform(navigator.userAgent);
   if (platform === null) return;
 

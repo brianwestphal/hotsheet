@@ -195,7 +195,7 @@ describe('JSON co-save integration (HS-7893)', () => {
 
 /** HS-7929: every backup writes a `backup-<TS>.attachments.json` manifest
  *  sibling next to the tarball + JSON co-save, and copies each attachment
- *  blob into the centralised `<backupRoot>/attachments/<sha>` store. */
+ *  blob into the centralized `<backupRoot>/attachments/<sha>` store. */
 describe('Attachment manifest integration (HS-7929)', () => {
   it('writes a manifest + hash-addressed blobs alongside the tarball', async () => {
     // Add a real attachment file under the live attachments dir.

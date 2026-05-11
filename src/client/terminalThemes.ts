@@ -5,7 +5,7 @@
  * popover reads the same array so no UI change is required.
  *
  * The `default` theme is the only entry that reads live CSS (via
- * readCssDefaultTheme) — it preserves the pre-HS-6307 behaviour from HS-7330
+ * readCssDefaultTheme) — it preserves the pre-HS-6307 behavior from HS-7330
  * where the terminal picked up the app's --bg / --text / --accent custom
  * properties. Every other theme is a static data record.
  *
@@ -102,7 +102,7 @@ export function themeToXtermOptions(theme: TerminalTheme): XtermThemeOptions {
 /**
  * Build the `default` theme at call time from the app's CSS custom properties.
  * Unlike every other theme (static records below), this one is dynamic so it
- * tracks the user's light/dark mode and accent colour. Preserves HS-7330.
+ * tracks the user's light/dark mode and accent color. Preserves HS-7330.
  */
 export function readCssDefaultTheme(): TerminalTheme {
   const css = typeof document !== 'undefined' ? getComputedStyle(document.documentElement) : null;
@@ -114,8 +114,8 @@ export function readCssDefaultTheme(): TerminalTheme {
   const fg = getColor('--text', '#000000');
   const accent = getColor('--accent', '#3b82f6');
   // Inherit xterm's default ANSI palette — users who pick `default` want the
-  // app chrome colours for fg/bg/cursor without a strong opinion on the 16-
-  // colour palette. These are xterm.js's own defaults.
+  // app chrome colors for fg/bg/cursor without a strong opinion on the 16-
+  // color palette. These are xterm.js's own defaults.
   return {
     id: 'default',
     name: 'Default',

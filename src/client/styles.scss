@@ -294,7 +294,7 @@ input, select, textarea {
 // HS-7943 — flow-mode project badge becomes a clickable affordance that
 // routes to the project's tab. Hover state hints "this is a link"
 // without being so loud the user accidentally clicks it; the rest of
-// the tile-label inherits its parent's hover behaviour. HS-7943
+// the tile-label inherits its parent's hover behavior. HS-7943
 // follow-up scoped the hover styling to the inner `.tile-project-name`
 // span only — the trailing ` › ` chevron is part of the same outer
 // span (so it shares the click hit-box) but stays muted on hover.
@@ -1294,7 +1294,7 @@ input, select, textarea {
 
 // HS-6835 + HS-6867: the centered tile is pulled out of the grid flow via
 // position:fixed (top/left are computed at runtime so the tile can
-// FLIP-animate from its grid slot). A same-sized grey placeholder takes its
+// FLIP-animate from its grid slot). A same-sized gray placeholder takes its
 // slot while centered so the grid doesn't reflow. Esc / click outside /
 // click same tile collapses it back into its original slot.
 .terminal-dashboard-tile.centered {
@@ -1317,7 +1317,7 @@ input, select, textarea {
   // Keystrokes still flow because `term.focus()` puts focus on
   // `.xterm-helper-textarea` programmatically (keyboard events ignore
   // `pointer-events`). Single-click on the centered xterm now falls through
-  // to the tile-root click handler, which uncenters — same behaviour as
+  // to the tile-root click handler, which uncenters — same behavior as
   // clicking the backdrop. The `::after` chip below tells the user to
   // double-click into the dedicated view to copy text.
   .terminal-dashboard-tile-xterm { pointer-events: none; user-select: none; }
@@ -1338,7 +1338,7 @@ input, select, textarea {
   }
 }
 
-// HS-6867: the grey placeholder that holds the tile's grid slot while it
+// HS-6867: the gray placeholder that holds the tile's grid slot while it
 // is animated to / from the centered position. Matches the tile's preview
 // frame so the slot reads as "the tile was here".
 .terminal-dashboard-tile-slot {
@@ -1971,7 +1971,7 @@ body.terminal-dashboard-active {
 
 // HS-8060 — running-state spinner-with-stop-icon. Anchored to the
 // button's right edge, `background: inherit` so it picks up the
-// button's colour and visually punches the button (rather than floating
+// button's color and visually punches the button (rather than floating
 // on the app's bg). `position: absolute` so the element does NOT
 // contribute to the button's intrinsic width — long button labels get
 // partially obscured (per §57.3.2 / the user's no-reflow directive).
@@ -3120,7 +3120,7 @@ body.terminal-dashboard-active {
 // HS-8023 — text-link-style action button used for low-emphasis
 // settings actions (e.g. "Reset exempt list to defaults"). Visually
 // reads as a hyperlink rather than a primary control, matching the
-// user's request for a non-outlined secondary-text-coloured button.
+// user's request for a non-outlined secondary-text-colored button.
 .settings-link-action {
   display: inline-block;
   padding: 0;
@@ -3866,7 +3866,7 @@ body.terminal-dashboard-active {
 }
 
 // HS-7951 — inline unified diff renderer for Edit/Write permission popups.
-// Replaces the flat-JSON `<pre>` dump with a colour-coded line-level view.
+// Replaces the flat-JSON `<pre>` dump with a color-coded line-level view.
 .edit-diff-preview {
   margin: 0;
   display: flex;
@@ -4000,7 +4000,7 @@ body.terminal-dashboard-active {
 // X with white pictograms) need to be reset to ordinary `.btn` styling
 // inside this variant. The selectors are scoped under
 // `.permission-popup-actions-stacked` so the legacy non-Bash icon
-// buttons keep their colour treatment.
+// buttons keep their color treatment.
 .permission-popup-actions-stacked {
   display: flex;
   flex-direction: column;
@@ -5178,7 +5178,7 @@ body.terminal-dashboard-active {
   }
 
   // HS-6702 — degraded-busy: channel says busy but no Claude spinner
-  // glyph has appeared in the last 5 s. Muted colour + paused animation
+  // glyph has appeared in the last 5 s. Muted color + paused animation
   // signals "channel might be stuck" without panicking the user.
   &.busy.degraded {
     color: var(--text-muted);
@@ -6327,10 +6327,10 @@ body.terminal-dashboard-active {
   }
 
   // Drop-target indicator. Invisible at rest; on slot hover, becomes a 2 px
-  // accent-coloured bar spanning the slot width. HS-7930 third pass — no
+  // accent-colored bar spanning the slot width. HS-7930 third pass — no
   // opacity transition (the user reported the 100 ms fade as "lines don't
   // disappear after hovering"); the bar is now `display: none` at rest and
-  // `display: block` on hover, so the on/off behaviour is instant. Also
+  // `display: block` on hover, so the on/off behavior is instant. Also
   // `pointer-events: none` so the bar itself can't intercept hover and
   // creates exactly one hover region — the parent slot.
   .feedback-insert-slot::before {
@@ -6617,7 +6617,7 @@ body.terminal-dashboard-active {
   }
 
   // ~2 s post-click busy state — accent-tinted background + accent
-  // colour + a subtle pulse so the user can see something happened. The
+  // color + a subtle pulse so the user can see something happened. The
   // JS removes `.is-busy` after 2000 ms.
   &.is-busy {
     background: color-mix(in srgb, var(--accent, #3b82f6) 18%, transparent);
@@ -6684,7 +6684,7 @@ body.terminal-dashboard-active {
   // container instead of pushing past the bounds; cell padding + a
   // 1 px border give the columns visible separation. Header row picks up
   // `--bg-secondary` so it reads as a header without inventing a new
-  // colour token.
+  // color token.
   table {
     display: block;
     max-width: 100%;
@@ -7200,7 +7200,7 @@ body.terminal-dashboard-active {
 
 // HS-7267 — OSC 133 shell-integration gutter glyphs. Rendered as a small
 // icon in the left-gutter column of the xterm viewport at each command's
-// prompt-start row. Colour encodes exit code: green check (exit 0), red X
+// prompt-start row. Color encodes exit code: green check (exit 0), red X
 // (non-zero), neutral dot (exit code not reported).
 .terminal-osc133-gutter {
   display: flex;
@@ -7378,7 +7378,7 @@ body.terminal-dashboard-active {
     }
 
     // HS-7270 — Ask Claude sits last in the popover and visually reads as
-    // the "headline" action for failing commands. Accent-coloured text so
+    // the "headline" action for failing commands. Accent-colored text so
     // it's obvious even on a scan past the three utility actions.
     &.terminal-osc133-popover-ask {
       color: var(--accent, #60a5fa);
@@ -7391,9 +7391,9 @@ body.terminal-dashboard-active {
   flex: 1;
   min-height: 0;
   // HS-7960 — body background defaults to `--bg` but is overwritten inline
-  // (via JS) with the active terminal theme's background colour so the
+  // (via JS) with the active terminal theme's background color so the
   // padded gutter around the xterm canvas reads as part of the terminal
-  // window rather than a competing app-coloured frame. The default below is
+  // window rather than a competing app-colored frame. The default below is
   // the pre-paint fallback for the millisecond before `applyAppearanceToTerm`
   // runs.
   background: var(--bg);
@@ -7443,7 +7443,7 @@ body.terminal-dashboard-active {
     width: 100%;
     // HS-7960 — let the terminal theme's bg paint this layer too. Pre-fix
     // the `.xterm` block was forced to `--bg` regardless of theme, which
-    // produced a colour seam between the `.terminal-body` gutter and the
+    // produced a color seam between the `.terminal-body` gutter and the
     // canvas when the theme bg differed from the app bg. With `inherit`
     // the body's JS-set bg cascades through and the seam disappears.
     background: inherit;
@@ -7451,7 +7451,7 @@ body.terminal-dashboard-active {
 
   // xterm.js applies its own inline/default styles to internal elements that can
   // surface as a black strip below the rendered rows when the container is taller
-  // than rows × cellHeight. Force transparency so the body's theme-coloured
+  // than rows × cellHeight. Force transparency so the body's theme-colored
   // background shows through instead (HS-6308 + HS-7960).
   .xterm-viewport,
   .xterm-screen {
@@ -8763,7 +8763,7 @@ label.detail-details-label {
 
 // HS-7975 — restyled to a borderless sidebar row that highlights on hover.
 // Spans the full sidebar width; counts pill is right-aligned. Tint classes
-// drop the background + border treatment in favour of just colouring the
+// drop the background + border treatment in favour of just coloring the
 // text + counts pill — the row's chrome only appears on hover.
 .sidebar-git-chip {
   display: flex;
@@ -8813,7 +8813,7 @@ label.detail-details-label {
 
   // Tint precedence per docs/48-git-status-tracker.md §48.4.1:
   // conflict (red) > behind (amber) > ahead (blue) > dirty (yellow) > clean.
-  // Post-HS-7975: tint colours the text + counts pill only; the row chrome
+  // Post-HS-7975: tint colors the text + counts pill only; the row chrome
   // stays clean unless hovered.
   &.is-clean    { color: #166534; }
   &.is-dirty    { color: #a16207; }
@@ -9247,7 +9247,7 @@ label.detail-details-label {
   // layout still differs because the prompt overlay is taller (header +
   // context + choices + always-allow + footer) — but the section dividers
   // / dark header bar / heavy drop shadow that the original spike used to
-  // mark it as a "terminal-coloured" thing are gone. All padding, gap,
+  // mark it as a "terminal-colored" thing are gone. All padding, gap,
   // and typography sizes follow the permission-popup scale.
   position: fixed;
   top: 56px;
@@ -9613,7 +9613,7 @@ label.detail-details-label {
 // always-allow checkbox for prompts with a captured `Channels: <value>`
 // line. Muted text on the left ("This channel will be auto-approved next
 // time."), opt-out checkbox on the right ("Don't remember"). Smaller font
-// + muted colour so it reads as informational rather than an action the
+// + muted color so it reads as informational rather than an action the
 // user has to take.
 .terminal-prompt-overlay-channel-rule-row {
   display: flex;
@@ -9780,7 +9780,7 @@ label.detail-details-label {
 // dispatched to `openTicketRefDialog(ticketNumber)`.
 
 .ticket-ref {
-  // Subtle distinction from regular markdown links — same accent colour
+  // Subtle distinction from regular markdown links — same accent color
   // but a thinner underline so a paragraph full of cross-references
   // doesn't read as visually noisy.
   color: var(--accent);

@@ -247,7 +247,7 @@ function renderRow(index: number): HTMLElement {
  * `mode: 'edit'` (default) — operates on an existing entry already in the
  * `terminals[]` array. The Done / Cancel-by-X actions both commit the
  * dialog state back into the entry (preserving the long-standing edit
- * behaviour where dragging the X is "save and close").
+ * behavior where dragging the X is "save and close").
  *
  * `mode: 'add'` (HS-7958) — operates on a fresh entry NOT yet in
  * `terminals[]`. The dialog only commits the entry on the final
@@ -434,7 +434,7 @@ function openEditor(
 
   /** Cancel path: in add-mode this discards the entry entirely (HS-7958
    *  requirement — clicking X on a new terminal cancels creation). In
-   *  edit-mode it preserves the long-standing "X = save and close" behaviour
+   *  edit-mode it preserves the long-standing "X = save and close" behavior
    *  so existing-terminal edits keep their current commit semantics. */
   const cancel = async (): Promise<void> => {
     if (isAdd) {
@@ -478,9 +478,9 @@ function openEditor(
   }
 }
 
-/** HS-7791 follow-up — render + behaviour for the per-input command combobox.
+/** HS-7791 follow-up — render + behavior for the per-input command combobox.
  *  Lives next to the input and is fully styled via app tokens (the native
- *  datalist popup didn't honour our colour-scheme in Tauri's WKWebView and
+ *  datalist popup didn't honour our color-scheme in Tauri's WKWebView and
  *  rendered as white-on-white). The optional `onCommit` callback fires after
  *  a value is committed via click or Enter (HS-7858 uses it to auto-populate
  *  the sibling name field when blank). */

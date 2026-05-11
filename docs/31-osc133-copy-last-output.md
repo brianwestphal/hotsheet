@@ -82,7 +82,7 @@ while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 - **Very long output.** No length cap — if the user runs `find /` and clicks copy, they get the full range. xterm's scrollback cap (`scrollback: 1000` by default in our config) is the backstop. Realistically the range is already bounded by the ring buffer's 500-record cap times the scrollback rows per record.
 - **Output that wraps past scrollback.** If C's line has been trimmed out of the buffer, the marker fires `onDispose` and `isDisposed` flips true. The helper returns `null` and the button shakes — the user can still manually select-drag the rows they can see.
 - **Running command with no output yet.** C has fired but the cursor is still on C's own line with nothing after it. After trimming trailing blanks, `lines` is empty → shake. The user clicks again once output is visible.
-- **Bell or alt-screen app active.** OSC 133 escapes emitted inside the alt screen (e.g. a shell-integrated `less`) register markers that dispose when the alt screen tears down (§26.9 item 2). If the user clicks copy after exiting `less`, the range computation falls back to whichever record was alive in the primary buffer — the expected "last normal command" behaviour.
+- **Bell or alt-screen app active.** OSC 133 escapes emitted inside the alt screen (e.g. a shell-integrated `less`) register markers that dispose when the alt screen tears down (§26.9 item 2). If the user clicks copy after exiting `less`, the range computation falls back to whichever record was alive in the primary buffer — the expected "last normal command" behavior.
 - **Shell that emits only A/D (no C).** The most recent completed record has `outputStart: null`, the helper returns null, the button shakes. A Phase 2 fallback could read from `commandEnd` of the prior record to A of the latest, but that's error-prone (prompt text would get included) and the better fix is to document "copy last output needs a shell that emits C" — which every mainstream shell integration already does.
 
 ## 31.6 Testing
@@ -116,7 +116,7 @@ The fixture uses `lazy: true` and the configure helper deliberately skips `POST 
 ## 31.7 Out of scope
 
 - **Keyboard shortcut.** Deferred to Phase 2 (HS-7269). Simpler to land the click-only flow first and let users ask for a shortcut if they want one.
-- **Copy with ANSI escape retention.** We always use `translateToString` (cells → plain string), stripping colour codes. A user who wants the raw bytes can re-run with `| cat -v`.
+- **Copy with ANSI escape retention.** We always use `translateToString` (cells → plain string), stripping color codes. A user who wants the raw bytes can re-run with `| cat -v`.
 - **Copy older commands.** Phase 2 (HS-7269) adds a hover popover on each gutter glyph with per-command Copy Command / Copy Output / Rerun actions. Phase 1b only copies the latest.
 - **Cross-terminal "copy output from that other tab".** Not happening — each terminal's scrollback is its own thing.
 - **Configurable dedupe / reformat** (strip timestamps, merge wrapped lines, etc.). The paste is whatever xterm rendered; post-processing happens downstream.

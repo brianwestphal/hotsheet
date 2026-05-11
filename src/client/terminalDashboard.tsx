@@ -103,7 +103,7 @@ const gridHandles = new Map<string, TileGridHandle>();
 const SLIDER_PERSIST_DEBOUNCE_MS = 250;
 
 /** HS-7662 — layout mode for the dashboard grid. `'sectioned'` renders one
- *  `<section>` per project (the default §25.4 behaviour); `'flow'` renders
+ *  `<section>` per project (the default §25.4 behavior); `'flow'` renders
  *  every project's terminals as a single flat grid in registered-project
  *  order, with project-color badges to mark project boundaries. Persisted
  *  to `/file-settings` under `dashboard_layout_mode`. Default `'sectioned'`. */
@@ -842,7 +842,7 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
 
 /** HS-7662 — sentinel key for the single flow-mode tile-grid handle in the
  *  shared `gridHandles` map. Distinguishes from per-project secrets so the
- *  bell fan-out + cross-handle iteration in enterDashboard can recognise
+ *  bell fan-out + cross-handle iteration in enterDashboard can recognize
  *  the flow-mode handle and pass it the union of every project's pending
  *  bells (rather than treating it like a per-project handle that only
  *  cares about its own secret). */

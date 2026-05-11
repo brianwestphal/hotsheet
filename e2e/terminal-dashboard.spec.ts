@@ -768,9 +768,9 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await expect(page.locator('.terminal-dashboard-tile-slot')).toHaveCount(0, { timeout: 2000 });
   });
 
-  // HS-6866: dashboard tiles used to render on a grey card backdrop (--bg-secondary)
+  // HS-6866: dashboard tiles used to render on a gray card backdrop (--bg-secondary)
   // AND instantiated xterm with no theme, leaving the canvas on xterm's default
-  // black palette — the combined effect was a black-and-grey tile that looked
+  // black palette — the combined effect was a black-and-gray tile that looked
   // nothing like the drawer's white-on-white terminal. The CSS fix flips the
   // tile-preview backdrop to the same `--bg` variable the drawer uses. The
   // xterm-theme fix (new XTerm({ theme: readXtermTheme() }) in both dashboard

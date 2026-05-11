@@ -5,7 +5,7 @@ import type { EditDiffShape } from './permissionPreview.js';
  * HS-7951 — inline unified-diff renderer for the Claude permission popup
  * when the tool is `Edit` / `Write`. Replaces the flat-JSON `<pre>` preview
  * (which dumped `old_string` / `new_string` raw, leaving the user to mentally
- * reconstruct the diff) with a colour-coded line-level diff that's actually
+ * reconstruct the diff) with a color-coded line-level diff that's actually
  * scannable.
  *
  * See docs/47-richer-permission-overlay.md §47.3 for the design.

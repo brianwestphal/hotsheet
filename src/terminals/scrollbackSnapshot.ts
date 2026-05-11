@@ -33,7 +33,7 @@ const BACKSPACE_RX = /\x08/g;
 /**
  * Strip the most common terminal escape sequences from a UTF-8 string so
  * the result is plain printable text + newlines. Conservative — leaves
- * any escape we don't recognise in place rather than corrupting characters.
+ * any escape we don't recognize in place rather than corrupting characters.
  */
 export function stripAnsi(input: string): string {
   return input

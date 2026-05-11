@@ -44,7 +44,7 @@ export function buildTaskpolicyArgs(pid: number, qosClass: string = TASKPOLICY_Q
  * Best-effort macOS QoS bump. Returns `true` when `taskpolicy` exited
  * cleanly, `false` otherwise (non-darwin / `taskpolicy` missing / non-zero
  * exit / spawn threw). Never throws — the caller treats the bump as
- * an opportunistic optimisation, not a hard requirement.
+ * an opportunistic optimization, not a hard requirement.
  *
  * Logs a single concise success / skip line to `console.log` so the user
  * can see the bump happened in the boot output (parallel to the existing

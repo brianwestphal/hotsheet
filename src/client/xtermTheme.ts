@@ -11,11 +11,11 @@
  *
  * HS-7330: we also derive selectionBackground / selectionInactiveBackground
  * from --accent. xterm's default selection fill is a near-white translucent
- * colour; on the app's white `--bg` that's effectively invisible and users
+ * color; on the app's white `--bg` that's effectively invisible and users
  * reported "can't select text in terminals" even though the selection range
  * was being recorded correctly. Hard-coding a hex value with an alpha suffix
  * (8-digit hex: RRGGBBAA) keeps the fill semi-transparent over any background
- * without needing a colour-parsing dependency at runtime.
+ * without needing a color-parsing dependency at runtime.
  */
 export function readXtermTheme(): Record<string, string> {
   const css = getComputedStyle(document.documentElement);
@@ -30,10 +30,10 @@ export function readXtermTheme(): Record<string, string> {
   };
 }
 
-/** Append an 8-bit alpha to a hex colour (#rgb or #rrggbb). Non-hex inputs
- *  (rgb(), hsl(), named colours) pass through unchanged — callers fall back
+/** Append an 8-bit alpha to a hex color (#rgb or #rrggbb). Non-hex inputs
+ *  (rgb(), hsl(), named colors) pass through unchanged — callers fall back
  *  to a hard-coded blue above in that case via the selectionBackground
- *  branch, since xterm ignores unrecognised colour strings. */
+ *  branch, since xterm ignores unrecognised color strings. */
 export function withAlpha(color: string, alpha: number): string {
   const a = Math.max(0, Math.min(255, Math.round(alpha)));
   const hex = a.toString(16).padStart(2, '0');

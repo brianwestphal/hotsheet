@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 /**
  * §60 / HS-8235 — DOM-binding helpers. Each test asserts BOTH the
- * happy-path update behaviour AND the disposer contract (idempotent,
+ * happy-path update behavior AND the disposer contract (idempotent,
  * stops further updates).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

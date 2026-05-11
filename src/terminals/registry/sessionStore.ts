@@ -5,7 +5,7 @@ import type { SessionState } from './types.js';
  * HS-8189 — module-level session storage shared by the split registry
  * modules. Pre-fix everything here lived in the 1006-line
  * `src/terminals/registry.ts`. Splitting requires the Map + key helper +
- * defaults to live somewhere all behavioural modules
+ * defaults to live somewhere all behavioral modules
  * (`./attach.ts` / `./lifecycle.ts` / `./state.ts` / `./scannerHandler.ts`)
  * can read + mutate without a circular import.
  */

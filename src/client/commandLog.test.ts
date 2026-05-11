@@ -168,7 +168,7 @@ describe('applyShellPartialEvent — shell_streaming_enabled gate (HS-7984)', ()
 // wiped the textContent. Post-HS-8324 there's no separate cache and no
 // wholesale re-render — the bindList preserves DOM identity across polls
 // and the per-row partial effect writes the current partial whenever the
-// signal fires. The behaviour the original tests guarded against (live
+// signal fires. The behavior the original tests guarded against (live
 // preview flickering empty between ticks) is now structurally impossible.
 //
 // These replacement tests verify the new contract directly: the per-row

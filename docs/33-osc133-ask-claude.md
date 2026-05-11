@@ -4,13 +4,13 @@
 
 Phase 3 closes the OSC 133 rollout with the action that makes Hot Sheet's terminal meaningfully different from VS Code's: **one click on a failing command's gutter glyph dispatches the command, its output, its exit code, and its working directory to the Claude Channel with a diagnose-and-fix prompt**. See [26-shell-integration-osc133.md](26-shell-integration-osc133.md) §26.6 item 5 and [26-shell-integration-osc133.md](26-shell-integration-osc133.md) §26.3 item 5 — this is the Hot-Sheet-specific wedge.
 
-Phases 1a / 1b / 2 shipped the marker ring, the copy-output button, and the hover popover respectively. Phase 3 is a small addition on top of Phase 2: a fourth button in the popover labelled **Ask Claude**, gated on the Claude Channel being alive, that builds a canonical prompt via a pure helper and hands it to the existing `triggerChannelAndMarkBusy(message)` export from `channelUI.tsx`.
+Phases 1a / 1b / 2 shipped the marker ring, the copy-output button, and the hover popover respectively. Phase 3 is a small addition on top of Phase 2: a fourth button in the popover labeled **Ask Claude**, gated on the Claude Channel being alive, that builds a canonical prompt via a pure helper and hands it to the existing `triggerChannelAndMarkBusy(message)` export from `channelUI.tsx`.
 
 ## 33.2 Popover entry
 
 The Phase 2 popover (§32.3) renders three utility buttons: Copy command / Copy output / Rerun. Phase 3 adds a fourth, **Ask Claude**, at the end of the popover. Visibility is decided at popover open time:
 
-- `isChannelAlive() === true` → the button renders, styled with the accent colour and bold text so it reads as the headline action.
+- `isChannelAlive() === true` → the button renders, styled with the accent color and bold text so it reads as the headline action.
 - `isChannelAlive() === false` → the button is omitted entirely. The popover keeps its three utility actions so users without the channel installed still get the Phase 2 affordances.
 
 Rationale for opening-time check (vs. click-time): mirrors `channelUI.tsx`'s `checkAndTrigger` pattern. A user opening the popover with a dead channel shouldn't see a button that errors or warns when clicked — just hide it. A user whose channel dies between popover open and click (edge case — requires manually `kill`ing Claude Code mid-hover) hits the click-time `isChannelAlive()` guard and the action silently no-ops.
@@ -111,7 +111,7 @@ The "channel alive" test waits 500 ms after page load before hovering — initCh
 ## 33.7 Manual test plan (add to `docs/manual-test-plan.md` §26)
 
 - Connect Claude Code to Hot Sheet (green channel dot visible). In a shell-integrated drawer terminal, run `false` (exits 1).
-- Hover the red-X gutter glyph — popover shows Copy command / Copy output / Rerun / **Ask Claude** (accent-coloured).
+- Hover the red-X gutter glyph — popover shows Copy command / Copy output / Rerun / **Ask Claude** (accent-colored).
 - Click **Ask Claude** — the channel dot pulses, and within a few seconds Claude responds in the Commands Log panel diagnosing the `false` exit.
 - Run a long-output failing command (`for i in $(seq 1 1000); do echo line $i; done; false`). Ask Claude → the prompt truncates to the last 8 000 chars (visible in the Commands Log entry).
 - Disconnect Claude Code (`Ctrl+C` the MCP client). Re-open the popover on any glyph — the Ask Claude button is now absent. Copy command / Copy output / Rerun still work.

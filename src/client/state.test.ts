@@ -93,11 +93,11 @@ describe('getStatusIcon', () => {
 });
 
 describe('shouldResetStatusOnUpNext (HS-7998)', () => {
-  it('returns true for completed (existing behaviour preserved)', () => {
+  it('returns true for completed (existing behavior preserved)', () => {
     expect(shouldResetStatusOnUpNext('completed')).toBe(true);
   });
 
-  it('returns true for verified (existing behaviour preserved)', () => {
+  it('returns true for verified (existing behavior preserved)', () => {
     expect(shouldResetStatusOnUpNext('verified')).toBe(true);
   });
 

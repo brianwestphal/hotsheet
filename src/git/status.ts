@@ -213,7 +213,7 @@ export function _resetFetchStateForTests(): void {
  * Otherwise count X != ' ' as staged, Y != ' ' as unstaged. A single file
  * can contribute to BOTH `staged` and `unstaged` (e.g. partial stage).
  *
- * Exported for unit testing — the spawn path's only behavioural surface is
+ * Exported for unit testing — the spawn path's only behavioral surface is
  * this parser.
  */
 export function bucketPorcelain(output: string): { staged: number; unstaged: number; untracked: number; conflicted: number } {

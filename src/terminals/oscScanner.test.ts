@@ -4,7 +4,7 @@
  * The scanner runs on every PTY chunk in `registry.ts::spawnIntoSession`'s
  * `pty.onData` handler, so a regression here breaks the bell + OSC 9
  * notification + OSC 7 CWD UIs at once. Pre-HS-8220 there was no test
- * coverage on the module — this suite locks the documented behaviour
+ * coverage on the module — this suite locks the documented behavior
  * (HS-6766 cross-chunk OSC tracking, HS-7264 OSC 9 notification, HS-7278
  * OSC 7 CWD push) plus the iTerm2 numeric sub-command rejection and the
  * `MAX_OSC_PAYLOAD_LEN` heap cap.

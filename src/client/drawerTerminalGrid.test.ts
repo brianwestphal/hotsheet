@@ -11,7 +11,7 @@
  * `_resetStateForTesting` disposers, Esc routing.
  *
  * The xterm-spinning-up code path (`mountTileGrid` → real `Terminal()`)
- * is mocked; tests assert behaviour through the public exports +
+ * is mocked; tests assert behavior through the public exports +
  * dispatcher state via `_resetStateForTesting`.
  */
 // @vitest-environment happy-dom

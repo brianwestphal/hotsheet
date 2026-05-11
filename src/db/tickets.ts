@@ -187,7 +187,7 @@ export async function hardDeleteTicket(id: number): Promise<void> {
  * (e.g. `HS-100`, `BUG-42`, `MIGRATION_V2-7`). When the user types a
  * complete ticket id, they want THAT ticket regardless of which bucket
  * it lives in — backlog, archive, or even trash. Matches the same shape
- * `ticketRefs.ts::buildTicketRefRegex` recognises for inline links, but
+ * `ticketRefs.ts::buildTicketRefRegex` recognizes for inline links, but
  * anchored to the full string (case-insensitive whitespace tolerated).
  *
  * Exported for tests + the search-counts route which suppresses the

@@ -23,7 +23,7 @@ export interface ShellPartialOutputEvent {
   partial: string;
 }
 
-/** Event name; centralised so callers don't typo-drift the string. */
+/** Event name; centralized so callers don't typo-drift the string. */
 export const SHELL_PARTIAL_OUTPUT_EVENT = 'hotsheet:shell-partial-output';
 
 /**
@@ -116,7 +116,7 @@ const STOP_GLYPH = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"
 
 function buildSpinnerElement(textColor: string): HTMLElement {
   // 14×14 spinner ring + an 8×8 stop glyph centered inside. Both inherit
-  // the spinner's foreground colour (the button's `contrastColor`); the
+  // the spinner's foreground color (the button's `contrastColor`); the
   // spinner element itself uses `background: inherit` so it picks up the
   // button's background — see §57.3.2.
   return toElement(

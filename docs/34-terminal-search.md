@@ -13,13 +13,13 @@ Search is available in:
 
 Search is **not** available in the grid tiles themselves. Grid tiles are preview-scale, non-interactive by default (`pointer-events: none` on `.terminal-dashboard-tile-xterm`), and typing into a search input inside a tile while another tile is focused would be confusing. The dedicated view is the "full-screen" mode this spec calls out and is where find is appropriate.
 
-## 34.2 UI behaviour
+## 34.2 UI behavior
 
 **Collapsed state.** A 28 px circular magnifier button. Clicking it toggles the box open; `Cmd+F` / `Ctrl+F` while a terminal is focused also opens it (§34.4).
 
 **Expanded state (`.is-open`).** 240 px flex row, `background: var(--bg)`, `border: 1px solid var(--border)` (accent on focus-within). Contents left-to-right:
 
-| Control | Behaviour |
+| Control | Behavior |
 | --- | --- |
 | Magnifier toggle | Clicking toggles the box closed. |
 | Text input | Placeholder: `Search` (drawer) or `Search <terminal label>` (dedicated view). Typing runs an *incremental* findNext so the highlight moves as you type. |
@@ -95,7 +95,7 @@ All of the above is driven by `src/client/terminalSearch.tsx`:
 
 **Automated (e2e).** `e2e/terminal-search.spec.ts` ships Playwright tests (HS-7363 / HS-7427 / HS-7426 / HS-7526) against a real PTY that runs `e2e/fixtures/terminal-search-fruits.sh` (prints `apple\nbanana\napple\napple\n` then `exec sleep 3600`): (1) drawer flow — open the widget, type `apple`, assert the count chip walks `1/3 → 2/3 → 3/3 → 2/3` across Enter / Shift+Enter, confirm HS-7393 Esc-blurs-only (input loses focus but widget + query + count stay intact), then assert the × close button clears the query and collapses the widget; (2) Cmd+F routing — focus the xterm helper textarea, press Meta+f, assert the terminal-search input is focused and `#search-input` is not; (3) dashboard dedicated view — enter the dashboard (sizer visible, header search slot hidden), double-click the tile, assert the slot is visible and the sizer is hidden, run a search (same `apple` → `1/3` assertion), click Back and assert the sizer is restored + the slot is hidden again; (4) grid-view regression — assert `#terminal-dashboard-search-slot` stays hidden while no dedicated view is up; (5) HS-7427 recent-query history; (6) HS-7426 regex toggle; (7) HS-7526 dedicated-view Esc routing — focus the search input in the dedicated view, press Esc, assert the overlay is still visible, the input is blurred but the query is preserved, the widget stays `.is-open`, and the xterm helper textarea has focus; press Esc a second time and assert the overlay is removed (exit-to-grid parity preserved for the non-focused case).
 
-**Manual.** See `docs/manual-test-plan.md` §13 for what's left: visual amber/orange highlight colour, Cmd+F fall-through when focus is outside a terminal, Stop → Start clears search state, re-entering dedicated view for a DIFFERENT tile, and Esc-exits-dedicated-view parity with the Back button.
+**Manual.** See `docs/manual-test-plan.md` §13 for what's left: visual amber/orange highlight color, Cmd+F fall-through when focus is outside a terminal, Stop → Start clears search state, re-entering dedicated view for a DIFFERENT tile, and Esc-exits-dedicated-view parity with the Back button.
 
 ## 34.8 Regex / case / whole-word toggles (HS-7426)
 
@@ -111,9 +111,9 @@ Three checkbox-style icon toggles live inside the expanded `.terminal-search-box
 
 **Visual.** Same 20 px square size as the chevron buttons (the existing `.terminal-search-btn` rule). Active state uses `background: var(--accent)` + `color: white` via `.is-active`, inactive state inherits the default toolbar-button palette. `aria-pressed="true"` / `false` reflects active state.
 
-**Click behaviour.** Each toggle flips its boolean in a per-mount `activeSearchOptions` object, calls `syncToggleButtons()` to mirror the new state into `aria-pressed` + `.is-active`, and immediately re-runs the current query through `addon.findNext(query, sOpts)` with `incremental: false` (a fresh non-incremental search) so highlights + count refresh from scratch — incremental finds can skip re-evaluation when the query string itself hasn't changed, which leaves stale highlights after a toggle flip. Empty input still no-ops the find.
+**Click behavior.** Each toggle flips its boolean in a per-mount `activeSearchOptions` object, calls `syncToggleButtons()` to mirror the new state into `aria-pressed` + `.is-active`, and immediately re-runs the current query through `addon.findNext(query, sOpts)` with `incremental: false` (a fresh non-incremental search) so highlights + count refresh from scratch — incremental finds can skip re-evaluation when the query string itself hasn't changed, which leaves stale highlights after a toggle flip. Empty input still no-ops the find.
 
-**Regex-specific.** When `regex` is on, `doFind` validates the pattern up-front via `new RegExp(q)`. On `SyntaxError` it adds `.is-invalid` to the input + sets the count chip to `err` and skips the addon call. The `onDidChangeResults` callback also early-returns when `.is-invalid` is set so the addon can't overwrite `err` with `0/0`. The validation happens before the addon call rather than relying on xterm's behaviour because both versions (silent no-op vs. thrown `SyntaxError`) have shipped across xterm releases. The addon-side `try/catch` remains as a fallback for flag combinations xterm parses differently from V8.
+**Regex-specific.** When `regex` is on, `doFind` validates the pattern up-front via `new RegExp(q)`. On `SyntaxError` it adds `.is-invalid` to the input + sets the count chip to `err` and skips the addon call. The `onDidChangeResults` callback also early-returns when `.is-invalid` is set so the addon can't overwrite `err` with `0/0`. The validation happens before the addon call rather than relying on xterm's behavior because both versions (silent no-op vs. thrown `SyntaxError`) have shipped across xterm releases. The addon-side `try/catch` remains as a fallback for flag combinations xterm parses differently from V8.
 
 **Scope.** Per-terminal. Each `mountTerminalSearch` call owns its own `activeSearchOptions` closure-local object so one drawer tab's regex mode doesn't leak into another. Sharing across widgets was considered and rejected: a user running `grep` output in one terminal and tailing a structured log in another has different expectations for case/regex defaults, and per-terminal matches the per-`TerminalInstance` model used elsewhere (runtime title / runtime cwd / shell-integration markers).
 

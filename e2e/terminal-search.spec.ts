@@ -101,7 +101,7 @@ test.describe('Terminal search widget (HS-7363)', () => {
 
   // 1. Drawer flow — open the widget, type "apple", step through matches with
   // Enter / Shift+Enter, close via the × button (HS-7393 removed the Esc-
-  // closes-widget behaviour; the close button is now the single explicit
+  // closes-widget behavior; the close button is now the single explicit
   // close+clear path).
   test('drawer: open + type + step through matches + close via × button', async ({ page }) => {
     await openDrawerAndWaitForFruits(page);
@@ -406,7 +406,7 @@ test.describe('Terminal search widget (HS-7363)', () => {
     await expect(helperTextarea).toBeFocused();
 
     // A second Esc (now that the input is blurred) should exit the dedicated
-    // view — this is the pre-existing behaviour and must not regress.
+    // view — this is the pre-existing behavior and must not regress.
     await page.keyboard.press('Escape');
     await expect(overlay).toHaveCount(0, { timeout: 3000 });
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);

@@ -7,7 +7,7 @@ import type { RingBuffer } from '../ringBuffer.js';
  * Pre-fix `src/terminals/registry.ts` was a 1006-line god module with 36
  * exports covering attach / detach / spawn / kill / destroy + bell + cwd
  * + pid + spinner + scanner-match + status. This file pulls out the
- * type/interface declarations so the four behavioural modules
+ * type/interface declarations so the four behavioral modules
  * (`./attach.ts` / `./lifecycle.ts` / `./state.ts`) can share them without
  * circular imports.
  */

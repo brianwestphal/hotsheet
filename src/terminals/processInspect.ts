@@ -331,7 +331,7 @@ export interface KillTreeResult {
  *
  * Returns a result object purely for logging / test assertions. Never
  * throws — the worst case is `bailed: true` and the original SIGHUP-only
- * behaviour stands. Cross-platform note: Windows currently bails (no
+ * behavior stands. Cross-platform note: Windows currently bails (no
  * `ps`); v1 covers macOS / Linux which is where node-pty's grandchild-
  * survival problem is observed.
  */

@@ -13,7 +13,7 @@
  * Public surface (`getActiveProject()` / `setActiveProject(project)`)
  * stays unchanged — the migration is purely internal consolidation.
  * The 88 callsites across 18 files that read `getActiveProject()` and
- * the handful that call `setActiveProject(project)` see no behavioural
+ * the handful that call `setActiveProject(project)` see no behavioral
  * change.
  *
  * **Does NOT reset on project switch** (this store IS the source of

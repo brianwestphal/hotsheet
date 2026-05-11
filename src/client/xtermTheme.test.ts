@@ -3,18 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readXtermTheme, withAlpha } from './xtermTheme.js';
 
 describe('withAlpha (HS-7330)', () => {
-  it('appends 8-bit alpha hex to a 6-digit hex colour', () => {
+  it('appends 8-bit alpha hex to a 6-digit hex color', () => {
     expect(withAlpha('#3b82f6', 0x66)).toBe('#3b82f666');
     expect(withAlpha('#000000', 0xff)).toBe('#000000ff');
     expect(withAlpha('#ffffff', 0x00)).toBe('#ffffff00');
   });
 
-  it('expands a 3-digit hex colour before appending alpha', () => {
+  it('expands a 3-digit hex color before appending alpha', () => {
     expect(withAlpha('#abc', 0x80)).toBe('#aabbcc80');
     expect(withAlpha('#f00', 0x66)).toBe('#ff000066');
   });
 
-  it('falls back to the app accent when input is not a hex colour', () => {
+  it('falls back to the app accent when input is not a hex color', () => {
     expect(withAlpha('rgb(10, 20, 30)', 0x66)).toBe('#3b82f666');
     expect(withAlpha('red', 0x66)).toBe('#3b82f666');
     expect(withAlpha('', 0x66)).toBe('#3b82f666');
@@ -86,7 +86,7 @@ describe('readXtermTheme (HS-7330)', () => {
     // fell back to a near-white translucent default that was invisible on
     // the app's white --bg. This test locks in the invariant: whatever the
     // theme source returns, selectionBackground must be a non-empty hex
-    // colour string with an alpha suffix.
+    // color string with an alpha suffix.
     const theme = readXtermTheme();
     expect(theme.selectionBackground).toMatch(/^#[0-9a-f]{8}$/);
     expect(theme.selectionInactiveBackground).toMatch(/^#[0-9a-f]{8}$/);

@@ -139,7 +139,7 @@ describe('bindTicketRefGlobalClickHandler — capture-first interception (HS-806
     anchor.click();
 
     // Empty data-ticket-number bails before stopPropagation, so the
-    // ancestor handler still runs (this also pins the no-op behaviour
+    // ancestor handler still runs (this also pins the no-op behavior
     // for malformed anchors — they shouldn't break click-to-edit).
     expect(parentClick).toHaveBeenCalledTimes(1);
   });

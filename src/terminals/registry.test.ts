@@ -51,7 +51,7 @@ class FakePty implements PtyLike {
     // WindowServer, …) and cause `vitest run src/terminals` to SIGTERM
     // the user's GUI session out of existence. The HS-8179 ancestor
     // guard inside `killProcessTreeBestEffort` is the load-bearing
-    // defence; this `pid = 0` is belt-and-braces so the kill path
+    // defense; this `pid = 0` is belt-and-braces so the kill path
     // doesn't even fire.
     this.pid = 0;
     FakePty.lastSpawned = this;
@@ -398,7 +398,7 @@ describe('TerminalRegistry', () => {
 
   // HS-7528: `restartTerminal` also goes through `teardownPty` internally —
   // the signal-change fix should apply there too (without changing the
-  // externally-observable "old PTY killed, new PTY spawned" behaviour that
+  // externally-observable "old PTY killed, new PTY spawned" behavior that
   // other restart tests verify).
   it('restartTerminal sends SIGHUP to the outgoing PTY (HS-7528)', () => {
     const d = tmpDataDir();
@@ -497,7 +497,7 @@ describe('TerminalRegistry', () => {
       // "session exists but pty=null && exitCode=null" branch in attach
       // is only reachable if a future code path creates a session
       // without spawning. We exercise it via the symmetric default-
-      // behaviour assertion: a noSpawn attach to an exited session
+      // behavior assertion: a noSpawn attach to an exited session
       // returns the exited state (NOT noSession), since the session
       // exists in a definite state.
       const dir = tmpDataDir();
@@ -514,7 +514,7 @@ describe('TerminalRegistry', () => {
       expect(result.noSession).toBeUndefined();
     });
 
-    it('still spawns when noSpawn is false / unset (default behaviour preserved)', () => {
+    it('still spawns when noSpawn is false / unset (default behavior preserved)', () => {
       const dir = tmpDataDir();
       const { sub } = makeSub();
       const result = attach('secret-nospawn-default', dir, sub);

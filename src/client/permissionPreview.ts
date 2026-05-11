@@ -5,7 +5,7 @@
  * Parse known shapes and surface just the useful text:
  *
  *   - Bash → just the `command` field
- *   - Other recognised tools → the most descriptive single field
+ *   - Other recognized tools → the most descriptive single field
  *   - Generic JSON object → flat `key: value` lines (multi-line strings
  *     indented under the key)
  *   - Anything else → returned untouched

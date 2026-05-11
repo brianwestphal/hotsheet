@@ -285,7 +285,7 @@ test.describe('Terminal checkout bugs', () => {
     // Snapshot the rendered xterm-rows text so we can compare BEFORE vs
     // AFTER the reconnect. Pre-fix the AFTER content would be roughly
     // double the BEFORE content (every row repeated). The draw script
-    // uses inverse-video markers; we compare normalized text so colour
+    // uses inverse-video markers; we compare normalized text so color
     // attribute changes between renders don't tilt the count.
     const beforeRows = await drawerPane.evaluate((paneEl: Element) => {
       const rows = Array.from(paneEl.querySelectorAll('.xterm-rows > div'));

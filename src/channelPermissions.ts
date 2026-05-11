@@ -72,7 +72,7 @@ export function completePermission(request_id: string): boolean {
 
 /** Drop every queued permission. The channel server's
  *  `POST /permission/dismiss` endpoint calls this. Pre-HS-8047 dismiss
- *  also nuked the single slot, so this preserves observable behaviour. */
+ *  also nuked the single slot, so this preserves observable behavior. */
 export function clearAllPermissions(): void {
   queue.length = 0;
 }

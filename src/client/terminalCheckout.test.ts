@@ -4,7 +4,7 @@
  *
  * Drives the module through happy-dom (no real WebSocket — the module
  * detects `typeof WebSocket === 'undefined'` and falls back to ws=null,
- * which is the right behaviour under happy-dom). Tests focus on the
+ * which is the right behavior under happy-dom). Tests focus on the
  * stack semantics, the resize-skip rule, the placeholder rendering, the
  * cross-project independence, and the dispose-on-empty-stack invariant.
  *
@@ -312,7 +312,7 @@ describe('readOnly mode (HS-8301)', () => {
 });
 
 describe('placeholder background (HS-8295)', () => {
-  it('paints the bumped-down placeholder with the consumer-provided background colour', () => {
+  it('paints the bumped-down placeholder with the consumer-provided background color', () => {
     const mA = makeMount('mA');
     const mB = makeMount('mB');
     const handleA = checkout({
@@ -1238,7 +1238,7 @@ describe('per-entry global stall watcher (HS-8286)', () => {
     h.release();
   });
 
-  it('HS-8309 — once the stall token is acquired, dispose-via-release tears it down (defence-in-depth)', () => {
+  it('HS-8309 — once the stall token is acquired, dispose-via-release tears it down (defense-in-depth)', () => {
     // Belt-and-braces check that `disposeEntry` releases an outstanding
     // token even if the stall watcher never gets to see the resolving
     // echo. Ensures the leak surface is one path (the keystroke gate)

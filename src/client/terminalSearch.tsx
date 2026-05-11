@@ -117,7 +117,7 @@ export function mountTerminalSearch(
     throw new Error('terminal-search: failed to mount — missing expected elements');
   }
 
-  // Match-highlight colours deliberately use amber / orange rather than the
+  // Match-highlight colors deliberately use amber / orange rather than the
   // app accent blue so matches remain distinct from the active-selection
   // highlight (HS-7330 selection uses `--accent` at 40/20 % alpha) when a
   // user has both a live selection and an ongoing search.
@@ -204,7 +204,7 @@ export function mountTerminalSearch(
     // HS-7426 — when regex mode is on, validate the pattern up-front so we
     // can render the `.is-invalid` state and `err` count chip without
     // depending on whether xterm's SearchAddon throws or silently no-ops on
-    // bad input. (Both behaviours have shipped across xterm versions.)
+    // bad input. (Both behaviors have shipped across xterm versions.)
     if (activeSearchOptions.regex) {
       try {
         new RegExp(q);

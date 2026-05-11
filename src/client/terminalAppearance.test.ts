@@ -231,7 +231,7 @@ describe('per-project default cache (HS-8283)', () => {
     expect(getProjectDefault('')).toEqual({});
   });
 
-  it('setProjectDefault is a no-op when called with an empty secret (defence-in-depth)', () => {
+  it('setProjectDefault is a no-op when called with an empty secret (defense-in-depth)', () => {
     setProjectDefault('', { theme: 'should-be-ignored' });
     expect(getProjectDefault('')).toEqual({});
   });
@@ -275,9 +275,9 @@ describe('per-project default cache (HS-8283)', () => {
 
 /**
  * HS-7960 — `resolveAppearanceBackground` returns the active theme's
- * background colour, used by the drawer + dashboard dedicated view to paint
- * the padded gutter around the xterm canvas in a colour that matches the
- * canvas itself (no app-coloured seam).
+ * background color, used by the drawer + dashboard dedicated view to paint
+ * the padded gutter around the xterm canvas in a color that matches the
+ * canvas itself (no app-colored seam).
  */
 describe('resolveAppearanceBackground (HS-7960)', () => {
   it('returns the configured theme bg for a known theme id', () => {
@@ -294,7 +294,7 @@ describe('resolveAppearanceBackground (HS-7960)', () => {
     expect(out).toBe(def!.background);
   });
 
-  it('returns a non-empty colour string for every shipped theme', () => {
+  it('returns a non-empty color string for every shipped theme', () => {
     for (const t of TERMINAL_THEMES) {
       const out = resolveAppearanceBackground({ theme: t.id, fontFamily: 'system', fontSize: 13 });
       expect(typeof out).toBe('string');
