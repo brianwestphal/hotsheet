@@ -75,16 +75,45 @@ function canUseColumnView(): boolean {
  * rebuild path (container.innerHTML = '' + for-loop). Column view is
  * HS-8332 (sub #2).
  *
- * FLIP animation in the default branch is a known regression in this
- * ticket — the bindList reconciles synchronously inside the
- * `ticketsStore.actions.setTickets(...)` call (which runs BEFORE
- * `renderTicketList` is invoked by the call site), so the snapshot
- * captured at the top of `renderTicketList` is taken AFTER the
- * reconcile and `flipAnimate` is a no-op. Restoring FLIP requires a
- * `setTicketsAnimated` wrapper that captures snapshot, mutates, then
- * animates — filed as a follow-up.
+ * HS-8336 (2026-05-11) — FLIP animation restored via
+ * `setTicketsAnimated` wrapper below. The wrapper captures the
+ * snapshot BEFORE the setTickets write (so the bindList reconcile
+ * sits BETWEEN snapshot and flipAnimate), which is the correct
+ * sequencing for the synchronous-reconcile path. `renderTicketList`'s
+ * own captureSnapshot / flipAnimate stays — it still drives FLIP for
+ * the column / trash / preview branches (which mutate DOM inside
+ * `renderTicketList` itself, not via the bindList).
  */
 let listViewBindListDispose: (() => void) | null = null;
+
+/**
+ * HS-8336 — wrapper around `ticketsStore.actions.setTickets(...)` that
+ * captures a FLIP snapshot before the store write and animates rows
+ * to their new positions after the synchronous bindList reconcile.
+ *
+ * The bindList reconciles synchronously inside `setTickets` (the kerf
+ * signal fires + bindList runs + DOM reorders all on the same call
+ * stack), so by the time control returns from `setTickets` the DOM is
+ * already in its new layout. Capturing the snapshot BEFORE the call +
+ * running `flipAnimate` AFTER gives FLIP its pre/post pair.
+ *
+ * For the column / trash / preview branches this wrapper is a slight
+ * pessimisation (an extra snapshot capture) but not a correctness
+ * problem — those branches don't use bindList, so the snapshot here
+ * captures the pre-data-change DOM, the data changes but the DOM
+ * doesn't yet, and `flipAnimate` here is a near-no-op (dx,dy ≈ 0).
+ * Their REAL FLIP animation still runs from `renderTicketList`'s own
+ * captureSnapshot / flipAnimate pair which brackets the wholesale
+ * rebuild.
+ *
+ * Only used by `loadTickets`. `loadPreviewTickets` is deferred to
+ * HS-8333 (which moves preview to bindList).
+ */
+export function setTicketsAnimated(tickets: readonly Ticket[]): void {
+  const snapshot = captureSnapshot();
+  ticketsStore.actions.setTickets(tickets);
+  flipAnimate(snapshot);
+}
 
 function unmountListViewBindList(): void {
   if (listViewBindListDispose !== null) {
@@ -352,7 +381,7 @@ export async function loadTickets() {
     const view = state.customViews.find(v => v.id === viewId);
     if (view) {
       const viewTag = view.tag;
-      ticketsStore.actions.setTickets(await api<Ticket[]>('/tickets/query', {
+      setTicketsAnimated(await api<Ticket[]>('/tickets/query', {
         method: 'POST',
         body: {
           logic: view.logic,
@@ -364,7 +393,7 @@ export async function loadTickets() {
         },
       }));
     } else {
-      ticketsStore.actions.setTickets([]);
+      setTicketsAnimated([]);
     }
     renderTicketList();
     return;
@@ -417,7 +446,7 @@ export async function loadTickets() {
   params.set('sort_dir', state.sortDir);
 
   const query = params.toString();
-  ticketsStore.actions.setTickets(await api<Ticket[]>(`/tickets${query ? '?' + query : ''}`));
+  setTicketsAnimated(await api<Ticket[]>(`/tickets${query ? '?' + query : ''}`));
   // Fetch sync map before rendering so icons appear on first render
   try {
     setSyncedTicketMap(await api<Record<number, SyncedTicketInfo>>('/sync/tickets'));
