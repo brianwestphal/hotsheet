@@ -74,3 +74,4 @@
 - TSX/SafeHtml for HTML building (not manual string concatenation).
 - `toElement()` instead of `document.createElement()`.
 - No ORM — raw SQL via PGLite's `query()` method.
+- **American English** spelling and grammar for all prose: code comments, commit messages, completion notes, requirements docs, AI summaries, and user-visible strings. See `CLAUDE.md` → "Spelling and grammar" for the common British → American swap list. Fix opportunistically when editing nearby text; a separate sweep ticket tracks codebase-wide conversion.

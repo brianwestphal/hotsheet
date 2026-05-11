@@ -504,6 +504,7 @@ All timestamp columns are `TIMESTAMPTZ` (older DBs migrated in place).
 - **Hot Sheet ↔ Channel:** Hot Sheet `/api/channel/trigger` POSTs to the running channel; Hot Sheet polls `/api/channel/permission` (long-poll) for pending Claude tool-use approvals.
 - **Status / auto mode:** sidebar play button (see `src/client/channelUI.tsx`). Heartbeat hooks installed into `~/.claude/settings.json` by `src/claude-hooks.ts` (PostToolUse/UserPromptSubmit/Stop).
 - **Worklist file:** `src/sync/markdown.ts` builds `.hotsheet/worklist.md` with curl examples the AI session can run; `src/skills.ts` maintains the `.claude/skills/hotsheet` skill.
+- **MCP tool surface (HS-8344 design, `docs/63-mcp-tools.md`):** Today the channel server defines **zero MCP tools** — Claude → Hot Sheet ops all run as `curl` against the REST API documented in §7 below + the worklist. Phase 1 (HS-8346) lands 5 tools in a new `tools/list` + `tools/call` handler pair: `hotsheet_update_ticket` / `create_ticket` / `signal_done` / `add_attachment` / `request_feedback`. Phase 2 (HS-8347) extends to 14 tools total. Each tool internally proxies to the local Hot Sheet HTTP API via `port` + `secret` read from `<dataDir>/settings.json` — single source of truth, no duplicated handler tree. Soft-cutover migration: worklist + skills list MCP form first, curl stays as fallback for non-Claude AI agents.
 
 ---
 
