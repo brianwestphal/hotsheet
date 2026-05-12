@@ -193,8 +193,18 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
   }
 
   // Variant transition or first mount — wipe + relay out + remount.
+  // HS-8365 — `replaceChildren()` (no args) is the ESLint-compliant
+  // equivalent of `innerHTML = ''`. `morph()` isn't a good fit here:
+  // the variant transition is structurally different (default has a
+  // draft row + rows container + empty-state; trash + preview don't),
+  // and the rows container is then handed to `bindList` which owns its
+  // children — morphing across that ownership boundary requires the
+  // `ownedItems` escape hatch + a refactor of the mount sequence. The
+  // variant transition is also rare (user clicks a sidebar item, which
+  // moves focus away from this container), so focus / selection
+  // preservation isn't user-visible here.
   unmountBindList();
-  container.innerHTML = '';
+  container.replaceChildren();
   container.classList.remove('ticket-list-columns');
   if (variant === 'default') {
     container.appendChild(createDraftRow());

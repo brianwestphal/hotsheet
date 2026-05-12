@@ -100,12 +100,21 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
   // itself with `HS-1234` in its own notes shouldn't render that as a
   // link).
   const currentTicketNumber = state.tickets.find(t => t.id === ticketId)?.ticket_number;
-  container.innerHTML = '';
-
+  // HS-8365 — accumulate every child element in an array and commit via
+  // a single `replaceChildren(...children)`. Pre-fix every renderNotes
+  // call wiped the container with `innerHTML = ''` then appended one
+  // element at a time, which flushed layout incrementally. The
+  // accumulate-then-commit form does the DOM work in one batch and
+  // removes the `innerHTML = ''` smell. Full `morph()` migration is
+  // gated on moving the per-note click / contextmenu / megaphone-button
+  // listeners off per-element attachment and onto delegation at the
+  // container — substantial refactor, captured in the HS-8365 follow-up.
   if (notes.length === 0) {
     container.replaceChildren(toElement(<div className="notes-empty">No notes added</div>));
     return;
   }
+
+  const children: Element[] = [];
 
   for (const note of notes) {
     const isEmpty = note.text.trim() === '';
@@ -318,7 +327,7 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
       }
     }
 
-    container.appendChild(entry);
+    children.push(entry);
 
     // HS-7599: render any feedback drafts whose `parent_note_id` matches
     // this note inline, immediately below the parent note. Free-floating
@@ -327,7 +336,7 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
     const drafts = ticketDraftsCache.get(ticketId) ?? [];
     for (const draft of drafts) {
       if (draft.parentNoteId === note.id) {
-        container.appendChild(buildDraftEntry(ticketId, draft, notes));
+        children.push(buildDraftEntry(ticketId, draft, notes));
       }
     }
   }
@@ -342,7 +351,7 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
     const drafts = ticketDraftsCache.get(ticketId) ?? [];
     for (const draft of drafts) {
       if (draft.parentNoteId !== null && noteIds.has(draft.parentNoteId)) continue;
-      container.appendChild(buildDraftEntry(ticketId, draft, notes));
+      children.push(buildDraftEntry(ticketId, draft, notes));
     }
   }
 
@@ -362,7 +371,10 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
     e.stopPropagation();
     byIdOrNull('detail-add-note-btn')?.click();
   });
-  container.appendChild(addBottomBtn);
+  children.push(addBottomBtn);
+
+  // Single commit — replaces every existing child in one DOM mutation.
+  container.replaceChildren(...children);
 
   // If a note was just created, scroll to it and open edit mode.
   if (pendingFocusNoteId != null && pendingFocusNoteId !== '') {

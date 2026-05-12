@@ -166,14 +166,22 @@ async function handleDelete(index: number): Promise<void> {
 function renderList(): void {
   const list = byIdOrNull('settings-terminals-list');
   if (!list) return;
-  list.innerHTML = '';
+  // HS-8365 — `replaceChildren(...rows)` instead of the prior
+  // `innerHTML = '' + append-each` pattern. Each row's per-element
+  // listeners (mousedown swallow + drag handlers + click) capture `index`
+  // in a closure, so `morph()` would either preserve stale-index
+  // listeners across re-orderings or need a delegation refactor that
+  // conflicts with the per-row drag-gesture isolation this file
+  // intentionally uses (see the module-level JSDoc rationale). The
+  // `replaceChildren` form keeps the per-row listener pattern intact
+  // while removing the `innerHTML = ''` smell — full `morph()` migration
+  // here is gated on an event-delegation refactor that's out of scope.
   if (terminals.length === 0) {
-    list.appendChild(toElement(<div className="settings-terminals-empty">No terminals configured.</div>));
+    list.replaceChildren(toElement(<div className="settings-terminals-empty">No terminals configured.</div>));
     return;
   }
-  for (let i = 0; i < terminals.length; i++) {
-    list.appendChild(renderRow(i));
-  }
+  const rows = terminals.map((_, i) => renderRow(i));
+  list.replaceChildren(...rows);
 }
 
 function renderRow(index: number): HTMLElement {

@@ -185,7 +185,15 @@ export function renderPreviewColumnView() {
   }
   const savedScrolls = saveColumnScrollState(container);
   unmountColumnView();
-  container.innerHTML = '';
+  // HS-8365 — `replaceChildren()` (no args) is the ESLint-compliant
+  // equivalent of `innerHTML = ''`. `morph()` isn't a good fit here:
+  // the column layout's inner `<div class="column-body">` elements are
+  // each handed to a per-column `bindList`, and morphing across that
+  // ownership boundary would require the `ownedItems` escape hatch +
+  // a refactor of the mount sequence. The transition is also rare
+  // (column-count change, hide-verified toggle, project switch), so
+  // focus / selection preservation isn't user-visible.
+  container.replaceChildren();
   container.classList.add('ticket-list-columns');
 
   const knownStatuses = new Set(columns.map(c => c.status));
@@ -296,7 +304,10 @@ export function renderColumnView() {
   }
   const savedScrolls = saveColumnScrollState(container);
   unmountColumnView();
-  container.innerHTML = '';
+  // HS-8365 — see the matching `replaceChildren()` rationale on
+  // `renderPreviewColumnView` above. Same bindList-ownership-boundary
+  // limitation applies here.
+  container.replaceChildren();
   container.classList.add('ticket-list-columns');
 
   container.appendChild(createDraftRow());

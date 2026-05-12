@@ -4,6 +4,7 @@ import { marked } from 'marked';
 
 import { raw } from '../jsx-runtime.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
+import { morph } from './reactive.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 
 /**
@@ -138,7 +139,14 @@ export function openReaderOverlay(options: OpenReaderOverlayOptions): void {
     const entry = currentEntry();
     titleEl.textContent = entry.title;
     overlay.setAttribute('aria-label', entry.title);
-    bodyEl.innerHTML = renderReaderBodyHtml(entry.markdown);
+    // HS-8365 — `morph()` reconciles in-place against the existing body
+    // children. Common DOM (matching `<p>` / `<ul>` / `<code>` etc. at the
+    // same position) is preserved, so navigating between two similarly-
+    // shaped notes only mutates the differing text nodes / attributes
+    // instead of rebuilding the whole subtree. If the user has a text
+    // selection inside the body, kerf's morph preserves it for the
+    // surviving nodes.
+    morph(bodyEl, renderReaderBodyHtml(entry.markdown));
     // Reset scroll on navigation so a long previous note doesn't leave the
     // new one mid-scrolled — fresh entry, fresh top-of-page.
     bodyEl.scrollTop = 0;

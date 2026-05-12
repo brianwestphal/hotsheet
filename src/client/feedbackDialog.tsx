@@ -8,6 +8,7 @@ import {
   parseFeedbackBlocks,
 } from './feedbackParser.js';
 import type { NoteEntry } from './noteRenderer.js';
+import { morph } from './reactive.js';
 import { loadTickets } from './ticketList.js';
 import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
 
@@ -158,22 +159,34 @@ export function showFeedbackDialog(
   const fileListEl = overlay.querySelector('#feedback-files')!;
   const fileInput = overlay.querySelector('#feedback-file-input') as HTMLInputElement;
 
+  // HS-8365 — `morph()` reconciles in place, so any user focus / selection
+  // on a sibling textarea (the catch-all or per-block response inputs)
+  // survives a file add / remove. Listener attachment uses delegation on
+  // `fileListEl` rather than per-button so a morphed-in row from the
+  // template doesn't need a follow-up wiring pass — the delegated click
+  // walks up via `closest('.category-delete-btn')` and reads the row's
+  // `data-idx`.
+  fileListEl.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement | null)?.closest<HTMLButtonElement>('.category-delete-btn');
+    if (btn === null || btn === undefined || !fileListEl.contains(btn)) return;
+    const idx = parseInt(btn.dataset.idx ?? '-1', 10);
+    if (Number.isNaN(idx) || idx < 0 || idx >= pendingFiles.length) return;
+    pendingFiles.splice(idx, 1);
+    renderFileList();
+  });
+
   function renderFileList() {
-    fileListEl.innerHTML = '';
-    for (let i = 0; i < pendingFiles.length; i++) {
-      const file = pendingFiles[i];
-      const row = toElement(
-        <div className="not-working-file-row">
-          <span>{file.name}</span>
-          <button className="category-delete-btn" data-idx={String(i)}>{'×'}</button>
-        </div>
-      );
-      requireChild<HTMLButtonElement>(row, 'button').addEventListener('click', () => {
-        pendingFiles.splice(i, 1);
-        renderFileList();
-      });
-      fileListEl.appendChild(row);
-    }
+    const template = toElement(
+      <div>
+        {pendingFiles.map((file, i) => (
+          <div className="not-working-file-row" data-key={`${String(i)}:${file.name}`}>
+            <span>{file.name}</span>
+            <button className="category-delete-btn" data-idx={String(i)}>{'×'}</button>
+          </div>
+        ))}
+      </div>,
+    );
+    morph(fileListEl, template);
   }
 
   requireChild<HTMLButtonElement>(overlay, '#feedback-add-file').addEventListener('click', () => fileInput.click());

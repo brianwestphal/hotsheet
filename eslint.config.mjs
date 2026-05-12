@@ -102,7 +102,7 @@ export default tseslint.config(
       "src/client/backups.tsx",
       "src/client/channelUI.tsx",
       "src/client/clipboardUtil.tsx",
-      "src/client/columnView.tsx",
+      // HS-8365 — `src/client/columnView.tsx` migrated, removed from allowlist.
       "src/client/commandEditor.tsx",
       "src/client/commandLog.tsx",
       "src/client/commandLogFilter.tsx",
@@ -114,16 +114,16 @@ export default tseslint.config(
       "src/client/dbRepairUI.tsx",
       "src/client/detail.tsx",
       "src/client/drawerTerminalGrid.tsx",
-      "src/client/feedbackDialog.tsx",
+      // HS-8365 — `src/client/feedbackDialog.tsx` migrated, removed from allowlist.
       "src/client/iconPicker.tsx",
-      "src/client/noteRenderer.tsx",
+      // HS-8365 — `src/client/noteRenderer.tsx` migrated, removed from allowlist.
       "src/client/openFolder.tsx",
       "src/client/permissionDialogShell.tsx",
       "src/client/pluginConfigDialog.tsx",
       "src/client/pluginSettings.tsx",
       "src/client/pluginUI.tsx",
       "src/client/projectTabs.tsx",
-      "src/client/readerOverlay.tsx",
+      // HS-8365 — `src/client/readerOverlay.tsx` migrated, removed from allowlist.
       "src/client/settingsCategories.tsx",
       "src/client/settingsDialog.tsx",
       "src/client/settingsLoader.tsx",
@@ -132,7 +132,13 @@ export default tseslint.config(
       "src/client/terminal.tsx",
       "src/client/terminalDashboard.tsx",
       "src/client/terminalDefaultAppearanceUI.tsx",
+      // HS-8365 — `src/client/terminalsSettings.tsx` retains popover-rebuild
+      // innerHTML usage (HS-8365 non-target — popover dismisses on focus loss,
+      // morph doesn't help) so stays on the allowlist.
       "src/client/terminalsSettings.tsx",
+      // HS-8365 — `src/client/ticketList.tsx` retains one icon-swap innerHTML
+      // (star-mixed-wrap, line 453 — non-target per the HS-8365 "icon swaps"
+      // callout) so stays on the allowlist.
       "src/client/ticketList.tsx",
       // Tests legitimately use `document.body.innerHTML = '<...>'` to
       // build the test DOM under happy-dom. The HS-8243 rule's intent
