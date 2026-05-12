@@ -31,11 +31,36 @@ async function createTicket(page: Page, title: string): Promise<void> {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
-  await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 5000 });
+  // HS-8367 — `[value="X"]` attribute selectors miss post-render
+  // updates because the HS-8335 per-row effect writes `.value` (the
+  // property) not the markup attribute. Poll on live `.value` instead.
+  await expect.poll(
+    async () => {
+      return await page.locator('.ticket-row[data-id] .ticket-title-input').evaluateAll(
+        (nodes, t) => (nodes as HTMLInputElement[]).some(n => n.value === t),
+        title,
+      );
+    },
+    { timeout: 5000 },
+  ).toBe(true);
 }
 
 async function rowByTitle(page: Page, title: string) {
-  return page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) });
+  // HS-8367 — find the row whose title input's live `.value` matches.
+  // We can't filter by attribute since the per-row effect writes
+  // properties only, so we discover the row's `data-id` via evaluate +
+  // build a locator pinned to that id.
+  const id = await page.locator('.ticket-row[data-id] .ticket-title-input').evaluateAll(
+    (nodes, t) => {
+      for (const n of nodes as HTMLInputElement[]) {
+        if (n.value === t) return n.closest('.ticket-row')?.getAttribute('data-id') ?? null;
+      }
+      return null;
+    },
+    title,
+  );
+  if (id === null) throw new Error(`rowByTitle: no row found with title "${title}"`);
+  return page.locator(`.ticket-row[data-id="${id}"]`);
 }
 
 async function openDetail(page: Page, title: string): Promise<void> {
@@ -48,6 +73,15 @@ test.describe('HS-8357 — ticket-change reflection in the list view', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    // HS-8367 — view mode is persisted server-side, so a prior test
+    // that switched to column view leaves the dashboard in column view
+    // for the next list-view test. Force the layout back to list view
+    // by clicking the toolbar button when it isn't already active.
+    const listBtn = page.locator('.layout-btn[data-layout="list"]');
+    if ((await listBtn.getAttribute('class') ?? '').match(/active/) === null) {
+      await listBtn.click();
+      await expect(page.locator('#ticket-list')).not.toHaveClass(/ticket-list-columns/, { timeout: 5000 });
+    }
   });
 
   test('changing the ticket type / category reflects in the list row badge in place', async ({ page }) => {
@@ -56,34 +90,23 @@ test.describe('HS-8357 — ticket-change reflection in the list view', () => {
     const badge = row.locator('.ticket-category-badge');
 
     const initialColor = await badge.evaluate(el => (el as HTMLElement).style.backgroundColor);
-    const initialLabel = (await badge.textContent())?.trim() ?? '';
 
-    // Click the badge to open the category dropdown, pick a different
-    // category (whichever is NOT the initial one — drives both halves of
-    // the swap regardless of seed order).
+    // Click the badge to open the category dropdown. The dropdown items
+    // display the FULL category label (e.g. "Issue", "Bug") while the
+    // badge displays the SHORT form (e.g. "ISS"), so we can't compare
+    // textContent directly. Instead, pick the LAST item, which is
+    // always a different category from the default ("Issue").
     await badge.click();
     const dropdownItems = page.locator('.dropdown-menu .dropdown-item');
     await expect(dropdownItems.first()).toBeVisible({ timeout: 5000 });
     const count = await dropdownItems.count();
-    let switched = false;
-    for (let i = 0; i < count; i++) {
-      const item = dropdownItems.nth(i);
-      const itemLabel = (await item.textContent())?.trim() ?? '';
-      // Skip dropdown items that match the initial category — pick the
-      // first one whose label differs so the swap is visible.
-      if (itemLabel === '' || itemLabel === initialLabel) continue;
-      await item.click();
-      switched = true;
-      break;
-    }
-    expect(switched).toBe(true);
+    expect(count).toBeGreaterThan(1);
+    await dropdownItems.nth(count - 1).click();
 
-    // The badge color OR label changed in place — same DOM node, new style.
+    // The badge color updates in place — same DOM node, new background.
     await expect.poll(async () => {
-      const c = await badge.evaluate(el => (el as HTMLElement).style.backgroundColor);
-      const l = (await badge.textContent())?.trim() ?? '';
-      return c !== initialColor || l !== initialLabel;
-    }, { timeout: 5000 }).toBe(true);
+      return await badge.evaluate(el => (el as HTMLElement).style.backgroundColor);
+    }, { timeout: 5000 }).not.toBe(initialColor);
 
     await page.screenshot({ path: 'test-results/hs-8357-list-category-after.png' });
   });
@@ -94,30 +117,18 @@ test.describe('HS-8357 — ticket-change reflection in the list view', () => {
     const indicator = row.locator('.ticket-priority-indicator');
 
     const initialColor = await indicator.evaluate(el => (el as HTMLElement).style.color);
-    const initialTitle = await indicator.getAttribute('title');
 
     await indicator.click();
     const dropdownItems = page.locator('.dropdown-menu .dropdown-item');
     await expect(dropdownItems.first()).toBeVisible({ timeout: 5000 });
+    // Pick the LAST priority option — always different from the default.
     const count = await dropdownItems.count();
-    let switched = false;
-    for (let i = 0; i < count; i++) {
-      const item = dropdownItems.nth(i);
-      const itemText = (await item.textContent())?.trim() ?? '';
-      if (itemText === '') continue;
-      // Skip the currently-selected one (matches title attr).
-      if (initialTitle !== null && itemText.toLowerCase().includes(initialTitle.toLowerCase())) continue;
-      await item.click();
-      switched = true;
-      break;
-    }
-    expect(switched).toBe(true);
+    expect(count).toBeGreaterThan(1);
+    await dropdownItems.nth(count - 1).click();
 
     await expect.poll(async () => {
-      const c = await indicator.evaluate(el => (el as HTMLElement).style.color);
-      const ti = await indicator.getAttribute('title');
-      return c !== initialColor || ti !== initialTitle;
-    }, { timeout: 5000 }).toBe(true);
+      return await indicator.evaluate(el => (el as HTMLElement).style.color);
+    }, { timeout: 5000 }).not.toBe(initialColor);
 
     await page.screenshot({ path: 'test-results/hs-8357-list-priority-after.png' });
   });
@@ -157,8 +168,14 @@ test.describe('HS-8357 — ticket-change reflection in the list view', () => {
     // Wait for debounced save + server-pushed update to flow back.
     await page.waitForTimeout(1200);
 
-    const updatedRow = page.locator('.ticket-row[data-id] .ticket-title-input[value="Renamed via detail panel"]');
-    await expect(updatedRow).toBeVisible({ timeout: 5000 });
+    // Live `.value` property — `[value="X"]` attribute selectors miss
+    // the HS-8335 effect's property-only writes.
+    await expect.poll(
+      async () => page.locator('.ticket-row[data-id] .ticket-title-input').evaluateAll(
+        nodes => (nodes as HTMLInputElement[]).some(n => n.value === 'Renamed via detail panel'),
+      ),
+      { timeout: 5000 },
+    ).toBe(true);
 
     await page.screenshot({ path: 'test-results/hs-8357-list-title-after.png' });
   });
@@ -174,9 +191,14 @@ test.describe('HS-8357 — ticket-change reflection in the list view', () => {
     // Debounced save.
     await page.waitForTimeout(1200);
 
-    // Re-fetch and confirm the row picked up the new value.
-    const updatedRow = page.locator('.ticket-row[data-id] .ticket-title-input[value="Edited inline"]');
-    await expect(updatedRow).toBeVisible({ timeout: 5000 });
+    // Live `.value` property — `[value="X"]` attribute selectors miss
+    // the HS-8335 effect's property-only writes.
+    await expect.poll(
+      async () => page.locator('.ticket-row[data-id] .ticket-title-input').evaluateAll(
+        nodes => (nodes as HTMLInputElement[]).some(n => n.value === 'Edited inline'),
+      ),
+      { timeout: 5000 },
+    ).toBe(true);
   });
 
   test('tag changes in the detail panel are NOT rendered on the list row (HS-8357 / docs/4-user-interface.md)', async ({ page }) => {
@@ -221,6 +243,15 @@ test.describe('HS-8357 — ticket-change reflection in the column view', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    // HS-8367 — force list view first so `createTicket` can find the
+    // freshly-mounted `.ticket-row` (column view doesn't render those —
+    // it uses `.column-card`). Each column-view test calls
+    // `enterColumnView()` after creating the ticket.
+    const listBtn = page.locator('.layout-btn[data-layout="list"]');
+    if ((await listBtn.getAttribute('class') ?? '').match(/active/) === null) {
+      await listBtn.click();
+      await expect(page.locator('#ticket-list')).not.toHaveClass(/ticket-list-columns/, { timeout: 5000 });
+    }
   });
 
   async function enterColumnView(page: Page): Promise<void> {
@@ -247,22 +278,16 @@ test.describe('HS-8357 — ticket-change reflection in the column view', () => {
     await card.click();
     await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });
 
-    // Pick a different category via the detail-panel dropdown.
-    const detailBadge = page.locator('#detail-panel .ticket-category-badge, #detail-category-badge').first();
+    // Pick the last category via the detail-panel dropdown — always
+    // different from the default ("Issue") so the change is visible.
+    // Selector is `#detail-category` (see `src/client/detail.tsx`).
+    const detailBadge = page.locator('#detail-category');
     await detailBadge.click();
     const dropdownItems = page.locator('.dropdown-menu .dropdown-item');
     await expect(dropdownItems.first()).toBeVisible({ timeout: 5000 });
     const count = await dropdownItems.count();
-    let switched = false;
-    for (let i = 0; i < count; i++) {
-      const item = dropdownItems.nth(i);
-      const itemLabel = (await item.textContent())?.trim() ?? '';
-      if (itemLabel === '' || itemLabel === initialLabel) continue;
-      await item.click();
-      switched = true;
-      break;
-    }
-    expect(switched).toBe(true);
+    expect(count).toBeGreaterThan(1);
+    await dropdownItems.nth(count - 1).click();
 
     await expect.poll(async () => {
       const l = (await badge.textContent())?.trim() ?? '';
@@ -283,24 +308,16 @@ test.describe('HS-8357 — ticket-change reflection in the column view', () => {
 
     await card.click();
     await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });
-    // Priority indicator in the detail panel.
-    const detailIndicator = page.locator('#detail-panel .ticket-priority-indicator').first();
+    // Priority indicator in the detail panel — pick the last option,
+    // always different from the default. Selector is `#detail-priority`
+    // (see `src/client/detail.tsx`).
+    const detailIndicator = page.locator('#detail-priority');
     await detailIndicator.click();
     const dropdownItems = page.locator('.dropdown-menu .dropdown-item');
     await expect(dropdownItems.first()).toBeVisible({ timeout: 5000 });
     const count = await dropdownItems.count();
-    let switched = false;
-    for (let i = 0; i < count; i++) {
-      const item = dropdownItems.nth(i);
-      const itemLabel = (await item.textContent())?.trim() ?? '';
-      if (itemLabel === '') continue;
-      // Skip the currently-default text.
-      if (itemLabel.toLowerCase() === 'default') continue;
-      await item.click();
-      switched = true;
-      break;
-    }
-    expect(switched).toBe(true);
+    expect(count).toBeGreaterThan(1);
+    await dropdownItems.nth(count - 1).click();
 
     await expect.poll(async () => {
       const c = await indicator.evaluate(el => (el as HTMLElement).style.color);
@@ -321,14 +338,19 @@ test.describe('HS-8357 — ticket-change reflection in the column view', () => {
     const notStartedColumn = page.locator('.column[data-status="not_started"]');
     await expect(notStartedColumn.locator('.column-card').filter({ hasText: 'Column status ticket' })).toHaveCount(1);
 
-    // Cycle the status via the detail-panel button.
+    // The detail-panel `#detail-status` button opens a DROPDOWN — pick
+    // the Completed option directly to move the card across columns.
+    // The row-level `.ticket-status-btn` cycles; this one doesn't.
     await card.click();
     await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });
-    const detailStatusBtn = page.locator('#detail-status-btn, #detail-panel .ticket-status-btn').first();
-    await detailStatusBtn.click();
-    await page.waitForTimeout(400);
-    await detailStatusBtn.click(); // not_started → started → completed
-    await page.waitForTimeout(400);
+    await page.locator('#detail-status').click();
+    const statusItems = page.locator('.dropdown-menu .dropdown-item');
+    await expect(statusItems.first()).toBeVisible({ timeout: 5000 });
+    // Find the "Completed" item among the dropdown options.
+    const completedItem = statusItems.filter({ hasText: /Completed/i });
+    await expect(completedItem).toHaveCount(1, { timeout: 5000 });
+    await completedItem.click();
+    await page.waitForTimeout(800);
 
     // Card should now be in the completed column. Per the
     // `setupColumnCardEffects` HS-8335 design, the original card was

@@ -552,6 +552,17 @@ export async function cycleStatus(ticket: Ticket) {
   };
   const newStatus = cycle[ticket.status] || 'not_started';
   const updated = await trackedPatch(ticket, { status: newStatus }, 'Change status');
+  // HS-8367 — route through the store BEFORE mutating the closure's
+  // `ticket` reference. The store's per-ticket signal value (HS-8335)
+  // is the SAME object reference as `ticket` here; if we `Object.assign`
+  // first, the store's structural-equal check in `applyServerUpdate`
+  // (and the later `reconcilePerTicketSignals` walk on `loadTickets`'s
+  // `setTickets`) sees `signal.value === updated` and SKIPS firing —
+  // so the per-row effect from HS-8335 never re-paints the status icon /
+  // title attr / category badge / etc. Pre-fix the row stayed visually
+  // pinned to the pre-click state until a different rebuild trigger
+  // (variant switch, project switch) tore the row down.
+  ticketsStore.actions.applyServerUpdate(updated);
   Object.assign(ticket, updated);
   callRenderTicketList();
 }
@@ -562,17 +573,34 @@ export async function toggleUpNext(ticket: Ticket) {
   // status set lives in `shouldResetStatusOnUpNext` so the three
   // toggle-up-next callsites (this row handler, `bindDetailUpNext` in
   // `app.tsx`, and `actions.ts`'s batch path) stay in sync.
+  let updated: Ticket;
   if (!ticket.up_next && shouldResetStatusOnUpNext(ticket.status)) {
-    await trackedPatch(ticket, { status: 'not_started', up_next: true }, 'Toggle up next');
+    updated = await trackedPatch(ticket, { status: 'not_started', up_next: true }, 'Toggle up next');
   } else {
-    await trackedPatch(ticket, { up_next: !ticket.up_next }, 'Toggle up next');
+    updated = await trackedPatch(ticket, { up_next: !ticket.up_next }, 'Toggle up next');
   }
+  // HS-8367 — fire the per-ticket signal BEFORE mutating the closure's
+  // `ticket` reference. Without this `Object.assign` happening AFTER
+  // `applyServerUpdate`, the next click on the same star would read the
+  // stale `ticket.up_next` from the closure (the prior `await
+  // trackedPatch` flipped the server but never updated the closure),
+  // toggle to the same value, and the server-side no-op leaves the star
+  // class stuck. The `callLoadTickets()` round trip would eventually
+  // update `state.tickets[i]` but the closure's `ticket` reference is
+  // independent — that's why `cycleStatus` / `setTicketField` / the
+  // category + priority menu callbacks all carry the same applyServer-
+  // Update-then-Object.assign ordering.
+  ticketsStore.actions.applyServerUpdate(updated);
+  Object.assign(ticket, updated);
   void callLoadTickets();
   document.dispatchEvent(new CustomEvent('hotsheet:upnext-changed'));
 }
 
 async function setTicketField(ticket: Ticket, field: string, value: string) {
   const updated = await trackedPatch(ticket, { [field]: value }, `Change ${field}`);
+  // HS-8367 — same applyServerUpdate-before-mutate ordering as
+  // `cycleStatus`; see the rationale there.
+  ticketsStore.actions.applyServerUpdate(updated);
   Object.assign(ticket, updated);
   callRenderTicketList();
 }
@@ -627,6 +655,8 @@ export function showCategoryMenu(anchor: HTMLElement, ticket: Ticket) {
     active: ticket.category === s.value,
     action: async () => {
       const updated = await trackedPatch(ticket, { category: s.value }, 'Change category');
+      // HS-8367 — applyServerUpdate before mutate; see `cycleStatus`.
+      ticketsStore.actions.applyServerUpdate(updated);
       Object.assign(ticket, updated);
       callRenderTicketList();
     },
@@ -647,6 +677,8 @@ export function showPriorityMenu(anchor: HTMLElement, ticket: Ticket) {
     active: ticket.priority === s.value,
     action: async () => {
       const updated = await trackedPatch(ticket, { priority: s.value }, 'Change priority');
+      // HS-8367 — applyServerUpdate before mutate; see `cycleStatus`.
+      ticketsStore.actions.applyServerUpdate(updated);
       Object.assign(ticket, updated);
       callRenderTicketList();
     },

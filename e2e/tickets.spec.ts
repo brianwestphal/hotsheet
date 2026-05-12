@@ -53,8 +53,14 @@ test.describe('Ticket management', () => {
     // Wait for debounced save (the app debounces saves)
     await page.waitForTimeout(1000);
 
-    // Verify the list row title updated
-    await expect(page.locator('.ticket-row[data-id] .ticket-title-input[value="Updated title"]')).toBeVisible({ timeout: 5000 });
+    // Verify the list row title updated. HS-8367 — assert via
+    // `toHaveValue` (reads the live `.value` property) rather than a
+    // `[value="..."]` attribute selector. The HS-8335 per-row reactive
+    // effect sets the input's `.value` property in place, leaving the
+    // markup `value=` attribute (which is the HTML DEFAULT value, not
+    // the current one) as the original. Attribute-based selectors miss
+    // post-update reflections; property-based assertions catch them.
+    await expect(page.locator('.ticket-row[data-id] .ticket-title-input').filter({ hasNot: page.locator('.draft-input') }).first()).toHaveValue('Updated title', { timeout: 5000 });
   });
 
   test('change ticket status by clicking the status button', async ({ page }) => {

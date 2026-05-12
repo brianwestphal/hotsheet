@@ -89,10 +89,10 @@ test.describe('HS-8356 — show / hide terminals in the dashboard view', () => {
     await page.locator('#terminal-dashboard-toggle').click();
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
 
-    // All three tiles render — `.terminal-tile[data-terminal-id="X"]` is the
+    // All three tiles render — `.terminal-dashboard-tile[data-terminal-id="X"]` is the
     // post-HS-7967 `flattenSectionsToTiles` layout.
     for (const id of ['a', 'b', 'c']) {
-      await expect(page.locator(`.terminal-tile[data-terminal-id="${id}"]`)).toHaveCount(1, { timeout: 5000 });
+      await expect(page.locator(`.terminal-dashboard-tile[data-terminal-id="${id}"]`)).toHaveCount(1, { timeout: 5000 });
     }
 
     await page.screenshot({ path: 'test-results/hs-8356-dashboard-all-visible.png' });
@@ -134,7 +134,7 @@ test.describe('HS-8356 — show / hide terminals in the dashboard view', () => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await page.locator('#terminal-dashboard-toggle').click();
-    await expect(page.locator('.terminal-tile[data-terminal-id="b"]')).toHaveCount(1, { timeout: 5000 });
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="b"]')).toHaveCount(1, { timeout: 5000 });
 
     const hideBtn = page.locator('#terminal-dashboard-hide-btn, .terminal-dashboard-hide-btn').first();
     await hideBtn.click();
@@ -144,9 +144,9 @@ test.describe('HS-8356 — show / hide terminals in the dashboard view', () => {
     await expect(dialog.locator('.hide-terminal-row[data-terminal-id="b"].is-hidden')).toHaveCount(1);
 
     // The dashboard rebuilt via the hidden-state subscription — tile B is gone.
-    await expect(page.locator('.terminal-tile[data-terminal-id="b"]')).toHaveCount(0, { timeout: 5000 });
-    await expect(page.locator('.terminal-tile[data-terminal-id="a"]')).toHaveCount(1);
-    await expect(page.locator('.terminal-tile[data-terminal-id="c"]')).toHaveCount(1);
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="b"]')).toHaveCount(0, { timeout: 5000 });
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="a"]')).toHaveCount(1);
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="c"]')).toHaveCount(1);
 
     await page.screenshot({ path: 'test-results/hs-8356-dashboard-after-hide-one.png' });
   });
@@ -169,7 +169,7 @@ test.describe('HS-8356 — show / hide terminals in the dashboard view', () => {
     await page.keyboard.press('Escape');
 
     await expect(page.locator('.terminal-dashboard-all-hidden')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('.terminal-tile')).toHaveCount(0);
+    await expect(page.locator('.terminal-dashboard-tile')).toHaveCount(0);
 
     await page.screenshot({ path: 'test-results/hs-8356-dashboard-all-hidden.png' });
   });
@@ -191,8 +191,8 @@ test.describe('HS-8356 — show / hide terminals in the dashboard view', () => {
     await expect(page.locator('.terminal-dashboard-all-hidden')).toBeVisible();
 
     await dialog.locator('.hide-terminal-show-all').click();
-    await expect(page.locator('.terminal-tile[data-terminal-id="a"]')).toHaveCount(1, { timeout: 5000 });
-    await expect(page.locator('.terminal-tile[data-terminal-id="b"]')).toHaveCount(1);
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="a"]')).toHaveCount(1, { timeout: 5000 });
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="b"]')).toHaveCount(1);
     await expect(page.locator('.terminal-dashboard-all-hidden')).toHaveCount(0);
 
     await page.screenshot({ path: 'test-results/hs-8356-dashboard-after-show-all.png' });
@@ -253,7 +253,7 @@ test.describe('HS-8356 — show / hide terminals cross-surface (dashboard ↔ dr
     await page.locator('.hide-terminal-dialog-overlay .hide-terminal-row[data-terminal-id="b"]').click();
     await page.keyboard.press('Escape');
     // Confirm the dashboard reflects the hide.
-    await expect(page.locator('.terminal-tile[data-terminal-id="b"]')).toHaveCount(0, { timeout: 5000 });
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="b"]')).toHaveCount(0, { timeout: 5000 });
 
     // 2. Exit dashboard mode, enter drawer grid mode.
     await page.locator('#terminal-dashboard-toggle').click();
@@ -298,9 +298,9 @@ test.describe('HS-8356 — show / hide terminals cross-surface (dashboard ↔ dr
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
 
     // 3. Dashboard also has A hidden.
-    await expect(page.locator('.terminal-tile[data-terminal-id="a"]')).toHaveCount(0, { timeout: 5000 });
-    await expect(page.locator('.terminal-tile[data-terminal-id="b"]')).toHaveCount(1);
-    await expect(page.locator('.terminal-tile[data-terminal-id="c"]')).toHaveCount(1);
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="a"]')).toHaveCount(0, { timeout: 5000 });
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="b"]')).toHaveCount(1);
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="c"]')).toHaveCount(1);
 
     await page.screenshot({ path: 'test-results/hs-8356-cross-surface-dashboard-after-drawer-hide.png' });
   });

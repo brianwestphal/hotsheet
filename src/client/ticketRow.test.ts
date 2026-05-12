@@ -345,6 +345,71 @@ describe('setupTicketRowEffects (HS-8357) — list-view reactivity for every mut
   });
 });
 
+describe('per-ticket signal fires when route through the store (HS-8367 regression guard)', () => {
+  // HS-8367 — the bug: `cycleStatus` / `setTicketField` / category +
+  // priority menu callbacks were doing `Object.assign(ticket, updated)`
+  // WITHOUT routing through `ticketsStore.actions.applyServerUpdate`.
+  // The store's per-ticket signal value is the SAME object reference
+  // as the closure's `ticket` (the store stores the live reference).
+  // After `Object.assign`, the structural-equal check in
+  // `applyServerUpdate` (and the later `reconcilePerTicketSignals`
+  // walk on `loadTickets`'s `setTickets`) sees `signal.value` ===
+  // updated and SKIPS firing — so the per-row reactive effect from
+  // HS-8335 never re-paints. The fix orders applyServerUpdate BEFORE
+  // `Object.assign` so the signal sees the OLD ticket (still in
+  // `signal.value`) ≠ updated and fires.
+
+  it('applyServerUpdate(updated) FIRES the per-ticket signal when current value differs', () => {
+    const t = makeTicket(1, { status: 'not_started' });
+    ticketsStore.actions.setTickets([t]);
+    const row = buildMinimalListRow(t);
+    document.body.appendChild(row);
+    const dispose = setupTicketRowEffects(row, t);
+
+    const btn = row.querySelector<HTMLElement>('.ticket-status-btn')!;
+    // The stub row uses `title="${t.status}"` (underscore) — initial.
+    expect(btn.getAttribute('title')).toBe('not_started');
+
+    // Production-equivalent flow: applyServerUpdate FIRST (signal
+    // fires because store's signal value is still the OLD ticket),
+    // THEN Object.assign the closure for subsequent reads.
+    const updated = makeTicket(1, { status: 'started' });
+    ticketsStore.actions.applyServerUpdate(updated);
+    Object.assign(t, updated);
+
+    // The effect fired → button title flipped in place.
+    expect(btn.getAttribute('title')).toBe('started');
+
+    dispose();
+  });
+
+  it('Object.assign BEFORE applyServerUpdate does NOT fire the signal (pinning the bug shape so a future refactor that re-introduces it fails this test)', () => {
+    const t = makeTicket(1, { status: 'not_started' });
+    ticketsStore.actions.setTickets([t]);
+    const row = buildMinimalListRow(t);
+    document.body.appendChild(row);
+    const dispose = setupTicketRowEffects(row, t);
+
+    const btn = row.querySelector<HTMLElement>('.ticket-status-btn')!;
+    expect(btn.getAttribute('title')).toBe('not_started');
+
+    // BUG SHAPE — mutate the closure (which is the same reference
+    // held by the signal) BEFORE calling applyServerUpdate. The
+    // signal sees its value === updated (structurally equal) and
+    // skips firing.
+    const updated = makeTicket(1, { status: 'started' });
+    Object.assign(t, updated);
+    ticketsStore.actions.applyServerUpdate(updated);
+
+    // Title attr stays at 'not_started' — the bug shape doesn't fire
+    // the signal. This assertion pins the bug so a future refactor
+    // that flips the order back will be caught by this regression.
+    expect(btn.getAttribute('title')).toBe('not_started');
+
+    dispose();
+  });
+});
+
 describe('setupColumnCardEffects (HS-8335) — column-view reactivity', () => {
   it('toggles .up-next class and star symbol on up_next flip', () => {
     const t = makeTicket(1, { up_next: false });
