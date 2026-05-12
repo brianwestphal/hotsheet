@@ -208,6 +208,143 @@ describe('setupTicketRowEffects (HS-8335) — list-view reactivity', () => {
   });
 });
 
+describe('setupTicketRowEffects (HS-8357) — list-view reactivity for every mutable field', () => {
+  // HS-8357 extends the HS-8335 coverage with explicit per-field
+  // assertions for every mutable ticket field that the user expects to
+  // see reflected in the list row in place: type / category,
+  // priority, status (full not-started → started → completed → verified
+  // cycle), title (focused-AND-unfocused matrix), tags (currently NOT
+  // rendered on the list row — pin the not-rendered status so a future
+  // change is conscious).
+
+  it('priority change updates indicator color + title attr in place', () => {
+    const t = makeTicket(1, { priority: 'default' });
+    ticketsStore.actions.setTickets([t]);
+    const row = buildMinimalListRow(t);
+    document.body.appendChild(row);
+    const dispose = setupTicketRowEffects(row, t);
+
+    const indicator = row.querySelector<HTMLElement>('.ticket-priority-indicator')!;
+    ticketsStore.actions.optimisticUpdate(1, { priority: 'highest' });
+    // Priority color comes from the static `getPriorityColor` map — any
+    // non-empty change-of-color string is sufficient to prove the effect
+    // fired. We assert it's NOT still the prior value (the initial DOM
+    // build had `#def` from `buildMinimalListRow`'s stub).
+    expect(indicator.style.color).not.toBe('rgb(221, 238, 255)'); // stub `#def` normalized
+    expect(indicator.getAttribute('title')).toBe('highest');
+
+    ticketsStore.actions.optimisticUpdate(1, { priority: 'low' });
+    expect(indicator.getAttribute('title')).toBe('low');
+
+    dispose();
+  });
+
+  it('status change cycles the status-button title attr across the full not_started→started→completed→verified path', () => {
+    const t = makeTicket(1, { status: 'not_started' });
+    ticketsStore.actions.setTickets([t]);
+    const row = buildMinimalListRow(t);
+    document.body.appendChild(row);
+    const dispose = setupTicketRowEffects(row, t);
+
+    const btn = row.querySelector<HTMLElement>('.ticket-status-btn')!;
+    expect(row.classList.contains('completed')).toBe(false);
+    expect(btn.classList.contains('verified')).toBe(false);
+
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'started' }));
+    expect(btn.getAttribute('title')).toBe('started');
+    expect(row.classList.contains('completed')).toBe(false);
+    expect(btn.classList.contains('verified')).toBe(false);
+
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed' }));
+    expect(btn.getAttribute('title')).toBe('completed');
+    expect(row.classList.contains('completed')).toBe(true);
+    expect(btn.classList.contains('verified')).toBe(false);
+
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'verified' }));
+    expect(btn.getAttribute('title')).toBe('verified');
+    expect(row.classList.contains('completed')).toBe(true);
+    expect(btn.classList.contains('verified')).toBe(true);
+
+    // Cycling back collapses the classes.
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'not_started' }));
+    expect(btn.getAttribute('title')).toBe('not started');
+    expect(row.classList.contains('completed')).toBe(false);
+    expect(btn.classList.contains('verified')).toBe(false);
+
+    dispose();
+  });
+
+  it('title change applies in place when the title input is NOT focused', () => {
+    const t = makeTicket(1, { title: 'Original' });
+    ticketsStore.actions.setTickets([t]);
+    const row = buildMinimalListRow(t);
+    document.body.appendChild(row);
+    const dispose = setupTicketRowEffects(row, t);
+
+    const titleInput = row.querySelector<HTMLInputElement>('.ticket-title-input')!;
+    // Initial value preserved — no first-run write.
+    expect(titleInput.value).toBe('Original');
+    // Make sure focus is NOT on the input.
+    expect(document.activeElement).not.toBe(titleInput);
+
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { title: 'Server change 1' }));
+    expect(titleInput.value).toBe('Server change 1');
+
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { title: 'Server change 2' }));
+    expect(titleInput.value).toBe('Server change 2');
+
+    dispose();
+  });
+
+  it('category change is independent of priority change (single-effect funnel writes both)', () => {
+    state.categories = [
+      { id: 'feature', label: 'Feature', shortLabel: 'FT', color: '#111111', shortcutKey: 'f', description: '' },
+      { id: 'bug', label: 'Bug', shortLabel: 'BG', color: '#ff0000', shortcutKey: 'b', description: '' },
+    ];
+    const t = makeTicket(1, { category: 'feature', priority: 'default' });
+    ticketsStore.actions.setTickets([t]);
+    const row = buildMinimalListRow(t);
+    document.body.appendChild(row);
+    const dispose = setupTicketRowEffects(row, t);
+
+    const badge = row.querySelector<HTMLElement>('.ticket-category-badge')!;
+    const indicator = row.querySelector<HTMLElement>('.ticket-priority-indicator')!;
+
+    // Change BOTH fields in one update — verify both reflect.
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { category: 'bug', priority: 'high' }));
+    expect(badge.textContent).toBe('BG');
+    expect(badge.style.backgroundColor).toBe('#ff0000');
+    expect(indicator.getAttribute('title')).toBe('high');
+
+    dispose();
+  });
+
+  it('tags are NOT rendered on list rows by design — pin the contract', () => {
+    const t = makeTicket(1, { tags: '["alpha","beta","gamma"]' });
+    ticketsStore.actions.setTickets([t]);
+    const row = buildMinimalListRow(t);
+    document.body.appendChild(row);
+    const dispose = setupTicketRowEffects(row, t);
+
+    // No tag-related elements exist on the list row markup. A future
+    // requirement to surface tags on the row should come with explicit
+    // reactive coverage; this assertion fails loud if somebody adds
+    // tag-rendering without that.
+    expect(row.querySelectorAll('.ticket-tag, .column-card-tag, [data-tag]')).toHaveLength(0);
+    // The tag values themselves don't leak as raw text either.
+    expect(row.textContent).not.toContain('alpha');
+    expect(row.textContent).not.toContain('beta');
+    expect(row.textContent).not.toContain('gamma');
+
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { tags: '["delta"]' }));
+    // Still no tag rendering after the change.
+    expect(row.querySelectorAll('.ticket-tag, .column-card-tag, [data-tag]')).toHaveLength(0);
+    expect(row.textContent).not.toContain('delta');
+
+    dispose();
+  });
+});
+
 describe('setupColumnCardEffects (HS-8335) — column-view reactivity', () => {
   it('toggles .up-next class and star symbol on up_next flip', () => {
     const t = makeTicket(1, { up_next: false });
@@ -255,6 +392,100 @@ describe('setupColumnCardEffects (HS-8335) — column-view reactivity', () => {
     ticketsStore.actions.optimisticUpdate(1, { title: 'Updated title' });
     // The title-host's text node should reflect the new value.
     expect(titleHost.textContent).toContain('Updated title');
+
+    dispose();
+  });
+});
+
+describe('setupColumnCardEffects (HS-8357) — column-view reactivity for every mutable field', () => {
+  // HS-8357 extends the HS-8335 column-card coverage with explicit
+  // per-field assertions for the fields that should update in place on
+  // a column card. Status is deliberately NOT reactive on the card
+  // itself (a status flip moves the card to a different per-status
+  // column signal which tears down + remounts the card fresh) — that
+  // contract is pinned by its own test below.
+
+  it('priority change updates indicator color in place', () => {
+    const t = makeTicket(1, { priority: 'default' });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    const indicator = card.querySelector<HTMLElement>('.ticket-priority-indicator')!;
+    ticketsStore.actions.optimisticUpdate(1, { priority: 'highest' });
+    expect(indicator.style.color).not.toBe('rgb(221, 238, 255)');
+    // Column cards don't carry a `title` attr on the priority indicator
+    // (see `createPreviewColumnCard` in columnView.tsx — `cursor:default`
+    // means no title attr by design), so we only assert color flip.
+
+    dispose();
+  });
+
+  it('status change is NOT made reactive on the card root status-X class (by design — card moves columns instead)', () => {
+    const t = makeTicket(1, { status: 'not_started' });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    // Live card built with `status-not_started`.
+    expect(card.classList.contains('status-not_started')).toBe(true);
+    // Status flip via the store — the card's class stays stale, by
+    // design. (A real status flip in the live app moves the card to a
+    // different per-column bindList, tearing down this card.)
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed' }));
+    expect(card.classList.contains('status-not_started')).toBe(true);
+    expect(card.classList.contains('status-completed')).toBe(false);
+
+    dispose();
+  });
+
+  it('title change rebuilds the title host text but preserves the host element identity', () => {
+    const t = makeTicket(1, { title: 'Original' });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    const titleHost = card.querySelector<HTMLElement>('.column-card-title')!;
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { title: 'New title text' }));
+    expect(titleHost.textContent).toContain('New title text');
+    // Host element identity preserved across the rebuild.
+    expect(card.querySelector<HTMLElement>('.column-card-title')).toBe(titleHost);
+
+    dispose();
+  });
+
+  it('multiple field changes in one server update apply atomically', () => {
+    state.categories = [
+      { id: 'feature', label: 'Feature', shortLabel: 'FT', color: '#111111', shortcutKey: 'f', description: '' },
+      { id: 'bug', label: 'Bug', shortLabel: 'BG', color: '#ff0000', shortcutKey: 'b', description: '' },
+    ];
+    const t = makeTicket(1, { category: 'feature', priority: 'default', title: 'A', up_next: false });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, {
+      category: 'bug',
+      priority: 'high',
+      title: 'B',
+      up_next: true,
+    }));
+
+    const badge = card.querySelector<HTMLElement>('.ticket-category-badge')!;
+    const indicator = card.querySelector<HTMLElement>('.ticket-priority-indicator')!;
+    const star = card.querySelector<HTMLElement>('.ticket-star')!;
+    const titleHost = card.querySelector<HTMLElement>('.column-card-title')!;
+
+    expect(badge.textContent).toBe('BG');
+    expect(badge.style.backgroundColor).toBe('#ff0000');
+    expect(indicator.style.color).not.toBe('rgb(221, 238, 255)');
+    expect(star.textContent).toBe('★');
+    expect(card.classList.contains('up-next')).toBe(true);
+    expect(titleHost.textContent).toContain('B');
 
     dispose();
   });
