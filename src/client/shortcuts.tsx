@@ -109,30 +109,30 @@ export function bindKeyboardShortcuts() {
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const offset = e.key === 'ArrowLeft' ? -1 : 1;
-        // HS-7927 follow-up: focus inside the commands-log pane is treated
-        // the same as focus inside a terminal pane — Cmd+Shift+Arrow cycles
-        // drawer tabs, Opt+Cmd+Shift+Arrow escapes back to project tabs.
-        // The search input inside the commands-log pane is otherwise
-        // indistinguishable from any other text input, so without this gate
-        // Cmd+Shift+Arrow on the search field would just no-op.
-        const inDrawer = isTerminalFocused() || isCommandsLogFocused();
-        if (e.altKey) {
-          if (!isInput || inDrawer) {
-            e.preventDefault();
-            switchTabByOffset(offset);
-          }
-          return;
-        }
-        if (inDrawer) {
-          e.preventDefault();
-          switchTerminalTabByOffset(offset);
-          return;
-        }
-        if (!isInput) {
+        const decision = decideShiftArrowTabAction({
+          isInput,
+          isTerminalFocused: isTerminalFocused(),
+          isCommandsLogFocused: isCommandsLogFocused(),
+          isAlt: e.altKey,
+        });
+        if (decision === 'project') {
           e.preventDefault();
           switchTabByOffset(offset);
           return;
         }
+        if (decision === 'drawer-tab') {
+          e.preventDefault();
+          switchTerminalTabByOffset(offset);
+          return;
+        }
+        if (decision === 'fallthrough-alt') {
+          // Alt held + regular input — silently return without firing
+          // the global handler. Browser still handles the chord for
+          // word-by-word selection extension.
+          return;
+        }
+        // decision === 'fallthrough' — no return, let other handlers
+        // (or the browser's native text-selection) handle it.
       }
     }
 
@@ -397,6 +397,79 @@ export function bindKeyboardShortcuts() {
  * Exported so unit tests can verify the predicate directly without driving
  * the full keydown handler.
  */
+/**
+ * HS-8366 — pure decision function for Cmd/Ctrl+Shift+Arrow when the
+ * focused element is determined. Routes the chord to one of four
+ * outcomes:
+ *
+ * - `'project'` — switch project tabs (Opt/Alt variant OR no input
+ *   focus, no drawer focus).
+ * - `'drawer-tab'` — switch drawer tabs (Cmd+Shift+Arrow when focus is
+ *   inside the xterm helper-textarea OR a non-input element of the
+ *   commands-log pane).
+ * - `'fallthrough'` — no preventDefault, let the chord through. Used
+ *   when focus is on a regular text input + no Alt — the browser
+ *   handles Cmd+Shift+Arrow for text-selection extension (per macOS
+ *   conventions: select to line start / end). Pre-HS-8366 this case
+ *   was hijacked into drawer-tab cycling when focus was on the
+ *   commands-log search input.
+ * - `'fallthrough-alt'` — same outcome as `'fallthrough'` but for the
+ *   Opt+Cmd+Shift+Arrow chord on a regular input. The browser handles
+ *   it for word-by-word selection extension.
+ *
+ * Exported so unit tests can pin every cell of the decision matrix
+ * without driving the full keyboard handler + projectTabs imports.
+ *
+ * The xterm helper-textarea is captured by `isTerminalFocused` (matches
+ * via the `.xterm` ancestor), NOT by `isInput` alone — so a
+ * `isTerminalFocused === true` overrides the regular-input fallthrough:
+ * xterm doesn't use Cmd+Shift+Arrow for text selection, and the user
+ * expects the chord to cycle drawer tabs from inside the terminal.
+ */
+export type ShiftArrowTabDecision = 'project' | 'drawer-tab' | 'fallthrough' | 'fallthrough-alt';
+
+export interface ShiftArrowTabContext {
+  /** True when focus is on a generic text input (`<input>`, `<textarea>`,
+   *  `<select>`, or a `contenteditable` element). The xterm helper-
+   *  textarea is ALSO an input by this definition, but
+   *  `isTerminalFocused` takes precedence for it (see below). */
+  readonly isInput: boolean;
+  /** True when focus is inside a `.drawer-terminal-pane` or `.xterm`
+   *  subtree — i.e., the xterm helper-textarea or a sibling chrome
+   *  element. */
+  readonly isTerminalFocused: boolean;
+  /** True when the active drawer tab is `commands-log` and the drawer
+   *  panel is visible. Set even when focus is on `<body>` inside the
+   *  drawer (see `isCommandsLogFocused` JSDoc for the broader contract). */
+  readonly isCommandsLogFocused: boolean;
+  /** True when the Alt / Option modifier is held alongside Cmd/Ctrl+Shift. */
+  readonly isAlt: boolean;
+}
+
+export function decideShiftArrowTabAction(ctx: ShiftArrowTabContext): ShiftArrowTabDecision {
+  // The xterm helper-textarea is both an "input" AND a terminal-focused
+  // surface; xterm doesn't use Cmd+Shift+Arrow for text selection, so
+  // it routes to drawer-tab cycling (or project cycling under Alt) just
+  // like a non-input focus inside the drawer.
+  const inDrawerNonInput = ctx.isTerminalFocused || (ctx.isCommandsLogFocused && !ctx.isInput);
+  if (ctx.isAlt) {
+    // Opt+Cmd+Shift+Arrow: escape back to project tabs from the drawer,
+    // OR switch projects when no input has focus.
+    if (!ctx.isInput || inDrawerNonInput) return 'project';
+    // Otherwise (Alt held + regular input) — let the browser handle the
+    // chord for word-by-word text selection on macOS.
+    return 'fallthrough-alt';
+  }
+  if (inDrawerNonInput) return 'drawer-tab';
+  if (!ctx.isInput) return 'project';
+  // Regular text input + no Alt — let the browser handle the chord for
+  // line-boundary text selection on macOS. This is the HS-8366 carve-
+  // out: pre-fix the commands-log search input case fell through to
+  // drawer-tab cycling because `isCommandsLogFocused()` returned true
+  // for it; now it correctly returns 'fallthrough'.
+  return 'fallthrough';
+}
+
 export function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;

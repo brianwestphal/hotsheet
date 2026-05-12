@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  decideShiftArrowTabAction,
   findVisibleModalOverlay,
   isCommandsLogFocused,
   isEditableTarget,
@@ -435,5 +436,105 @@ describe('shouldBailForActiveModal (HS-8033)', () => {
       <div class="terminal-prompt-overlay"><button>Allow</button></div>
     `;
     expect(shouldBailForActiveModal(document.getElementById('ticket-row'))).toBe(false);
+  });
+});
+
+describe('decideShiftArrowTabAction (HS-8366)', () => {
+  // HS-8366 — pre-fix the commands-log search input (a regular text
+  // input that happens to live inside a panel where
+  // `isCommandsLogFocused()` returns true) had Cmd+Shift+Arrow stolen
+  // for drawer-tab cycling instead of being used for text-selection
+  // extension. This describe block pins every cell of the decision
+  // matrix so a future refactor of the carve-out is caught.
+
+  const base = { isInput: false, isTerminalFocused: false, isCommandsLogFocused: false, isAlt: false };
+
+  describe('no Alt modifier (Cmd+Shift+Arrow)', () => {
+    it('returns "fallthrough" for a regular input outside any drawer (e.g. ticket title input)', () => {
+      expect(decideShiftArrowTabAction({ ...base, isInput: true })).toBe('fallthrough');
+    });
+
+    it('returns "fallthrough" for the commands-log SEARCH INPUT — the HS-8366 regression target', () => {
+      // The exact bug shape: focus is on a regular input (`isInput`
+      // true) AND `isCommandsLogFocused` returns true (because the
+      // active drawer tab is commands-log). Pre-fix this returned
+      // "drawer-tab" and stole Cmd+Shift+Arrow from the search field;
+      // post-fix the regular-input check wins and the browser handles
+      // the chord for line-boundary selection.
+      expect(decideShiftArrowTabAction({
+        ...base,
+        isInput: true,
+        isCommandsLogFocused: true,
+      })).toBe('fallthrough');
+    });
+
+    it('returns "drawer-tab" for the xterm helper-textarea (isInput=true AND isTerminalFocused=true — terminal wins)', () => {
+      // The xterm helper-textarea is a TEXTAREA so `isInput` is true,
+      // BUT xterm doesn't use Cmd+Shift+Arrow for text selection — we
+      // want the existing drawer-tab cycling behavior. The
+      // `isTerminalFocused` check takes precedence over the regular-
+      // input fallthrough.
+      expect(decideShiftArrowTabAction({
+        ...base,
+        isInput: true,
+        isTerminalFocused: true,
+      })).toBe('drawer-tab');
+    });
+
+    it('returns "drawer-tab" for a non-input element inside the commands-log pane (e.g. focus on <body> after a click on a log row)', () => {
+      expect(decideShiftArrowTabAction({
+        ...base,
+        isInput: false,
+        isCommandsLogFocused: true,
+      })).toBe('drawer-tab');
+    });
+
+    it('returns "project" when no input has focus and no drawer signal is set', () => {
+      expect(decideShiftArrowTabAction(base)).toBe('project');
+    });
+  });
+
+  describe('Alt modifier held (Opt+Cmd+Shift+Arrow)', () => {
+    it('returns "project" when no input is focused', () => {
+      expect(decideShiftArrowTabAction({ ...base, isAlt: true })).toBe('project');
+    });
+
+    it('returns "project" when focus is in a terminal (Opt-escape from xterm to project tabs)', () => {
+      expect(decideShiftArrowTabAction({
+        ...base,
+        isAlt: true,
+        isInput: true,
+        isTerminalFocused: true,
+      })).toBe('project');
+    });
+
+    it('returns "project" when focus is in a non-input commands-log element (Opt-escape from drawer to project tabs)', () => {
+      expect(decideShiftArrowTabAction({
+        ...base,
+        isAlt: true,
+        isCommandsLogFocused: true,
+      })).toBe('project');
+    });
+
+    it('returns "fallthrough-alt" for a regular input + Alt — browser handles word-by-word selection', () => {
+      // HS-8366 — Opt+Cmd+Shift+Arrow on macOS extends selection by
+      // word. Pre-fix this case fell into the same drawer-tab hijack
+      // as plain Cmd+Shift+Arrow for the commands-log search input;
+      // post-fix the chord falls through to the browser.
+      expect(decideShiftArrowTabAction({
+        ...base,
+        isAlt: true,
+        isInput: true,
+      })).toBe('fallthrough-alt');
+    });
+
+    it('returns "fallthrough-alt" for the commands-log search input + Alt (mirror of the plain-Cmd+Shift+Arrow case)', () => {
+      expect(decideShiftArrowTabAction({
+        ...base,
+        isAlt: true,
+        isInput: true,
+        isCommandsLogFocused: true,
+      })).toBe('fallthrough-alt');
+    });
   });
 });

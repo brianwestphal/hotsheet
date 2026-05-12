@@ -1316,6 +1316,23 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     magnifiedNavListener = (e: KeyboardEvent): void => {
       const direction = isMagnifiedNavShortcut(e);
       if (direction === null) return;
+      // HS-8366 — bail when a regular text input owns focus so the
+      // Cmd+Shift+Arrow chord falls through to the browser for text-
+      // selection extension. The xterm helper-textarea is detected via
+      // the `.xterm` ancestor and is excluded from the carve-out (xterm
+      // doesn't use Cmd+Shift+Arrow for text selection). This guard is
+      // defensive — the dashboard chrome that hosts magnified tiles
+      // hides the sidebar / detail panel / search inputs while a tile is
+      // magnified, so a focused regular input is rare here, but a stray
+      // popover input or a future feature that introduces one would
+      // otherwise have its chord stolen.
+      const target = e.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName;
+        const isRegularInput = (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable);
+        const isInXterm = target.closest('.xterm') !== null;
+        if (isRegularInput && !isInXterm) return;
+      }
       const fromTile = dedicated !== null ? dedicated.tile : centered;
       if (fromTile === null) return;
       const next = findNextTileInDirection(fromTile, direction);

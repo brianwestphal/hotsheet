@@ -11,8 +11,14 @@
  * disposers. When a row's key drops out of the source array, the row's
  * own effect tree is torn down and the node is detached.
  */
-import type { ReadonlySignal, Signal } from 'kerfjs';
-import { effect } from 'kerfjs';
+// HS-8342 — import via the `./reactive.js` shim per §60.4 instead of
+// from `'kerfjs'` directly. The shim is the single mediation point for
+// the underlying signals library — sibling helpers like this one go
+// through it so a future swap (e.g. back to `@preact/signals-core`
+// direct, or to a different signals primitive entirely) only touches
+// `reactive.ts`.
+import type { ReadonlySignal, Signal } from './reactive.js';
+import { effect } from './reactive.js';
 
 type AnySignal<T> = ReadonlySignal<T> | Signal<T>;
 
