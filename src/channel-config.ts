@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
@@ -7,7 +7,32 @@ const McpConfigSchema = z.object({
   mcpServers: z.record(z.string(), z.unknown()).optional(),
 }).loose();
 
-const MCP_SERVER_KEY = 'hotsheet-channel';
+// HS-8349 — the legacy single-key MCP server name used before per-project
+// slug-suffixed keys landed. Kept here so `registerChannel` / `unregisterChannel`
+// can opportunistically remove a stale legacy entry on the same `.mcp.json`
+// during the one-time migration. New writes use `getMcpServerKey(dataDir)`.
+const LEGACY_MCP_SERVER_KEY = 'hotsheet-channel';
+
+/** HS-8349 — derive a stable per-project slug from the channel server's
+ *  `--data-dir`. The basename of the project root (parent of `.hotsheet/`)
+ *  is lowercased and non-alphanumeric runs collapse to a single `-`.
+ *  Leading / trailing `-` are trimmed. An empty result falls back to
+ *  `project` so the slug is always non-empty. */
+export function slugifyDataDir(dataDir: string): string {
+  const root = dataDir.replace(/[\\/]\.hotsheet[\\/]?$/, '');
+  const base = basename(root) || 'project';
+  const slug = base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug !== '' ? slug : 'project';
+}
+
+/** HS-8349 — the per-project MCP server key written into `.mcp.json`.
+ *  Claude Code namespaces tools by the `.mcp.json` key, so each project's
+ *  channel server now registers under `hotsheet-channel-<slug>` instead of
+ *  the shared `hotsheet-channel`, surfacing the source project in the tool
+ *  list (e.g. `mcp__hotsheet-channel-kerf__hotsheet_update_ticket`). */
+export function getMcpServerKey(dataDir: string): string {
+  return `${LEGACY_MCP_SERVER_KEY}-${slugifyDataDir(dataDir)}`;
+}
 
 /** Get the path to the channel server and the command to run it.
  *  channel-config.ts and channel.ts are siblings in src/ (dev) and dist/ (production).
@@ -37,11 +62,16 @@ function projectRoot(dataDir: string): string {
   return dataDir.replace(/\/.hotsheet\/?$/, '');
 }
 
-/** Register the channel server in .mcp.json for a specific project */
+/** Register the channel server in .mcp.json for a specific project.
+ *  HS-8349 — the key is per-project (`hotsheet-channel-<slug>` from
+ *  `getMcpServerKey(dataDir)`). Any pre-existing legacy `hotsheet-channel`
+ *  entry on the same `.mcp.json` is dropped in the same write so the upgrade
+ *  doesn't leave a stale duplicate behind. */
 export function registerChannel(dataDir: string): void {
   const root = projectRoot(dataDir);
   const mcpPath = join(root, '.mcp.json');
   const { command, args } = getChannelServerPath();
+  const serverKey = getMcpServerKey(dataDir);
 
   let config: z.infer<typeof McpConfigSchema> = {};
   if (existsSync(mcpPath)) {
@@ -52,7 +82,18 @@ export function registerChannel(dataDir: string): void {
   }
 
   if (!config.mcpServers) config.mcpServers = {};
-  config.mcpServers[MCP_SERVER_KEY] = {
+  // HS-8349 migration: drop the legacy single-key entry if present.
+  // The slug-suffixed key supersedes it.
+  if (
+    serverKey !== LEGACY_MCP_SERVER_KEY
+    && config.mcpServers[LEGACY_MCP_SERVER_KEY] !== undefined
+  ) {
+    const servers = { ...config.mcpServers };
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+    delete servers[LEGACY_MCP_SERVER_KEY];
+    config.mcpServers = servers;
+  }
+  config.mcpServers[serverKey] = {
     command,
     args: [...args, '--data-dir', dataDir],
   };
@@ -67,7 +108,10 @@ export function registerChannelForAll(dataDirs: string[]): void {
   }
 }
 
-/** Remove the channel server from .mcp.json for a specific project */
+/** Remove the channel server from .mcp.json for a specific project.
+ *  HS-8349 — removes BOTH the per-project slug-suffixed key AND the legacy
+ *  `hotsheet-channel` key (in case the user is rolling back from a build
+ *  that registered it). */
 export function unregisterChannel(dataDir?: string): void {
   const root = dataDir !== undefined ? projectRoot(dataDir) : process.cwd();
   const mcpPath = join(root, '.mcp.json');
@@ -76,10 +120,24 @@ export function unregisterChannel(dataDir?: string): void {
 
   try {
     const config = McpConfigSchema.parse(JSON.parse(readFileSync(mcpPath, 'utf-8')));
-    if (config.mcpServers?.[MCP_SERVER_KEY] !== undefined) {
-      const servers = { ...config.mcpServers };
+    const servers = config.mcpServers !== undefined ? { ...config.mcpServers } : {};
+    let changed = false;
+    // Drop the per-project key (only resolvable when dataDir is provided).
+    if (dataDir !== undefined) {
+      const serverKey = getMcpServerKey(dataDir);
+      if (servers[serverKey] !== undefined) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete servers[serverKey];
+        changed = true;
+      }
+    }
+    // Drop the legacy single-key entry if present.
+    if (servers[LEGACY_MCP_SERVER_KEY] !== undefined) {
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete servers[MCP_SERVER_KEY];
+      delete servers[LEGACY_MCP_SERVER_KEY];
+      changed = true;
+    }
+    if (changed) {
       config.mcpServers = servers;
       writeFileSync(mcpPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
     }
@@ -129,9 +187,11 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
  *  HS-8347 — bumped from 5 → 6 for the Phase 2 expansion (9 more tools:
  *  hotsheet_get_ticket / delete_ticket / restore_ticket / toggle_up_next /
  *  duplicate_tickets / batch / edit_note / delete_note / query_tickets).
+ *  HS-8349 — bumped from 6 → 7 for the Phase 4 multi-project tool naming
+ *  (`.mcp.json` key + `Server({name})` are now per-project `hotsheet-channel-<slug>`).
  *  Users who have the channel registered will see a "reconnect via `/mcp`"
  *  prompt when the main server boots with the newer version. */
-const EXPECTED_CHANNEL_VERSION = 6;
+const EXPECTED_CHANNEL_VERSION = 7;
 
 /** Check if the running channel server's version matches the expected version.
  *  Returns null if no channel, true if matching, false if mismatched. */

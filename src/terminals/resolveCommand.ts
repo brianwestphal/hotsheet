@@ -1,6 +1,7 @@
 import { existsSync } from 'fs';
 import { delimiter, dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 
+import { slugifyDataDir } from '../channel-config.js';
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
 import { DEFAULT_TERMINAL_ID, findTerminalConfig, type TerminalConfig } from './config.js';
@@ -12,8 +13,14 @@ export interface ResolvedCommand {
 
 const CLAUDE_TOKEN = '{{claudeCommand}}';
 const PROJECT_DIR_TOKEN = '{{projectDir}}';
-const CLAUDE_WITH_CHANNEL = 'claude --dangerously-load-development-channels server:hotsheet-channel';
 const CLAUDE_BASE = 'claude';
+
+/** HS-8349 — build the development-channel command for a given project.
+ *  The MCP server name is now per-project (`hotsheet-channel-<slug>`), so
+ *  this needs to mirror the slug from `slugifyDataDir(dataDir)`. */
+export function claudeWithChannelCommand(dataDir: string): string {
+  return `claude --dangerously-load-development-channels server:hotsheet-channel-${slugifyDataDir(dataDir)}`;
+}
 
 /**
  * Pure: resolve a user-entered terminal `cwd` string against the project
@@ -89,7 +96,7 @@ function lookupConfig(options: ResolveOptions): TerminalConfig {
 function pickClaudeCommand(options: ResolveOptions): string {
   const claudePresent = (options.isClaudeOnPath ?? defaultClaudeDetector)();
   const channelEnabled = options.channelEnabledOverride ?? isChannelEnabled(options.dataDir);
-  if (claudePresent && channelEnabled) return CLAUDE_WITH_CHANNEL;
+  if (claudePresent && channelEnabled) return claudeWithChannelCommand(options.dataDir);
   if (claudePresent) return CLAUDE_BASE;
   return (options.defaultShellOverride ?? defaultShell)();
 }

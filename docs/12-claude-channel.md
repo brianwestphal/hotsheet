@@ -51,13 +51,13 @@ The Claude Channel and custom commands are configured in the **Experimental** se
 
 ## 12.5 `.mcp.json` Registration
 
-When the channel is enabled, Hot Sheet adds an entry to `.mcp.json`:
+When the channel is enabled, Hot Sheet adds an entry to `.mcp.json` under a per-project key (HS-8349). The key is `hotsheet-channel-<slug>` where `<slug>` is derived from the basename of the project root via `slugifyDataDir(dataDir)` in `src/channel-config.ts` (lowercase, non-alphanumeric runs collapse to `-`, fallback `project`):
 
 **Production** (installed via npm):
 ```json
 {
   "mcpServers": {
-    "hotsheet-channel": {
+    "hotsheet-channel-myproject": {
       "command": "node",
       "args": ["<path-to-dist>/channel.js", "--data-dir", "<data-dir>"]
     }
@@ -69,7 +69,7 @@ When the channel is enabled, Hot Sheet adds an entry to `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "hotsheet-channel": {
+    "hotsheet-channel-myproject": {
       "command": "npx",
       "args": ["tsx", "<path-to-src>/channel.ts", "--data-dir", "<data-dir>"]
     }
@@ -79,7 +79,9 @@ When the channel is enabled, Hot Sheet adds an entry to `.mcp.json`:
 
 The path detection uses `dirname(fileURLToPath(import.meta.url))` and checks for `dist/channel.js` first (production), then `src/channel.ts` (dev mode).
 
-Existing `.mcp.json` entries are preserved (merge, not overwrite).
+Existing `.mcp.json` entries are preserved (merge, not overwrite). The legacy single-key `hotsheet-channel` entry (pre-HS-8349) is opportunistically removed by `registerChannel` when it writes the new per-project key, so a one-time upgrade leaves no orphan entry behind.
+
+The launch command shown in Settings → Experimental matches the per-project key: `claude --dangerously-load-development-channels server:hotsheet-channel-<slug>`. The slug surfaces in Claude Code's tool list as `mcp__hotsheet-channel-<slug>__hotsheet_update_ticket`, so multi-project sessions can distinguish each project's MCP tools without spawn-order namespacing collisions.
 
 ## 12.6 Port Coordination
 

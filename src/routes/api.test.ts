@@ -128,6 +128,11 @@ vi.mock('../channel-config.js', () => ({
   shutdownChannel: vi.fn(() => Promise.resolve()),
   triggerChannel: vi.fn(() => Promise.resolve(true)),
   checkChannelVersion: vi.fn(() => Promise.resolve(null)),
+  // HS-8349 — `/channel/status` calls `slugifyDataDir` to build the `serverName`
+  // field; mock returns a fixed slug so the route handler resolves without
+  // touching the real filesystem.
+  slugifyDataDir: vi.fn(() => 'test-project'),
+  getMcpServerKey: vi.fn(() => 'hotsheet-channel-test-project'),
 }));
 
 // Mock global config so channel enable/disable tests don't modify the real ~/.hotsheet/config.json

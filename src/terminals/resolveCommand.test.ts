@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { resolveTerminalCommand, resolveTerminalCwd } from './resolveCommand.js';
+import { claudeWithChannelCommand, resolveTerminalCommand, resolveTerminalCwd } from './resolveCommand.js';
 
 function makeDataDir(settings: Record<string, unknown> = {}): string {
   const root = mkdtempSync(join(tmpdir(), 'hs-resolve-'));
@@ -26,13 +26,25 @@ describe('resolveTerminalCommand', () => {
     return d;
   }
 
-  it('uses channel-enabled claude command when channelEnabled + claude on PATH', () => {
+  it('uses channel-enabled claude command with the per-project slug when channelEnabled + claude on PATH (HS-8349)', () => {
+    const dataDir = dir();
     const { command } = resolveTerminalCommand({
-      dataDir: dir(),
+      dataDir,
       isClaudeOnPath: () => true,
       channelEnabledOverride: true,
     });
-    expect(command).toBe('claude --dangerously-load-development-channels server:hotsheet-channel');
+    // Per-project slug-suffixed channel name — exact value depends on the
+    // tempDir basename, so assert via the helper rather than a literal.
+    expect(command).toBe(claudeWithChannelCommand(dataDir));
+    expect(command.startsWith('claude --dangerously-load-development-channels server:hotsheet-channel-')).toBe(true);
+  });
+
+  it('produces distinct channel commands for distinct project dataDirs (HS-8349)', () => {
+    const dataDirA = dir();
+    const dataDirB = dir();
+    const a = resolveTerminalCommand({ dataDir: dataDirA, isClaudeOnPath: () => true, channelEnabledOverride: true }).command;
+    const b = resolveTerminalCommand({ dataDir: dataDirB, isClaudeOnPath: () => true, channelEnabledOverride: true }).command;
+    expect(a).not.toBe(b);
   });
 
   it('uses plain claude when channel is disabled but claude is on PATH', () => {

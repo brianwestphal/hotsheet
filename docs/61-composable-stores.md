@@ -239,7 +239,20 @@ The decision criterion in HS-8248 was explicit: adopt nanostores only if §60 he
 
 Nanostores is well-built and small, but its compatibility cost (parallel binding helpers OR a manual signal-mirror layer) exceeds its size win, and the wrapper required to enforce §61's three rules is the bespoke factory regardless. Stay with the §61.3 spec as written. **HS-8238 ships the factory from scratch.** Do not re-open this question without a new piece of evidence that invalidates the auto-tracking analysis above.
 
-## 61.14 Cross-refs
+## 61.14 List virtualization thresholds (HS-8368 stack)
+
+HS-8368's phased rollout produced two opposite virtualization decisions for the two list-rendering surfaces. Documenting them together so a future contributor doesn't relitigate the column-view case.
+
+**List view (default / trash / preview variants) — virtualized.** A single `bindList(rowsContainer, ticketsSignal, t => t.id, createTicketRow)` mounts all visible rows under one container. Per-row mount cost is dominated by `createTicketRow`'s JSX-literal pass + the `setupTicketRowEffects` install (~1–2 ms per row in happy-dom; closer to ~0.5 ms in real Chromium). At a typical fully-loaded project (~200 visible tickets) the full-mount cost lands in the 100–400 ms range — well over the user-perceptible 100 ms threshold for project-switch / view-switch / variant-transition. HS-8371 wraps the call in `bindListVirtualized(parent, source, key, render, { rowHeight: 32, buffer: 10, threshold: 100 })` so above-threshold lists only mount the windowed slice (~`viewport / rowHeight + 2 * buffer` rows = ~40 rows on a typical screen). Fixed-height rows are safe here because list-view rows are uniform 32 px (no wrapping, sync icon + title input + badges all single-line).
+
+**Column view (per-status columns) — NOT virtualized.** Each column has its own `bindList(body, columnSignal, t => t.id, createColumnCard)` (or `createPreviewColumnCard` for backup-preview). Per-column cost is roughly the same per-card factor (~1–2 ms) as list view, but the per-status partition (`ticketsByStatusSignal`) splits the row count across columns: a healthy distribution of 200 tickets across 4 columns puts the largest bucket at ~80 cards = 80–160 ms — at the edge of the threshold but rare to trip. The full-mount cost only hits on layout-toggle (list → column) or variant transition; per-update reactivity stays O(changes) because bindList preserves identity across signal writes. Two further reasons NOT to virtualize:
+
+1. **Variable-height cards.** Column cards wrap titles to multiple lines depending on column width + tag count + sync-icon presence. `bindListVirtualized`'s `rowHeight` parameter assumes uniform fixed-height rows; estimated-height-with-refinement (react-virtuoso style) is a substantially more complex implementation and adds runtime measurement cost that can outweigh the mount-cost savings at these row counts.
+2. **Pathological all-in-one-bucket cases.** A column view with 200 tickets all in `not_started` would mount 200 cards in one column — that hits the threshold. But these distributions are rare in practice (most projects have churn across statuses), and the cost only hits on layout-toggle, not on per-update.
+
+**Threshold for revisiting.** Re-open the column-view virtualization question if either (a) a real flame graph shows per-column mount as the dominant cost in a user's project-switch latency, or (b) `bindListVirtualized` grows estimated-height-with-refinement support cheaply enough that retrofitting column view becomes net-positive. Until then column view stays on plain `bindList` and the §60/§61 reactive update path keeps per-card data changes cheap.
+
+## 61.15 Cross-refs
 
 - [§60. Fine-grained reactivity primitive](60-reactivity-primitive.md) — hard dependency. HS-8166 must ship before HS-8167 phases start.
 - [§62. Unified JSX render targets](62-unified-jsx-render-targets.md) — independent track. No dependency either direction.

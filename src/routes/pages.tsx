@@ -612,7 +612,7 @@ pageRoutes.get('/', (c) => {
                 <div id="settings-channel-instructions" style="display:none">
                   <div className="settings-hint" style="margin-top:8px">Launch Claude Code with channel support:</div>
                   <div className="settings-channel-command">
-                    <code id="settings-channel-cmd">claude --dangerously-load-development-channels server:hotsheet-channel</code>
+                    <code id="settings-channel-cmd">claude --dangerously-load-development-channels server:hotsheet-channel-…</code>
                     <button className="btn btn-sm" id="settings-channel-copy-btn" title="Copy command">Copy</button>
                   </div>
                 </div>

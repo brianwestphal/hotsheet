@@ -93,6 +93,13 @@ This document lists features that require manual verification before each releas
 - [ ] Channel UI hidden if Claude CLI version < 2.1.80
 - [ ] Channel toggle in Settings → Experimental registers `.mcp.json`
 
+### HS-8349 Multi-project tool naming
+- [ ] Open Hot Sheet on a project named `foo` (basename of the project root directory). Open Settings → Experimental. The launch command rendered under "Enable Claude Channel" reads `claude --dangerously-load-development-channels server:hotsheet-channel-foo` (slug-suffixed, not the legacy `server:hotsheet-channel`).
+- [ ] Open the project's `.mcp.json` (parent of `.hotsheet/`). The registered key is `hotsheet-channel-foo`, not `hotsheet-channel`.
+- [ ] Add a second project at a different path (e.g. `~/Documents/bar`). Its `.mcp.json` registers under `hotsheet-channel-bar`. Inside Claude Code, run `/mcp` — the tool list shows distinct names for each project (`mcp__hotsheet-channel-foo__hotsheet_update_ticket` vs `mcp__hotsheet-channel-bar__hotsheet_update_ticket`).
+- [ ] Migration: create a project whose `.mcp.json` contains a legacy `hotsheet-channel` entry (pre-HS-8349 shape). Enable the channel — the legacy entry is removed and the new slug-suffixed entry is written. Disable the channel — both keys (legacy + slug-suffixed) are removed from `.mcp.json`.
+- [ ] Edge case: project root with non-alphanumeric basename (e.g. `My Project!!!`). The slug collapses to `my-project` and the command displays accordingly.
+
 ---
 
 ## 4. Shell Commands

@@ -3,7 +3,10 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getChannelPort, isChannelAlive, registerChannel, triggerChannel, unregisterChannel } from './channel-config.js';
+import {
+  getChannelPort, getMcpServerKey, isChannelAlive,
+  registerChannel, slugifyDataDir, triggerChannel, unregisterChannel,
+} from './channel-config.js';
 
 let tempDir: string;
 
@@ -19,7 +22,7 @@ afterEach(() => {
 });
 
 describe('registerChannel', () => {
-  it('creates .mcp.json with hotsheet-channel entry', () => {
+  it('creates .mcp.json with per-project hotsheet-channel entry (HS-8349)', () => {
     const dataDir = join(tempDir, '.hotsheet');
     mkdirSync(dataDir, { recursive: true });
     registerChannel(dataDir);
@@ -27,9 +30,13 @@ describe('registerChannel', () => {
     expect(existsSync(mcpPath)).toBe(true);
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, { command: string; args: string[] }> };
     expect(config.mcpServers).toBeDefined();
-    expect(config.mcpServers['hotsheet-channel']).toBeDefined();
-    expect(config.mcpServers['hotsheet-channel'].args).toContain('--data-dir');
-    expect(config.mcpServers['hotsheet-channel'].args).toContain(dataDir);
+    const serverKey = getMcpServerKey(dataDir);
+    expect(serverKey.startsWith('hotsheet-channel-')).toBe(true);
+    expect(config.mcpServers[serverKey]).toBeDefined();
+    expect(config.mcpServers[serverKey].args).toContain('--data-dir');
+    expect(config.mcpServers[serverKey].args).toContain(dataDir);
+    // The legacy single-key entry must NOT be written.
+    expect(config.mcpServers['hotsheet-channel']).toBeUndefined();
   });
 
   it('preserves existing mcpServers entries', () => {
@@ -45,7 +52,7 @@ describe('registerChannel', () => {
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, { command: string; args: string[] }> };
     expect(config.mcpServers['other-server']).toBeDefined();
     expect(config.mcpServers['other-server'].command).toBe('node');
-    expect(config.mcpServers['hotsheet-channel']).toBeDefined();
+    expect(config.mcpServers[getMcpServerKey(dataDir)]).toBeDefined();
   });
 
   it('preserves other top-level keys in .mcp.json', () => {
@@ -59,22 +66,46 @@ describe('registerChannel', () => {
     registerChannel(dataDir);
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { someOtherKey: string; mcpServers: Record<string, unknown> };
     expect(config.someOtherKey).toBe('value');
-    expect(config.mcpServers['hotsheet-channel']).toBeDefined();
+    expect(config.mcpServers[getMcpServerKey(dataDir)]).toBeDefined();
   });
 
-  it('overwrites existing hotsheet-channel entry', () => {
+  it('overwrites existing per-project entry', () => {
+    const mcpPath = join(tempDir, '.mcp.json');
+    const dataDir = join(tempDir, '.hotsheet');
+    mkdirSync(dataDir, { recursive: true });
+    const serverKey = getMcpServerKey(dataDir);
+    writeFileSync(mcpPath, JSON.stringify({
+      mcpServers: {
+        [serverKey]: { command: 'old-command', args: ['old'] },
+      },
+    }));
+    registerChannel(dataDir);
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, { command: string; args: string[] }> };
+    expect(config.mcpServers[serverKey].args).toContain(dataDir);
+    expect(config.mcpServers[serverKey].args).not.toContain('old');
+  });
+
+  it('migrates legacy hotsheet-channel entry to per-project key (HS-8349)', () => {
     const mcpPath = join(tempDir, '.mcp.json');
     writeFileSync(mcpPath, JSON.stringify({
       mcpServers: {
-        'hotsheet-channel': { command: 'old-command', args: ['old'] },
+        'hotsheet-channel': { command: 'legacy', args: ['old-dir'] },
+        'other-server': { command: 'node', args: ['other.js'] },
       },
     }));
     const dataDir = join(tempDir, '.hotsheet');
     mkdirSync(dataDir, { recursive: true });
     registerChannel(dataDir);
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, { command: string; args: string[] }> };
-    expect(config.mcpServers['hotsheet-channel'].args).toContain(dataDir);
-    expect(config.mcpServers['hotsheet-channel'].args).not.toContain('old');
+    // Legacy entry dropped.
+    expect(config.mcpServers['hotsheet-channel']).toBeUndefined();
+    // New per-project entry present with the new dataDir.
+    const serverKey = getMcpServerKey(dataDir);
+    expect(config.mcpServers[serverKey]).toBeDefined();
+    expect(config.mcpServers[serverKey].args).toContain(dataDir);
+    // Unrelated entries untouched.
+    expect(config.mcpServers['other-server']).toBeDefined();
+    expect(config.mcpServers['other-server'].command).toBe('node');
   });
 
   it('handles corrupt .mcp.json by overwriting', () => {
@@ -84,7 +115,7 @@ describe('registerChannel', () => {
     mkdirSync(dataDir, { recursive: true });
     registerChannel(dataDir);
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, unknown> };
-    expect(config.mcpServers['hotsheet-channel']).toBeDefined();
+    expect(config.mcpServers[getMcpServerKey(dataDir)]).toBeDefined();
   });
 
   it('creates mcpServers key if absent', () => {
@@ -95,20 +126,59 @@ describe('registerChannel', () => {
     registerChannel(dataDir);
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, unknown> };
     expect(config.mcpServers).toBeDefined();
-    expect(config.mcpServers['hotsheet-channel']).toBeDefined();
+    expect(config.mcpServers[getMcpServerKey(dataDir)]).toBeDefined();
+  });
+
+  it('keeps distinct per-project keys across two project directories (HS-8349)', () => {
+    const dataDirA = join(tempDir, 'project-a', '.hotsheet');
+    const dataDirB = join(tempDir, 'project-b', '.hotsheet');
+    mkdirSync(dataDirA, { recursive: true });
+    mkdirSync(dataDirB, { recursive: true });
+    registerChannel(dataDirA);
+    registerChannel(dataDirB);
+    const mcpA = JSON.parse(readFileSync(join(tempDir, 'project-a', '.mcp.json'), 'utf-8')) as { mcpServers: Record<string, { args: string[] }> };
+    const mcpB = JSON.parse(readFileSync(join(tempDir, 'project-b', '.mcp.json'), 'utf-8')) as { mcpServers: Record<string, { args: string[] }> };
+    const keyA = getMcpServerKey(dataDirA);
+    const keyB = getMcpServerKey(dataDirB);
+    expect(keyA).not.toBe(keyB);
+    expect(keyA).toBe('hotsheet-channel-project-a');
+    expect(keyB).toBe('hotsheet-channel-project-b');
+    expect(mcpA.mcpServers[keyA]).toBeDefined();
+    expect(mcpA.mcpServers[keyA].args).toContain(dataDirA);
+    expect(mcpB.mcpServers[keyB]).toBeDefined();
+    expect(mcpB.mcpServers[keyB].args).toContain(dataDirB);
   });
 });
 
 describe('unregisterChannel', () => {
-  it('removes hotsheet-channel from .mcp.json', () => {
+  it('removes per-project hotsheet-channel-<slug> entry from .mcp.json (HS-8349)', () => {
+    const dataDir = join(tempDir, '.hotsheet');
+    mkdirSync(dataDir, { recursive: true });
     const mcpPath = join(tempDir, '.mcp.json');
+    const serverKey = getMcpServerKey(dataDir);
     writeFileSync(mcpPath, JSON.stringify({
       mcpServers: {
-        'hotsheet-channel': { command: 'node', args: ['channel.js'] },
+        [serverKey]: { command: 'node', args: ['channel.js'] },
         'other-server': { command: 'node', args: ['other.js'] },
       },
     }));
-    unregisterChannel();
+    unregisterChannel(dataDir);
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, unknown> };
+    expect(config.mcpServers[serverKey]).toBeUndefined();
+    expect(config.mcpServers['other-server']).toBeDefined();
+  });
+
+  it('also removes legacy hotsheet-channel entry (HS-8349 rollback safety)', () => {
+    const dataDir = join(tempDir, '.hotsheet');
+    mkdirSync(dataDir, { recursive: true });
+    const mcpPath = join(tempDir, '.mcp.json');
+    writeFileSync(mcpPath, JSON.stringify({
+      mcpServers: {
+        'hotsheet-channel': { command: 'legacy', args: ['old'] },
+        'other-server': { command: 'node', args: ['other.js'] },
+      },
+    }));
+    unregisterChannel(dataDir);
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, unknown> };
     expect(config.mcpServers['hotsheet-channel']).toBeUndefined();
     expect(config.mcpServers['other-server']).toBeDefined();
@@ -425,8 +495,60 @@ describe('registerChannel file format', () => {
     registerChannel(dataDir);
     const mcpPath = join(tempDir, '.mcp.json');
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, { command: string; args: string[] }> };
-    const entry = config.mcpServers['hotsheet-channel'];
+    const entry = config.mcpServers[getMcpServerKey(dataDir)];
     // Command should be either 'node' or 'npx'
     expect(['node', 'npx']).toContain(entry.command);
+  });
+});
+
+describe('slugifyDataDir (HS-8349)', () => {
+  it('uses the basename of the project root (parent of .hotsheet/)', () => {
+    expect(slugifyDataDir('/Users/x/Documents/hotsheet/.hotsheet')).toBe('hotsheet');
+    expect(slugifyDataDir('/Users/x/Documents/kerf/.hotsheet')).toBe('kerf');
+  });
+
+  it('lowercases mixed-case basenames', () => {
+    expect(slugifyDataDir('/projects/MyProject/.hotsheet')).toBe('myproject');
+  });
+
+  it('collapses non-alphanumeric runs to a single dash', () => {
+    expect(slugifyDataDir('/projects/my project/.hotsheet')).toBe('my-project');
+    expect(slugifyDataDir('/projects/foo.bar_baz/.hotsheet')).toBe('foo-bar-baz');
+    expect(slugifyDataDir('/projects/a@@b##c/.hotsheet')).toBe('a-b-c');
+  });
+
+  it('trims leading and trailing dashes', () => {
+    expect(slugifyDataDir('/projects/--foo--/.hotsheet')).toBe('foo');
+    expect(slugifyDataDir('/projects/.foo./.hotsheet')).toBe('foo');
+  });
+
+  it('falls back to "project" when the basename has no alphanumerics', () => {
+    expect(slugifyDataDir('/projects/!!!/.hotsheet')).toBe('project');
+  });
+
+  it('handles dataDir without trailing .hotsheet', () => {
+    // Some callers may pass the project root directly.
+    expect(slugifyDataDir('/Users/x/Documents/hotsheet')).toBe('hotsheet');
+  });
+
+  it('handles trailing slash on .hotsheet/', () => {
+    expect(slugifyDataDir('/Users/x/Documents/hotsheet/.hotsheet/')).toBe('hotsheet');
+  });
+
+  it('is stable across repeated invocations', () => {
+    const a = slugifyDataDir('/projects/MyApp/.hotsheet');
+    const b = slugifyDataDir('/projects/MyApp/.hotsheet');
+    expect(a).toBe(b);
+  });
+});
+
+describe('getMcpServerKey (HS-8349)', () => {
+  it('prepends "hotsheet-channel-" to the slug', () => {
+    expect(getMcpServerKey('/Users/x/Documents/hotsheet/.hotsheet')).toBe('hotsheet-channel-hotsheet');
+    expect(getMcpServerKey('/projects/MyApp/.hotsheet')).toBe('hotsheet-channel-myapp');
+  });
+
+  it('produces distinct keys for distinct project roots', () => {
+    expect(getMcpServerKey('/projects/a/.hotsheet')).not.toBe(getMcpServerKey('/projects/b/.hotsheet'));
   });
 });

@@ -100,7 +100,7 @@ A per-project setting `terminal_command` (stored in `.hotsheet/settings.json`) h
 
 `{{claudeCommand}}` resolves at PTY spawn time:
 
-- If `channelEnabled === true` (global config, with per-project `channel_enabled` fallback — see [12-claude-channel.md](12-claude-channel.md)) **and** `claude` is found on PATH → `claude --dangerously-load-development-channels server:hotsheet-channel`.
+- If `channelEnabled === true` (global config, with per-project `channel_enabled` fallback — see [12-claude-channel.md](12-claude-channel.md)) **and** `claude` is found on PATH → `claude --dangerously-load-development-channels server:hotsheet-channel-<slug>` where `<slug>` is `slugifyDataDir(dataDir)` per HS-8349 (basename of the project root, lowercased, non-alphanumeric runs collapsed to `-`). The substitution is performed by `claudeWithChannelCommand(dataDir)` in `src/terminals/resolveCommand.ts`.
 - Else if `claude` is found on PATH → `claude`.
 - Else → fall back to the user's default shell (`$SHELL` on Unix, `%COMSPEC%` on Windows).
 

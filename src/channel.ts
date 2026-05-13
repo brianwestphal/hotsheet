@@ -17,6 +17,7 @@ import { join } from 'path';
 import { z } from 'zod';
 
 import { callTool, listTools } from './channel.tools.js';
+import { slugifyDataDir } from './channel-config.js';
 import {
   clearAllPermissions,
   completePermission,
@@ -30,8 +31,10 @@ import {
 // HS-8347 — bumped from 5 → 6 for the Phase 2 expansion (9 more tools:
 // hotsheet_get_ticket / delete_ticket / restore_ticket / toggle_up_next /
 // duplicate_tickets / batch / edit_note / delete_note / query_tickets).
+// HS-8349 — bumped from 6 → 7 for the Phase 4 multi-project tool naming
+// (`.mcp.json` key + Server({name}) are now per-project `hotsheet-channel-<slug>`).
 // `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` bumped in lockstep.
-export const CHANNEL_VERSION = 6;
+export const CHANNEL_VERSION = 7;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -44,11 +47,17 @@ for (let i = 0; i < args.length; i++) {
 }
 
 const portFile = join(dataDir, 'channel-port');
+// HS-8349 — derive a per-project slug from the channel server's --data-dir
+// so the MCP `Server({name})` matches the per-project `.mcp.json` key
+// (`hotsheet-channel-<slug>`). Surfaces the source project in Claude Code's
+// tool list when multiple projects are open in the same session.
+const serverSlug = slugifyDataDir(dataDir);
+const serverName = `hotsheet-channel-${serverSlug}`;
 
 // Create MCP server with channel capability
 // eslint-disable-next-line @typescript-eslint/no-deprecated -- Server is needed for low-level MCP channel/permission protocol
 const mcp = new Server(
-  { name: 'hotsheet-channel', version: '0.1.0' },
+  { name: serverName, version: '0.1.0' },
   {
     capabilities: {
       // HS-8346 — declare the `tools` capability so Claude Code knows
@@ -336,7 +345,7 @@ httpServer.listen(0, '127.0.0.1', () => {
       // data dir may not exist yet
     }
     // Log to stderr (stdout is reserved for MCP stdio transport)
-    process.stderr.write(`hotsheet-channel listening on port ${port}\n`);
+    process.stderr.write(`${serverName} listening on port ${port}\n`);
     // Notify main server that channel is now connected
     void notifyMainServer();
   }

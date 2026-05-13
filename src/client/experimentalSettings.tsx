@@ -234,6 +234,17 @@ export function bindExperimentalSettings() {
     customCommandsSection.style.display = '';
   }).catch(() => {});
 
+  // HS-8349 — render the per-project channel-launch command. The MCP
+  // server name is now `hotsheet-channel-<slug>`; fetch it from
+  // /channel/status so the command shown in Settings → Experimental
+  // matches the actual launch string used by terminals + .mcp.json.
+  if (channelCmd !== null) {
+    api<{ serverName?: string }>('/channel/status').catch(() => null).then(status => {
+      const serverName = status?.serverName ?? 'hotsheet-channel';
+      channelCmd.textContent = `claude --dangerously-load-development-channels server:${serverName}`;
+    }).catch(() => {});
+  }
+
   // Reload custom commands every time settings opens
   void reloadCustomCommands().then(() => {
     renderChannelCommands();

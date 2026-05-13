@@ -100,9 +100,15 @@ Adding tools changes the channel server's capability surface. Bump both `CHANNEL
 
 ## 63.4 Multi-project scoping
 
-The channel server is registered per-project in each project's `.mcp.json` with a project-specific `--data-dir`. A single Claude Code session that has multiple Hot Sheet projects open ends up with one MCP server per project — Claude Code namespaces tools by server name. To keep the tool names distinguishable when multiple Hot Sheet projects are connected, the server registers itself as `hotsheet-channel-<project-slug>` where the slug is derived from the project's data-dir basename. Inside each server, tools are still named `hotsheet_*` — Claude Code's full tool name becomes `mcp__hotsheet-channel-<slug>__hotsheet_update_ticket`.
+**Status:** Shipped 2026-05-13 under HS-8349.
 
-Pre-fix (no scoping): every project's MCP server registered as `hotsheet-channel`, Claude Code would silently disambiguate by spawn order and the user couldn't tell which `hotsheet_update_ticket` belonged to which project. Post-fix the slug makes the routing visible in the agent's tool list.
+The channel server is registered per-project in each project's `.mcp.json` with a project-specific `--data-dir`. A single Claude Code session that has multiple Hot Sheet projects open ends up with one MCP server per project — Claude Code namespaces tools by the `.mcp.json` key. To keep the tool names distinguishable when multiple Hot Sheet projects are connected, the channel server registers itself as `hotsheet-channel-<project-slug>` where the slug is derived from the basename of the project root (parent of `.hotsheet/`). Inside each server, tools are still named `hotsheet_*` — Claude Code's full tool name becomes `mcp__hotsheet-channel-<slug>__hotsheet_update_ticket`.
+
+The slug is computed by `slugifyDataDir(dataDir)` in `src/channel-config.ts`: lowercase the basename, collapse non-alphanumeric runs to a single `-`, trim leading/trailing `-`. If the result is empty (basename contained no alphanumerics) it falls back to `project`. Both the `.mcp.json` registration key (`getMcpServerKey(dataDir)`) and the MCP `Server({name})` value in `src/channel.ts` use the slug-suffixed name, so the registration key, the server's announced name, and the dev-channel command (`claude --dangerously-load-development-channels server:hotsheet-channel-<slug>`) all agree. The slug-suffixed dev-channel command is built by `claudeWithChannelCommand(dataDir)` in `src/terminals/resolveCommand.ts` and rendered by the Settings → Experimental panel via the `serverName` field on `GET /api/channel/status`.
+
+**Migration.** `registerChannel(dataDir)` opportunistically drops any legacy `hotsheet-channel` entry on the same `.mcp.json` when writing the new slug-suffixed key. `unregisterChannel(dataDir)` removes both the per-project slug-suffixed key and the legacy single-key entry. The `CHANNEL_VERSION` / `EXPECTED_CHANNEL_VERSION` bump from 6 → 7 prompts the version-mismatch warning in the main UI so existing users reconnect via `/mcp` after upgrading.
+
+Pre-fix: every project's MCP server registered as `hotsheet-channel`, Claude Code silently disambiguated by spawn order and the user could not tell which `hotsheet_update_ticket` belonged to which project. Post-fix the slug makes the routing visible in the agent's tool list.
 
 ## 63.5 Testing strategy
 
@@ -170,10 +176,10 @@ Tracked in follow-up tickets filed under HS-8344:
 - **Phase 1 — MCP tool infrastructure + 5-tool core.** Add `tools/list` + `tools/call` handlers to `src/channel.ts`. Implement `hotsheet_update_ticket`, `hotsheet_create_ticket`, `hotsheet_signal_done`, `hotsheet_add_attachment`, `hotsheet_request_feedback`. Bump versions. New `src/channel.tools.test.ts`. Worklist + `hotsheet` skill updated to mention the tools generically.
 - **Phase 2 — Full coverage.** Remaining tools: `get_ticket`, `delete_ticket`, `restore_ticket`, `toggle_up_next`, `duplicate_tickets`, `batch`, `edit_note`, `delete_note`, `query_tickets`. Tests for each.
 - **Phase 3 — Worklist + skill rewrite.** `.hotsheet/worklist.md` template and all 8 `hs-*` skills get the two-form layout. `.claude/skills/hotsheet/SKILL.md` line added.
-- **Phase 4 — Multi-project tool naming.** Slug derivation, server-name suffix, manual-test entry. Defer until a user actually trips over the cross-project tool collision — it's a polish, not a blocker.
+- **Phase 4 — Multi-project tool naming.** Slug derivation, server-name suffix, manual-test entry. **Shipped 2026-05-13 under HS-8349** — pulled forward from the deferred queue once the user confirmed multi-project support was load-bearing rather than polish.
 - **Phase 5 — Doc rollout.** §12.13, §9.0 callout, AI summaries updated. Done in lockstep with Phase 1 so the docs land with the first shipped tools.
 
-Phases 1, 3, 5 land together as the MVP shipment; Phase 2 follows once Phase 1 is exercised in a real session; Phase 4 is on hold.
+All five phases now shipped. Phases 1, 3, 5 landed together as the MVP shipment; Phase 2 followed once Phase 1 was exercised in a real session; Phase 4 closed the multi-project gap.
 
 ## 63.8 Non-goals
 

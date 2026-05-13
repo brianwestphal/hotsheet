@@ -35,7 +35,7 @@ channelRoutes.get('/channel/claude-check', async (c) => {
 });
 
 channelRoutes.get('/channel/status', async (c) => {
-  const { isChannelAlive, getChannelPort, checkChannelVersion } = await import('../channel-config.js');
+  const { isChannelAlive, getChannelPort, checkChannelVersion, slugifyDataDir } = await import('../channel-config.js');
   const { readGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
   // Channel enabled is a global setting; fall back to legacy per-project DB (read-only)
@@ -59,7 +59,11 @@ channelRoutes.get('/channel/status', async (c) => {
     const vCheck = await checkChannelVersion(dataDir);
     if (vCheck !== null && !vCheck.match) versionMismatch = true;
   }
-  return c.json({ enabled, alive, port, done, versionMismatch });
+  // HS-8349 — the per-project MCP server name. The client uses this to
+  // render the per-project `claude --dangerously-load-development-channels
+  // server:hotsheet-channel-<slug>` command in Settings → Experimental.
+  const serverName = `hotsheet-channel-${slugifyDataDir(dataDir)}`;
+  return c.json({ enabled, alive, port, done, versionMismatch, serverName });
 });
 
 channelRoutes.post('/channel/trigger', async (c) => {
