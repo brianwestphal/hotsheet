@@ -161,6 +161,64 @@ const RequestFeedbackInputSchema = z.object({
   urgent: z.boolean().optional().describe('When true, uses the IMMEDIATE FEEDBACK NEEDED prefix (auto-selects the ticket in the UI). Defaults to false.'),
 });
 
+// HS-8347 — Phase 2 tools (9 more, bringing the surface to 14 total).
+// Each tool reuses the proxy helper from Phase 1; the Zod schemas are
+// per-tool (not reused verbatim from `src/routes/validation.ts`) because
+// the tool input shape is FLAT and agent-ergonomic — e.g.
+// `hotsheet_edit_note` takes `{ticket_id, note_id, text}` directly
+// rather than splitting `id` + `noteId` into URL params and `{text}` into
+// the body the way the REST API does.
+
+const GetTicketInputSchema = z.object({
+  id: z.number().int().describe('Ticket id (numeric)'),
+});
+
+const DeleteTicketInputSchema = z.object({
+  id: z.number().int().describe('Ticket id to soft-delete (move to trash)'),
+});
+
+const RestoreTicketInputSchema = z.object({
+  id: z.number().int().describe('Ticket id to restore from trash'),
+});
+
+const ToggleUpNextInputSchema = z.object({
+  id: z.number().int().describe('Ticket id whose up_next flag to toggle'),
+});
+
+const DuplicateTicketsInputSchema = z.object({
+  ids: z.array(z.number().int()).min(1).describe('Ticket ids to duplicate (one or more)'),
+});
+
+const BatchInputSchema = z.object({
+  ids: z.array(z.number().int()).min(1).describe('Ticket ids to operate on (one or more)'),
+  action: z.enum(['delete', 'restore', 'category', 'priority', 'status', 'up_next', 'mark_read', 'mark_unread']).describe('Batch action to apply'),
+  value: z.union([z.string(), z.boolean()]).optional().describe('Required for category / priority / status / up_next; ignored otherwise'),
+});
+
+const EditNoteInputSchema = z.object({
+  ticket_id: z.number().int().describe('The id of the ticket the note belongs to'),
+  note_id: z.string().min(1).describe('The note id (client-generated, e.g. "cn_..." or server-assigned)'),
+  text: z.string().describe('The new note text. Empty string clears the note body but keeps the entry; use `hotsheet_delete_note` to remove a note entirely.'),
+});
+
+const DeleteNoteInputSchema = z.object({
+  ticket_id: z.number().int().describe('The id of the ticket the note belongs to'),
+  note_id: z.string().min(1).describe('The note id to delete'),
+});
+
+const QueryTicketsInputSchema = z.object({
+  logic: z.enum(['all', 'any']).describe('Combine conditions with AND (`all`) or OR (`any`)'),
+  conditions: z.array(z.object({
+    field: z.enum(['category', 'priority', 'status', 'title', 'details', 'up_next', 'tags']),
+    operator: z.enum(['equals', 'not_equals', 'contains', 'not_contains', 'lt', 'lte', 'gt', 'gte']),
+    value: z.string().describe('Comparison value as a string (the REST API parses based on field/operator)'),
+  })).describe('One or more conditions to combine via `logic`'),
+  sort_by: z.string().optional().describe('Field name to sort by (e.g. "created", "modified", "priority")'),
+  sort_dir: z.enum(['asc', 'desc']).optional(),
+  required_tag: z.string().optional().describe('When set, only tickets carrying this tag are included'),
+  include_archived: z.boolean().optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Tool dispatcher. Each branch validates its input via the per-tool
 // schema, maps to the appropriate REST endpoint shape, and proxies via
@@ -254,6 +312,85 @@ async function dispatchRequestFeedback(args: unknown, settings: ChannelSettings,
   }, fetchFn);
 }
 
+// HS-8347 dispatchers — Phase 2 (9 new tools).
+
+async function dispatchGetTicket(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = GetTicketInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_get_ticket — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, `/api/tickets/${String(parsed.data.id)}`, { method: 'GET' }, fetchFn);
+}
+
+async function dispatchDeleteTicket(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = DeleteTicketInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_delete_ticket — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, `/api/tickets/${String(parsed.data.id)}`, { method: 'DELETE' }, fetchFn);
+}
+
+async function dispatchRestoreTicket(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = RestoreTicketInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_restore_ticket — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, `/api/tickets/${String(parsed.data.id)}/restore`, { method: 'POST' }, fetchFn);
+}
+
+async function dispatchToggleUpNext(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = ToggleUpNextInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_toggle_up_next — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, `/api/tickets/${String(parsed.data.id)}/up-next`, { method: 'POST' }, fetchFn);
+}
+
+async function dispatchDuplicateTickets(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = DuplicateTicketsInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_duplicate_tickets — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, '/api/tickets/duplicate', { method: 'POST', body: { ids: parsed.data.ids } }, fetchFn);
+}
+
+async function dispatchBatch(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = BatchInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_batch — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, '/api/tickets/batch', { method: 'POST', body: parsed.data }, fetchFn);
+}
+
+async function dispatchEditNote(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = EditNoteInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_edit_note — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  const { ticket_id, note_id, text } = parsed.data;
+  return await proxyRequest(settings, `/api/tickets/${String(ticket_id)}/notes/${encodeURIComponent(note_id)}`, {
+    method: 'PATCH',
+    body: { text },
+  }, fetchFn);
+}
+
+async function dispatchDeleteNote(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = DeleteNoteInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_delete_note — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  const { ticket_id, note_id } = parsed.data;
+  return await proxyRequest(settings, `/api/tickets/${String(ticket_id)}/notes/${encodeURIComponent(note_id)}`, { method: 'DELETE' }, fetchFn);
+}
+
+async function dispatchQueryTickets(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = QueryTicketsInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_query_tickets — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, '/api/tickets/query', { method: 'POST', body: parsed.data }, fetchFn);
+}
+
 // ---------------------------------------------------------------------------
 // Public tool catalog + top-level dispatcher.
 // ---------------------------------------------------------------------------
@@ -295,6 +432,61 @@ const TOOLS: ToolEntry[] = [
     description: 'Add a FEEDBACK NEEDED note to a ticket. The tool prepends FEEDBACK NEEDED: (default) or IMMEDIATE FEEDBACK NEEDED: (when urgent=true) to the question text. Saves the agent from remembering the exact prefix syntax.',
     inputSchema: RequestFeedbackInputSchema,
     call: dispatchRequestFeedback,
+  },
+  // HS-8347 — Phase 2: 9 more tools (14 total).
+  {
+    name: 'hotsheet_get_ticket',
+    description: 'Read a single ticket\'s current state by id. Returns the full ticket JSON including title, status, category, priority, up_next, tags, notes, details, and timestamps.',
+    inputSchema: GetTicketInputSchema,
+    call: dispatchGetTicket,
+  },
+  {
+    name: 'hotsheet_delete_ticket',
+    description: 'Soft-delete a ticket (move to trash). The ticket can be restored via hotsheet_restore_ticket. Use hotsheet_batch with action=delete to soft-delete many tickets at once.',
+    inputSchema: DeleteTicketInputSchema,
+    call: dispatchDeleteTicket,
+  },
+  {
+    name: 'hotsheet_restore_ticket',
+    description: 'Restore a soft-deleted ticket from trash back to its previous status.',
+    inputSchema: RestoreTicketInputSchema,
+    call: dispatchRestoreTicket,
+  },
+  {
+    name: 'hotsheet_toggle_up_next',
+    description: 'Toggle a ticket\'s up_next flag (the star in the UI). Marking up_next from a backlog/archive status also resets the status to not_started.',
+    inputSchema: ToggleUpNextInputSchema,
+    call: dispatchToggleUpNext,
+  },
+  {
+    name: 'hotsheet_duplicate_tickets',
+    description: 'Duplicate one or more tickets. The copies are created with the same fields as the originals but receive fresh ids and timestamps.',
+    inputSchema: DuplicateTicketsInputSchema,
+    call: dispatchDuplicateTickets,
+  },
+  {
+    name: 'hotsheet_batch',
+    description: 'Apply a batch action (delete / restore / category / priority / status / up_next / mark_read / mark_unread) to one or more tickets at once. `value` is required for category / priority / status / up_next; ignored for the others.',
+    inputSchema: BatchInputSchema,
+    call: dispatchBatch,
+  },
+  {
+    name: 'hotsheet_edit_note',
+    description: 'Edit an individual note on a ticket by note_id. The body of the note (note.text) is replaced with the provided text. To add a new note instead, use hotsheet_update_ticket with the `notes` field (which appends a new note).',
+    inputSchema: EditNoteInputSchema,
+    call: dispatchEditNote,
+  },
+  {
+    name: 'hotsheet_delete_note',
+    description: 'Delete an individual note from a ticket by note_id. The note is removed entirely; use hotsheet_edit_note with empty text to clear the body while keeping the entry.',
+    inputSchema: DeleteNoteInputSchema,
+    call: dispatchDeleteNote,
+  },
+  {
+    name: 'hotsheet_query_tickets',
+    description: 'Run a custom-view-style query: combine field/operator/value conditions via AND (logic="all") or OR (logic="any"), with optional sort_by / sort_dir / required_tag / include_archived. Returns the matching tickets. For agents that need to dig deeper than the worklist provides.',
+    inputSchema: QueryTicketsInputSchema,
+    call: dispatchQueryTickets,
   },
 ];
 

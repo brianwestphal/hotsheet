@@ -52,15 +52,24 @@ function fakeFetch(handler: (input: string, init?: { method?: string; headers?: 
 // Catalog + listTools()
 // ---------------------------------------------------------------------------
 
-describe('listTools (HS-8346)', () => {
-  it('returns the five Phase-1 tools by name', () => {
+describe('listTools (HS-8346 + HS-8347)', () => {
+  it('returns the 14 tools by name (Phase 1 + Phase 2)', () => {
     const tools = listTools();
     const names = tools.map(t => t.name).sort();
     expect(names).toEqual([
       'hotsheet_add_attachment',
+      'hotsheet_batch',
       'hotsheet_create_ticket',
+      'hotsheet_delete_note',
+      'hotsheet_delete_ticket',
+      'hotsheet_duplicate_tickets',
+      'hotsheet_edit_note',
+      'hotsheet_get_ticket',
+      'hotsheet_query_tickets',
       'hotsheet_request_feedback',
+      'hotsheet_restore_ticket',
       'hotsheet_signal_done',
+      'hotsheet_toggle_up_next',
       'hotsheet_update_ticket',
     ]);
   });
@@ -77,7 +86,7 @@ describe('listTools (HS-8346)', () => {
 
   it('the catalog count matches the internal `TOOLS` array', () => {
     expect(listTools()).toHaveLength(_toolsForTesting.length);
-    expect(_toolsForTesting).toHaveLength(5);
+    expect(_toolsForTesting).toHaveLength(14);
   });
 });
 
@@ -376,5 +385,284 @@ describe('errorResult (HS-8346)', () => {
     expect(r.isError).toBe(true);
     expect(r.content).toHaveLength(1);
     expect(r.content[0]).toEqual({ type: 'text', text: 'boom' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HS-8347 — Phase 2 tools.
+// ---------------------------------------------------------------------------
+
+describe('hotsheet_get_ticket (HS-8347)', () => {
+  it('happy path — GETs /api/tickets/:id and returns the JSON', async () => {
+    const ticketJson = JSON.stringify({ id: 7, title: 'Hello' });
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: ticketJson };
+    });
+    const result = await callTool('hotsheet_get_ticket', { id: 7 }, tmpDataDir, fetchFn);
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe(ticketJson);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/7');
+    expect(call[1].method).toBe('GET');
+  });
+
+  it('Zod rejection — missing id', async () => {
+    const result = await callTool('hotsheet_get_ticket', {}, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
+  });
+
+  it('HTTP 404 propagation', async () => {
+    const fetchFn = fakeFetch(() => ({ ok: false, status: 404, text: 'Not found' }));
+    const result = await callTool('hotsheet_get_ticket', { id: 9999 }, tmpDataDir, fetchFn);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('HTTP 404');
+  });
+});
+
+describe('hotsheet_delete_ticket (HS-8347)', () => {
+  it('happy path — DELETEs /api/tickets/:id', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{"ok":true}' };
+    });
+    await callTool('hotsheet_delete_ticket', { id: 5 }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/5');
+    expect(call[1].method).toBe('DELETE');
+  });
+
+  it('Zod rejection — non-integer id', async () => {
+    const result = await callTool('hotsheet_delete_ticket', { id: 'abc' }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
+  });
+});
+
+describe('hotsheet_restore_ticket (HS-8347)', () => {
+  it('happy path — POSTs /api/tickets/:id/restore', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{"ok":true}' };
+    });
+    await callTool('hotsheet_restore_ticket', { id: 5 }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/5/restore');
+    expect(call[1].method).toBe('POST');
+  });
+});
+
+describe('hotsheet_toggle_up_next (HS-8347)', () => {
+  it('happy path — POSTs /api/tickets/:id/up-next', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{"ok":true,"up_next":true}' };
+    });
+    await callTool('hotsheet_toggle_up_next', { id: 42 }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/42/up-next');
+    expect(call[1].method).toBe('POST');
+  });
+});
+
+describe('hotsheet_duplicate_tickets (HS-8347)', () => {
+  it('happy path — POSTs /api/tickets/duplicate with {ids}', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '[{"id":101},{"id":102}]' };
+    });
+    await callTool('hotsheet_duplicate_tickets', { ids: [1, 2] }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/duplicate');
+    expect(call[1].method).toBe('POST');
+    expect(JSON.parse(call[1].body)).toEqual({ ids: [1, 2] });
+  });
+
+  it('Zod rejection — empty ids array', async () => {
+    const result = await callTool('hotsheet_duplicate_tickets', { ids: [] }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
+  });
+});
+
+describe('hotsheet_batch (HS-8347)', () => {
+  it('happy path — POSTs /api/tickets/batch with the full payload', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{"ok":true}' };
+    });
+    await callTool('hotsheet_batch', {
+      ids: [1, 2, 3],
+      action: 'status',
+      value: 'completed',
+    }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/batch');
+    expect(call[1].method).toBe('POST');
+    expect(JSON.parse(call[1].body)).toEqual({
+      ids: [1, 2, 3],
+      action: 'status',
+      value: 'completed',
+    });
+  });
+
+  it('accepts boolean values for up_next action', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{}' };
+    });
+    await callTool('hotsheet_batch', {
+      ids: [1],
+      action: 'up_next',
+      value: true,
+    }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { body: string }];
+    const body = JSON.parse(call[1].body) as { value: boolean };
+    expect(body.value).toBe(true);
+  });
+
+  it('Zod rejection — invalid action enum', async () => {
+    const result = await callTool('hotsheet_batch', {
+      ids: [1],
+      action: 'invalid_action',
+    }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
+    expect(result.content[0].text).toContain('action');
+  });
+
+  it('Zod rejection — empty ids array', async () => {
+    const result = await callTool('hotsheet_batch', {
+      ids: [],
+      action: 'delete',
+    }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
+  });
+});
+
+describe('hotsheet_edit_note (HS-8347)', () => {
+  it('happy path — PATCHes /api/tickets/:id/notes/:noteId with {text}', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{"ok":true}' };
+    });
+    await callTool('hotsheet_edit_note', {
+      ticket_id: 42,
+      note_id: 'cn_abc123',
+      text: 'Updated note body',
+    }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/42/notes/cn_abc123');
+    expect(call[1].method).toBe('PATCH');
+    expect(JSON.parse(call[1].body)).toEqual({ text: 'Updated note body' });
+  });
+
+  it('URL-encodes special characters in note_id', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{}' };
+    });
+    await callTool('hotsheet_edit_note', {
+      ticket_id: 42,
+      note_id: 'has spaces & weird/chars',
+      text: 'x',
+    }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, unknown];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/42/notes/has%20spaces%20%26%20weird%2Fchars');
+  });
+
+  it('Zod rejection — missing note_id', async () => {
+    const result = await callTool('hotsheet_edit_note', { ticket_id: 1, text: 'x' }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
+  });
+});
+
+describe('hotsheet_delete_note (HS-8347)', () => {
+  it('happy path — DELETEs /api/tickets/:id/notes/:noteId', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{"ok":true}' };
+    });
+    await callTool('hotsheet_delete_note', {
+      ticket_id: 42,
+      note_id: 'cn_xyz',
+    }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/42/notes/cn_xyz');
+    expect(call[1].method).toBe('DELETE');
+  });
+});
+
+describe('hotsheet_query_tickets (HS-8347)', () => {
+  it('happy path — POSTs /api/tickets/query with the full payload', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '[]' };
+    });
+    await callTool('hotsheet_query_tickets', {
+      logic: 'all',
+      conditions: [
+        { field: 'category', operator: 'equals', value: 'bug' },
+        { field: 'priority', operator: 'equals', value: 'highest' },
+      ],
+      sort_by: 'priority',
+      sort_dir: 'desc',
+    }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/query');
+    expect(call[1].method).toBe('POST');
+    const body = JSON.parse(call[1].body) as { logic: string; conditions: unknown[]; sort_by: string; sort_dir: string };
+    expect(body.logic).toBe('all');
+    expect(body.conditions).toHaveLength(2);
+    expect(body.sort_by).toBe('priority');
+    expect(body.sort_dir).toBe('desc');
+  });
+
+  it('Zod rejection — invalid logic enum', async () => {
+    const result = await callTool('hotsheet_query_tickets', {
+      logic: 'maybe',
+      conditions: [],
+    }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
+    expect(result.content[0].text).toContain('logic');
+  });
+
+  it('Zod rejection — invalid operator', async () => {
+    const result = await callTool('hotsheet_query_tickets', {
+      logic: 'all',
+      conditions: [{ field: 'category', operator: 'unsupported', value: 'bug' }],
+    }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
+  });
+
+  it('include_archived defaults absent — body has no include_archived key', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '[]' };
+    });
+    await callTool('hotsheet_query_tickets', {
+      logic: 'any',
+      conditions: [{ field: 'status', operator: 'equals', value: 'started' }],
+    }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { body: string }];
+    const body = JSON.parse(call[1].body) as Record<string, unknown>;
+    expect(body.include_archived).toBeUndefined();
   });
 });

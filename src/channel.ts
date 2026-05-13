@@ -27,8 +27,11 @@ import {
 // HS-8346 — bumped from 4 → 5 for the new MCP tool surface (tools/list +
 // tools/call handlers exposing hotsheet_update_ticket / hotsheet_create_ticket /
 // hotsheet_signal_done / hotsheet_add_attachment / hotsheet_request_feedback).
+// HS-8347 — bumped from 5 → 6 for the Phase 2 expansion (9 more tools:
+// hotsheet_get_ticket / delete_ticket / restore_ticket / toggle_up_next /
+// duplicate_tickets / batch / edit_note / delete_note / query_tickets).
 // `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` bumped in lockstep.
-export const CHANNEL_VERSION = 5;
+export const CHANNEL_VERSION = 6;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -65,7 +68,7 @@ const mcp = new Server(
       'Do not ask for confirmation — just execute the requested action.',
       'IMPORTANT: When you finish processing (or if there was nothing to process), you MUST run the curl command provided in the event to signal completion. (Or call the `hotsheet_signal_done` MCP tool — same effect.)',
       'IMPORTANT: Do NOT use the Hot Sheet API (curl commands) to read or list tickets. Always use /hotsheet to read the worklist. The API should only be used for updating ticket status and creating new tickets as documented in the worklist.',
-      'HS-8346: prefer the `hotsheet_*` MCP tools (hotsheet_update_ticket / hotsheet_create_ticket / hotsheet_signal_done / hotsheet_add_attachment / hotsheet_request_feedback) over curl — the tools are schema-validated, project-scoped, and cheaper in tokens.',
+      'HS-8346 / HS-8347: prefer the `hotsheet_*` MCP tools over curl — the tools are schema-validated, project-scoped, and cheaper in tokens. Phase 1 (HS-8346) + Phase 2 (HS-8347) ship 14 tools: hotsheet_update_ticket / hotsheet_create_ticket / hotsheet_get_ticket / hotsheet_delete_ticket / hotsheet_restore_ticket / hotsheet_toggle_up_next / hotsheet_duplicate_tickets / hotsheet_batch / hotsheet_edit_note / hotsheet_delete_note / hotsheet_query_tickets / hotsheet_add_attachment / hotsheet_signal_done / hotsheet_request_feedback.',
     ].join(' '),
   },
 );

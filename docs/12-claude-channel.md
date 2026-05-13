@@ -251,7 +251,7 @@ Prompt: `Make a commit message for the recently completed tickets, without wrapp
 
 The channel server exposes a typed tool surface for AI agents. See [63-mcp-tools.md](63-mcp-tools.md) for the full tool reference. Tools internally proxy to the local Hot Sheet HTTP API documented in §9 — there is no duplicated handler tree.
 
-Phase 1 shipped under HS-8346 (5 tools: `hotsheet_update_ticket`, `hotsheet_create_ticket`, `hotsheet_signal_done`, `hotsheet_add_attachment`, `hotsheet_request_feedback`). Phases 2–5 land per the phasing in `docs/63-mcp-tools.md` §63.7. The REST API documented above is the universal interface and the source of truth for input validation; MCP tools are an additional access path for AI agents connected over the Claude Channel, not a replacement.
+Phase 1 (HS-8346) + Phase 2 (HS-8347) shipped — 14 tools live: `hotsheet_update_ticket`, `hotsheet_create_ticket`, `hotsheet_get_ticket`, `hotsheet_delete_ticket`, `hotsheet_restore_ticket`, `hotsheet_toggle_up_next`, `hotsheet_duplicate_tickets`, `hotsheet_batch`, `hotsheet_edit_note`, `hotsheet_delete_note`, `hotsheet_query_tickets`, `hotsheet_signal_done`, `hotsheet_add_attachment`, `hotsheet_request_feedback`. Phases 3–4 land per the phasing in `docs/63-mcp-tools.md` §63.7. The REST API documented above is the universal interface and the source of truth for input validation; MCP tools are an additional access path for AI agents connected over the Claude Channel, not a replacement.
 
 ## 12.14 Requirements
 

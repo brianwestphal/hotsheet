@@ -126,9 +126,12 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
  *  HS-8346 — bumped from 4 → 5 for the new MCP tool surface (tools/list +
  *  tools/call handlers exposing hotsheet_update_ticket / hotsheet_create_ticket /
  *  hotsheet_signal_done / hotsheet_add_attachment / hotsheet_request_feedback).
+ *  HS-8347 — bumped from 5 → 6 for the Phase 2 expansion (9 more tools:
+ *  hotsheet_get_ticket / delete_ticket / restore_ticket / toggle_up_next /
+ *  duplicate_tickets / batch / edit_note / delete_note / query_tickets).
  *  Users who have the channel registered will see a "reconnect via `/mcp`"
  *  prompt when the main server boots with the newer version. */
-const EXPECTED_CHANNEL_VERSION = 5;
+const EXPECTED_CHANNEL_VERSION = 6;
 
 /** Check if the running channel server's version matches the expected version.
  *  Returns null if no channel, true if matching, false if mismatched. */
