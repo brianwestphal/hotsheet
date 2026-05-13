@@ -8,10 +8,12 @@ import {
   getPriorityIcon,
   getProjectGridActive,
   getProjectGridColumnCount,
+  getProjectViewScrollTop,
   getStatusIcon,
   setActiveProject,
   setProjectGridActive,
   setProjectGridColumnCount,
+  setProjectViewScrollTop,
   shouldResetStatusOnUpNext,
   state,
   type Ticket,
@@ -239,6 +241,65 @@ describe('per-project drawer grid state (HS-6311)', () => {
     setActiveProject(projB);
     expect(getProjectGridActive('grid-b')).toBe(false);
     expect(getProjectGridColumnCount('grid-b')).toBe(4);
+  });
+});
+
+describe('per-project view scroll positions (HS-8374)', () => {
+  const SECRET_A = 'scroll-a';
+  const SECRET_B = 'scroll-b';
+
+  it('returns 0 for an uninitialized (secret, view, mode) triple', () => {
+    expect(getProjectViewScrollTop(SECRET_A, 'all', false)).toBe(0);
+    expect(getProjectViewScrollTop(SECRET_A, 'trash', false)).toBe(0);
+    expect(getProjectViewScrollTop(SECRET_A, 'all', true)).toBe(0);
+  });
+
+  it('round-trips a saved scrollTop value', () => {
+    setProjectViewScrollTop(SECRET_A, 'all', false, 1234);
+    expect(getProjectViewScrollTop(SECRET_A, 'all', false)).toBe(1234);
+  });
+
+  it('keys are independent by secret', () => {
+    setProjectViewScrollTop(SECRET_A, 'all', false, 100);
+    setProjectViewScrollTop(SECRET_B, 'all', false, 200);
+    expect(getProjectViewScrollTop(SECRET_A, 'all', false)).toBe(100);
+    expect(getProjectViewScrollTop(SECRET_B, 'all', false)).toBe(200);
+  });
+
+  it('keys are independent by view', () => {
+    setProjectViewScrollTop(SECRET_A, 'all', false, 50);
+    setProjectViewScrollTop(SECRET_A, 'trash', false, 60);
+    setProjectViewScrollTop(SECRET_A, 'completed', false, 70);
+    expect(getProjectViewScrollTop(SECRET_A, 'all', false)).toBe(50);
+    expect(getProjectViewScrollTop(SECRET_A, 'trash', false)).toBe(60);
+    expect(getProjectViewScrollTop(SECRET_A, 'completed', false)).toBe(70);
+  });
+
+  it('keys are independent by preview-mode', () => {
+    // Same project + view, different mode (preview vs live) — separate entries.
+    setProjectViewScrollTop(SECRET_A, 'all', false, 11);
+    setProjectViewScrollTop(SECRET_A, 'all', true, 22);
+    expect(getProjectViewScrollTop(SECRET_A, 'all', false)).toBe(11);
+    expect(getProjectViewScrollTop(SECRET_A, 'all', true)).toBe(22);
+  });
+
+  it('clearPerProjectSessionState drops every scroll entry for the secret without touching other projects', () => {
+    setProjectViewScrollTop(SECRET_A, 'all', false, 100);
+    setProjectViewScrollTop(SECRET_A, 'trash', false, 200);
+    setProjectViewScrollTop(SECRET_A, 'all', true, 300);
+    setProjectViewScrollTop(SECRET_B, 'all', false, 999);
+    clearPerProjectSessionState(SECRET_A);
+    expect(getProjectViewScrollTop(SECRET_A, 'all', false)).toBe(0);
+    expect(getProjectViewScrollTop(SECRET_A, 'trash', false)).toBe(0);
+    expect(getProjectViewScrollTop(SECRET_A, 'all', true)).toBe(0);
+    // Other project's scroll is untouched.
+    expect(getProjectViewScrollTop(SECRET_B, 'all', false)).toBe(999);
+  });
+
+  it('updates an existing entry in place rather than creating a duplicate', () => {
+    setProjectViewScrollTop(SECRET_A, 'all', false, 100);
+    setProjectViewScrollTop(SECRET_A, 'all', false, 250);
+    expect(getProjectViewScrollTop(SECRET_A, 'all', false)).toBe(250);
   });
 });
 

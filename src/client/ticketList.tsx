@@ -5,10 +5,10 @@ import { syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
 import { effect } from './reactive.js';
-import { bindList, bindListVirtualized } from './reactive-bind.js';
+import { bindListVirtualized } from './reactive-bind.js';
 import { renderSearchExtraRows } from './searchExtraRows.js';
 import type { SyncedTicketInfo,Ticket  } from './state.js';
-import { setSyncedTicketMap, state } from './state.js';
+import { getActiveProject, getProjectViewScrollTop, setProjectViewScrollTop, setSyncedTicketMap, state } from './state.js';
 import {
   draggedTicketIds as _draggedTicketIds,
 registerCallbacks,
@@ -110,6 +110,31 @@ type BindListVariant = 'default' | 'trash' | 'preview';
 let listViewBindListDispose: (() => void) | null = null;
 let listViewEmptyEffectDispose: (() => void) | null = null;
 let mountedVariant: BindListVariant | null = null;
+
+/** HS-8374 — the last `(secret, view, preview-mode)` triple we rendered.
+ *  Tracked so `renderTicketList` can detect cross-pair transitions and
+ *  save the OLD pair's scrollTop + restore the NEW pair's scrollTop
+ *  in the same render pass. Empty string before the first render (no
+ *  previous pair). */
+let lastScrollKey: string = '';
+
+/** HS-8374 — build the cache key for the project / view / preview-mode
+ *  triple. Matches the format used by `state.tsx::getProjectViewScrollTop`
+ *  / `setProjectViewScrollTop`. Returns null when there's no active
+ *  project (boot-time pre-handshake state) — the caller skips the
+ *  save/restore dance in that case. */
+function computeScrollKey(): { secret: string; view: string; preview: boolean; key: string } | null {
+  const project = getActiveProject();
+  if (project === null) return null;
+  const view = state.view;
+  const preview = state.backupPreview?.active === true;
+  return {
+    secret: project.secret,
+    view,
+    preview,
+    key: `${project.secret}::${view}::${preview ? 'preview' : 'live'}`,
+  };
+}
 
 /**
  * HS-8336 — wrapper around `ticketsStore.actions.setTickets(...)` that
@@ -236,33 +261,28 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
       }
     : (ticket: Ticket): { el: Element } => ({ el: factory(ticket) });
 
-  // HS-8371 — virtualize the default variant. The other two variants
-  // (trash, preview) keep plain `bindList` for now; they'll move to
-  // virtualization under HS-8372 (Phase 2) once Phase 1's behavior is
-  // observed in real use. `bindListVirtualized` short-circuits to plain
-  // `bindList` when the ticket count is below the threshold (100), so
-  // small-project users see zero overhead — no scroll-listener, no
-  // padding side-effects, no derived-signal computation.
-  if (variant === 'default') {
-    listViewBindListDispose = bindListVirtualized(
-      rowsContainer,
-      filteredTickets,
-      (ticket) => ticket.id,
-      renderRow,
-      // Row height is fixed at 32 px for the default-list-variant
-      // shape (one-line title input + badges). Locked here so a future
-      // CSS edit that changes the row height fails the
-      // `bindListVirtualized.test.ts` unit assertion loud.
-      { rowHeight: 32, buffer: 10, threshold: 100 },
-    );
-  } else {
-    listViewBindListDispose = bindList(
-      rowsContainer,
-      filteredTickets,
-      (ticket) => ticket.id,
-      renderRow,
-    );
-  }
+  // HS-8371 (Phase 1) + HS-8372 (Phase 2) — virtualize all three list
+  // variants. All three (`default`, `trash`, `preview`) share the same
+  // `.ticket-row` base class + fixed-height row design, so the same
+  // `rowHeight: 32` parameter works for all of them. `bindListVirtualized`
+  // short-circuits to plain `bindList` when the ticket count is below
+  // the threshold (100), so small-project users see zero overhead — no
+  // scroll-listener, no padding side-effects, no derived-signal
+  // computation. The variants are still routed through `rowFactoryFor`
+  // / `renderRow` separately so the per-row effects (`setupTicketRowEffects`
+  // for the default variant only) stay variant-specific; the virtualization
+  // wrapper just controls WHEN those factories run.
+  listViewBindListDispose = bindListVirtualized(
+    rowsContainer,
+    filteredTickets,
+    (ticket) => ticket.id,
+    renderRow,
+    // Row height is fixed at 32 px for every `.ticket-row` variant
+    // (one-line title + badges). Locked here so a future CSS edit
+    // that changes the row height fails the `bindListVirtualized.test.ts`
+    // unit assertion loud.
+    { rowHeight: 32, buffer: 10, threshold: 100 },
+  );
 
   if (variant !== 'default') {
     const message = variant === 'trash' ? 'Trash is empty' : 'No tickets match this view';
@@ -338,7 +358,36 @@ export function renderTicketList() {
   }
 
   const container = byId('ticket-list');
-  const scrollTop = container.scrollTop;
+  // HS-8374 — detect cross-`(project, view, preview-mode)` transitions
+  // and persist / restore the scrollTop per-pair. Same-pair re-renders
+  // (e.g. a single-row update) fall through the `keyInfo.key === lastScrollKey`
+  // branch and keep the existing in-call save+restore-via-local-var
+  // pattern from pre-HS-8374. The save fires BEFORE `ensureBindListMount`
+  // because the post-mount `scrollHeight` for the NEW pair may differ
+  // (different ticket count under virtualization) and we want the OLD
+  // pair's captured scrollTop unmodified.
+  const keyInfo = computeScrollKey();
+  const inCallScrollTop = container.scrollTop;
+  let restoreScrollTop = inCallScrollTop;
+  if (keyInfo !== null && keyInfo.key !== lastScrollKey) {
+    if (lastScrollKey !== '') {
+      // Save the OLD pair's scrollTop. We can't reverse-parse the key
+      // back to secret/view because the OLD project might have been
+      // removed; instead the lastScrollKey already holds the full
+      // composite, so a direct Map.set bypasses the helper. Keep
+      // public state.tsx setter signature focused on
+      // setting-from-current-pair; this is the previous-pair store.
+      const parts = lastScrollKey.split('::');
+      if (parts.length === 3) {
+        const [prevSecret, prevView, prevMode] = parts;
+        setProjectViewScrollTop(prevSecret, prevView, prevMode === 'preview', inCallScrollTop);
+      }
+    }
+    // Restore the NEW pair's scrollTop (or 0 — natural top-of-list
+    // default for a project/view the user hasn't scrolled before).
+    restoreScrollTop = getProjectViewScrollTop(keyInfo.secret, keyInfo.view, keyInfo.preview);
+    lastScrollKey = keyInfo.key;
+  }
 
   // HS-8331 (default) / HS-8333 (trash + preview) / HS-8334 (signal
   // switched to `filteredTickets`) — all three list-view variants are
@@ -351,7 +400,14 @@ export function renderTicketList() {
   unmountColumnView();
   ensureBindListMount(container, computeTargetVariant());
 
-  container.scrollTop = scrollTop;
+  // HS-8374 — clamp the restored scrollTop to the new scrollHeight in
+  // case the saved value exceeds the new project's list height (fewer
+  // tickets means smaller scrollHeight). Browsers clamp scrollTop
+  // assignments automatically but doing it explicitly here keeps the
+  // bindListVirtualized window-math from briefly computing a window
+  // past the end of the list during the first reconcile pass.
+  const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+  container.scrollTop = Math.min(restoreScrollTop, maxScrollTop);
 
   if (isPreview) {
     // Hide batch toolbar in preview mode

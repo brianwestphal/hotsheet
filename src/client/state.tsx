@@ -33,6 +33,20 @@ const projectGridActive = new Map<string, boolean>();
  *  slider). Session-only. Pre-HS-8176 this stored a continuous 0..100
  *  slider value; the new integer-only slider stores `perRow` directly. */
 const projectGridColumnCount = new Map<string, number>();
+/** HS-8374 — per-`(project, view, preview-mode)` saved scroll position for
+ *  the ticket-list container, session-only. Keyed by
+ *  `${secret}::${view}::${preview ? 'preview' : 'live'}` so the user's
+ *  scrollTop when they navigated AWAY from a (project, view) pair is
+ *  restored when they navigate BACK. Required under HS-8371 list-
+ *  virtualization because the wrapper computes the windowed slice from
+ *  `scrollTop / rowHeight`; if a project switch lands the new project's
+ *  list at the OLD project's saved scrollTop, the user sees the right
+ *  rows at the right offset without any flash. Pre-virtualization the
+ *  scroll position was implicitly preserved because the row container's
+ *  element identity survived across re-renders; under virtualization
+ *  the row container's `scrollHeight` changes with N so we have to
+ *  persist + restore explicitly. */
+const projectViewScrollPositions = new Map<string, number>();
 
 /** Switch active project, saving and restoring the sidebar view.
  *
@@ -69,6 +83,31 @@ export function clearPerProjectSessionState(secret: string): void {
   // secret doesn't resurrect the prior project's grid-mode flag / slider.
   projectGridActive.delete(secret);
   projectGridColumnCount.delete(secret);
+  // HS-8374 — drop every scroll-position entry whose key starts with the
+  // removed project's secret so a re-added project at the same secret
+  // doesn't resurrect the prior project's per-view scroll offsets.
+  const prefix = `${secret}::`;
+  for (const k of [...projectViewScrollPositions.keys()]) {
+    if (k.startsWith(prefix)) projectViewScrollPositions.delete(k);
+  }
+}
+
+/** HS-8374 — read the saved scroll position for a `(secret, view, mode)`
+ *  triple. Returns 0 when no entry is recorded — that's the natural
+ *  default (top of the list) for a project / view the user hasn't
+ *  scrolled before. Exported so the unit test in `state.test.ts` can
+ *  pin the Map shape directly. */
+export function getProjectViewScrollTop(secret: string, view: string, preview: boolean): number {
+  return projectViewScrollPositions.get(`${secret}::${view}::${preview ? 'preview' : 'live'}`) ?? 0;
+}
+
+/** HS-8374 — record the scroll position for a `(secret, view, mode)`
+ *  triple. The caller is the ticket-list renderer; it captures the
+ *  `#ticket-list` scrollTop BEFORE navigating away from a project /
+ *  view pair and BEFORE the underlying signal change tears down the
+ *  bindList children. */
+export function setProjectViewScrollTop(secret: string, view: string, preview: boolean, scrollTop: number): void {
+  projectViewScrollPositions.set(`${secret}::${view}::${preview ? 'preview' : 'live'}`, scrollTop);
 }
 
 /** HS-6311 — drawer terminal grid per-project state. The drawer grid module
