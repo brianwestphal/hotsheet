@@ -60,6 +60,17 @@ export interface TicketFilters {
   include_backlog?: boolean;
   /** HS-7756 — same as `include_backlog` but for the archive bucket. */
   include_archive?: boolean;
+  /** HS-8337 — when set, the SQL appends `LIMIT $limit`. The client uses
+   *  this in list-layout mode to fetch only the first N rows (default page
+   *  size 100, growable via the Load More button). Column view + custom
+   *  views ignore it and request the full result set. */
+  limit?: number;
+  /** HS-8337 — when set, the SQL appends `OFFSET $offset`. Currently unused
+   *  by the client (Load More re-fetches with a growing `limit` and
+   *  `offset: 0` so the rendered list is always a contiguous prefix), but
+   *  exposed for completeness so a future infinite-scroll path can adopt
+   *  it without a server change. */
+  offset?: number;
 }
 
 export const DEFAULT_CATEGORIES: CategoryDef[] = [

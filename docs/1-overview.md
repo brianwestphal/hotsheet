@@ -50,7 +50,9 @@
 
 ## 1.7 Portability
 
-- Runs on macOS, Linux, and Windows.
+- Designed to run on macOS, Linux, and Windows.
+- **Active testing happens on macOS only.** Linux and Windows builds are produced by the same Tauri release pipeline (see `docs/tauri-architecture.md`) and the platform-specific code paths (`process.platform` branches in `src/open-in-file-manager.ts`, `src/terminals/resolveCommand.ts`, `src/processPriority.ts`, etc.) are written to be cross-platform, but the maintainer does not run the regression suite on Linux or Windows. Cross-platform breakage may go undetected between releases.
+- **Help is welcome from users on other platforms** — bug reports, regression triage, and pull requests for Linux/Windows-specific issues are all actively appreciated. Open an issue at <https://github.com/brianwestphal/hotsheet/issues>.
 - CLI installable via npm (or yarn, pnpm, bun).
 - Desktop app distributed as native packages per platform.
 - Port auto-selection handles conflicts gracefully.

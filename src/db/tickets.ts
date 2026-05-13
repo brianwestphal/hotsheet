@@ -320,8 +320,24 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
 
   const dir = filters.sort_dir === 'asc' ? 'ASC' : 'DESC';
 
+  // HS-8337 — optional pagination. `limit` + `offset` are coerced + bounded
+  // by the route handler before reaching here; passing them on to placeholders
+  // keeps the SQL parameterized. Both are appended only when set so callers
+  // that pass no `limit` get full-result semantics (preserves pre-HS-8337
+  // behaviour for column view, custom views, cleanup queries, and the
+  // backup/preview path).
+  let limitClause = '';
+  if (filters.limit !== undefined) {
+    values.push(filters.limit);
+    limitClause += ` LIMIT $${values.length}`;
+  }
+  if (filters.offset !== undefined) {
+    values.push(filters.offset);
+    limitClause += ` OFFSET $${values.length}`;
+  }
+
   const result = await db.query<Ticket>(
-    `SELECT * FROM tickets ${where} ORDER BY ${orderBy} ${dir}, id DESC`,
+    `SELECT * FROM tickets ${where} ORDER BY ${orderBy} ${dir}, id DESC${limitClause}`,
     values
   );
   return result.rows;

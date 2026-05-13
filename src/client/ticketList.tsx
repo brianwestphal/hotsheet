@@ -8,7 +8,7 @@ import { effect } from './reactive.js';
 import { bindListVirtualized } from './reactive-bind.js';
 import { renderSearchExtraRows } from './searchExtraRows.js';
 import type { SyncedTicketInfo,Ticket  } from './state.js';
-import { getActiveProject, getProjectViewScrollTop, setProjectViewScrollTop, setSyncedTicketMap, state } from './state.js';
+import { getActiveProject, getProjectViewScrollTop, LIST_PAGE_SIZE, setProjectViewScrollTop, setSyncedTicketMap, state } from './state.js';
 import {
   draggedTicketIds as _draggedTicketIds,
 registerCallbacks,
@@ -297,7 +297,51 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
     });
   }
 
+  // HS-8337 — Load More button. Always mounted (so `updateLoadMoreButton`
+  // can toggle visibility without a re-mount roundtrip), hidden by default.
+  // The variant doesn't matter here: pagination is gated server-side by
+  // the request shape, and `loadTickets` sets `hasMoreTickets = false` for
+  // the preview / custom-view / column-layout / trash / backlog / archive
+  // sub-cases that should never show the button. (The trash and preview
+  // variants ALSO hide it via `updateLoadMoreButton`'s extra guard, just
+  // to be safe in case a future code path forgets to set the flag.)
+  const loadMoreBtn = toElement(
+    <button className="ticket-list-load-more" style="display:none" type="button">Load More</button>
+  );
+  loadMoreBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    void loadMoreTickets();
+  });
+  container.appendChild(loadMoreBtn);
+
   mountedVariant = variant;
+  // Update visibility immediately on (re)mount in case `hasMoreTickets`
+  // was set by a fetch that completed before the new variant's container
+  // was in the DOM.
+  updateLoadMoreButton();
+}
+
+/** HS-8337 — bumps `state.listLimit` by the page size and re-fetches.
+ *  Lives on the same async fetch path as `loadTickets`, just with a
+ *  pre-bump of the limit. The scope key matches the previous fetch's,
+ *  so `loadTickets` won't reset the limit. */
+async function loadMoreTickets(): Promise<void> {
+  state.listLimit += LIST_PAGE_SIZE;
+  await loadTickets();
+}
+
+/** HS-8337 — apply `state.hasMoreTickets` to the Load More button's
+ *  visibility. Called from every `loadTickets` exit path. Safe to call
+ *  before the button exists (no-ops). */
+function updateLoadMoreButton(): void {
+  const container = byIdOrNull('ticket-list');
+  if (container === null) return;
+  const btn = container.querySelector<HTMLElement>(':scope > .ticket-list-load-more');
+  if (btn === null) return;
+  // Only the `default` variant shows the button — trash + preview load
+  // their full result sets and Load More wouldn't make sense.
+  const showable = state.hasMoreTickets && mountedVariant === 'default' && state.layout === 'list';
+  btn.style.display = showable ? '' : 'none';
 }
 
 export function renderTicketList() {
@@ -543,14 +587,45 @@ function updateBatchToolbar() {
 
 // --- Data loading ---
 
+/** HS-8337 — fingerprint of the filter scope. `loadTickets` resets
+ *  `state.listLimit` to the page size whenever this changes between
+ *  calls, so a sidebar/search/sort/layout change drops the user back to
+ *  the first page (the Load More button only ever grows the current
+ *  scope's window). The `loadMoreTickets` entry point below skips the
+ *  reset by bumping `state.listLimit` first — the scope key is unchanged,
+ *  so loadTickets keeps the grown window. */
+function buildScopeKey(): string {
+  return [
+    state.view, state.search, state.sortBy, state.sortDir, state.layout,
+    state.includeBacklogInSearch ? '1' : '0',
+    state.includeArchiveInSearch ? '1' : '0',
+  ].join('|');
+}
+let lastScopeKey: string | null = null;
+
 export async function loadTickets() {
   // In preview mode, filter backup tickets locally instead of querying the API
   if (state.backupPreview?.active === true) {
+    state.hasMoreTickets = false;
+    updateLoadMoreButton();
     loadPreviewTickets();
     return;
   }
 
-  // Custom view: use the query endpoint
+  // HS-8337 — reset the list-mode pagination window whenever the filter
+  // scope changes between calls (view / search / sort / layout switch).
+  // The Load More entry point bumps `listLimit` BEFORE calling `loadTickets`
+  // with the same scope key, so it doesn't get clobbered here.
+  const scopeKey = buildScopeKey();
+  if (lastScopeKey !== scopeKey) {
+    state.listLimit = LIST_PAGE_SIZE;
+    lastScopeKey = scopeKey;
+  }
+
+  // Custom view: use the query endpoint. HS-8337 — custom views still
+  // fetch everything (no `limit` on the query endpoint); per the ticket,
+  // pagination is scoped to the standard /tickets path that drives the
+  // sidebar's built-in views. The Load More button stays hidden.
   if (state.view.startsWith('custom:')) {
     const viewId = state.view.slice(7);
     const view = state.customViews.find(v => v.id === viewId);
@@ -570,6 +645,8 @@ export async function loadTickets() {
     } else {
       setTicketsAnimated([]);
     }
+    state.hasMoreTickets = false;
+    updateLoadMoreButton();
     renderTicketList();
     return;
   }
@@ -613,8 +690,28 @@ export async function loadTickets() {
   params.set('sort_by', state.sortBy);
   params.set('sort_dir', state.sortDir);
 
+  // HS-8337 — list-layout pagination. Request `listLimit + 1` rows so we
+  // can detect whether more rows exist without a second roundtrip (the
+  // extra row is trimmed before installing into the store). Column layout
+  // continues to fetch the full result set: column view groups by status,
+  // and a partial fetch could orphan a column entirely. Reads `state.layout`
+  // captured into a local so an in-flight layout toggle doesn't cause the
+  // post-await trim path to disagree with the request shape.
+  const isListLayout = state.layout === 'list';
+  if (isListLayout) {
+    params.set('limit', String(state.listLimit + 1));
+  }
+
   const query = params.toString();
-  setTicketsAnimated(await api<Ticket[]>(`/tickets${query ? '?' + query : ''}`));
+  const rows = await api<Ticket[]>(`/tickets${query ? '?' + query : ''}`);
+  if (isListLayout && rows.length > state.listLimit) {
+    state.hasMoreTickets = true;
+    rows.length = state.listLimit;
+  } else {
+    state.hasMoreTickets = false;
+  }
+  updateLoadMoreButton();
+  setTicketsAnimated(rows);
   // Fetch sync map before rendering so icons appear on first render
   try {
     setSyncedTicketMap(await api<Record<number, SyncedTicketInfo>>('/sync/tickets'));

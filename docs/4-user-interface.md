@@ -38,6 +38,7 @@ The interface is divided into:
 - Clicking a ticket opens it in the detail panel.
 - Completed and verified ticket titles are displayed with strikethrough styling and muted text color.
 - Scroll position is preserved when the list re-renders (e.g., after data updates).
+- **Pagination (HS-8337).** List layout fetches at most 100 tickets at a time. When a view (e.g. Archive) holds more than 100 matching tickets, a **Load More** button appears at the bottom of the list — clicking it grows the window by another 100 and re-renders. The pagination window resets to 100 on any scope change (sidebar view, search query, sort, layout toggle). Column layout (§4.4) and Custom Views (§4.14) continue to load the full result set — column view groups by status and would orphan whole columns under a partial fetch, and custom views go through a separate query endpoint that doesn't paginate.
 
 ### 4.4 Column View (Kanban)
 
@@ -273,6 +274,7 @@ Each has three options:
 - Scroll position is preserved across data-driven re-renders in both list and column views.
 - Input debouncing (200-800ms depending on field) prevents excessive API calls.
 - Long-poll minimizes unnecessary network traffic compared to interval polling.
+- **List-mode pagination (HS-8337).** List layout fetches at most 100 tickets at a time with `limit` on `GET /api/tickets` and grows the window in 100-row increments via a Load More button (§4.3). Pre-fix, the archive view (often thousands of tickets) loaded every row in one round-trip, costing several seconds of JSON parse + signal install before the user saw anything. Column view (§4.4) and custom views (§4.14) continue to fetch unbounded result sets — column view's status-grouped layout would orphan whole columns under a partial fetch.
 
 ### 4.21 Undo / Redo
 

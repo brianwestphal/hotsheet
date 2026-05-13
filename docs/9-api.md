@@ -62,11 +62,17 @@ If BOTH are present, the header takes precedence. If NEITHER is present, the ser
 | `search` | Free-text search (ILIKE on title, details, ticket_number, tags) |
 | `sort_by` | created, priority, category, status |
 | `sort_dir` | asc, desc |
+| `include_backlog` | `true` / `1` — mix backlog rows into the result set (HS-7756) |
+| `include_archive` | `true` / `1` — mix archive rows into the result set (HS-7756) |
+| `limit` | Positive integer, max 10000 (HS-8337). Empty string treated as not provided. Invalid values return 400. |
+| `offset` | Non-negative integer (HS-8337). Empty string treated as not provided. Invalid values return 400. |
 
 Special status filter values:
 - `open` — not_started + started
 - `non_verified` — not_started + started + completed
 - `active` — excludes deleted, backlog, archive (default behavior)
+
+**Pagination (HS-8337).** The browser client uses `limit` to render at most `N` rows in list layout — default page size 100, growable via a "Load More" button at the bottom of the list. The client requests `limit + 1` rows and trims to detect whether more rows exist without a second round-trip; `offset` is exposed for completeness but the Load More flow re-fetches with a growing `limit` and `offset: 0` so the rendered list is always a contiguous prefix. Column layout and custom views ignore both params (column view groups by status and would orphan columns under a partial fetch; custom views go through the separate `POST /api/tickets/query` endpoint which doesn't currently paginate).
 
 ### 9.2 Batch Endpoint
 

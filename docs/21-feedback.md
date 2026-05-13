@@ -121,6 +121,7 @@ The implementation lives entirely in `src/client/styles.scss` (`.feedback-insert
 
 - In the detail panel, below notes that have a feedback prefix (when that note is the most recent), a "Provide Feedback" link button appears.
 - Clicking it re-opens the feedback dialog, in case the user dismissed it earlier.
+- **HS-8339** — the same affordance also appears as the **first item** in the ticket right-click context menu (`showTicketContextMenu` in `src/client/contextMenu.tsx`) whenever the ticket is the sole selection AND `hasPendingFeedback(ticket)` returns true. A megaphone icon anchors the item; clicking it parses the latest note via `parseNotesJson` + `getTicketFeedbackState` and calls `showFeedbackDialog(ticket.id, ticket.ticket_number, feedback.prompt, undefined, feedback.noteId)` — exactly the same entry point the inline detail-panel link uses, so saved-draft pickup and channel notification on submit behave identically. The item is intentionally rendered without a trailing separator so the existing separator-count-indexed insertion logic for the Push-to-backend submenu stays balanced.
 
 ### 21.4 Immediate Feedback Auto-Select
 

@@ -1,13 +1,18 @@
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
 import { toElement } from './dom.js';
+import { getTicketFeedbackState, showFeedbackDialog } from './feedbackDialog.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH } from './icons.js';
+import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS, syncedTicketMap, VERIFIED_SVG } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
+import { hasPendingFeedback } from './ticketRow.js';
 import { toggleReadState, trackedBatch, trackedDelete, trackedPatch } from './undo/actions.js';
+
+const MEGAPHONE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>';
 
 export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
   e.preventDefault();
@@ -22,6 +27,25 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
   }
 
   const menu = toElement(<div className="context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}></div>);
+
+  // HS-8339 — Provide Feedback shortcut for tickets whose most recent note
+  // is a FEEDBACK NEEDED / IMMEDIATE FEEDBACK NEEDED prompt. Mirrors the
+  // inline link button in the detail panel's notes list so the user can
+  // open the dialog from the ticket list without first selecting the
+  // ticket and scrolling to the bottom of its notes. Single-selection only —
+  // the dialog targets one ticket at a time. No trailing separator so the
+  // separator-count-based insertion logic in the Push-to-backend async block
+  // below stays balanced; the megaphone icon already visually anchors the
+  // item.
+  if (state.selectedIds.size === 1 && hasPendingFeedback(ticket)) {
+    const notes = parseNotesJson(ticket.notes);
+    const feedback = getTicketFeedbackState(notes);
+    if (feedback !== null) {
+      addActionItem(menu, 'Provide Feedback', () => {
+        showFeedbackDialog(ticket.id, ticket.ticket_number, feedback.prompt, undefined, feedback.noteId);
+      }, { icon: MEGAPHONE_SVG });
+    }
+  }
 
   // Completed ticket actions: Verified and Not Working
   const allCompleted = Array.from(state.selectedIds).every(id => {

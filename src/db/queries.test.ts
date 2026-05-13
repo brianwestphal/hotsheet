@@ -560,6 +560,60 @@ describe('filtering', () => {
       expect(isExactTicketIdSearch('')).toBe(false);
     });
   });
+
+  // HS-8337 — list-mode pagination. `getTickets` accepts optional `limit`
+  // and `offset` that translate directly to `LIMIT $N OFFSET $M` on the
+  // SELECT. Both default to "no clause" so the column-view + custom-view
+  // + cleanup paths continue to fetch full result sets.
+  describe('pagination (HS-8337)', () => {
+    it('returns only `limit` rows when limit is set', async () => {
+      // Seed a known-large block of active tickets so this test is robust
+      // against whatever else lives in the DB from prior describes.
+      for (let i = 0; i < 5; i++) await createTicket(`Pagination seed ${i}`);
+      const limited = await getTickets({ limit: 3 });
+      expect(limited.length).toBe(3);
+    });
+
+    it('returns no rows when offset exceeds total', async () => {
+      const out = await getTickets({ limit: 1, offset: 999_999 });
+      expect(out.length).toBe(0);
+    });
+
+    it('paging with offset returns a non-overlapping window', async () => {
+      const pageA = await getTickets({ limit: 3, offset: 0 });
+      const pageB = await getTickets({ limit: 3, offset: 3 });
+      const aIds = new Set(pageA.map(t => t.id));
+      const bIds = new Set(pageB.map(t => t.id));
+      for (const id of bIds) expect(aIds.has(id)).toBe(false);
+    });
+
+    it('limit + filter compose (limit applies AFTER the WHERE clause)', async () => {
+      const t1 = await createTicket('Limit+filter target A', { category: 'feature' });
+      const t2 = await createTicket('Limit+filter target B', { category: 'feature' });
+      const t3 = await createTicket('Limit+filter target C', { category: 'feature' });
+      const featureRows = await getTickets({ category: 'feature' });
+      // Sanity: the seeds are in the unfiltered result.
+      expect(featureRows.length).toBeGreaterThanOrEqual(3);
+      // With a limit smaller than the seed count, only `limit` come back,
+      // and every returned row still satisfies the filter.
+      const limited = await getTickets({ category: 'feature', limit: 2 });
+      expect(limited.length).toBe(2);
+      for (const r of limited) expect(r.category).toBe('feature');
+      // The full result set contains all three seeds — limit isn't dropping
+      // rows that the filter wouldn't have matched.
+      const allIds = featureRows.map(r => r.id);
+      expect(allIds).toContain(t1.id);
+      expect(allIds).toContain(t2.id);
+      expect(allIds).toContain(t3.id);
+    });
+
+    it('no limit returns the unbounded result set (back-compat)', async () => {
+      const unbounded = await getTickets();
+      // Must be at least the count of one of the larger known seed
+      // batches — proves we didn't accidentally inject a default LIMIT.
+      expect(unbounded.length).toBeGreaterThan(5);
+    });
+  });
 });
 
 describe('sorting', () => {

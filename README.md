@@ -41,7 +41,7 @@ hotsheet
 
 That's it. Data stays local.
 
-> **Note:** We're actively developing and testing on macOS. Linux and Windows builds are provided but less tested — if you run into issues on those platforms, we'd love your help! Please [open an issue](https://github.com/brianwestphal/hotsheet/issues).
+> **Platform support.** Hot Sheet is designed to run on macOS, Linux, and Windows, but **active development and testing happens on macOS only.** Linux and Windows builds come out of the same Tauri release pipeline and the platform-specific code paths are written to be cross-platform, but cross-platform regressions may go undetected between releases. **Help from users on other platforms is welcome** — bug reports, reproduction steps, and PRs fixing platform-specific issues are all actively appreciated. Please [open an issue](https://github.com/brianwestphal/hotsheet/issues) if you hit something on Linux or Windows.
 
 </div>
 

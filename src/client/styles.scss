@@ -2910,6 +2910,34 @@ body.terminal-dashboard-active {
   font-size: 14px;
 }
 
+// HS-8337 — Load More button at the bottom of the paginated list view.
+// Anchored as a normal block element under `.ticket-list`'s flow so it
+// scrolls with the rows above it. Centered, full-width-clickable hit
+// target, muted by default and tinted with the accent on hover so it's
+// discoverable without being noisy.
+.ticket-list-load-more {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: center;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--accent);
+  }
+
+  &:active {
+    background: var(--bg-active);
+  }
+}
+
 // --- Ticket Row ---
 
 .ticket-row {

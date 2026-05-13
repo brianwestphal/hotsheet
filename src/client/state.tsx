@@ -275,6 +275,17 @@ export interface AppState {
    *  visibility of the "Include `{N}` ..." rows. Both default to 0 when
    *  no search is active or no matches exist outside the active set. */
   searchExtraCounts: { backlog: number; archive: number };
+  /** HS-8337 — list-layout pagination window size. The next `loadTickets`
+   *  fetch in list layout requests `limit = listLimit + 1` rows and trims
+   *  the extra to derive `hasMoreTickets`. Grows by `LIST_PAGE_SIZE` (100)
+   *  each time the user clicks Load More; resets to the page size on any
+   *  scope change (view / search / sort / layout). Ignored in column
+   *  layout and on the custom-view / preview paths. */
+  listLimit: number;
+  /** HS-8337 — true after the most recent list-layout fetch when the
+   *  server returned the full `limit + 1` rows. Drives visibility of the
+   *  Load More button at the bottom of the list. */
+  hasMoreTickets: boolean;
 }
 
 export const state: AppState = {
@@ -311,7 +322,14 @@ export const state: AppState = {
   includeArchiveInSearch: false,
   viewModeBeforeSearchInclude: null,
   searchExtraCounts: { backlog: 0, archive: 0 },
+  listLimit: 100,
+  hasMoreTickets: false,
 };
+
+/** HS-8337 — page size for list-layout pagination. Initial fetch and each
+ *  Load More click both grow `state.listLimit` by this amount. Kept in
+ *  sync with the literal initializer on `state.listLimit` above. */
+export const LIST_PAGE_SIZE = 100;
 
 // HS-8239 (2026-05-11) — §61 Phase 2 data-source flip. `state.tickets` is
 // installed here as a getter+setter that delegates to the kerf

@@ -347,6 +347,53 @@ describe('filtering & sorting', () => {
     expect(Array.isArray(data)).toBe(true);
   });
 
+  // HS-8337 — `limit` + `offset` query params drive list-mode pagination.
+  // Bad inputs return 400 so a client typo doesn't silently degrade to
+  // "fetch everything" (which is what `getTickets({})` does and was the
+  // exact bug HS-8337 ships pagination to fix).
+  it('accepts valid limit (HS-8337)', async () => {
+    // Seed a handful so the result is at least one row.
+    for (let i = 0; i < 3; i++) await app.request('/api/tickets', post({ title: `Limit seed ${i}` }));
+    const res = await app.request('/api/tickets?limit=2');
+    expect(res.status).toBe(200);
+    const data = await res.json() as TicketResponse[];
+    expect(data.length).toBeLessThanOrEqual(2);
+  });
+
+  it('accepts limit + offset together (HS-8337)', async () => {
+    for (let i = 0; i < 3; i++) await app.request('/api/tickets', post({ title: `Offset seed ${i}` }));
+    const pageA = await (await app.request('/api/tickets?limit=2&offset=0')).json() as TicketResponse[];
+    const pageB = await (await app.request('/api/tickets?limit=2&offset=2')).json() as TicketResponse[];
+    const aIds = new Set(pageA.map(t => t.id));
+    for (const t of pageB) expect(aIds.has(t.id)).toBe(false);
+  });
+
+  it('rejects non-numeric limit with 400 (HS-8337)', async () => {
+    const res = await app.request('/api/tickets?limit=abc');
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects zero / negative limit with 400 (HS-8337)', async () => {
+    expect((await app.request('/api/tickets?limit=0')).status).toBe(400);
+    expect((await app.request('/api/tickets?limit=-5')).status).toBe(400);
+  });
+
+  it('rejects limit above 10000 with 400 (HS-8337)', async () => {
+    expect((await app.request('/api/tickets?limit=10001')).status).toBe(400);
+  });
+
+  it('rejects negative offset with 400 (HS-8337)', async () => {
+    expect((await app.request('/api/tickets?offset=-1')).status).toBe(400);
+  });
+
+  it('empty-string limit / offset are treated as not provided (HS-8337)', async () => {
+    // Same convention as the other params in this route — empty string is
+    // tolerated for clients that build URLSearchParams without conditional
+    // skipping. Returns 200, not 400.
+    const res = await app.request('/api/tickets?limit=&offset=');
+    expect(res.status).toBe(200);
+  });
+
   it('empty string params are treated as not provided', async () => {
     const res = await app.request('/api/tickets?category=&status=&search=');
     expect(res.status).toBe(200);

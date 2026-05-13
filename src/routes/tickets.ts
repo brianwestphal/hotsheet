@@ -92,6 +92,24 @@ ticketRoutes.get('/tickets', async (c) => {
   const includeArchive = c.req.query('include_archive');
   if (includeArchive === 'true' || includeArchive === '1') filters.include_archive = true;
 
+  // HS-8337 — optional list-mode pagination. `limit` is a positive integer
+  // capped at 10000 (the same upper bound used by `countSearchMatchesInExcludedStatuses`'s
+  // implicit fixed-page semantics; well above any realistic single-page
+  // payload). `offset` is a non-negative integer. Bad values return 400 so
+  // a client typo doesn't silently degrade to "fetch everything".
+  const rawLimit = c.req.query('limit');
+  if (rawLimit !== undefined && rawLimit !== '') {
+    const n = Number.parseInt(rawLimit, 10);
+    if (!Number.isFinite(n) || n <= 0 || n > 10000) return c.json({ error: `Invalid limit "${rawLimit}"` }, 400);
+    filters.limit = n;
+  }
+  const rawOffset = c.req.query('offset');
+  if (rawOffset !== undefined && rawOffset !== '') {
+    const n = Number.parseInt(rawOffset, 10);
+    if (!Number.isFinite(n) || n < 0) return c.json({ error: `Invalid offset "${rawOffset}"` }, 400);
+    filters.offset = n;
+  }
+
   const tickets = await getTickets(filters);
   return c.json(tickets);
 });
