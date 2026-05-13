@@ -6,7 +6,12 @@ import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
 
 // HS-8022 bump — main /hotsheet skill body lost the conditional `/clear` prefix.
-export const SKILL_VERSION = 9;
+// HS-8348 — bumped 9 → 10 for the Phase 3 two-form skill rewrite. The
+// `hs-*` ticket-skill body gains an MCP-tool-first / curl-fallback
+// pattern; the `hotsheet` main-skill body gains the same two-form
+// guidance. SKILL_VERSION bump forces existing seeded skill files to
+// re-author on next boot via the `updateFile` upgrade path.
+export const SKILL_VERSION = 10;
 
 let skillPort: number;
 let skillCategories: CategoryDef[] = DEFAULT_CATEGORIES;
@@ -68,6 +73,13 @@ function ticketSkillBody(skill: SkillDef, projectRoot: string): string {
   const port = settings.port ?? skillPort;
   const secret = settings.secret ?? '';
   const secretLine = secret ? `  -H "X-Hotsheet-Secret: ${secret}" \\` : '';
+  // HS-8348 — Phase 3 two-form skill body. MCP tool listed first
+  // (preferred when the Claude Channel is connected), curl form right
+  // below as the universal fallback. The MCP form uses the
+  // `hotsheet_create_ticket` tool's FLAT input shape (`{title,
+  // category, up_next}`) not the curl form's nested `{title, defaults:
+  // {category, up_next}}` — both shapes route to the same REST
+  // endpoint, the tool just translates.
   const lines = [
     `Create a new Hot Sheet **${skill.label}** ticket. ${skill.description}.`,
     '',
@@ -75,7 +87,10 @@ function ticketSkillBody(skill: SkillDef, projectRoot: string): string {
     '- If the input starts with "next", "up next", or "do next" (case-insensitive), set `up_next` to `true` and use the remaining text as the title',
     '- Otherwise, use the entire input as the title',
     '',
-    '**Create the ticket** by running:',
+    '**Create the ticket — MCP tool (preferred when the channel is connected):**',
+    `Call the \`hotsheet_create_ticket\` tool with \`{ "title": "<TITLE>", "category": "${skill.category}", "up_next": <true|false> }\`. The tool is schema-validated and routes to the channel server's \`--data-dir\` so there's no chance of cross-project misrouting.`,
+    '',
+    '**Fallback (curl):**',
     '```bash',
     `curl -s -X POST http://localhost:${port}/api/tickets \\`,
     '  -H "Content-Type: application/json" \\',
@@ -118,6 +133,11 @@ function mainSkillBody(projectRoot: string): string {
     'If the worklist says "Auto-Prioritize", follow those instructions to choose and mark tickets as Up Next before working on them.',
     '',
     `If API calls fail (connection refused or 403), re-read \`${settingsRel}\` for the current \`port\` and \`secret\` values — you may be connecting to the wrong Hot Sheet instance.`,
+    '',
+    // HS-8348 — Phase 3 main-skill MCP-tools mention. The worklist
+    // documents the full per-operation two-form layout; this line tells
+    // the agent to prefer the MCP path when it's available.
+    '**MCP tools (`hotsheet_*`) are preferred over curl when the channel is connected** — see the worklist for per-operation guidance. The 14-tool surface covers ticket lifecycle (`hotsheet_update_ticket`, `hotsheet_create_ticket`, `hotsheet_get_ticket`, `hotsheet_delete_ticket`, `hotsheet_restore_ticket`, `hotsheet_toggle_up_next`, `hotsheet_duplicate_tickets`), bulk operations (`hotsheet_batch`), notes (`hotsheet_edit_note`, `hotsheet_delete_note`), attachments (`hotsheet_add_attachment`), channel signaling (`hotsheet_signal_done`), feedback sugar (`hotsheet_request_feedback`), and query (`hotsheet_query_tickets`). Curl stays supported as the universal fallback for non-Claude AI agents and human terminal callers.',
   ].join('\n');
 }
 

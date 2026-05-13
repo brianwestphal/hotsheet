@@ -18,7 +18,7 @@
 // direct, or to a different signals primitive entirely) only touches
 // `reactive.ts`.
 import type { ReadonlySignal, Signal } from './reactive.js';
-import { effect } from './reactive.js';
+import { computed, effect, signal } from './reactive.js';
 
 type AnySignal<T> = ReadonlySignal<T> | Signal<T>;
 
@@ -101,6 +101,142 @@ interface ListEntry {
   key: unknown;
   el: Element;
   dispose: (() => void) | undefined;
+}
+
+/**
+ * HS-8371 — viewport-aware wrapper around `bindList` that only mounts
+ * the rows intersecting the visible scroll window (plus a configurable
+ * buffer above + below). For lists below `opts.threshold` rows the
+ * wrapper is a no-op and delegates verbatim to `bindList`; for lists
+ * above the threshold it slices `signal.value` to the visible window
+ * + pads `parent` with `padding-top` / `padding-bottom` to keep the
+ * scrollbar honest (the parent ends up with the same `scrollHeight`
+ * as if every row were mounted).
+ *
+ * **Design choice — wrap `bindList`, don't refactor it.** `bindList` is
+ * consumed by several non-virtualized surfaces (project tabs, command
+ * log, ticket detail attachments, etc.). Going INSIDE `bindList` to
+ * make it viewport-aware would force every consumer to pay viewport-
+ * detection cost OR add a feature flag to the helper signature that
+ * complicates the contract. The wrapper here is a thin slice-and-
+ * resubscribe over the source signal — bindList stays unchanged for
+ * other consumers (zero overhead), and the keyed-reconcile logic
+ * inside bindList does the right thing when the windowed slice
+ * shifts (new ids appear → mount fresh rows; old ids disappear → tear
+ * down their per-row disposers).
+ *
+ * **Fixed-height assumption.** `opts.rowHeight` is fixed; rows
+ * outside the window are accounted for purely by padding-top /
+ * padding-bottom on `parent`. Variable-height rows (e.g. column-card
+ * variants where the title wraps to multiple lines) need an estimated-
+ * height-with-refinement system — out of scope for HS-8371 (Phase 1
+ * is the default list variant only); see HS-8373 (Phase 3) for the
+ * column-view case.
+ *
+ * **Below-threshold path.** When `items.length < threshold`, the
+ * wrapper returns the full slice verbatim with zero padding. Skipping
+ * virtualization for small lists keeps the no-overhead promise — a
+ * 20-ticket project doesn't pay for scroll-listener registration or
+ * scroll-position-to-window math.
+ *
+ * **Scroll container.** Defaults to `parent.parentElement`, which is
+ * where Hot Sheet's `#ticket-list` scrollbar lives. Callers can
+ * override via `opts.scrollContainer` for tests or future surfaces
+ * where the scroll ancestor isn't the immediate parent.
+ *
+ * **Multi-select / keyboard-nav scope.** Off-viewport rows are NOT in
+ * the DOM. Any consumer that reads from a `.ticket-row[data-id]`
+ * DOM query would silently see a shrunken set. The Hot Sheet
+ * keyboard handlers in `src/client/shortcuts.tsx` already read from
+ * `state.selectedIds` + `filteredTickets.value` directly, NOT from
+ * the live DOM (audited under HS-8371 Phase 1 implementation); verify
+ * in tests that this contract holds.
+ */
+export function bindListVirtualized<T>(
+  parent: HTMLElement,
+  source: AnySignal<readonly T[]>,
+  key: (item: T) => unknown,
+  render: (item: T) => BindListRenderResult,
+  opts: { rowHeight: number; buffer?: number; threshold?: number; scrollContainer?: HTMLElement },
+): () => void {
+  const rowHeight = opts.rowHeight;
+  const buffer = opts.buffer ?? 10;
+  const threshold = opts.threshold ?? 100;
+  const scrollContainer: HTMLElement | null = opts.scrollContainer ?? parent.parentElement;
+
+  // Below-threshold fast path — delegate to plain `bindList` with no
+  // padding side effects and no scroll listener. The wrapper's overhead
+  // collapses to a single `bindList` call + the outer disposer wrapper.
+  // This branch decision is taken at MOUNT TIME using the source
+  // signal's current value; if the project grows past the threshold
+  // mid-session the wrapper stays in delegate mode until next remount.
+  // For HS-8371's use case (the ticket-list re-mounts on every variant
+  // switch + project switch), that's the natural boundary — a growing
+  // project that crosses the threshold rebuilds the bindList on the
+  // next mutation that triggers a fresh setTickets pass.
+  if (scrollContainer === null || source.value.length < threshold) {
+    return bindList(parent, source, key, render);
+  }
+
+  // Local signal for the scroll position. We feed it via a scroll-
+  // event listener on `scrollContainer`. Updating this signal flows
+  // through `windowedSignal` (the derived slice) and re-fires the
+  // bindList reconcile.
+  const scrollTop = signal(scrollContainer.scrollTop);
+
+  // Derived signal — the visible slice. Pure read of `source.value`
+  // and `scrollTop.value`; the padding mutation lives in a separate
+  // `effect()` below so this stays a clean computed (no DOM side
+  // effects inside computed) and the wrapper's behavior stays
+  // testable without a layout system.
+  const windowedSignal: ReadonlySignal<readonly T[]> = computed(() => {
+    const items = source.value;
+    if (items.length < threshold) return items;
+    const top = scrollTop.value;
+    const viewportHeight = scrollContainer.clientHeight || 600;
+    const startIdx = Math.max(0, Math.floor(top / rowHeight) - buffer);
+    const endIdx = Math.min(items.length, Math.ceil((top + viewportHeight) / rowHeight) + buffer);
+    return items.slice(startIdx, endIdx);
+  });
+
+  // Side-effect: mutate `parent.style.paddingTop` / `paddingBottom`
+  // to keep the scrollbar honest. Padding placeholders the
+  // before-window + after-window rows so the parent's `scrollHeight`
+  // equals the full N × rowHeight even though only the window-slice
+  // children are mounted.
+  const paddingEffectDispose = effect(() => {
+    const items = source.value;
+    if (items.length < threshold) {
+      parent.style.paddingTop = '0px';
+      parent.style.paddingBottom = '0px';
+      return;
+    }
+    const top = scrollTop.value;
+    const viewportHeight = scrollContainer.clientHeight || 600;
+    const startIdx = Math.max(0, Math.floor(top / rowHeight) - buffer);
+    const endIdx = Math.min(items.length, Math.ceil((top + viewportHeight) / rowHeight) + buffer);
+    parent.style.paddingTop = `${String(startIdx * rowHeight)}px`;
+    parent.style.paddingBottom = `${String((items.length - endIdx) * rowHeight)}px`;
+  });
+
+  // Scroll listener — wires scrollTop position into the local signal.
+  // `{ passive: true }` so we don't block the browser's scroll thread.
+  const onScroll = (): void => { scrollTop.value = scrollContainer.scrollTop; };
+  scrollContainer.addEventListener('scroll', onScroll, { passive: true });
+
+  // Delegate to plain `bindList` against the windowed signal. bindList's
+  // keyed-reconcile path handles the slice shifting cleanly.
+  const stopBindList = bindList(parent, windowedSignal, key, render);
+
+  return () => {
+    scrollContainer.removeEventListener('scroll', onScroll);
+    paddingEffectDispose();
+    stopBindList();
+    // Reset padding so a future re-mount of `parent` with plain
+    // children doesn't inherit stale offsets.
+    parent.style.paddingTop = '';
+    parent.style.paddingBottom = '';
+  };
 }
 
 export function bindList<T>(

@@ -5,7 +5,7 @@ import { syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
 import { effect } from './reactive.js';
-import { bindList } from './reactive-bind.js';
+import { bindList, bindListVirtualized } from './reactive-bind.js';
 import { renderSearchExtraRows } from './searchExtraRows.js';
 import type { SyncedTicketInfo,Ticket  } from './state.js';
 import { setSyncedTicketMap, state } from './state.js';
@@ -229,17 +229,40 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
   // mutations that would dirty them are rare enough that the cost of
   // installing the effect closures isn't justified.
   const factory = rowFactoryFor(variant);
-  listViewBindListDispose = bindList(
-    rowsContainer,
-    filteredTickets,
-    (ticket) => ticket.id,
-    variant === 'default'
-      ? (ticket) => {
-          const el = factory(ticket);
-          return { el, dispose: setupTicketRowEffects(el, ticket) };
-        }
-      : (ticket) => ({ el: factory(ticket) }),
-  );
+  const renderRow = variant === 'default'
+    ? (ticket: Ticket): { el: Element; dispose?: () => void } => {
+        const el = factory(ticket);
+        return { el, dispose: setupTicketRowEffects(el, ticket) };
+      }
+    : (ticket: Ticket): { el: Element } => ({ el: factory(ticket) });
+
+  // HS-8371 — virtualize the default variant. The other two variants
+  // (trash, preview) keep plain `bindList` for now; they'll move to
+  // virtualization under HS-8372 (Phase 2) once Phase 1's behavior is
+  // observed in real use. `bindListVirtualized` short-circuits to plain
+  // `bindList` when the ticket count is below the threshold (100), so
+  // small-project users see zero overhead — no scroll-listener, no
+  // padding side-effects, no derived-signal computation.
+  if (variant === 'default') {
+    listViewBindListDispose = bindListVirtualized(
+      rowsContainer,
+      filteredTickets,
+      (ticket) => ticket.id,
+      renderRow,
+      // Row height is fixed at 32 px for the default-list-variant
+      // shape (one-line title input + badges). Locked here so a future
+      // CSS edit that changes the row height fails the
+      // `bindListVirtualized.test.ts` unit assertion loud.
+      { rowHeight: 32, buffer: 10, threshold: 100 },
+    );
+  } else {
+    listViewBindListDispose = bindList(
+      rowsContainer,
+      filteredTickets,
+      (ticket) => ticket.id,
+      renderRow,
+    );
+  }
 
   if (variant !== 'default') {
     const message = variant === 'trash' ? 'Trash is empty' : 'No tickets match this view';

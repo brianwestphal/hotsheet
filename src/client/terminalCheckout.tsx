@@ -483,6 +483,21 @@ function attachWebSocketToEntry(entry: StackEntry): void {
     entry.ws = null;
     return;
   }
+  // HS-8369 followup — defensive guard for the `window`-is-gone case.
+  // The WS close-event handler queues a `attachWebSocketToEntry` retry
+  // via `queueMicrotask` (line ~608). When happy-dom tears down at end-
+  // of-test, the microtask may still be queued; by the time it runs,
+  // `window` is undefined and accessing `window.location.protocol`
+  // throws `ReferenceError: window is not defined` as an unhandled
+  // rejection in the test report (originally surfaced from
+  // `permissionOverlay.test.ts`'s teardown). The `intentionallyClosing`
+  // + `stack.length === 0` guards in the close handler don't cover the
+  // happy-dom-disposal case because the entry's state machine looks
+  // alive — only the global environment is gone.
+  if (typeof window === 'undefined') {
+    entry.ws = null;
+    return;
+  }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   // HS-8218 — append `&noSpawn=1` when the entry was created with

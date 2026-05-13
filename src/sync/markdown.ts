@@ -204,14 +204,25 @@ async function buildWorkflowInstructions(port: number, secretHeader: string): Pr
   sections.push('');
   sections.push(`The Hot Sheet API is available at http://localhost:${port}/api. **You MUST update ticket status** as you work — this is required, not optional.`);
   sections.push('');
-  // HS-8346 — one-line MCP-tools mention. The full two-form layout
-  // (MCP preferred, curl fallback right below) lands in HS-8348 (Phase 3).
-  sections.push('**MCP tools available.** When the Claude Channel is connected, the `hotsheet_*` MCP tools (`hotsheet_update_ticket`, `hotsheet_create_ticket`, `hotsheet_signal_done`, `hotsheet_add_attachment`, `hotsheet_request_feedback`) are preferred over the curl commands below — schema-validated, project-scoped, and cheaper in tokens. The curl commands stay supported as the universal fallback.');
+  // HS-8348 — Phase 3 two-form layout. MCP tools listed first (preferred
+  // when the Claude Channel is connected), curl form right below as the
+  // universal fallback for non-Claude AI agents and human terminal callers.
+  sections.push('**MCP tools available.** When the Claude Channel is connected, the `hotsheet_*` MCP tools (14 tools — see the per-operation forms below) are preferred over the curl commands — schema-validated, project-scoped, and cheaper in tokens. The curl commands stay supported as the universal fallback.');
   sections.push('');
   sections.push('- **BEFORE starting work on a ticket**, set its status to "started":');
+  sections.push('');
+  sections.push('  **MCP tool (preferred when the channel is connected):**');
+  sections.push('  Call the `hotsheet_update_ticket` tool with `{ "id": <id>, "status": "started" }`.');
+  sections.push('');
+  sections.push('  **Fallback (curl):**');
   sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"status": "started"}'\``);
   sections.push('');
   sections.push('- **AFTER completing work on a ticket**, set its status to "completed" and **include notes** describing what was done:');
+  sections.push('');
+  sections.push('  **MCP tool (preferred when the channel is connected):**');
+  sections.push('  Call the `hotsheet_update_ticket` tool with `{ "id": <id>, "status": "completed", "notes": "Describe the specific changes made" }`.');
+  sections.push('');
+  sections.push('  **Fallback (curl):**');
   sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"status": "completed", "notes": "Describe the specific changes made"}'\``);
   sections.push('');
   sections.push('**IMPORTANT:**');
@@ -262,19 +273,29 @@ async function buildWorkflowInstructions(port: number, secretHeader: string): Pr
   sections.push('To create a ticket:');
   const allCats = await getCategories();
   const catIds = allCats.map(c => c.id).join('|');
+  sections.push('');
+  sections.push('  **MCP tool (preferred when the channel is connected):**');
+  sections.push(`  Call the \`hotsheet_create_ticket\` tool with \`{ "title": "Title", "category": "${catIds}", "up_next": false }\`. The \`details\`, \`priority\`, \`tags\` keys are also accepted; only \`title\` is required.`);
+  sections.push('');
+  sections.push('  **Fallback (curl):**');
   sections.push(`  \`curl -s -X POST http://localhost:${port}/api/tickets -H "Content-Type: application/json"${secretHeader} -d '{"title": "Title", "defaults": {"category": "${catIds}", "up_next": false}}'\``);
   sections.push('');
-  sections.push('You can also include `"details"` in the defaults object for longer descriptions.');
+  sections.push('You can also include `"details"` in the defaults object (curl) or as a top-level field (MCP) for longer descriptions.');
   sections.push('Set `up_next: true` only for items that should be prioritized immediately.');
   sections.push('');
 
   // Attachment upload instructions
   sections.push('## Uploading Attachments');
   sections.push('');
-  sections.push('You can attach files to tickets via multipart form upload (NOT JSON):');
+  sections.push('You can attach files to tickets:');
+  sections.push('');
+  sections.push('  **MCP tool (preferred when the channel is connected):**');
+  sections.push('  Call the `hotsheet_add_attachment` tool with `{ "ticket_id": <id>, "path": "/absolute/path/to/file.png" }`. The tool reads the file from disk and posts multipart on your behalf — no shell escaping needed.');
+  sections.push('');
+  sections.push('  **Fallback (curl):**');
   sections.push(`  \`curl -s -X POST http://localhost:${port}/api/tickets/{id}/attachments${secretHeader} -F "file=@/path/to/file.png"\``);
   sections.push('');
-  sections.push('Do NOT set `Content-Type: application/json` — curl sets the multipart boundary automatically with `-F`.');
+  sections.push('Do NOT set `Content-Type: application/json` on the curl form — curl sets the multipart boundary automatically with `-F`.');
   sections.push('');
 
   // Feedback instructions
@@ -283,8 +304,19 @@ async function buildWorkflowInstructions(port: number, secretHeader: string): Pr
   sections.push('When you need input from the user before continuing, add a note where the **entire note text begins** with one of these exact prefixes:');
   sections.push('');
   sections.push('- **Standard feedback**: `FEEDBACK NEEDED: Your question here`');
+  sections.push('');
+  sections.push('  **MCP tool (preferred when the channel is connected):**');
+  sections.push('  Call the `hotsheet_request_feedback` tool with `{ "ticket_id": <id>, "question": "Your question here" }`. The tool prepends the `FEEDBACK NEEDED:` prefix automatically.');
+  sections.push('');
+  sections.push('  **Fallback (curl):**');
   sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"notes": "FEEDBACK NEEDED: Your question here"}'\``);
+  sections.push('');
   sections.push('- **Urgent feedback** (auto-selects the ticket in the UI): `IMMEDIATE FEEDBACK NEEDED: Your question here`');
+  sections.push('');
+  sections.push('  **MCP tool (preferred when the channel is connected):**');
+  sections.push('  Call the `hotsheet_request_feedback` tool with `{ "ticket_id": <id>, "question": "Your urgent question", "urgent": true }`. The tool prepends the `IMMEDIATE FEEDBACK NEEDED:` prefix automatically.');
+  sections.push('');
+  sections.push('  **Fallback (curl):**');
   sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"notes": "IMMEDIATE FEEDBACK NEEDED: Your urgent question"}'\``);
   sections.push('');
   sections.push('**IMPORTANT:** The prefix must be the very first characters of the note — do not add any text before it. The note text sent in the `"notes"` field must start with `FEEDBACK NEEDED:` or `IMMEDIATE FEEDBACK NEEDED:` exactly.');

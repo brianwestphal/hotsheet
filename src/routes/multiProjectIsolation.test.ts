@@ -87,6 +87,16 @@ function getProjectBySecret(secret: string): Project | undefined {
 let app: Hono<AppEnv>;
 let defaultProject: Project;
 
+// HS-8340 followup — the beforeAll hook below initializes two PGLite
+// databases (one per project). Each init runs the schema migrations
+// against a fresh tmpdir-rooted dataDir. Under full-parallel-suite
+// load that work routinely exceeds vitest's default 10s hook budget
+// (the test passes in isolation at ~10s but contends with other
+// PGLite-using tests in the parallel suite). Bumping the hook budget
+// to 60s eliminates the cross-suite flake observed in prior commits
+// (see e.g. `HS-8364 / HS-8365` commit message `the 1 'failed' test
+// file is pre-existing flake from concurrent localhost-port use across
+// the parallel suite`) without changing test behavior.
 beforeAll(async () => {
   // Set up two projects with distinct dataDirs.
   const baseDir = tmpdir();
@@ -124,14 +134,14 @@ beforeAll(async () => {
     await runWithDataDir(resolvedDataDir, () => next());
   });
   app.route('/api', apiRoutes);
-});
+}, 60_000);
 
 afterAll(async () => {
   await closeAllDatabases();
   for (const p of PROJECTS) {
     try { rmSync(p.dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
-});
+}, 60_000);
 
 async function createTicket(secret: string, title: string): Promise<TicketResponse> {
   const res = await app.request('/api/tickets', {

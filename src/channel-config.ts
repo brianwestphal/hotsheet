@@ -183,7 +183,11 @@ export async function triggerChannel(dataDir: string, serverPort: number, messag
     const settings = readFileSettings(dataDir);
     if (settings.secret !== undefined && settings.secret !== '') secretHeader = ` -H "X-Hotsheet-Secret: ${settings.secret}"`;
   } catch { /* ignore */ }
-  const doneSignal = `\n\nWhen you are completely finished (or if there was nothing to do), signal completion by running:\ncurl -s -X POST http://localhost:${serverPort}/api/channel/done${secretHeader}`;
+  // HS-8348 — Phase 3 two-form layout. Mention the `hotsheet_signal_done`
+  // MCP tool first (preferred when the channel is connected), with the
+  // curl fallback right below for non-Claude AI agents and any caller
+  // whose tool surface doesn't include the channel-server tools.
+  const doneSignal = `\n\nWhen you are completely finished (or if there was nothing to do), signal completion by calling the \`hotsheet_signal_done\` MCP tool (or, as a fallback, running:\ncurl -s -X POST http://localhost:${serverPort}/api/channel/done${secretHeader}\n)`;
   const content = message !== undefined && message !== ''
     ? message + doneSignal
     : 'Process the Hot Sheet worklist. Run /hotsheet to work through the current Up Next items.' + doneSignal;
