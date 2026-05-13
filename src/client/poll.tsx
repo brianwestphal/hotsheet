@@ -4,7 +4,7 @@ import { TIMERS } from './constants/timers.js';
 import { refreshDetail } from './detail.js';
 import { checkFeedbackState } from './feedbackDialog.js';
 import { refreshGitStatusChip } from './gitStatusChip.js';
-import { refreshProjectChannelStatus, refreshProjectTabs } from './projectTabs.js';
+import { refreshProjectChannelStatus, refreshProjectFeedbackState, refreshProjectTabs } from './projectTabs.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
 
@@ -35,6 +35,11 @@ export function startLongPoll() {
         checkChannelDone();
         void refreshProjectTabs();
         void refreshProjectChannelStatus();
+        // HS-8378 — bulk per-project feedback-state refresh so the
+        // purple-dot indicator on EVERY project tab stays live, not just
+        // the active project's (which `checkFeedbackState` above already
+        // handles inline via `state.tickets`).
+        void refreshProjectFeedbackState();
         // HS-7954 — git status changes (.git/index / .git/HEAD writes
         // detected by `src/git/watcher.ts`) ride on the same poll-version
         // bump that ticket mutations use, so refresh the sidebar git chip

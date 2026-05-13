@@ -208,6 +208,7 @@ The heartbeat endpoint accepts `{ projectDir: string, state: "busy" | "idle" | "
 | DELETE | `/api/projects/:secret` | Remove a registered project by its secret |
 | POST | `/api/projects/:secret/reveal` | Open the project's root folder in the OS file manager |
 | GET | `/api/projects/channel-status` | Returns channel alive/dead status for all registered projects |
+| GET | `/api/projects/feedback-state` | HS-8378 — returns per-project boolean indicating whether any non-deleted ticket has a `FEEDBACK NEEDED:` / `IMMEDIATE FEEDBACK NEEDED:` prompt as its most recent note. Drives the cross-project tab purple dot. |
 | POST | `/api/projects/reorder` | Reorder the project list (`{ secrets: string[] }`) |
 | GET | `/api/projects/permissions` | Long-poll for pending permissions across all projects (versioned, 3s timeout) |
 

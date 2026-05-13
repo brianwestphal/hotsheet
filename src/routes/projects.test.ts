@@ -63,6 +63,15 @@ vi.mock('../channel-config.js', () => ({
   registerChannel: vi.fn(),
 }));
 
+// HS-8378 — stub the cross-project feedback aggregator so the route-level
+// test for `GET /projects/feedback-state` can dial individual projects'
+// boolean answers without standing up real PGLite instances. The
+// underlying notes-parsing helper (`notesEndWithFeedback`) is covered by
+// the pure-helper test in `src/feedback-state.test.ts`.
+vi.mock('../feedback-state.js', () => ({
+  projectHasPendingFeedback: vi.fn(() => Promise.resolve(false)),
+}));
+
 vi.mock('./notify.js', () => ({
   notifyChange: vi.fn(),
   addPermissionWaiter: vi.fn(),
@@ -259,6 +268,45 @@ describe('GET /projects/channel-status', () => {
     const data = await res.json() as { enabled: boolean; projects: Record<string, boolean> };
     expect(data.enabled).toBe(true);
     expect(data.projects['test-secret-123']).toBe(true);
+  });
+});
+
+describe('GET /projects/feedback-state (HS-8378)', () => {
+  it('returns a per-secret boolean map across all registered projects', async () => {
+    const { projectHasPendingFeedback } = await import('../feedback-state.js');
+    // Project A has feedback, Project B doesn't — verifies the per-project
+    // boolean is keyed by `secret` and surfaces independently.
+    vi.mocked(projectHasPendingFeedback).mockImplementation((db: unknown) => {
+      if (db === mockProject.db) return Promise.resolve(true);
+      return Promise.resolve(false);
+    });
+
+    const res = await app.request('/api/projects/feedback-state');
+    expect(res.status).toBe(200);
+    const data = await res.json() as { projects: Record<string, boolean> };
+    expect(data.projects['test-secret-123']).toBe(true);
+    expect(data.projects['test-secret-456']).toBe(false);
+  });
+
+  it('returns false for every project when none have pending feedback', async () => {
+    const { projectHasPendingFeedback } = await import('../feedback-state.js');
+    vi.mocked(projectHasPendingFeedback).mockImplementation(() => Promise.resolve(false));
+
+    const res = await app.request('/api/projects/feedback-state');
+    expect(res.status).toBe(200);
+    const data = await res.json() as { projects: Record<string, boolean> };
+    expect(data.projects['test-secret-123']).toBe(false);
+    expect(data.projects['test-secret-456']).toBe(false);
+  });
+
+  it('keys the response by every live project (used to drive cross-project tab dots)', async () => {
+    const { projectHasPendingFeedback } = await import('../feedback-state.js');
+    vi.mocked(projectHasPendingFeedback).mockImplementation(() => Promise.resolve(false));
+
+    const res = await app.request('/api/projects/feedback-state');
+    expect(res.status).toBe(200);
+    const data = await res.json() as { projects: Record<string, boolean> };
+    expect(Object.keys(data.projects).sort()).toEqual(['test-secret-123', 'test-secret-456'].sort());
   });
 });
 

@@ -19,13 +19,42 @@ export function setProjectReloadCallback(cb: () => Promise<void>) {
   reloadCallback = cb;
 }
 
-/** Projects with pending feedback (managed by feedbackDialog.checkFeedbackState). */
+/** Projects with pending feedback. Pre-HS-8378 this set was only ever
+ *  populated for the *active* project via the client-side
+ *  `feedbackDialog.checkFeedbackState()` scan of `state.tickets`, so the
+ *  project-tab purple dot was invisible on every non-active project. Now
+ *  it's also bulk-refreshed from the server's `/api/projects/feedback-state`
+ *  endpoint on every poll-version bump (see `refreshProjectFeedbackState`
+ *  below). Active-project writes via `setProjectFeedback` still happen
+ *  inline so the dot updates as soon as the user submits / resolves a
+ *  feedback request without waiting for the next poll. */
 const feedbackSecrets = new Set<string>();
 
 export function setProjectFeedback(secret: string, hasFeedback: boolean) {
   if (hasFeedback) feedbackSecrets.add(secret);
   else feedbackSecrets.delete(secret);
   updateStatusDots();
+}
+
+/** HS-8378 — bulk refresh of `feedbackSecrets` from the server's cross-
+ *  project aggregator. Called from `poll.tsx` on every poll-version bump
+ *  so a FEEDBACK NEEDED note added on Project B shows up as a purple dot
+ *  on the Project B tab even while the user is viewing Project A. */
+export async function refreshProjectFeedbackState(): Promise<void> {
+  try {
+    const data = await api<{ projects: Record<string, boolean> }>('/projects/feedback-state');
+    feedbackSecrets.clear();
+    for (const [secret, hasFeedback] of Object.entries(data.projects)) {
+      if (hasFeedback) feedbackSecrets.add(secret);
+    }
+  } catch { /* network blip — leave the previous snapshot in place */ }
+  updateStatusDots();
+}
+
+/** Test-only — expose `feedbackSecrets` membership so unit tests can
+ *  assert the bulk-refresh behavior without spying on the DOM. */
+export function _hasProjectFeedbackForTests(secret: string): boolean {
+  return feedbackSecrets.has(secret);
 }
 
 /** **HS-8317 (2026-05-10)** — pre-fix this file held its own

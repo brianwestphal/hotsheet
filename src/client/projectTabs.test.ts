@@ -11,12 +11,16 @@
  * 4. Single ↔ multi transition tears down the bindList cleanly + paints
  *    the h1 header.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  _hasProjectFeedbackForTests,
   _renderTabsForTesting,
   _resetProjectTabsForTesting,
   _setProjectsForTesting,
+  refreshProjectFeedbackState,
+  setProjectFeedback,
+  updateStatusDots,
 } from './projectTabs.js';
 import type { ProjectInfo } from './state.js';
 
@@ -156,5 +160,93 @@ describe('projectTabs trial migration (HS-8235)', () => {
     expect(document.querySelector('#app-title-area h1')).toBeNull();
     expect(tabSecrets()).toEqual(['sec-a', 'sec-b', 'sec-c']);
     expect(activeTabSecret()).toBe('sec-a');
+  });
+});
+
+describe('refreshProjectFeedbackState (HS-8378)', () => {
+  // Fetch-stub helper. `api()` in `src/client/api.tsx` calls `fetch(url,
+  // { ... })` and reads `res.json()`; we only need a `.ok` + `.json()`
+  // surface for the GET /projects/feedback-state call to succeed.
+  function stubFetchWithFeedback(map: Record<string, boolean>): void {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: () => Promise.resolve({ projects: map }),
+    } as unknown as Response)));
+  }
+
+  beforeEach(() => {
+    makeTitleArea();
+    _setProjectsForTesting([A, B, C], A.secret);
+    _renderTabsForTesting();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('populates `feedbackSecrets` from the server response (bulk replace)', async () => {
+    stubFetchWithFeedback({ 'sec-a': false, 'sec-b': true, 'sec-c': false });
+    await refreshProjectFeedbackState();
+    expect(_hasProjectFeedbackForTests('sec-a')).toBe(false);
+    expect(_hasProjectFeedbackForTests('sec-b')).toBe(true);
+    expect(_hasProjectFeedbackForTests('sec-c')).toBe(false);
+  });
+
+  it('paints `.project-tab-dot.feedback` on every project the server reports as having feedback', async () => {
+    stubFetchWithFeedback({ 'sec-a': false, 'sec-b': true, 'sec-c': true });
+    await refreshProjectFeedbackState();
+    // Tab A has no feedback dot
+    const dotA = document.querySelector<HTMLElement>('[data-secret="sec-a"] .project-tab-dot');
+    expect(dotA?.className).toBe('project-tab-dot');
+    // Tabs B + C do
+    const dotB = document.querySelector<HTMLElement>('[data-secret="sec-b"] .project-tab-dot');
+    const dotC = document.querySelector<HTMLElement>('[data-secret="sec-c"] .project-tab-dot');
+    expect(dotB?.className).toBe('project-tab-dot feedback');
+    expect(dotC?.className).toBe('project-tab-dot feedback');
+  });
+
+  it('clears stale feedback membership when a project drops to false (cross-project resolution)', async () => {
+    // First fetch: B has feedback.
+    stubFetchWithFeedback({ 'sec-a': false, 'sec-b': true, 'sec-c': false });
+    await refreshProjectFeedbackState();
+    expect(_hasProjectFeedbackForTests('sec-b')).toBe(true);
+
+    // Second fetch: B's feedback resolved.
+    stubFetchWithFeedback({ 'sec-a': false, 'sec-b': false, 'sec-c': false });
+    await refreshProjectFeedbackState();
+    expect(_hasProjectFeedbackForTests('sec-b')).toBe(false);
+    const dotB = document.querySelector<HTMLElement>('[data-secret="sec-b"] .project-tab-dot');
+    expect(dotB?.className).toBe('project-tab-dot');
+  });
+
+  it('leaves the previous snapshot in place on a network error (no `feedbackSecrets` clobber)', async () => {
+    stubFetchWithFeedback({ 'sec-a': false, 'sec-b': true, 'sec-c': false });
+    await refreshProjectFeedbackState();
+    expect(_hasProjectFeedbackForTests('sec-b')).toBe(true);
+
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
+    await refreshProjectFeedbackState();
+    // B stays in the set — a transient network blip shouldn't make the
+    // dot flicker off and back on at the next successful poll.
+    expect(_hasProjectFeedbackForTests('sec-b')).toBe(true);
+  });
+
+  it('coexists with the inline active-project `setProjectFeedback` path (both write into the same set)', () => {
+    // Inline write (still used by `feedbackDialog.checkFeedbackState()` for
+    // the active project) — verify it surfaces the dot without requiring
+    // a poll round-trip.
+    setProjectFeedback('sec-a', true);
+    expect(_hasProjectFeedbackForTests('sec-a')).toBe(true);
+    const dotA = document.querySelector<HTMLElement>('[data-secret="sec-a"] .project-tab-dot');
+    expect(dotA?.className).toBe('project-tab-dot feedback');
+    setProjectFeedback('sec-a', false);
+    expect(_hasProjectFeedbackForTests('sec-a')).toBe(false);
+  });
+
+  it('updateStatusDots is safe to call when no tabs are mounted (multi → single transition)', () => {
+    document.body.innerHTML = '';
+    expect(() => { updateStatusDots(); }).not.toThrow();
   });
 });

@@ -122,6 +122,23 @@ projectRoutes.get('/channel-status', async (c) => {
   return c.json({ enabled: true, projects: statuses });
 });
 
+/** GET /api/projects/feedback-state — HS-8378. Per-project boolean indicating
+ *  whether any non-deleted ticket has a FEEDBACK NEEDED / IMMEDIATE FEEDBACK
+ *  NEEDED prompt as its most recent note. Polled alongside `/channel-status`
+ *  so the project-tab purple dot reflects every project, not just the active
+ *  one. Pre-HS-8378 the dot was driven by `checkFeedbackState()` scanning
+ *  `state.tickets` (active project only), so a feedback-needed ticket in any
+ *  other project was invisible on its tab until the user switched into it. */
+projectRoutes.get('/feedback-state', async (c) => {
+  const { projectHasPendingFeedback } = await import('../feedback-state.js');
+  const projects = getAllProjects();
+  const result: Record<string, boolean> = {};
+  await Promise.all(projects.map(async (p) => {
+    result[p.secret] = await projectHasPendingFeedback(p.db);
+  }));
+  return c.json({ projects: result });
+});
+
 /** GET /api/projects/permissions — check for pending permissions across all projects (long-poll, 3s timeout) */
 projectRoutes.get('/permissions', async (c) => {
   const { getChannelPort } = await import('../channel-config.js');

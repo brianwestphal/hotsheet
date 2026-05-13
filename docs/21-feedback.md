@@ -150,6 +150,7 @@ Implementation lives in `buildOverlay(ticketNumber, blocks)` inside `src/client/
 - When any ticket in a project has pending feedback, a purple dot appears on the project tab.
 - The dot clears when all feedback notes in the project are resolved (responded to, or "No Response Needed" added).
 - Priority order for tab dots: feedback (purple) > permissions attention (blue) > channel busy (yellow).
+- **HS-8378** — cross-project visibility: the dot reflects EVERY registered project's state, not just the active one. The active project is still updated inline by `feedbackDialog.checkFeedbackState()` from `state.tickets` so the dot appears/clears immediately on submit / "No Response Needed". Every OTHER project's state is bulk-refreshed from the server-side aggregator `GET /api/projects/feedback-state` on every poll-version bump (wired in `src/client/poll.tsx` via `refreshProjectFeedbackState()` in `src/client/projectTabs.tsx`). The server-side check (`projectHasPendingFeedback(db)` in `src/feedback-state.ts`) uses a SQL `LIKE` pre-filter to narrow the JSON-parse loop to tickets whose notes column literally contains `FEEDBACK NEEDED:` or `IMMEDIATE FEEDBACK NEEDED:` somewhere, then JSON-parses each candidate and confirms the prefix is on the LAST note (matching the client-side `hasPendingFeedback(ticket)` semantics in `ticketRow.tsx`). Pre-fix, `feedbackSecrets` was only ever populated for the active project, so a `FEEDBACK NEEDED` note in any non-active project was invisible on its tab until the user switched into it.
 
 ### 21.7 Channel Notification
 
