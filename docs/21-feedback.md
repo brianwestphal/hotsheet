@@ -123,6 +123,17 @@ The implementation lives entirely in `src/client/styles.scss` (`.feedback-insert
 - Clicking it re-opens the feedback dialog, in case the user dismissed it earlier.
 - **HS-8339** — the same affordance also appears as the **first item** in the ticket right-click context menu (`showTicketContextMenu` in `src/client/contextMenu.tsx`) whenever the ticket is the sole selection AND `hasPendingFeedback(ticket)` returns true. A megaphone icon anchors the item; clicking it parses the latest note via `parseNotesJson` + `getTicketFeedbackState` and calls `showFeedbackDialog(ticket.id, ticket.ticket_number, feedback.prompt, undefined, feedback.noteId)` — exactly the same entry point the inline detail-panel link uses, so saved-draft pickup and channel notification on submit behave identically. The item is intentionally rendered without a trailing separator so the existing separator-count-indexed insertion logic for the Push-to-backend submenu stays balanced.
 
+### 21.3.1 Clickable ticket references inside the dialog (HS-8338)
+
+The feedback dialog renders two places where `HS-NNNN`-style ticket references can appear, and both are wired through the §55 ticket cross-reference machinery so a click opens a stacked reference dialog on top of the feedback dialog (the user doesn't lose their in-progress response):
+
+1. **Dialog title.** The header reads `Feedback Needed — HS-9001`; HS-8338 wraps the ticket number in `<a class="ticket-ref" data-ticket-number="HS-9001">HS-9001</a>` so clicking the number opens the originating ticket's reference dialog. This is the headline affordance — the user often wants to glance at the original ticket (title, status, recent notes) while composing a response without dismissing the dialog.
+2. **Prompt body blocks.** Each rendered block's HTML is passed through `linkifyWithCachedPrefixes(block.html)` (from `src/client/ticketRefs.ts`) before being injected via `raw(...)`. Every `HS-NNNN` match (or any other prefix the project has registered) becomes a clickable anchor. Self-references are deliberately NOT skipped here — passing `undefined` for the `currentTicketNumber` argument; the user explicitly asked for "see the original ticket for reference" even when the prompt mentions the host ticket's own number.
+
+The reference dialog is appended to `document.body` at `z-index: 2600 + stackIndex * 2`, well above the feedback dialog's `z-index: 2500`. Clicks on the reference dialog's backdrop / close button call `stopPropagation()` so they don't bubble to the feedback overlay's click-outside-to-dismiss handler, and the reference dialog's capture-phase Esc handler pops only the top of the reference stack — pressing Esc with both up dismisses the reference first, then a second Esc reaches the feedback dialog's normal Esc-blur handling. Stacking depth matches the §55 30 px transform offset so a chain of refs reads as a fan.
+
+Implementation lives in `buildOverlay(ticketNumber, blocks)` inside `src/client/feedbackDialog.tsx` (exported for unit tests). Five unit tests in `feedbackDialog.test.ts` under the `buildOverlay ticket-ref linkification (HS-8338)` describe block cover: header anchor + dataset wiring, label-prefix preservation, body-block linkification across multiple matches, self-reference is NOT skipped, and the empty-prompt placeholder has no ticket-ref anchors.
+
 ### 21.4 Immediate Feedback Auto-Select
 
 - When `IMMEDIATE FEEDBACK NEEDED:` is detected on any ticket during the poll cycle, the ticket is automatically selected (if no other ticket is currently selected).

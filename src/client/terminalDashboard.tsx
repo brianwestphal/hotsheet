@@ -57,8 +57,11 @@ import { mountTileGrid, type TileEntry, type TileGridHandle } from './terminalTi
  * - The cross-project bell long-poll subscription, fanned out to each
  *   per-project grid handle as a filtered pendingIds set.
  * - The dedicated-view search widget integration via the shared module's
- *   `onDedicatedBarMount` hook (which also hides the sizer + reveals the
- *   `#terminal-dashboard-search-slot`).
+ *   `onDedicatedBarMount` hook — the widget is now appended directly to
+ *   the dedicated bar (HS-8341), right-aligned via a CSS rule on
+ *   `.terminal-dashboard-dedicated-bar > .terminal-search-box`. Pre-fix
+ *   it mounted into a `#terminal-dashboard-search-slot` slot in the
+ *   app-header, which was always occluded by the fixed-position overlay.
  * - Cross-section centered-tile coordination (only one tile across all
  *   project sections is centered at a time).
  * - The right-click context menu (Close Tab + Rename for dynamic
@@ -126,9 +129,12 @@ interface DashboardState {
    *  a centered tile? When the user clicks a tile in section B while
    *  section A has one centered, we uncenter A first via `onTileEnlarge`. */
   centeredHandle: TileGridHandle | null;
-  /** Search widget mounted in the app-header `#terminal-dashboard-search-slot`
-   *  while a dedicated view is open. Disposed via the `onDedicatedBarMount`
-   *  return-value disposer pattern. */
+  /** HS-8341 — search widget mounted directly into the dedicated view's
+   *  top toolbar (`.terminal-dashboard-dedicated-bar`) while a dedicated
+   *  view is open. Pre-HS-8341 the widget mounted into a slot in the app
+   *  header — but the dedicated overlay is `position: fixed; z-index: 600`
+   *  and covers the header, so the slot was never visible. Disposed via
+   *  the `onDedicatedBarMount` return-value disposer pattern. */
   dedicatedSearchHandle: TerminalSearchHandle | null;
   active: boolean;
   toggleButton: HTMLButtonElement | null;
@@ -242,9 +248,13 @@ function handleDashboardEscape(e: KeyboardEvent): void {
       // exiting; after blurring, focus the dedicated xterm so a SECOND Esc
       // lands on the terminal-side keypress target and exits the view
       // normally. See docs/25-terminal-dashboard.md §25.8.
+      // HS-8341 — the widget moved from the app-header slot into the
+      // dedicated bar itself; recover it via the `dedicatedSearchHandle`
+      // state slot (set by `buildFlowDedicatedBarMount` /
+      // `buildSectionedDedicatedBarMount`) rather than a fixed DOM id.
       const activeEl = document.activeElement as HTMLElement | null;
-      const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
-      const inSearch = activeEl !== null && searchSlot !== null && searchSlot.contains(activeEl)
+      const searchRoot = dashboardState.dedicatedSearchHandle?.root ?? null;
+      const inSearch = activeEl !== null && searchRoot !== null && searchRoot.contains(activeEl)
         && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
       if (inSearch) {
         e.preventDefault();
@@ -468,15 +478,15 @@ function teardownAllHandles(): void {
   for (const handle of gridHandles.values()) handle.dispose();
   gridHandles.clear();
   dashboardState.centeredHandle = null;
-  // Clear search slot if dedicated view was open at exit time.
+  // HS-8341 — the dedicated bar's search widget is owned by the per-bar
+  // disposer returned from `buildFlowDedicatedBarMount` /
+  // `buildSectionedDedicatedBarMount`; when each tile-grid handle is
+  // disposed above, its `exitDedicatedView` fires the disposer which
+  // removes the widget. Clear the reference defensively in case a handle
+  // had been torn down out of band.
   if (dashboardState.dedicatedSearchHandle !== null) {
     try { dashboardState.dedicatedSearchHandle.dispose(); } catch { /* ignore */ }
     dashboardState.dedicatedSearchHandle = null;
-  }
-  const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
-  if (searchSlot !== null) {
-    searchSlot.replaceChildren();
-    searchSlot.style.display = 'none';
   }
 }
 
@@ -737,6 +747,34 @@ function fillDedicatedLabel(label: HTMLElement, project: ProjectInfo, terminalLa
   ));
 }
 
+/** HS-8341 — attach a terminal-search widget to a dedicated-view top bar.
+ *  Both the flow-mode and sectioned-mode dedicated-bar mount callbacks
+ *  share this two-step setup (load a SearchAddon onto the live xterm, then
+ *  mount the widget and append its root into the bar). Returns the handle
+ *  + a disposer that removes the widget root from the bar AND disposes the
+ *  handle. The widget is right-aligned via the
+ *  `.terminal-dashboard-dedicated-bar > .terminal-search-box` CSS rule.
+ *  Pre-fix the widget mounted into a `#terminal-dashboard-search-slot` in
+ *  the app-header, which was always occluded by the fixed-position
+ *  `.terminal-dashboard-dedicated` overlay. Exported for unit tests. */
+export function attachDedicatedBarSearch(
+  bar: HTMLElement,
+  term: Terminal,
+  placeholderLabel: string,
+): { handle: TerminalSearchHandle; dispose: () => void } {
+  const search = new SearchAddon();
+  term.loadAddon(search);
+  const handle = mountTerminalSearch(term, search, { placeholder: `Search ${placeholderLabel}` });
+  bar.appendChild(handle.root);
+  return {
+    handle,
+    dispose: () => {
+      try { handle.dispose(); } catch { /* ignore */ }
+      handle.root.remove();
+    },
+  };
+}
+
 /** HS-8104 — extracted from `paintFlowLayout` to keep it readable. The
  *  callback hides flow-grid chrome on enter, mounts a search widget into the
  *  dedicated toolbar, and the returned cleanup restores the chrome on exit
@@ -750,22 +788,10 @@ function buildFlowDedicatedBarMount(
     const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
     const project = projectFor(entry);
     if (label !== null && project !== null) fillDedicatedLabel(label, project, entry.label);
-    const search = new SearchAddon();
-    term.loadAddon(search);
-    const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
-    let handleLocal: TerminalSearchHandle | null = null;
-    if (searchSlot !== null) {
-      handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });
-      searchSlot.replaceChildren(handleLocal.root);
-      searchSlot.style.display = '';
-      dashboardState.dedicatedSearchHandle = handleLocal;
-    }
+    const { handle: handleLocal, dispose: disposeSearch } = attachDedicatedBarSearch(bar, term, entry.label);
+    dashboardState.dedicatedSearchHandle = handleLocal;
     return () => {
-      try { handleLocal?.dispose(); } catch { /* ignore */ }
-      if (searchSlot !== null) {
-        searchSlot.replaceChildren();
-        searchSlot.style.display = 'none';
-      }
+      disposeSearch();
       dashboardState.dedicatedSearchHandle = null;
       if (dashboardState.active) {
         setFlowChromeVisibility(true);
@@ -930,22 +956,10 @@ function buildSectionedDedicatedBarMount(
     if (dashboardState.groupingSelect !== null) dashboardState.groupingSelect.style.display = 'none';
     const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
     if (label !== null) fillDedicatedLabel(label, project, entry.label);
-    const search = new SearchAddon();
-    term.loadAddon(search);
-    const searchSlot = byIdOrNull('terminal-dashboard-search-slot');
-    let handleLocal: TerminalSearchHandle | null = null;
-    if (searchSlot !== null) {
-      handleLocal = mountTerminalSearch(term, search, { placeholder: `Search ${entry.label}` });
-      searchSlot.replaceChildren(handleLocal.root);
-      searchSlot.style.display = '';
-      dashboardState.dedicatedSearchHandle = handleLocal;
-    }
+    const { handle: handleLocal, dispose: disposeSearch } = attachDedicatedBarSearch(bar, term, entry.label);
+    dashboardState.dedicatedSearchHandle = handleLocal;
     return () => {
-      try { handleLocal?.dispose(); } catch { /* ignore */ }
-      if (searchSlot !== null) {
-        searchSlot.replaceChildren();
-        searchSlot.style.display = 'none';
-      }
+      disposeSearch();
       dashboardState.dedicatedSearchHandle = null;
       if (dashboardState.sizerContainer !== null && dashboardState.active) dashboardState.sizerContainer.style.display = '';
       // HS-7826 — restore the grouping selector visibility (count-aware).

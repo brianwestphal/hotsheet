@@ -177,33 +177,37 @@ test.describe('Terminal search widget (HS-7363)', () => {
     await expect(searchBox).toHaveClass(/is-open/);
   });
 
-  // 3. Dedicated view flow — dashboard shows the `#terminal-dashboard-search-slot`
-  // only while the dedicated view is up (mutually exclusive with the sizer).
-  // Exiting via the Back button puts the sizer back and hides the slot.
-  test('dedicated view exposes the header search slot; exit restores the sizer', async ({ page }) => {
+  // 3. Dedicated view flow — HS-8341 mounts the search widget directly into
+  // `.terminal-dashboard-dedicated-bar` (right-aligned by the
+  // `margin-left:auto` rule). Pre-HS-8341 it mounted into a
+  // `#terminal-dashboard-search-slot` slot in the app header, which was
+  // always occluded by the fixed-position dedicated overlay. The dashboard
+  // grid view's sizer remains the visible control while no dedicated view
+  // is up; entering the dedicated view hides the sizer (no slot to toggle
+  // anymore — the widget appears inside the overlay's own bar).
+  test('dedicated view mounts the search widget into the dedicated bar; Back restores the sizer (HS-8341)', async ({ page }) => {
     await openDrawerAndWaitForFruits(page);
 
-    // Enter the dashboard. In grid view: sizer visible, header search hidden.
+    // Enter the dashboard. Grid view: sizer visible.
     await page.locator('#terminal-dashboard-toggle').click();
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
     await expect(page.locator('#terminal-dashboard-sizer')).toBeVisible();
-    await expect(page.locator('#terminal-dashboard-search-slot')).toBeHidden();
 
     // Double-click the fruits tile to enter the dedicated view.
     const tile = page.locator('.terminal-dashboard-tile[data-terminal-id="fruits"]');
     await expect(tile).toHaveClass(/terminal-dashboard-tile-alive/, { timeout: 5000 });
     await tile.dblclick();
 
-    // Dedicated overlay is up; the sizer hides and the search slot takes over.
+    // Dedicated overlay is up; the sizer hides and the search widget appears
+    // inside the dedicated bar (HS-8341).
     const overlay = page.locator('.terminal-dashboard-dedicated');
     await expect(overlay).toBeVisible({ timeout: 5000 });
     await expect(page.locator('#terminal-dashboard-sizer')).toBeHidden();
-    const slot = page.locator('#terminal-dashboard-search-slot');
-    await expect(slot).toBeVisible();
-
-    // The search widget is mounted inside the slot. Open it + search.
-    const searchBox = slot.locator('.terminal-search-box');
+    const bar = overlay.locator('.terminal-dashboard-dedicated-bar');
+    const searchBox = bar.locator('.terminal-search-box');
     await expect(searchBox).toBeVisible();
+
+    // Open the widget + search.
     await searchBox.locator('.terminal-search-toggle').click();
     await expect(searchBox).toHaveClass(/is-open/);
     const input = searchBox.locator('.terminal-search-input');
@@ -215,11 +219,13 @@ test.describe('Terminal search widget (HS-7363)', () => {
     await input.fill('apple');
     await expect(searchBox.locator('.terminal-search-count')).toHaveText('1/3', { timeout: 3000 });
 
-    // Exit the dedicated view via the Back button. Slot should hide, sizer
-    // should come back, and the dashboard grid is visible again.
+    // Exit via the Back button. Overlay (and its inline search widget)
+    // tears down; the sizer comes back. The drawer-terminal widget still
+    // exists on the page outside the overlay — it's the dedicated-bar one
+    // that's gone, scoped to the now-removed `bar` locator.
     await overlay.locator('.terminal-dashboard-dedicated-back').click();
     await expect(overlay).toHaveCount(0, { timeout: 3000 });
-    await expect(slot).toBeHidden();
+    await expect(bar).toHaveCount(0);
     await expect(page.locator('#terminal-dashboard-sizer')).toBeVisible();
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
   });
@@ -312,9 +318,12 @@ test.describe('Terminal search widget (HS-7363)', () => {
     await expect(count).toHaveText('0/0');
   });
 
-  // 6. Regression: while in grid view (no dedicated view up) the header
-  // search slot must stay hidden; the sizer is the grid-view control.
-  test('grid view keeps the header search slot hidden (sizer visible instead)', async ({ page }) => {
+  // 6. Regression (HS-8341): while in grid view (no dedicated view up)
+  // there must be no dedicated-bar search widget anywhere; the sizer is the
+  // grid-view control. Pre-HS-8341 this also asserted the
+  // `#terminal-dashboard-search-slot` in the app header was hidden, but
+  // that slot has been removed.
+  test('grid view shows only the sizer; no dedicated-bar widget exists yet', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
@@ -322,7 +331,7 @@ test.describe('Terminal search widget (HS-7363)', () => {
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
 
     await expect(page.locator('#terminal-dashboard-sizer')).toBeVisible();
-    await expect(page.locator('#terminal-dashboard-search-slot')).toBeHidden();
+    await expect(page.locator('.terminal-dashboard-dedicated-bar')).toHaveCount(0);
   });
 
   // 7. HS-7525 — after the HS-7426 match-mode toggles landed in the same flex
@@ -381,9 +390,9 @@ test.describe('Terminal search widget (HS-7363)', () => {
     const overlay = page.locator('.terminal-dashboard-dedicated');
     await expect(overlay).toBeVisible({ timeout: 5000 });
 
-    // Open the search widget in the header slot and type a query.
-    const slot = page.locator('#terminal-dashboard-search-slot');
-    const searchBox = slot.locator('.terminal-search-box');
+    // Open the search widget inside the dedicated bar (HS-8341) and type
+    // a query.
+    const searchBox = overlay.locator('.terminal-dashboard-dedicated-bar .terminal-search-box');
     await searchBox.locator('.terminal-search-toggle').click();
     const input = searchBox.locator('.terminal-search-input');
     await expect(input).toBeFocused();

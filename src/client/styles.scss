@@ -7220,10 +7220,14 @@ body.terminal-dashboard-active {
 // just a different mount point — shown by `enterDedicatedView` (the slot's
 // `display:none` inline is replaced by `display:''` when the dedicated
 // view mounts its xterm) and hidden again by `exitDedicatedView`.
-.terminal-dashboard-search-slot {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
+// HS-8341 — the dedicated view's top toolbar lays out as a flex row. Push
+// the search widget to the right edge so it visually anchors opposite the
+// Back button + breadcrumb label on the left. Pre-HS-8341 the widget
+// mounted into a `#terminal-dashboard-search-slot` div in the app-header,
+// which was always occluded by the fixed-position overlay covering the
+// header.
+.terminal-dashboard-dedicated-bar > .terminal-search-box {
+  margin-left: auto;
 }
 
 // HS-7267 — OSC 133 shell-integration gutter glyphs. Rendered as a small

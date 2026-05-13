@@ -10,6 +10,7 @@ import {
 import type { NoteEntry } from './noteRenderer.js';
 import { morph } from './reactive.js';
 import { loadTickets } from './ticketList.js';
+import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
 
 const FEEDBACK_PREFIX = 'FEEDBACK NEEDED:';
@@ -363,12 +364,23 @@ function overlayHasAnyText(overlay: HTMLElement): boolean {
   return false;
 }
 
-function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTMLElement {
+/** HS-8338 — exported as a test seam so the ticket-ref linkification in
+ *  the header + the prompt blocks can be DOM-asserted without spinning up
+ *  the full `showFeedbackDialog` flow. */
+export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTMLElement {
   return toElement(
     <div className="feedback-dialog-overlay custom-view-editor-overlay" style="z-index:2500">
       <div className="custom-view-editor feedback-dialog" style="width:560px">
         <div className="custom-view-editor-header">
-          <span>Feedback Needed — {ticketNumber}</span>
+          {/* HS-8338 — wrap the ticket number in a `.ticket-ref` anchor so the
+              global capture-phase click handler in `ticketRefDialog.tsx`
+              dispatches to `openTicketRefDialog(ticketNumber)`. Stacks on top
+              of this dialog (z-index 2600 + N) so the user can see the
+              referenced ticket without dismissing the feedback dialog.
+              Self-reference is INTENTIONAL here — the whole point of the
+              affordance is "let me re-open the originating ticket for
+              reference while I'm composing a response". */}
+          <span>{'Feedback Needed — '}<a className="ticket-ref" data-ticket-number={ticketNumber} href="javascript:void(0)">{ticketNumber}</a></span>
           <button className="detail-close" id="feedback-close">{'×'}</button>
         </div>
         <div className="custom-view-editor-body">
@@ -377,8 +389,15 @@ function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTMLElemen
               ? <div className="feedback-prompt-block note-markdown feedback-prompt-empty"><em>(no prompt text)</em></div>
               : blocks.map((block, idx) => (
                   <>
+                    {/* HS-8338 — linkify HS-NNNN refs in the prompt body so
+                        clicks open a stacked reference dialog (`ticketRefDialog
+                        .tsx`'s global handler reads the `.ticket-ref`
+                        anchor's `data-ticket-number`). Self-refs are NOT
+                        skipped — passing `undefined` for the current-ticket
+                        argument intentionally; if the prompt references its
+                        own ticket, the user usually does want to see it. */}
                     <div className="feedback-prompt-block note-markdown" data-block-index={String(idx)}>
-                      {raw(block.html)}
+                      {raw(linkifyWithCachedPrefixes(block.html))}
                     </div>
                     <div className="feedback-insert-slot" data-after-block={String(idx)}>
                       <button className="feedback-insert-btn" type="button" aria-label="Add response here">

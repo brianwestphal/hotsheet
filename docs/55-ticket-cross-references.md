@@ -44,8 +44,9 @@ Linkify pass runs after every `marked.parse()` in:
 - `src/client/detail.tsx::renderDetailsMarkdown` — the rendered-markdown view of the Details textarea (HS-8020).
 - `src/client/readerOverlay.tsx::openReaderOverlay` — the §49 reader-mode overlay (note + details modes).
 - `src/client/ticketRefDialog.tsx` — the stacking dialog itself, so cross-references inside a dialog also linkify.
+- **`src/client/feedbackDialog.tsx::buildOverlay` (HS-8338)** — the §21.2 feedback dialog runs both the prompt-body blocks (`linkifyWithCachedPrefixes(block.html)`) AND emits the ticket number in the header as a `<a class="ticket-ref" data-ticket-number="…">` anchor so the dialog title itself can route back to the originating ticket. Self-references are intentionally NOT skipped here (the user explicitly asked for the affordance to re-open the host ticket).
 
-The current ticket's number is passed as `currentTicketNumber` to skip self-references — sourced from `state.activeTicketId` lookup in `state.tickets`.
+The current ticket's number is passed as `currentTicketNumber` to skip self-references at the four call sites where self-refs are clutter (notes / details / reader overlay / ref-dialog body). The feedback dialog (HS-8338) deliberately omits `currentTicketNumber` because users need to re-open the originating ticket from inside the dialog while composing a response — the click stacks the reference dialog on top of the feedback dialog without dismissing the user's in-progress work.
 
 ### 55.3.4 Stacking dialog (`src/client/ticketRefDialog.tsx`)
 

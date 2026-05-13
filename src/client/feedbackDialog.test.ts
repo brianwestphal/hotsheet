@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment happy-dom
+import { beforeEach, describe, expect, it } from 'vitest';
 
-import { pickDraftForFeedbackNote } from './feedbackDialog.js';
+import { buildOverlay, pickDraftForFeedbackNote } from './feedbackDialog.js';
+import { _resetPrefixesForTesting } from './ticketRefs.js';
 
 /**
  * HS-7822 — pickDraftForFeedbackNote pure-helper tests. The helper drives
@@ -73,5 +75,63 @@ describe('pickDraftForFeedbackNote', () => {
     ];
     const picked = pickDraftForFeedbackNote(drafts, 'note-1');
     expect(picked?.id).toBe('with-ts');
+  });
+});
+
+describe('buildOverlay ticket-ref linkification (HS-8338)', () => {
+  beforeEach(() => {
+    // Pre-seed the prefix cache so `linkifyWithCachedPrefixes` sees the
+    // `HS` prefix without an awaited `/api/tickets/prefixes` round-trip.
+    _resetPrefixesForTesting(['HS']);
+  });
+
+  it('renders the dialog title ticket number as a clickable `.ticket-ref` anchor', () => {
+    // The whole point of HS-8338 is that the user wants to re-open the
+    // originating ticket while composing a response — the anchor wraps the
+    // ticket number in the header so the global capture-phase click
+    // handler dispatches to `openTicketRefDialog(ticketNumber)`.
+    const overlay = buildOverlay('HS-9001', []);
+    const headerAnchor = overlay.querySelector<HTMLAnchorElement>('.custom-view-editor-header .ticket-ref');
+    expect(headerAnchor).not.toBeNull();
+    expect(headerAnchor!.dataset.ticketNumber).toBe('HS-9001');
+    expect(headerAnchor!.textContent).toBe('HS-9001');
+  });
+
+  it('preserves the header label prefix so the title still reads "Feedback Needed — HS-9001"', () => {
+    const overlay = buildOverlay('HS-9001', []);
+    const header = overlay.querySelector<HTMLElement>('.custom-view-editor-header > span');
+    expect(header).not.toBeNull();
+    // Normalize whitespace — the toElement output may carry incidental
+    // spacing between text and the anchor.
+    const flat = header!.textContent.replace(/\s+/g, ' ').trim();
+    expect(flat).toBe('Feedback Needed — HS-9001');
+  });
+
+  it('linkifies HS-NNNN refs inside the rendered prompt body blocks', () => {
+    const overlay = buildOverlay('HS-9001', [
+      { markdown: '', html: '<p>See <strong>HS-1234</strong> and HS-5678 for context.</p>' },
+    ]);
+    const blockAnchors = overlay.querySelectorAll<HTMLAnchorElement>('.feedback-prompt-block .ticket-ref');
+    const numbers = Array.from(blockAnchors).map(a => a.dataset.ticketNumber);
+    expect(numbers).toEqual(['HS-1234', 'HS-5678']);
+  });
+
+  it('does NOT skip self-references in the prompt body', () => {
+    // The user explicitly wants to be able to navigate to the originating
+    // ticket while in the dialog — so a prompt that mentions its own
+    // ticket number should still produce a clickable anchor. Confirmed by
+    // passing no `currentTicketNumber` argument to `linkifyWithCachedPrefixes`.
+    const overlay = buildOverlay('HS-9001', [
+      { markdown: '', html: '<p>This is HS-9001 itself.</p>' },
+    ]);
+    const anchors = overlay.querySelectorAll<HTMLAnchorElement>('.feedback-prompt-block .ticket-ref');
+    expect(anchors.length).toBe(1);
+    expect(anchors[0].dataset.ticketNumber).toBe('HS-9001');
+  });
+
+  it('renders an empty-prompt placeholder block with no ticket-ref anchors', () => {
+    const overlay = buildOverlay('HS-9001', []);
+    expect(overlay.querySelector('.feedback-prompt-empty')).not.toBeNull();
+    expect(overlay.querySelectorAll('.feedback-prompt-block .ticket-ref').length).toBe(0);
   });
 });
