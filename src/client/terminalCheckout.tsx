@@ -603,6 +603,23 @@ function attachWebSocketToEntry(entry: StackEntry): void {
       stackLen: entry.stack.length,
       stillCurrent: entry.ws === ws,
     });
+    // HS-8379 — reset the keystroke / echo timestamps on every WS close
+    // event so a stalled `(lastTypeTs > lastEchoTs)` state doesn't pin the
+    // global server-slow banner across the close-reconnect window. Pre-fix
+    // a keystroke whose bytes left the client but whose echo never came
+    // back (TCP frame in flight at close time, OR echo dropped in close,
+    // OR server-side scrollback replay rendered the bytes via the
+    // string-typed `history` JSON frame which does NOT bump `lastEchoTs`)
+    // left the per-entry stall watcher firing every 250 ms even after the
+    // reconnect succeeded — the banner stayed visible until the user
+    // switched projects (which tears down every entry via `disposeEntry`
+    // and releases the token). Resetting both timestamps on close means
+    // the next type-echo cycle on the fresh socket starts clean.
+    // `notifyStallSubscribers` flushes the watcher so the release happens
+    // synchronously rather than waiting for the 250 ms tick.
+    entry.lastTypeTs = 0;
+    entry.lastEchoTs = 0;
+    notifyStallSubscribers(entry);
     // HS-8044 — module-driven reconnect. Skip when (a) the user
     // explicitly released the entry (the dispose path flips the flag
     // before close) or (b) the stack is empty (no consumer needs the

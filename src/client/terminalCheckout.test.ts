@@ -1294,4 +1294,51 @@ describe('per-entry global stall watcher (HS-8286)', () => {
     h1.release();
     h2.release();
   });
+
+  it('HS-8379 — WS close clears stall timestamps so the banner does not stick across a reconnect', () => {
+    // Regression for "slow service notice sometimes not hiding until I
+    // switch projects". The path: keystroke sent successfully (sent=true,
+    // lastTypeTs bumped). WS closes before the echo binary frame arrives
+    // back at the client. Server-side `history` replay on reconnect writes
+    // the echoed bytes via `applyHistoryReplay` BUT that path only fires
+    // `term.write` — it does NOT bump `lastEchoTs` (which only updates in
+    // the binary-frame branch of `ws.message`). The per-entry stall
+    // watcher therefore keeps `lastTypeTs > lastEchoTs` indefinitely and
+    // the global server-slow banner stays pinned until the entry is
+    // disposed (typically on project switch via `disposeAllInstances`,
+    // matching the user's symptom). Fix: reset both timestamps on every
+    // WS close so the next type-echo cycle on the fresh socket starts
+    // clean, releasing the token immediately.
+    mountBanner();
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 't', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 't')!;
+
+    // Pre-stage the stalled state: a keystroke 2 s ago, no echo since.
+    entry.lastTypeTs = Date.now() - 2000;
+    entry.lastEchoTs = 0;
+    for (const sub of entry.stallSubscribers) sub();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(1);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+    expect(entry.globalStallToken).not.toBeNull();
+
+    // Simulate the WS close event. happy-dom's WebSocket exposes
+    // `dispatchEvent` so we can fire a real `close` event through the
+    // listener attached in `attachWebSocketToEntry`.
+    const ws = entry.ws;
+    expect(ws).not.toBeNull();
+    ws!.dispatchEvent(new CloseEvent('close', { code: 1006, reason: '', wasClean: false }));
+
+    // Post-fix: the close handler reset lastTypeTs / lastEchoTs to 0 and
+    // notified subscribers, so the watcher saw `stalled = false` on the
+    // synchronous re-evaluation and released the token. The banner is
+    // gone without requiring a project switch.
+    expect(entry.lastTypeTs).toBe(0);
+    expect(entry.lastEchoTs).toBe(0);
+    expect(entry.globalStallToken).toBeNull();
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+
+    h.release();
+  });
 });
