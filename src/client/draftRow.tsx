@@ -135,6 +135,18 @@ function showDraftCategoryMenu(anchor: HTMLElement) {
     active: currentCat === s.value,
     action: () => {
       setDraftCategory(s.value);
+      // HS-8375 \u2014 the badge needs to repaint in place. Pre-HS-833 the
+      // list re-render rebuilt the draft row every time, picking the new
+      // category up via `getDraftCategory()` inside `createDraftRow`. After
+      // the bindList refactor (HS-8332 onward) `ensureBindListMount` keeps
+      // the draft row mount-once for the lifetime of the list view \u2014
+      // calling `callRenderTicketList()` no longer touches the draft row
+      // at all. Sync the badge directly so the user sees their selection
+      // reflected. `callRenderTicketList()` is kept downstream so any
+      // ticket-list dependencies on `draftCategory` (the auto-tag /
+      // create-with-category path reads `draftCategory` on Enter) stay
+      // consistent.
+      syncDraftBadge(s.value);
       callRenderTicketList();
       callFocusDraftInput();
     },
@@ -142,4 +154,15 @@ function showDraftCategoryMenu(anchor: HTMLElement) {
   document.body.appendChild(menu);
   positionDropdown(menu, anchor);
   menu.style.visibility = '';
+}
+
+/** HS-8375 - repaint the draft row's category badge in place. Used by the
+ *  category-dropdown action so a type switch is visible without a list
+ *  re-render. Exported for unit tests. No-op when no draft row is
+ *  mounted (e.g. in column view where the draft row lives elsewhere). */
+export function syncDraftBadge(category: string): void {
+  const badge = document.querySelector<HTMLElement>('.draft-row .ticket-category-badge');
+  if (badge === null) return;
+  badge.style.backgroundColor = getCategoryColor(category);
+  badge.textContent = getCategoryLabel(category);
 }

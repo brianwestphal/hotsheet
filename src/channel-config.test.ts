@@ -210,6 +210,73 @@ describe('unregisterChannel', () => {
   });
 });
 
+describe('register/unregisterChannel × claude-allow-rule integration (HS-8377)', () => {
+  it('registerChannel writes BOTH .mcp.json AND .claude/settings.local.json when `.claude/` exists', () => {
+    const dataDir = join(tempDir, '.hotsheet');
+    const claudeDir = join(tempDir, '.claude');
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(claudeDir, { recursive: true });
+
+    registerChannel(dataDir);
+
+    const mcpPath = join(tempDir, '.mcp.json');
+    const claudeSettingsPath = join(claudeDir, 'settings.local.json');
+    expect(existsSync(mcpPath)).toBe(true);
+    expect(existsSync(claudeSettingsPath)).toBe(true);
+
+    const claudeSettings = JSON.parse(readFileSync(claudeSettingsPath, 'utf-8')) as { permissions: { allow: string[] } };
+    const expectedRule = `mcp__${getMcpServerKey(dataDir)}__*`;
+    expect(claudeSettings.permissions.allow).toContain(expectedRule);
+  });
+
+  it('registerChannel writes only .mcp.json when `.claude/` is absent (D4 — no Claude Code in this project)', () => {
+    const dataDir = join(tempDir, '.hotsheet');
+    mkdirSync(dataDir, { recursive: true });
+    // No .claude dir.
+
+    registerChannel(dataDir);
+
+    expect(existsSync(join(tempDir, '.mcp.json'))).toBe(true);
+    expect(existsSync(join(tempDir, '.claude'))).toBe(false);
+  });
+
+  it('unregisterChannel removes the rule from .claude/settings.local.json AND the .mcp.json entry', () => {
+    const dataDir = join(tempDir, '.hotsheet');
+    const claudeDir = join(tempDir, '.claude');
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(claudeDir, { recursive: true });
+
+    // Register first so both files have the entries we'll be removing.
+    registerChannel(dataDir);
+    const claudeSettingsPath = join(claudeDir, 'settings.local.json');
+    const expectedRule = `mcp__${getMcpServerKey(dataDir)}__*`;
+    expect((JSON.parse(readFileSync(claudeSettingsPath, 'utf-8')) as { permissions: { allow: string[] } }).permissions.allow).toContain(expectedRule);
+
+    unregisterChannel(dataDir);
+
+    // Both files updated.
+    const mcpConfig = JSON.parse(readFileSync(join(tempDir, '.mcp.json'), 'utf-8')) as { mcpServers: Record<string, unknown> };
+    expect(mcpConfig.mcpServers[getMcpServerKey(dataDir)]).toBeUndefined();
+    const claudeSettings = JSON.parse(readFileSync(claudeSettingsPath, 'utf-8')) as { permissions: { allow: string[] } };
+    expect(claudeSettings.permissions.allow).not.toContain(expectedRule);
+  });
+
+  it('opt-out: `claude_auto_allow_rule: false` in <dataDir>/settings.json suppresses both write paths', () => {
+    const dataDir = join(tempDir, '.hotsheet');
+    const claudeDir = join(tempDir, '.claude');
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ claude_auto_allow_rule: false }));
+
+    registerChannel(dataDir);
+
+    // .mcp.json still written (the opt-out is about .claude/settings.local.json only).
+    expect(existsSync(join(tempDir, '.mcp.json'))).toBe(true);
+    // .claude/settings.local.json never created — the opt-out short-circuits.
+    expect(existsSync(join(claudeDir, 'settings.local.json'))).toBe(false);
+  });
+});
+
 describe('getChannelPort', () => {
   it('reads port from channel-port file', () => {
     const dataDir = join(tempDir, 'data');

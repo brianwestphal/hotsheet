@@ -3,6 +3,8 @@ import { basename, dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
+import { syncClaudeAllowRule, unsyncClaudeAllowRule } from './claude-allow-rule.js';
+
 const McpConfigSchema = z.object({
   mcpServers: z.record(z.string(), z.unknown()).optional(),
 }).loose();
@@ -99,6 +101,14 @@ export function registerChannel(dataDir: string): void {
   };
 
   writeFileSync(mcpPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+
+  // HS-8376 / HS-8377 — when the project has a `.claude/` directory, also
+  // add the `mcp__hotsheet-channel-<slug>__*` wildcard rule to
+  // `.claude/settings.local.json`'s `permissions.allow` array so Claude
+  // Code accepts every `hotsheet_*` MCP tool call without per-call
+  // permission prompts. Idempotent, failure-open, and gated on the
+  // per-project `claude_auto_allow_rule` opt-out setting — see §64.
+  syncClaudeAllowRule(dataDir);
 }
 
 /** Register the channel for multiple projects at once */
@@ -142,6 +152,13 @@ export function unregisterChannel(dataDir?: string): void {
       writeFileSync(mcpPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
     }
   } catch { /* ignore */ }
+
+  // HS-8376 / HS-8377 — symmetric removal of the allow rule when a
+  // dataDir is known (the no-arg legacy path used for stale-instance
+  // cleanup can't resolve the per-project slug, so it leaves the allow
+  // rule alone — at worst the user has an orphan wildcard pointing at a
+  // no-longer-registered server, harmless).
+  if (dataDir !== undefined) unsyncClaudeAllowRule(dataDir);
 }
 
 /** Unregister the channel from multiple projects at once */
