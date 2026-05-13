@@ -121,8 +121,14 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
 }
 
 /** Expected channel server version — must match CHANNEL_VERSION in channel.ts.
- *  Duplicated here to avoid importing channel.ts (which has side effects). */
-const EXPECTED_CHANNEL_VERSION = 4;
+ *  Duplicated here to avoid importing channel.ts (which has side effects).
+ *
+ *  HS-8346 — bumped from 4 → 5 for the new MCP tool surface (tools/list +
+ *  tools/call handlers exposing hotsheet_update_ticket / hotsheet_create_ticket /
+ *  hotsheet_signal_done / hotsheet_add_attachment / hotsheet_request_feedback).
+ *  Users who have the channel registered will see a "reconnect via `/mcp`"
+ *  prompt when the main server boots with the newer version. */
+const EXPECTED_CHANNEL_VERSION = 5;
 
 /** Check if the running channel server's version matches the expected version.
  *  Returns null if no channel, true if matching, false if mismatched. */

@@ -204,6 +204,10 @@ async function buildWorkflowInstructions(port: number, secretHeader: string): Pr
   sections.push('');
   sections.push(`The Hot Sheet API is available at http://localhost:${port}/api. **You MUST update ticket status** as you work — this is required, not optional.`);
   sections.push('');
+  // HS-8346 — one-line MCP-tools mention. The full two-form layout
+  // (MCP preferred, curl fallback right below) lands in HS-8348 (Phase 3).
+  sections.push('**MCP tools available.** When the Claude Channel is connected, the `hotsheet_*` MCP tools (`hotsheet_update_ticket`, `hotsheet_create_ticket`, `hotsheet_signal_done`, `hotsheet_add_attachment`, `hotsheet_request_feedback`) are preferred over the curl commands below — schema-validated, project-scoped, and cheaper in tokens. The curl commands stay supported as the universal fallback.');
+  sections.push('');
   sections.push('- **BEFORE starting work on a ticket**, set its status to "started":');
   sections.push(`  \`curl -s -X PATCH http://localhost:${port}/api/tickets/{id} -H "Content-Type: application/json"${secretHeader} -d '{"status": "started"}'\``);
   sections.push('');

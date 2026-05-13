@@ -10,11 +10,13 @@
  *  and warns if they don't match (user needs to reconnect via /mcp in Claude Code). */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
 import { join } from 'path';
 import { z } from 'zod';
 
+import { callTool, listTools } from './channel.tools.js';
 import {
   clearAllPermissions,
   completePermission,
@@ -22,7 +24,11 @@ import {
   peekPending,
 } from './channelPermissions.js';
 
-export const CHANNEL_VERSION = 4;
+// HS-8346 — bumped from 4 → 5 for the new MCP tool surface (tools/list +
+// tools/call handlers exposing hotsheet_update_ticket / hotsheet_create_ticket /
+// hotsheet_signal_done / hotsheet_add_attachment / hotsheet_request_feedback).
+// `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` bumped in lockstep.
+export const CHANNEL_VERSION = 5;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -42,6 +48,11 @@ const mcp = new Server(
   { name: 'hotsheet-channel', version: '0.1.0' },
   {
     capabilities: {
+      // HS-8346 — declare the `tools` capability so Claude Code knows
+      // to send `tools/list` + `tools/call` requests. The handlers are
+      // registered below; the tool catalog is defined in
+      // `src/channel.tools.ts`.
+      tools: {},
       experimental: {
         'claude/channel': {},
         'claude/channel/permission': {},
@@ -52,11 +63,29 @@ const mcp = new Server(
       'When you receive a channel event from hotsheet-channel, follow the instructions in the event content.',
       'Typically this means running /hotsheet to process the current Up Next work items.',
       'Do not ask for confirmation — just execute the requested action.',
-      'IMPORTANT: When you finish processing (or if there was nothing to process), you MUST run the curl command provided in the event to signal completion.',
+      'IMPORTANT: When you finish processing (or if there was nothing to process), you MUST run the curl command provided in the event to signal completion. (Or call the `hotsheet_signal_done` MCP tool — same effect.)',
       'IMPORTANT: Do NOT use the Hot Sheet API (curl commands) to read or list tickets. Always use /hotsheet to read the worklist. The API should only be used for updating ticket status and creating new tickets as documented in the worklist.',
+      'HS-8346: prefer the `hotsheet_*` MCP tools (hotsheet_update_ticket / hotsheet_create_ticket / hotsheet_signal_done / hotsheet_add_attachment / hotsheet_request_feedback) over curl — the tools are schema-validated, project-scoped, and cheaper in tokens.',
     ].join(' '),
   },
 );
+
+// HS-8346 — register the MCP tool handlers. `tools/list` returns the
+// tool catalog (name + description + JSON Schema); `tools/call`
+// dispatches to the per-tool handler defined in `channel.tools.ts`.
+mcp.setRequestHandler(ListToolsRequestSchema, () => {
+  return { tools: listTools() };
+});
+mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+  const result = await callTool(name, args ?? {}, dataDir);
+  // The MCP SDK's `CallToolResult` is a union — one branch requires
+  // `task`. Our tools return the standard `{ content, isError? }`
+  // branch which is structurally a subset of that union. Cast at the
+  // boundary to satisfy the strict union type without leaking the SDK
+  // dependency into `channel.tools.ts`.
+  return result as unknown as Record<string, unknown>;
+});
 
 // HS-8047 — pending permissions live in `channelPermissions.ts` as a queue
 // instead of a single nullable slot. Pre-fix a follow-up `permission_request`

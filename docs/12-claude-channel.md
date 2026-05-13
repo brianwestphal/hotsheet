@@ -247,7 +247,13 @@ Prompt: `Make a commit message for the recently completed tickets, without wrapp
 | `/api/channel/notify` | POST | Notify long-poll of channel state changes (used internally by channel server) |
 | `/api/channel/permission/notify` | POST | Wake the permission long-poll when a new permission request arrives (used internally by channel server) |
 
-## 12.13 Requirements
+## 12.13 MCP Tools
+
+The channel server exposes a typed tool surface for AI agents. See [63-mcp-tools.md](63-mcp-tools.md) for the full tool reference. Tools internally proxy to the local Hot Sheet HTTP API documented in §9 — there is no duplicated handler tree.
+
+Phase 1 shipped under HS-8346 (5 tools: `hotsheet_update_ticket`, `hotsheet_create_ticket`, `hotsheet_signal_done`, `hotsheet_add_attachment`, `hotsheet_request_feedback`). Phases 2–5 land per the phasing in `docs/63-mcp-tools.md` §63.7. The REST API documented above is the universal interface and the source of truth for input validation; MCP tools are an additional access path for AI agents connected over the Claude Channel, not a replacement.
+
+## 12.14 Requirements
 
 - Claude Code v2.1.80+ with claude.ai login
 - `@modelcontextprotocol/sdk` npm package (dependency of the channel server)

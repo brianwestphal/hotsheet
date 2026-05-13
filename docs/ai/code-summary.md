@@ -15,7 +15,7 @@
 - **Rendering:** Custom JSX runtime → HTML strings (`SafeHtml`). Shared server + client. No React.
 - **Build:** tsup (server CLI + channel + client IIFE), sass for styles, esbuild for plugins.
 - **Desktop:** Tauri v2 wraps the Node server as a sidecar.
-- **AI integration:** Markdown worklist exports + MCP channel server (`src/channel.ts`, `CHANNEL_VERSION=4`).
+- **AI integration:** Markdown worklist exports + MCP channel server (`src/channel.ts`, `CHANNEL_VERSION=5` — HS-8346 added the `tools/list` + `tools/call` handler pair exposing 5 `hotsheet_*` tools).
 
 ---
 
@@ -497,14 +497,14 @@ All timestamp columns are `TIMESTAMPTZ` (older DBs migrated in place).
 
 ## 8. Channel / MCP (`src/channel.ts`)
 
-- **Version:** `CHANNEL_VERSION = 4`. `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` must match. Bump **both** when changing the channel HTTP surface or MCP behavior.
+- **Version:** `CHANNEL_VERSION = 5` (HS-8346 bumped from 4). `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` must match. Bump **both** when changing the channel HTTP surface or MCP behavior.
 - **Launch paths:** production = `node dist/channel.js --data-dir <path>`; dev = `npx tsx src/channel.ts`. Both are registered in `.mcp.json` by `src/channel-config.ts`.
 - **Transport:** stdio (MCP) to Claude Code + a local HTTP port (written to `.hotsheet/channel-port`).
 - **Channel HTTP:** `/health`, `/permission` (120s expiry), `POST /permission/respond`, `POST /permission/dismiss`, `POST /permission/inject` (HS-8205 debug injector — used by `scripts/simulate-claude-prompts.mjs` permission-* types; reads `<dataDir>/channel-port` to find the running server).
 - **Hot Sheet ↔ Channel:** Hot Sheet `/api/channel/trigger` POSTs to the running channel; Hot Sheet polls `/api/channel/permission` (long-poll) for pending Claude tool-use approvals.
 - **Status / auto mode:** sidebar play button (see `src/client/channelUI.tsx`). Heartbeat hooks installed into `~/.claude/settings.json` by `src/claude-hooks.ts` (PostToolUse/UserPromptSubmit/Stop).
 - **Worklist file:** `src/sync/markdown.ts` builds `.hotsheet/worklist.md` with curl examples the AI session can run; `src/skills.ts` maintains the `.claude/skills/hotsheet` skill.
-- **MCP tool surface (HS-8344 design, `docs/63-mcp-tools.md`):** Today the channel server defines **zero MCP tools** — Claude → Hot Sheet ops all run as `curl` against the REST API documented in §7 below + the worklist. Phase 1 (HS-8346) lands 5 tools in a new `tools/list` + `tools/call` handler pair: `hotsheet_update_ticket` / `create_ticket` / `signal_done` / `add_attachment` / `request_feedback`. Phase 2 (HS-8347) extends to 14 tools total. Each tool internally proxies to the local Hot Sheet HTTP API via `port` + `secret` read from `<dataDir>/settings.json` — single source of truth, no duplicated handler tree. Soft-cutover migration: worklist + skills list MCP form first, curl stays as fallback for non-Claude AI agents.
+- **MCP tool surface (HS-8344 design, `docs/63-mcp-tools.md`):** **HS-8346 (Phase 1) shipped** — the channel server declares the `tools` capability and registers `tools/list` + `tools/call` handlers in `src/channel.ts`. The tool catalog + dispatcher + localhost-HTTP proxy live in `src/channel.tools.ts`. **5 tools live today:** `hotsheet_update_ticket`, `hotsheet_create_ticket`, `hotsheet_signal_done`, `hotsheet_add_attachment`, `hotsheet_request_feedback`. Phase 2 (HS-8347) extends to 14 tools total. Each tool validates input via per-tool Zod schemas (`TicketPrioritySchema` + `TicketStatusSchema` reused from `src/routes/validation.ts`), then proxies to the local Hot Sheet HTTP API via `port` + `secret` read from `<dataDir>/settings.json` — single source of truth, no duplicated handler tree. Errors surface as MCP `{isError: true, content: [{type: 'text', text}]}`. 28 unit tests in `src/channel.tools.test.ts` cover every tool × every error branch (validation rejection, HTTP error, network error, missing-settings) without a live server. Worklist + `hotsheet` skill carry a one-line MCP-tools mention; the full two-form rewrite (MCP preferred, curl fallback right below) is Phase 3 (HS-8348).
 
 ---
 
@@ -578,6 +578,7 @@ Env flags: `PLUGINS_ENABLED` (build/runtime toggle), `NO_WEB_SERVER` (E2E), `NOD
 | Add a skill or change its text | `src/skills.ts` — bump the `hotsheet-skill-version` header so skills regenerate |
 | Change the worklist export | `src/sync/markdown.ts` (debounced) |
 | Add/change an MCP endpoint | `src/channel.ts` **and** bump `CHANNEL_VERSION` + `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` |
+| Add an MCP tool for AI agents (HS-8346) | `src/channel.tools.ts` (add to the `TOOLS` array — name + description + Zod input schema + dispatcher) + new test cases in `src/channel.tools.test.ts` + bump `CHANNEL_VERSION` + `EXPECTED_CHANNEL_VERSION`; design in `docs/63-mcp-tools.md` |
 | Add a Tauri native command | `src-tauri/src/lib.rs` (new `#[tauri::command]`), invoke from `src/client/tauriIntegration.tsx` |
 | Add a plugin UI location or element type | Extend `PluginUILocation` / element types in `src/plugins/types.ts`; render in `src/client/pluginUI.tsx` |
 | Add a plugin sync capability | Extend `TicketingBackend` in `src/plugins/types.ts`; handle in `src/plugins/syncEngine.ts`; add DB columns via `initSchema()` if needed |

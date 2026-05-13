@@ -1,5 +1,7 @@
 # 9. REST API
 
+> **MCP tool equivalents.** Every mutation endpoint in this document has an equivalent MCP tool when accessed by an AI agent through the Claude Channel. See [63-mcp-tools.md](63-mcp-tools.md) for the tool surface. The REST API documented below is the universal interface and the source of truth for input validation; MCP tools are an additional access path that proxies into the same REST endpoints (`src/channel.tools.ts`, HS-8346).
+
 ## Functional Requirements
 
 ### 9.0 Input Validation
