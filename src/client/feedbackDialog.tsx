@@ -515,6 +515,11 @@ export async function checkFeedbackState() {
 
   let hasFeedback = false;
   for (const ticket of appState.tickets) {
+    // HS-8381 — backlog + archive tickets shouldn't drive the project-tab
+    // dot. Matches the server-side `projectHasPendingFeedback` filter so
+    // the inline (active project) and bulk (cross-project) writes agree
+    // when the user is on the Backlog or Archive view.
+    if (ticket.status === 'backlog' || ticket.status === 'archive' || ticket.status === 'deleted') continue;
     const notes = parseNotesJson(ticket.notes);
     const feedback = getTicketFeedbackState(notes);
     if (!feedback) continue;

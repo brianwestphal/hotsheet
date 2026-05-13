@@ -253,6 +253,30 @@ describe('ticketsStore — filteredTickets derived signal', () => {
     ticketsStore.actions.patchFilter({ search: '' });
     expect(filteredTickets.value.length).toBe(2);
   });
+
+  // HS-8380 — the server's WHERE clause matches against title + details +
+  // ticket_number + tags + notes. Pre-fix the client filter only checked
+  // the first three, so server-returned matches whose only hit was in tags
+  // or notes were dropped on the client. Symptom: "Hide N archive items"
+  // banner whose N (server count) was much larger than the visible list
+  // (client re-filter).
+  it('filters by notes (HS-8380 — mirrors server ILIKE clause)', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(1, { title: 'A', notes: JSON.stringify([{ id: 'n1', text: 'FEEDBACK NEEDED: confirm fix?', created_at: '2026-05-14T00:00:00Z' }]) }),
+      makeTicket(2, { title: 'B', notes: '[]' }),
+    ]);
+    ticketsStore.actions.patchFilter({ search: 'FEEDBACK NEEDED' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([1]);
+  });
+
+  it('filters by tags (HS-8380 — mirrors server ILIKE clause)', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(1, { title: 'A', tags: JSON.stringify(['urgent', 'auth']) }),
+      makeTicket(2, { title: 'B', tags: '[]' }),
+    ]);
+    ticketsStore.actions.patchFilter({ search: 'urgent' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([1]);
+  });
 });
 
 /**

@@ -110,4 +110,14 @@ When the user types an exact ticket-number reference in the search box (e.g. `HS
 
 **Tests:** 8 new in `src/db/queries.test.ts`'s `exact ticket-id search bypasses status filter (HS-8100)` describe block — covers backlog / archive / trash hits, case insensitivity, no-substring-drift, suppressed include counts, and the regex shape (positive + negative cases).
 
-**Status:** Shipped (HS-7756) + extended (HS-8100).
+## 40.5 Client-side filter parity (HS-8380)
+
+The server's `getTickets` WHERE clause matches against five columns: `title`, `details`, `ticket_number`, `tags`, `notes`. `countSearchMatchesInExcludedStatuses` uses the same five-column ILIKE union so its `{backlog, archive}` counts agree with what `getTickets` would return for the same search.
+
+Pre-fix, the client-side re-filter in `ticketsStore.ts::ticketMatchesSearch` only checked `title` + `details` + `ticket_number` — the server returned the full five-column match set, then the client dropped any ticket whose match lived solely in `tags` or `notes`. Symptom on the Archive view with a notes-keyword search: "Hide 84 archive items" banner alongside a visible list of only 17 (the count was correct; the list was wrong).
+
+Post-fix, `ticketMatchesSearch` checks all five columns the server does, so the visible list size and the banner's reported count agree.
+
+**Tests:** 2 new in `src/client/ticketsStore.test.ts`'s `filteredTickets derived signal` describe block — covers a notes-only match and a tags-only match against a query that doesn't appear in title / details / ticket_number.
+
+**Status:** Shipped (HS-7756) + extended (HS-8100, HS-8380).

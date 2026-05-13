@@ -290,9 +290,18 @@ export const ticketsByStatusSignal: ReadonlySignal<Partial<Record<string, readon
 });
 
 function ticketMatchesSearch(t: Ticket, lcSearch: string): boolean {
+  // HS-8380 — mirror the server's `getTickets` ILIKE clause exactly. Pre-fix
+  // this only checked title / details / ticket_number, so when the server's
+  // `countSearchMatchesInExcludedStatuses` reported N matches in archive (the
+  // count query DOES match against notes + tags too), the client's re-filter
+  // pass dropped any ticket whose match lived solely in notes or tags. Result:
+  // "Hide 84 archive items" banner alongside a visible list of 17. Now the
+  // client filter operates on the same five columns the server does.
   return t.title.toLowerCase().includes(lcSearch)
     || t.details.toLowerCase().includes(lcSearch)
-    || t.ticket_number.toLowerCase().includes(lcSearch);
+    || t.ticket_number.toLowerCase().includes(lcSearch)
+    || t.tags.toLowerCase().includes(lcSearch)
+    || t.notes.toLowerCase().includes(lcSearch);
 }
 
 /**

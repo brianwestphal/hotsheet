@@ -62,9 +62,16 @@ export async function projectHasPendingFeedback(db: PGlite): Promise<boolean> {
     // Cheap pre-filter: tickets whose notes JSON literally contains one
     // of the prefix strings somewhere. Saves a JSON.parse on every ticket
     // in projects where most tickets have no notes at all.
+    //
+    // HS-8381 — exclude `backlog` + `archive` (in addition to `deleted`)
+    // from the candidate set. The purple project-tab dot is meant to
+    // flag actionable feedback prompts; a FEEDBACK NEEDED note left on
+    // a ticket the user has moved to backlog or archive isn't actionable
+    // from that tab (the user deliberately set it aside) and shouldn't
+    // pull attention to the project.
     const res = await db.query<{ notes: string }>(
       `SELECT notes FROM tickets
-        WHERE status != 'deleted'
+        WHERE status NOT IN ('deleted', 'backlog', 'archive')
           AND notes != ''
           AND notes != '[]'
           AND (notes LIKE '%FEEDBACK NEEDED:%' OR notes LIKE '%IMMEDIATE FEEDBACK NEEDED:%')`,

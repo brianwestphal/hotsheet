@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { notesEndWithFeedback } from './feedback-state.js';
+import { notesEndWithFeedback, projectHasPendingFeedback } from './feedback-state.js';
+import { cleanupTestDb, setupTestDb } from './test-helpers.js';
 
 /**
  * HS-8378 — pure unit tests for `notesEndWithFeedback`. The DB-side
@@ -83,5 +84,80 @@ describe('notesEndWithFeedback (HS-8378)', () => {
       { text: 'Earlier I asked: FEEDBACK NEEDED: yes or no?', created_at: '2026-05-13T11:00:00Z' },
     ]);
     expect(notesEndWithFeedback(notes)).toBe(false);
+  });
+});
+
+/**
+ * HS-8381 — `projectHasPendingFeedback` must exclude backlog + archive
+ * (in addition to the pre-existing `deleted` exclusion) so the purple
+ * project-tab dot only flags actionable feedback prompts. A FEEDBACK
+ * NEEDED note left on a ticket that's been moved to backlog or archive
+ * is set aside on purpose and shouldn't pull attention to the project.
+ */
+describe('projectHasPendingFeedback (HS-8381 — bucket exclusions)', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await setupTestDb();
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb(tempDir);
+  });
+
+  async function insertTicketWithFeedback(status: string): Promise<void> {
+    const { getDb } = await import('./db/connection.js');
+    const db = await getDb();
+    const notes = JSON.stringify([
+      { id: 'n1', text: 'FEEDBACK NEEDED: confirm?', created_at: '2026-05-14T10:00:00Z' },
+    ]);
+    await db.query(
+      `INSERT INTO tickets (ticket_number, title, details, category, priority, status, up_next, notes, tags)
+       VALUES ($1, $2, '', 'bug', 'default', $3, false, $4, '[]')`,
+      [`HS-${Math.floor(Math.random() * 1_000_000)}`, `Ticket ${status}`, status, notes],
+    );
+  }
+
+  it('returns true when a non_started ticket has a pending feedback prompt', async () => {
+    const { getDb } = await import('./db/connection.js');
+    const db = await getDb();
+    await insertTicketWithFeedback('not_started');
+    expect(await projectHasPendingFeedback(db)).toBe(true);
+  });
+
+  it('returns false when the only feedback-prompt ticket is in backlog', async () => {
+    const { getDb } = await import('./db/connection.js');
+    const db = await getDb();
+    await insertTicketWithFeedback('backlog');
+    expect(await projectHasPendingFeedback(db)).toBe(false);
+  });
+
+  it('returns false when the only feedback-prompt ticket is in archive', async () => {
+    const { getDb } = await import('./db/connection.js');
+    const db = await getDb();
+    await insertTicketWithFeedback('archive');
+    expect(await projectHasPendingFeedback(db)).toBe(false);
+  });
+
+  it('returns false when the only feedback-prompt ticket is deleted', async () => {
+    const { getDb } = await import('./db/connection.js');
+    const db = await getDb();
+    await insertTicketWithFeedback('deleted');
+    expect(await projectHasPendingFeedback(db)).toBe(false);
+  });
+
+  it('returns true when an active ticket has feedback even alongside backlog/archive feedback tickets', async () => {
+    const { getDb } = await import('./db/connection.js');
+    const db = await getDb();
+    await insertTicketWithFeedback('backlog');
+    await insertTicketWithFeedback('archive');
+    await insertTicketWithFeedback('started');
+    expect(await projectHasPendingFeedback(db)).toBe(true);
+  });
+
+  it('returns false when no tickets have notes at all', async () => {
+    const { getDb } = await import('./db/connection.js');
+    const db = await getDb();
+    expect(await projectHasPendingFeedback(db)).toBe(false);
   });
 });
