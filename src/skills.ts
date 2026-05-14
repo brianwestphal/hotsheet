@@ -13,15 +13,66 @@ import { DEFAULT_CATEGORIES } from './types.js';
 // re-author on next boot via the `updateFile` upgrade path.
 export const SKILL_VERSION = 10;
 
-let skillPort: number;
-let skillCategories: CategoryDef[] = DEFAULT_CATEGORIES;
+/**
+ * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
+ * inside a single named container so a future audit can spot stale handles
+ * immediately. Pre-fix the file carried three separately-declared module-level
+ * `let`s (`skillPort` / `skillCategories` / `pendingCreatedFlag`), each with
+ * its own implicit reset story across tests. Now: read `skillsState.foo`
+ * everywhere; reset via `_resetSkillsStateForTesting()` (assigns
+ * `freshSkillsState()`).
+ *
+ * This is the minimal-encapsulation variant of the HS-8390 ticket (vs. the
+ * full per-project `SkillsContext` factory, which would require plumbing a
+ * context through `projects.ts` + `routes/dashboard.ts` + every callsite —
+ * deferred). The struct already gives us: (a) a single grep-able location
+ * for every mutable bit, (b) explicit test-reset entry point, (c) a
+ * straightforward path forward to the full factory if/when needed (rename
+ * `skillsState` to a parameter, drop the module-level slot, expose a
+ * `createSkillsContext()`).
+ *
+ * Note: `skillsState.port` is `number | undefined` — pre-fix `skillPort: number`
+ * was declared without an initializer, so the runtime value WAS undefined
+ * before `initSkills()` ran but the type lied. The `undefined` typing here
+ * matches reality; `ticketSkillBody` and `ensureClaudePermissions` both
+ * handle the `undefined` case explicitly now.
+ */
+interface SkillsState {
+  port: number | undefined;
+  categories: CategoryDef[];
+  /**
+   * Tracks whether skills were created/updated in this server session.
+   * Consumed once by the UI endpoint so the banner shows even though
+   * cli.ts already called ensureSkills() before the page loaded.
+   */
+  pendingCreatedFlag: boolean;
+}
+
+function freshSkillsState(): SkillsState {
+  return {
+    port: undefined,
+    categories: DEFAULT_CATEGORIES,
+    pendingCreatedFlag: false,
+  };
+}
+
+let skillsState: SkillsState = freshSkillsState();
+
+/** **HS-8390 — TEST ONLY.** Reset the module-level `skillsState` to its
+ *  fresh shape so consecutive tests start from a clean slate. Production
+ *  code never needs to call this; tests can call it in `beforeEach` as
+ *  an explicit alternative to the implicit `initSkills` /
+ *  `setSkillCategories` reset pattern. */
+export function _resetSkillsStateForTesting(): void {
+  skillsState = freshSkillsState();
+}
 
 export function initSkills(port: number) {
-  skillPort = port;
+  skillsState.port = port;
 }
 
 export function setSkillCategories(categories: CategoryDef[]) {
-  skillCategories = categories;
+  skillsState.categories = categories;
 }
 
 interface SkillDef {
@@ -32,7 +83,7 @@ interface SkillDef {
 }
 
 function buildTicketSkills(): SkillDef[] {
-  return skillCategories.map(cat => ({
+  return skillsState.categories.map(cat => ({
     name: `hs-${cat.id.replace(/_/g, '-')}`,
     category: cat.id,
     label: cat.label.toLowerCase(),
@@ -70,7 +121,11 @@ export function updateFile(path: string, content: string): boolean {
 function ticketSkillBody(skill: SkillDef, projectRoot: string): string {
   const dataDir = join(projectRoot, '.hotsheet');
   const settings = readFileSettings(dataDir);
-  const port = settings.port ?? skillPort;
+  // HS-8390 — settings.port wins; fall back to skillsState.port; final
+  // fallback to a placeholder if neither is set (production code always
+  // calls initSkills before this runs, so the placeholder only fires in
+  // edge-case test paths that skip init).
+  const port = settings.port ?? skillsState.port ?? 4174;
   const secret = settings.secret ?? '';
   const secretLine = secret ? `  -H "X-Hotsheet-Secret: ${secret}" \\` : '';
   // HS-8348 — Phase 3 two-form skill body. MCP tool listed first
@@ -206,8 +261,14 @@ const HOTSHEET_ALLOW_PATTERNS = [
 const HOTSHEET_CURL_RE = /^Bash\(curl \* http:\/\/localhost:\d+\/api\/\*\)$|^Bash\(curl \* http:\/\/localhost:41[789]\*\/api\/\*\)$/;
 
 function ensureClaudePermissions(cwd: string): boolean {
-  // Only configure if port is in the expected range
-  if (skillPort < 4170 || skillPort > 4199) return false;
+  // Only configure if port is in the expected range. HS-8390 — explicit
+  // undefined check; pre-fix the bare numeric comparison silently
+  // succeeded with `NaN < 4170` evaluating false on an uninitialized
+  // module-level `let skillPort: number` (the type lied; runtime was
+  // undefined). Now we early-return when no port is set.
+  const port = skillsState.port;
+  if (port === undefined) return false;
+  if (port < 4170 || port > 4199) return false;
 
   const settingsPath = join(cwd, '.claude', 'settings.json');
 
@@ -392,11 +453,6 @@ function ensureWindsurfRules(cwd: string): boolean {
 
 // --- Public API ---
 
-// Tracks whether skills were created/updated in this server session.
-// Consumed once by the UI endpoint so the banner shows even though
-// cli.ts already called ensureSkills() before the page loaded.
-let pendingCreatedFlag = false;
-
 /** Ensure skills for a specific project root directory. */
 export function ensureSkillsForDir(projectRoot: string): string[] {
   const platforms: string[] = [];
@@ -415,7 +471,7 @@ export function ensureSkillsForDir(projectRoot: string): string[] {
   }
 
   if (platforms.length > 0) {
-    pendingCreatedFlag = true;
+    skillsState.pendingCreatedFlag = true;
   }
   return platforms;
 }
@@ -426,7 +482,7 @@ export function ensureSkills(): string[] {
 }
 
 export function consumeSkillsCreatedFlag(): boolean {
-  const result = pendingCreatedFlag;
-  pendingCreatedFlag = false;
+  const result = skillsState.pendingCreatedFlag;
+  skillsState.pendingCreatedFlag = false;
   return result;
 }

@@ -4,6 +4,7 @@ import { join } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  _resetSkillsStateForTesting,
   consumeSkillsCreatedFlag,
   ensureSkills,
   initSkills,
@@ -491,6 +492,62 @@ describe('setSkillCategories', () => {
 
     // Restore defaults for other tests
     setSkillCategories(DEFAULT_CATEGORIES);
+  });
+});
+
+describe('_resetSkillsStateForTesting (HS-8390)', () => {
+  let tempDir: string;
+  let settingsDir: string;
+
+  beforeEach(() => {
+    tempDir = join(tmpdir(), `hs-skills-reset-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    settingsDir = join(tempDir, '.hotsheet');
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({}));
+    mkdirSync(join(tempDir, '.claude'), { recursive: true });
+    vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(tempDir, { recursive: true, force: true });
+    // Restore default state so other test files aren't affected by our resets.
+    initSkills(4174);
+    setSkillCategories(DEFAULT_CATEGORIES);
+  });
+
+  it('clears port back to undefined so ensureClaudePermissions early-returns until re-init', () => {
+    // After explicit reset, port is undefined → ensureClaudePermissions
+    // bails before touching .claude/settings.json. Pre-HS-8390 the bare
+    // `skillPort < 4170` comparison would silently see `NaN < 4170` (false)
+    // and fall through to writing the file even with no port set.
+    initSkills(4174);
+    setSkillCategories(DEFAULT_CATEGORIES);
+    _resetSkillsStateForTesting();
+    ensureSkills();
+    const claudeSettings = join(tempDir, '.claude', 'settings.json');
+    expect(existsSync(claudeSettings)).toBe(false);
+  });
+
+  it('clears categories back to DEFAULT_CATEGORIES', () => {
+    setSkillCategories([
+      { id: 'epic', label: 'Epic', shortLabel: 'EPC', color: '#8b5cf6', shortcutKey: 'e', description: 'Large initiatives' },
+    ]);
+    _resetSkillsStateForTesting();
+    initSkills(4174);
+    ensureSkills();
+    // After reset, the default `hs-bug` skill should exist (from
+    // DEFAULT_CATEGORIES) and the custom `hs-epic` should not.
+    expect(existsSync(join(tempDir, '.claude', 'skills', 'hs-bug', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(tempDir, '.claude', 'skills', 'hs-epic', 'SKILL.md'))).toBe(false);
+  });
+
+  it('clears pendingCreatedFlag back to false', () => {
+    initSkills(4174);
+    setSkillCategories(DEFAULT_CATEGORIES);
+    ensureSkills(); // sets pendingCreatedFlag = true
+    _resetSkillsStateForTesting();
+    expect(consumeSkillsCreatedFlag()).toBe(false);
   });
 });
 
