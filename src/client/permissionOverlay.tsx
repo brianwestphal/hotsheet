@@ -31,6 +31,16 @@ import { renderEditDiffPreview } from './editDiffPreview.js';
 import { buildAlwaysAllowAffordance } from './permissionAllowListUI.js';
 import { openPermissionDialogShell } from './permissionDialogShell.js';
 import {
+  _inspectLiveCheckoutForTesting,
+  _resetLiveCheckoutStateForTesting,
+  disconnectActiveLiveTermResizeObserver,
+  getActiveCheckout,
+  releaseActiveCheckoutIfAny,
+  runLiveTermFitWithRetry,
+  setActiveCheckout,
+  setActiveLiveTermResizeObserver,
+} from './permissionLiveCheckout.js';
+import {
   extractWriteFields,
   LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD,
   type PermissionData,
@@ -40,7 +50,7 @@ import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
 import { state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
 import { getProjectDefault, getSessionOverride, resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
-import { checkout, type CheckoutHandle, peekEntryDims } from './terminalCheckout.js';
+import { checkout, peekEntryDims } from './terminalCheckout.js';
 import { buildWritePermissionPreview } from './writePermissionPreview.js';
 
 export {
@@ -95,16 +105,11 @@ interface PermissionOverlayState {
    *  channel server unreachable" from "owner project present with null = no
    *  permission pending". */
   activePopupOwnerSecret: string | null;
-  /** HS-8171 v2 / HS-8182 — the §54 live-terminal checkout handle the popup
-   *  may have taken. Hoisted out of the popup's closure so the polling loop's
-   *  auto-dismiss path can `release()` it too. */
-  activeCheckoutHandle: CheckoutHandle | null;
-  /** HS-8206 — ResizeObserver that keeps the borrowed live-terminal sized
-   *  to fit the popup's `liveTermContainer`. */
-  activeLiveTermResizeObserver: ResizeObserver | null;
-  /** HS-8206 v2 — pending retry timeout id so a re-run from the
-   *  ResizeObserver doesn't stack up parallel retry chains. */
-  liveTermFitRetryTimer: ReturnType<typeof setTimeout> | null;
+  // HS-8394 — the three live-checkout slots (`activeCheckoutHandle`,
+  // `activeLiveTermResizeObserver`, `liveTermFitRetryTimer`) moved to
+  // `permissionLiveCheckout.ts`. Access via the module's exported getters
+  // (`getActiveCheckout`, `_inspectLiveCheckoutForTesting`) and setters
+  // (`setActiveCheckout`, `setActiveLiveTermResizeObserver`).
 }
 
 function freshPermissionOverlayState(): PermissionOverlayState {
@@ -116,9 +121,6 @@ function freshPermissionOverlayState(): PermissionOverlayState {
     setChannelBusyTimeoutRefModule: () => {},
     activePopupRequestId: null,
     activePopupOwnerSecret: null,
-    activeCheckoutHandle: null,
-    activeLiveTermResizeObserver: null,
-    liveTermFitRetryTimer: null,
   };
 }
 
@@ -383,71 +385,11 @@ function syncMinimizedDots() {
  * semantics).
  */
 
-function releaseActiveCheckoutIfAny(): void {
-  disconnectActiveLiveTermResizeObserver();
-  clearLiveTermFitRetryTimer();
-  if (permissionState.activeCheckoutHandle === null) return;
-  try { permissionState.activeCheckoutHandle.release(); } catch { /* swallow — entry may already be torn down */ }
-  permissionState.activeCheckoutHandle = null;
-}
-
-function disconnectActiveLiveTermResizeObserver(): void {
-  if (permissionState.activeLiveTermResizeObserver === null) return;
-  try { permissionState.activeLiveTermResizeObserver.disconnect(); } catch { /* swallow */ }
-  permissionState.activeLiveTermResizeObserver = null;
-}
-
-/** HS-8206 v2 — total retry budget for the live-term fit. xterm's
- *  renderer typically measures cell dims within a couple of frames after
- *  reparenting; the budget is generous enough to cover slow first paints
- *  on cold startup (heavy theme load, lots of scrollback to replay) but
- *  not so long that a genuinely-broken environment hangs the fit forever. */
-const LIVE_TERM_FIT_RETRY_INTERVAL_MS = 16;
-const LIVE_TERM_FIT_RETRY_MAX_ATTEMPTS = 30;
-
-function clearLiveTermFitRetryTimer(): void {
-  if (permissionState.liveTermFitRetryTimer === null) return;
-  clearTimeout(permissionState.liveTermFitRetryTimer);
-  permissionState.liveTermFitRetryTimer = null;
-}
-
-/** HS-8206 v2 — drive `fit.proposeDimensions()` to a successful resize,
- *  retrying up to {@link LIVE_TERM_FIT_RETRY_MAX_ATTEMPTS} times with
- *  {@link LIVE_TERM_FIT_RETRY_INTERVAL_MS} between attempts. Bails if
- *  the active checkout handle changes (popup closed / replaced) or the
- *  popup is dismissed mid-retry. Idempotent: a re-entry while a retry
- *  chain is in flight cancels the pending timer and starts fresh, so
- *  the ResizeObserver firing during a retry doesn't produce overlapping
- *  chains. */
-function runLiveTermFitWithRetry(forHandle: CheckoutHandle): void {
-  clearLiveTermFitRetryTimer();
-  let attempts = 0;
-  function attempt(): void {
-    permissionState.liveTermFitRetryTimer = null;
-    if (permissionState.activeCheckoutHandle !== forHandle) return; // popup closed or re-checked-out.
-    attempts++;
-    let proposed: { cols: number; rows: number } | undefined;
-    try {
-      proposed = forHandle.fit.proposeDimensions();
-    } catch { /* term disposed mid-flight */ return; }
-    if (proposed === undefined) {
-      if (attempts >= LIVE_TERM_FIT_RETRY_MAX_ATTEMPTS) return;
-      permissionState.liveTermFitRetryTimer = setTimeout(attempt, LIVE_TERM_FIT_RETRY_INTERVAL_MS);
-      return;
-    }
-    if (proposed.cols === forHandle.term.cols && proposed.rows === forHandle.term.rows) {
-      return; // already at the right dims — break the fit/observe loop.
-    }
-    try { forHandle.resize(proposed.cols, proposed.rows); } catch { /* term disposed */ }
-  }
-  // First attempt on the next animation frame so the popup overlay's
-  // initial layout has settled before we read CSS dims.
-  if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(attempt);
-  } else {
-    permissionState.liveTermFitRetryTimer = setTimeout(attempt, 0);
-  }
-}
+// HS-8394 — `releaseActiveCheckoutIfAny`, `disconnectActiveLiveTermResizeObserver`,
+// `clearLiveTermFitRetryTimer`, `runLiveTermFitWithRetry` + the three
+// related state slots (`activeCheckoutHandle`, `activeLiveTermResizeObserver`,
+// `liveTermFitRetryTimer`) moved to `permissionLiveCheckout.ts`. Imported
+// below; the slots no longer live on `permissionState`.
 
 /**
  * HS-8219 — should `perm` be skipped entirely (already-handled / waiting
@@ -921,7 +863,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
       projectDefault: getProjectDefault(secret),
       sessionOverride: getSessionOverride('default'),
     });
-    permissionState.activeCheckoutHandle = checkout({
+    setActiveCheckout(checkout({
       projectSecret: secret,
       terminalId: 'default',
       cols: startCols,
@@ -951,7 +893,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
       // `onNoLiveSession` callback below.
       noSpawn: true,
       onNoLiveSession: () => { fallbackToNonLivePreview(); },
-    });
+    }));
     // HS-8206 v2 — `proposeDimensions()` returns undefined when xterm's
     // renderer hasn't measured cell dims for the new layout
     // (`renderService.dimensions.css.cell` is 0×0). Right after the term
@@ -969,13 +911,18 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     // attempts; the proposed-vs-current short-circuit prevents the
     // well-known fit/observe feedback loop.
     disconnectActiveLiveTermResizeObserver();
-    runLiveTermFitWithRetry(permissionState.activeCheckoutHandle);
+    {
+      const handle = getActiveCheckout();
+      if (handle !== null) runLiveTermFitWithRetry(handle);
+    }
     if (typeof ResizeObserver !== 'undefined') {
-      permissionState.activeLiveTermResizeObserver = new ResizeObserver(() => {
-        if (permissionState.activeCheckoutHandle === null) return;
-        runLiveTermFitWithRetry(permissionState.activeCheckoutHandle);
+      const observer = new ResizeObserver(() => {
+        const handle = getActiveCheckout();
+        if (handle === null) return;
+        runLiveTermFitWithRetry(handle);
       });
-      permissionState.activeLiveTermResizeObserver.observe(liveTermContainer);
+      observer.observe(liveTermContainer);
+      setActiveLiveTermResizeObserver(observer);
     }
   }
 
@@ -1001,8 +948,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
  *  stack) is cleared explicitly because those are separate const Set/Map/
  *  Array containers, not part of the bundled state object. */
 export function _resetStateForTesting(): void {
-  disconnectActiveLiveTermResizeObserver();
-  clearLiveTermFitRetryTimer();
+  _resetLiveCheckoutStateForTesting();
   respondedRequestIds.clear();
   dismissedRequestIds.clear();
   for (const rec of minimizedRequests.values()) clearTimeout(rec.timeoutId);
@@ -1033,11 +979,12 @@ export function _inspectStateForTesting(): {
   permissionVersion: number;
   autoDismissMissCount: number;
 } {
+  const live = _inspectLiveCheckoutForTesting();
   return {
     activePopupRequestId: permissionState.activePopupRequestId,
     activePopupOwnerSecret: permissionState.activePopupOwnerSecret,
-    activeCheckoutHandle: permissionState.activeCheckoutHandle !== null,
-    activeLiveTermResizeObserver: permissionState.activeLiveTermResizeObserver !== null,
+    activeCheckoutHandle: live.activeCheckoutHandle,
+    activeLiveTermResizeObserver: live.activeLiveTermResizeObserver,
     respondedRequestIds: [...respondedRequestIds],
     dismissedRequestIds: [...dismissedRequestIds],
     minimizedRequestIds: [...minimizedRequests.keys()],
