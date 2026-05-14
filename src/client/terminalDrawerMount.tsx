@@ -32,13 +32,18 @@
 import { SearchAddon } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import type { ITheme, Terminal as XTerm } from '@xterm/xterm';
+import type { Terminal as XTerm } from '@xterm/xterm';
 
 import { openExternalUrl } from './tauriIntegration.js';
 import type { TerminalInstance } from './terminal.js';
-import type { TerminalAppearance } from './terminalAppearance.js';
 import { resolveAppearanceBackground } from './terminalAppearance.js';
 import { checkout } from './terminalCheckout.js';
+import {
+  doFit,
+  reapplyAppearance,
+  resolveAppearanceThemeForInit,
+  resolveInstanceAppearance,
+} from './terminalInstanceAppearance.js';
 import { updateCwdChip, updateTabLabel } from './terminalInstanceLabel.js';
 import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { parseOsc7Payload } from './terminalOsc7.js';
@@ -53,11 +58,7 @@ import {
 interface DrawerMountHooks {
   setStatus: (inst: TerminalInstance, status: 'not-connected' | 'connecting' | 'alive' | 'exited') => void;
   shortCommandName: (command: string) => string;
-  doFit: (inst: TerminalInstance) => void;
   isTerminalTabActive: (inst: TerminalInstance) => boolean;
-  resolveInstanceAppearance: (inst: TerminalInstance) => TerminalAppearance;
-  resolveAppearanceThemeForInit: (inst: TerminalInstance) => ITheme;
-  reapplyAppearance: (inst: TerminalInstance) => Promise<void>;
 }
 
 let hooks: DrawerMountHooks | null = null;
@@ -80,7 +81,7 @@ function requireHooks(): DrawerMountHooks {
 function applyDrawerXtermOptions(inst: TerminalInstance, term: XTerm): void {
   // HS-8044 — option overrides applied here win for the drawer's lifetime as
   // long as it stays at top-of-stack of the shared (secret, terminalId) xterm.
-  term.options.theme = requireHooks().resolveAppearanceThemeForInit(inst);
+  term.options.theme = resolveAppearanceThemeForInit(inst);
   term.options.linkHandler = {
     activate: (_event, text) => { openExternalUrl(text); },
   };
@@ -163,7 +164,6 @@ function attachDrawerTermHandlers(inst: TerminalInstance, term: XTerm, handle: R
 }
 
 export function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void {
-  const h = requireHooks();
   const handle = checkout({
     projectSecret: secret,
     terminalId: inst.id,
@@ -173,7 +173,7 @@ export function mountInstanceViaCheckout(inst: TerminalInstance, secret: string)
     // HS-8295 — paint the §54 "Terminal in use elsewhere" placeholder with
     // this terminal's resolved theme background so a §47 popup borrowing
     // the live xterm doesn't flash the drawer canvas to `--bg-secondary`.
-    placeholderBackground: resolveAppearanceBackground(h.resolveInstanceAppearance(inst)),
+    placeholderBackground: resolveAppearanceBackground(resolveInstanceAppearance(inst)),
     onControlMessage(msg) { handleControlMessage(inst, msg); },
     onRestoredToTop() {
       // HS-8206 v2 — when another consumer (e.g. the §47 permission popup
@@ -187,7 +187,7 @@ export function mountInstanceViaCheckout(inst: TerminalInstance, secret: string)
       // wrapping at ~80 cols even though the drawer pane is full-width.
       // Defer one rAF so the reparent + applyResizeIfChanged round-trip
       // has settled before FitAddon reads CSS dims.
-      requestAnimationFrame(() => h.doFit(inst));
+      requestAnimationFrame(() => doFit(inst));
     },
   });
   const term = handle.term;
@@ -199,9 +199,9 @@ export function mountInstanceViaCheckout(inst: TerminalInstance, secret: string)
   // HS-7960 — paint the body's gutter to match the theme BEFORE the async
   // appearance load runs (fire-and-forget below). Without this synchronous
   // prime the very first canvas paint flashes with the app's `--bg`.
-  inst.body.style.backgroundColor = resolveAppearanceBackground(h.resolveInstanceAppearance(inst));
+  inst.body.style.backgroundColor = resolveAppearanceBackground(resolveInstanceAppearance(inst));
   // HS-6307 — apply full appearance (font family + size). Fire-and-forget.
-  void h.reapplyAppearance(inst);
+  void reapplyAppearance(inst);
 
   // Clicking the body (including padding gutters outside the canvas) focuses
   // the terminal — preserves the pre-HS-7959 click-to-focus reach.
@@ -256,7 +256,7 @@ export function handleControlMessage(inst: TerminalInstance, msg: { type: string
       // Prefer the user-supplied name; fall back to resolved command for unnamed terminals.
       if ((inst.config.name ?? '') === '') inst.label.textContent = h.shortCommandName(msg.command);
     }
-    requestAnimationFrame(() => h.doFit(inst));
+    requestAnimationFrame(() => doFit(inst));
     return;
   }
   if (isExitMessage(msg)) {

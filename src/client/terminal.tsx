@@ -21,17 +21,16 @@ import { bindList } from './reactive-bind.js';
 import { getActiveProject } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import {
-  applyAppearanceToTerm,
-  getProjectDefault,
-  getSessionOverride,
   loadProjectDefaultAppearance,
-  resolveAppearance,
-  resolveAppearanceBackground,
   subscribeToDefaultAppearanceChanges,
 } from './terminalAppearance.js';
 import { mountAppearancePopover } from './terminalAppearancePopover.js';
 import type { CheckoutHandle } from './terminalCheckout.js';
 import { initDrawerMount, mountInstanceViaCheckout } from './terminalDrawerMount.js';
+import {
+  doFit,
+  reapplyAppearance,
+} from './terminalInstanceAppearance.js';
 import {
   tabDisplayName,
   updateCwdChip,
@@ -50,7 +49,6 @@ import {
 import { initTabContextMenu, orderedTabIds, showTabContextMenu } from './terminalTabContextMenu.js';
 import { attachTabDragHandlers, initTabDragDrop } from './terminalTabDragDrop.js';
 import { pickNearestTerminalTabId } from './terminalTabSelection.js';
-import { getThemeById, themeToXtermOptions } from './terminalThemes.js';
 
 type Status = 'not-connected' | 'connecting' | 'alive' | 'exited';
 
@@ -266,11 +264,7 @@ export function initTerminal(): void {
   initDrawerMount({
     setStatus,
     shortCommandName,
-    doFit,
     isTerminalTabActive,
-    resolveInstanceAppearance,
-    resolveAppearanceThemeForInit,
-    reapplyAppearance,
   });
   // Wire up the new + button that creates dynamic terminals.
   byIdOrNull('drawer-add-terminal-btn')?.addEventListener('click', () => { void createDynamicTerminal(); });
@@ -825,41 +819,10 @@ function createInstance(config: TerminalTabConfig): TerminalInstance {
 
 /** HS-6307 — resolve the appearance layers for a terminal. Factored out so
  *  mountXterm / reapplyAppearance / the popover all read the same stack. */
-function resolveInstanceAppearance(inst: TerminalInstance) {
-  const configOverride: { theme?: string; fontFamily?: string; fontSize?: number } = {};
-  if (inst.config.theme !== undefined) configOverride.theme = inst.config.theme;
-  if (inst.config.fontFamily !== undefined) configOverride.fontFamily = inst.config.fontFamily;
-  if (inst.config.fontSize !== undefined) configOverride.fontSize = inst.config.fontSize;
-  // HS-8283 — drawer terminals always belong to the active project, so
-  // resolve against the active project's per-secret cached default.
-  const activeSecret = getActiveProject()?.secret ?? '';
-  return resolveAppearance({
-    projectDefault: getProjectDefault(activeSecret),
-    configOverride,
-    sessionOverride: getSessionOverride(inst.id),
-  });
-}
-
-/** Build just the xterm ITheme for the initial `new XTerm({ theme: … })`
- *  call — the full appearance (font family + size) is applied async after
- *  the terminal opens. */
-function resolveAppearanceThemeForInit(inst: TerminalInstance) {
-  const appearance = resolveInstanceAppearance(inst);
-  const theme = getThemeById(appearance.theme) ?? getThemeById('default')!;
-  return themeToXtermOptions(theme);
-}
-
-/** Re-resolve + apply appearance to a live xterm. Called on mount, on the
- *  appearance popover's onApply callback, and on project-default changes. */
-async function reapplyAppearance(inst: TerminalInstance): Promise<void> {
-  if (inst.term === null) return;
-  const appearance = resolveInstanceAppearance(inst);
-  // HS-7960 — paint the body's padded gutter with the new theme background
-  // synchronously, BEFORE the async font load runs, so a slow font fetch
-  // doesn't leave the gutter in the previous theme's color mid-flight.
-  inst.body.style.backgroundColor = resolveAppearanceBackground(appearance);
-  await applyAppearanceToTerm(inst.term, appearance);
-}
+// HS-8396 Phase 7a — `resolveInstanceAppearance`, `resolveAppearanceThemeForInit`,
+// `reapplyAppearance`, `doFit` moved to `terminalInstanceAppearance.tsx`.
+// Imported below; the drawer-mount module now imports them directly so
+// they no longer need to be threaded through `initDrawerMount` hooks.
 
 /**
  * HS-8044 — mount the drawer pane via `terminalCheckout` instead of
@@ -1056,11 +1019,6 @@ export function onProjectSwitch(): void {
   disposeAllInstances();
   terminalState.currentProjectSecret = null;
   terminalState.lastKnownConfigs = { configured: [], dynamic: [] };
-}
-
-function doFit(inst: TerminalInstance): void {
-  if (!inst.fit) return;
-  try { inst.fit.fit(); } catch { /* body not visible yet */ }
 }
 
 // --- Dynamic terminal lifecycle (HS-6306) ---
