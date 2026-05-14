@@ -153,6 +153,18 @@ When the user gives you work directly via the CLI (not via MCP channel or Hot Sh
 - Client CSS and JS are built separately and served as static files
 - **`CHANNEL_VERSION`** in `src/channel.ts` AND `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` — bump both integers (they must match) when changing the channel server's capabilities (new endpoints, protocol changes, new MCP features). The main server compares the running server's version against the expected version and warns the user to reconnect via `/mcp` in Claude Code if they don't match. Always increment both when modifying `src/channel.ts` in ways that affect the HTTP API or MCP behavior.
 
+### Ticket numbers in prose
+
+Hot Sheet tickets are local to the maintainer's machine — the `HS-NNNN` numbering only resolves against the `.hotsheet/` database, which lives outside the repo. A bare `HS-1234` reference is meaningless to anyone else reading this codebase.
+
+Rules:
+
+- **Never tell a reader to look in `.hotsheet/`** for ticket context (the orientation doc, other requirements docs, code comments, commit messages, completion notes, AI summaries). That directory is local-only.
+- **It's fine to mention a ticket number** — but ALWAYS pair it with a short self-contained summary that conveys the meaning without needing the ticket. The summary may be very different from the ticket's actual title; aim for what a fresh reader needs to understand the change. Example: ✅ `HS-8380 — client search filter mirrors the server's five-column ILIKE`; ❌ `Per HS-8380`.
+- When opportunistically editing prose that contains a bare ticket number, add the short summary if you can.
+
+Audience: assume the reader has the repo but not the local ticket DB.
+
 ### Spelling and grammar (American English)
 
 All prose written for this project — code comments, commit messages, completion notes, requirements docs, AI summaries, user-visible strings — uses **American English** spelling and grammar. This applies to new writing AND to existing text you happen to be editing.

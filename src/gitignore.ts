@@ -1,10 +1,10 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { appendFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 export function isHotsheetGitignored(repoRoot: string): boolean {
   try {
-    execSync('git check-ignore -q .hotsheet', { cwd: repoRoot, stdio: 'ignore' });
+    execFileSync('git', ['check-ignore', '-q', '.hotsheet'], { cwd: repoRoot, stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -13,7 +13,7 @@ export function isHotsheetGitignored(repoRoot: string): boolean {
 
 export function isGitRepo(dir: string): boolean {
   try {
-    execSync('git rev-parse --is-inside-work-tree', { cwd: dir, stdio: 'ignore' });
+    execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: dir, stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -22,7 +22,7 @@ export function isGitRepo(dir: string): boolean {
 
 export function getGitRoot(dir: string): string | null {
   try {
-    return execSync('git rev-parse --show-toplevel', { cwd: dir, encoding: 'utf-8' }).trim();
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: dir, encoding: 'utf-8' }).trim();
   } catch {
     return null;
   }

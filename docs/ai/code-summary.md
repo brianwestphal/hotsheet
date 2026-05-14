@@ -377,7 +377,7 @@ When `IntersectionObserver` is undefined (some test envs without a polyfill), th
 - `projectTabsFingerprint.ts` — **deleted in HS-8310 (2026-05-09)**. Pre-deletion: pure-helper fingerprint of the project-tab list shape used by `projectTabs.tsx` to skip rebuilds when the visible tab set is unchanged. The HS-8235 bindList migration of `projectTabs.tsx` made the helper obsolete (keyed reconciliation does the same job naturally); zero callers remained, so the helper + its test were deleted.
 - `terminalSnapshot.ts` — **deleted in HS-8177 (2026-05-04)**. Pre-deletion: client-side scrollback snapshot helper used by §47 permission popup (HS-7999 → HS-8139 → HS-8158 → HS-8159 iterations). HS-8171 v2 replaced the popup's snapshot path with a real §54 `checkout()` of the live terminal; the snapshot module then had zero production callers. Deleted alongside the pause/drain plumbing it depended on (`pauseEntryWrites` / `takePausedBytes` / `resumeEntryWritesAndDrain` / `sendPtyResize` exports + `paused` / `pausedBytes` fields on `StackEntry` in `terminalCheckout.tsx`). A future surface needing a one-shot mirror would need to reintroduce a similar capture path.
 
-### `src/plugins/`, `src/sync/`, `src/terminals/`, `src/git/`, `src/shared/`, `src/components/`, `src/utils/`
+### `src/plugins/`, `src/sync/`, `src/terminals/`, `src/git/`, `src/components/`, `src/utils/`
 
 - `plugins/{types.ts,loader.ts,syncEngine.ts}` — plugin API types, discovery/activation, bi-directional sync.
 - `sync/markdown.ts` — debounced export of `worklist.md` / `open-tickets.md`.

@@ -1,5 +1,5 @@
 /**
- * HS-8191 — Centralised UI-timing constants for the client bundle.
+ * HS-8191 — Centralized UI-timing constants for the client bundle.
  *
  * Pre-HS-8191 ~20 hardcoded `setTimeout` / debounce literals were scattered
  * across the client (`200`, `2000`, `6000`, `400`, `900`, `150`, …) with
@@ -9,6 +9,15 @@
  *
  * Naming convention: `<UI_OR_BEHAVIOR>_<UNIT>` — units are always
  * milliseconds for setTimeout values.
+ *
+ * **What belongs here vs. stays local** — only timing values that two or
+ * more client modules must agree on. A constant used inside one file
+ * stays in that file (e.g., `CENTER_ANIMATION_MS` in `terminalTileGrid.tsx`,
+ * `SERVER_BUSY_THRESHOLD_MS` exported by `serverBusyChip.tsx` for its
+ * own tests). Move a local constant up to this module the moment a
+ * second consumer needs the same value — and ONLY then. Adding genuinely
+ * single-use values here creates dependency-graph noise without buying
+ * anything.
  */
 
 /** Toast / alert auto-hide for transient notices (megaphone send failure,
