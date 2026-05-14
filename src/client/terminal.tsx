@@ -1,7 +1,5 @@
 import type { FitAddon } from '@xterm/addon-fit';
-import { SearchAddon } from '@xterm/addon-search';
-import { SerializeAddon } from '@xterm/addon-serialize';
-import { WebLinksAddon } from '@xterm/addon-web-links';
+import type { SearchAddon } from '@xterm/addon-search';
 import type { Terminal as XTerm } from '@xterm/xterm';
 
 import { raw } from '../jsx-runtime.js';
@@ -21,7 +19,7 @@ import type { Signal } from './reactive.js';
 import { signal } from './reactive.js';
 import { bindList } from './reactive-bind.js';
 import { getActiveProject } from './state.js';
-import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
+import { getTauriInvoke } from './tauriIntegration.js';
 import {
   applyAppearanceToTerm,
   getProjectDefault,
@@ -32,26 +30,22 @@ import {
   subscribeToDefaultAppearanceChanges,
 } from './terminalAppearance.js';
 import { mountAppearancePopover } from './terminalAppearancePopover.js';
-import { checkout,type CheckoutHandle } from './terminalCheckout.js';
+import type { CheckoutHandle } from './terminalCheckout.js';
+import { initDrawerMount, mountInstanceViaCheckout } from './terminalDrawerMount.js';
 import {
   tabDisplayName,
   updateCwdChip,
   updateTabLabel,
 } from './terminalInstanceLabel.js';
-import { isClearTerminalShortcut, isFindShortcut, isJumpShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
-import { cacheHomeDir, parseOsc7Payload } from './terminalOsc7.js';
-import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
+import { cacheHomeDir } from './terminalOsc7.js';
+import type { TerminalSearchHandle } from './terminalSearch.js';
 import {
   applyShellIntegrationToolbarVisibility,
-  closeDanglingCommand,
   copyLastOutput,
   freshShellIntegrationState,
-  handleOsc133,
-  jumpToPromptMarker,
   reapplyShellIntegrationDecorations,
   resetShellIntegration,
   type ShellIntegrationState,
-  shellIntegrationUiEnabled,
 } from './terminalShellIntegration.js';
 import { initTabContextMenu, orderedTabIds, showTabContextMenu } from './terminalTabContextMenu.js';
 import { attachTabDragHandlers, initTabDragDrop } from './terminalTabDragDrop.js';
@@ -262,6 +256,21 @@ export function initTerminal(): void {
     getInstance: (id) => instances.get(id),
     closeDynamicTerminal,
     selectFallbackAfterClose,
+  });
+  // HS-8396 Phases 5+6 — wire the drawer xterm mount + control-message
+  // dispatch module's hooks. The lifecycle helpers (`setStatus`,
+  // `shortCommandName`, `doFit`, `isTerminalTabActive`,
+  // `resolveInstanceAppearance`, `resolveAppearanceThemeForInit`,
+  // `reapplyAppearance`) stay in this module — they reach into per-
+  // instance state that hasn't been phase-extracted yet.
+  initDrawerMount({
+    setStatus,
+    shortCommandName,
+    doFit,
+    isTerminalTabActive,
+    resolveInstanceAppearance,
+    resolveAppearanceThemeForInit,
+    reapplyAppearance,
   });
   // Wire up the new + button that creates dynamic terminals.
   byIdOrNull('drawer-add-terminal-btn')?.addEventListener('click', () => { void createDynamicTerminal(); });
@@ -868,212 +877,13 @@ async function reapplyAppearance(inst: TerminalInstance): Promise<void> {
  * reconnect on transient close, so the drawer's old `scheduleReconnect`
  * path is gone.
  */
-function applyDrawerXtermOptions(inst: TerminalInstance, term: XTerm): void {
-  // HS-8044 — option overrides applied here win for the drawer's lifetime as
-  // long as it stays at top-of-stack of the shared (secret, terminalId) xterm.
-  term.options.theme = resolveAppearanceThemeForInit(inst);
-  term.options.linkHandler = {
-    activate: (_event, text) => { openExternalUrl(text); },
-  };
-  term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
-  term.loadAddon(new SerializeAddon());
-}
 
-function mountDrawerSearchAddon(inst: TerminalInstance, term: XTerm): { search: SearchAddon; searchHandle: TerminalSearchHandle | null } {
-  // HS-7331 — xterm's SearchAddon powers the toolbar Find widget. Disposed on
-  // PTY restart + re-created on the next mount so search state doesn't leak.
-  const search = new SearchAddon();
-  term.loadAddon(search);
-  const searchSlot = inst.header.querySelector<HTMLElement>('.terminal-search-slot');
-  let searchHandle: TerminalSearchHandle | null = null;
-  if (searchSlot !== null) {
-    searchHandle = mountTerminalSearch(term, search);
-    searchSlot.replaceChildren(searchHandle.root);
-  }
-  return { search, searchHandle };
-}
-
-function attachDrawerKeyHandler(inst: TerminalInstance, term: XTerm): void {
-  // Per-shortcut rationale lives on the original mountXterm comments
-  // (HS-7329 / HS-7269 / HS-7331 / HS-7594).
-  term.attachCustomKeyEventHandler((e) => {
-    if (isClearTerminalShortcut(e)) {
-      inst.checkout?.term.clear();
-      return false;
-    }
-    if (isFindShortcut(e)) return false;
-    if (isTerminalViewToggleShortcut(e) !== null) return false;
-    if (!shellIntegrationUiEnabled()) return true;
-    if (!inst.shellIntegration.enabled) return true;
-    const direction = isJumpShortcut(e);
-    if (direction !== null) {
-      jumpToPromptMarker(inst, direction);
-      return false;
-    }
-    return true;
-  });
-}
-
-function attachDrawerTermHandlers(inst: TerminalInstance, term: XTerm, handle: ReturnType<typeof checkout>): void {
-  // HS-8044 — echo fit-driven dim changes through `handle.resize` so the WS
-  // resize frame is sent and `lastApplied` bookkeeping stays current.
-  inst.termHandlerDisposers.push(term.onResize(({ cols, rows }) => {
-    handle.resize(cols, rows);
-  }));
-
-  // OSC 0 / OSC 2 title-change escapes (HS-6473).
-  inst.termHandlerDisposers.push(term.onTitleChange((newTitle) => {
-    inst.runtimeTitle = typeof newTitle === 'string' ? newTitle : '';
-    updateTabLabel(inst);
-  }));
-
-  // OSC 7 — shell-pushed CWD (HS-7262). xterm.js doesn't handle OSC 7
-  // natively — register a parser hook on the number directly.
-  inst.termHandlerDisposers.push(term.parser.registerOscHandler(7, (payload) => {
-    const parsed = parseOsc7Payload(payload);
-    if (parsed !== null) {
-      inst.runtimeCwd = parsed;
-      updateCwdChip(inst);
-    }
-    return true;
-  }));
-
-  // OSC 133 — FinalTerm / iTerm2 / VS Code shell integration (HS-7267).
-  inst.termHandlerDisposers.push(term.parser.registerOscHandler(133, (payload) => {
-    handleOsc133(inst, term, payload);
-    return true;
-  }));
-
-  // Bell character `\x07` (HS-6473).
-  inst.termHandlerDisposers.push(term.onBell(() => {
-    if (!isTerminalTabActive(inst)) {
-      inst.hasBell = true;
-      updateTabLabel(inst);
-    }
-  }));
-}
-
-// HS-8286 — `attachStallIndicator` deleted. The per-pane stall chip was
-// removed; stall detection now feeds the global server-slow banner via
-// the per-entry watcher inside `terminalCheckout.tsx::createEntry`.
-
-function mountInstanceViaCheckout(inst: TerminalInstance, secret: string): void {
-  const handle = checkout({
-    projectSecret: secret,
-    terminalId: inst.id,
-    cols: 80,
-    rows: 24,
-    mountInto: inst.canvasHost,
-    // HS-8295 — paint the §54 "Terminal in use elsewhere" placeholder with
-    // this terminal's resolved theme background so a §47 popup borrowing
-    // the live xterm doesn't flash the drawer canvas to `--bg-secondary`.
-    placeholderBackground: resolveAppearanceBackground(resolveInstanceAppearance(inst)),
-    onControlMessage(msg) { handleControlMessage(inst, msg); },
-    onRestoredToTop() {
-      // HS-8206 v2 — when another consumer (e.g. the §47 permission popup
-      // borrowing the live terminal via §54 checkout) releases, the live
-      // xterm reparents back into our `canvasHost`. `applyResizeIfChanged`
-      // inside `releaseInternal` resizes the term to the cols/rows we
-      // originally requested at checkout time (80×24), NOT to the drawer
-      // pane's actual current geometry — which is typically much wider
-      // (e.g. 178×42). Without an explicit refit here, the user sees the
-      // drawer terminal stuck at the popup's narrow size with content
-      // wrapping at ~80 cols even though the drawer pane is full-width.
-      // Defer one rAF so the reparent + applyResizeIfChanged round-trip
-      // has settled before FitAddon reads CSS dims.
-      requestAnimationFrame(() => doFit(inst));
-    },
-  });
-  const term = handle.term;
-  const fit = handle.fit;
-
-  applyDrawerXtermOptions(inst, term);
-  const { search, searchHandle } = mountDrawerSearchAddon(inst, term);
-
-  // HS-7960 — paint the body's gutter to match the theme BEFORE the async
-  // appearance load runs (fire-and-forget below). Without this synchronous
-  // prime the very first canvas paint flashes with the app's `--bg`.
-  inst.body.style.backgroundColor = resolveAppearanceBackground(resolveInstanceAppearance(inst));
-  // HS-6307 — apply full appearance (font family + size). Fire-and-forget.
-  void reapplyAppearance(inst);
-
-  // Clicking the body (including padding gutters outside the canvas) focuses
-  // the terminal — preserves the pre-HS-7959 click-to-focus reach.
-  inst.body.addEventListener('click', () => { term.focus(); });
-
-  attachDrawerKeyHandler(inst, term);
-  attachDrawerTermHandlers(inst, term, handle);
-
-  inst.checkout = handle;
-  inst.term = term;
-  inst.fit = fit;
-  inst.search = search;
-  inst.searchHandle = searchHandle;
-  inst.wsSecret = secret;
-}
-
-// HS-8044 — pre-fix `connect(inst)` opened a per-instance WebSocket
-// here, wired open / message / close / error listeners, and
-// `scheduleReconnect(inst)` retried with backoff on close. Post-fix the
-// checkout module owns all of that: `mountInstanceViaCheckout` delegates
-// to `checkout(...)` which opens the WS internally, and the module's
-// own close-event listener auto-reconnects when the entry's stack is
-// non-empty (the drawer remains a consumer until the tab closes /
-// project switches away). The drawer's `onControlMessage` callback
-// passed into `checkout()` receives the parsed JSON control messages
-// and routes them through `handleControlMessage(inst, msg)` for
-// 'history' / 'exit' handling.
-
-// HS-8088 — discriminated union over the control-message shapes the
-// drawer currently consumes. Pre-fix the parsed JSON arrived as
-// `{ type: string; [k: string]: unknown }` and each branch did
-// `msg as unknown as HistoryMessage` / `as unknown as ExitMessage` to
-// peel apart the fields. The narrowing predicates below let TS pick
-// the right branch from a `msg.type === 'history'` / `'exit'` check
-// without an escape-hatch cast at every callsite. The interface members
-// extend an index signature so the predicates' type guards can narrow
-// against the JSON-shape parameter type.
-interface HistoryMessage { type: 'history'; bytes: string; alive: boolean; exitCode: number | null; cols: number; rows: number; command: string; [k: string]: unknown }
-interface ExitMessage { type: 'exit'; code: number; [k: string]: unknown }
-type ControlMessage = HistoryMessage | ExitMessage;
-
-function isHistoryMessage(msg: { type: string; [k: string]: unknown }): msg is HistoryMessage {
-  return msg.type === 'history' && typeof msg.bytes === 'string' && typeof msg.alive === 'boolean';
-}
-function isExitMessage(msg: { type: string; [k: string]: unknown }): msg is ExitMessage {
-  return msg.type === 'exit' && typeof msg.code === 'number';
-}
-// `ControlMessage` is exposed for tests / future callers — kept exported
-// to mirror the audit's intent.
-export type { ControlMessage };
-
-function handleControlMessage(inst: TerminalInstance, msg: { type: string; [k: string]: unknown }): void {
-  if (isHistoryMessage(msg)) {
-    // HS-8044 — bytes-replay (resize first, write second) is now done
-    // inside the checkout module's WS handler. The drawer just extracts
-    // the metadata fields (alive, exitCode, command) for tab-status /
-    // tab-label updates.
-    inst.exitCode = msg.exitCode;
-    setStatus(inst, msg.alive ? 'alive' : 'exited');
-    if (msg.command !== '') {
-      // Prefer the user-supplied name; fall back to resolved command for unnamed terminals.
-      if ((inst.config.name ?? '') === '') inst.label.textContent = shortCommandName(msg.command);
-    }
-    requestAnimationFrame(() => doFit(inst));
-    return;
-  }
-  if (isExitMessage(msg)) {
-    inst.exitCode = msg.code;
-    setStatus(inst, 'exited');
-    inst.term?.write(`\r\n[process exited with code ${msg.code}]\r\n`);
-    // HS-7267 — if a command was in-flight (A seen, no D yet), close it out
-    // with exitCode=-1 so its gutter glyph stays visible (otherwise the
-    // record sits dangling with no visible end). §26.9 edge case "runaway
-    // C without D".
-    if (inst.term !== null) closeDanglingCommand(inst, inst.term);
-    return;
-  }
-}
+// HS-8396 Phases 5+6 — `mountInstanceViaCheckout`, `applyDrawerXtermOptions`,
+// `mountDrawerSearchAddon`, `attachDrawerKeyHandler`, `attachDrawerTermHandlers`,
+// `HistoryMessage` / `ExitMessage` / `ControlMessage`, `isHistoryMessage`,
+// `isExitMessage`, and `handleControlMessage` moved to `terminalDrawerMount.tsx`.
+// Wired via `initDrawerMount({setStatus, shortCommandName, doFit, ...})` in
+// `initTerminal`.
 
 /**
  * OSC 133 handler entry point (HS-7267). The payload is everything after
