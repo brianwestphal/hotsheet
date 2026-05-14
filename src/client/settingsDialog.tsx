@@ -8,12 +8,33 @@ import type { NotifyLevel } from './state.js';
 import { state } from './state.js';
 import { getTauriInvoke, showUpdateBanner } from './tauriIntegration.js';
 
-export function bindSettingsDialog(rebuildCategoryUI: () => void) {
-  const overlay = byId('settings-overlay');
-  const closeBtn = byId('settings-close');
-  const settingsBtn = byId('settings-btn');
+interface FileSettingsForGeneralAndTerminal {
+  appName?: string;
+  backupDir?: string;
+  ticketPrefix?: string;
+  terminal_scrollback_bytes?: string | number;
+}
 
-  // Tab switching
+export function bindSettingsDialog(rebuildCategoryUI: () => void) {
+  bindTabSwitching();
+  bindDialogOpenClose();
+
+  bindGeneralTab();
+  bindBackupsTab();
+  bindTerminalTab();
+
+  bindAutoContextSettings();
+  if (PLUGINS_ENABLED) {
+    void import('./pluginSettings.js').then(({ bindPluginSettings }) => bindPluginSettings());
+  }
+  bindExperimentalSettings();
+  bindCategorySettings(rebuildCategoryUI);
+  bindCliToolSettings();
+}
+
+// --- Tab switching + dialog open/close ---
+
+function bindTabSwitching() {
   const tabs = document.querySelectorAll('.settings-tab');
   const panels = document.querySelectorAll('.settings-tab-panel');
   tabs.forEach(tab => {
@@ -31,6 +52,14 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       }
     });
   });
+}
+
+function bindDialogOpenClose() {
+  const overlay = byId('settings-overlay');
+  const closeBtn = byId('settings-close');
+  const settingsBtn = byId('settings-btn');
+  const tabs = document.querySelectorAll('.settings-tab');
+  const panels = document.querySelectorAll('.settings-tab-panel');
 
   settingsBtn.addEventListener('click', () => {
     // Always reset to General tab when opening
@@ -45,47 +74,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     const titleEl = byIdOrNull('settings-dialog-title');
     if (titleEl) titleEl.textContent = `${projectName} Settings`;
 
-    // Populate fields with current values
-    byId<HTMLInputElement>('settings-trash-days').value = String(state.settings.trash_cleanup_days);
-    byId<HTMLInputElement>('settings-verified-days').value = String(state.settings.verified_cleanup_days);
-    byId<HTMLInputElement>('settings-auto-order').checked = state.settings.auto_order;
-    byId<HTMLInputElement>('settings-hide-verified-column').checked = state.settings.hide_verified_column;
-    byId<HTMLInputElement>('settings-shell-integration-ui').checked = state.settings.shell_integration_ui;
-    // HS-7984 — §53 Phase 4 streaming toggle.
-    byId<HTMLInputElement>('settings-shell-streaming-enabled').checked = state.settings.shell_streaming_enabled;
-    byId<HTMLSelectElement>('settings-notify-permission').value = state.settings.notify_permission;
-    byId<HTMLSelectElement>('settings-notify-completed').value = state.settings.notify_completed;
     overlay.style.display = 'flex';
-    void loadBackupList();
-    // Load file-based settings (app name, backup dir, terminal settings)
-    void api<{
-      appName?: string;
-      backupDir?: string;
-      ticketPrefix?: string;
-      terminal_scrollback_bytes?: string | number;
-    }>('/file-settings').then((fs) => {
-      byId<HTMLInputElement>('settings-app-name').value = fs.appName ?? '';
-      byId<HTMLInputElement>('settings-backup-dir').value = fs.backupDir ?? '';
-      byId<HTMLInputElement>('settings-ticket-prefix').value = fs.ticketPrefix ?? '';
-      const scrollback = fs.terminal_scrollback_bytes;
-      const scrollbackInput = byId<HTMLInputElement>('settings-terminal-scrollback');
-      scrollbackInput.value = scrollback === undefined || scrollback === '' ? '' : String(scrollback);
-    });
-    // Terminals outline list (HS-6271) — loads asynchronously.
-    void import('./terminalsSettings.js').then(({ loadAndRenderTerminalsSettings }) => loadAndRenderTerminalsSettings());
-    // HS-6307 — populate + wire the "Default appearance" panel on open.
-    void import('./terminalDefaultAppearanceUI.js').then(({ loadAndWireTerminalDefaultAppearance }) => {
-      void loadAndWireTerminalDefaultAppearance();
-    });
-    // HS-7596 / §37 — populate + wire the Quit confirmation panel.
-    void import('./quitConfirmSettingsUI.js').then(({ loadAndWireQuitConfirmSettings }) => {
-      void loadAndWireQuitConfirmSettings();
-    });
-    // HS-7830 — wire the Reset visibility button + live-update its
-    // status text from the dashboardHiddenTerminals subscription.
-    void import('./hiddenTerminalsResetUI.js').then(({ loadAndWireHiddenTerminalsReset }) => {
-      loadAndWireHiddenTerminalsReset();
-    });
   });
 
   closeBtn.addEventListener('click', () => {
@@ -97,9 +86,42 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       overlay.style.display = 'none';
     }
   });
+}
+
+// --- General tab ---
+
+function bindGeneralTab() {
+  const settingsBtn = byId('settings-btn');
+
+  const trashInput = byId<HTMLInputElement>('settings-trash-days');
+  const verifiedInput = byId<HTMLInputElement>('settings-verified-days');
+  const autoOrderCheckbox = byId<HTMLInputElement>('settings-auto-order');
+  const hideVerifiedCheckbox = byId<HTMLInputElement>('settings-hide-verified-column');
+  const shellIntegrationCheckbox = byId<HTMLInputElement>('settings-shell-integration-ui');
+  const shellStreamingCheckbox = byId<HTMLInputElement>('settings-shell-streaming-enabled');
+  const notifyPermSelect = byId<HTMLSelectElement>('settings-notify-permission');
+  const notifyCompSelect = byId<HTMLSelectElement>('settings-notify-completed');
+  const appNameInput = byId<HTMLInputElement>('settings-app-name');
+  const prefixInput = byId<HTMLInputElement>('settings-ticket-prefix');
+
+  // Populate values + load file-settings fields when dialog opens.
+  settingsBtn.addEventListener('click', () => {
+    trashInput.value = String(state.settings.trash_cleanup_days);
+    verifiedInput.value = String(state.settings.verified_cleanup_days);
+    autoOrderCheckbox.checked = state.settings.auto_order;
+    hideVerifiedCheckbox.checked = state.settings.hide_verified_column;
+    shellIntegrationCheckbox.checked = state.settings.shell_integration_ui;
+    // HS-7984 — §53 Phase 4 streaming toggle.
+    shellStreamingCheckbox.checked = state.settings.shell_streaming_enabled;
+    notifyPermSelect.value = state.settings.notify_permission;
+    notifyCompSelect.value = state.settings.notify_completed;
+    void api<FileSettingsForGeneralAndTerminal>('/file-settings').then((fs) => {
+      appNameInput.value = fs.appName ?? '';
+      prefixInput.value = fs.ticketPrefix ?? '';
+    });
+  });
 
   // Trash cleanup days
-  const trashInput = byId<HTMLInputElement>('settings-trash-days');
   let trashTimeout: ReturnType<typeof setTimeout> | null = null;
   trashInput.addEventListener('input', () => {
     if (trashTimeout) clearTimeout(trashTimeout);
@@ -112,7 +134,6 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   });
 
   // Verified cleanup days
-  const verifiedInput = byId<HTMLInputElement>('settings-verified-days');
   let verifiedTimeout: ReturnType<typeof setTimeout> | null = null;
   verifiedInput.addEventListener('input', () => {
     if (verifiedTimeout) clearTimeout(verifiedTimeout);
@@ -124,7 +145,116 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     }, 500);
   });
 
-  // App icon picker
+  bindAppIconPicker();
+
+  // Auto-prioritize toggle
+  autoOrderCheckbox.addEventListener('change', () => {
+    state.settings.auto_order = autoOrderCheckbox.checked;
+    void api('/settings', { method: 'PATCH', body: { auto_order: String(autoOrderCheckbox.checked) } });
+  });
+
+  // Hide verified column toggle
+  hideVerifiedCheckbox.addEventListener('change', async () => {
+    state.settings.hide_verified_column = hideVerifiedCheckbox.checked;
+    await api('/settings', { method: 'PATCH', body: { hide_verified_column: String(hideVerifiedCheckbox.checked) } });
+    // Re-render to apply column change immediately
+    const { renderTicketList } = await import('./ticketList.js');
+    renderTicketList();
+  });
+
+  // HS-7269 — Shell integration UI toggle. Covers gutter glyphs + copy-output
+  // button + Cmd/Ctrl+Arrow jump shortcuts + hover popover. Toggling fires a
+  // custom event that the terminal module listens for so it can re-apply
+  // visibility on the currently-active instance without a full rebuild.
+  shellIntegrationCheckbox.addEventListener('change', () => {
+    state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
+    void api('/settings', { method: 'PATCH', body: { shell_integration_ui: String(shellIntegrationCheckbox.checked) } });
+    document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
+  });
+
+  // HS-7984 — §53 Phase 4 streaming-output toggle. Per-project (DB-backed
+  // settings via `/settings`). When off, both client surfaces (sidebar
+  // row preview + Commands Log live `<pre>`) gate rendering on the flag
+  // — server still buffers so re-enabling mid-run picks up where we
+  // left off. The shell-partial-output event is still dispatched; the
+  // consumers decide whether to act on it.
+  shellStreamingCheckbox.addEventListener('change', () => {
+    state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
+    void api('/settings', { method: 'PATCH', body: { shell_streaming_enabled: String(shellStreamingCheckbox.checked) } });
+  });
+
+  // Notification dropdowns
+  notifyPermSelect.addEventListener('change', () => {
+    state.settings.notify_permission = notifyPermSelect.value as NotifyLevel;
+    void api('/settings', { method: 'PATCH', body: { notify_permission: notifyPermSelect.value } });
+  });
+  notifyCompSelect.addEventListener('change', () => {
+    state.settings.notify_completed = notifyCompSelect.value as NotifyLevel;
+    void api('/settings', { method: 'PATCH', body: { notify_completed: notifyCompSelect.value } });
+  });
+
+  // App name (file-based setting)
+  const appNameHint = byId('settings-app-name-hint');
+  let appNameTimeout: ReturnType<typeof setTimeout> | null = null;
+  appNameInput.addEventListener('input', () => {
+    if (appNameTimeout) clearTimeout(appNameTimeout);
+    appNameTimeout = setTimeout(() => {
+      const val = appNameInput.value.trim();
+      void api('/file-settings', { method: 'PATCH', body: { appName: val } }).then(() => {
+        const displayName = val || 'Hot Sheet';
+        document.title = displayName;
+        const h1 = document.querySelector('.app-title h1');
+        if (h1) h1.textContent = displayName;
+        appNameHint.textContent = val ? 'Saved. Restart the desktop app to update the title bar.' : 'Using default name.';
+      });
+    }, 800);
+  });
+
+  // Ticket prefix (file-based setting)
+  const prefixHint = byId('settings-ticket-prefix-hint');
+  let prefixTimeout: ReturnType<typeof setTimeout> | null = null;
+  prefixInput.addEventListener('input', () => {
+    if (prefixTimeout) clearTimeout(prefixTimeout);
+    prefixTimeout = setTimeout(() => {
+      const val = prefixInput.value.trim();
+      if (val !== '' && !/^[a-zA-Z0-9_-]{1,10}$/.test(val)) {
+        prefixHint.textContent = 'Invalid: use up to 10 alphanumeric, hyphen, or underscore characters.';
+        return;
+      }
+      void api('/file-settings', { method: 'PATCH', body: { ticketPrefix: val } }).then(() => {
+        prefixHint.textContent = val ? `New tickets will use "${val}-" prefix.` : 'Using default prefix (HS).';
+      });
+    }, 800);
+  });
+
+  // Check for Updates button
+  const checkUpdatesBtn = byId<HTMLButtonElement>('check-updates-btn');
+  const checkUpdatesStatus = byId('check-updates-status');
+  checkUpdatesBtn.addEventListener('click', async () => {
+    const invoke = getTauriInvoke();
+    if (!invoke) return;
+    checkUpdatesBtn.disabled = true;
+    checkUpdatesBtn.textContent = 'Checking...';
+    checkUpdatesStatus.textContent = '';
+    try {
+      const version = (await invoke('check_for_update')) as string | null;
+      if (version !== null && version !== '') {
+        checkUpdatesStatus.textContent = `Update available: v${version}`;
+        // Close settings panel so the update banner is visible
+        byId('settings-overlay').style.display = 'none';
+        showUpdateBanner(version);
+      } else {
+        checkUpdatesStatus.textContent = 'Your software is up to date.';
+      }
+    } catch {
+      checkUpdatesStatus.textContent = 'Could not check for updates.';
+    }
+    checkUpdatesBtn.textContent = 'Check for Updates';
+    checkUpdatesBtn.disabled = false;
+  });
+}
+
+function bindAppIconPicker() {
   const iconBtn = byId('app-icon-picker-btn');
   const iconPreview = byId<HTMLImageElement>('app-icon-preview');
   let currentIcon = 'default';
@@ -184,124 +314,22 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       document.addEventListener('click', close);
     }, 0);
   });
+}
 
-  // Auto-prioritize toggle
-  const autoOrderCheckbox = byId<HTMLInputElement>('settings-auto-order');
-  autoOrderCheckbox.addEventListener('change', () => {
-    state.settings.auto_order = autoOrderCheckbox.checked;
-    void api('/settings', { method: 'PATCH', body: { auto_order: String(autoOrderCheckbox.checked) } });
-  });
+// --- Backups tab ---
 
-  // Hide verified column toggle
-  const hideVerifiedCheckbox = byId<HTMLInputElement>('settings-hide-verified-column');
-  hideVerifiedCheckbox.addEventListener('change', async () => {
-    state.settings.hide_verified_column = hideVerifiedCheckbox.checked;
-    await api('/settings', { method: 'PATCH', body: { hide_verified_column: String(hideVerifiedCheckbox.checked) } });
-    // Re-render to apply column change immediately
-    const { renderTicketList } = await import('./ticketList.js');
-    renderTicketList();
-  });
-
-  // HS-7269 — Shell integration UI toggle. Covers gutter glyphs + copy-output
-  // button + Cmd/Ctrl+Arrow jump shortcuts + hover popover. Toggling fires a
-  // custom event that the terminal module listens for so it can re-apply
-  // visibility on the currently-active instance without a full rebuild.
-  const shellIntegrationCheckbox = byId<HTMLInputElement>('settings-shell-integration-ui');
-  shellIntegrationCheckbox.addEventListener('change', () => {
-    state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
-    void api('/settings', { method: 'PATCH', body: { shell_integration_ui: String(shellIntegrationCheckbox.checked) } });
-    document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
-  });
-
-  // HS-7984 — §53 Phase 4 streaming-output toggle. Per-project (DB-backed
-  // settings via `/settings`). When off, both client surfaces (sidebar
-  // row preview + Commands Log live `<pre>`) gate rendering on the flag
-  // — server still buffers so re-enabling mid-run picks up where we
-  // left off. The shell-partial-output event is still dispatched; the
-  // consumers decide whether to act on it.
-  const shellStreamingCheckbox = byId<HTMLInputElement>('settings-shell-streaming-enabled');
-  shellStreamingCheckbox.addEventListener('change', () => {
-    state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
-    void api('/settings', { method: 'PATCH', body: { shell_streaming_enabled: String(shellStreamingCheckbox.checked) } });
-  });
-
-  // Notification dropdowns
-  const notifyPermSelect = byId<HTMLSelectElement>('settings-notify-permission');
-  const notifyCompSelect = byId<HTMLSelectElement>('settings-notify-completed');
-  notifyPermSelect.addEventListener('change', () => {
-    state.settings.notify_permission = notifyPermSelect.value as NotifyLevel;
-    void api('/settings', { method: 'PATCH', body: { notify_permission: notifyPermSelect.value } });
-  });
-  notifyCompSelect.addEventListener('change', () => {
-    state.settings.notify_completed = notifyCompSelect.value as NotifyLevel;
-    void api('/settings', { method: 'PATCH', body: { notify_completed: notifyCompSelect.value } });
-  });
-
-  // App name (file-based setting)
-  const appNameInput = byId<HTMLInputElement>('settings-app-name');
-  const appNameHint = byId('settings-app-name-hint');
-  let appNameTimeout: ReturnType<typeof setTimeout> | null = null;
-  appNameInput.addEventListener('input', () => {
-    if (appNameTimeout) clearTimeout(appNameTimeout);
-    appNameTimeout = setTimeout(() => {
-      const val = appNameInput.value.trim();
-      void api('/file-settings', { method: 'PATCH', body: { appName: val } }).then(() => {
-        const displayName = val || 'Hot Sheet';
-        document.title = displayName;
-        const h1 = document.querySelector('.app-title h1');
-        if (h1) h1.textContent = displayName;
-        appNameHint.textContent = val ? 'Saved. Restart the desktop app to update the title bar.' : 'Using default name.';
-      });
-    }, 800);
-  });
-
-  // Ticket prefix (file-based setting)
-  const prefixInput = byId<HTMLInputElement>('settings-ticket-prefix');
-  const prefixHint = byId('settings-ticket-prefix-hint');
-  let prefixTimeout: ReturnType<typeof setTimeout> | null = null;
-  prefixInput.addEventListener('input', () => {
-    if (prefixTimeout) clearTimeout(prefixTimeout);
-    prefixTimeout = setTimeout(() => {
-      const val = prefixInput.value.trim();
-      if (val !== '' && !/^[a-zA-Z0-9_-]{1,10}$/.test(val)) {
-        prefixHint.textContent = 'Invalid: use up to 10 alphanumeric, hyphen, or underscore characters.';
-        return;
-      }
-      void api('/file-settings', { method: 'PATCH', body: { ticketPrefix: val } }).then(() => {
-        prefixHint.textContent = val ? `New tickets will use "${val}-" prefix.` : 'Using default prefix (HS).';
-      });
-    }, 800);
-  });
-
-  // Check for Updates button
-  const checkUpdatesBtn = byId<HTMLButtonElement>('check-updates-btn');
-  const checkUpdatesStatus = byId('check-updates-status');
-  checkUpdatesBtn.addEventListener('click', async () => {
-    const invoke = getTauriInvoke();
-    if (!invoke) return;
-    checkUpdatesBtn.disabled = true;
-    checkUpdatesBtn.textContent = 'Checking...';
-    checkUpdatesStatus.textContent = '';
-    try {
-      const version = (await invoke('check_for_update')) as string | null;
-      if (version !== null && version !== '') {
-        checkUpdatesStatus.textContent = `Update available: v${version}`;
-        // Close settings panel so the update banner is visible
-        byId('settings-overlay').style.display = 'none';
-        showUpdateBanner(version);
-      } else {
-        checkUpdatesStatus.textContent = 'Your software is up to date.';
-      }
-    } catch {
-      checkUpdatesStatus.textContent = 'Could not check for updates.';
-    }
-    checkUpdatesBtn.textContent = 'Check for Updates';
-    checkUpdatesBtn.disabled = false;
-  });
-
-  // Backup directory (file-based setting)
+function bindBackupsTab() {
+  const settingsBtn = byId('settings-btn');
   const backupDirInput = byId<HTMLInputElement>('settings-backup-dir');
   const backupDirHint = byId('settings-backup-dir-hint');
+
+  settingsBtn.addEventListener('click', () => {
+    void loadBackupList();
+    void api<FileSettingsForGeneralAndTerminal>('/file-settings').then((fs) => {
+      backupDirInput.value = fs.backupDir ?? '';
+    });
+  });
+
   let backupDirTimeout: ReturnType<typeof setTimeout> | null = null;
   backupDirInput.addEventListener('input', () => {
     if (backupDirTimeout) clearTimeout(backupDirTimeout);
@@ -312,12 +340,19 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
       });
     }, 800);
   });
+}
 
-  // --- Embedded Terminal settings (HS-6268, docs/22-terminal.md §22.10) ---
-  // The Terminal settings tab is Tauri-only (HS-6437, HS-6337) — the backing
-  // PTY runs on the user's machine, so there is no sensible web-only UX. The
-  // feature is now always on in Tauri (no toggle): adding a terminal entry
-  // makes a tab appear; removing the last entry hides them again.
+// --- Embedded Terminal tab (HS-6268, docs/22-terminal.md §22.10) ---
+//
+// The Terminal settings tab is Tauri-only (HS-6437, HS-6337) — the backing
+// PTY runs on the user's machine, so there is no sensible web-only UX. The
+// feature is now always on in Tauri (no toggle): adding a terminal entry
+// makes a tab appear; removing the last entry hides them again.
+
+function bindTerminalTab() {
+  const settingsBtn = byId('settings-btn');
+
+  // Hide the Terminal tab button entirely outside Tauri.
   const termTabBtn = byIdOrNull('settings-tab-terminal');
   if (termTabBtn !== null) termTabBtn.style.display = getTauriInvoke() !== null ? '' : 'none';
 
@@ -342,22 +377,27 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     }, 800);
   });
 
-  // --- Context tab (auto-context) ---
-  bindAutoContextSettings();
-
-  // --- Plugins tab ---
-  if (PLUGINS_ENABLED) {
-    void import('./pluginSettings.js').then(({ bindPluginSettings }) => bindPluginSettings());
-  }
-
-  // --- Experimental tab (channel + custom commands) ---
-  bindExperimentalSettings();
-
-  // --- Category management ---
-  bindCategorySettings(rebuildCategoryUI);
-
-  // --- CLI tool install (Tauri only) ---
-  bindCliToolSettings();
+  settingsBtn.addEventListener('click', () => {
+    void api<FileSettingsForGeneralAndTerminal>('/file-settings').then((fs) => {
+      const scrollback = fs.terminal_scrollback_bytes;
+      termScrollbackInput.value = scrollback === undefined || scrollback === '' ? '' : String(scrollback);
+    });
+    // Terminals outline list (HS-6271) — loads asynchronously.
+    void import('./terminalsSettings.js').then(({ loadAndRenderTerminalsSettings }) => loadAndRenderTerminalsSettings());
+    // HS-6307 — populate + wire the "Default appearance" panel on open.
+    void import('./terminalDefaultAppearanceUI.js').then(({ loadAndWireTerminalDefaultAppearance }) => {
+      void loadAndWireTerminalDefaultAppearance();
+    });
+    // HS-7596 / §37 — populate + wire the Quit confirmation panel.
+    void import('./quitConfirmSettingsUI.js').then(({ loadAndWireQuitConfirmSettings }) => {
+      void loadAndWireQuitConfirmSettings();
+    });
+    // HS-7830 — wire the Reset visibility button + live-update its
+    // status text from the dashboardHiddenTerminals subscription.
+    void import('./hiddenTerminalsResetUI.js').then(({ loadAndWireHiddenTerminalsReset }) => {
+      loadAndWireHiddenTerminalsReset();
+    });
+  });
 }
 
 // --- Auto-context settings ---
@@ -403,7 +443,7 @@ function bindAutoContextSettings() {
         <div className="auto-context-entry">
           <div className="auto-context-header">
             <span className="auto-context-badge" data-type={entry.type}>{entry.type === 'category' ? 'Category' : 'Tag'}: {displayKey}</span>
-            <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
+            <button className="category-delete-btn" title="Remove">{'×'}</button>
           </div>
           <textarea className="auto-context-text" rows={3}>{entry.text}</textarea>
         </div>
@@ -454,7 +494,7 @@ function bindAutoContextSettings() {
           <div className="custom-view-editor" style="width:400px">
             <div className="custom-view-editor-header">
               <span>Add Auto-Context</span>
-              <button className="detail-close" id="ac-dialog-close">{'\u00d7'}</button>
+              <button className="detail-close" id="ac-dialog-close">{'×'}</button>
             </div>
             <div className="custom-view-editor-body">
               <div className="settings-field">

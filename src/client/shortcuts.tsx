@@ -36,6 +36,338 @@ function triggerRedo() {
   void performRedo();
 }
 
+/**
+ * Per-event focus context derived once per keydown so each shortcut entry
+ * can read pre-computed booleans rather than re-querying the DOM in its
+ * `match` predicate.
+ */
+interface KeyContext {
+  readonly isInput: boolean;
+  readonly isTerminalFocused: boolean;
+  readonly isCommandsLogFocused: boolean;
+}
+
+/** A shortcut's `run` callback returns `'handled'` to stop dispatch (and
+ *  implicitly calls `preventDefault` if it wants to consume the chord) or
+ *  `'continue'` to let the table keep matching subsequent entries — used
+ *  by chords with native-passthrough semantics like Cmd+C / Cmd+X. */
+type ShortcutResult = 'handled' | 'continue';
+
+interface KeyboardShortcut {
+  /** Human-readable label — appears in dev tools / logs, never user-facing. */
+  readonly label: string;
+  /** Predicate matching the chord. Should cover key + modifiers but stop
+   *  short of state-dependent gates that belong in `run`. */
+  readonly match: (e: KeyboardEvent, ctx: KeyContext) => boolean;
+  /** Side-effect handler. Must call `preventDefault()` itself when the
+   *  chord is being consumed — keeps each entry honest about its own
+   *  native-passthrough semantics. */
+  readonly run: (e: KeyboardEvent, ctx: KeyContext) => ShortcutResult;
+}
+
+/**
+ * The full keyboard-shortcut table. Order matters: entries are matched
+ * top-to-bottom; the first whose `match` returns true runs, and unless
+ * its `run` returns `'continue'` the dispatch halts. New chords go here.
+ *
+ * The capture-phase Cmd+Z / Cmd+Shift+Z handler is NOT in this table —
+ * it has to fire before any document-level keydown listener (so the
+ * dispatch table never sees it) and lives in its own listener below.
+ *
+ * The early Escape-closes-server-modal handler and the HS-8033 modal-bail
+ * are also kept inline in {@link bindKeyboardShortcuts} because they must
+ * run before any chord entry.
+ */
+const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
+  {
+    label: 'Cmd/Ctrl+Shift+[: previous project tab',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[',
+    run: (e) => {
+      e.preventDefault();
+      switchTabByOffset(-1);
+      return 'handled';
+    },
+  },
+  {
+    label: 'Cmd/Ctrl+Shift+]: next project tab',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && e.key === ']',
+    run: (e) => {
+      e.preventDefault();
+      switchTabByOffset(1);
+      return 'handled';
+    },
+  },
+  {
+    // HS-6472 + HS-8366 — terminal-aware project/drawer tab cycling. The
+    // pure decision function {@link decideShiftArrowTabAction} owns every
+    // cell of the (input × terminal × commands-log × alt) decision matrix.
+    label: 'Cmd/Ctrl+Shift+Arrow: project or drawer tab cycle',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'),
+    run: (e, ctx) => {
+      const offset = e.key === 'ArrowLeft' ? -1 : 1;
+      const decision = decideShiftArrowTabAction({
+        isInput: ctx.isInput,
+        isTerminalFocused: ctx.isTerminalFocused,
+        isCommandsLogFocused: ctx.isCommandsLogFocused,
+        isAlt: e.altKey,
+      });
+      if (decision === 'project') {
+        e.preventDefault();
+        switchTabByOffset(offset);
+        return 'handled';
+      }
+      if (decision === 'drawer-tab') {
+        e.preventDefault();
+        switchTerminalTabByOffset(offset);
+        return 'handled';
+      }
+      // 'fallthrough' or 'fallthrough-alt' — both mean "let the browser
+      // handle it for text-selection extension." 'fallthrough-alt' is a
+      // hard stop (the original handler explicitly returned without
+      // firing later entries); 'fallthrough' is a soft stop with the
+      // same end-state because no later entry matches Cmd+Shift+Arrow.
+      return 'handled';
+    },
+  },
+  {
+    label: 'Opt+Cmd+W / Ctrl+Alt+W: close active tab',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.altKey && e.key.toLowerCase() === 'w',
+    run: (e) => {
+      e.preventDefault();
+      closeActiveTab();
+      return 'handled';
+    },
+  },
+  {
+    // HS-7926 — Cmd+T (macOS) / Ctrl+T (Win/Linux) opens a new dynamic
+    // terminal. Fires regardless of focus (including inside xterm helper
+    // textarea / INPUT) — every macOS app reserves Cmd+T for "new tab".
+    label: 'Cmd/Ctrl+T: new dynamic terminal (HS-7926)',
+    match: (e) => isNewTerminalShortcut(e),
+    run: (e) => {
+      const btn = byIdOrNull('drawer-add-terminal-btn');
+      if (btn === null) return 'continue';
+      e.preventDefault();
+      btn.click();
+      return 'handled';
+    },
+  },
+  {
+    label: 'Cmd/Ctrl+O: open folder (non-Tauri only)',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.key === 'o' && getTauriInvoke() === null,
+    run: (e) => {
+      e.preventDefault();
+      showOpenFolderDialog();
+      return 'handled';
+    },
+  },
+  {
+    label: 'Cmd/Ctrl+,: open settings (non-Tauri only)',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.key === ',' && getTauriInvoke() === null,
+    run: (e) => {
+      e.preventDefault();
+      byIdOrNull('settings-btn')?.click();
+      return 'handled';
+    },
+  },
+  {
+    // HS-8011 / HS-7393 — second Escape branch. Blurs the focused input
+    // or clears ticket selection. The earlier server-modal-close pass
+    // already ran above and didn't consume the keystroke if there was
+    // no modal to close.
+    label: 'Escape: blur focused input or clear ticket selection',
+    match: (e) => e.key === 'Escape',
+    run: (e) => {
+      if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return 'handled';
+      const active = document.activeElement as HTMLElement | null;
+      if (active && isEditableTarget(active)) {
+        active.blur();
+        return 'handled';
+      }
+      if (state.selectedIds.size > 0) {
+        state.selectedIds.clear();
+        renderTicketList();
+      }
+      return 'handled';
+    },
+  },
+  {
+    // Column-view card navigation. Attachment-item focus delegates to
+    // the attachment handler so attachment row arrow keys still work.
+    label: 'ArrowDown/ArrowUp: navigate column-view cards',
+    match: (e, ctx) => (e.key === 'ArrowDown' || e.key === 'ArrowUp') && !ctx.isInput && state.layout === 'columns'
+      && !(document.activeElement instanceof HTMLElement && document.activeElement.classList.contains('attachment-item')),
+    run: (e) => {
+      const allCards = Array.from(document.querySelectorAll<HTMLElement>('.column-card[data-id]'));
+      if (allCards.length === 0 || state.selectedIds.size === 0) return 'continue';
+      e.preventDefault();
+      const currentId = state.lastClickedId ?? Array.from(state.selectedIds)[0];
+      const currentIdx = allCards.findIndex(c => c.dataset.id === String(currentId));
+      const nextIdx = e.key === 'ArrowDown' ? currentIdx + 1 : currentIdx - 1;
+      if (nextIdx < 0 || nextIdx >= allCards.length) return 'handled';
+      const nextCard = allCards[nextIdx];
+      const nextId = parseInt(nextCard.dataset.id!, 10);
+      if (e.shiftKey) {
+        state.selectedIds.add(nextId);
+      } else {
+        state.selectedIds.clear();
+        state.selectedIds.add(nextId);
+      }
+      state.lastClickedId = nextId;
+      nextCard.scrollIntoView({ block: 'nearest' });
+      renderTicketList();
+      return 'handled';
+    },
+  },
+  {
+    label: 'Cmd/Ctrl+A: select all visible tickets',
+    match: (e, ctx) => (e.metaKey || e.ctrlKey) && e.key === 'a' && !ctx.isInput,
+    run: (e) => {
+      e.preventDefault();
+      state.selectedIds.clear();
+      for (const t of state.tickets) {
+        state.selectedIds.add(t.id);
+      }
+      renderTicketList();
+      return 'handled';
+    },
+  },
+  {
+    label: 'Cmd/Ctrl+D: toggle up_next on selected tickets',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.key === 'd',
+    run: (e) => {
+      if (state.selectedIds.size === 0) return 'handled';
+      e.preventDefault();
+      const selectedTickets = state.tickets.filter(t => state.selectedIds.has(t.id));
+      void toggleUpNext(selectedTickets).then(() => void loadTickets());
+      return 'handled';
+    },
+  },
+  {
+    // Cmd/Ctrl+C with selection: copy tickets. Native copy still wins
+    // inside an input (unless Alt forces ticket-copy) and when text is
+    // selected on the page.
+    label: 'Cmd/Ctrl+C: copy selected tickets to clipboard',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.key === 'c' && state.selectedIds.size > 0,
+    run: (e, ctx) => {
+      if (ctx.isInput && !e.altKey) return 'continue';
+      const sel = !e.altKey ? window.getSelection() : null;
+      if (sel !== null && !sel.isCollapsed && sel.toString().trim() !== '') return 'continue';
+      e.preventDefault();
+      const selected = state.tickets.filter(t => state.selectedIds.has(t.id));
+      copyTickets(selected, false);
+      const text = selected.map(formatTicketForClipboard).join('\n\n');
+      void navigator.clipboard.writeText(text);
+      return 'handled';
+    },
+  },
+  {
+    label: 'Cmd/Ctrl+X: cut selected tickets',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.key === 'x' && state.selectedIds.size > 0,
+    run: (e, ctx) => {
+      if (ctx.isInput && !e.altKey) return 'continue';
+      const sel = !e.altKey ? window.getSelection() : null;
+      if (sel !== null && !sel.isCollapsed && sel.toString().trim() !== '') return 'continue';
+      e.preventDefault();
+      const selected = state.tickets.filter(t => state.selectedIds.has(t.id));
+      copyTickets(selected, true);
+      const text = selected.map(formatTicketForClipboard).join('\n\n');
+      void navigator.clipboard.writeText(text);
+      return 'handled';
+    },
+  },
+  {
+    label: 'Cmd/Ctrl+V: paste tickets from internal clipboard',
+    match: (e, ctx) => (e.metaKey || e.ctrlKey) && e.key === 'v' && !ctx.isInput && hasClipboardTickets(),
+    run: (e) => {
+      e.preventDefault();
+      void pasteTickets();
+      return 'handled';
+    },
+  },
+  {
+    label: 'Cmd/Ctrl+N: focus draft input',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.key === 'n',
+    run: (e) => {
+      e.preventDefault();
+      focusDraftInput();
+      return 'handled';
+    },
+  },
+  {
+    label: 'Cmd/Ctrl+P: print',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.key === 'p',
+    run: (e) => {
+      e.preventDefault();
+      showPrintDialog();
+      return 'handled';
+    },
+  },
+  {
+    // HS-7331 / HS-7460 — Cmd/Ctrl+F. Routes to in-terminal SearchAddon
+    // when a terminal is focused (only on the platform-correct modifier,
+    // so the wrong-platform variant reaches the shell as readline
+    // forward-char); otherwise focuses the ticket-list search input.
+    label: 'Cmd/Ctrl+F: focus terminal-or-ticket search',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.key === 'f',
+    run: (e, ctx) => {
+      if (ctx.isTerminalFocused) {
+        if (!isFindShortcut(e)) return 'handled';
+        e.preventDefault();
+        if (focusActiveTerminalSearch()) return 'handled';
+        byId<HTMLInputElement>('search-input').focus();
+        return 'handled';
+      }
+      e.preventDefault();
+      byId<HTMLInputElement>('search-input').focus();
+      return 'handled';
+    },
+  },
+  {
+    // HS-7594 — Cmd+` toggles drawer-grid or dashboard depending on
+    // focus; Opt+Cmd+` always toggles dashboard.
+    label: 'Cmd/Ctrl+`: toggle drawer-grid or terminal dashboard',
+    match: (e) => isTerminalViewToggleShortcut(e) !== null,
+    run: (e, ctx) => {
+      const toggleMatch = isTerminalViewToggleShortcut(e);
+      if (toggleMatch === null) return 'continue';
+      e.preventDefault();
+      const target = toggleMatch.alt ? 'dashboard' : (ctx.isTerminalFocused ? 'drawer-grid' : 'dashboard');
+      if (target === 'drawer-grid') {
+        const btn = byIdOrNull<HTMLButtonElement>('drawer-grid-toggle');
+        if (btn !== null && !btn.disabled) btn.click();
+      } else {
+        const btn = byIdOrNull<HTMLButtonElement>('terminal-dashboard-toggle');
+        if (btn !== null && btn.style.display !== 'none') btn.click();
+      }
+      return 'handled';
+    },
+  },
+  {
+    label: 'n: focus draft input (when not editing)',
+    match: (e, ctx) => e.key === 'n' && !ctx.isInput,
+    run: (e) => {
+      e.preventDefault();
+      focusDraftInput();
+      return 'handled';
+    },
+  },
+  {
+    label: 'Delete/Backspace: delete selected tickets',
+    match: (e, ctx) => (e.key === 'Delete' || e.key === 'Backspace') && !ctx.isInput && state.selectedIds.size > 0,
+    run: (e) => {
+      e.preventDefault();
+      const ids = Array.from(state.selectedIds);
+      const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
+      void trackedBatch(affected, { ids, action: 'delete' }, 'Delete').then(() => {
+        state.selectedIds.clear();
+        void loadTickets();
+      });
+      return 'handled';
+    },
+  },
+];
+
 export function bindKeyboardShortcuts() {
   // Tauri menu events
   window.addEventListener('app:undo', triggerUndo);
@@ -43,7 +375,10 @@ export function bindKeyboardShortcuts() {
   window.addEventListener('app:preferences', () => byIdOrNull('settings-btn')?.click());
   window.addEventListener('app:open-folder', () => showOpenFolderDialog());
 
-  // Keyboard fallback for browser mode (non-Tauri) — capture phase
+  // Keyboard fallback for browser mode (non-Tauri) — capture phase. Kept
+  // outside the dispatch table because it has to fire BEFORE the
+  // document-level keydown listener (the table) so it can hijack Cmd+Z
+  // from a focused input element that has its own undo handling.
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
       // HS-8033 — bail when any modal is open so Cmd+Z reaches the native
@@ -61,14 +396,13 @@ export function bindKeyboardShortcuts() {
   }, true);
 
   document.addEventListener('keydown', (e) => {
-    // Ignore if typing in an input/textarea (except specific shortcuts)
-    const isInput = isEditableTarget(e.target);
-
-    // Close any open dialog on Escape
+    // Close any open server-rendered dialog on Escape. Has to run before
+    // the HS-8033 modal-bail because that bail returns true for these
+    // overlays too — without the early pass they'd never close.
     if (e.key === 'Escape') {
       // HS-8011 — let plain Esc fall through to the focused terminal so
-      // programs running there (claude code, vim, less, …) can interrupt /
-      // dismiss / cancel. Opt+Esc still routes to Hot Sheet.
+      // programs running there (claude code, vim, less, …) can interrupt
+      // / dismiss / cancel. Opt+Esc still routes to Hot Sheet.
       if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
       for (const id of ['open-folder-overlay', 'settings-overlay']) {
         const dlg = byIdOrNull(id);
@@ -80,308 +414,21 @@ export function bindKeyboardShortcuts() {
     }
 
     // HS-8033 — when any modal dialog is mounted + visible, bail out of
-    // every global shortcut. Pre-fix Cmd+A while the settings / feedback /
-    // confirm dialog was open silently selected every ticket behind the
-    // backdrop, and a fast Cmd+A → Backspace deleted them. Modals own the
-    // keyboard until they're dismissed (Esc above still works because we
-    // bail AFTER the Esc handler so the user can always close the modal).
-    // Modal-internal shortcuts (e.g. Cmd+Enter to submit) are wired on the
-    // input elements directly, so they fire before this document-level
-    // listener and aren't affected by the bail.
+    // every global shortcut. Modals own the keyboard until they're
+    // dismissed. Esc above still works because it bails AFTER the
+    // server-modal-close pass. Modal-internal shortcuts (e.g. Cmd+Enter
+    // to submit) are wired on the input elements directly, so they fire
+    // before this document-level listener and aren't affected.
     if (shouldBailForActiveModal(e.target)) return;
 
-    // Tab switching: Cmd+Shift+[/] (works even in inputs) or Cmd+Shift+Left/Right (not in text fields)
-    // HS-6472: when a terminal is focused, Cmd+Shift+Left/Right switches terminal
-    // tabs instead, and adding Alt/Option bubbles the shortcut back up to project
-    // tabs. The xterm helper textarea is still a TEXTAREA, so this block has to
-    // run before the isInput guard below; terminal focus is detected by walking
-    // up from the active element to a .drawer-terminal-pane or .xterm container.
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
-      if (e.key === '[') {
-        e.preventDefault();
-        switchTabByOffset(-1);
-        return;
-      }
-      if (e.key === ']') {
-        e.preventDefault();
-        switchTabByOffset(1);
-        return;
-      }
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        const offset = e.key === 'ArrowLeft' ? -1 : 1;
-        const decision = decideShiftArrowTabAction({
-          isInput,
-          isTerminalFocused: isTerminalFocused(),
-          isCommandsLogFocused: isCommandsLogFocused(),
-          isAlt: e.altKey,
-        });
-        if (decision === 'project') {
-          e.preventDefault();
-          switchTabByOffset(offset);
-          return;
-        }
-        if (decision === 'drawer-tab') {
-          e.preventDefault();
-          switchTerminalTabByOffset(offset);
-          return;
-        }
-        if (decision === 'fallthrough-alt') {
-          // Alt held + regular input — silently return without firing
-          // the global handler. Browser still handles the chord for
-          // word-by-word selection extension.
-          return;
-        }
-        // decision === 'fallthrough' — no return, let other handlers
-        // (or the browser's native text-selection) handle it.
-      }
-    }
-
-    // Close tab: Opt+Cmd+W (macOS) / Ctrl+Alt+W (other)
-    if ((e.metaKey || e.ctrlKey) && e.altKey && e.key.toLowerCase() === 'w') {
-      e.preventDefault();
-      closeActiveTab();
-      return;
-    }
-
-    // HS-7926 — Cmd+T (macOS) / Ctrl+T (Windows/Linux) opens a new dynamic
-    // terminal. Mirrors Terminal.app / iTerm2 / VS Code's "new tab" shortcut.
-    // Fires regardless of focus context (including inside an xterm helper
-    // textarea or an INPUT) — Cmd+T is reserved by every macOS app for "new
-    // tab" so users expect it to work everywhere. The "+" add-terminal
-    // button at `#drawer-add-terminal-btn` lives inside
-    // `#drawer-terminal-tabs-wrap` which is `display:none` when no
-    // configured terminals exist; clicking a hidden button still fires the
-    // handler so the shortcut works in every state.
-    if (isNewTerminalShortcut(e)) {
-      const btn = byIdOrNull('drawer-add-terminal-btn');
-      if (btn !== null) {
-        e.preventDefault();
-        btn.click();
-        return;
-      }
-    }
-
-    // Cmd/Ctrl+O: Open Folder (browser mode — Tauri handles via menu)
-    if ((e.metaKey || e.ctrlKey) && e.key === 'o' && !getTauriInvoke()) {
-      e.preventDefault();
-      showOpenFolderDialog();
-      return;
-    }
-
-    // Cmd/Ctrl+,: Settings (browser mode — Tauri handles via menu)
-    if ((e.metaKey || e.ctrlKey) && e.key === ',' && !getTauriInvoke()) {
-      e.preventDefault();
-      byIdOrNull('settings-btn')?.click();
-      return;
-    }
-
-    if (e.key === 'Escape') {
-      // HS-8011 — when a terminal owns keyboard focus, plain Esc must reach
-      // the program running inside it. Pre-fix this branch unconditionally
-      // blurred xterm's helper-textarea (which {@link isEditableTarget}
-      // matches) — claude code / vim / less never saw the keystroke. Opt+Esc
-      // still falls through to Hot Sheet's blur-and-deselect behavior.
-      if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
-      // HS-7393 — any focused INPUT / TEXTAREA should blur on Esc without
-      // also clearing ticket selection or the input's value. Previously this
-      // branch only covered detail-panel inputs, so Esc in the app search or
-      // a terminal search widget blurred-and-deselected at the same time.
-      // The app-level search and terminal-search Esc-clear-and-close
-      // behaviors have also been removed (sidebar.tsx, terminalSearch.tsx)
-      // so Esc is now consistently just "lose focus" across every input.
-      const active = document.activeElement as HTMLElement | null;
-      if (active && isEditableTarget(active)) {
-        active.blur();
-        return;
-      }
-      if (state.selectedIds.size > 0) {
-        state.selectedIds.clear();
-        renderTicketList();
-      }
-      return;
-    }
-
-    // Arrow keys in column view: navigate between cards
-    // Skip if an attachment item is focused — let the attachment handler navigate between attachments
-    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !isInput && state.layout === 'columns'
-      && !(document.activeElement instanceof HTMLElement && document.activeElement.classList.contains('attachment-item'))) {
-      const allCards = Array.from(document.querySelectorAll<HTMLElement>('.column-card[data-id]'));
-      if (allCards.length > 0 && state.selectedIds.size > 0) {
-        e.preventDefault();
-        // Find the currently selected card
-        const currentId = state.lastClickedId ?? Array.from(state.selectedIds)[0];
-        const currentIdx = allCards.findIndex(c => c.dataset.id === String(currentId));
-        const nextIdx = e.key === 'ArrowDown' ? currentIdx + 1 : currentIdx - 1;
-        if (nextIdx >= 0 && nextIdx < allCards.length) {
-          const nextCard = allCards[nextIdx];
-          const nextId = parseInt(nextCard.dataset.id!, 10);
-          if (e.shiftKey) {
-            state.selectedIds.add(nextId);
-          } else {
-            state.selectedIds.clear();
-            state.selectedIds.add(nextId);
-          }
-          state.lastClickedId = nextId;
-          nextCard.scrollIntoView({ block: 'nearest' });
-          renderTicketList();
-        }
-        return;
-      }
-    }
-
-    // Cmd/Ctrl+A: select all visible tickets
-    if ((e.metaKey || e.ctrlKey) && e.key === 'a' && !isInput) {
-      e.preventDefault();
-      state.selectedIds.clear();
-      for (const t of state.tickets) {
-        state.selectedIds.add(t.id);
-      }
-      renderTicketList();
-      return;
-    }
-
-    // Cmd/Ctrl+D: toggle up next for all selected tickets
-    if ((e.metaKey || e.ctrlKey) && e.key === 'd') {
-      if (state.selectedIds.size > 0) {
-        e.preventDefault();
-        const selectedTickets = state.tickets.filter(t => state.selectedIds.has(t.id));
-        void toggleUpNext(selectedTickets).then(() => void loadTickets());
-      }
-      return;
-    }
-
-    // Cmd/Ctrl+C: copy selected ticket(s) info to clipboard
-    // Opt+Cmd/Ctrl+C: force ticket copy even when in a text field
-    if ((e.metaKey || e.ctrlKey) && e.key === 'c' && state.selectedIds.size > 0) {
-      // Let native copy work in text fields (unless Alt/Option forces ticket copy)
-      if (isInput && !e.altKey) { /* native copy */ }
-      else {
-        // Also let native copy work when text is selected on the page
-        const sel = !e.altKey ? window.getSelection() : null;
-        if (sel !== null && !sel.isCollapsed && sel.toString().trim() !== '') { /* native copy */ }
-        else {
-          e.preventDefault();
-          const selected = state.tickets.filter(t => state.selectedIds.has(t.id));
-          // Store structured data in internal clipboard for cross-project paste
-          copyTickets(selected, false);
-          // Also write text to system clipboard for external paste
-          const text = selected.map(formatTicketForClipboard).join('\n\n');
-          void navigator.clipboard.writeText(text);
-          return;
-        }
-      }
-    }
-
-    // Cmd/Ctrl+X: cut selected tickets (copy + mark for deletion on paste)
-    if ((e.metaKey || e.ctrlKey) && e.key === 'x' && state.selectedIds.size > 0) {
-      if (isInput && !e.altKey) { /* native cut */ }
-      else {
-        const sel = !e.altKey ? window.getSelection() : null;
-        if (sel !== null && !sel.isCollapsed && sel.toString().trim() !== '') { /* native cut */ }
-        else {
-          e.preventDefault();
-          const selected = state.tickets.filter(t => state.selectedIds.has(t.id));
-          copyTickets(selected, true);
-          const text = selected.map(formatTicketForClipboard).join('\n\n');
-          void navigator.clipboard.writeText(text);
-          return;
-        }
-      }
-    }
-
-    // Cmd/Ctrl+V: paste tickets from internal clipboard
-    if ((e.metaKey || e.ctrlKey) && e.key === 'v' && !isInput && hasClipboardTickets()) {
-      e.preventDefault();
-      void pasteTickets();
-      return;
-    }
-
-    // Cmd/Ctrl+N: focus draft input (works everywhere)
-    if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
-      e.preventDefault();
-      focusDraftInput();
-      return;
-    }
-
-    // Cmd/Ctrl+P: print
-    if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
-      e.preventDefault();
-      showPrintDialog();
-      return;
-    }
-
-    // Cmd/Ctrl+F: focus search. HS-7331 — when a terminal has focus, route
-    // to the in-terminal SearchAddon widget; otherwise fall through to the
-    // ticket-list search in the app header.
-    // HS-7460 — when a terminal is focused, only the platform-correct
-    // modifier (Cmd on macOS / Ctrl elsewhere) hijacks the shortcut. The
-    // wrong-platform variant (e.g. Ctrl+F on macOS) passes through entirely
-    // so xterm forwards it to the shell as readline's `forward-char`.
-    // Outside a terminal both modifiers continue to focus the ticket search
-    // — the ticket-list has no conflicting use of Ctrl+F.
-    if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-      if (isTerminalFocused()) {
-        if (!isFindShortcut(e)) return;
-        e.preventDefault();
-        if (focusActiveTerminalSearch()) return;
-        byId<HTMLInputElement>('search-input').focus();
-        return;
-      }
-      e.preventDefault();
-      byId<HTMLInputElement>('search-input').focus();
-      return;
-    }
-
-    // HS-7594 — Cmd+` (macOS) / Ctrl+` (Linux/Windows) toggles a terminal-view
-    // surface based on where focus is:
-    //   - In a drawer terminal → toggle §36 drawer terminal grid view
-    //   - Anywhere else → toggle §25 global Terminal Dashboard
-    // Opt+Cmd+` always toggles the global Terminal Dashboard (lets the user
-    // jump to the dashboard from inside a drawer terminal without leaving).
-    // Implementation: dispatch a click on the relevant toggle button so we
-    // reuse its existing enable/disable + state-machine logic instead of
-    // re-implementing the lifecycle here.
-    {
-      const toggleMatch = isTerminalViewToggleShortcut(e);
-      if (toggleMatch !== null) {
-        e.preventDefault();
-        const inTerminal = isTerminalFocused();
-        const target = toggleMatch.alt
-          ? 'dashboard'
-          : (inTerminal ? 'drawer-grid' : 'dashboard');
-        if (target === 'drawer-grid') {
-          const btn = byIdOrNull<HTMLButtonElement>('drawer-grid-toggle');
-          if (btn !== null && !btn.disabled) btn.click();
-          // If the drawer-grid toggle is disabled (≤1 terminal), silently
-          // ignore — matches the click behavior of the disabled button.
-        } else {
-          // Dashboard toggle is unconditionally enabled (when Tauri-stubbed
-          // visible at all). Click it whether dashboard is currently open or
-          // not — the toggle's own click handler flips the state.
-          const btn = byIdOrNull<HTMLButtonElement>('terminal-dashboard-toggle');
-          if (btn !== null && btn.style.display !== 'none') btn.click();
-        }
-        return;
-      }
-    }
-
-    // N: focus draft input (when not in an input)
-    if (e.key === 'n' && !isInput) {
-      e.preventDefault();
-      focusDraftInput();
-      return;
-    }
-
-    // Delete/Backspace: delete selected tickets (when not in an input)
-    if ((e.key === 'Delete' || e.key === 'Backspace') && !isInput && state.selectedIds.size > 0) {
-      e.preventDefault();
-      const ids = Array.from(state.selectedIds);
-      const affected = state.tickets.filter(t => state.selectedIds.has(t.id));
-      void trackedBatch(affected, { ids, action: 'delete' }, 'Delete').then(() => {
-        state.selectedIds.clear();
-        void loadTickets();
-      });
-      return;
+    const ctx: KeyContext = {
+      isInput: isEditableTarget(e.target),
+      isTerminalFocused: isTerminalFocused(),
+      isCommandsLogFocused: isCommandsLogFocused(),
+    };
+    for (const sc of KEYBOARD_SHORTCUTS) {
+      if (!sc.match(e, ctx)) continue;
+      if (sc.run(e, ctx) === 'handled') return;
     }
   });
 }

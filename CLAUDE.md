@@ -155,13 +155,15 @@ When the user gives you work directly via the CLI (not via MCP channel or Hot Sh
 
 ### Ticket numbers in prose
 
-Hot Sheet tickets are local to the maintainer's machine — the `HS-NNNN` numbering only resolves against the `.hotsheet/` database, which lives outside the repo. A bare `HS-1234` reference is meaningless to anyone else reading this codebase.
+Hot Sheet tickets are local to the maintainer's machine — the `HS-NNNN` numbering only resolves against the `.hotsheet/` database, which lives outside the repo. A bare `HS-1234` reference is meaningless to anyone reading prose **outside** Hot Sheet.
 
-Rules:
+**Scope.** This rule applies to prose stored outside the local ticket DB: the orientation doc, requirements docs (`docs/**`), code comments, commit messages, AI summaries (`docs/ai/**`). It does **not** apply to prose stored inside Hot Sheet itself (ticket details, ticket notes, completion notes) — anyone reading those already has Hot Sheet open and can resolve a bare reference with one click, so bare `HS-NNNN` references are fine there.
 
-- **Never tell a reader to look in `.hotsheet/`** for ticket context (the orientation doc, other requirements docs, code comments, commit messages, completion notes, AI summaries). That directory is local-only.
+Rules (out-of-DB prose only):
+
+- **Never tell a reader to look in `.hotsheet/`** for ticket context. That directory is local-only.
 - **It's fine to mention a ticket number** — but ALWAYS pair it with a short self-contained summary that conveys the meaning without needing the ticket. The summary may be very different from the ticket's actual title; aim for what a fresh reader needs to understand the change. Example: ✅ `HS-8380 — client search filter mirrors the server's five-column ILIKE`; ❌ `Per HS-8380`.
-- When opportunistically editing prose that contains a bare ticket number, add the short summary if you can.
+- When opportunistically editing out-of-DB prose that contains a bare ticket number, add the short summary if you can.
 
 Audience: assume the reader has the repo but not the local ticket DB.
 

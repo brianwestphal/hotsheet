@@ -1,21 +1,3 @@
-import { raw } from '../jsx-runtime.js';
-import { extractPrimaryValue } from '../permissionAllowRules.js';
-import { api, apiWithSecret } from './api.js';
-import { buildBashPermissionPreview } from './bashPermissionPreview.js';
-import { channelStore } from './channelStore.js';
-import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
-import { TIMERS } from './constants/timers.js';
-import { toElement } from './dom.js';
-import { renderEditDiffPreview } from './editDiffPreview.js';
-import { buildAlwaysAllowAffordance } from './permissionAllowListUI.js';
-import { openPermissionDialogShell } from './permissionDialogShell.js';
-import { type EditDiffShape, formatEditDiff, formatInputPreview } from './permissionPreview.js';
-import { state } from './state.js';
-import { requestAttention } from './tauriIntegration.js';
-import { getProjectDefault, getSessionOverride, resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
-import { checkout, type CheckoutHandle, peekEntryDims } from './terminalCheckout.js';
-import { buildWritePermissionPreview } from './writePermissionPreview.js';
-
 /**
  * Claude permission-request UI. Historically there were two variants: a
  * full-screen overlay for the active project and a compact popup for
@@ -31,63 +13,42 @@ import { buildWritePermissionPreview } from './writePermissionPreview.js';
  * HS-7266: the popup is non-modal — it does NOT dismiss or minimize on
  * outside clicks. Users can interact with the rest of the UI while it is
  * visible. Minimize is an explicit action via the popup's own Minimize link.
+ *
+ * HS-8384 — pure helpers + types live in `permissionOverlayHelpers.ts`
+ * and are re-exported below so existing `from './permissionOverlay.js'`
+ * imports (channelStore.ts, channelUI.tsx, the test file) keep working.
  */
 
-export type PermissionData = { request_id: string; tool_name: string; description: string; input_preview?: string };
+import { raw } from '../jsx-runtime.js';
+import { extractPrimaryValue } from '../permissionAllowRules.js';
+import { api, apiWithSecret } from './api.js';
+import { buildBashPermissionPreview } from './bashPermissionPreview.js';
+import { channelStore } from './channelStore.js';
+import { clearProjectAttention, getProjectAttentionSecrets, isChannelBusy, markProjectAttention, setChannelBusy } from './channelUI.js';
+import { TIMERS } from './constants/timers.js';
+import { toElement } from './dom.js';
+import { renderEditDiffPreview } from './editDiffPreview.js';
+import { buildAlwaysAllowAffordance } from './permissionAllowListUI.js';
+import { openPermissionDialogShell } from './permissionDialogShell.js';
+import {
+  extractWriteFields,
+  LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD,
+  type PermissionData,
+  shouldUseLiveCheckout,
+} from './permissionOverlayHelpers.js';
+import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
+import { state } from './state.js';
+import { requestAttention } from './tauriIntegration.js';
+import { getProjectDefault, getSessionOverride, resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
+import { checkout, type CheckoutHandle, peekEntryDims } from './terminalCheckout.js';
+import { buildWritePermissionPreview } from './writePermissionPreview.js';
 
-/**
- * HS-8217 — single-line flat preview length above which the popup
- * borrows the live terminal instead of rendering a static `<pre>`. Tuned
- * so that short bash one-liners (`ls -la`, `git status`) stay on the
- * tight static path while pipelines / longer commands surface the rich
- * TUI output. 80 chars matches the conventional "fits on one terminal
- * line" cap.
- */
-export const LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD = 80;
-
-/**
- * HS-8217 — pure heuristic: should the popup borrow the live terminal
- * via §54 checkout instead of rendering a static `<pre>` / DOM diff?
- *
- * Triggers (any one — short-circuit OR):
- *   - **Edit / Write parseable** — `editDiff !== null`. Edit/Write diffs
- *     are inherently multi-line and benefit substantially from the real
- *     claude TUI's colored rendering (file-name header + dim-faded
- *     unchanged context + green added rows + red removed rows + the
- *     numbered choices list directly below) over the static
- *     `renderEditDiffPreview` HTML diff. User report HS-8217: "the text
- *     is hard to follow. in the terminal, the edits are color coded so
- *     it's easier to see what's being added / removed".
- *   - **Truncation** — flat preview ends in `…` (HS-7999) OR
- *     `editDiff.truncated === true` (HS-8139). Pre-HS-8217 these were
- *     the only triggers — the static body would otherwise be
- *     ambiguous.
- *   - **Multi-line flat** — `previewText.includes('\n')` for non-Edit
- *     tools (e.g. WebFetch with a multi-line body, generic key/value
- *     dumps from `formatInputPreview`'s flat fallback).
- *   - **Long single-line flat** — `previewText.length > 80` (the
- *     `LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD` constant). Long single-line
- *     bash pipelines benefit from seeing the actual claude prompt's
- *     wrapping + surrounding context.
- *
- * Stays static for: short single-line bash / `git status` / one-line
- * `Read` previews, where the `<pre>` is tight and the live terminal
- * would surround the value with noise that adds no scanning value AND
- * would pay the noSpawn-fallback round-trip if `'default'` isn't live.
- *
- * Pure helper, no DOM / module state. Exported for unit-test isolation.
- */
-export function shouldUseLiveCheckout(
-  editDiff: EditDiffShape | null,
-  previewText: string,
-): boolean {
-  if (editDiff !== null) return true;
-  if (previewText === '') return false;
-  if (previewText.endsWith('…')) return true;
-  if (previewText.includes('\n')) return true;
-  if (previewText.length > LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD) return true;
-  return false;
-}
+export {
+  extractWriteFields,
+  LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD,
+  type PermissionData,
+  shouldUseLiveCheckout,
+};
 
 /**
  * HS-8190 — every long-lived mutable lifecycle ref this module owns lives
@@ -144,29 +105,6 @@ interface PermissionOverlayState {
   /** HS-8206 v2 — pending retry timeout id so a re-run from the
    *  ResizeObserver doesn't stack up parallel retry chains. */
   liveTermFitRetryTimer: ReturnType<typeof setTimeout> | null;
-}
-
-/**
- * HS-8296 — pure: extract `{file_path, content}` from a Write tool's
- * `input_preview` JSON. Returns null when the JSON is malformed, the
- * tool's primary fields are missing, or `file_path` is empty (the
- * dialog title needs a real path to render usefully).
- *
- * Exported for unit-test isolation. The `content` field can legitimately
- * be empty (Claude is asked to create an empty file) — the body
- * renderer handles that case as "0 bytes" text rather than rejecting it.
- */
-export function extractWriteFields(inputPreview: string): { filePath: string; content: string } | null {
-  if (inputPreview === '') return null;
-  let parsed: unknown;
-  try { parsed = JSON.parse(inputPreview); } catch { return null; }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const obj = parsed as Record<string, unknown>;
-  const filePath = obj.file_path;
-  const content = obj.content;
-  if (typeof filePath !== 'string' || filePath === '') return null;
-  if (typeof content !== 'string') return null;
-  return { filePath, content };
 }
 
 function freshPermissionOverlayState(): PermissionOverlayState {

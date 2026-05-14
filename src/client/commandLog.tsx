@@ -1,5 +1,21 @@
-import { raw } from '../jsx-runtime.js';
+/**
+ * Commands Log drawer-pane orchestration: panel open/close lifecycle,
+ * polling timer, search debounce, drawer-tab switching, per-project
+ * persistence, and the bindList mount against the entries container.
+ *
+ * Per HS-8385 the streaming-side helpers + per-entry row rendering live
+ * in dedicated modules:
+ * - `commandLogStreaming.ts` — `writePartialIntoPre`,
+ *   `shouldAutoScrollToBottom`, `applyShellPartialEvent`.
+ * - `commandLogEntryRow.tsx` — `renderEntryRow` + the context menu +
+ *   `cancelingShellIds` + the pure formatting helpers.
+ *
+ * Their public surface is re-exported from here so existing importers
+ * (including `commandLog.test.ts`) keep working without an import sweep.
+ */
+
 import { api } from './api.js';
+import { cleanupCancelingShellIds, dismissContextMenu, renderEntryRow } from './commandLogEntryRow.js';
 import { dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
 import { commandLogSelectionStore } from './commandLogSelectionStore.js';
 import {
@@ -8,43 +24,24 @@ import {
   filteredEntriesSignal,
   getEntrySignals,
 } from './commandLogStore.js';
-import { maybeFireShellStreamFirstUseToast, SHELL_PARTIAL_OUTPUT_EVENT,type ShellPartialOutputEvent } from './commandSidebar.js';
+import {
+  applyShellPartialEvent,
+  shouldAutoScrollToBottom,
+  writePartialIntoPre,
+} from './commandLogStreaming.js';
+import { SHELL_PARTIAL_OUTPUT_EVENT, type ShellPartialOutputEvent } from './commandSidebar.js';
 import { TIMERS } from './constants/timers.js';
-import { byId, byIdOrNull, toElement } from './dom.js';
+import { byId, byIdOrNull } from './dom.js';
 import { resolveDrawerTabForTauri } from './drawerTabGating.js';
 import { recordInteraction } from './longTaskObserver.js';
-import { effect } from './reactive.js';
 import { bindList } from './reactive-bind.js';
-import { state } from './state.js';
-import { stripAnsi, tailLines } from './stripAnsi.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 
-/**
- * HS-8015 follow-up #2 — number of trailing lines to render in the
- * collapsed running-shell preview pre. Matches the
- * `.command-log-detail`'s `-webkit-line-clamp: 3` rule visually so
- * collapsed rows look identical to completed-shell rows.
- */
-const RUNNING_SHELL_PREVIEW_LINES = 3;
+// Re-export the streaming helpers so existing importers (and the
+// `commandLog.test.ts` harness) keep their `from './commandLog.js'`
+// shape after the HS-8385 split.
+export { applyShellPartialEvent, shouldAutoScrollToBottom, writePartialIntoPre };
 
-/** Pure: write the rendered partial into a single `<pre>` based on its
- *  data-shell-partial-mode dataset attribute. Exported for unit tests
- *  so happy-dom doesn't need the full live event listener wired up. */
-export function writePartialIntoPre(pre: HTMLElement, partial: string): void {
-  const stripped = stripAnsi(partial);
-  if (pre.dataset.shellPartialMode === 'preview') {
-    pre.textContent = tailLines(stripped, RUNNING_SHELL_PREVIEW_LINES);
-  } else {
-    pre.textContent = stripped;
-  }
-}
-
-const cancelingShellIds = new Set<number>();
-
-/** Server-shape command-log entry. HS-8318 / §61 Phase 3b — the store's
- *  `AnnotatedEntry` wraps this with an `isRunningShell` flag baked in at
- *  reconcile time. Within this file the rendering code consumes the
- *  annotated form throughout. */
 type LogEntry = AnnotatedEntry;
 
 let panelOpen = false;
@@ -64,489 +61,6 @@ let activeTab: string = 'commands-log';
 /** Read the id of the currently-visible drawer tab (`commands-log` or `terminal:<id>`). */
 export function getActiveDrawerTab(): string {
   return activeTab;
-}
-
-// --- Selection state (HS-2544 / HS-8324) ---
-//
-// HS-8324 — selection + expansion state lives in `commandLogSelectionStore`.
-// The legacy `selectedLogIds: Set<number>` + `lastClickedId: number | null`
-// + `expandedEntryIds: Set<number>` are replaced by store reads through
-// `commandLogSelectionStore.state.value.{selected,lastClicked,expanded}`.
-// Per-row effects in `renderEntryRow` flip the `.selected` + `.expanded`
-// classes declaratively; the imperative `updateSelectionClasses()` sweep
-// + the post-shape-rebuild `applyExpansion()` re-apply are gone.
-
-/**
- * HS-7983 — sticky-bottom auto-scroll threshold (px). When the scroll
- * container is within this many px of the bottom, the partial-output
- * listener counts the user as "pinned" and re-pins after appending the
- * new chunk. Once the user scrolls up past the threshold we stop
- * auto-following so a chatty command doesn't fight a manual review.
- *
- * Value chosen empirically: needs to be larger than typical sub-pixel
- * rounding (1–2 px) but smaller than a single line of text (~16 px) so
- * scrolling up by a single line definitively unpins. 8 px hits the
- * middle of that range.
- */
-const STICKY_BOTTOM_THRESHOLD_PX = 8;
-
-/** Pure: decide whether to auto-scroll the partial-output container to
- *  the bottom after appending a chunk. Exported for unit tests so
- *  happy-dom doesn't need to mount the whole drawer to verify the rule.
- *  Inputs match `Element.scrollTop` / `clientHeight` / `scrollHeight`
- *  semantics — caller pulls them off whatever scroller wraps the
- *  partial-output `<pre>`. */
-export function shouldAutoScrollToBottom(
-  scrollTop: number,
-  clientHeight: number,
-  scrollHeight: number,
-  threshold: number = STICKY_BOTTOM_THRESHOLD_PX,
-): boolean {
-  return scrollTop + clientHeight >= scrollHeight - threshold;
-}
-
-/**
- * HS-7983 — apply a single `hotsheet:shell-partial-output` event. HS-8318
- * §61 Phase 3b refactor: writes through the `commandLogStore` instead of
- * mutating module-level Maps + walking the DOM. The store fires the
- * per-entry `partial` signal which the per-row bindList effect reads;
- * the row's `<pre>` updates in place via that effect — no broadcast to
- * sibling rows. Sticky-bottom scroll lives inside the per-row effect
- * (captures pinned-state before the textContent write).
- *
- * Public export retained so the existing wire-up in `initCommandLog`
- * (`window.addEventListener(SHELL_PARTIAL_OUTPUT_EVENT, applyShellPartialEvent)`)
- * keeps a one-liner shape.
- */
-export function applyShellPartialEvent(detail: ShellPartialOutputEvent): void {
-  // HS-7984 — gate Commands Log live-render on the §53 Phase 4 setting.
-  // Server still buffers + dispatches events; this consumer just
-  // no-ops. Re-enabling mid-run picks up at the next chunk because the
-  // server-side partial buffer survives the gate flip.
-  if (!state.settings.shell_streaming_enabled) return;
-  // HS-8015 — sole survivor of the previous dual-render path. The
-  // first-use discoverability toast fires once per session when the
-  // user first sees a live partial-output chunk, pointing them at the
-  // Commands Log feature. Idempotent — the toast helper short-circuits
-  // after the first invocation.
-  maybeFireShellStreamFirstUseToast();
-  // HS-8324 — the per-row bindList effect writes to the `<pre>` in
-  // place when the store's per-entry partial signal fires. No more
-  // legacy DOM-write fallback (HS-8318 retained one for the existing
-  // happy-dom test suite; that suite has been migrated to drive
-  // through bindList).
-  commandLogStore.actions.setRunningOutput(detail.id, detail.partial);
-}
-
-// --- Relative time helper ---
-
-function relativeTime(iso: string): string {
-  // Parse the timestamp — ensure it's treated as UTC
-  let then: number;
-  if (iso.endsWith('Z') || iso.includes('+') || iso.includes('T') && iso.match(/[+-]\d{2}:\d{2}$/)) {
-    then = new Date(iso).getTime();
-  } else {
-    // No timezone indicator — append Z to force UTC interpretation
-    then = new Date(iso + 'Z').getTime();
-  }
-  if (isNaN(then)) return iso; // fallback to raw string if unparseable
-
-  const diffMs = Date.now() - then;
-  if (diffMs < 0) return 'just now'; // clock skew
-  const diffSec = Math.floor(diffMs / 1000);
-  if (diffSec < 60) return 'just now';
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.floor(diffHr / 24);
-  return `${diffDay}d ago`;
-}
-
-// --- Direction indicator ---
-
-function directionIndicator(dir: string): { symbol: string; color: string } {
-  switch (dir) {
-    case 'outgoing': return { symbol: '\u2192', color: 'var(--accent)' };
-    case 'incoming': return { symbol: '\u2190', color: '#22c55e' };
-    default: return { symbol: '\u25CF', color: 'var(--text-muted)' };
-  }
-}
-
-// --- Event type badge colors ---
-
-function typeBadgeColor(eventType: string): string {
-  switch (eventType) {
-    case 'trigger': return '#3b82f6';
-    case 'done': return '#22c55e';
-    case 'permission_request': return '#f97316';
-    case 'shell_command': return '#6b7280';
-    default: return '#6b7280';
-  }
-}
-
-function typeBadgeLabel(eventType: string): string {
-  switch (eventType) {
-    case 'trigger': return 'trigger';
-    case 'done': return 'done';
-    case 'permission_request': return 'permission';
-    case 'shell_command': return 'shell';
-    default: return eventType;
-  }
-}
-
-// --- Shell command detail formatting (HS-2547) ---
-
-function formatShellDetail(detail: string): { inputLine: string; output: string } | null {
-  const sep = '\n---SHELL_OUTPUT---\n';
-  const idx = detail.indexOf(sep);
-  if (idx === -1) return null;
-  return {
-    inputLine: detail.slice(0, idx),
-    output: detail.slice(idx + sep.length),
-  };
-}
-
-// --- Context menu (HS-2546) ---
-
-function dismissContextMenu() {
-  document.querySelector('.command-log-context-menu')?.remove();
-}
-
-function getEntryText(entry: LogEntry): string {
-  let text = entry.summary;
-  if (entry.detail) text += '\n' + entry.detail;
-  return text;
-}
-
-function showContextMenu(x: number, y: number, entries: LogEntry[]) {
-  dismissContextMenu();
-  // HS-7835 — consistent icon-row markup with the other context menus
-  // (`.dropdown-icon` + `.context-menu-label` spans).
-  const menu = toElement(
-    <div className="command-log-context-menu" style={`left:${x}px;top:${y}px`}>
-      <div className="context-menu-item" data-action="copy">
-        <span className="dropdown-icon">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>')}</span>
-        <span className="context-menu-label">Copy{entries.length > 1 ? ` (${entries.length} entries)` : ''}</span>
-      </div>
-    </div>
-  );
-
-  const copyItem = menu.querySelector('[data-action="copy"]') as HTMLElement;
-  copyItem.addEventListener('click', () => {
-    const text = entries.map(e => getEntryText(e)).join('\n\n---\n\n');
-    void navigator.clipboard.writeText(text);
-    dismissContextMenu();
-  });
-
-  document.body.appendChild(menu);
-
-  // Clamp to viewport
-  const rect = menu.getBoundingClientRect();
-  if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 4}px`;
-  if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 4}px`;
-
-  // Dismiss on outside click
-  setTimeout(() => {
-    const close = (e: MouseEvent) => {
-      if (!menu.contains(e.target as Node)) {
-        dismissContextMenu();
-        document.removeEventListener('click', close, true);
-      }
-    };
-    document.addEventListener('click', close, true);
-  }, 0);
-}
-
-// --- Render entries ---
-
-/** Create the DOM element for a single log entry, including event handlers. */
-interface LogEntryRenderState {
-  displayDetail: string;
-  preview: string;
-  hasMore: boolean;
-  isRunningShell: boolean;
-  isCanceling: boolean;
-  shellParts: ReturnType<typeof formatShellDetail>;
-}
-
-function computeLogEntryRenderState(entry: LogEntry): LogEntryRenderState {
-  const shellParts = entry.event_type === 'shell_command' ? formatShellDetail(entry.detail) : null;
-  const displayDetail = shellParts ? shellParts.output : entry.detail;
-  const detailLines = displayDetail.split('\n');
-  const preview = detailLines.slice(0, 3).join('\n');
-  const hasMore = detailLines.length > 3 || displayDetail.length > 300;
-  // HS-8318 — `isRunningShell` is baked into the annotated entry at
-  // store-reconcile time, not derived ad-hoc here. Pre-fix every render
-  // read from a module-level `runningShellIds` Array that was rebuilt
-  // wholesale on every poll tick; post-fix the per-entry signal carries
-  // the flag and the row's effect re-runs only when it actually flips.
-  const isRunningShell = entry.isRunningShell;
-  const isCanceling = cancelingShellIds.has(entry.id);
-  return { displayDetail, preview, hasMore, isRunningShell, isCanceling, shellParts };
-}
-
-function buildLogEntryEl(entry: LogEntry, s: LogEntryRenderState): HTMLElement {
-  const dir = directionIndicator(entry.direction);
-  const badgeColor = typeBadgeColor(entry.event_type);
-  const badgeLabel = typeBadgeLabel(entry.event_type);
-  const time = relativeTime(entry.created_at);
-  const { shellParts, displayDetail, preview, hasMore, isRunningShell, isCanceling } = s;
-  return toElement(
-    <div className="command-log-entry" data-id={String(entry.id)}>
-      <div className="command-log-entry-header">
-        <span className="command-log-direction" style={`color:${dir.color}`}>{dir.symbol}</span>
-        <span className="command-log-type-badge" style={`background:${badgeColor}`}>{badgeLabel}</span>
-        <span className="command-log-summary">{entry.summary}</span>
-        {isRunningShell && isCanceling
-          ? <span className="command-log-canceling">{'Canceling\u2026'}</span>
-          : isRunningShell
-          ? <button className="command-log-stop-btn" title="Stop process">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>')}</button>
-          : null}
-        <span className="command-log-time">{time}</span>
-      </div>
-      {shellParts ? (
-        <div>
-          <pre className="command-log-detail command-log-shell-input">{shellParts.inputLine}</pre>
-          {displayDetail !== '' ? <hr className="command-log-shell-divider" /> : null}
-          {displayDetail !== '' ? <pre className="command-log-detail">{preview}{hasMore ? '\u2026' : ''}</pre> : null}
-          {hasMore ? <pre className="command-log-detail-full" style="display:none">{displayDetail}</pre> : null}
-        </div>
-      ) : isRunningShell ? (
-        // HS-7983 \u2014 running shell entries don't carry the
-        // `---SHELL_OUTPUT---` separator yet (server only writes the final
-        // detail in `child.on('close')`), so `formatShellDetail` returned
-        // null. HS-8015 follow-up #2 mirrors the completed-shell layout
-        // above with a TWIN-pre design (preview + full) so the row is
-        // click-to-expand while running:
-        //
-        //   - Preview pre: `.command-log-detail` (3-line clamp via the
-        //     existing CSS rule). Live writer fills with the trailing
-        //     `RUNNING_SHELL_PREVIEW_LINES` lines so the user sees the
-        //     most recent output, not the first three lines of the
-        //     buffer.
-        //   - Full pre:    `.command-log-detail-full` (no clamp; gains a
-        //     max-height + scroll via `.command-log-shell-partial-full`
-        //     so a chatty long-running command doesn't push every other
-        //     entry off-screen). Hidden until the user clicks; the
-        //     existing display-swap logic in the click handler reveals
-        //     it (matches the completed-shell flow).
-        //
-        // Both pres share `data-shell-partial-id` so the live writer +
-        // hydrate find both; per-pre `data-shell-partial-mode` selects
-        // tail-vs-full content. The pre is empty until the first chunk
-        // arrives \u2014 `:empty { display: none }` collapses it so the
-        // divider above doesn't sit on dead space.
-        <div>
-          <pre className="command-log-detail command-log-shell-input">{entry.detail}</pre>
-          <hr className="command-log-shell-divider" />
-          <pre
-            className="command-log-detail command-log-shell-partial command-log-shell-partial-preview"
-            data-shell-partial-id={String(entry.id)}
-            data-shell-partial-mode="preview"
-          ></pre>
-          <pre
-            className="command-log-detail-full command-log-shell-partial command-log-shell-partial-full"
-            data-shell-partial-id={String(entry.id)}
-            data-shell-partial-mode="full"
-            style="display:none"
-          ></pre>
-        </div>
-      ) : (
-        <div>
-          {entry.detail !== '' ? <pre className="command-log-detail">{preview}{hasMore ? '\u2026' : ''}</pre> : null}
-          {hasMore ? <pre className="command-log-detail-full" style="display:none">{entry.detail}</pre> : null}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function bindStopButtonHandler(el: HTMLElement, entry: LogEntry): void {
-  const stopBtn = el.querySelector('.command-log-stop-btn') as HTMLElement;
-  stopBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    cancelingShellIds.add(entry.id);
-    void api('/shell/kill', { method: 'POST', body: { id: entry.id } });
-    stopBtn.replaceWith(toElement(<span className="command-log-canceling">{'Canceling\u2026'}</span>));
-  });
-}
-
-/** HS-8015 follow-up #2 — running-shell rows are always expandable
- *  because the running-shell render branch always emits a hidden
- *  full-pre alongside the line-clamped preview. Pre-fix `hasMore`
- *  (computed from the command line alone) was false and the click
- *  did nothing for a running shell. */
-/** HS-8324 — apply the current expansion state to a row's inner
- *  display swaps. Called from the per-row expansion effect; reads
- *  `expanded` as the desired state rather than toggling a class.
- *  The pre-fix `hasMore || isRunningShell` gate (decided whether
- *  expand was meaningful at all) has moved into the click handler
- *  since the store's expanded-state is only ever set for expandable
- *  rows. */
-function applyExpansionDisplay(el: HTMLElement, expanded: boolean): void {
-  const detailEls = el.querySelectorAll('.command-log-detail:not(.command-log-shell-input)');
-  const fullEl = el.querySelector<HTMLElement>('.command-log-detail-full');
-  if (expanded) {
-    for (const d of detailEls) (d as HTMLElement).style.display = 'none';
-    if (fullEl) fullEl.style.display = '';
-  } else {
-    for (const d of detailEls) (d as HTMLElement).style.display = '';
-    if (fullEl) fullEl.style.display = 'none';
-  }
-}
-
-function bindEntryClickHandler(
-  el: HTMLElement,
-  entry: LogEntry,
-  hasMore: boolean,
-  isRunningShell: boolean,
-): void {
-  el.addEventListener('click', (e) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('.command-log-stop-btn')) return;
-
-    if (e.metaKey || e.ctrlKey) {
-      commandLogSelectionStore.actions.toggleSelected(entry.id);
-      return;
-    }
-
-    if (e.shiftKey) {
-      const last = commandLogSelectionStore.state.value.lastClicked;
-      if (last !== null) {
-        // HS-8318 — read the current filtered list from the store at click
-        // time so shift+click ranges target the live filter, not a stale
-        // closure capture from row-mount time.
-        const ids = filteredEntriesSignal.value.map(e2 => e2.id);
-        const startIdx = ids.indexOf(last);
-        const endIdx = ids.indexOf(entry.id);
-        if (startIdx !== -1 && endIdx !== -1) {
-          const [lo, hi] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
-          commandLogSelectionStore.actions.addToSelection(ids.slice(lo, hi + 1));
-          return;
-        }
-      }
-    }
-
-    commandLogSelectionStore.actions.selectOnly(entry.id);
-    // Pre-fix `applyExpansion(el, entry, hasMore, isRunningShell)` did
-    // the class-toggle + dataset update inline. With the per-row
-    // expansion effect (HS-8324), the store's expanded-set is the
-    // source of truth: toggle it, the effect picks it up and flips
-    // the row's `.expanded` class + child `display` swaps.
-    if (hasMore || isRunningShell) {
-      commandLogSelectionStore.actions.toggleExpanded(entry.id);
-    }
-  });
-}
-
-function bindEntryContextMenu(el: HTMLElement, entry: LogEntry): void {
-  el.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    // HS-8318 — read the current filtered list from the store at click
-    // time instead of relying on a closure-captured snapshot. Pre-fix
-    // the wholesale-rerender pattern handed every renderLogEntry call a
-    // fresh `filtered` Array; post-fix bindList preserves DOM identity
-    // so the row's handler closure outlives any single filter pass.
-    const filtered = filteredEntriesSignal.value;
-    const selected = commandLogSelectionStore.state.value.selected;
-    const entriesToCopy = (selected.size > 0 && selected.has(entry.id))
-      ? filtered.filter(e2 => selected.has(e2.id))
-      : [entry];
-    showContextMenu(e.clientX, e.clientY, entriesToCopy);
-  });
-}
-
-/**
- * HS-8318 / §61 Phase 3b — per-row bindList render. Builds the wrapper
- * once for each entry id; per-row effects (a) rebuild the inner DOM
- * when the entry's `detail` / `summary` / `isRunningShell` change, and
- * (b) write partial-output chunks into the running-shell `<pre>` in
- * place. Surviving rows keep their wrapper across poll ticks, so click
- * handlers + selection + expansion state all persist.
- *
- * Returns the `bindList` row contract (`{ el, dispose }`); the disposer
- * tears down both per-row effects so a row that drops off the rolling-
- * 100 buffer doesn't keep firing against a detached wrapper.
- */
-function renderEntryRow(entry: LogEntry): { el: Element; dispose: () => void } {
-  const sigs = getEntrySignals(entry.id);
-  // Initial paint — every per-row effect below treats this as the
-  // baseline and only rebuilds on subsequent signal changes.
-  const initial = computeLogEntryRenderState(entry);
-  const wrapper = buildLogEntryEl(entry, initial);
-  if (initial.isRunningShell) bindStopButtonHandler(wrapper, entry);
-  bindEntryClickHandler(wrapper, entry, initial.hasMore, initial.isRunningShell);
-  bindEntryContextMenu(wrapper, entry);
-
-  // Per-row "shape" effect: when the entry signal value changes
-  // structurally (running → done transition, summary edit on a re-fetch),
-  // replace the wrapper's inner content + re-attach the click / stop /
-  // context handlers. HS-8324 — the selection + expansion classes are
-  // driven by their own per-row effects below; the shape rebuild here
-  // doesn't need to reapply them (the effects will refire when the
-  // inner DOM changes).
-  let firstShapeRun = true;
-  const disposeShape = effect(() => {
-    const current = sigs?.entry.value ?? entry;
-    if (firstShapeRun) { firstShapeRun = false; return; }
-    const s = computeLogEntryRenderState(current);
-    const fresh = buildLogEntryEl(current, s);
-    wrapper.replaceChildren(...Array.from(fresh.childNodes));
-    if (s.isRunningShell) bindStopButtonHandler(wrapper, current);
-    bindEntryClickHandler(wrapper, current, s.hasMore, s.isRunningShell);
-    // contextmenu: no need to re-bind — the existing handler already
-    // reads `filteredEntriesSignal.value` at click time.
-    // The expansion effect below will re-fire and re-apply display
-    // swaps to the fresh inner DOM because `commandLogSelectionStore`'s
-    // expanded set is a stable signal (untouched by the shape change).
-    applyExpansionDisplay(wrapper, commandLogSelectionStore.state.value.expanded.has(current.id));
-  });
-
-  // HS-8324 per-row `.selected` class effect. The pre-fix imperative
-  // `updateSelectionClasses()` swept every row in the DOM after each
-  // click; this effect flips the class only when this row's
-  // membership in `selected` actually changes.
-  const disposeSelected = effect(() => {
-    const isSelected = commandLogSelectionStore.state.value.selected.has(entry.id);
-    wrapper.classList.toggle('selected', isSelected);
-  });
-
-  // HS-8324 per-row `.expanded` class effect. Drives the `.expanded`
-  // class toggle + child `display` swaps off the store. Pre-fix the
-  // `applyExpansion()` call in the click handler did both inline; now
-  // the click handler just calls `commandLogSelectionStore.actions.toggleExpanded(id)`
-  // and this effect reacts.
-  const disposeExpanded = effect(() => {
-    const isExpanded = commandLogSelectionStore.state.value.expanded.has(entry.id);
-    wrapper.classList.toggle('expanded', isExpanded);
-    applyExpansionDisplay(wrapper, isExpanded);
-  });
-
-  // Per-row partial-output effect: subscribes to the per-entry `partial`
-  // signal and writes the latest chunk into the row's
-  // `<pre data-shell-partial-id>` slots. Sticky-bottom scroll lives
-  // here — captures pinned-state BEFORE the textContent write so the
-  // post-write `scrollHeight` doesn't fool the threshold check.
-  let firstPartialRun = true;
-  const disposePartial = effect(() => {
-    const partial = sigs?.partial.value ?? '';
-    if (firstPartialRun) { firstPartialRun = false; return; }
-    if (!state.settings.shell_streaming_enabled) return;
-    const partialEls = wrapper.querySelectorAll<HTMLElement>('pre.command-log-shell-partial');
-    if (partialEls.length === 0) return;
-    const container = byIdOrNull('command-log-entries');
-    const wasPinned = container !== null
-      ? shouldAutoScrollToBottom(container.scrollTop, container.clientHeight, container.scrollHeight)
-      : false;
-    for (const pre of partialEls) writePartialIntoPre(pre, partial);
-    if (wasPinned && container !== null) container.scrollTop = container.scrollHeight;
-  });
-
-  return {
-    el: wrapper,
-    dispose: () => { disposeShape(); disposeSelected(); disposeExpanded(); disposePartial(); },
-  };
 }
 
 /** Mount the bindList against the entries container. Idempotent —
@@ -631,10 +145,10 @@ async function loadEntries() {
       if (next !== cached) commandLogStore.actions.setRunningOutput(idNum, next);
     }
   }
-  // Clean up canceling state for processes that are no longer running
-  for (const id of cancelingShellIds) {
-    if (!running.ids.includes(id)) cancelingShellIds.delete(id);
-  }
+  // Drop ids whose process is no longer in the server-reported running
+  // list (canceling-shell state cleanup — HS-8385: lives in
+  // commandLogEntryRow.ts which owns the canceling Set).
+  cleanupCancelingShellIds(running.ids);
   // Make sure the bindList is mounted now that the container is in the DOM.
   mountEntriesBindList();
 
@@ -980,9 +494,10 @@ export function initCommandLog() {
   byIdOrNull('command-log-btn')?.addEventListener('click', togglePanel);
 
   // HS-7983 — module-level subscription to the streaming-shell-output
-  // event. Delegated to `applyShellPartialEvent` (exported for tests) so
-  // the listener wire-up is one line and the DOM-mutation logic stays
-  // unit-testable in happy-dom without bootstrapping the full drawer.
+  // event. Delegated to `applyShellPartialEvent` (now in
+  // `commandLogStreaming.ts`) so the listener wire-up is one line and
+  // the DOM-mutation logic stays unit-testable in happy-dom without
+  // bootstrapping the full drawer.
   window.addEventListener(SHELL_PARTIAL_OUTPUT_EVENT, (e: Event) => {
     applyShellPartialEvent((e as CustomEvent<ShellPartialOutputEvent>).detail);
   });
