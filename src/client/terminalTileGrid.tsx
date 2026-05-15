@@ -14,6 +14,7 @@ import {
   getProjectDefault,
   getSessionOverride,
   resolveAppearance,
+  type TerminalAppearance,
 } from './terminalAppearance.js';
 import { checkout,type CheckoutHandle } from './terminalCheckout.js';
 import {
@@ -351,29 +352,78 @@ interface TileGridContext {
    *  versions share the slot with the factory closure that constructed
    *  the ctx without the closure needing to be aware of the indirection. */
   magnifiedNavListener: { current: ((e: KeyboardEvent) => void) | null };
-  /** HS-8403 — Cycle 2 transitional bridge into the center / dedicated
-   *  subsystem (which is still closure-resident pending Cycle 3). The
-   *  magnified-nav `magnifyTile` lifted function reaches back into the
-   *  factory's `centered` / `dedicated` slots + their lifecycle helpers
-   *  through these callbacks. Cycle 3 lifts the center / dedicated
-   *  subsystem and removes this slot in favour of direct module-level
-   *  calls + boxed-current `centered` / `dedicated` refs.
+  /** HS-8404 — Cycle 3 — CSS class strings the lifted center / dedicated
+   *  functions need for new DOM element construction (slot placeholder,
+   *  center backdrop, dedicated overlay layout, "Starting…" placeholder
+   *  during spawn-and-enlarge). Pre-fix the closures closed over the
+   *  factory locals; post-fix the module-level functions read them
+   *  through ctx so they don't need access to `opts.cssPrefix` for every
+   *  string concat. Cycle 4 will widen this with the remaining classes
+   *  the rendering / sizing functions need. */
+  classes: {
+    tileClass: string;
+    previewClass: string;
+    placeholderClass: string;
+    placeholderStartingClass: string;
+    slotClass: string;
+    backdropClass: string;
+    dedicatedClass: string;
+    dedicatedBarClass: string;
+    dedicatedBackClass: string;
+    dedicatedLabelClass: string;
+    dedicatedBodyClass: string;
+    dedicatedPaneClass: string;
+  };
+  /** HS-8403 / HS-8404 — bridge entries the lifted center / dedicated
+   *  functions use to read + write state still resident in the factory
+   *  closure. Cycle 3 grew this from the original 9 entries (just the
+   *  Cycle-2 magnified-nav reach-back) to the current shape: read+write
+   *  pairs for the four mutable single-slot refs (`centered` /
+   *  `dedicated` / `centerBackdrop` / `pendingSingleClickTimer`) plus a
+   *  set of temporary Cycle-4 bridge entries (`mountTileViaCheckout`,
+   *  `ensureTileMounted`, `applyTileScale`, `applySizing`,
+   *  `resolveTileAppearance`, `renderPreviewContent`, `markTileMounted`)
+   *  that the lifted Cycle-3 code still reaches back into.
+   *
+   *  Cycle 4 will (a) box the four mutable slots as `{ current: T }`
+   *  refs and collapse the get/set pairs, and (b) lift the
+   *  Cycle-4-bridge functions to module level so those entries drop
+   *  out entirely.
+   *
+   *  Note: `centerTile` / `enterDedicatedView` / `exitDedicatedView` /
+   *  `removeCenterBackdrop` / `finishUncenterTile` entries from Cycle 2
+   *  are GONE — Cycle 3 lifted those, so the `magnifyTile` lifted
+   *  function now calls the lifted versions directly (e.g.
+   *  `centerTile(ctx, ...)`) instead of via a callback.
    *
    *  `setDedicatedPriorCenteredTile` mutates a field on the held
-   *  DedicatedView object; `setCentered` swaps the slot itself. Read /
-   *  write boundaries are pinned inside the factory's closures so a
-   *  refactor here doesn't accidentally let a Cycle 1/2/3 lifted function
-   *  poke at fields it shouldn't see yet. */
+   *  DedicatedView object; `setDedicated` swaps the slot itself. */
   centerCallbacks: {
     getCentered: () => InternalTile | null;
     setCentered: (next: InternalTile | null) => void;
     getDedicated: () => DedicatedView | null;
+    setDedicated: (next: DedicatedView | null) => void;
     setDedicatedPriorCenteredTile: (v: InternalTile | null) => void;
-    centerTile: (tile: InternalTile) => void;
-    enterDedicatedView: (tile: InternalTile, prior: InternalTile | null) => void;
-    exitDedicatedView: () => void;
-    removeCenterBackdrop: () => void;
-    finishUncenterTile: (tile: InternalTile, placeholder: HTMLElement | null) => void;
+    getCenterBackdrop: () => HTMLElement | null;
+    setCenterBackdrop: (next: HTMLElement | null) => void;
+    getPendingSingleClickTimer: () => number | null;
+    setPendingSingleClickTimer: (next: number | null) => void;
+    // Cycle-4 bridge entries — these reach into the per-tile lifecycle /
+    // sizing / rendering closures that Cycle 4 will lift. They collapse
+    // when Cycle 4 ships.
+    mountTileViaCheckout: (tile: InternalTile) => void;
+    ensureTileMounted: (tile: InternalTile) => void;
+    applyTileScale: (xtermRoot: HTMLElement, tileWidth: number, tileHeight: number) => void;
+    applySizing: () => void;
+    resolveTileAppearance: (tile: InternalTile) => TerminalAppearance;
+    renderPreviewContent: (state: TileSessionState, exitCode: number | null) => HTMLElement;
+    /** Bookkeeping helper that pairs with `mountTileViaCheckout` — updates
+     *  the virtualization state's `mounted` flag for the tile's composite
+     *  key. Pre-fix `renderTile` + `spawnAndEnlarge` both inlined this
+     *  three-liner; the bridge lets the lifted Cycle-3 spawn-and-enlarge
+     *  call it without needing access to the closure-resident `virtState`
+     *  Map. */
+    markTileMounted: (tile: InternalTile) => void;
   };
 }
 
@@ -451,19 +501,25 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   const dedicatedBodyClass = `${cssPrefix}-dedicated-body`;
   const dedicatedPaneClass = `${cssPrefix}-dedicated-pane`;
 
-  // HS-8402 / HS-8403 — TileGridContext for the lifted module-level
-  // functions. See the `TileGridContext` interface JSDoc for the cycle
-  // plan.
+  // HS-8402 / HS-8403 / HS-8404 — TileGridContext for the lifted
+  // module-level functions. See the `TileGridContext` interface JSDoc
+  // for the cycle plan.
   //
-  // `magnifiedNavListener` is a boxed-current slot so the lifted
+  // `classes` carries the CSS class strings the lifted Cycle-3 center /
+  // dedicated code needs for new element construction. Pre-Cycle 3 the
+  // closures closed over the factory's `slotClass` / `backdropClass` /
+  // `dedicatedClass` etc. locals; post-Cycle 3 these are passed via ctx.
+  //
+  // `magnifiedNavListener` is a boxed-current slot so the lifted Cycle-2
   // bind / unbind functions can swap the listener without needing the
-  // factory to plumb a setter; the closure side never reads this slot
-  // directly (it only existed for the magnified-nav code, which is now
-  // module-level).
+  // factory to plumb a setter.
   //
-  // `centerCallbacks` is the Cycle 2 bridge: the lifted `magnifyTile`
-  // reaches back into the factory's center / dedicated subsystem via
-  // these callbacks. `function` declarations are hoisted so the
+  // `centerCallbacks` now carries (1) get/set pairs for the four
+  // mutable single-slot refs (`centered` / `dedicated` /
+  // `centerBackdrop` / `pendingSingleClickTimer`) the lifted Cycle-3
+  // code reads + writes, and (2) Cycle-4 bridge entries that reach
+  // back into the per-tile lifecycle / sizing / rendering closures
+  // pending Cycle 4's lift. `function` declarations are hoisted so the
   // forward references below resolve fine even though the actual
   // function bodies appear later in the factory.
   const ctx: TileGridContext = {
@@ -473,16 +529,41 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     isCentered: () => centered !== null,
     isDedicated: () => dedicated !== null,
     magnifiedNavListener: { current: null },
+    classes: {
+      tileClass,
+      previewClass,
+      placeholderClass,
+      placeholderStartingClass,
+      slotClass,
+      backdropClass,
+      dedicatedClass,
+      dedicatedBarClass,
+      dedicatedBackClass,
+      dedicatedLabelClass,
+      dedicatedBodyClass,
+      dedicatedPaneClass,
+    },
     centerCallbacks: {
       getCentered: () => centered,
       setCentered: (next) => { centered = next; },
       getDedicated: () => dedicated,
+      setDedicated: (next) => { dedicated = next; },
       setDedicatedPriorCenteredTile: (v) => { if (dedicated !== null) dedicated.priorCenteredTile = v; },
-      centerTile: (tile) => { centerTile(tile); },
-      enterDedicatedView: (tile, prior) => { enterDedicatedView(tile, prior); },
-      exitDedicatedView: () => { exitDedicatedView(); },
-      removeCenterBackdrop: () => { removeCenterBackdrop(); },
-      finishUncenterTile: (tile, placeholder) => { finishUncenterTile(tile, placeholder); },
+      getCenterBackdrop: () => centerBackdrop,
+      setCenterBackdrop: (next) => { centerBackdrop = next; },
+      getPendingSingleClickTimer: () => pendingSingleClickTimer,
+      setPendingSingleClickTimer: (next) => { pendingSingleClickTimer = next; },
+      mountTileViaCheckout: (tile) => { mountTileViaCheckout(tile); },
+      ensureTileMounted: (tile) => { ensureTileMounted(tile); },
+      applyTileScale: (xtermRoot, tileWidth, tileHeight) => { applyTileScale(xtermRoot, tileWidth, tileHeight); },
+      applySizing: () => { applySizing(); },
+      resolveTileAppearance: (tile) => resolveTileAppearance(tile),
+      renderPreviewContent: (state, exitCode) => toElement(renderPreviewContent(state, exitCode)),
+      markTileMounted: (tile) => {
+        const key = tileKeyFor(tile.entry);
+        const v = virtState.get(key);
+        if (v !== undefined) virtState.set(key, { ...v, mounted: true });
+      },
     },
   };
 
@@ -608,8 +689,8 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       if (s !== undefined) virtState.set(key, { ...s, mounted: true });
     }
 
-    root.addEventListener('click', (e) => { onTileClick(tile, e); });
-    root.addEventListener('dblclick', (e) => { onTileDblClick(tile, e); });
+    root.addEventListener('click', (e) => { onTileClick(ctx, tile, e); });
+    root.addEventListener('dblclick', (e) => { onTileDblClick(ctx, tile, e); });
     if (opts.onContextMenu !== undefined) {
       const handler = opts.onContextMenu;
       root.addEventListener('contextmenu', (e) => { handler(tile.entry, e); });
@@ -1105,488 +1186,23 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     xtermRoot.style.transform = `scale(${scale.scale})`;
   }
 
-  // --- Click → center / dblclick → dedicated ---
-
-  function onTileClick(tile: InternalTile, e: MouseEvent): void {
-    e.stopPropagation();
-    if (pendingSingleClickTimer !== null) window.clearTimeout(pendingSingleClickTimer);
-    pendingSingleClickTimer = window.setTimeout(() => {
-      pendingSingleClickTimer = null;
-      if (tile.state !== 'alive') {
-        void spawnAndEnlarge(tile, 'center');
-        return;
-      }
-      // HS-8157 — clicking the already-centered tile is a no-op; the
-      // user dismisses the magnified view by clicking outside (the
-      // backdrop click handler in `centerTile`). Pre-fix the inside
-      // click also uncentered, which made any click inside the
-      // magnified terminal (text selection, focus, etc.) collapse it.
-      if (centered === tile) return;
-      if (centered !== null) uncenterTile();
-      centerTile(tile);
-    }, SINGLE_CLICK_DELAY_MS);
-  }
-
-  function onTileDblClick(tile: InternalTile, e: MouseEvent): void {
-    e.stopPropagation();
-    e.preventDefault();
-    if (pendingSingleClickTimer !== null) {
-      window.clearTimeout(pendingSingleClickTimer);
-      pendingSingleClickTimer = null;
-    }
-    if (tile.state !== 'alive') {
-      void spawnAndEnlarge(tile, 'dedicated');
-      return;
-    }
-    const prior = centered === tile ? null : centered;
-    if (centered === tile) uncenterTile();
-    try { enterDedicatedView(tile, prior); }
-    catch (err) { console.error('terminalTileGrid: enterDedicatedView failed', err); }
-  }
-
-  async function spawnAndEnlarge(tile: InternalTile, target: 'center' | 'dedicated'): Promise<void> {
-    const wasExited = tile.state === 'exited';
-    // HS-8059 — clear the inline theme-bg so the `Starting…` card uses its
-    // own `--bg-secondary` instead of being painted with the previous mount's
-    // theme bg.
-    tile.preview.style.backgroundColor = '';
-    tile.preview.replaceChildren(toElement(
-      <div className={`${placeholderClass} ${placeholderStartingClass}`}>
-        <span>Starting…</span>
-      </div>
-    ));
-    try {
-      if (wasExited) {
-        await apiWithSecret('/terminal/restart', tile.entry.secret, {
-          method: 'POST',
-          body: { terminalId: tile.entry.id },
-        });
-      }
-      tile.state = 'alive';
-      tile.exitCode = null;
-      tile.root.classList.remove(`${tileClass}-not_spawned`, `${tileClass}-exited`);
-      tile.root.classList.add(`${tileClass}-alive`);
-      mountTileViaCheckout(tile);
-      // HS-7968 / HS-8285 follow-up — flag the tile as mounted in the
-      // virtualization state (composite key).
-      const key = tileKeyFor(tile.entry);
-      const v = virtState.get(key);
-      if (v !== undefined) virtState.set(key, { ...v, mounted: true });
-    } catch (err) {
-      console.error('terminalTileGrid: spawn failed', err);
-      tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
-      return;
-    }
-    if (target === 'center') centerTile(tile);
-    else enterDedicatedView(tile, null);
-  }
-
-  // --- Centered overlay (FLIP animation, §25.7 / HS-6867) ---
-
-  function getCenterReferenceRect(): DOMRect {
-    if (opts.centerScope === 'viewport') {
-      // Use the visual viewport so the centered tile tracks the window.
-      return new DOMRect(0, 0, window.innerWidth, window.innerHeight);
-    }
-    const el = opts.centerReferenceEl ?? opts.container;
-    return el.getBoundingClientRect();
-  }
-
-  function centerTile(tile: InternalTile): void {
-    centered = tile;
-    clearTileBell(ctx, tile);
-    if (opts.onTileEnlarge !== undefined) opts.onTileEnlarge(tile.entry, 'center');
-    // HS-8028 — install the magnified-nav keyboard listener (Shift+Cmd+
-    // Arrow on macOS / Shift+Ctrl+Arrow elsewhere). Idempotent — the
-    // helper only attaches once even on rapid re-centers.
-    bindMagnifiedNavHandler(ctx);
-    // HS-7968 — defend against the click-before-IO race: if an alive tile
-    // hasn't been mounted yet (the IntersectionObserver callback hadn't run
-    // before the click landed), force-mount now so the centered tile shows
-    // the live terminal instead of an empty placeholder.
-    if (tile.state === 'alive' && tile.checkout === null) {
-      ensureTileMounted(tile);
-    }
-
-    const origRect = tile.root.getBoundingClientRect();
-    const placeholder = createSlotPlaceholder(origRect.width, origRect.height);
-    tile.slotPlaceholder = placeholder;
-    tile.root.parentElement?.insertBefore(placeholder, tile.root);
-
-    const refRect = getCenterReferenceRect();
-    const availWidth = refRect.width * opts.centerSizeFrac;
-    const availHeight = refRect.height * opts.centerSizeFrac;
-    const previewWidth = Math.min(availWidth, availHeight * TILE_ASPECT);
-    const previewHeight = previewWidth / TILE_ASPECT;
-    const targetLeft = refRect.left + (refRect.width - previewWidth) / 2;
-    const targetTop = refRect.top + (refRect.height - previewHeight) / 2;
-
-    tile.root.classList.add('centered');
-    tile.root.style.left = `${targetLeft}px`;
-    tile.root.style.top = `${targetTop}px`;
-    tile.root.style.width = `${previewWidth}px`;
-    tile.preview.style.width = `${previewWidth}px`;
-    tile.preview.style.height = `${previewHeight}px`;
-    if (tile.xtermRoot !== null) applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
-
-    mountCenterBackdrop();
-
-    const finalRect = tile.root.getBoundingClientRect();
-    if (finalRect.width > 0 && finalRect.height > 0) {
-      const dx = origRect.left - finalRect.left;
-      const dy = origRect.top - finalRect.top;
-      const sx = origRect.width / finalRect.width;
-      const sy = origRect.height / finalRect.height;
-      tile.root.style.transition = 'none';
-      tile.root.style.transformOrigin = 'top left';
-      tile.root.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
-      void tile.root.offsetWidth;
-      tile.root.style.transition = `transform ${CENTER_ANIMATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
-      tile.root.style.transform = '';
-    }
-
-    queueMicrotask(() => { tile.checkout?.term.focus(); });
-  }
-
-  function recenterTile(): void {
-    if (centered === null || !centered.root.classList.contains('centered')) return;
-    const refRect = getCenterReferenceRect();
-    const availWidth = refRect.width * opts.centerSizeFrac;
-    const availHeight = refRect.height * opts.centerSizeFrac;
-    const previewWidth = Math.min(availWidth, availHeight * TILE_ASPECT);
-    const previewHeight = previewWidth / TILE_ASPECT;
-    const targetLeft = refRect.left + (refRect.width - previewWidth) / 2;
-    const targetTop = refRect.top + (refRect.height - previewHeight) / 2;
-
-    const tile = centered;
-    const prev = tile.root.style.transition;
-    tile.root.style.transition = 'none';
-    tile.root.style.left = `${targetLeft}px`;
-    tile.root.style.top = `${targetTop}px`;
-    tile.root.style.width = `${previewWidth}px`;
-    tile.preview.style.width = `${previewWidth}px`;
-    tile.preview.style.height = `${previewHeight}px`;
-    if (tile.xtermRoot !== null) applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
-    void tile.root.offsetWidth;
-    tile.root.style.transition = prev;
-  }
-
-  function uncenterTile(): void {
-    if (centered === null) return;
-    const tile = centered;
-    const placeholder = tile.slotPlaceholder;
-    centered = null;
-    removeCenterBackdrop();
-    // HS-8028 — uncentering returns the user to the bare grid; the
-    // magnified-nav handler is no longer relevant (no magnified target
-    // to navigate from). Only unbind when no dedicated view is up
-    // either — `enterDedicatedView` may have called `uncenterTile`
-    // internally on an open centered tile, in which case the nav
-    // handler must stay armed for the dedicated path.
-    if (dedicated === null) unbindMagnifiedNavHandler(ctx);
-    if (opts.onTileShrink !== undefined) opts.onTileShrink(tile.entry);
-
-    if (placeholder === null) { finishUncenterTile(tile, null); return; }
-    const targetRect = placeholder.getBoundingClientRect();
-    const currentRect = tile.root.getBoundingClientRect();
-    if (currentRect.width <= 0 || currentRect.height <= 0) {
-      finishUncenterTile(tile, placeholder);
-      return;
-    }
-
-    const dx = targetRect.left - currentRect.left;
-    const dy = targetRect.top - currentRect.top;
-    const sx = targetRect.width / currentRect.width;
-    const sy = targetRect.height / currentRect.height;
-    tile.root.style.transition = `transform ${CENTER_ANIMATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
-    tile.root.style.transformOrigin = 'top left';
-    tile.root.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
-
-    const onEnd = (): void => {
-      tile.root.removeEventListener('transitionend', onEnd);
-      finishUncenterTile(tile, placeholder);
-    };
-    tile.root.addEventListener('transitionend', onEnd);
-    window.setTimeout(() => {
-      tile.root.removeEventListener('transitionend', onEnd);
-      if (tile.slotPlaceholder === placeholder) finishUncenterTile(tile, placeholder);
-    }, CENTER_ANIMATION_MS + 80);
-  }
-
-  function finishUncenterTile(tile: InternalTile, placeholder: HTMLElement | null): void {
-    tile.root.classList.remove('centered');
-    tile.root.style.transition = '';
-    tile.root.style.transform = '';
-    tile.root.style.transformOrigin = '';
-    tile.root.style.left = '';
-    tile.root.style.top = '';
-    if (tile.gridPreviewWidth > 0) tile.root.style.width = `${tile.gridPreviewWidth}px`;
-    tile.preview.style.width = `${tile.gridPreviewWidth}px`;
-    tile.preview.style.height = `${tile.gridPreviewHeight}px`;
-    if (tile.xtermRoot !== null && tile.gridPreviewWidth > 0 && tile.gridPreviewHeight > 0) {
-      applyTileScale(tile.xtermRoot, tile.gridPreviewWidth, tile.gridPreviewHeight);
-    }
-    if (placeholder !== null && placeholder.parentElement !== null) {
-      placeholder.parentElement.insertBefore(tile.root, placeholder);
-      placeholder.remove();
-    }
-    tile.slotPlaceholder = null;
-    // HS-8046 — uncentering returns the user to the unoccluded grid view;
-    // bells that piled up behind the centered overlay are now visible and
-    // should auto-clear (the user IS looking at them).
-    clearBellsForVisibleTiles(ctx);
-  }
-
-  function createSlotPlaceholder(width: number, height: number): HTMLElement {
-    return toElement(
-      <div className={slotClass} style={`width:${width}px;height:${height}px;`}></div>
-    );
-  }
-
-  function mountCenterBackdrop(): void {
-    if (centerBackdrop !== null) return;
-    const backdrop = toElement(<div className={backdropClass}></div>);
-    backdrop.addEventListener('click', () => { uncenterTile(); });
-    if (opts.centerScope === 'viewport') {
-      document.body.appendChild(backdrop);
-    } else {
-      const target = opts.centerReferenceEl ?? opts.container;
-      target.appendChild(backdrop);
-    }
-    centerBackdrop = backdrop;
-  }
-
-  function removeCenterBackdrop(): void {
-    if (centerBackdrop === null) return;
-    centerBackdrop.remove();
-    centerBackdrop = null;
-  }
-
-  // HS-8402 — `clearTileBell`, `postClearBell`, `isGridSurfaceUnoccluded`,
-  // `maybeAutoClearTileBell`, `clearBellsForVisibleTiles` are lifted to
-  // module-level functions taking `ctx: TileGridContext` as their first
-  // arg. See the bottom of the file for the lifted implementations.
-  // `visibleTileIds` was relocated to the top of the factory body so the
-  // `ctx` literal can capture the same Set reference; the factory and
-  // the lifted code share that one Set.
-
-  // --- HS-8028 magnified-nav (Shift+Cmd+Arrow) ---
-
-  // HS-8403 — `bindMagnifiedNavHandler`, `unbindMagnifiedNavHandler`,
-  // `findNextTileInDirection`, `magnifyTile` are lifted to module-level
+  // HS-8402 (Cycle 1) — bell-clearing functions
+  // HS-8403 (Cycle 2) — magnified-nav functions
+  // HS-8404 (Cycle 3) — click / centered-overlay / dedicated-view functions
+  // ───────────────────────────────────────────────────────────────────────
+  // All twelve closures that lived here (Cycles 1+2+3) are now module-level
   // functions taking `ctx: TileGridContext` as their first arg. See the
-  // bottom of the file for the lifted implementations. The factory's
-  // `centered` / `dedicated` slots + their lifecycle helpers are bridged
-  // into the lifted code via `ctx.centerCallbacks` (Cycle 3 lifts the
-  // center / dedicated subsystem and removes that bridge in favour of
-  // direct module-level calls).
-
-  // --- Dedicated full-pane view (§25.8 / §36.5 / HS-7063 / HS-7098) ---
-
-  function enterDedicatedView(tile: InternalTile, priorCenteredTile: InternalTile | null): void {
-    if (dedicated !== null) exitDedicatedView();
-    clearTileBell(ctx, tile);
-    if (opts.onTileEnlarge !== undefined) opts.onTileEnlarge(tile.entry, 'dedicated');
-    // HS-8028 — magnified-nav listener (Shift+Cmd+Arrow on macOS /
-    // Shift+Ctrl+Arrow elsewhere). Idempotent — already wired if the
-    // user dedicated-viewed an already-centered tile.
-    bindMagnifiedNavHandler(ctx);
-
-    const overlay = toElement(
-      <div className={dedicatedClass} data-secret={tile.entry.secret} data-terminal-id={tile.entry.id}>
-        <div className={dedicatedBarClass}>
-          <button className={dedicatedBackClass} title="Back to grid">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
-            <span>Back</span>
-          </button>
-          <div className={dedicatedLabelClass}>{tile.entry.label}</div>
-        </div>
-        <div className={dedicatedBodyClass}>
-          <div className={dedicatedPaneClass}></div>
-        </div>
-      </div>
-    );
-    // Append the overlay relative to the appropriate scope so the dedicated
-    // view occupies the same area the grid does. Dashboard uses
-    // 'viewport' -> append to the dashboard root (which has fixed position
-    // anyway); drawer uses 'container' -> append into the grid container.
-    const dedicatedHost = opts.centerScope === 'viewport'
-      ? (opts.centerReferenceEl ?? opts.container)
-      : opts.container;
-    dedicatedHost.appendChild(overlay);
-
-    const pane = overlay.querySelector<HTMLElement>(`.${dedicatedPaneClass}`);
-    const backBtn = overlay.querySelector<HTMLElement>(`.${dedicatedBackClass}`);
-    const bar = overlay.querySelector<HTMLElement>(`.${dedicatedBarClass}`);
-    const dedicatedBody = overlay.querySelector<HTMLElement>(`.${dedicatedBodyClass}`);
-    if (pane === null || backBtn === null || bar === null) return;
-    // HS-8012 — the prompt overlay used to capture `dedicatedBody ?? pane`
-    // here so it could mount inside the dedicated view. It now mounts on
-    // `document.body` and anchors below the project tab, so the closure
-    // no longer needs an in-pane anchor. `dedicatedBody` is still used
-    // below to apply the per-theme background color.
-    backBtn.addEventListener('click', () => { exitDedicatedView(); });
-
-    const appearance = resolveTileAppearance(tile);
-    const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
-    // HS-7960 — paint the dedicated-body padded gutter with the active
-    // theme's bg so the area around the xterm canvas reads as part of the
-    // terminal frame, matching the drawer's HS-7960 treatment.
-    if (dedicatedBody !== null) dedicatedBody.style.backgroundColor = themeData.background;
-
-    // HS-8042 — dedicated view is a `terminalCheckout` consumer. Pre-fix
-    // it spawned its own xterm + WebSocket attached to the same PTY,
-    // duplicating resources for any terminal already mounted in a tile.
-    // The migration claims the live xterm into the dedicated pane via
-    // checkout; the tile's existing mount drops to the §54.3.2
-    // placeholder; on exit the handle releases and the xterm reparents
-    // back. The `cols`/`rows` initial-checkout values are placeholders —
-    // `fit.fit()` runs in the next frame to resolve real dims from the
-    // pane's measured layout, then `applyResizeIfChanged` inside
-    // checkout fires the real resize via `term.onResize` below.
-    // HS-8073 — when the dedicated view is bumped down (e.g. quit-confirm
-    // preview pushes the same terminal onto the LIFO stack) and later
-    // restored (cancel), the live xterm reparents back into `pane` but
-    // the pane's own dimensions never changed during the round-trip, so
-    // the `bodyResizeObserver` below doesn't fire and the term keeps the
-    // bumping consumer's last-applied size (e.g. the quit-dialog's
-    // smaller preview dims). The result the user sees is centered
-    // contents inside an oversized empty frame. We need a refit on
-    // restore to reconverge the term to the dedicated pane's actual
-    // dims. `runFit` is hoisted as a `let` so the `onRestoredToTop`
-    // closure (passed into `checkout()` synchronously below, before the
-    // `runFit` const assignment) can call it.
-    let runFit: () => void = () => { /* assigned below before any restore */ };
-    const handle = checkout({
-      projectSecret: tile.entry.secret,
-      terminalId: tile.entry.id,
-      cols: TILE_INITIAL_COLS,
-      rows: TILE_INITIAL_ROWS,
-      mountInto: pane,
-      // HS-8295 — paint the §54 bumped-down placeholder with this terminal's
-      // theme bg so a quit-confirm preview / popup borrowing the live xterm
-      // doesn't flash the dedicated pane to `--bg-secondary`.
-      placeholderBackground: themeData.background,
-      onRestoredToTop() {
-        // HS-8073 — defer one frame so the pane has a current layout
-        // box (the xterm element just reparented in synchronously, but
-        // FitAddon reads `term.element.parentElement` dims and we want
-        // the browser to have settled any same-frame layout shift the
-        // reparent might have triggered). `runFit()` calls `fit.fit()`
-        // which calls `term.resize(realCols, realRows)`; that fires
-        // `term.onResize` below which routes through `handle.resize`
-        // and updates both `lastApplied` and the server PTY size.
-        requestAnimationFrame(() => { runFit(); });
-      },
-    });
-    const term = handle.term;
-    const fit = handle.fit;
-
-    // Apply appearance + per-consumer term tweaks. The xterm is shared
-    // across consumers via the checkout module, so settings written here
-    // persist on the term — when this dedicated view releases and the
-    // tile's checkout (if any) regains top-of-stack, the tile sees the
-    // theme/font we set. That's fine — both surfaces resolve appearance
-    // for the same `(secret, terminalId)` so the values match.
-    term.options.theme = themeToXtermOptions(themeData);
-    term.options.linkHandler = {
-      activate: (_event, text) => { openExternalUrl(text); },
-    };
-    term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
-    void applyAppearanceToTerm(term, appearance);
-    // HS-7594 — swallow Cmd/Ctrl+` so the document-level toggle dispatcher
-    // sees it instead of the shell receiving a backtick.
-    term.attachCustomKeyEventHandler((e) => {
-      if (isTerminalViewToggleShortcut(e) !== null) return false;
-      return true;
-    });
-
-    runFit = (): void => {
-      try {
-        fit.fit();
-        // HS-8042 — propagate the fit() result to the checkout entry's
-        // last-applied dims so a subsequent same-size handoff (e.g.
-        // tile's checkout regains top-of-stack at its own dims) won't
-        // skip an actually-different resize. The `term.onResize` below
-        // fires after fit() and sends the WS resize frame; without
-        // updating the entry's bookkeeping we'd risk a stale lastApplied.
-      } catch { /* not ready */ }
-    };
-    requestAnimationFrame(runFit);
-    const bodyResizeObserver = new ResizeObserver(runFit);
-    bodyResizeObserver.observe(pane);
-
-    // HS-8042 — `term.onData` is wired by the checkout module's WS
-    // attachment; we don't need to add another handler here. (Pre-fix
-    // dedicated had its own ws.send onData wiring because it owned a
-    // separate WS; checkout's WS handler now serves both tile and
-    // dedicated for the same terminal.)
-    //
-    // `term.onResize` fires when `fit.fit()` resolves the pane's
-    // measured dims — route the new size through `handle.resize` so
-    // the checkout module sends the WS resize frame AND updates the
-    // entry's `lastAppliedCols/Rows` bookkeeping (so a future stack
-    // swap to a different-size consumer doesn't skip-on-same-size
-    // erroneously). The skip rule inside `handle.resize` itself is the
-    // SIGWINCH-storm guard for idempotent fit() calls.
-    term.onResize(({ cols, rows }) => {
-      handle.resize(cols, rows);
-    });
-
-    let barDispose: (() => void) | null = null;
-    if (opts.onDedicatedBarMount !== undefined) {
-      const result = opts.onDedicatedBarMount(bar, tile.entry, term);
-      if (typeof result === 'function') barDispose = result;
-    }
-
-    dedicated = { tile, overlay, checkout: handle, term, fit, bodyResizeObserver, priorCenteredTile, barDispose };
-    queueMicrotask(() => { term.focus(); });
-  }
-
-  function exitDedicatedView(): void {
-    if (dedicated === null) return;
-    const view = dedicated;
-    dedicated = null;
-    // HS-8028 — exit dedicated; if the user is returning to centered
-    // (priorCenteredTile non-null) keep the nav handler armed since
-    // `centerTile` would re-bind anyway. Otherwise unbind — the bare
-    // grid has no magnified target.
-    if (view.priorCenteredTile === null) unbindMagnifiedNavHandler(ctx);
-    view.bodyResizeObserver?.disconnect();
-    if (view.barDispose !== null) {
-      try { view.barDispose(); } catch { /* swallow */ }
-    }
-    // HS-8042 — release the checkout instead of disposing the term/ws
-    // directly. If the tile's own checkout is still in the LIFO stack
-    // (the common case — the user double-clicked a mounted tile), the
-    // live xterm DOM-reparents back to the tile's `xtermRoot` and the
-    // tile's preview becomes interactive again. If the tile's checkout
-    // is empty (rare — the tile was virtualized off-screen between
-    // dedicated entry and exit), the entry is fully disposed and the
-    // tile re-mounts on its next viewport-enter.
-    view.checkout.release();
-    view.overlay.remove();
-    if (opts.onTileShrink !== undefined) opts.onTileShrink(view.tile.entry);
-
-    // HS-7097 + HS-8048: re-claim the tile PTY at tile-native dims via
-    // the tile's checkout (the live xterm just reparented back into the
-    // tile via `view.checkout.release()` above; resize routes through
-    // the same shared WS that the dedicated view was using).
-    if (view.tile.checkout !== null
-        && view.tile.targetCols > 0 && view.tile.targetRows > 0) {
-      view.tile.checkout.resize(view.tile.targetCols, view.tile.targetRows);
-    }
-
-    applySizing();
-    if (view.priorCenteredTile !== null) {
-      centerTile(view.priorCenteredTile);
-    } else {
-      // HS-8046 — exiting dedicated view (with no centered fallback)
-      // returns the user to the unoccluded grid; sweep visible tiles for
-      // bells that piled up while the dedicated view was up.
-      clearBellsForVisibleTiles(ctx);
-    }
-  }
+  // bottom of the file for the lifted implementations. The factory passes
+  // `ctx` to every callsite; the four mutable single-slot refs (`centered`,
+  // `dedicated`, `centerBackdrop`, `pendingSingleClickTimer`) are reached
+  // through `ctx.centerCallbacks` get/set pairs. Cycle 4 will box those
+  // slots as `{ current: T }` refs and collapse the get/set pairs into
+  // direct `.current` reads / writes.
+  //
+  // The Cycle-2 `centerCallbacks.{centerTile, enterDedicatedView,
+  // exitDedicatedView, removeCenterBackdrop, finishUncenterTile}`
+  // transitional entries are GONE in Cycle 3 — the lifted `magnifyTile`
+  // now calls the lifted center / dedicated functions directly.
 
   // --- Tile teardown ---
 
@@ -1819,7 +1435,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
    *  the single-click timer + virtualization registries / observer all
    *  live above the per-tile layer and need explicit cleanup here. */
   function teardownAmbientState(): void {
-    if (dedicated !== null) exitDedicatedView();
+    if (dedicated !== null) exitDedicatedView(ctx);
     if (centered !== null) {
       if (centered.slotPlaceholder !== null) centered.slotPlaceholder.remove();
       centered.root.classList.remove('centered');
@@ -1832,7 +1448,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // `uncenterTile` may have already unbound; the helper is
     // idempotent.
     unbindMagnifiedNavHandler(ctx);
-    removeCenterBackdrop();
+    removeCenterBackdrop(ctx);
     if (pendingSingleClickTimer !== null) {
       window.clearTimeout(pendingSingleClickTimer);
       pendingSingleClickTimer = null;
@@ -1865,9 +1481,9 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       applySizing();
     },
     applySizing,
-    recenterTile,
-    uncenterTile,
-    exitDedicatedView,
+    recenterTile: () => { recenterTile(ctx); },
+    uncenterTile: () => { uncenterTile(ctx); },
+    exitDedicatedView: () => { exitDedicatedView(ctx); },
     syncBellState(pendingTileKeys) {
       for (const tile of tiles.values()) {
         const key = tileKeyFor(tile.entry);
@@ -2045,7 +1661,9 @@ function findNextTileInDirection(ctx: TileGridContext, from: InternalTile, direc
 }
 
 /** HS-8028 — switch the magnified view from the current tile to `next`,
- *  preserving the user's current magnification mode. */
+ *  preserving the user's current magnification mode. HS-8404 — direct
+ *  calls to the lifted center / dedicated functions instead of going
+ *  through Cycle 2's `centerCallbacks` bridge (which is now collapsed). */
 function magnifyTile(ctx: TileGridContext, next: InternalTile, mode: 'center' | 'dedicated'): void {
   const cb = ctx.centerCallbacks;
   if (mode === 'center') {
@@ -2057,17 +1675,498 @@ function magnifyTile(ctx: TileGridContext, next: InternalTile, mode: 'center' | 
     if (prev !== null) {
       const placeholder = prev.slotPlaceholder;
       cb.setCentered(null);
-      cb.removeCenterBackdrop();
+      removeCenterBackdrop(ctx);
       if (ctx.opts.onTileShrink !== undefined) ctx.opts.onTileShrink(prev.entry);
-      cb.finishUncenterTile(prev, placeholder);
+      finishUncenterTile(ctx, prev, placeholder);
     }
-    cb.centerTile(next);
+    centerTile(ctx, next);
   } else {
     // Dedicated → swap. Force-clear `priorCenteredTile` so exit
     // doesn't animate through a stale centered state on the way out
     // (we're about to enter dedicated for `next` immediately).
     cb.setDedicatedPriorCenteredTile(null);
-    cb.exitDedicatedView();
-    cb.enterDedicatedView(next, null);
+    exitDedicatedView(ctx);
+    enterDedicatedView(ctx, next, null);
+  }
+}
+
+// =============================================================================
+// HS-8404 Cycle 3 — lifted center-zoom + dedicated-view functions
+// =============================================================================
+// All twelve closures (click dispatchers, spawn-and-enlarge, the FLIP-animation
+// center cluster, slot placeholder, center backdrop, dedicated-view enter/exit)
+// have been hoisted to module-level. Each takes `ctx: TileGridContext` as its
+// first arg. Cross-calls within the lifted set go direct (e.g.
+// `centerTile(ctx, ...)` calls `mountCenterBackdrop(ctx)` and
+// `bindMagnifiedNavHandler(ctx)` directly). State that lives in the factory
+// closure (`centered` / `dedicated` / `centerBackdrop` /
+// `pendingSingleClickTimer` slots, plus the Cycle-4 lifecycle / sizing /
+// rendering helpers `mountTileViaCheckout` / `ensureTileMounted` /
+// `applyTileScale` / `applySizing` / `resolveTileAppearance` /
+// `renderPreviewContent` / `markTileMounted`) is reached through
+// `ctx.centerCallbacks`. Cycle 4 will box the four mutable single-slot refs
+// and collapse the lifecycle / sizing / rendering bridge entries by lifting
+// those closures too.
+
+// --- Click → center / dblclick → dedicated ---
+
+function onTileClick(ctx: TileGridContext, tile: InternalTile, e: MouseEvent): void {
+  e.stopPropagation();
+  const cb = ctx.centerCallbacks;
+  const prior = cb.getPendingSingleClickTimer();
+  if (prior !== null) window.clearTimeout(prior);
+  cb.setPendingSingleClickTimer(window.setTimeout(() => {
+    cb.setPendingSingleClickTimer(null);
+    if (tile.state !== 'alive') {
+      void spawnAndEnlarge(ctx, tile, 'center');
+      return;
+    }
+    // HS-8157 — clicking the already-centered tile is a no-op; the
+    // user dismisses the magnified view by clicking outside (the
+    // backdrop click handler in `centerTile`). Pre-fix the inside
+    // click also uncentered, which made any click inside the
+    // magnified terminal (text selection, focus, etc.) collapse it.
+    const centered = cb.getCentered();
+    if (centered === tile) return;
+    if (centered !== null) uncenterTile(ctx);
+    centerTile(ctx, tile);
+  }, SINGLE_CLICK_DELAY_MS));
+}
+
+function onTileDblClick(ctx: TileGridContext, tile: InternalTile, e: MouseEvent): void {
+  e.stopPropagation();
+  e.preventDefault();
+  const cb = ctx.centerCallbacks;
+  const pending = cb.getPendingSingleClickTimer();
+  if (pending !== null) {
+    window.clearTimeout(pending);
+    cb.setPendingSingleClickTimer(null);
+  }
+  if (tile.state !== 'alive') {
+    void spawnAndEnlarge(ctx, tile, 'dedicated');
+    return;
+  }
+  const centered = cb.getCentered();
+  const prior = centered === tile ? null : centered;
+  if (centered === tile) uncenterTile(ctx);
+  try { enterDedicatedView(ctx, tile, prior); }
+  catch (err) { console.error('terminalTileGrid: enterDedicatedView failed', err); }
+}
+
+async function spawnAndEnlarge(ctx: TileGridContext, tile: InternalTile, target: 'center' | 'dedicated'): Promise<void> {
+  const cb = ctx.centerCallbacks;
+  const wasExited = tile.state === 'exited';
+  // HS-8059 — clear the inline theme-bg so the `Starting…` card uses its
+  // own `--bg-secondary` instead of being painted with the previous mount's
+  // theme bg.
+  tile.preview.style.backgroundColor = '';
+  tile.preview.replaceChildren(toElement(
+    <div className={`${ctx.classes.placeholderClass} ${ctx.classes.placeholderStartingClass}`}>
+      <span>Starting…</span>
+    </div>
+  ));
+  try {
+    if (wasExited) {
+      await apiWithSecret('/terminal/restart', tile.entry.secret, {
+        method: 'POST',
+        body: { terminalId: tile.entry.id },
+      });
+    }
+    tile.state = 'alive';
+    tile.exitCode = null;
+    tile.root.classList.remove(`${ctx.classes.tileClass}-not_spawned`, `${ctx.classes.tileClass}-exited`);
+    tile.root.classList.add(`${ctx.classes.tileClass}-alive`);
+    cb.mountTileViaCheckout(tile);
+    // HS-7968 / HS-8285 follow-up — flag the tile as mounted in the
+    // virtualization state (composite key). The `markTileMounted` bridge
+    // does the `virtState.get/set` dance using the factory's Map; Cycle 4
+    // collapses the bridge when `virtState` is also lifted.
+    cb.markTileMounted(tile);
+  } catch (err) {
+    console.error('terminalTileGrid: spawn failed', err);
+    tile.preview.replaceChildren(cb.renderPreviewContent(tile.state, tile.exitCode));
+    return;
+  }
+  if (target === 'center') centerTile(ctx, tile);
+  else enterDedicatedView(ctx, tile, null);
+}
+
+// --- Centered overlay (FLIP animation, §25.7 / HS-6867) ---
+
+function getCenterReferenceRect(ctx: TileGridContext): DOMRect {
+  if (ctx.opts.centerScope === 'viewport') {
+    // Use the visual viewport so the centered tile tracks the window.
+    return new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+  }
+  const el = ctx.opts.centerReferenceEl ?? ctx.opts.container;
+  return el.getBoundingClientRect();
+}
+
+function centerTile(ctx: TileGridContext, tile: InternalTile): void {
+  const cb = ctx.centerCallbacks;
+  cb.setCentered(tile);
+  clearTileBell(ctx, tile);
+  if (ctx.opts.onTileEnlarge !== undefined) ctx.opts.onTileEnlarge(tile.entry, 'center');
+  // HS-8028 — install the magnified-nav keyboard listener (Shift+Cmd+
+  // Arrow on macOS / Shift+Ctrl+Arrow elsewhere). Idempotent — the
+  // helper only attaches once even on rapid re-centers.
+  bindMagnifiedNavHandler(ctx);
+  // HS-7968 — defend against the click-before-IO race: if an alive tile
+  // hasn't been mounted yet (the IntersectionObserver callback hadn't run
+  // before the click landed), force-mount now so the centered tile shows
+  // the live terminal instead of an empty placeholder.
+  if (tile.state === 'alive' && tile.checkout === null) {
+    cb.ensureTileMounted(tile);
+  }
+
+  const origRect = tile.root.getBoundingClientRect();
+  const placeholder = createSlotPlaceholder(ctx, origRect.width, origRect.height);
+  tile.slotPlaceholder = placeholder;
+  tile.root.parentElement?.insertBefore(placeholder, tile.root);
+
+  const refRect = getCenterReferenceRect(ctx);
+  const availWidth = refRect.width * ctx.opts.centerSizeFrac;
+  const availHeight = refRect.height * ctx.opts.centerSizeFrac;
+  const previewWidth = Math.min(availWidth, availHeight * TILE_ASPECT);
+  const previewHeight = previewWidth / TILE_ASPECT;
+  const targetLeft = refRect.left + (refRect.width - previewWidth) / 2;
+  const targetTop = refRect.top + (refRect.height - previewHeight) / 2;
+
+  tile.root.classList.add('centered');
+  tile.root.style.left = `${targetLeft}px`;
+  tile.root.style.top = `${targetTop}px`;
+  tile.root.style.width = `${previewWidth}px`;
+  tile.preview.style.width = `${previewWidth}px`;
+  tile.preview.style.height = `${previewHeight}px`;
+  if (tile.xtermRoot !== null) cb.applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
+
+  mountCenterBackdrop(ctx);
+
+  const finalRect = tile.root.getBoundingClientRect();
+  if (finalRect.width > 0 && finalRect.height > 0) {
+    const dx = origRect.left - finalRect.left;
+    const dy = origRect.top - finalRect.top;
+    const sx = origRect.width / finalRect.width;
+    const sy = origRect.height / finalRect.height;
+    tile.root.style.transition = 'none';
+    tile.root.style.transformOrigin = 'top left';
+    tile.root.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+    void tile.root.offsetWidth;
+    tile.root.style.transition = `transform ${CENTER_ANIMATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
+    tile.root.style.transform = '';
+  }
+
+  queueMicrotask(() => { tile.checkout?.term.focus(); });
+}
+
+function recenterTile(ctx: TileGridContext): void {
+  const cb = ctx.centerCallbacks;
+  const centered = cb.getCentered();
+  if (centered === null || !centered.root.classList.contains('centered')) return;
+  const refRect = getCenterReferenceRect(ctx);
+  const availWidth = refRect.width * ctx.opts.centerSizeFrac;
+  const availHeight = refRect.height * ctx.opts.centerSizeFrac;
+  const previewWidth = Math.min(availWidth, availHeight * TILE_ASPECT);
+  const previewHeight = previewWidth / TILE_ASPECT;
+  const targetLeft = refRect.left + (refRect.width - previewWidth) / 2;
+  const targetTop = refRect.top + (refRect.height - previewHeight) / 2;
+
+  const tile = centered;
+  const prev = tile.root.style.transition;
+  tile.root.style.transition = 'none';
+  tile.root.style.left = `${targetLeft}px`;
+  tile.root.style.top = `${targetTop}px`;
+  tile.root.style.width = `${previewWidth}px`;
+  tile.preview.style.width = `${previewWidth}px`;
+  tile.preview.style.height = `${previewHeight}px`;
+  if (tile.xtermRoot !== null) cb.applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
+  void tile.root.offsetWidth;
+  tile.root.style.transition = prev;
+}
+
+function uncenterTile(ctx: TileGridContext): void {
+  const cb = ctx.centerCallbacks;
+  const centered = cb.getCentered();
+  if (centered === null) return;
+  const tile = centered;
+  const placeholder = tile.slotPlaceholder;
+  cb.setCentered(null);
+  removeCenterBackdrop(ctx);
+  // HS-8028 — uncentering returns the user to the bare grid; the
+  // magnified-nav handler is no longer relevant (no magnified target
+  // to navigate from). Only unbind when no dedicated view is up
+  // either — `enterDedicatedView` may have called `uncenterTile`
+  // internally on an open centered tile, in which case the nav
+  // handler must stay armed for the dedicated path.
+  if (cb.getDedicated() === null) unbindMagnifiedNavHandler(ctx);
+  if (ctx.opts.onTileShrink !== undefined) ctx.opts.onTileShrink(tile.entry);
+
+  if (placeholder === null) { finishUncenterTile(ctx, tile, null); return; }
+  const targetRect = placeholder.getBoundingClientRect();
+  const currentRect = tile.root.getBoundingClientRect();
+  if (currentRect.width <= 0 || currentRect.height <= 0) {
+    finishUncenterTile(ctx, tile, placeholder);
+    return;
+  }
+
+  const dx = targetRect.left - currentRect.left;
+  const dy = targetRect.top - currentRect.top;
+  const sx = targetRect.width / currentRect.width;
+  const sy = targetRect.height / currentRect.height;
+  tile.root.style.transition = `transform ${CENTER_ANIMATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
+  tile.root.style.transformOrigin = 'top left';
+  tile.root.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+
+  const onEnd = (): void => {
+    tile.root.removeEventListener('transitionend', onEnd);
+    finishUncenterTile(ctx, tile, placeholder);
+  };
+  tile.root.addEventListener('transitionend', onEnd);
+  window.setTimeout(() => {
+    tile.root.removeEventListener('transitionend', onEnd);
+    if (tile.slotPlaceholder === placeholder) finishUncenterTile(ctx, tile, placeholder);
+  }, CENTER_ANIMATION_MS + 80);
+}
+
+function finishUncenterTile(ctx: TileGridContext, tile: InternalTile, placeholder: HTMLElement | null): void {
+  const cb = ctx.centerCallbacks;
+  tile.root.classList.remove('centered');
+  tile.root.style.transition = '';
+  tile.root.style.transform = '';
+  tile.root.style.transformOrigin = '';
+  tile.root.style.left = '';
+  tile.root.style.top = '';
+  if (tile.gridPreviewWidth > 0) tile.root.style.width = `${tile.gridPreviewWidth}px`;
+  tile.preview.style.width = `${tile.gridPreviewWidth}px`;
+  tile.preview.style.height = `${tile.gridPreviewHeight}px`;
+  if (tile.xtermRoot !== null && tile.gridPreviewWidth > 0 && tile.gridPreviewHeight > 0) {
+    cb.applyTileScale(tile.xtermRoot, tile.gridPreviewWidth, tile.gridPreviewHeight);
+  }
+  if (placeholder !== null && placeholder.parentElement !== null) {
+    placeholder.parentElement.insertBefore(tile.root, placeholder);
+    placeholder.remove();
+  }
+  tile.slotPlaceholder = null;
+  // HS-8046 — uncentering returns the user to the unoccluded grid view;
+  // bells that piled up behind the centered overlay are now visible and
+  // should auto-clear (the user IS looking at them).
+  clearBellsForVisibleTiles(ctx);
+}
+
+function createSlotPlaceholder(ctx: TileGridContext, width: number, height: number): HTMLElement {
+  return toElement(
+    <div className={ctx.classes.slotClass} style={`width:${width}px;height:${height}px;`}></div>
+  );
+}
+
+function mountCenterBackdrop(ctx: TileGridContext): void {
+  const cb = ctx.centerCallbacks;
+  if (cb.getCenterBackdrop() !== null) return;
+  const backdrop = toElement(<div className={ctx.classes.backdropClass}></div>);
+  backdrop.addEventListener('click', () => { uncenterTile(ctx); });
+  if (ctx.opts.centerScope === 'viewport') {
+    document.body.appendChild(backdrop);
+  } else {
+    const target = ctx.opts.centerReferenceEl ?? ctx.opts.container;
+    target.appendChild(backdrop);
+  }
+  cb.setCenterBackdrop(backdrop);
+}
+
+function removeCenterBackdrop(ctx: TileGridContext): void {
+  const cb = ctx.centerCallbacks;
+  const backdrop = cb.getCenterBackdrop();
+  if (backdrop === null) return;
+  backdrop.remove();
+  cb.setCenterBackdrop(null);
+}
+
+// --- Dedicated full-pane view (§25.8 / §36.5 / HS-7063 / HS-7098) ---
+
+function enterDedicatedView(ctx: TileGridContext, tile: InternalTile, priorCenteredTile: InternalTile | null): void {
+  const cb = ctx.centerCallbacks;
+  if (cb.getDedicated() !== null) exitDedicatedView(ctx);
+  clearTileBell(ctx, tile);
+  if (ctx.opts.onTileEnlarge !== undefined) ctx.opts.onTileEnlarge(tile.entry, 'dedicated');
+  // HS-8028 — magnified-nav listener (Shift+Cmd+Arrow on macOS /
+  // Shift+Ctrl+Arrow elsewhere). Idempotent — already wired if the
+  // user dedicated-viewed an already-centered tile.
+  bindMagnifiedNavHandler(ctx);
+
+  const c = ctx.classes;
+  const overlay = toElement(
+    <div className={c.dedicatedClass} data-secret={tile.entry.secret} data-terminal-id={tile.entry.id}>
+      <div className={c.dedicatedBarClass}>
+        <button className={c.dedicatedBackClass} title="Back to grid">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+          <span>Back</span>
+        </button>
+        <div className={c.dedicatedLabelClass}>{tile.entry.label}</div>
+      </div>
+      <div className={c.dedicatedBodyClass}>
+        <div className={c.dedicatedPaneClass}></div>
+      </div>
+    </div>
+  );
+  // Append the overlay relative to the appropriate scope so the dedicated
+  // view occupies the same area the grid does. Dashboard uses
+  // 'viewport' -> append to the dashboard root (which has fixed position
+  // anyway); drawer uses 'container' -> append into the grid container.
+  const dedicatedHost = ctx.opts.centerScope === 'viewport'
+    ? (ctx.opts.centerReferenceEl ?? ctx.opts.container)
+    : ctx.opts.container;
+  dedicatedHost.appendChild(overlay);
+
+  const pane = overlay.querySelector<HTMLElement>(`.${c.dedicatedPaneClass}`);
+  const backBtn = overlay.querySelector<HTMLElement>(`.${c.dedicatedBackClass}`);
+  const bar = overlay.querySelector<HTMLElement>(`.${c.dedicatedBarClass}`);
+  const dedicatedBody = overlay.querySelector<HTMLElement>(`.${c.dedicatedBodyClass}`);
+  if (pane === null || backBtn === null || bar === null) return;
+  // HS-8012 — the prompt overlay used to capture `dedicatedBody ?? pane`
+  // here so it could mount inside the dedicated view. It now mounts on
+  // `document.body` and anchors below the project tab, so the closure
+  // no longer needs an in-pane anchor. `dedicatedBody` is still used
+  // below to apply the per-theme background color.
+  backBtn.addEventListener('click', () => { exitDedicatedView(ctx); });
+
+  const appearance = cb.resolveTileAppearance(tile);
+  const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
+  // HS-7960 — paint the dedicated-body padded gutter with the active
+  // theme's bg so the area around the xterm canvas reads as part of the
+  // terminal frame, matching the drawer's HS-7960 treatment.
+  if (dedicatedBody !== null) dedicatedBody.style.backgroundColor = themeData.background;
+
+  // HS-8042 — dedicated view is a `terminalCheckout` consumer. Pre-fix
+  // it spawned its own xterm + WebSocket attached to the same PTY,
+  // duplicating resources for any terminal already mounted in a tile.
+  // The migration claims the live xterm into the dedicated pane via
+  // checkout; the tile's existing mount drops to the §54.3.2
+  // placeholder; on exit the handle releases and the xterm reparents
+  // back. The `cols`/`rows` initial-checkout values are placeholders —
+  // `fit.fit()` runs in the next frame to resolve real dims from the
+  // pane's measured layout, then `applyResizeIfChanged` inside
+  // checkout fires the real resize via `term.onResize` below.
+  // HS-8073 — when the dedicated view is bumped down (e.g. quit-confirm
+  // preview pushes the same terminal onto the LIFO stack) and later
+  // restored (cancel), the live xterm reparents back into `pane` but
+  // the pane's own dimensions never changed during the round-trip, so
+  // the `bodyResizeObserver` below doesn't fire and the term keeps the
+  // bumping consumer's last-applied size (e.g. the quit-dialog's
+  // smaller preview dims). The result the user sees is centered
+  // contents inside an oversized empty frame. We need a refit on
+  // restore to reconverge the term to the dedicated pane's actual
+  // dims. `runFit` is hoisted as a `let` so the `onRestoredToTop`
+  // closure (passed into `checkout()` synchronously below, before the
+  // `runFit` const assignment) can call it.
+  let runFit: () => void = () => { /* assigned below before any restore */ };
+  const handle = checkout({
+    projectSecret: tile.entry.secret,
+    terminalId: tile.entry.id,
+    cols: TILE_INITIAL_COLS,
+    rows: TILE_INITIAL_ROWS,
+    mountInto: pane,
+    // HS-8295 — paint the §54 bumped-down placeholder with this terminal's
+    // theme bg so a quit-confirm preview / popup borrowing the live xterm
+    // doesn't flash the dedicated pane to `--bg-secondary`.
+    placeholderBackground: themeData.background,
+    onRestoredToTop() {
+      // HS-8073 — defer one frame so the pane has a current layout
+      // box (the xterm element just reparented in synchronously, but
+      // FitAddon reads `term.element.parentElement` dims and we want
+      // the browser to have settled any same-frame layout shift the
+      // reparent might have triggered).
+      requestAnimationFrame(() => { runFit(); });
+    },
+  });
+  const term = handle.term;
+  const fit = handle.fit;
+
+  // Apply appearance + per-consumer term tweaks. The xterm is shared
+  // across consumers via the checkout module, so settings written here
+  // persist on the term — when this dedicated view releases and the
+  // tile's checkout (if any) regains top-of-stack, the tile sees the
+  // theme/font we set.
+  term.options.theme = themeToXtermOptions(themeData);
+  term.options.linkHandler = {
+    activate: (_event, text) => { openExternalUrl(text); },
+  };
+  term.loadAddon(new WebLinksAddon((_event, uri) => { openExternalUrl(uri); }));
+  void applyAppearanceToTerm(term, appearance);
+  // HS-7594 — swallow Cmd/Ctrl+` so the document-level toggle dispatcher
+  // sees it instead of the shell receiving a backtick.
+  term.attachCustomKeyEventHandler((e) => {
+    if (isTerminalViewToggleShortcut(e) !== null) return false;
+    return true;
+  });
+
+  runFit = (): void => {
+    try { fit.fit(); } catch { /* not ready */ }
+  };
+  requestAnimationFrame(runFit);
+  const bodyResizeObserver = new ResizeObserver(runFit);
+  bodyResizeObserver.observe(pane);
+
+  // `term.onResize` fires when `fit.fit()` resolves the pane's measured
+  // dims — route the new size through `handle.resize` so the checkout
+  // module sends the WS resize frame AND updates the entry's
+  // `lastAppliedCols/Rows` bookkeeping.
+  term.onResize(({ cols, rows }) => {
+    handle.resize(cols, rows);
+  });
+
+  let barDispose: (() => void) | null = null;
+  if (ctx.opts.onDedicatedBarMount !== undefined) {
+    const result = ctx.opts.onDedicatedBarMount(bar, tile.entry, term);
+    if (typeof result === 'function') barDispose = result;
+  }
+
+  cb.setDedicated({ tile, overlay, checkout: handle, term, fit, bodyResizeObserver, priorCenteredTile, barDispose });
+  queueMicrotask(() => { term.focus(); });
+}
+
+function exitDedicatedView(ctx: TileGridContext): void {
+  const cb = ctx.centerCallbacks;
+  const dedicated = cb.getDedicated();
+  if (dedicated === null) return;
+  const view = dedicated;
+  cb.setDedicated(null);
+  // HS-8028 — exit dedicated; if the user is returning to centered
+  // (priorCenteredTile non-null) keep the nav handler armed since
+  // `centerTile` would re-bind anyway. Otherwise unbind — the bare
+  // grid has no magnified target.
+  if (view.priorCenteredTile === null) unbindMagnifiedNavHandler(ctx);
+  view.bodyResizeObserver?.disconnect();
+  if (view.barDispose !== null) {
+    try { view.barDispose(); } catch { /* swallow */ }
+  }
+  // HS-8042 — release the checkout instead of disposing the term/ws
+  // directly. If the tile's own checkout is still in the LIFO stack
+  // (the common case — the user double-clicked a mounted tile), the
+  // live xterm DOM-reparents back to the tile's `xtermRoot` and the
+  // tile's preview becomes interactive again. If the tile's checkout
+  // is empty (rare — the tile was virtualized off-screen between
+  // dedicated entry and exit), the entry is fully disposed and the
+  // tile re-mounts on its next viewport-enter.
+  view.checkout.release();
+  view.overlay.remove();
+  if (ctx.opts.onTileShrink !== undefined) ctx.opts.onTileShrink(view.tile.entry);
+
+  // HS-7097 + HS-8048: re-claim the tile PTY at tile-native dims via
+  // the tile's checkout (the live xterm just reparented back into the
+  // tile via `view.checkout.release()` above; resize routes through
+  // the same shared WS that the dedicated view was using).
+  if (view.tile.checkout !== null
+      && view.tile.targetCols > 0 && view.tile.targetRows > 0) {
+    view.tile.checkout.resize(view.tile.targetCols, view.tile.targetRows);
+  }
+
+  cb.applySizing();
+  if (view.priorCenteredTile !== null) {
+    centerTile(ctx, view.priorCenteredTile);
+  } else {
+    // HS-8046 — exiting dedicated view (with no centered fallback)
+    // returns the user to the unoccluded grid; sweep visible tiles for
+    // bells that piled up while the dedicated view was up.
+    clearBellsForVisibleTiles(ctx);
   }
 }
