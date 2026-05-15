@@ -195,6 +195,30 @@ export function paintDashboardSections(root: HTMLElement, sections: ProjectSecti
   // early-return, leaving tiles with no preview dims. Now that the grid is
   // attached to the document, walk all handles and size again.
   applyAllSizing();
+
+  // HS-8399 — defensive third pass after the browser has had a chance to
+  // settle layout. The synchronous `applyAllSizing()` above reads
+  // `container.clientWidth`; in real browsers (Chromium, WKWebView)
+  // accessing `clientWidth` normally forces layout, but when this paint
+  // runs in response to the hidden-change subscription (visibility-grouping
+  // switch, hide/show via the §39 dialog) `replaceChildren()` + the
+  // `appendChild()` calls inside the layout paths can leave the grid
+  // container reporting `clientWidth === 0` even after attachment until
+  // the next style-recompute. The `applySizing` early-bail then leaves
+  // every tile without an inline width, and the user-reported "all tiles
+  // very small / 0×0" symptom appears because the CSS for
+  // `.terminal-dashboard-tile` has no width fallback (width is applied
+  // inline by `applyTileSizing()`, per the comment at styles.scss:1207).
+  // A `requestAnimationFrame` callback fires after the browser settles
+  // layout — by then `clientWidth` reports the real value, so the second
+  // applyAllSizing rescues every tile. Idempotent + cheap; the same
+  // pattern is already used by the window-resize handler. Guarded by
+  // `typeof requestAnimationFrame` so the unit-test happy-dom path
+  // (which the HS-8399 regression test in `terminalTileGrid.test.ts`
+  // exercises) keeps its synchronous-only semantics.
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => { applyAllSizing(); });
+  }
 }
 
 function paintSectionedLayout(root: HTMLElement, sections: ProjectSectionData[]): void {
