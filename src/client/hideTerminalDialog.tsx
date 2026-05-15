@@ -49,6 +49,12 @@ export interface HideTerminalProjectGroup {
 
 export interface ShowDialogOptions {
   mode: 'global' | 'single-project';
+  /** HS-8406 — scope key whose active grouping the tab strip reads +
+   *  writes. The dashboard passes `DASHBOARD_SCOPE`; a project's drawer
+   *  passes `projectScope(secret)`. Pre-HS-8406 the tab strip mutated a
+   *  single global active id, so flipping a tab in the drawer's dialog
+   *  also flipped the dashboard's active grouping. */
+  scopeKey: string;
   groups: HideTerminalProjectGroup[];
   onChange?: () => void;
 }
@@ -112,7 +118,7 @@ function buildOverlay(opts: ShowDialogOptions): HTMLElement {
   overlay.querySelector('[data-action="show-all"]')?.addEventListener('click', () => {
     // HS-8290 — single global state, so "Show All" empties the active
     // grouping's hidden ids across every project in one call.
-    unhideAllEverywhereInGrouping(getActiveGroupingId());
+    unhideAllEverywhereInGrouping(getActiveGroupingId(opts.scopeKey));
     rerenderBody(overlay, opts);
     if (opts.onChange) opts.onChange();
   });
@@ -121,7 +127,7 @@ function buildOverlay(opts: ShowDialogOptions): HTMLElement {
     // rendered in the dialog body in the active grouping. Per-group
     // (per-project) so each terminal id is routed to its own project's
     // hiddenByProject entry.
-    const activeId = getActiveGroupingId();
+    const activeId = getActiveGroupingId(opts.scopeKey);
     for (const group of opts.groups) {
       if (group.terminals.length === 0) continue;
       hideAllInGrouping(group.secret, activeId, group.terminals.map(t => t.id));
@@ -139,7 +145,7 @@ function rerenderTabs(overlay: HTMLElement, opts: ShowDialogOptions): void {
   if (tabsEl === null) return;
   tabsEl.replaceChildren();
   const groupings = getGroupings();
-  const activeId = getActiveGroupingId();
+  const activeId = getActiveGroupingId(opts.scopeKey);
   for (const grouping of groupings) {
     tabsEl.appendChild(buildTab(overlay, opts, grouping, activeId));
   }
@@ -165,7 +171,7 @@ function buildTab(
     </button>
   ) as HTMLButtonElement;
   tab.addEventListener('click', () => {
-    setActiveGrouping(grouping.id);
+    setActiveGrouping(opts.scopeKey, grouping.id);
     rerenderTabs(overlay, opts);
     rerenderBody(overlay, opts);
     if (opts.onChange) opts.onChange();
@@ -226,7 +232,7 @@ async function promptAddGrouping(overlay: HTMLElement, opts: ShowDialogOptions):
   const name = await promptForName('New grouping', '');
   if (name === null) return;
   const grouping = addGrouping(name);
-  setActiveGrouping(grouping.id);
+  setActiveGrouping(opts.scopeKey, grouping.id);
   rerenderTabs(overlay, opts);
   rerenderBody(overlay, opts);
   if (opts.onChange) opts.onChange();
@@ -347,7 +353,7 @@ function rerenderBody(overlay: HTMLElement, opts: ShowDialogOptions): void {
   const body = overlay.querySelector<HTMLElement>('[data-role="body"]');
   if (body === null) return;
   body.replaceChildren();
-  const activeGroupingId = getActiveGroupingId();
+  const activeGroupingId = getActiveGroupingId(opts.scopeKey);
   if (opts.groups.every(g => g.terminals.length === 0)) {
     body.appendChild(toElement(<div className="hide-terminal-empty">No terminals registered.</div>));
     return;
@@ -357,7 +363,7 @@ function rerenderBody(overlay: HTMLElement, opts: ShowDialogOptions): void {
     if (opts.mode === 'global') {
       body.appendChild(toElement(<div className="hide-terminal-group-heading">{group.name}</div>));
     }
-    const visibleCount = filterVisible(group.secret, group.terminals).length;
+    const visibleCount = filterVisible(opts.scopeKey, group.secret, group.terminals).length;
     void visibleCount;
     for (const term of group.terminals) {
       // HS-8290 — read / write against the terminal's own project secret in

@@ -34,22 +34,22 @@ describe('visibilityGroupingsStore — initial state', () => {
     const s = visibilityGroupingsStore.state.value;
     expect(s.groupings).toHaveLength(1);
     expect(s.groupings[0].id).toBe(DEFAULT_GROUPING_ID);
-    expect(s.activeId).toBe(DEFAULT_GROUPING_ID);
+    expect(s.activeIdByScope).toEqual({});
   });
 
   it('reset() returns to initial after mutations', () => {
     visibilityGroupingsStore.actions.setState({
       ...initialGlobalState(),
-      activeId: 'something-else',
+      activeIdByScope: { dashboard: 'g-mutated' },
     });
     _visibilityGroupingsStoreForTesting.reset();
-    expect(visibilityGroupingsStore.state.value.activeId).toBe(DEFAULT_GROUPING_ID);
+    expect(visibilityGroupingsStore.state.value.activeIdByScope).toEqual({});
   });
 });
 
 describe('visibilityGroupingsStore — setState', () => {
   it('replaces the whole state when the reference changes', () => {
-    const next = { ...initialGlobalState(), activeId: 'g-other' };
+    const next = { ...initialGlobalState(), activeIdByScope: { dashboard: 'g-other' } };
     visibilityGroupingsStore.actions.setState(next);
     expect(visibilityGroupingsStore.state.value).toBe(next);
   });
@@ -75,9 +75,9 @@ describe('subscribeToVisibilityGroupings — no-fire-on-subscribe', () => {
   it('fires on every actual state change', () => {
     let fires = 0;
     const unsub = subscribeToVisibilityGroupings(() => { fires++; });
-    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeId: 'g-a' });
+    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeIdByScope: { dashboard: 'g-a' } });
     expect(fires).toBe(1);
-    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeId: 'g-b' });
+    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeIdByScope: { dashboard: 'g-b' } });
     expect(fires).toBe(2);
     unsub();
   });
@@ -86,7 +86,7 @@ describe('subscribeToVisibilityGroupings — no-fire-on-subscribe', () => {
     let fires = 0;
     const unsub = subscribeToVisibilityGroupings(() => { fires++; });
     unsub();
-    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeId: 'g-a' });
+    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeIdByScope: { dashboard: 'g-a' } });
     expect(fires).toBe(0);
   });
 
@@ -95,7 +95,7 @@ describe('subscribeToVisibilityGroupings — no-fire-on-subscribe', () => {
     let b = 0;
     const unsubA = subscribeToVisibilityGroupings(() => { a++; });
     const unsubB = subscribeToVisibilityGroupings(() => { b++; });
-    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeId: 'g-x' });
+    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeIdByScope: { dashboard: 'g-x' } });
     expect(a).toBe(1);
     expect(b).toBe(1);
     unsubA();
@@ -106,7 +106,7 @@ describe('subscribeToVisibilityGroupings — no-fire-on-subscribe', () => {
     let other = 0;
     const unsubBad = subscribeToVisibilityGroupings(() => { throw new Error('bad'); });
     const unsubOk = subscribeToVisibilityGroupings(() => { other++; });
-    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeId: 'g-z' });
+    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeIdByScope: { dashboard: 'g-z' } });
     expect(other).toBe(1);
     unsubBad();
     unsubOk();
@@ -118,7 +118,7 @@ describe('_resetSubscribersForTesting — leak protection', () => {
     let fires = 0;
     subscribeToVisibilityGroupings(() => { fires++; }); // intentionally not unsubbed
     _resetSubscribersForTesting();
-    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeId: 'g-leak' });
+    visibilityGroupingsStore.actions.setState({ ...initialGlobalState(), activeIdByScope: { dashboard: 'g-leak' } });
     expect(fires).toBe(0);
   });
 });

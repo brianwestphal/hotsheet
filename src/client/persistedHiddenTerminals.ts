@@ -27,6 +27,7 @@ import {
   subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
 import {
+  DASHBOARD_SCOPE,
   DEFAULT_GROUPING_ID,
   parsePersistedState,
   type VisibilityGrouping,
@@ -70,7 +71,16 @@ async function writeNow(): Promise<void> {
   const payload = {
     dashboard: {
       visibilityGroupings: persistedGroupings,
-      activeVisibilityGroupingId: state.activeId,
+      // HS-8406 — per-scope active grouping selections (`'dashboard'`
+      // for the §25 dashboard, `'project:<secret>'` for each project's
+      // §36 drawer-grid). Pre-fix the persisted shape was a single
+      // scalar `activeVisibilityGroupingId`; `parsePersistedState`
+      // migrates legacy payloads into the dashboard scope, and we keep
+      // writing the scalar form alongside the new map for one release
+      // so a downgrade-then-upgrade flow doesn't lose the dashboard's
+      // pick.
+      activeVisibilityGroupingIdByScope: state.activeIdByScope,
+      activeVisibilityGroupingId: state.activeIdByScope[DASHBOARD_SCOPE] ?? DEFAULT_GROUPING_ID,
     },
   };
   const serialised = JSON.stringify(payload);
@@ -105,10 +115,15 @@ export async function initPersistedHiddenTerminals(): Promise<void> {
       dashboard?: {
         visibilityGroupings?: unknown;
         activeVisibilityGroupingId?: unknown;
+        activeVisibilityGroupingIdByScope?: unknown;
       };
     }>('/global-config');
     const dashboard = cfg.dashboard ?? {};
-    const state = parsePersistedState(dashboard.visibilityGroupings, dashboard.activeVisibilityGroupingId);
+    const state = parsePersistedState(
+      dashboard.visibilityGroupings,
+      dashboard.activeVisibilityGroupingId,
+      dashboard.activeVisibilityGroupingIdByScope,
+    );
     hydratePersistedGlobalState(state);
     // Stash the canonical serialised value so the first change-driven
     // PATCH doesn't immediately re-write the same payload.
@@ -116,7 +131,8 @@ export async function initPersistedHiddenTerminals(): Promise<void> {
     lastPersisted = JSON.stringify({
       dashboard: {
         visibilityGroupings: persistedGroupings,
-        activeVisibilityGroupingId: state.activeId,
+        activeVisibilityGroupingIdByScope: state.activeIdByScope,
+        activeVisibilityGroupingId: state.activeIdByScope[DASHBOARD_SCOPE] ?? DEFAULT_GROUPING_ID,
       },
     });
   } catch {

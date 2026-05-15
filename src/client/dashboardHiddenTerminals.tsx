@@ -43,13 +43,14 @@ import {
   addGrouping as addGroupingPure,
   DEFAULT_GROUPING_ID,
   deleteGrouping as deleteGroupingPure,
-  getActiveGrouping,
+  getActiveGroupingFor,
+  getActiveGroupingIdFor,
   getHiddenIdsForProject,
   type GlobalVisibilityState,
   pruneStaleIdsInGroupings,
   renameGrouping as renameGroupingPure,
   reorderGroupings as reorderGroupingsPure,
-  setActiveGroupingId as setActiveGroupingIdPure,
+  setActiveGroupingIdFor as setActiveGroupingIdForPure,
   toggleHiddenInGrouping,
   updateGroupingById,
   type VisibilityGrouping,
@@ -77,46 +78,48 @@ function setGlobalState(next: GlobalVisibilityState): void {
 }
 
 // ---------------------------------------------------------------------------
-// Pre-HS-7826 single-grouping public API. Every helper delegates to the
-// active grouping.
+// HS-7826 → HS-8406 — scope-aware visibility API. Every helper takes a
+// `scopeKey` so the dashboard (`DASHBOARD_SCOPE`) and per-project drawer
+// surfaces (`projectScope(secret)`) read/write independent active-grouping
+// selections against the same shared grouping definitions.
 // ---------------------------------------------------------------------------
 
-/** True when this `(secret, terminalId)` pair is hidden in the active
- *  grouping. */
-export function isTerminalHidden(secret: string, terminalId: string): boolean {
-  const active = getActiveGrouping(currentVisibility());
+/** True when this `(secret, terminalId)` pair is hidden in the scope's
+ *  active grouping. */
+export function isTerminalHidden(scopeKey: string, secret: string, terminalId: string): boolean {
+  const active = getActiveGroupingFor(currentVisibility(), scopeKey);
   return getHiddenIdsForProject(active, secret).includes(terminalId);
 }
 
-/** Return a fresh set of hidden terminal ids for `secret` in the active
- *  grouping. Returned set is a copy — mutating it does NOT affect module
- *  state; use `setTerminalHidden` to make changes. */
-export function getHiddenTerminals(secret: string): Set<string> {
-  const active = getActiveGrouping(currentVisibility());
+/** Return a fresh set of hidden terminal ids for `secret` in the scope's
+ *  active grouping. Returned set is a copy — mutating it does NOT affect
+ *  module state; use `setTerminalHidden` to make changes. */
+export function getHiddenTerminals(scopeKey: string, secret: string): Set<string> {
+  const active = getActiveGroupingFor(currentVisibility(), scopeKey);
   return new Set(getHiddenIdsForProject(active, secret));
 }
 
 /** Toggle the hidden state for a `(secret, terminalId)` pair against the
- *  active grouping. */
-export function setTerminalHidden(secret: string, terminalId: string, hide: boolean): void {
-  const active = getActiveGrouping(currentVisibility());
+ *  scope's active grouping. */
+export function setTerminalHidden(scopeKey: string, secret: string, terminalId: string, hide: boolean): void {
+  const active = getActiveGroupingFor(currentVisibility(), scopeKey);
   const next = updateGroupingById(currentVisibility(), active.id, g => toggleHiddenInGrouping(g, secret, terminalId, hide));
   setGlobalState(next);
 }
 
 /** Filter a TileEntry-like list down to visible-only ids in `secret`'s
- *  active-grouping hidden set. */
-export function filterVisible<T extends { id: string }>(secret: string, entries: T[]): T[] {
-  const active = getActiveGrouping(currentVisibility());
+ *  hidden set under the scope's active grouping. */
+export function filterVisible<T extends { id: string }>(scopeKey: string, secret: string, entries: T[]): T[] {
+  const active = getActiveGroupingFor(currentVisibility(), scopeKey);
   const ids = getHiddenIdsForProject(active, secret);
   if (ids.length === 0) return entries;
   const set = new Set(ids);
   return entries.filter(e => !set.has(e.id));
 }
 
-/** Clear all hidden state for ONE project's active grouping. */
-export function unhideAllInProject(secret: string): void {
-  const active = getActiveGrouping(currentVisibility());
+/** Clear all hidden state for ONE project in the scope's active grouping. */
+export function unhideAllInProject(scopeKey: string, secret: string): void {
+  const active = getActiveGroupingFor(currentVisibility(), scopeKey);
   if (getHiddenIdsForProject(active, secret).length === 0) return;
   const next = updateGroupingById(currentVisibility(), active.id, g => {
     if ((g.hiddenByProject[secret] ?? []).length === 0) return g;
@@ -129,10 +132,10 @@ export function unhideAllInProject(secret: string): void {
   setGlobalState(next);
 }
 
-/** Clear hidden state across EVERY project in the active grouping. Used
- *  by the global Terminal Dashboard's "Show all" link. */
-export function unhideAllEverywhere(): void {
-  const active = getActiveGrouping(currentVisibility());
+/** Clear hidden state across EVERY project in the scope's active
+ *  grouping. Used by the global Terminal Dashboard's "Show all" link. */
+export function unhideAllEverywhere(scopeKey: string): void {
+  const active = getActiveGroupingFor(currentVisibility(), scopeKey);
   if (Object.keys(active.hiddenByProject).length === 0) return;
   const next = updateGroupingById(currentVisibility(), active.id, g => ({ ...g, hiddenByProject: {} }));
   setGlobalState(next);
@@ -147,18 +150,19 @@ export function subscribeToHiddenChanges(handler: () => void): () => void {
   return subscribeToVisibilityGroupings(handler);
 }
 
-/** Total number of hidden terminals across every project in the active
- *  grouping. */
-export function countHiddenAcrossAllProjects(): number {
-  const active = getActiveGrouping(currentVisibility());
+/** Total number of hidden terminals across every project in the scope's
+ *  active grouping. */
+export function countHiddenAcrossAllProjects(scopeKey: string): number {
+  const active = getActiveGroupingFor(currentVisibility(), scopeKey);
   let total = 0;
   for (const ids of Object.values(active.hiddenByProject)) total += ids.length;
   return total;
 }
 
-/** Number of hidden terminals scoped to a single project's active grouping. */
-export function countHiddenForProject(secret: string): number {
-  const active = getActiveGrouping(currentVisibility());
+/** Number of hidden terminals scoped to a single project in the scope's
+ *  active grouping. */
+export function countHiddenForProject(scopeKey: string, secret: string): number {
+  const active = getActiveGroupingFor(currentVisibility(), scopeKey);
   return getHiddenIdsForProject(active, secret).length;
 }
 
@@ -219,14 +223,19 @@ export function hydratePersistedGlobalState(state: GlobalVisibilityState): void 
       }
       return { ...g, hiddenByProject: cleaned };
     }),
-    activeId: state.activeId,
+    activeIdByScope: { ...state.activeIdByScope },
   };
   if (visibilityStateEquals(currentVisibility(), sanitised)) return;
   setGlobalState(sanitised);
 }
 
 function visibilityStateEquals(a: GlobalVisibilityState, b: GlobalVisibilityState): boolean {
-  if (a.activeId !== b.activeId) return false;
+  const aScopes = Object.keys(a.activeIdByScope);
+  const bScopes = Object.keys(b.activeIdByScope);
+  if (aScopes.length !== bScopes.length) return false;
+  for (const scope of aScopes) {
+    if (a.activeIdByScope[scope] !== b.activeIdByScope[scope]) return false;
+  }
   if (a.groupings.length !== b.groupings.length) return false;
   for (let i = 0; i < a.groupings.length; i++) {
     const ga = a.groupings[i];
@@ -264,16 +273,21 @@ export function getGroupings(): VisibilityGrouping[] {
   return currentVisibility().groupings;
 }
 
-/** Active grouping id. */
-export function getActiveGroupingId(): string {
-  return currentVisibility().activeId;
+/** Active grouping id for a scope. Falls back to `DEFAULT_GROUPING_ID`
+ *  when the scope has no override. */
+export function getActiveGroupingId(scopeKey: string): string {
+  return getActiveGroupingIdFor(currentVisibility(), scopeKey);
 }
 
-/** Switch the active grouping. Fires the change subscription so the
- *  dashboard / drawer-grid filter re-applies. */
-export function setActiveGrouping(id: string): void {
-  setGlobalState(setActiveGroupingIdPure(currentVisibility(), id));
+/** Switch the active grouping for a scope. Fires the change
+ *  subscription so the dashboard / drawer-grid filter re-applies. */
+export function setActiveGrouping(scopeKey: string, id: string): void {
+  setGlobalState(setActiveGroupingIdForPure(currentVisibility(), scopeKey, id));
 }
+
+// Re-export the scope helpers so consumers don't need a parallel
+// `from './visibilityGroupings.js'` import for the most common case.
+export { DASHBOARD_SCOPE, projectScope } from './visibilityGroupings.js';
 
 /** Add a new grouping. Returns the new grouping (so the caller can
  *  immediately switch to it / focus its tab). */
@@ -377,7 +391,7 @@ export function pruneHiddenForProject(secret: string, knownIds: readonly string[
   const knownSet = new Set(knownIds);
   const pruned = pruneStaleIdsInGroupings(currentVisibility().groupings, secret, knownSet);
   if (pruned === null) return;
-  setGlobalState({ groupings: pruned, activeId: currentVisibility().activeId });
+  setGlobalState({ groupings: pruned, activeIdByScope: currentVisibility().activeIdByScope });
 }
 
 /**
@@ -401,5 +415,5 @@ export function hideNewTerminalInNonDefaultGroupings(secret: string, terminalId:
   });
   const anyChanged = groupings.some((g, i) => g !== currentVisibility().groupings[i]);
   if (!anyChanged) return;
-  setGlobalState({ groupings, activeId: currentVisibility().activeId });
+  setGlobalState({ groupings, activeIdByScope: currentVisibility().activeIdByScope });
 }

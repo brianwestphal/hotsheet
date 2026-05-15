@@ -1,6 +1,7 @@
 import { confirmDialog } from './confirm.js';
 import {
   countHiddenForProject,
+  projectScope,
   subscribeToHiddenChanges,
   unhideAllInProject,
 } from './dashboardHiddenTerminals.js';
@@ -36,7 +37,13 @@ export function loadAndWireHiddenTerminalsReset(): void {
   newButton.addEventListener('click', async () => {
     const project = getActiveProject();
     if (project === null) return;
-    const count = countHiddenForProject(project.secret);
+    // HS-8406 — Settings → Terminal "Reset visibility" affordance is per-
+    // project (the surrounding label says "this project"), so we read +
+    // mutate the project's drawer-grid scope. The dashboard's pick is
+    // independent; users who want to reset that go through the dashboard
+    // dialog.
+    const scope = projectScope(project.secret);
+    const count = countHiddenForProject(scope, project.secret);
     if (count === 0) return;
     const ok = await confirmDialog({
       title: 'Reset terminal visibility?',
@@ -46,7 +53,7 @@ export function loadAndWireHiddenTerminalsReset(): void {
       confirmLabel: 'Reset',
     });
     if (!ok) return;
-    unhideAllInProject(project.secret);
+    unhideAllInProject(scope, project.secret);
     // The persistence layer (`persistedHiddenTerminals.ts`) subscribes to
     // the change and PATCHes `hidden_terminals: []` automatically — no
     // explicit /file-settings call needed here.
@@ -66,7 +73,7 @@ export function loadAndWireHiddenTerminalsReset(): void {
 
 function refreshStatus(button: HTMLButtonElement, status: HTMLElement): void {
   const project = getActiveProject();
-  const count = project === null ? 0 : countHiddenForProject(project.secret);
+  const count = project === null ? 0 : countHiddenForProject(projectScope(project.secret), project.secret);
   if (count === 0) {
     status.textContent = 'No terminals hidden for this project.';
     button.disabled = true;

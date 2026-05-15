@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _resetForTests as _resetHiddenForTests,
   addGrouping,
+  DASHBOARD_SCOPE,
   getGlobalVisibilityState,
   isConfiguredTerminalId,
   setActiveGrouping,
@@ -93,7 +94,7 @@ describe('initPersistedHiddenTerminals (HS-8290 — global endpoint)', () => {
     await initPersistedHiddenTerminals();
     observedUrls.length = 0;
     const g = addGrouping('Servers');
-    setActiveGrouping(g.id);
+    setActiveGrouping(DASHBOARD_SCOPE, g.id);
     _flushForTests();
     await Promise.resolve();
     await Promise.resolve();

@@ -11,7 +11,7 @@
 
 import { raw } from '../jsx-runtime.js';
 import { apiWithSecret } from './api.js';
-import { setTerminalHidden } from './dashboardHiddenTerminals.js';
+import { DASHBOARD_SCOPE, setTerminalHidden } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
 import { ICON_EYE_OFF, ICON_PENCIL, ICON_X } from './icons.js';
 import { openRenameDialog } from './terminal/renameDialog.js';
@@ -149,7 +149,7 @@ export function onTileContextMenu(
 
   bind('close', () => { void closeDashboardTile(entry, secret, isDynamic, opts.onTileMutated); });
   bind('rename', () => { openDashboardTileRename(entry); });
-  bind('hide', () => { setTerminalHidden(secret, entry.id, true); });
+  bind('hide', () => { setTerminalHidden(DASHBOARD_SCOPE, secret, entry.id, true); });
 
   document.body.appendChild(menu);
   // Clamp to viewport.

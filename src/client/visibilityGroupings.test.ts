@@ -2,19 +2,22 @@ import { describe, expect, it } from 'vitest';
 
 import {
   addGrouping,
+  DASHBOARD_SCOPE,
   DEFAULT_GROUPING_ID,
   DEFAULT_GROUPING_NAME,
   deleteGrouping,
   generateGroupingId,
-  getActiveGrouping,
+  getActiveGroupingFor,
+  getActiveGroupingIdFor,
   getHiddenIdsForProject,
   type GlobalVisibilityState,
   initialGlobalState,
   parsePersistedState,
+  projectScope,
   pruneStaleIdsInGroupings,
   renameGrouping,
   reorderGroupings,
-  setActiveGroupingId,
+  setActiveGroupingIdFor,
   toggleHiddenInGrouping,
   updateGroupingById,
   type VisibilityGrouping,
@@ -23,14 +26,17 @@ import {
 const SECRET_A = 'aaaa1111';
 const SECRET_B = 'bbbb2222';
 
-describe('initialGlobalState (HS-8290)', () => {
-  it('returns a single Default grouping with no per-project hidden ids', () => {
+describe('initialGlobalState (HS-8290 → HS-8406)', () => {
+  it('returns a single Default grouping with no per-project hidden ids and no scope overrides', () => {
     const s = initialGlobalState();
     expect(s.groupings).toHaveLength(1);
     expect(s.groupings[0].id).toBe(DEFAULT_GROUPING_ID);
     expect(s.groupings[0].name).toBe(DEFAULT_GROUPING_NAME);
     expect(s.groupings[0].hiddenByProject).toEqual({});
-    expect(s.activeId).toBe(DEFAULT_GROUPING_ID);
+    expect(s.activeIdByScope).toEqual({});
+    // Every scope falls back to Default when no override is recorded.
+    expect(getActiveGroupingIdFor(s, DASHBOARD_SCOPE)).toBe(DEFAULT_GROUPING_ID);
+    expect(getActiveGroupingIdFor(s, projectScope('aaaa'))).toBe(DEFAULT_GROUPING_ID);
   });
 });
 
@@ -51,27 +57,75 @@ describe('generateGroupingId (HS-7826)', () => {
   });
 });
 
-describe('getActiveGrouping', () => {
-  it('returns the grouping whose id matches activeId', () => {
+describe('getActiveGroupingFor (HS-8406)', () => {
+  it('returns the Default grouping for any scope without an override', () => {
     const s = initialGlobalState();
-    expect(getActiveGrouping(s).id).toBe(DEFAULT_GROUPING_ID);
+    expect(getActiveGroupingFor(s, DASHBOARD_SCOPE).id).toBe(DEFAULT_GROUPING_ID);
+    expect(getActiveGroupingFor(s, projectScope(SECRET_A)).id).toBe(DEFAULT_GROUPING_ID);
   });
 
-  it('falls back to the first grouping when activeId does not match', () => {
+  it('returns the override-recorded grouping for a scope when it exists', () => {
     const state: GlobalVisibilityState = {
       groupings: [
         { id: 'a', name: 'A', hiddenByProject: {} },
         { id: 'b', name: 'B', hiddenByProject: {} },
       ],
-      activeId: 'unknown',
+      activeIdByScope: { [DASHBOARD_SCOPE]: 'a', [projectScope(SECRET_B)]: 'b' },
     };
-    expect(getActiveGrouping(state).id).toBe('a');
+    expect(getActiveGroupingFor(state, DASHBOARD_SCOPE).id).toBe('a');
+    expect(getActiveGroupingFor(state, projectScope(SECRET_B)).id).toBe('b');
+    // A scope without an override falls back to Default (synthesized
+    // when missing — the first grouping wins as a safety net).
+    expect(getActiveGroupingFor(state, projectScope(SECRET_A)).id).toBe('a');
+  });
+
+  it('falls back to first grouping when override id does not match any grouping', () => {
+    const state: GlobalVisibilityState = {
+      groupings: [
+        { id: 'a', name: 'A', hiddenByProject: {} },
+        { id: 'b', name: 'B', hiddenByProject: {} },
+      ],
+      activeIdByScope: { [DASHBOARD_SCOPE]: 'unknown' },
+    };
+    expect(getActiveGroupingFor(state, DASHBOARD_SCOPE).id).toBe('a');
   });
 
   it('returns a synthesized empty Default when groupings list is empty', () => {
-    const g = getActiveGrouping({ groupings: [], activeId: '' });
+    const g = getActiveGroupingFor({ groupings: [], activeIdByScope: {} }, DASHBOARD_SCOPE);
     expect(g.id).toBe(DEFAULT_GROUPING_ID);
     expect(g.hiddenByProject).toEqual({});
+  });
+});
+
+describe('setActiveGroupingIdFor (HS-8406)', () => {
+  it('records an override for the named scope only', () => {
+    const s = addGrouping(initialGlobalState(), 'X');
+    const next = setActiveGroupingIdFor(s.state, DASHBOARD_SCOPE, s.grouping.id);
+    expect(next.activeIdByScope[DASHBOARD_SCOPE]).toBe(s.grouping.id);
+    expect(next.activeIdByScope[projectScope(SECRET_A)]).toBeUndefined();
+  });
+
+  it('keeps independent overrides per scope', () => {
+    const a = addGrouping(initialGlobalState(), 'A');
+    const b = addGrouping(a.state, 'B');
+    const withDashboard = setActiveGroupingIdFor(b.state, DASHBOARD_SCOPE, a.grouping.id);
+    const withBoth = setActiveGroupingIdFor(withDashboard, projectScope(SECRET_A), b.grouping.id);
+    expect(getActiveGroupingIdFor(withBoth, DASHBOARD_SCOPE)).toBe(a.grouping.id);
+    expect(getActiveGroupingIdFor(withBoth, projectScope(SECRET_A))).toBe(b.grouping.id);
+  });
+
+  it('strips the override entry when set back to DEFAULT_GROUPING_ID', () => {
+    const a = addGrouping(initialGlobalState(), 'A');
+    const withOverride = setActiveGroupingIdFor(a.state, DASHBOARD_SCOPE, a.grouping.id);
+    expect(withOverride.activeIdByScope[DASHBOARD_SCOPE]).toBe(a.grouping.id);
+    const reset = setActiveGroupingIdFor(withOverride, DASHBOARD_SCOPE, DEFAULT_GROUPING_ID);
+    expect(reset.activeIdByScope[DASHBOARD_SCOPE]).toBeUndefined();
+    expect(getActiveGroupingIdFor(reset, DASHBOARD_SCOPE)).toBe(DEFAULT_GROUPING_ID);
+  });
+
+  it('no-ops when id does not match any grouping', () => {
+    const s = initialGlobalState();
+    expect(setActiveGroupingIdFor(s, DASHBOARD_SCOPE, 'g-nope')).toBe(s);
   });
 });
 
@@ -123,12 +177,38 @@ describe('deleteGrouping', () => {
     expect(next).toBe(s0);
   });
 
-  it('removes a non-Default grouping and falls activeId back to Default', () => {
+  it('removes a non-Default grouping and strips per-scope overrides that pointed at it', () => {
     const s0 = addGrouping(initialGlobalState(), 'Servers');
-    const stateWithActive = setActiveGroupingId(s0.state, s0.grouping.id);
+    const stateWithActive = setActiveGroupingIdFor(
+      setActiveGroupingIdFor(s0.state, DASHBOARD_SCOPE, s0.grouping.id),
+      projectScope(SECRET_A),
+      s0.grouping.id,
+    );
+    expect(stateWithActive.activeIdByScope[DASHBOARD_SCOPE]).toBe(s0.grouping.id);
+    expect(stateWithActive.activeIdByScope[projectScope(SECRET_A)]).toBe(s0.grouping.id);
     const next = deleteGrouping(stateWithActive, s0.grouping.id);
     expect(next.groupings.find(g => g.id === s0.grouping.id)).toBeUndefined();
-    expect(next.activeId).toBe(DEFAULT_GROUPING_ID);
+    // Both scopes that previously pointed at the deleted grouping fall
+    // back to Default — `getActiveGroupingIdFor` returns DEFAULT for
+    // missing entries.
+    expect(next.activeIdByScope[DASHBOARD_SCOPE]).toBeUndefined();
+    expect(next.activeIdByScope[projectScope(SECRET_A)]).toBeUndefined();
+    expect(getActiveGroupingIdFor(next, DASHBOARD_SCOPE)).toBe(DEFAULT_GROUPING_ID);
+    expect(getActiveGroupingIdFor(next, projectScope(SECRET_A))).toBe(DEFAULT_GROUPING_ID);
+  });
+
+  it('preserves per-scope overrides that pointed at OTHER groupings', () => {
+    const a = addGrouping(initialGlobalState(), 'A');
+    const b = addGrouping(a.state, 'B');
+    // Dashboard picks A; project picks B. Delete A.
+    const withBoth = setActiveGroupingIdFor(
+      setActiveGroupingIdFor(b.state, DASHBOARD_SCOPE, a.grouping.id),
+      projectScope(SECRET_A),
+      b.grouping.id,
+    );
+    const next = deleteGrouping(withBoth, a.grouping.id);
+    expect(next.activeIdByScope[DASHBOARD_SCOPE]).toBeUndefined();
+    expect(next.activeIdByScope[projectScope(SECRET_A)]).toBe(b.grouping.id);
   });
 });
 
@@ -200,20 +280,56 @@ describe('updateGroupingById', () => {
   });
 });
 
-describe('parsePersistedState (HS-8290)', () => {
-  it('parses the new shape and uses the requested activeId', () => {
+describe('parsePersistedState (HS-8290 → HS-8406)', () => {
+  it('migrates the legacy scalar activeId into the dashboard scope', () => {
     const raw = [
       { id: DEFAULT_GROUPING_ID, name: 'Default', hiddenByProject: {} },
       { id: 'g-1', name: 'Servers', hiddenByProject: { [SECRET_A]: ['default'] } },
     ];
     const state = parsePersistedState(raw, 'g-1');
-    expect(state.activeId).toBe('g-1');
+    expect(state.activeIdByScope).toEqual({ [DASHBOARD_SCOPE]: 'g-1' });
     expect(state.groupings[1].hiddenByProject[SECRET_A]).toEqual(['default']);
   });
 
-  it('falls back to first grouping id when activeId is unknown', () => {
+  it('legacy scalar pointing at Default migrates to no override (Default is the implicit fallback)', () => {
     const raw = [{ id: DEFAULT_GROUPING_ID, name: 'Default', hiddenByProject: {} }];
-    expect(parsePersistedState(raw, 'g-nope').activeId).toBe(DEFAULT_GROUPING_ID);
+    expect(parsePersistedState(raw, DEFAULT_GROUPING_ID).activeIdByScope).toEqual({});
+  });
+
+  it('legacy scalar pointing at unknown id is dropped (no override recorded)', () => {
+    const raw = [{ id: DEFAULT_GROUPING_ID, name: 'Default', hiddenByProject: {} }];
+    expect(parsePersistedState(raw, 'g-nope').activeIdByScope).toEqual({});
+  });
+
+  it('reads the new activeIdByScope shape verbatim, dropping unknown ids and Default redundancies', () => {
+    const raw = [
+      { id: DEFAULT_GROUPING_ID, name: 'Default', hiddenByProject: {} },
+      { id: 'g-1', name: 'A', hiddenByProject: {} },
+      { id: 'g-2', name: 'B', hiddenByProject: {} },
+    ];
+    const byScope = {
+      [DASHBOARD_SCOPE]: 'g-1',
+      [projectScope(SECRET_A)]: 'g-2',
+      [projectScope(SECRET_B)]: 'g-nope',  // dropped — unknown id
+      [`project:${SECRET_A}-default`]: DEFAULT_GROUPING_ID,  // dropped — Default is implicit
+    };
+    const state = parsePersistedState(raw, 'irrelevant', byScope);
+    expect(state.activeIdByScope).toEqual({
+      [DASHBOARD_SCOPE]: 'g-1',
+      [projectScope(SECRET_A)]: 'g-2',
+    });
+  });
+
+  it('new activeIdByScope wins over legacy scalar when both are present', () => {
+    const raw = [
+      { id: DEFAULT_GROUPING_ID, name: 'Default', hiddenByProject: {} },
+      { id: 'g-1', name: 'A', hiddenByProject: {} },
+    ];
+    // Legacy says g-1 for dashboard; new map is empty (no overrides).
+    // The new shape wins → no overrides → dashboard falls back to Default.
+    const state = parsePersistedState(raw, 'g-1', {});
+    expect(state.activeIdByScope).toEqual({});
+    expect(getActiveGroupingIdFor(state, DASHBOARD_SCOPE)).toBe(DEFAULT_GROUPING_ID);
   });
 
   it('synthesises Default when the persisted list lacks it', () => {

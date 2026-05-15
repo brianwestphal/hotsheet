@@ -611,3 +611,133 @@ describe('terminalTileGrid — bindList preserves identity across rebuild (HS-83
     grid.dispose();
   });
 });
+
+/**
+ * HS-8399 — regression test for "changing visibility in terminal dashboard
+ * makes all terminals disappear (i think they're all just very small —
+ * 0x0)". The reproduction the user reported was: open the terminal
+ * dashboard, switch the visibility grouping, and every tile collapses to
+ * effectively 0×0 until a full reload of the dashboard.
+ *
+ * The dashboard's hidden-change subscriber calls `paintDashboardSections`
+ * which disposes every existing `gridHandle`, clears the dashboard root,
+ * mounts a brand-new `mountTileGrid(...)`, calls `handle.rebuild(...)`
+ * with the freshly-filtered tile entries, and then runs a second-pass
+ * `applyAllSizing()` to catch the case where the per-handle rebuild's
+ * own `applySizing` landed against a detached container. This test
+ * exercises the dispose-then-mount-then-rebuild sequence against a
+ * single shared container and asserts that the surviving tiles end up
+ * with non-zero inline `width` (set by `applySizing` when the container
+ * has measurable `clientWidth`).
+ *
+ * happy-dom returns 0 for `clientWidth` by default, so we stub it to a
+ * realistic dashboard width before each `applySizing` call — same
+ * pattern as the HS-8288 test above.
+ */
+describe('terminalTileGrid — visibility-change re-paint preserves tile sizing (HS-8399)', () => {
+  it('a fresh grid mounted into a recycled container ends up with non-zero tile widths after rebuild', () => {
+    const container = makeContainer();
+    Object.defineProperty(container, 'clientWidth', { value: 1200, configurable: true });
+
+    // First grid: simulate the initial dashboard paint.
+    const firstGrid = mountTileGrid({
+      container,
+      cssPrefix: 'terminal-dashboard',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getColumnCount: () => 4,
+    });
+    firstGrid.rebuild([
+      makeEntry('s1', 't1'),
+      makeEntry('s2', 't2'),
+      makeEntry('s3', 't3'),
+    ]);
+    const firstTiles = container.querySelectorAll<HTMLElement>('.terminal-dashboard-tile');
+    expect(firstTiles.length).toBe(3);
+    for (const tile of firstTiles) {
+      expect(tile.style.width).not.toBe('');
+      expect(parseFloat(tile.style.width)).toBeGreaterThan(0);
+    }
+
+    // Simulate the visibility-change re-paint:
+    //   1. Dispose the current handle (drops every tile + releases checkouts)
+    //   2. Clear the container (mirrors `root.replaceChildren()`)
+    //   3. Mount a fresh handle into the same container
+    //   4. Rebuild with the new (post-filter) entry set
+    firstGrid.dispose();
+    container.replaceChildren();
+    Object.defineProperty(container, 'clientWidth', { value: 1200, configurable: true });
+
+    const secondGrid = mountTileGrid({
+      container,
+      cssPrefix: 'terminal-dashboard',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getColumnCount: () => 4,
+    });
+    secondGrid.rebuild([
+      makeEntry('s1', 't1'),
+      makeEntry('s3', 't3'),
+    ]);
+
+    const secondTiles = container.querySelectorAll<HTMLElement>('.terminal-dashboard-tile');
+    expect(secondTiles.length).toBe(2);
+    // The user-reported repro was tiles collapsing to 0×0 — pre-fix the
+    // dispose / re-mount sequence left the new tiles with no inline
+    // width because `applySizing` couldn't find them at the moment it
+    // ran (or ran against a detached container). Post-fix every tile
+    // carries a positive inline width set by `applySizing` so the CSS
+    // box is visible.
+    for (const tile of secondTiles) {
+      expect(tile.style.width).not.toBe('');
+      expect(parseFloat(tile.style.width)).toBeGreaterThan(0);
+      const preview = tile.querySelector<HTMLElement>('.terminal-dashboard-tile-preview');
+      expect(preview).not.toBeNull();
+      expect(preview!.style.width).not.toBe('');
+      expect(parseFloat(preview!.style.width)).toBeGreaterThan(0);
+      expect(preview!.style.height).not.toBe('');
+      expect(parseFloat(preview!.style.height)).toBeGreaterThan(0);
+    }
+
+    secondGrid.dispose();
+  });
+
+  it('an explicit applySizing() after rebuild rescues tiles that landed without inline width', () => {
+    // Belt-and-braces case the dashboard relies on: even if the per-
+    // handle rebuild's own `applySizing` lands against a detached
+    // container (clientWidth === 0), a follow-up `applySizing` call
+    // once the container is laid out must fix every tile in place.
+    const container = makeContainer();
+    // Start with clientWidth 0 to simulate the detached-during-rebuild case.
+    Object.defineProperty(container, 'clientWidth', { value: 0, configurable: true });
+
+    const grid = mountTileGrid({
+      container,
+      cssPrefix: 'terminal-dashboard',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getColumnCount: () => 4,
+    });
+    grid.rebuild([makeEntry('s1', 't1'), makeEntry('s2', 't2')]);
+    // First applySizing inside rebuild ran against clientWidth=0 and
+    // bailed — tiles have no inline width yet.
+    const tilesBefore = container.querySelectorAll<HTMLElement>('.terminal-dashboard-tile');
+    for (const tile of tilesBefore) {
+      expect(tile.style.width).toBe('');
+    }
+
+    // Now the container is laid out — re-run applySizing. Tiles must
+    // pick up the new width.
+    Object.defineProperty(container, 'clientWidth', { value: 1200, configurable: true });
+    grid.applySizing();
+
+    const tilesAfter = container.querySelectorAll<HTMLElement>('.terminal-dashboard-tile');
+    expect(tilesAfter.length).toBe(2);
+    for (const tile of tilesAfter) {
+      expect(tile.style.width).not.toBe('');
+      expect(parseFloat(tile.style.width)).toBeGreaterThan(0);
+    }
+
+    grid.dispose();
+  });
+});

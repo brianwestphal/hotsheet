@@ -41,7 +41,7 @@ import {
   unhideAllInGrouping,
   unhideAllInProject,
 } from './dashboardHiddenTerminals.js';
-import { DEFAULT_GROUPING_ID } from './visibilityGroupings.js';
+import { DASHBOARD_SCOPE, DEFAULT_GROUPING_ID } from './visibilityGroupings.js';
 
 interface Tile { id: string; name: string }
 
@@ -68,22 +68,22 @@ describe('HS-8356 — dashboard `paintSectionedLayout` filterVisible integration
   // dashboard's contract with the store is pinned end-to-end.
 
   it('initial state — no ids hidden, every tile is visible', () => {
-    const result = filterVisible(PROJECT_A, tiles('t1', 't2', 't3'));
+    const result = filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2', 't3'));
     expect(result.map(t => t.id)).toEqual(['t1', 't2', 't3']);
   });
 
   it('hiding one id drops only that id from the section', () => {
-    setTerminalHidden(PROJECT_A, 't2', true);
-    const result = filterVisible(PROJECT_A, tiles('t1', 't2', 't3'));
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't2', true);
+    const result = filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2', 't3'));
     expect(result.map(t => t.id)).toEqual(['t1', 't3']);
   });
 
   it('hiding every configured id in a project drops the entire section (count drops to 0)', () => {
     // Hide every id in the project.
-    setTerminalHidden(PROJECT_A, 't1', true);
-    setTerminalHidden(PROJECT_A, 't2', true);
-    setTerminalHidden(PROJECT_A, 't3', true);
-    const result = filterVisible(PROJECT_A, tiles('t1', 't2', 't3'));
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't2', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't3', true);
+    const result = filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2', 't3'));
     expect(result).toHaveLength(0);
     // Mirrors the `paintSectionedLayout` `continue` condition: when the
     // section has 3 configured terminals + 0 visible, the section is
@@ -93,40 +93,40 @@ describe('HS-8356 — dashboard `paintSectionedLayout` filterVisible integration
   });
 
   it('a hide in project A does NOT affect project B (cross-project isolation)', () => {
-    setTerminalHidden(PROJECT_A, 't1', true);
-    const aTiles = filterVisible(PROJECT_A, tiles('t1', 't2'));
-    const bTiles = filterVisible(PROJECT_B, tiles('t1', 't2'));
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', true);
+    const aTiles = filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2'));
+    const bTiles = filterVisible(DASHBOARD_SCOPE, PROJECT_B, tiles('t1', 't2'));
     expect(aTiles.map(t => t.id)).toEqual(['t2']);
     expect(bTiles.map(t => t.id)).toEqual(['t1', 't2']);
   });
 
   it('unhiding restores the tile back into the filtered list', () => {
-    setTerminalHidden(PROJECT_A, 't2', true);
-    expect(filterVisible(PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t1']);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't2', true);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t1']);
 
-    setTerminalHidden(PROJECT_A, 't2', false);
-    expect(filterVisible(PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t1', 't2']);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't2', false);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t1', 't2']);
   });
 
   it('unhideAllInProject restores every tile in that project but leaves other projects alone', () => {
-    setTerminalHidden(PROJECT_A, 't1', true);
-    setTerminalHidden(PROJECT_A, 't2', true);
-    setTerminalHidden(PROJECT_B, 't1', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't2', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_B, 't1', true);
 
-    unhideAllInProject(PROJECT_A);
+    unhideAllInProject(DASHBOARD_SCOPE, PROJECT_A);
 
-    expect(filterVisible(PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t1', 't2']);
-    expect(filterVisible(PROJECT_B, tiles('t1', 't2')).map(t => t.id)).toEqual(['t2']);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t1', 't2']);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_B, tiles('t1', 't2')).map(t => t.id)).toEqual(['t2']);
   });
 
   it('unhideAllEverywhere restores every tile in every project', () => {
-    setTerminalHidden(PROJECT_A, 't1', true);
-    setTerminalHidden(PROJECT_B, 't1', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_B, 't1', true);
 
-    unhideAllEverywhere();
+    unhideAllEverywhere(DASHBOARD_SCOPE);
 
-    expect(filterVisible(PROJECT_A, tiles('t1'))).toHaveLength(1);
-    expect(filterVisible(PROJECT_B, tiles('t1'))).toHaveLength(1);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1'))).toHaveLength(1);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_B, tiles('t1'))).toHaveLength(1);
   });
 });
 
@@ -138,18 +138,18 @@ describe('HS-8356 — drawer terminal grid filterVisible integration', () => {
   // tests mirror that exact shape.
 
   it('initial state — every tile in the active project is visible to the drawer grid', () => {
-    const visible = filterVisible(PROJECT_A, tiles('t1', 't2', 't3'));
+    const visible = filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2', 't3'));
     expect(visible.map(t => t.id)).toEqual(['t1', 't2', 't3']);
   });
 
   it('a single-project hide fires the change subscription exactly once per state change', () => {
     let fires = 0;
     const unsub = subscribeToHiddenChanges(() => { fires++; });
-    setTerminalHidden(PROJECT_A, 't1', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', true);
     expect(fires).toBe(1);
-    setTerminalHidden(PROJECT_A, 't1', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', true);
     expect(fires).toBe(1); // idempotent
-    setTerminalHidden(PROJECT_A, 't1', false);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', false);
     expect(fires).toBe(2);
     unsub();
   });
@@ -163,7 +163,7 @@ describe('HS-8356 — drawer terminal grid filterVisible integration', () => {
     // subscription doesn't accidentally drop cross-project rebuilds.
     let fires = 0;
     const unsub = subscribeToHiddenChanges(() => { fires++; });
-    setTerminalHidden(PROJECT_B, 't1', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_B, 't1', true);
     expect(fires).toBe(1);
     unsub();
   });
@@ -178,26 +178,26 @@ describe('HS-8356 — drawer terminal grid filterVisible integration', () => {
     setTerminalHiddenInGrouping(PROJECT_A, g.id, 't1', true);
 
     // Still on Default grouping — the hide isn't visible yet.
-    expect(filterVisible(PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t1', 't2']);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t1', 't2']);
 
     // Activate the Server grouping — now the hide takes effect.
-    setActiveGrouping(g.id);
-    expect(filterVisible(PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t2']);
+    setActiveGrouping(DASHBOARD_SCOPE, g.id);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t2']);
 
     // Switch back — Default grouping's empty hidden list takes over.
-    setActiveGrouping(DEFAULT_GROUPING_ID);
-    expect(filterVisible(PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t1', 't2']);
+    setActiveGrouping(DASHBOARD_SCOPE, DEFAULT_GROUPING_ID);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2')).map(t => t.id)).toEqual(['t1', 't2']);
   });
 
   it('hideAllInGrouping (dialog "Hide All" path) hides every supplied id in one call', () => {
     const g = addGrouping('Server');
-    setActiveGrouping(g.id);
+    setActiveGrouping(DASHBOARD_SCOPE, g.id);
 
     hideAllInGrouping(PROJECT_A, g.id, ['t1', 't2', 't3']);
-    expect(filterVisible(PROJECT_A, tiles('t1', 't2', 't3'))).toHaveLength(0);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2', 't3'))).toHaveLength(0);
 
     unhideAllInGrouping(PROJECT_A, g.id);
-    expect(filterVisible(PROJECT_A, tiles('t1', 't2', 't3')).map(t => t.id)).toEqual(['t1', 't2', 't3']);
+    expect(filterVisible(DASHBOARD_SCOPE, PROJECT_A, tiles('t1', 't2', 't3')).map(t => t.id)).toEqual(['t1', 't2', 't3']);
   });
 });
 
@@ -205,42 +205,42 @@ describe('HS-8356 — hide-button badge integration (dashboard + drawer grid)', 
   // Both the dashboard's hide button and the drawer grid's hide button
   // call `applyHideButtonBadge(button, count)` where count comes from
   // `countHiddenForProject(secret)` (drawer grid) or
-  // `countHiddenAcrossAllProjects()` (dashboard). These tests pin the
+  // `countHiddenAcrossAllProjects(DASHBOARD_SCOPE)` (dashboard). These tests pin the
   // badge → count → state round trip.
 
   it('hiding one terminal increments the per-project count by 1', () => {
-    expect(countHiddenForProject(PROJECT_A)).toBe(0);
-    setTerminalHidden(PROJECT_A, 't1', true);
-    expect(countHiddenForProject(PROJECT_A)).toBe(1);
-    setTerminalHidden(PROJECT_A, 't2', true);
-    expect(countHiddenForProject(PROJECT_A)).toBe(2);
+    expect(countHiddenForProject(DASHBOARD_SCOPE, PROJECT_A)).toBe(0);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', true);
+    expect(countHiddenForProject(DASHBOARD_SCOPE, PROJECT_A)).toBe(1);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't2', true);
+    expect(countHiddenForProject(DASHBOARD_SCOPE, PROJECT_A)).toBe(2);
   });
 
   it('hiding one terminal in project A leaves project B count at 0', () => {
-    setTerminalHidden(PROJECT_A, 't1', true);
-    expect(countHiddenForProject(PROJECT_A)).toBe(1);
-    expect(countHiddenForProject(PROJECT_B)).toBe(0);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', true);
+    expect(countHiddenForProject(DASHBOARD_SCOPE, PROJECT_A)).toBe(1);
+    expect(countHiddenForProject(DASHBOARD_SCOPE, PROJECT_B)).toBe(0);
   });
 
   it('the dashboard-scope count sums across every project', () => {
-    setTerminalHidden(PROJECT_A, 't1', true);
-    setTerminalHidden(PROJECT_A, 't2', true);
-    setTerminalHidden(PROJECT_B, 't1', true);
-    expect(countHiddenAcrossAllProjects()).toBe(3);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't2', true);
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_B, 't1', true);
+    expect(countHiddenAcrossAllProjects(DASHBOARD_SCOPE)).toBe(3);
   });
 
   it('applyHideButtonBadge writes / removes the .hide-btn-badge node based on the live count', () => {
     const button = document.createElement('button');
-    setTerminalHidden(PROJECT_A, 't1', true);
-    applyHideButtonBadge(button, countHiddenForProject(PROJECT_A));
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't1', true);
+    applyHideButtonBadge(button, countHiddenForProject(DASHBOARD_SCOPE, PROJECT_A));
     expect(button.querySelector('.hide-btn-badge')?.textContent).toBe('1');
 
-    setTerminalHidden(PROJECT_A, 't2', true);
-    applyHideButtonBadge(button, countHiddenForProject(PROJECT_A));
+    setTerminalHidden(DASHBOARD_SCOPE, PROJECT_A, 't2', true);
+    applyHideButtonBadge(button, countHiddenForProject(DASHBOARD_SCOPE, PROJECT_A));
     expect(button.querySelector('.hide-btn-badge')?.textContent).toBe('2');
 
-    unhideAllInProject(PROJECT_A);
-    applyHideButtonBadge(button, countHiddenForProject(PROJECT_A));
+    unhideAllInProject(DASHBOARD_SCOPE, PROJECT_A);
+    applyHideButtonBadge(button, countHiddenForProject(DASHBOARD_SCOPE, PROJECT_A));
     expect(button.querySelector('.hide-btn-badge')).toBeNull();
   });
 });
@@ -255,7 +255,7 @@ describe('HS-8356 — grouping switch fires the subscription so dashboard + draw
     const g = addGrouping('Server');
     const handler = vi.fn();
     const unsub = subscribeToHiddenChanges(handler);
-    setActiveGrouping(g.id);
+    setActiveGrouping(DASHBOARD_SCOPE, g.id);
     expect(handler).toHaveBeenCalledTimes(1);
     unsub();
   });
@@ -263,7 +263,7 @@ describe('HS-8356 — grouping switch fires the subscription so dashboard + draw
   it('setActiveGrouping that does NOT change the active id is a no-op', () => {
     const handler = vi.fn();
     const unsub = subscribeToHiddenChanges(handler);
-    setActiveGrouping(DEFAULT_GROUPING_ID);
+    setActiveGrouping(DASHBOARD_SCOPE, DEFAULT_GROUPING_ID);
     expect(handler).not.toHaveBeenCalled();
     unsub();
   });

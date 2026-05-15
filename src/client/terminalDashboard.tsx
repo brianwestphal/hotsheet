@@ -3,6 +3,7 @@ import { subscribeToBellState } from './bellPoll.js';
 import {
   applyHideButtonBadge,
   countHiddenAcrossAllProjects,
+  DASHBOARD_SCOPE,
   pruneHiddenForProject,
   subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
@@ -94,16 +95,17 @@ export { attachDedicatedBarSearch };
 function refreshDashboardGroupingSelect(): void {
   if (dashboardState.groupingSelect === null) return;
   void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
-    refreshGroupingSelect({ selectEl: dashboardState.groupingSelect! });
+    refreshGroupingSelect({ selectEl: dashboardState.groupingSelect!, getScopeKey: () => DASHBOARD_SCOPE });
   });
 }
 
 function bindGroupingSelect(): void {
   if (dashboardState.groupingSelect === null) return;
-  // HS-7826 → HS-8290 — wire the grouping selector. Post-HS-8290 the
-  // groupings are global, so a single read + write covers every project.
+  // HS-7826 → HS-8290 → HS-8406 — wire the grouping selector against
+  // the `DASHBOARD_SCOPE` so flipping the dashboard's pick is
+  // independent of every project's drawer-grid pick.
   void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
-    wireGroupingSelectChange({ selectEl: dashboardState.groupingSelect! });
+    wireGroupingSelectChange({ selectEl: dashboardState.groupingSelect!, getScopeKey: () => DASHBOARD_SCOPE });
   });
 }
 
@@ -206,6 +208,7 @@ export function initTerminalDashboard(): void {
   dashboardState.hideButton?.addEventListener('click', () => {
     showHideTerminalDialog({
       mode: 'global',
+      scopeKey: DASHBOARD_SCOPE,
       groups: dashboardState.lastSectionData.map(s => ({
         secret: s.project.secret,
         name: s.project.name,
@@ -415,7 +418,7 @@ function enterDashboard(): void {
   // HS-7826 — refresh the grouping selector dropdown so adding / renaming
   // / deleting / switching groupings updates the chrome immediately.
   dashboardState.hiddenChangeUnsubscribe = subscribeToHiddenChanges(() => {
-    applyHideButtonBadge(dashboardState.hideButton, countHiddenAcrossAllProjects());
+    applyHideButtonBadge(dashboardState.hideButton, countHiddenAcrossAllProjects(DASHBOARD_SCOPE));
     refreshDashboardGroupingSelect();
     if (!dashboardState.active || dashboardState.rootElement === null) return;
     paintDashboardSections(dashboardState.rootElement, dashboardState.lastSectionData);
@@ -423,7 +426,7 @@ function enterDashboard(): void {
   refreshDashboardGroupingSelect();
   // HS-7823 — initial paint of the badge so the count is correct on first
   // dashboard open even when no toggle has fired this session yet.
-  applyHideButtonBadge(dashboardState.hideButton, countHiddenAcrossAllProjects());
+  applyHideButtonBadge(dashboardState.hideButton, countHiddenAcrossAllProjects(DASHBOARD_SCOPE));
 }
 
 async function renderDashboardGrid(root: HTMLElement): Promise<void> {

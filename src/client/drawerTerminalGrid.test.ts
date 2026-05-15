@@ -90,9 +90,14 @@ vi.mock('./bellPoll.js', () => ({
 
 vi.mock('./dashboardHiddenTerminals.js', () => ({
   subscribeToHiddenChanges: (...args: unknown[]) => subscribeToHiddenChangesMock(...args),
-  filterVisible: (...args: [string, unknown[]]) => filterVisibleMock(...args),
+  filterVisible: (...args: [string, string, unknown[]]) => filterVisibleMock(args[1], args[2]),
   applyHideButtonBadge: (...args: unknown[]) => { applyHideButtonBadgeMock(...args); },
-  countHiddenForProject: (...args: unknown[]) => countHiddenForProjectMock(...args),
+  countHiddenForProject: (...args: [string, string]) => countHiddenForProjectMock(args[1]),
+  // HS-8406 — re-export the scope helpers so callers' `projectScope(secret)`
+  // calls resolve. The test only cares that the call THREADS the right
+  // secret; the precise key shape is exercised in `visibilityGroupings.test.ts`.
+  projectScope: (secret: string) => `project:${secret}`,
+  DASHBOARD_SCOPE: 'dashboard',
   // HS-8314 — `refreshDrawerGroupingSelect` does a `void import('./visibilityGroupingSelect.js').then(...)`
   // dynamic import. vi.mock() of `./visibilityGroupingSelect.js` doesn't
   // intercept that dynamic import in this test runner config, so the

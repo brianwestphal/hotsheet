@@ -18,7 +18,7 @@
 import { SearchAddon } from '@xterm/addon-search';
 import type { Terminal } from '@xterm/xterm';
 
-import { filterVisible as filterVisibleEntries } from './dashboardHiddenTerminals.js';
+import { DASHBOARD_SCOPE, filterVisible as filterVisibleEntries } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
 import type { ProjectInfo } from './state.js';
 import type { ProjectSectionData } from './terminalDashboardState.js';
@@ -40,7 +40,7 @@ export interface FlowTile {
 export function flattenSectionsToTiles(sections: ProjectSectionData[]): FlowTile[] {
   const flat: FlowTile[] = [];
   for (const section of sections) {
-    const visible = filterVisibleEntries(section.project.secret, section.terminals);
+    const visible = filterVisibleEntries(DASHBOARD_SCOPE, section.project.secret, section.terminals);
     if (visible.length === 0) continue;
     for (const terminal of visible) {
       const baseEntry = toTileEntry(section.project.secret)(terminal);

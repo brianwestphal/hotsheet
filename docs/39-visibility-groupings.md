@@ -1,4 +1,4 @@
-# 39. Visibility groupings (HS-7826 / HS-8290)
+# 39. Visibility groupings (HS-7826 / HS-8290 / HS-8406)
 
 ## 39.1 Overview
 
@@ -8,9 +8,11 @@ HS-7826 introduces named **visibility groupings**. Each grouping carries its own
 
 **HS-8290 reshape** — pre-HS-8290 each project had its own grouping list stored under `visibility_groupings` in `.hotsheet/settings.json`, and a cross-project fan-out machinery (§39.7 in the prior revision) mirrored every grouping CRUD operation across every project to keep duplicated lists aligned. Post-HS-8290 the grouping list is **a single global record** in `~/.hotsheet/config.json` under `dashboard.visibilityGroupings`, with each grouping carrying a `hiddenByProject: Record<secret, string[]>` map that holds per-project hidden ids. The fan-out machinery is gone.
 
-## 39.2 Data model (HS-8290)
+**HS-8406 reshape** — HS-8290 collapsed the active-grouping selection into a single global `activeId`, which meant flipping the dropdown in a project's drawer-grid ALSO flipped the dashboard's pick (and every other project's). HS-8406 keeps the grouping list global but re-introduces **per-scope active-grouping selection**: each surface that reads/writes the active grouping uses its own scope key. The dashboard uses `'dashboard'`; each project's drawer-grid + the drawer-grid's hide-terminal dialog uses `'project:<secret>'`. The grouping definitions (the named groupings + their per-project hidden id lists) stay shared so a hide / unhide / rename made anywhere is visible everywhere; only the "which grouping is currently active" pick is scoped.
 
-A grouping is `{ id, name, hiddenByProject }`. The grouping list + active id are global; per-project hidden ids live inside each grouping under `hiddenByProject[secret]`. The Default grouping is always present, identifiable by the literal id `'default'`, and refused for deletion (rename works since the id is the invariant — name is just a label).
+## 39.2 Data model (HS-8290 → HS-8406)
+
+A grouping is `{ id, name, hiddenByProject }`. The grouping list is global; per-project hidden ids live inside each grouping under `hiddenByProject[secret]`. The Default grouping is always present, identifiable by the literal id `'default'`, and refused for deletion (rename works since the id is the invariant — name is just a label). HS-8406 replaces the single global `activeId` with a `activeIdByScope: Record<string, string>` map keyed by scope.
 
 ```ts
 interface VisibilityGrouping {
@@ -21,24 +23,34 @@ interface VisibilityGrouping {
 
 interface GlobalVisibilityState {
   groupings: VisibilityGrouping[];
-  activeId: string;
+  // HS-8406 — per-scope active grouping. Scope keys: 'dashboard' for the §25
+  // terminal dashboard, 'project:<secret>' for a project's §36 drawer-grid.
+  // Scopes missing from the map fall back to DEFAULT_GROUPING_ID — the
+  // absence of an entry IS Default, so deleting the dashboard's override or
+  // setting it back to Default removes the entry to keep the payload byte-stable.
+  activeIdByScope: Record<string, string>;
 }
+
+// Two scope-key helpers exported from visibilityGroupings.ts:
+const DASHBOARD_SCOPE = 'dashboard';
+function projectScope(secret: string): string { return `project:${secret}`; }
 ```
 
-Pure helpers in `src/client/visibilityGroupings.ts` (`addGrouping`, `renameGrouping`, `deleteGrouping`, `reorderGroupings`, `setActiveGroupingId`, `toggleHiddenInGrouping`, `parsePersistedState`, `pruneStaleIdsInGroupings`) own every state transition. Unit tests in `visibilityGroupings.test.ts`.
+Pure helpers in `src/client/visibilityGroupings.ts` (`addGrouping`, `renameGrouping`, `deleteGrouping`, `reorderGroupings`, `setActiveGroupingIdFor(state, scopeKey, id)`, `getActiveGroupingFor(state, scopeKey)`, `getActiveGroupingIdFor(state, scopeKey)`, `toggleHiddenInGrouping`, `parsePersistedState`, `pruneStaleIdsInGroupings`) own every state transition. Deleting a grouping that's currently the active pick in any scope strips that scope's override (the scope falls back to Default on next read). Unit tests in `visibilityGroupings.test.ts`.
 
-## 39.3 Persistence (HS-8290)
+## 39.3 Persistence (HS-8290 → HS-8406)
 
-One global key set in `~/.hotsheet/config.json` under `dashboard`:
+Two global keys in `~/.hotsheet/config.json` under `dashboard`:
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `dashboard.visibilityGroupings` | `VisibilityGrouping[]` | `[{ id: 'default', name: 'Default', hiddenByProject: {} }]` | One entry per grouping, displayed in array order. |
-| `dashboard.activeVisibilityGroupingId` | `string` | `'default'` | Id of the currently-active grouping. |
+| `dashboard.activeVisibilityGroupingIdByScope` | `Record<string, string>` | `{}` | HS-8406 — per-scope active grouping selections. Empty when every scope is on Default. |
+| `dashboard.activeVisibilityGroupingId` | `string` | `'default'` | Legacy scalar — kept written for one release as the dashboard scope's mirror so a downgrade-then-upgrade flow doesn't lose the dashboard's pick. `parsePersistedState` migrates it into `{ dashboard: <id> }` when the new map is absent. |
 
 Six per-project keys that USED to live in `.hotsheet/settings.json` (`visibility_groupings`, `active_visibility_grouping_id`, `hidden_terminals`, `dashboard_layout_mode`, `dashboard_columns_per_row`, `dashboard_slider_value`) are now reserved as **dead keys** in `src/file-settings.ts::HS_8290_DEAD_KEYS`. `readFileSettings` strips them on read, and the next `writeFileSettings` PATCH naturally drops them from disk via the read-merge-write flow. No migration step — per the HS-8290 ticket, existing values are dropped because the feature hasn't gone public.
 
-**Writing.** `src/client/persistedHiddenTerminals.ts` subscribes to every `subscribeToHiddenChanges` fire and PATCHes `dashboard.visibilityGroupings` + `dashboard.activeVisibilityGroupingId` to `/api/global-config` with a 250 ms debounce (single global timer; pre-HS-8290 this was a per-project debounce loop). Dynamic-terminal ids (`dyn-*`) are filtered out at write time. Sorted ids per `hiddenByProject[secret]` keep the serialised payload byte-stable so unchanged sets short-circuit the network call.
+**Writing.** `src/client/persistedHiddenTerminals.ts` subscribes to every `subscribeToHiddenChanges` fire and PATCHes `dashboard.visibilityGroupings` + `dashboard.activeVisibilityGroupingIdByScope` (HS-8406) + `dashboard.activeVisibilityGroupingId` (legacy mirror of the `'dashboard'` scope) to `/api/global-config` with a 250 ms debounce (single global timer; pre-HS-8290 this was a per-project debounce loop). Dynamic-terminal ids (`dyn-*`) are filtered out at write time. Sorted ids per `hiddenByProject[secret]` keep the serialised payload byte-stable so unchanged sets short-circuit the network call.
 
 **HS-8293 — init is one-shot.** `initPersistedHiddenTerminals` is called once from `initProjectTabs` and bails immediately on subsequent calls (the wired subscription is the marker). Pre-fix `refreshProjectTabs` re-ran it on every poll cycle, which re-fetched `/api/global-config` and re-hydrated the in-memory state. If the user had toggled a row between the moment the previous PATCH landed and the next poll's hydrate fired, the hydrate clobbered the toggle with the (now-stale) server snapshot, and the next debounced write's `lastPersisted` short-circuit suppressed the PATCH that would have rescued it — visible to the user as "fast successive toggles overwrite each other."
 

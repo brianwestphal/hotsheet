@@ -35,11 +35,30 @@ export interface VisibilityGrouping {
 /** Single global state: ordered list of groupings + active id. */
 export interface GlobalVisibilityState {
   groupings: VisibilityGrouping[];
-  activeId: string;
+  /** HS-8406 — per-scope active grouping selection. Each surface that
+   *  reads/writes the active grouping uses its own scope key:
+   *  - `'dashboard'` for the §25 terminal dashboard
+   *  - `'project:<secret>'` for a project's §36 drawer-grid + the
+   *    drawer's hide-terminal dialog opened from that project's tab.
+   *  Scopes missing from the map fall back to `DEFAULT_GROUPING_ID`.
+   *  Pre-HS-8406 a single global `activeId: string` covered every
+   *  surface, which meant flipping the grouping in a project's drawer
+   *  also flipped it in the dashboard. */
+  activeIdByScope: Record<string, string>;
+}
+
+/** Scope key for the §25 terminal dashboard. */
+export const DASHBOARD_SCOPE = 'dashboard';
+
+/** Scope key for a project's §36 drawer-grid + the drawer's
+ *  hide-terminal dialog opened from that project's tab. */
+export function projectScope(secret: string): string {
+  return `project:${secret}`;
 }
 
 /** Build the empty initial state — a single Default grouping with no
- *  hidden ids in any project. */
+ *  hidden ids in any project, no per-scope overrides (every scope falls
+ *  back to Default). */
 export function initialGlobalState(): GlobalVisibilityState {
   return {
     groupings: [{
@@ -47,7 +66,7 @@ export function initialGlobalState(): GlobalVisibilityState {
       name: DEFAULT_GROUPING_NAME,
       hiddenByProject: {},
     }],
-    activeId: DEFAULT_GROUPING_ID,
+    activeIdByScope: {},
   };
 }
 
@@ -66,14 +85,26 @@ export function generateGroupingId(existing: readonly VisibilityGrouping[]): str
   return `g-fallback-${n}`;
 }
 
-/** Return the active grouping (always defined — falls back to the first
- *  grouping if `activeId` doesn't match any, or to a synthesized empty
+/** Read the active grouping id for a scope. Falls back to
+ *  `DEFAULT_GROUPING_ID` when the scope has no override OR when the
+ *  recorded override doesn't match any current grouping (e.g. the
+ *  grouping was deleted from another surface). */
+export function getActiveGroupingIdFor(state: GlobalVisibilityState, scopeKey: string): string {
+  if (!Object.prototype.hasOwnProperty.call(state.activeIdByScope, scopeKey)) return DEFAULT_GROUPING_ID;
+  const recorded = state.activeIdByScope[scopeKey];
+  if (state.groupings.some(g => g.id === recorded)) return recorded;
+  return DEFAULT_GROUPING_ID;
+}
+
+/** Return the active grouping for a scope (always defined — falls back
+ *  to the Default grouping when missing, or to a synthesized empty
  *  Default if the list is somehow empty). */
-export function getActiveGrouping(state: GlobalVisibilityState): VisibilityGrouping {
+export function getActiveGroupingFor(state: GlobalVisibilityState, scopeKey: string): VisibilityGrouping {
   if (state.groupings.length === 0) {
     return { id: DEFAULT_GROUPING_ID, name: DEFAULT_GROUPING_NAME, hiddenByProject: {} };
   }
-  const found = state.groupings.find(g => g.id === state.activeId);
+  const id = getActiveGroupingIdFor(state, scopeKey);
+  const found = state.groupings.find(g => g.id === id);
   return found ?? state.groupings[0];
 }
 
@@ -87,7 +118,7 @@ export function addGrouping(
   const id = generateGroupingId(state.groupings);
   const grouping: VisibilityGrouping = { id, name, hiddenByProject: {} };
   return {
-    state: { groupings: [...state.groupings, grouping], activeId: state.activeId },
+    state: { groupings: [...state.groupings, grouping], activeIdByScope: state.activeIdByScope },
     grouping,
   };
 }
@@ -104,17 +135,21 @@ export function renameGrouping(
   const target = state.groupings.find(g => g.id === id);
   if (target === undefined || target.name === name) return state;
   const groupings = state.groupings.map(g => g.id === id ? { ...g, name } : g);
-  return { groupings, activeId: state.activeId };
+  return { groupings, activeIdByScope: state.activeIdByScope };
 }
 
-/** Delete a grouping by id. Refuses to delete the Default grouping. When
- *  the active grouping is deleted, activeId falls back to Default. */
+/** Delete a grouping by id. Refuses to delete the Default grouping. Any
+ *  scope whose recorded active id matches the deleted grouping has its
+ *  override stripped (so it falls back to Default on next read). */
 export function deleteGrouping(state: GlobalVisibilityState, id: string): GlobalVisibilityState {
   if (id === DEFAULT_GROUPING_ID) return state;
   if (!state.groupings.some(g => g.id === id)) return state;
   const groupings = state.groupings.filter(g => g.id !== id);
-  const activeId = state.activeId === id ? DEFAULT_GROUPING_ID : state.activeId;
-  return { groupings, activeId };
+  const activeIdByScope: Record<string, string> = {};
+  for (const [scope, gId] of Object.entries(state.activeIdByScope)) {
+    if (gId !== id) activeIdByScope[scope] = gId;
+  }
+  return { groupings, activeIdByScope };
 }
 
 /** Reorder groupings by moving `fromId` to the slot currently occupied by
@@ -131,14 +166,27 @@ export function reorderGroupings(
   const next = [...state.groupings];
   const [moved] = next.splice(fromIdx, 1);
   next.splice(toIdx, 0, moved);
-  return { groupings: next, activeId: state.activeId };
+  return { groupings: next, activeIdByScope: state.activeIdByScope };
 }
 
-/** Set the active grouping. No-op when id doesn't match any grouping. */
-export function setActiveGroupingId(state: GlobalVisibilityState, id: string): GlobalVisibilityState {
-  if (state.activeId === id) return state;
+/** Set the active grouping for a specific scope. No-op when id doesn't
+ *  match any grouping. Setting `DEFAULT_GROUPING_ID` strips the scope's
+ *  override entry (the absence of an entry IS Default). */
+export function setActiveGroupingIdFor(
+  state: GlobalVisibilityState,
+  scopeKey: string,
+  id: string,
+): GlobalVisibilityState {
   if (!state.groupings.some(g => g.id === id)) return state;
-  return { groupings: state.groupings, activeId: id };
+  const current = getActiveGroupingIdFor(state, scopeKey);
+  if (current === id) return state;
+  const activeIdByScope: Record<string, string> = {};
+  for (const [scope, gId] of Object.entries(state.activeIdByScope)) {
+    if (scope === scopeKey) continue;
+    activeIdByScope[scope] = gId;
+  }
+  if (id !== DEFAULT_GROUPING_ID) activeIdByScope[scopeKey] = id;
+  return { groupings: state.groupings, activeIdByScope };
 }
 
 /** Read the hidden ids for a grouping in a specific project. Returns an
@@ -178,22 +226,57 @@ export function updateGroupingById(
   const replacement = transform(target);
   if (replacement === target) return state;
   const groupings = state.groupings.map(g => g.id === id ? replacement : g);
-  return { groupings, activeId: state.activeId };
+  return { groupings, activeIdByScope: state.activeIdByScope };
 }
 
 /** Tolerant parser for the persisted shape returned by
  *  `GET /api/global-config` under `dashboard.visibilityGroupings`.
- *  Unknown shapes / parse errors fall through to the empty-Default state. */
+ *  Unknown shapes / parse errors fall through to the empty-Default state.
+ *
+ *  HS-8406 — accepts both the new `activeIdByScope` map AND the legacy
+ *  scalar `activeId`. When both are present the new map wins; when only
+ *  the legacy value is present it migrates to
+ *  `{ [DASHBOARD_SCOPE]: activeId }` (preserving the user's pre-fix
+ *  dashboard pick — every project's drawer-grid scope falls back to
+ *  Default on first read, which was the user-requested behavior). */
 export function parsePersistedState(
   rawGroupings: unknown,
   rawActiveId: unknown,
+  rawActiveIdByScope?: unknown,
 ): GlobalVisibilityState {
   const parsed = normaliseGroupings(rawGroupings);
   if (parsed === null || parsed.length === 0) return initialGlobalState();
-  const activeId = typeof rawActiveId === 'string' && parsed.some(g => g.id === rawActiveId)
-    ? rawActiveId
-    : parsed[0].id;
-  return { groupings: parsed, activeId };
+  const activeIdByScope = normaliseActiveIdByScope(rawActiveIdByScope, rawActiveId, parsed);
+  return { groupings: parsed, activeIdByScope };
+}
+
+function normaliseActiveIdByScope(
+  rawByScope: unknown,
+  rawLegacyId: unknown,
+  groupings: readonly VisibilityGrouping[],
+): Record<string, string> {
+  const validIds = new Set(groupings.map(g => g.id));
+  const out: Record<string, string> = {};
+
+  // New shape wins when present + parseable.
+  if (rawByScope !== null && typeof rawByScope === 'object' && !Array.isArray(rawByScope)) {
+    for (const [scope, id] of Object.entries(rawByScope as Record<string, unknown>)) {
+      if (typeof scope !== 'string' || scope === '') continue;
+      if (typeof id !== 'string' || !validIds.has(id)) continue;
+      // Drop redundant Default entries (absence IS Default — keeps the
+      // payload byte-stable when the user reverts a non-Default pick).
+      if (id === DEFAULT_GROUPING_ID) continue;
+      out[scope] = id;
+    }
+    return out;
+  }
+
+  // Legacy scalar fallback: migrate to the dashboard scope.
+  if (typeof rawLegacyId === 'string' && rawLegacyId !== '' && validIds.has(rawLegacyId)
+      && rawLegacyId !== DEFAULT_GROUPING_ID) {
+    out[DASHBOARD_SCOPE] = rawLegacyId;
+  }
+  return out;
 }
 
 function normaliseGroupings(raw: unknown): VisibilityGrouping[] | null {

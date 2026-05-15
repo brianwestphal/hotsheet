@@ -28,7 +28,7 @@
 
 import type { Terminal } from '@xterm/xterm';
 
-import { filterVisible as filterVisibleEntries } from './dashboardHiddenTerminals.js';
+import { DASHBOARD_SCOPE, filterVisible as filterVisibleEntriesScoped } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
 import { switchProject } from './projectTabs.js';
 import type { ProjectInfo } from './state.js';
@@ -201,11 +201,11 @@ function paintSectionedLayout(root: HTMLElement, sections: ProjectSectionData[])
   let renderedAny = false;
   let totalVisible = 0;
   for (const section of sections) {
-    const visible = filterVisibleEntries(section.project.secret, section.terminals);
+    const visible = filterVisibleEntriesScoped(DASHBOARD_SCOPE, section.project.secret, section.terminals);
     totalVisible += visible.length;
   }
   for (const section of sections) {
-    const visible = filterVisibleEntries(section.project.secret, section.terminals);
+    const visible = filterVisibleEntriesScoped(DASHBOARD_SCOPE, section.project.secret, section.terminals);
     // Drop the section entirely when there are configured terminals but
     // ALL of them are hidden — per the HS-7661 user answer "hide the whole
     // project". Sections with zero CONFIGURED terminals fall through to

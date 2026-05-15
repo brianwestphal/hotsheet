@@ -3,6 +3,7 @@ import {
   applyHideButtonBadge,
   countHiddenForProject,
   filterVisible as filterVisibleEntries,
+  projectScope,
   subscribeToHiddenChanges,
 } from './dashboardHiddenTerminals.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -143,8 +144,15 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
   drawerGridState.hideBtn = byIdOrNull<HTMLButtonElement>('drawer-grid-hide-btn');
   drawerGridState.groupingSelect = byIdOrNull<HTMLSelectElement>('drawer-grid-grouping-select');
   if (drawerGridState.groupingSelect !== null) {
+    // HS-8406 — drawer-grid select reads/writes the per-project scope so
+    // each project tracks its own active grouping independent of the
+    // dashboard. The scope key resolves on every read+write so a project
+    // switch picks up the new secret without a re-wire.
     void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
-      wireGroupingSelectChange({ selectEl: drawerGridState.groupingSelect! });
+      wireGroupingSelectChange({
+        selectEl: drawerGridState.groupingSelect!,
+        getScopeKey: () => projectScope(getActiveProject()?.secret ?? ''),
+      });
     });
   }
   if (drawerGridState.toggleBtn === null || drawerGridState.gridEl === null) return;
@@ -165,6 +173,7 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
     if (project === null) return;
     showHideTerminalDialog({
       mode: 'single-project',
+      scopeKey: projectScope(project.secret),
       groups: [{
         secret: project.secret,
         name: project.name,
@@ -269,7 +278,7 @@ export function onTerminalListUpdated(entries: DrawerGridTileEntry[]): void {
 function rebuildVisibleTiles(): void {
   const project = getActiveProject();
   if (project === null || drawerGridState.gridHandle === null) return;
-  const visible = filterVisibleEntries(project.secret, drawerGridState.lastKnownEntries);
+  const visible = filterVisibleEntries(projectScope(project.secret), project.secret, drawerGridState.lastKnownEntries);
   drawerGridState.gridHandle.rebuild(visible.map(toTileEntry(project.secret)));
   // Show / hide the all-hidden placeholder. We render it as a sibling of
   // the tiles inside `drawerGridState.gridEl` because mountTileGrid owns the tile children
@@ -316,7 +325,7 @@ function refreshDrawerGroupingSelect(): void {
   const selectEl = drawerGridState.groupingSelect;
   if (selectEl === null) return;
   void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
-    refreshGroupingSelect({ selectEl });
+    refreshGroupingSelect({ selectEl, getScopeKey: () => projectScope(getActiveProject()?.secret ?? '') });
   });
 }
 
@@ -326,7 +335,7 @@ function refreshDrawerGroupingSelect(): void {
 function refreshHideBtnBadge(): void {
   if (drawerGridState.hideBtn === null) return;
   const project = getActiveProject();
-  const count = project === null ? 0 : countHiddenForProject(project.secret);
+  const count = project === null ? 0 : countHiddenForProject(projectScope(project.secret), project.secret);
   applyHideButtonBadge(drawerGridState.hideBtn, count);
 }
 
@@ -507,7 +516,7 @@ async function showHideContextMenuAtPointer(e: MouseEvent, secret: string, termi
   menu.querySelector('.context-menu-item')?.addEventListener('click', (ev) => {
     ev.stopPropagation();
     menu.remove();
-    setTerminalHidden(secret, terminalId, true);
+    setTerminalHidden(projectScope(secret), secret, terminalId, true);
   });
   document.body.appendChild(menu);
   setTimeout(() => {
