@@ -319,27 +319,71 @@ describe('setupTicketRowEffects (HS-8357) — list-view reactivity for every mut
     dispose();
   });
 
-  it('tags are NOT rendered on list rows by design — pin the contract', () => {
+  it('tags appear on list rows after the title input and react to changes (HS-8307)', () => {
+    // HS-8307 flipped this from "not rendered by design" to "rendered
+    // after the title". The JSX-literal in `createTicketRow` emits a
+    // `.ticket-row-tags` container with `.ticket-row-tag` chips, and
+    // the combined effect's tags-sync branch keeps it aligned with the
+    // store's `tags` field on every change.
     const t = makeTicket(1, { tags: '["alpha","beta","gamma"]' });
     ticketsStore.actions.setTickets([t]);
+    // Seed the row's DOM with the same shape `createTicketRow` produces
+    // so the test exercises the effect's update path, not the initial
+    // JSX-literal render. The minimal builder doesn't include the tag
+    // container; we mount the seed manually here to match production.
     const row = buildMinimalListRow(t);
+    const seedTags = document.createElement('div');
+    seedTags.className = 'ticket-row-tags';
+    seedTags.innerHTML = '<span class="ticket-row-tag">alpha</span><span class="ticket-row-tag">beta</span><span class="ticket-row-tag">gamma</span>';
+    const priIndicator = row.querySelector<HTMLElement>('.ticket-priority-indicator')!;
+    row.insertBefore(seedTags, priIndicator);
     document.body.appendChild(row);
     const dispose = setupTicketRowEffects(row, t);
 
-    // No tag-related elements exist on the list row markup. A future
-    // requirement to surface tags on the row should come with explicit
-    // reactive coverage; this assertion fails loud if somebody adds
-    // tag-rendering without that.
-    expect(row.querySelectorAll('.ticket-tag, .column-card-tag, [data-tag]')).toHaveLength(0);
-    // The tag values themselves don't leak as raw text either.
-    expect(row.textContent).not.toContain('alpha');
-    expect(row.textContent).not.toContain('beta');
-    expect(row.textContent).not.toContain('gamma');
+    // Same tags → effect's dirty check skips the rebuild; the seeded
+    // chips are still present.
+    expect(row.querySelectorAll('.ticket-row-tag')).toHaveLength(3);
+    expect(Array.from(row.querySelectorAll('.ticket-row-tag')).map(el => el.textContent)).toEqual(['alpha', 'beta', 'gamma']);
 
-    ticketsStore.actions.applyServerUpdate(makeTicket(1, { tags: '["delta"]' }));
-    // Still no tag rendering after the change.
-    expect(row.querySelectorAll('.ticket-tag, .column-card-tag, [data-tag]')).toHaveLength(0);
-    expect(row.textContent).not.toContain('delta');
+    // Replace the tag list — container stays, children rebuild in place.
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { tags: '["delta","echo"]' }));
+    const after = row.querySelector<HTMLElement>('.ticket-row-tags')!;
+    expect(after).not.toBeNull();
+    expect(Array.from(after.querySelectorAll('.ticket-row-tag')).map(el => el.textContent)).toEqual(['delta', 'echo']);
+
+    // Empty tags → container removed entirely.
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { tags: '[]' }));
+    expect(row.querySelector('.ticket-row-tags')).toBeNull();
+
+    // Re-add a tag → container reinserted before the priority indicator.
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { tags: '["zeta"]' }));
+    const reinserted = row.querySelector<HTMLElement>('.ticket-row-tags');
+    expect(reinserted).not.toBeNull();
+    expect(reinserted!.nextElementSibling).toBe(priIndicator);
+    expect(reinserted!.querySelector('.ticket-row-tag')?.textContent).toBe('zeta');
+
+    dispose();
+  });
+
+  it('tag-container preserves element identity across in-place rebuilds (HS-8307)', () => {
+    // Mirrors the HS-8409 column-card "rebuild in place preserves
+    // container identity" test — important for any future hover anchor
+    // / animation that captures the container ref.
+    const t = makeTicket(1, { tags: '["a","b"]' });
+    ticketsStore.actions.setTickets([t]);
+    const row = buildMinimalListRow(t);
+    const seed = document.createElement('div');
+    seed.className = 'ticket-row-tags';
+    seed.innerHTML = '<span class="ticket-row-tag">a</span><span class="ticket-row-tag">b</span>';
+    const priIndicator = row.querySelector<HTMLElement>('.ticket-priority-indicator')!;
+    row.insertBefore(seed, priIndicator);
+    document.body.appendChild(row);
+    const dispose = setupTicketRowEffects(row, t);
+
+    const originalContainer = row.querySelector<HTMLElement>('.ticket-row-tags')!;
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { tags: '["c"]' }));
+    expect(row.querySelector<HTMLElement>('.ticket-row-tags')).toBe(originalContainer);
+    expect(Array.from(originalContainer.querySelectorAll('.ticket-row-tag')).map(el => el.textContent)).toEqual(['c']);
 
     dispose();
   });

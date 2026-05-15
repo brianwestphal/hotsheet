@@ -223,6 +223,16 @@ export interface AppSettings {
    *  first-use toast on the very first `hotsheet:shell-partial-output`
    *  event makes the change discoverable. */
   shell_streaming_enabled: boolean;
+
+  /** HS-8162 — gate for the HS-8054 UI-hang toast. When false (default
+   *  after this ticket), the rate-limited "Xms UI hang" toast in the
+   *  long-task observer is suppressed; the freeze is still logged to
+   *  the in-memory buffer + POSTed to `freeze.log` for diagnostics.
+   *  The toast was useful while debugging HS-8054 itself but the user
+   *  reported it as visual noise during normal use. The new toggle in
+   *  Settings → Experimental → Diagnostics lets power users turn it
+   *  back on when actively investigating a hang. */
+  diagnostics_freeze_toast_enabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -238,6 +248,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hide_verified_column: false,
   shell_integration_ui: true,
   shell_streaming_enabled: true,
+  diagnostics_freeze_toast_enabled: false,
 };
 
 export interface AppState {

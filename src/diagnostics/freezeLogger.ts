@@ -40,6 +40,34 @@ import { join } from 'path';
 export const FREEZE_LOG_FILENAME = 'freeze.log';
 export const LONG_TASK_THRESHOLD_MS = 100;
 
+/** HS-8163 — hard cap on `freeze.log` size. Freezes during a long debug
+ *  session can accumulate hundreds of entries (~250 B each); without a
+ *  ceiling the file grows unbounded and eats user disk. 1 MB ≈ 4000
+ *  entries — enough for ~a week of normal-use diagnostics. When a new
+ *  append would push the file past this cap, the head of the file is
+ *  dropped down to ~half so the next ~2000 entries fit before the next
+ *  truncate (avoids truncating on every write near the boundary). */
+export const FREEZE_LOG_MAX_BYTES = 1_048_576; // 1 MiB
+/** Floor we truncate down to when the cap is hit. Keeping it well below
+ *  the cap means a freeze burst doesn't re-trigger the truncate path on
+ *  every write — there's headroom for ~half the cap before the next
+ *  rotation. */
+export const FREEZE_LOG_TARGET_BYTES_AFTER_TRUNCATE = 524_288; // 512 KiB
+
+// Sentinel line inserted at the top of the file after a truncate so a
+// reader pasting the log knows the head was dropped (and roughly when).
+// Shape: a JSON object with source "freeze.log-truncated", durationMs 0,
+// and a context message describing the size before / after.
+function truncateMarkerLine(ts: string, beforeBytes: number, afterBytes: number): string {
+  const entry: FreezeEntry = {
+    ts,
+    source: 'freeze.log-truncated',
+    durationMs: 0,
+    context: `head dropped — file exceeded ${beforeBytes} bytes, kept tail ${afterBytes} bytes`,
+  };
+  return JSON.stringify(entry) + '\n';
+}
+
 /** Heartbeat tick interval for the server-side event-loop block detector.
  *  50 ms matches the client heartbeat (HS-8054 v2). 20 ticks/sec is
  *  trivial overhead under any realistic Node load. */
@@ -60,7 +88,8 @@ export interface FreezeEntry {
     | 'client-heartbeat'       // 50 ms setInterval heartbeat
     | 'server-heartbeat'       // 50 ms setInterval on the Node process
     | 'server-instrument-sync' // wrapped synchronous block
-    | 'server-instrument-async'; // wrapped async block
+    | 'server-instrument-async' // wrapped async block
+    | 'freeze.log-truncated';  // HS-8163 — marker for the head-dropped sentinel
   /** Block duration in ms. */
   durationMs: number;
   /** Free-form context — for client entries this is the recent UI
@@ -98,6 +127,16 @@ export function appendFreezeLog(dataDir: string, entry: FreezeEntry): Promise<vo
     .catch(() => { /* drop chained errors so one bad write doesn't poison the queue */ })
     .then(async () => {
       try {
+        // HS-8163 — rotation gate. Stat the current file; if appending
+        // the new line would push it past `FREEZE_LOG_MAX_BYTES`, drop
+        // the head of the file down to `FREEZE_LOG_TARGET_BYTES_AFTER_TRUNCATE`
+        // (keeping the tail intact — the most recent freezes are the
+        // most useful), insert a one-line truncation marker so a reader
+        // pasting the log knows the head was dropped, then append the
+        // new line. Bounds the file at ~1 MB indefinitely; the floor is
+        // far enough below the cap that a freeze burst doesn't trigger
+        // back-to-back truncates on every write.
+        await rotateIfNeeded(path, line.length);
         await fsp.appendFile(path, line, 'utf8');
       } catch (err) {
         console.warn('[hotsheet freeze.log] append failed:', err instanceof Error ? err.message : String(err));
@@ -105,6 +144,54 @@ export function appendFreezeLog(dataDir: string, entry: FreezeEntry): Promise<vo
     });
   appendQueue.set(dataDir, next);
   return next;
+}
+
+/** HS-8163 — when the file exists AND its current size + the pending
+ *  write would exceed `FREEZE_LOG_MAX_BYTES`, rewrite the file with the
+ *  most-recent tail (~`FREEZE_LOG_TARGET_BYTES_AFTER_TRUNCATE` bytes)
+ *  plus a one-line truncation marker prepended. The marker is itself a
+ *  valid JSONL entry (source `freeze.log-truncated`) so JSON-parsing
+ *  consumers don't choke. Missing file (ENOENT) is a no-op — the
+ *  caller's `appendFile` will create it. Any other error is swallowed:
+ *  freeze.log is diagnostic-only and we'd rather lose a rotation than
+ *  cascade into the caller's hot path. */
+async function rotateIfNeeded(path: string, pendingBytes: number): Promise<void> {
+  let stat: Awaited<ReturnType<typeof fsp.stat>>;
+  try {
+    stat = await fsp.stat(path);
+  } catch (err) {
+    // File doesn't exist yet (first ever append) — nothing to rotate.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  if (stat.size + pendingBytes <= FREEZE_LOG_MAX_BYTES) return;
+
+  // Read the current file. Files at this scale (~1 MB) are cheap to
+  // slurp; streaming would be more code for negligible payoff.
+  let content: string;
+  try {
+    content = await fsp.readFile(path, 'utf8');
+  } catch (err) {
+    console.warn('[hotsheet freeze.log] rotate readFile failed:', err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const beforeBytes = Buffer.byteLength(content, 'utf8');
+  // Walk forward from a target offset, advance to the next `\n` so the
+  // tail starts on a complete JSONL line (a mid-line truncation would
+  // leave the first entry unparseable).
+  const targetOffset = Math.max(0, beforeBytes - FREEZE_LOG_TARGET_BYTES_AFTER_TRUNCATE);
+  const newlineIdx = content.indexOf('\n', targetOffset);
+  const tail = newlineIdx === -1 ? '' : content.slice(newlineIdx + 1);
+  const afterBytes = Buffer.byteLength(tail, 'utf8');
+  const marker = truncateMarkerLine(new Date().toISOString(), beforeBytes, afterBytes);
+  // Single overwriting write so a concurrent read either sees the old
+  // file or the new one — never a half-written state. The per-dataDir
+  // `appendQueue` ordering guarantees no other writes interleave here.
+  try {
+    await fsp.writeFile(path, marker + tail, 'utf8');
+  } catch (err) {
+    console.warn('[hotsheet freeze.log] rotate writeFile failed:', err instanceof Error ? err.message : String(err));
+  }
 }
 
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;

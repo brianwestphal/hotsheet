@@ -12,6 +12,8 @@ import {
   _resetForTesting,
   appendFreezeLog,
   FREEZE_LOG_FILENAME,
+  FREEZE_LOG_MAX_BYTES,
+  FREEZE_LOG_TARGET_BYTES_AFTER_TRUNCATE,
   instrumentAsync,
   instrumentSync,
   startServerEventLoopHeartbeat,
@@ -71,6 +73,83 @@ describe('appendFreezeLog (HS-8054 v3)', () => {
       const parsed = JSON.parse(line) as { context: string };
       expect(parsed.context).toMatch(/^block-\d+$/);
     }
+  });
+
+  it('does NOT rotate when the file size + new line fits under the cap (HS-8163)', async () => {
+    // Pre-fill the file with content well under the cap. The append
+    // should just add a line on top.
+    const pre = 'a'.repeat(1000) + '\n';
+    await fsp.writeFile(join(tmpDir, FREEZE_LOG_FILENAME), pre, 'utf8');
+    await appendFreezeLog(tmpDir, {
+      ts: '2026-05-15T08:00:00.000Z',
+      source: 'server-heartbeat',
+      durationMs: 200,
+      context: 'block-A',
+    });
+    const after = await fsp.readFile(join(tmpDir, FREEZE_LOG_FILENAME), 'utf8');
+    // Pre-content preserved; new line appended at end. No truncation
+    // marker inserted (file didn't exceed the cap).
+    expect(after.startsWith(pre)).toBe(true);
+    expect(after).not.toContain('"freeze.log-truncated"');
+    expect(after).toContain('"context":"block-A"');
+  });
+
+  it('rotates by dropping the head when the file would exceed FREEZE_LOG_MAX_BYTES (HS-8163)', async () => {
+    // Pre-fill with content larger than the cap so the next append
+    // triggers rotation. Use a single big string padded out with
+    // newlines so the rotation's "advance to next \n" path has
+    // boundaries to land on. The lines themselves are not valid
+    // JSON — that's fine; rotation logic doesn't parse them.
+    const line = 'x'.repeat(1023) + '\n'; // 1024 B per line
+    const lines = Math.ceil(FREEZE_LOG_MAX_BYTES / 1024) + 100; // ~1.1 MB → safely over the cap
+    const pre = line.repeat(lines);
+    await fsp.writeFile(join(tmpDir, FREEZE_LOG_FILENAME), pre, 'utf8');
+    const preBytes = Buffer.byteLength(pre, 'utf8');
+    expect(preBytes).toBeGreaterThan(FREEZE_LOG_MAX_BYTES);
+
+    await appendFreezeLog(tmpDir, {
+      ts: '2026-05-15T08:00:01.000Z',
+      source: 'server-heartbeat',
+      durationMs: 250,
+      context: 'after-rotate',
+    });
+
+    const after = await fsp.readFile(join(tmpDir, FREEZE_LOG_FILENAME), 'utf8');
+    const afterBytes = Buffer.byteLength(after, 'utf8');
+    // Post-rotation the file is well under the cap (head dropped,
+    // tail kept, marker prepended, new line appended).
+    expect(afterBytes).toBeLessThan(FREEZE_LOG_MAX_BYTES);
+    // The first line is the truncation marker — JSON-parseable + has
+    // the new source string.
+    const firstNewline = after.indexOf('\n');
+    expect(firstNewline).toBeGreaterThan(0);
+    const markerLine = after.slice(0, firstNewline);
+    const marker = JSON.parse(markerLine) as { source: string; context: string };
+    expect(marker.source).toBe('freeze.log-truncated');
+    expect(marker.context).toMatch(/head dropped/);
+    // The new append landed at the bottom.
+    expect(after.endsWith('"context":"after-rotate"}\n')).toBe(true);
+    // Tail bytes preserved approximately at the target (within one
+    // line of slack — the "advance to next \n" rule means we keep
+    // whatever's after the first newline at-or-past the target offset).
+    const slack = 2 * 1024;
+    expect(afterBytes).toBeLessThanOrEqual(FREEZE_LOG_TARGET_BYTES_AFTER_TRUNCATE + slack);
+  });
+
+  it('writes only the new line when the file is missing — no rotation, no error (HS-8163)', async () => {
+    // First-ever append: stat throws ENOENT, rotate path bails early,
+    // appendFile creates the file with just the new line.
+    await appendFreezeLog(tmpDir, {
+      ts: '2026-05-15T08:00:00.000Z',
+      source: 'client-heartbeat',
+      durationMs: 200,
+      context: 'first-write',
+    });
+    const lines = await readFreezeLog();
+    expect(lines).toHaveLength(1);
+    const parsed = JSON.parse(lines[0]) as { context: string; source: string };
+    expect(parsed.context).toBe('first-write');
+    expect(parsed.source).toBe('client-heartbeat');
   });
 
   it('survives an unwritable dataDir without throwing', async () => {

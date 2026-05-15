@@ -2,7 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
 import { toElement } from './dom.js';
 import { getTicketFeedbackState, showFeedbackDialog, suppressNextAutoShowFeedback } from './feedbackDialog.js';
-import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH } from './icons.js';
+import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH } from './icons.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
 import { buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
@@ -284,6 +284,28 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   // lets the async backends-fetch find this separator by name instead
   // of by index (see HS-8414 comment above the Push block).
   addSeparator(menu, 'context-menu-separator-backlog');
+
+  // HS-8408 — Move to Open (the inverse of Move to Backlog). Appears
+  // only when EVERY selected ticket is currently in backlog; sets
+  // status back to `not_started` so the ticket re-enters the active
+  // work pile that the sidebar's Open view exposes. Label is "Move to
+  // Open" rather than "Move to Inbox" per user direction (Hot Sheet
+  // doesn't use "inbox" terminology — the active-work view is called
+  // "Open" in the sidebar). The item is rendered before Move to
+  // Backlog so a backlog ticket's "out of backlog" affordance leads
+  // the stash group, with Archive following as the other forward
+  // stash action. (Archive tickets don't get the symmetric item per
+  // the user's scope decision — strict reading of the ticket; if the
+  // user wants the same for archive later, the gate just adds an OR.)
+  const allBacklog = state.selectedIds.size > 0 && Array.from(state.selectedIds).every(id => {
+    const t = state.tickets.find(tk => tk.id === id);
+    return t?.status === 'backlog';
+  });
+  if (allBacklog) {
+    addActionItem(menu, 'Move to Open', () => applyToSelected('status', 'not_started'), {
+      icon: ICON_INBOX,
+    });
+  }
 
   // Move to Backlog
   addActionItem(menu, 'Move to Backlog', () => applyToSelected('status', 'backlog'), {

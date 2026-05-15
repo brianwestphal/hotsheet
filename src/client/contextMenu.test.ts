@@ -412,6 +412,74 @@ describe('showTicketContextMenu — HS-8414 separator under inspection block', (
     expect(categoryIdx).toBeGreaterThan(readIdx);
   });
 
+  it('shows Move to Open between Mark as Read and Move to Backlog for backlog tickets (HS-8408)', () => {
+    const t = makeTicket(301, { status: 'backlog' });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(301);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    const topLevel = document.querySelectorAll<HTMLElement>('.context-menu > .context-menu-item, .context-menu > .context-menu-separator');
+    const labels = Array.from(topLevel).map(el =>
+      el.classList.contains('context-menu-separator')
+        ? '__SEP__'
+        : el.querySelector('.context-menu-label')?.textContent ?? '',
+    );
+    const openIdx = labels.indexOf('Move to Open');
+    const backlogIdx = labels.indexOf('Move to Backlog');
+    expect(openIdx).toBeGreaterThanOrEqual(0);
+    expect(backlogIdx).toBe(openIdx + 1);
+  });
+
+  it('omits Move to Open when the selected ticket is NOT in backlog (HS-8408)', () => {
+    const t = makeTicket(302, { status: 'not_started' });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(302);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+    expect(menuLabels()).not.toContain('Move to Open');
+  });
+
+  it('omits Move to Open when only SOME selected tickets are in backlog (HS-8408)', () => {
+    // Strict reading of HS-8408 — the item is the inverse of "Move to
+    // Backlog" and only makes sense when every selected ticket is
+    // currently in backlog. Mixed selections fall back to the menu
+    // without the item.
+    const t = makeTicket(303, { status: 'backlog' });
+    const u = makeTicket(304, { status: 'not_started' });
+    ticketsStore.actions.setTickets([t, u]);
+    state.selectedIds.add(303);
+    state.selectedIds.add(304);
+    state.tickets = [t, u];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+    expect(menuLabels()).not.toContain('Move to Open');
+  });
+
+  it('shows Move to Open when multiple backlog tickets are selected (HS-8408)', () => {
+    const t = makeTicket(305, { status: 'backlog' });
+    const u = makeTicket(306, { status: 'backlog' });
+    ticketsStore.actions.setTickets([t, u]);
+    state.selectedIds.add(305);
+    state.selectedIds.add(306);
+    state.tickets = [t, u];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+    expect(menuLabels()).toContain('Move to Open');
+  });
+
+  it('omits Move to Open for archived tickets (HS-8408 — backlog-only per user direction)', () => {
+    const t = makeTicket(307, { status: 'archive' });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(307);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+    expect(menuLabels()).not.toContain('Move to Open');
+  });
+
   it('omits the HS-8414 separator on multi-select (no top inspection items, no extra sep)', () => {
     // Multi-select skips both Provide Feedback and Read Latest Note, so
     // there's nothing to "separate from below" — the menu opens

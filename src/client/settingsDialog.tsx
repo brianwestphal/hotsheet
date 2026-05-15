@@ -99,6 +99,11 @@ function bindGeneralTab() {
   const hideVerifiedCheckbox = byId<HTMLInputElement>('settings-hide-verified-column');
   const shellIntegrationCheckbox = byId<HTMLInputElement>('settings-shell-integration-ui');
   const shellStreamingCheckbox = byId<HTMLInputElement>('settings-shell-streaming-enabled');
+  // HS-8162 — diagnostics freeze-toast toggle. Lives in Settings →
+  // Experimental → Diagnostics; default off so the toast doesn't fire
+  // during normal use. Wired the same per-project shape as the other
+  // experimental toggles so it persists across reloads.
+  const diagnosticsFreezeToastCheckbox = byId<HTMLInputElement>('settings-diagnostics-freeze-toast');
   const notifyPermSelect = byId<HTMLSelectElement>('settings-notify-permission');
   const notifyCompSelect = byId<HTMLSelectElement>('settings-notify-completed');
   const appNameInput = byId<HTMLInputElement>('settings-app-name');
@@ -113,6 +118,8 @@ function bindGeneralTab() {
     shellIntegrationCheckbox.checked = state.settings.shell_integration_ui;
     // HS-7984 — §53 Phase 4 streaming toggle.
     shellStreamingCheckbox.checked = state.settings.shell_streaming_enabled;
+    // HS-8162 — diagnostics freeze-toast gate.
+    diagnosticsFreezeToastCheckbox.checked = state.settings.diagnostics_freeze_toast_enabled;
     notifyPermSelect.value = state.settings.notify_permission;
     notifyCompSelect.value = state.settings.notify_completed;
     void api<FileSettingsForGeneralAndTerminal>('/file-settings').then((fs) => {
@@ -181,6 +188,15 @@ function bindGeneralTab() {
   shellStreamingCheckbox.addEventListener('change', () => {
     state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
     void api('/settings', { method: 'PATCH', body: { shell_streaming_enabled: String(shellStreamingCheckbox.checked) } });
+  });
+
+  // HS-8162 — diagnostics freeze-toast toggle. Same per-project shape;
+  // the long-task observer reads `state.settings.diagnostics_freeze_toast_enabled`
+  // on every detected hang so flipping this takes effect immediately
+  // without a page reload.
+  diagnosticsFreezeToastCheckbox.addEventListener('change', () => {
+    state.settings.diagnostics_freeze_toast_enabled = diagnosticsFreezeToastCheckbox.checked;
+    void api('/settings', { method: 'PATCH', body: { diagnostics_freeze_toast_enabled: String(diagnosticsFreezeToastCheckbox.checked) } });
   });
 
   // Notification dropdowns

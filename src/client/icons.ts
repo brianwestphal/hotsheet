@@ -84,3 +84,9 @@ export const ICON_STAR_FILLED = `<svg xmlns="http://www.w3.org/2000/svg" width="
 
 /** Lucide `external-link` — Push to remote / open external. */
 export const ICON_EXTERNAL_LINK = `<svg ${LUCIDE_14}><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>`;
+
+/** Lucide `inbox` — anchor icon for HS-8408 "Move to Open" (the inverse
+ *  of "Move to Backlog"). The label says "Open" rather than "Inbox"
+ *  per user direction; the visual still uses the universally-recognized
+ *  inbox glyph for "active work pile". */
+export const ICON_INBOX = `<svg ${LUCIDE_14}><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>`;

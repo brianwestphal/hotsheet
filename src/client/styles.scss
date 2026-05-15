@@ -3066,6 +3066,32 @@ body.terminal-dashboard-active {
   }
 }
 
+// HS-8307 — tag chips in list view rows, sitting between the title
+// input and the priority indicator. Both the title and the tag list
+// shrink when row width is tight: title clips via the input's native
+// overflow, tags clip via the container's `overflow: hidden` cutting
+// off rightmost chips. `flex-shrink: 1` + `min-width: 0` lets the
+// container yield space when the title is long; chips themselves stay
+// nowrap so they don't break mid-text.
+.ticket-row-tags {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ticket-row-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .ticket-priority-indicator {
   flex-shrink: 0;
   font-size: 12px;

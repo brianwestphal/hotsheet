@@ -32,6 +32,15 @@
  * supported because it's free — no recurring timer overhead.
  */
 
+// HS-8162 — read the diagnostics freeze-toast gate from app state at
+// toast-decision time so flipping the Settings → Experimental →
+// Diagnostics checkbox takes effect on the next freeze without
+// needing a page reload. Lazy import (`require`-style) would
+// dependency-cycle through `app.tsx → longTaskObserver.tsx → state.tsx`
+// at module load — `state.tsx` is loaded already by app boot, so a
+// direct `import` resolves cleanly and the value is read at runtime.
+import { state } from './state.js';
+
 const LONG_TASK_THRESHOLD_MS = 100;
 const INTERACTION_BUFFER_SIZE = 30;
 const LONG_TASK_BUFFER_SIZE = 50;
@@ -192,9 +201,15 @@ export function initLongTaskObserver(): void {
   // HS-8054 follow-up — print a startup line so the user can verify
   // the instrumentation is wired (the v1 build had no startup log;
   // when the user reported "no log messages" we couldn't tell whether
-  // the observer was actually wired or not). Uses console.error so the
-  // line stands out against console.log noise during page init.
-  console.error(`[hotsheet longtask] init — observer:${observerSupported ? 'on' : 'off'} heartbeat:${heartbeatTimer !== null ? 'on' : 'off'} threshold:${LONG_TASK_THRESHOLD_MS}ms`);
+  // the observer was actually wired or not). HS-8164 (2026-05-15)
+  // demoted this from `console.error` to `console.log`: actual freeze
+  // events still use `console.error` (and the user can grep the
+  // `[hotsheet longtask]` prefix either way), but the startup line is
+  // a benign one-time "instrumentation alive" tick that fires on every
+  // page load. Leaving it as `console.error` cluttered the console
+  // with a red entry on every reload, which made it harder to spot
+  // real errors during dev work.
+  console.log(`[hotsheet longtask] init — observer:${observerSupported ? 'on' : 'off'} heartbeat:${heartbeatTimer !== null ? 'on' : 'off'} threshold:${LONG_TASK_THRESHOLD_MS}ms`);
 }
 
 function recordLongTask(durationMs: number, source: LongTaskSource): void {
@@ -232,7 +247,14 @@ function recordLongTask(durationMs: number, source: LongTaskSource): void {
   // HS-8054 follow-up — toast on each ≥ 500 ms block so the user notices
   // the instrumentation working without DevTools. Rate-limited to once
   // per 10 s.
-  if (durationMs >= TOAST_THRESHOLD_MS && (ts - lastToastTs) >= TOAST_RATE_LIMIT_MS) {
+  // HS-8162 (2026-05-15) — gated on
+  // `state.settings.diagnostics_freeze_toast_enabled` (default false).
+  // The toast was useful while building HS-8054 but was visual noise
+  // during normal use; power users flip it on in Settings →
+  // Experimental → Diagnostics when actively investigating a hang.
+  // The console.error + freeze.log + in-memory buffer continue to fire
+  // unconditionally — the gate only suppresses the toast surface.
+  if (shouldEmitFreezeToast(durationMs, ts, lastToastTs, state.settings.diagnostics_freeze_toast_enabled)) {
     lastToastTs = ts;
     void showLongTaskToast(durationMs, source, recentInteractions);
   }
@@ -277,6 +299,27 @@ async function postFreezeLog(
       },
     });
   } catch { /* swallow — freeze.log is a diagnostic-only path */ }
+}
+
+/**
+ * HS-8162 — pure helper: should the freeze toast fire? Extracted so the
+ * gate + threshold + rate-limit logic is unit-testable without driving
+ * the dynamic `await import('./toast.js')` resolution chain (which is
+ * awkward to spy on under happy-dom). Returns `true` only when all
+ * three conditions hold: gate is on, block exceeded the toast
+ * threshold, and the 10 s rate-limit window has elapsed since the
+ * previous toast.
+ */
+export function shouldEmitFreezeToast(
+  durationMs: number,
+  nowTs: number,
+  lastToastTs: number,
+  toastGateEnabled: boolean,
+): boolean {
+  if (!toastGateEnabled) return false;
+  if (durationMs < TOAST_THRESHOLD_MS) return false;
+  if ((nowTs - lastToastTs) < TOAST_RATE_LIMIT_MS) return false;
+  return true;
 }
 
 /** HS-8054 follow-up — load the toast helper lazily so the heartbeat

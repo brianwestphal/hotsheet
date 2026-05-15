@@ -630,6 +630,21 @@ pageRoutes.get('/', (c) => {
                   </div>
                 </div>
               </div>
+              {/* HS-8162 — Diagnostics subsection. Houses the UI-hang
+                  toast gate from the HS-8054 longtask observer (default
+                  off — the toast was useful while building HS-8054 but
+                  was visual noise during normal use). Future diagnostic
+                  opt-ins (server-event-loop heartbeat surfaces, etc.)
+                  can land here without a new tab. */}
+              <div className="settings-section" style="margin-top:16px">
+                <div className="settings-section-header">
+                  <h3>Diagnostics</h3>
+                </div>
+                <div className="settings-field settings-field-checkbox">
+                  <label><input type="checkbox" id="settings-diagnostics-freeze-toast" /> Show UI-hang toast when freezes are detected</label>
+                  <span className="settings-hint">When on, a small toast pops in for each ≥ 500 ms UI hang the HS-8054 longtask observer catches (rate-limited to once every 10 s). Off by default. Freezes are always logged to <code>&lt;dataDir&gt;/freeze.log</code> for diagnostics regardless of this setting.</span>
+                </div>
+              </div>
             </div>
             <div className="settings-tab-panel" data-panel="terminal" id="settings-terminal-panel">
               <div className="settings-section">

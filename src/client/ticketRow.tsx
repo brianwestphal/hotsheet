@@ -2,7 +2,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
-import { syncDetailPanel } from './detail.js';
+import { parseTags, syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { parseJsonArrayOr } from './json.js';
@@ -62,6 +62,12 @@ export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => v
   // was at the last effect fire; if the input.value differs from this
   // AND the user is focused, they're mid-edit and we shouldn't clobber.
   let lastAppliedTitle: string = ticket.title;
+
+  // HS-8307 — cheap dirty-check for tag changes. Tracks the raw JSON
+  // string from the store so the parse + DOM rebuild only runs when the
+  // string actually changes (parity with `setupColumnCardEffects` from
+  // HS-8409 — different surface, same reactive shape).
+  let lastAppliedTagsRaw: string = ticket.tags;
 
   const catBadge = row.querySelector<HTMLElement>('.ticket-category-badge');
   const statusBtn = row.querySelector<HTMLElement>('.ticket-status-btn');
@@ -147,6 +153,18 @@ export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => v
 
     // Unread / feedback dot — toggle DOM element presence + variant class
     syncUnreadDot(row, t);
+
+    // HS-8307 — tag chips. The JSX literal only renders `.ticket-row-tags`
+    // when the tag list is non-empty, so the in-place sync mirrors the
+    // HS-8409 column-card path: add the container on empty → non-empty,
+    // remove it on non-empty → empty, rebuild children in place on
+    // non-empty → different non-empty. Dirty-checked against the raw
+    // JSON string so a server-poll round-trip whose tags didn't change
+    // doesn't thrash the DOM.
+    if (t.tags !== lastAppliedTagsRaw) {
+      syncTicketRowTags(row, t);
+      lastAppliedTagsRaw = t.tags;
+    }
   }));
 
   // Cut-pending class — separate effect because it subscribes to a
@@ -188,6 +206,39 @@ function syncUnreadDot(row: HTMLElement, ticket: Ticket): void {
   const dot = toElement(<span className={`ticket-unread-dot${dotType === 'feedback' ? ' feedback' : ''}`} title={titleText}></span>);
   if (titleInput !== null) row.insertBefore(dot, titleInput);
   else row.appendChild(dot);
+}
+
+/** HS-8307 — keep the `.ticket-row-tags` chip container in sync with
+ *  the ticket's current tag list. Handles all three transitions: empty
+ *  → non-empty (insert the container before the priority indicator —
+ *  matches the JSX literal sibling order), non-empty → empty (remove
+ *  the container), non-empty → different non-empty (rebuild children
+ *  in place so the container element identity is preserved). Mirrors
+ *  `syncColumnCardTags` in `columnView.tsx` line-for-line — same
+ *  reactive shape, different surface. */
+function syncTicketRowTags(row: HTMLElement, ticket: Ticket): void {
+  const newTags = parseTags(ticket.tags);
+  const existing = row.querySelector<HTMLElement>('.ticket-row-tags');
+  if (newTags.length === 0) {
+    if (existing !== null) existing.remove();
+    return;
+  }
+  if (existing !== null) {
+    existing.replaceChildren(...newTags.map(tag => toElement(<span className="ticket-row-tag">{tag}</span>)));
+    return;
+  }
+  const container = toElement(
+    <div className="ticket-row-tags">
+      {newTags.map(tag => <span className="ticket-row-tag">{tag}</span>)}
+    </div>
+  );
+  // Insert before the priority indicator to match the JSX-literal order
+  // (title-input → tags → priority → star). Falls back to appending when
+  // the indicator is somehow absent — defensive only; the indicator is
+  // always rendered in `createTicketRow`.
+  const priIndicator = row.querySelector<HTMLElement>('.ticket-priority-indicator');
+  if (priIndicator !== null) row.insertBefore(container, priIndicator);
+  else row.appendChild(container);
 }
 
 /** Check if a ticket has pending feedback (last note is a FEEDBACK NEEDED prefix). */
@@ -236,6 +287,13 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
       {ticket.id in syncedTicketMap ? <span className="ticket-sync-icon" title={`Synced via ${syncedTicketMap[ticket.id].pluginId}`}>{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}
       {getIndicatorDotType(ticket) != null ? <span className={`ticket-unread-dot${getIndicatorDotType(ticket) === 'feedback' ? ' feedback' : ''}`} title={getIndicatorDotType(ticket) === 'feedback' ? 'Feedback needed' : 'Unread changes'}></span> : null}
       <input type="text" className="ticket-title-input" value={ticket.title} spellCheck="true" />
+      {parseTags(ticket.tags).length > 0 ? (
+        <div className="ticket-row-tags">
+          {parseTags(ticket.tags).map(tag => (
+            <span className="ticket-row-tag">{tag}</span>
+          ))}
+        </div>
+      ) : null}
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`} title={ticket.priority}>
         {raw(getPriorityIcon(ticket.priority))}
       </span>

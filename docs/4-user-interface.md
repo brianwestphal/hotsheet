@@ -33,7 +33,8 @@ The interface is divided into:
 ### 4.3 List View
 
 - Default view: a flat bullet-list of tickets.
-- Each row displays: checkbox, category badge (3-letter color-coded abbreviation), ticket number, status icon, sync icon (if synced), unread dot (if unread), title, priority icon, and up_next star.
+- Each row displays: checkbox, category badge (3-letter color-coded abbreviation), ticket number, status icon, sync icon (if synced), unread dot (if unread), title, tag chips (if any — HS-8307), priority icon, and up_next star.
+- **Tag chips (HS-8307).** Tags render after the title input as small `.ticket-row-tag` pills inside a `.ticket-row-tags` flex container (same visual treatment as the column-view chips in §4.4 — `var(--bg-hover)` background, 10 px font, 1×6 px padding, 3 px radius). The container is `flex-shrink: 1` with `overflow: hidden` so both the title and the tag list shrink when the row is tight on space: the title clips via the input's native overflow, the tag chips clip via the container cutting off the rightmost chips. Reactive: changes to `ticket.tags` (via the inline X-chip remove, autocomplete add, Tags... dialog, or server poll) update the chips in place without a list rebuild — same `setupTicketRowEffects` dirty-check + sync helper pattern HS-8409 introduced for column-view cards.
 - **Unread indicator**: A blue dot (6px, `#3b82f6`) appears before the title when a ticket has been updated since the user last read it (`updated_at > last_read_at`). Tickets are automatically marked as read when opened in the detail panel. Users can manually mark tickets as read/unread via the context menu.
 - Clicking a ticket opens it in the detail panel.
 - Completed and verified ticket titles are displayed with strikethrough styling and muted text color.

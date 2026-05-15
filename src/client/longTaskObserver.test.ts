@@ -26,24 +26,35 @@ import {
   computeHeartbeatTick,
   initLongTaskObserver,
   recordInteraction,
+  shouldEmitFreezeToast,
 } from './longTaskObserver.js';
 
 describe('longTaskObserver (HS-8054)', () => {
   let errorSpy: MockInstance<(...args: unknown[]) => void>;
+  let logSpy: MockInstance<(...args: unknown[]) => void>;
 
   beforeEach(() => {
     _resetLongTaskObserverForTesting();
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // HS-8164 — init line moved from `console.error` to `console.log`,
+    // so freeze events still hit `errorSpy` but the init startup tick
+    // now lands on `logSpy`. Both spies live for the whole describe so
+    // each test can assert against the right surface.
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
     errorSpy.mockRestore();
+    logSpy.mockRestore();
     _resetLongTaskObserverForTesting();
   });
 
   /** Pull only the long-task console lines (NOT the init log). HS-8054
-   *  follow-up — init now emits its own console.error startup line, so
-   *  call-count assertions need to filter to the long-task subset. */
+   *  follow-up — init originally emitted its own startup line on
+   *  `console.error`; HS-8164 (2026-05-15) demoted it to `console.log`,
+   *  so init no longer hits the errorSpy at all. The filter is kept
+   *  for defense-in-depth (timestamp prefix only matches recorded
+   *  freezes), but in practice every error call is now a freeze. */
   function longTaskCalls(): string[] {
     return errorSpy.mock.calls
       .map(c => String(c[0]))
@@ -126,7 +137,7 @@ describe('longTaskObserver (HS-8054)', () => {
   });
 
   describe('initLongTaskObserver', () => {
-    it('emits a startup line so the user can verify wiring (HS-8054 follow-up)', () => {
+    it('emits a startup line so the user can verify wiring (HS-8054 follow-up — HS-8164 demoted to console.log)', () => {
       const original = (globalThis as Record<string, unknown>).PerformanceObserver;
       class FakePO {
         static supportedEntryTypes = ['longtask'];
@@ -136,24 +147,32 @@ describe('longTaskObserver (HS-8054)', () => {
       (globalThis as Record<string, unknown>).PerformanceObserver = FakePO;
       try {
         initLongTaskObserver();
-        const initLines = errorSpy.mock.calls
+        // HS-8164 — init line now lands on console.log, not console.error.
+        // The startup line is a benign per-page-load tick; leaving it on
+        // console.error coloured every reload red in DevTools.
+        const initLines = logSpy.mock.calls
           .map(c => String(c[0]))
           .filter(s => /\[hotsheet longtask\] init —/.test(s));
         expect(initLines).toHaveLength(1);
         expect(initLines[0]).toContain('observer:on');
         expect(initLines[0]).toContain('heartbeat:on');
         expect(initLines[0]).toContain('threshold:100ms');
+        // And explicitly NOT on console.error — that surface is reserved
+        // for actual freeze events.
+        expect(
+          errorSpy.mock.calls.some(c => /\[hotsheet longtask\] init —/.test(String(c[0]))),
+        ).toBe(false);
       } finally {
         (globalThis as Record<string, unknown>).PerformanceObserver = original;
       }
     });
 
-    it('startup line says `observer:off` when PerformanceObserver is undefined (HS-8054 follow-up)', () => {
+    it('startup line says `observer:off` when PerformanceObserver is undefined (HS-8054 follow-up — HS-8164 demoted to console.log)', () => {
       const original = (globalThis as Record<string, unknown>).PerformanceObserver;
       (globalThis as Record<string, unknown>).PerformanceObserver = undefined;
       try {
         initLongTaskObserver();
-        const initLines = errorSpy.mock.calls
+        const initLines = logSpy.mock.calls
           .map(c => String(c[0]))
           .filter(s => /\[hotsheet longtask\] init —/.test(s));
         expect(initLines).toHaveLength(1);
@@ -276,8 +295,8 @@ describe('longTaskObserver (HS-8054)', () => {
         initLongTaskObserver();
         expect(observeSpy).not.toHaveBeenCalled();
         // The init line says observer:off because longtask wasn't in
-        // supportedEntryTypes.
-        const initLines = errorSpy.mock.calls
+        // supportedEntryTypes. HS-8164 — init lines land on console.log.
+        const initLines = logSpy.mock.calls
           .map(c => String(c[0]))
           .filter(s => /\[hotsheet longtask\] init —/.test(s));
         expect(initLines[0]).toContain('observer:off');
@@ -285,6 +304,41 @@ describe('longTaskObserver (HS-8054)', () => {
       } finally {
         (globalThis as Record<string, unknown>).PerformanceObserver = original;
       }
+    });
+  });
+
+  /**
+   * HS-8162 — pure helper tests for the toast-gate decision. The
+   * gate combines three conditions; this describe pins every
+   * combination so a future refactor can't drop one of them silently.
+   * Integration with the live `state.settings.diagnostics_freeze_toast_enabled`
+   * flag is covered by `recordLongTask` reading the same flag —
+   * tested via manual UI flow + the gated freeze.log POST keeps firing.
+   */
+  describe('shouldEmitFreezeToast (HS-8162)', () => {
+    it('returns false when the gate is off, regardless of duration', () => {
+      expect(shouldEmitFreezeToast(800, 100_000, 0, false)).toBe(false);
+      expect(shouldEmitFreezeToast(5000, 100_000, 0, false)).toBe(false);
+    });
+
+    it('returns false when duration is under the 500 ms toast threshold', () => {
+      expect(shouldEmitFreezeToast(200, 100_000, 0, true)).toBe(false);
+      expect(shouldEmitFreezeToast(499, 100_000, 0, true)).toBe(false);
+    });
+
+    it('returns true when gate is on, duration is over the threshold, and the rate-limit window has elapsed', () => {
+      expect(shouldEmitFreezeToast(500, 100_000, 0, true)).toBe(true);
+      expect(shouldEmitFreezeToast(800, 100_000, 50_000, true)).toBe(true);
+    });
+
+    it('returns false when the rate-limit window (10 s) has NOT elapsed since the last toast', () => {
+      // nowTs - lastToastTs = 5000 ms < 10_000 ms rate-limit.
+      expect(shouldEmitFreezeToast(800, 105_000, 100_000, true)).toBe(false);
+    });
+
+    it('returns true when the rate-limit window has elapsed exactly to the boundary', () => {
+      // nowTs - lastToastTs = 10_000 ms exactly — `>=` passes.
+      expect(shouldEmitFreezeToast(800, 110_000, 100_000, true)).toBe(true);
     });
   });
 });
