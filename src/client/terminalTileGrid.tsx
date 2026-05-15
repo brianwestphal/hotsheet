@@ -306,6 +306,77 @@ const CENTER_ANIMATION_MS = 280;
  *  hardware. */
 const SINGLE_CLICK_DELAY_MS = 220;
 
+/**
+ * HS-8397 / HS-8402 — Cycle 1 starting shape for the lift-to-module-with-ctx
+ * refactor. Each `mountTileGrid` factory call constructs a `TileGridContext`
+ * that the lifted module-level functions read + write through. Future cycles
+ * widen this shape:
+ *
+ * - **Cycle 1 (this commit, HS-8402):** the bell-clearing functions
+ *   (`clearTileBell`, `postClearBell`, `isGridSurfaceUnoccluded`,
+ *   `maybeAutoClearTileBell`, `clearBellsForVisibleTiles`) are lifted.
+ *   They need read access to `tiles` + `visibleTileIds` and a way to
+ *   ask "is the grid surface unoccluded right now". The `centered` and
+ *   `dedicated` slots stay as `let` bindings inside the factory body
+ *   for now (the center / dedicated subsystem isn't lifted yet); ctx
+ *   exposes `isCentered()` + `isDedicated()` reader functions so the
+ *   lifted bell code can answer the unoccluded check without touching
+ *   the closure refs directly.
+ * - **Cycle 2 (HS-8403):** lift the magnified-nav functions; ctx grows
+ *   `centerCallbacks` for the cross-subsystem calls into center /
+ *   dedicated paths that are still closure-resident.
+ * - **Cycle 3 (HS-8404):** lift the center / dedicated subsystem; ctx
+ *   replaces `isCentered` / `isDedicated` reader fns with proper
+ *   boxed-current refs (`centered: { current: InternalTile | null }`
+ *   etc.) so the lifted center / dedicated code can WRITE the slots.
+ *   The Cycle 2 `centerCallbacks` bridge is removed.
+ * - **Cycle 4 (HS-8405):** lift the remaining per-tile lifecycle +
+ *   virtualization functions; ctx grows `virtState` / `virtTimers` /
+ *   `virtRootToId` / `virtObserver` + the 13 derived CSS class strings.
+ *   The cluster splits into per-concern sub-modules.
+ *
+ * The `visibleTileIds` Set is a `const` reference shared between the
+ * factory body and the lifted bell code — both read + write the same
+ * Set instance, so they stay in sync without any additional plumbing.
+ */
+interface TileGridContext {
+  opts: TileGridOptions;
+  tiles: Map<string, InternalTile>;
+  visibleTileIds: Set<string>;
+  isCentered: () => boolean;
+  isDedicated: () => boolean;
+  /** HS-8403 — Cycle 2 boxed-current slot for the magnified-nav
+   *  listener. Both `bindMagnifiedNavHandler` and `unbindMagnifiedNavHandler`
+   *  read + write `.current`; the boxing lets the lifted module-level
+   *  versions share the slot with the factory closure that constructed
+   *  the ctx without the closure needing to be aware of the indirection. */
+  magnifiedNavListener: { current: ((e: KeyboardEvent) => void) | null };
+  /** HS-8403 — Cycle 2 transitional bridge into the center / dedicated
+   *  subsystem (which is still closure-resident pending Cycle 3). The
+   *  magnified-nav `magnifyTile` lifted function reaches back into the
+   *  factory's `centered` / `dedicated` slots + their lifecycle helpers
+   *  through these callbacks. Cycle 3 lifts the center / dedicated
+   *  subsystem and removes this slot in favour of direct module-level
+   *  calls + boxed-current `centered` / `dedicated` refs.
+   *
+   *  `setDedicatedPriorCenteredTile` mutates a field on the held
+   *  DedicatedView object; `setCentered` swaps the slot itself. Read /
+   *  write boundaries are pinned inside the factory's closures so a
+   *  refactor here doesn't accidentally let a Cycle 1/2/3 lifted function
+   *  poke at fields it shouldn't see yet. */
+  centerCallbacks: {
+    getCentered: () => InternalTile | null;
+    setCentered: (next: InternalTile | null) => void;
+    getDedicated: () => DedicatedView | null;
+    setDedicatedPriorCenteredTile: (v: InternalTile | null) => void;
+    centerTile: (tile: InternalTile) => void;
+    enterDedicatedView: (tile: InternalTile, prior: InternalTile | null) => void;
+    exitDedicatedView: () => void;
+    removeCenterBackdrop: () => void;
+    finishUncenterTile: (tile: InternalTile, placeholder: HTMLElement | null) => void;
+  };
+}
+
 export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   // HS-8285 follow-up — every internal Map below keys tiles by the
   // composite `${secret}::${id}`, NOT just `id`. In flow mode (HS-7662 /
@@ -333,6 +404,15 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   const virtState = new Map<string, TileVirtualState>();
   const virtTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const virtRootToId = new Map<Element, string>();
+  /** HS-8046 — set of tileIds whose root is currently inside the
+   *  IntersectionObserver's viewport. Updated by `handleIntersectionEntries`
+   *  on every enter / exit transition. Used to gate the auto-clear path.
+   *  HS-8402 — moved to the early-state block so the `TileGridContext`
+   *  literal below can reference it; the lifted bell functions read it
+   *  via `ctx.visibleTileIds`. The factory body still reads + writes
+   *  through the local `visibleTileIds` name (same Set instance, so
+   *  reads/writes stay in sync without extra plumbing). */
+  const visibleTileIds = new Set<string>();
 
   /** HS-8285 follow-up — composite tile registry key. See the `tiles` Map
    *  comment above for why `entry.id` alone is unsafe in flow mode. The
@@ -370,6 +450,41 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
   const dedicatedLabelClass = `${cssPrefix}-dedicated-label`;
   const dedicatedBodyClass = `${cssPrefix}-dedicated-body`;
   const dedicatedPaneClass = `${cssPrefix}-dedicated-pane`;
+
+  // HS-8402 / HS-8403 — TileGridContext for the lifted module-level
+  // functions. See the `TileGridContext` interface JSDoc for the cycle
+  // plan.
+  //
+  // `magnifiedNavListener` is a boxed-current slot so the lifted
+  // bind / unbind functions can swap the listener without needing the
+  // factory to plumb a setter; the closure side never reads this slot
+  // directly (it only existed for the magnified-nav code, which is now
+  // module-level).
+  //
+  // `centerCallbacks` is the Cycle 2 bridge: the lifted `magnifyTile`
+  // reaches back into the factory's center / dedicated subsystem via
+  // these callbacks. `function` declarations are hoisted so the
+  // forward references below resolve fine even though the actual
+  // function bodies appear later in the factory.
+  const ctx: TileGridContext = {
+    opts,
+    tiles,
+    visibleTileIds,
+    isCentered: () => centered !== null,
+    isDedicated: () => dedicated !== null,
+    magnifiedNavListener: { current: null },
+    centerCallbacks: {
+      getCentered: () => centered,
+      setCentered: (next) => { centered = next; },
+      getDedicated: () => dedicated,
+      setDedicatedPriorCenteredTile: (v) => { if (dedicated !== null) dedicated.priorCenteredTile = v; },
+      centerTile: (tile) => { centerTile(tile); },
+      enterDedicatedView: (tile, prior) => { enterDedicatedView(tile, prior); },
+      exitDedicatedView: () => { exitDedicatedView(); },
+      removeCenterBackdrop: () => { removeCenterBackdrop(); },
+      finishUncenterTile: (tile, placeholder) => { finishUncenterTile(tile, placeholder); },
+    },
+  };
 
   // --- DOM construction ---
 
@@ -519,7 +634,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
         // immediately clear any bell that was already on this tile when
         // it scrolled in.
         visibleTileIds.add(tileId);
-        maybeAutoClearTileBell(tile);
+        maybeAutoClearTileBell(ctx, tile);
         // Only mount-if-not-mounted when the tile is alive — exited /
         // not_spawned tiles don't have PTYs to attach to. The placeholder
         // visual already conveys their state.
@@ -781,8 +896,8 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       // viewing this tile in the unoccluded grid surface. Drop the
       // server-side bellPending flag too so other surfaces (project-tab
       // glyph, drawer tab) don't redundantly mark it.
-      if (isGridSurfaceUnoccluded() && visibleTileIds.has(tileKeyFor(tile.entry))) {
-        postClearBell(tile);
+      if (isGridSurfaceUnoccluded(ctx) && visibleTileIds.has(tileKeyFor(tile.entry))) {
+        postClearBell(ctx, tile);
         return;
       }
       tile.root.classList.add('has-bell');
@@ -1079,12 +1194,12 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
 
   function centerTile(tile: InternalTile): void {
     centered = tile;
-    clearTileBell(tile);
+    clearTileBell(ctx, tile);
     if (opts.onTileEnlarge !== undefined) opts.onTileEnlarge(tile.entry, 'center');
     // HS-8028 — install the magnified-nav keyboard listener (Shift+Cmd+
     // Arrow on macOS / Shift+Ctrl+Arrow elsewhere). Idempotent — the
     // helper only attaches once even on rapid re-centers.
-    bindMagnifiedNavHandler();
+    bindMagnifiedNavHandler(ctx);
     // HS-7968 — defend against the click-before-IO race: if an alive tile
     // hasn't been mounted yet (the IntersectionObserver callback hadn't run
     // before the click landed), force-mount now so the centered tile shows
@@ -1168,7 +1283,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // either — `enterDedicatedView` may have called `uncenterTile`
     // internally on an open centered tile, in which case the nav
     // handler must stay armed for the dedicated path.
-    if (dedicated === null) unbindMagnifiedNavHandler();
+    if (dedicated === null) unbindMagnifiedNavHandler(ctx);
     if (opts.onTileShrink !== undefined) opts.onTileShrink(tile.entry);
 
     if (placeholder === null) { finishUncenterTile(tile, null); return; }
@@ -1219,7 +1334,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // HS-8046 — uncentering returns the user to the unoccluded grid view;
     // bells that piled up behind the centered overlay are now visible and
     // should auto-clear (the user IS looking at them).
-    clearBellsForVisibleTiles();
+    clearBellsForVisibleTiles(ctx);
   }
 
   function createSlotPlaceholder(width: number, height: number): HTMLElement {
@@ -1247,210 +1362,35 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     centerBackdrop = null;
   }
 
-  function clearTileBell(tile: InternalTile): void {
-    if (!tile.root.classList.contains('has-bell')) return;
-    tile.root.classList.remove('has-bell');
-    postClearBell(tile);
-  }
-
-  /** HS-8046 — POST `/clear-bell` for a tile WITHOUT first checking the
-   *  class. Used by the auto-clear path: when a bell tries to land on a
-   *  tile the user is already looking at, we want to drop the server's
-   *  `bellPending` flag without ever rendering the indicator locally. */
-  function postClearBell(tile: InternalTile): void {
-    void apiWithSecret('/terminal/clear-bell', tile.entry.secret, {
-      method: 'POST',
-      body: { terminalId: tile.entry.id },
-    }).catch(() => { /* server restart / network blip — long-poll resyncs */ });
-  }
-
-  /** HS-8046 — true when nothing is occluding the grid layout, so a tile
-   *  in the viewport really IS the surface the user is looking at. While
-   *  a centered overlay or dedicated view is up, the rest of the grid is
-   *  visually behind / hidden, so bells for those tiles should NOT
-   *  auto-clear (the user can't actually see them). */
-  function isGridSurfaceUnoccluded(): boolean {
-    return centered === null && dedicated === null;
-  }
-
-  /** HS-8046 — set of tileIds whose root is currently inside the
-   *  IntersectionObserver's viewport. Updated by `handleIntersectionEntries`
-   *  on every enter / exit transition. Used to gate the auto-clear path. */
-  const visibleTileIds = new Set<string>();
-
-  /** HS-8046 — clear the bell for `tile` when (a) the grid surface is
-   *  unoccluded (no centered overlay / dedicated view) AND (b) the tile
-   *  root is currently in the viewport. The user is actively looking at
-   *  this terminal — no reason to keep the bell indicator. */
-  function maybeAutoClearTileBell(tile: InternalTile): void {
-    if (!isGridSurfaceUnoccluded()) return;
-    if (!visibleTileIds.has(tileKeyFor(tile.entry))) return;
-    clearTileBell(tile);
-  }
-
-  /** HS-8046 — sweep every currently-visible tile for `has-bell`, called
-   *  whenever the grid surface becomes unoccluded again (centered or
-   *  dedicated view dismissed). Bells that accumulated WHILE the
-   *  occluding view was up are now visible to the user; auto-clear them. */
-  function clearBellsForVisibleTiles(): void {
-    for (const id of visibleTileIds) {
-      const t = tiles.get(id);
-      if (t === undefined) continue;
-      clearTileBell(t);
-    }
-  }
+  // HS-8402 — `clearTileBell`, `postClearBell`, `isGridSurfaceUnoccluded`,
+  // `maybeAutoClearTileBell`, `clearBellsForVisibleTiles` are lifted to
+  // module-level functions taking `ctx: TileGridContext` as their first
+  // arg. See the bottom of the file for the lifted implementations.
+  // `visibleTileIds` was relocated to the top of the factory body so the
+  // `ctx` literal can capture the same Set reference; the factory and
+  // the lifted code share that one Set.
 
   // --- HS-8028 magnified-nav (Shift+Cmd+Arrow) ---
 
-  /** Capture-phase document keydown listener that fires while a tile is
-   *  centered or dedicated. Captures BEFORE xterm's customKeyEventHandler
-   *  so the chord doesn't get translated into shell escape sequences,
-   *  and uses `preventDefault` + `stopPropagation` to ensure xterm sees
-   *  no event at all. Bound idempotently by `bindMagnifiedNavHandler`,
-   *  unbound on the last-magnified-state exit by
-   *  `unbindMagnifiedNavHandler`. */
-  let magnifiedNavListener: ((e: KeyboardEvent) => void) | null = null;
-
-  function bindMagnifiedNavHandler(): void {
-    if (magnifiedNavListener !== null) return;
-    magnifiedNavListener = (e: KeyboardEvent): void => {
-      const direction = isMagnifiedNavShortcut(e);
-      if (direction === null) return;
-      // HS-8366 — bail when a regular text input owns focus so the
-      // Cmd+Shift+Arrow chord falls through to the browser for text-
-      // selection extension. The xterm helper-textarea is detected via
-      // the `.xterm` ancestor and is excluded from the carve-out (xterm
-      // doesn't use Cmd+Shift+Arrow for text selection). This guard is
-      // defensive — the dashboard chrome that hosts magnified tiles
-      // hides the sidebar / detail panel / search inputs while a tile is
-      // magnified, so a focused regular input is rare here, but a stray
-      // popover input or a future feature that introduces one would
-      // otherwise have its chord stolen.
-      const target = e.target;
-      if (target instanceof HTMLElement) {
-        const tag = target.tagName;
-        const isRegularInput = (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable);
-        const isInXterm = target.closest('.xterm') !== null;
-        if (isRegularInput && !isInXterm) return;
-      }
-      const fromTile = dedicated !== null ? dedicated.tile : centered;
-      if (fromTile === null) return;
-      const next = findNextTileInDirection(fromTile, direction);
-      if (next === null) return;
-      e.preventDefault();
-      e.stopPropagation();
-      magnifyTile(next, dedicated !== null ? 'dedicated' : 'center');
-    };
-    document.addEventListener('keydown', magnifiedNavListener, true);
-  }
-
-  function unbindMagnifiedNavHandler(): void {
-    if (magnifiedNavListener === null) return;
-    document.removeEventListener('keydown', magnifiedNavListener, true);
-    magnifiedNavListener = null;
-  }
-
-  /** HS-8028 — find the immediate-neighbour tile in the indicated grid
-   *  direction. Per the user's HS-8028 follow-up: arrows must follow the
-   *  natural visual layout — left lands on the tile immediately to the
-   *  left in the SAME ROW (no row-jumping), and similarly for the other
-   *  three directions. If no tile shares the row / column AND lies in the
-   *  indicated direction, returns null (no-op).
-   *
-   *  Pre-fix used a perpendicular-weighted cone metric that would jump to
-   *  a tile in a different row when no same-row neighbour existed, which
-   *  felt unintuitive. Same-row / same-column is determined by positive
-   *  bounding-rect overlap on the perpendicular axis. */
-  function findNextTileInDirection(from: InternalTile, direction: GridNavDirection): InternalTile | null {
-    // HS-8028 follow-up #2 — the `from` tile's grid position is what we
-    // want to navigate FROM, not its centered/dedicated mount position.
-    // When a tile is centered (single-click), its `tile.root` is at
-    // `position: absolute` floating in the middle of the viewport (a
-    // big rect spanning ~50–80 % of the screen). Comparing other tiles'
-    // grid-position rects against THAT rect blows up the same-row /
-    // same-column overlap test — every grid tile fails the "strict
-    // half-plane" gate because the centered overlay's edges sit far
-    // outside any single grid cell. Result: every Shift+Cmd+Arrow
-    // chord falls through to no-op, matching the user's "doesn't seem
-    // to work at all anymore" report (5/1/2026).
-    //
-    // Fix: when a slot placeholder exists (centered mode), use its
-    // bounding rect as the `from` reference — the placeholder is a
-    // ghost div the size of the original grid cell sitting in the
-    // tile's natural grid position. For dedicated mode, the tile's own
-    // root stays in the grid (the dedicated view is a separate
-    // overlay that doesn't reparent the tile root), so its
-    // getBoundingClientRect() still reflects the grid position.
-    const fromRect = from.slotPlaceholder !== null
-      ? from.slotPlaceholder.getBoundingClientRect()
-      : from.root.getBoundingClientRect();
-    const eligible: InternalTile[] = [];
-    const rects: NavRect[] = [];
-    for (const candidate of tiles.values()) {
-      if (candidate === from) continue;
-      if (candidate.state !== 'alive') continue;
-      eligible.push(candidate);
-      // Mirror the same trick for candidates: a candidate that itself
-      // is centered (rare — only one tile can be centered at a time,
-      // but defensive) should be navigated to via its grid position.
-      const candRect = candidate.slotPlaceholder !== null
-        ? candidate.slotPlaceholder.getBoundingClientRect()
-        : candidate.root.getBoundingClientRect();
-      rects.push(candRect);
-    }
-    const idx = pickGridNeighbourIndex(fromRect, rects, direction);
-    return idx === -1 ? null : eligible[idx];
-  }
-
-  /** HS-8028 — switch the magnified view from the current tile to `next`,
-   *  preserving the user's current magnification mode. `mode === 'center'`
-   *  uncenters the current and centers the next; `mode === 'dedicated'`
-   *  exits dedicated and re-enters dedicated for the next tile (with
-   *  no priorCenteredTile so the exit returns to the bare grid, not
-   *  back through a stale centered state). */
-  function magnifyTile(next: InternalTile, mode: 'center' | 'dedicated'): void {
-    if (mode === 'center') {
-      // Uncentering the prior runs through `uncenterTile` which would
-      // unbind the nav handler (no centered + no dedicated). The
-      // immediately-following `centerTile(next)` re-binds, but to avoid
-      // the unbind-rebind churn we just swap centered tiles directly.
-      // Pre-fix the visible flicker would have been minimal but the
-      // listener add/remove dance is wasteful when the user rapidly
-      // navigates with Shift+Cmd+Arrow.
-      if (centered !== null) {
-        // Synchronously uncenter without animation — the new center will
-        // animate from its grid position to the centered position right
-        // after, which feels like a single composite transition.
-        const prev = centered;
-        const placeholder = prev.slotPlaceholder;
-        centered = null;
-        removeCenterBackdrop();
-        if (opts.onTileShrink !== undefined) opts.onTileShrink(prev.entry);
-        finishUncenterTile(prev, placeholder);
-      }
-      centerTile(next);
-    } else {
-      // Dedicated → swap. Force-clear `priorCenteredTile` so exit
-      // doesn't animate through a stale centered state on the way out
-      // (we're about to enter dedicated for `next` immediately).
-      // Without this, exit would briefly call `centerTile(prior)` and
-      // the new `enterDedicatedView` would have to tear that down.
-      if (dedicated !== null) dedicated.priorCenteredTile = null;
-      exitDedicatedView();
-      enterDedicatedView(next, null);
-    }
-  }
+  // HS-8403 — `bindMagnifiedNavHandler`, `unbindMagnifiedNavHandler`,
+  // `findNextTileInDirection`, `magnifyTile` are lifted to module-level
+  // functions taking `ctx: TileGridContext` as their first arg. See the
+  // bottom of the file for the lifted implementations. The factory's
+  // `centered` / `dedicated` slots + their lifecycle helpers are bridged
+  // into the lifted code via `ctx.centerCallbacks` (Cycle 3 lifts the
+  // center / dedicated subsystem and removes that bridge in favour of
+  // direct module-level calls).
 
   // --- Dedicated full-pane view (§25.8 / §36.5 / HS-7063 / HS-7098) ---
 
   function enterDedicatedView(tile: InternalTile, priorCenteredTile: InternalTile | null): void {
     if (dedicated !== null) exitDedicatedView();
-    clearTileBell(tile);
+    clearTileBell(ctx, tile);
     if (opts.onTileEnlarge !== undefined) opts.onTileEnlarge(tile.entry, 'dedicated');
     // HS-8028 — magnified-nav listener (Shift+Cmd+Arrow on macOS /
     // Shift+Ctrl+Arrow elsewhere). Idempotent — already wired if the
     // user dedicated-viewed an already-centered tile.
-    bindMagnifiedNavHandler();
+    bindMagnifiedNavHandler(ctx);
 
     const overlay = toElement(
       <div className={dedicatedClass} data-secret={tile.entry.secret} data-terminal-id={tile.entry.id}>
@@ -1611,7 +1551,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // (priorCenteredTile non-null) keep the nav handler armed since
     // `centerTile` would re-bind anyway. Otherwise unbind — the bare
     // grid has no magnified target.
-    if (view.priorCenteredTile === null) unbindMagnifiedNavHandler();
+    if (view.priorCenteredTile === null) unbindMagnifiedNavHandler(ctx);
     view.bodyResizeObserver?.disconnect();
     if (view.barDispose !== null) {
       try { view.barDispose(); } catch { /* swallow */ }
@@ -1644,7 +1584,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       // HS-8046 — exiting dedicated view (with no centered fallback)
       // returns the user to the unoccluded grid; sweep visible tiles for
       // bells that piled up while the dedicated view was up.
-      clearBellsForVisibleTiles();
+      clearBellsForVisibleTiles(ctx);
     }
   }
 
@@ -1891,7 +1831,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     // nav handler must come off too. `exitDedicatedView` /
     // `uncenterTile` may have already unbound; the helper is
     // idempotent.
-    unbindMagnifiedNavHandler();
+    unbindMagnifiedNavHandler(ctx);
     removeCenterBackdrop();
     if (pendingSingleClickTimer !== null) {
       window.clearTimeout(pendingSingleClickTimer);
@@ -1937,8 +1877,8 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
           // HS-8046 — server-pushed bellPending lands on a tile the user
           // is already looking at. Drop the server flag instead of
           // rendering the indicator.
-          if (isGridSurfaceUnoccluded() && visibleTileIds.has(key)) {
-            postClearBell(tile);
+          if (isGridSurfaceUnoccluded(ctx) && visibleTileIds.has(key)) {
+            postClearBell(ctx, tile);
           } else {
             tile.root.classList.add('has-bell');
           }
@@ -1964,4 +1904,170 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       teardownAmbientState();
     },
   };
+}
+
+// =============================================================================
+// HS-8402 Cycle 1 — lifted bell-clearing functions
+// =============================================================================
+// These functions used to live as nested closures inside `mountTileGrid`
+// (the factory's lexical scope). They've been hoisted to module level so
+// future cycles can split them into their own sub-module without rewriting
+// every callsite. Each takes `ctx: TileGridContext` as its first arg; the
+// factory passes its own `ctx` instance to every call.
+
+/** HS-8046 — true when nothing is occluding the grid layout, so a tile
+ *  in the viewport really IS the surface the user is looking at. While
+ *  a centered overlay or dedicated view is up, the rest of the grid is
+ *  visually behind / hidden, so bells for those tiles should NOT
+ *  auto-clear (the user can't actually see them). */
+function isGridSurfaceUnoccluded(ctx: TileGridContext): boolean {
+  return !ctx.isCentered() && !ctx.isDedicated();
+}
+
+/** HS-8046 — POST `/clear-bell` for a tile WITHOUT first checking the
+ *  class. Used by the auto-clear path: when a bell tries to land on a
+ *  tile the user is already looking at, we want to drop the server's
+ *  `bellPending` flag without ever rendering the indicator locally. */
+function postClearBell(_ctx: TileGridContext, tile: InternalTile): void {
+  void apiWithSecret('/terminal/clear-bell', tile.entry.secret, {
+    method: 'POST',
+    body: { terminalId: tile.entry.id },
+  }).catch(() => { /* server restart / network blip — long-poll resyncs */ });
+}
+
+function clearTileBell(ctx: TileGridContext, tile: InternalTile): void {
+  if (!tile.root.classList.contains('has-bell')) return;
+  tile.root.classList.remove('has-bell');
+  postClearBell(ctx, tile);
+}
+
+/** HS-8046 — clear the bell for `tile` when (a) the grid surface is
+ *  unoccluded (no centered overlay / dedicated view) AND (b) the tile
+ *  root is currently in the viewport. The user is actively looking at
+ *  this terminal — no reason to keep the bell indicator. */
+function maybeAutoClearTileBell(ctx: TileGridContext, tile: InternalTile): void {
+  if (!isGridSurfaceUnoccluded(ctx)) return;
+  // Composite tile key — `${secret}::${id}` matches the factory's
+  // `tileKeyFor`. Computed inline so the lifted code doesn't need a
+  // back-reference into the factory scope.
+  const key = `${tile.entry.secret}::${tile.entry.id}`;
+  if (!ctx.visibleTileIds.has(key)) return;
+  clearTileBell(ctx, tile);
+}
+
+/** HS-8046 — sweep every currently-visible tile for `has-bell`, called
+ *  whenever the grid surface becomes unoccluded again (centered or
+ *  dedicated view dismissed). Bells that accumulated WHILE the
+ *  occluding view was up are now visible to the user; auto-clear them. */
+function clearBellsForVisibleTiles(ctx: TileGridContext): void {
+  for (const id of ctx.visibleTileIds) {
+    const t = ctx.tiles.get(id);
+    if (t === undefined) continue;
+    clearTileBell(ctx, t);
+  }
+}
+
+// =============================================================================
+// HS-8403 Cycle 2 — lifted magnified-nav functions (HS-8028 family)
+// =============================================================================
+// Shift+Cmd+Arrow (macOS) / Shift+Ctrl+Arrow (Linux/Windows) navigates
+// between tiles while one is centered or in dedicated view. Cross-subsystem
+// calls into `centerTile` / `enterDedicatedView` / `removeCenterBackdrop` /
+// `exitDedicatedView` go through `ctx.centerCallbacks` until Cycle 3 lifts
+// the center / dedicated subsystem itself, at which point this code calls
+// those lifted functions directly and the bridge is removed.
+
+function bindMagnifiedNavHandler(ctx: TileGridContext): void {
+  if (ctx.magnifiedNavListener.current !== null) return;
+  const listener = (e: KeyboardEvent): void => {
+    const direction = isMagnifiedNavShortcut(e);
+    if (direction === null) return;
+    // HS-8366 — bail when a regular text input owns focus so the
+    // Cmd+Shift+Arrow chord falls through to the browser for text-
+    // selection extension. The xterm helper-textarea is detected via
+    // the `.xterm` ancestor and is excluded from the carve-out (xterm
+    // doesn't use Cmd+Shift+Arrow for text selection).
+    const target = e.target;
+    if (target instanceof HTMLElement) {
+      const tag = target.tagName;
+      const isRegularInput = (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable);
+      const isInXterm = target.closest('.xterm') !== null;
+      if (isRegularInput && !isInXterm) return;
+    }
+    const dedicated = ctx.centerCallbacks.getDedicated();
+    const centered = ctx.centerCallbacks.getCentered();
+    const fromTile = dedicated !== null ? dedicated.tile : centered;
+    if (fromTile === null) return;
+    const next = findNextTileInDirection(ctx, fromTile, direction);
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    magnifyTile(ctx, next, dedicated !== null ? 'dedicated' : 'center');
+  };
+  ctx.magnifiedNavListener.current = listener;
+  document.addEventListener('keydown', listener, true);
+}
+
+function unbindMagnifiedNavHandler(ctx: TileGridContext): void {
+  const listener = ctx.magnifiedNavListener.current;
+  if (listener === null) return;
+  document.removeEventListener('keydown', listener, true);
+  ctx.magnifiedNavListener.current = null;
+}
+
+/** HS-8028 — find the immediate-neighbour tile in the indicated grid
+ *  direction. Per the user's HS-8028 follow-up: arrows must follow the
+ *  natural visual layout — left lands on the tile immediately to the
+ *  left in the SAME ROW (no row-jumping), and similarly for the other
+ *  three directions. */
+function findNextTileInDirection(ctx: TileGridContext, from: InternalTile, direction: GridNavDirection): InternalTile | null {
+  // HS-8028 follow-up #2 — when a tile is centered, its `tile.root`
+  // lives at `position: absolute` in the middle of the viewport. Use
+  // the slot placeholder's grid-position rect when one exists so the
+  // same-row / same-column overlap test runs against the original
+  // grid cell rather than the floating overlay.
+  const fromRect = from.slotPlaceholder !== null
+    ? from.slotPlaceholder.getBoundingClientRect()
+    : from.root.getBoundingClientRect();
+  const eligible: InternalTile[] = [];
+  const rects: NavRect[] = [];
+  for (const candidate of ctx.tiles.values()) {
+    if (candidate === from) continue;
+    if (candidate.state !== 'alive') continue;
+    eligible.push(candidate);
+    const candRect = candidate.slotPlaceholder !== null
+      ? candidate.slotPlaceholder.getBoundingClientRect()
+      : candidate.root.getBoundingClientRect();
+    rects.push(candRect);
+  }
+  const idx = pickGridNeighbourIndex(fromRect, rects, direction);
+  return idx === -1 ? null : eligible[idx];
+}
+
+/** HS-8028 — switch the magnified view from the current tile to `next`,
+ *  preserving the user's current magnification mode. */
+function magnifyTile(ctx: TileGridContext, next: InternalTile, mode: 'center' | 'dedicated'): void {
+  const cb = ctx.centerCallbacks;
+  if (mode === 'center') {
+    // Synchronously uncenter the prior tile without animation; the
+    // new center will animate from its grid position to the centered
+    // position right after, which feels like a single composite
+    // transition.
+    const prev = cb.getCentered();
+    if (prev !== null) {
+      const placeholder = prev.slotPlaceholder;
+      cb.setCentered(null);
+      cb.removeCenterBackdrop();
+      if (ctx.opts.onTileShrink !== undefined) ctx.opts.onTileShrink(prev.entry);
+      cb.finishUncenterTile(prev, placeholder);
+    }
+    cb.centerTile(next);
+  } else {
+    // Dedicated → swap. Force-clear `priorCenteredTile` so exit
+    // doesn't animate through a stale centered state on the way out
+    // (we're about to enter dedicated for `next` immediately).
+    cb.setDedicatedPriorCenteredTile(null);
+    cb.exitDedicatedView();
+    cb.enterDedicatedView(next, null);
+  }
 }
