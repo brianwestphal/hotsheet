@@ -241,6 +241,85 @@ describe('showTicketContextMenu — Read Latest Note (HS-8401)', () => {
     expect(overlay!.textContent).toContain('Earlier real note');
   });
 
+  it('renders chevron-up / chevron-down nav buttons when the ticket has multiple non-empty notes (HS-8415)', () => {
+    // Pre-fix the menu opened the reader overlay without a `navigation`
+    // slot, so the user landed on the latest note with no way to step
+    // back to earlier ones. Post-fix the menu builds navEntries from
+    // every non-empty note and sets initialIndex to the latest, matching
+    // the per-note book-icon trigger in `noteRenderer.tsx`.
+    const t = makeTicket(108, { notes: notesWith('## First', '## Second', '## Third') });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(108);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    const items = document.querySelectorAll<HTMLElement>('.context-menu .context-menu-item');
+    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Latest Note');
+    expect(readItem).toBeDefined();
+    readItem!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const overlay = document.querySelector('.reader-mode-overlay');
+    expect(overlay).not.toBeNull();
+    // Chevron buttons present means the navigation slot was passed.
+    const prev = overlay!.querySelector<HTMLButtonElement>('.reader-mode-prev');
+    const next = overlay!.querySelector<HTMLButtonElement>('.reader-mode-next');
+    expect(prev).not.toBeNull();
+    expect(next).not.toBeNull();
+    // Latest note is the initial entry; next-button disabled at end of
+    // list, prev-button enabled so the user can walk back.
+    expect(next!.disabled).toBe(true);
+    expect(prev!.disabled).toBe(false);
+    expect(overlay!.textContent).toContain('Third');
+  });
+
+  it('skips chevron nav buttons when only one non-empty note exists (HS-8415)', () => {
+    // Single-entry shape matches the `navEntries.length > 1` guard in
+    // `noteRenderer.tsx`. With one note there's nowhere to navigate, so
+    // the chevrons would be permanently disabled — omit them entirely.
+    const t = makeTicket(109, { notes: notesWith('## Only one') });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(109);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    const items = document.querySelectorAll<HTMLElement>('.context-menu .context-menu-item');
+    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Latest Note');
+    readItem!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const overlay = document.querySelector('.reader-mode-overlay');
+    expect(overlay).not.toBeNull();
+    expect(overlay!.querySelector('.reader-mode-prev')).toBeNull();
+    expect(overlay!.querySelector('.reader-mode-next')).toBeNull();
+  });
+
+  it('navigation entries skip empty notes so chevron walk stays on real content (HS-8415)', () => {
+    // Three notes with the middle one blank — the reader's navigation
+    // list should contain only the two non-empty entries.
+    const t = makeTicket(110, { notes: notesWith('## Earlier', '', '## Later') });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(110);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    const items = document.querySelectorAll<HTMLElement>('.context-menu .context-menu-item');
+    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Latest Note');
+    readItem!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const overlay = document.querySelector('.reader-mode-overlay');
+    const prev = overlay!.querySelector<HTMLButtonElement>('.reader-mode-prev');
+    // Start on the latest non-empty note ("Later"). One click back
+    // should land on "Earlier" (skipping the blank middle entry).
+    expect(overlay!.textContent).toContain('Later');
+    prev!.click();
+    expect(overlay!.textContent).toContain('Earlier');
+    expect(overlay!.textContent).not.toContain('Later');
+    // Now at the first entry — prev disabled.
+    expect(prev!.disabled).toBe(true);
+  });
+
   it('omits Read Latest Note when multiple tickets are selected (single-selection only)', () => {
     const t = makeTicket(106, { notes: notesWith('## a note') });
     const u = makeTicket(107);
@@ -251,5 +330,108 @@ describe('showTicketContextMenu — Read Latest Note (HS-8401)', () => {
 
     showTicketContextMenu(makeContextMenuEvent(), t);
     expect(menuLabels()).not.toContain('Read Latest Note');
+  });
+});
+
+/**
+ * HS-8414 — separator under the Provide Feedback / Read Latest Note
+ * inspection block. Pre-change the menu flowed straight from Read Latest
+ * Note into Category submenu which looked cluttered; post-change a
+ * separator visually groups the two top items away from the
+ * configuration submenus below.
+ */
+describe('showTicketContextMenu — HS-8414 separator under inspection block', () => {
+  function notesWith(...texts: string[]): string {
+    return JSON.stringify(
+      texts.map((text, i) => ({ id: `n_${i}`, text, created_at: `2026-05-15T0${i}:00:00Z` })),
+    );
+  }
+
+  function indexOfLabel(labels: string[], label: string): number {
+    return labels.indexOf(label);
+  }
+
+  it('places a separator between Read Latest Note and Category submenu (single-selection)', () => {
+    const t = makeTicket(201, { notes: notesWith('## a note') });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(201);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    // Find Read Latest Note + Category positions inside the top-level
+    // menu (excluding submenu items). Asserting the separator sits
+    // between them proves the HS-8414 placement.
+    const topLevel = document.querySelectorAll<HTMLElement>('.context-menu > .context-menu-item, .context-menu > .context-menu-separator');
+    const labels = Array.from(topLevel).map(el =>
+      el.classList.contains('context-menu-separator')
+        ? '__SEP__'
+        : el.querySelector('.context-menu-label')?.textContent ?? '',
+    );
+    const readIdx = indexOfLabel(labels, 'Read Latest Note');
+    const categoryIdx = indexOfLabel(labels, 'Category');
+    expect(readIdx).toBeGreaterThanOrEqual(0);
+    expect(categoryIdx).toBeGreaterThan(readIdx);
+    // Every slot between Read Latest Note and Category should be a
+    // separator (there's nothing else between them in the single-
+    // selection-non-completed shape).
+    for (let i = readIdx + 1; i < categoryIdx; i++) {
+      expect(labels[i]).toBe('__SEP__');
+    }
+    // At least one separator exists in that gap.
+    expect(categoryIdx - readIdx).toBeGreaterThanOrEqual(2);
+  });
+
+  it('places a separator above Provide Feedback + Read Latest Note for feedback tickets (single-selection)', () => {
+    const t = makeTicket(202, { notes: JSON.stringify([
+      { id: 'n_1', text: '## older', created_at: '2026-05-15T00:00:00Z' },
+      { id: 'n_2', text: 'FEEDBACK NEEDED: ack?', created_at: '2026-05-15T01:00:00Z' },
+    ]) });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(202);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    const topLevel = document.querySelectorAll<HTMLElement>('.context-menu > .context-menu-item, .context-menu > .context-menu-separator');
+    const labels = Array.from(topLevel).map(el =>
+      el.classList.contains('context-menu-separator')
+        ? '__SEP__'
+        : el.querySelector('.context-menu-label')?.textContent ?? '',
+    );
+    const provideIdx = labels.indexOf('Provide Feedback');
+    const readIdx = labels.indexOf('Read Latest Note');
+    const categoryIdx = labels.indexOf('Category');
+    // Provide Feedback comes first, then Read Latest Note, then sep, then Category.
+    expect(provideIdx).toBeGreaterThanOrEqual(0);
+    expect(readIdx).toBe(provideIdx + 1);
+    // Sep between Read Latest Note and Category — same shape as the
+    // baseline single-selection case, no extra separator between the
+    // two top items.
+    expect(labels[readIdx + 1]).toBe('__SEP__');
+    expect(categoryIdx).toBeGreaterThan(readIdx);
+  });
+
+  it('omits the HS-8414 separator on multi-select (no top inspection items, no extra sep)', () => {
+    // Multi-select skips both Provide Feedback and Read Latest Note, so
+    // there's nothing to "separate from below" — the menu opens
+    // straight on Category submenu.
+    const t = makeTicket(203, { notes: notesWith('## one') });
+    const u = makeTicket(204);
+    ticketsStore.actions.setTickets([t, u]);
+    state.selectedIds.add(203);
+    state.selectedIds.add(204);
+    state.tickets = [t, u];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    const topLevel = document.querySelectorAll<HTMLElement>('.context-menu > .context-menu-item, .context-menu > .context-menu-separator');
+    const labels = Array.from(topLevel).map(el =>
+      el.classList.contains('context-menu-separator')
+        ? '__SEP__'
+        : el.querySelector('.context-menu-label')?.textContent ?? '',
+    );
+    const categoryIdx = labels.indexOf('Category');
+    expect(categoryIdx).toBe(0); // First top-level item is Category submenu.
   });
 });

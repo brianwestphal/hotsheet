@@ -41,11 +41,36 @@ export function getTicketFeedbackState(notes: NoteEntry[]): { type: 'standard' |
  *  to avoid re-opening on every refreshDetail() poll cycle. */
 let lastAutoShownKey: string | null = null;
 
+/** HS-8416 — one-shot guard set by `showTicketContextMenu` before its
+ *  selection re-render. The re-render cascades into
+ *  `updateBatchToolbar → syncDetailPanel`, which historically auto-opened
+ *  the feedback dialog whenever the just-selected ticket had a pending
+ *  FEEDBACK NEEDED note — so right-clicking a feedback ticket popped the
+ *  form on top of the context menu instead of letting the user pick a
+ *  menu item. The guard makes the next `shouldAutoShowFeedback` call
+ *  return false WITHOUT recording the noteId in `lastAutoShownKey`, so a
+ *  later legitimate navigation to the same ticket (e.g. clicking the row
+ *  after dismissing the menu) still auto-shows on the first arrival. */
+let suppressAutoShowOnce = false;
+
 export function resetAutoShownFeedback() {
   lastAutoShownKey = null;
+  suppressAutoShowOnce = false;
+}
+
+/** HS-8416 — set the one-shot suppress flag. The next
+ *  `shouldAutoShowFeedback` call returns false without consuming the
+ *  ticket+noteId pair from `lastAutoShownKey`, so the auto-show can
+ *  still fire later when the user navigates to the ticket normally. */
+export function suppressNextAutoShowFeedback(): void {
+  suppressAutoShowOnce = true;
 }
 
 export function shouldAutoShowFeedback(ticketId: number, noteId: string): boolean {
+  if (suppressAutoShowOnce) {
+    suppressAutoShowOnce = false;
+    return false;
+  }
   const key = `${ticketId}:${noteId}`;
   if (lastAutoShownKey === key) return false;
   lastAutoShownKey = key;

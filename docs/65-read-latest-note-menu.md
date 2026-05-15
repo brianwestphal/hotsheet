@@ -21,7 +21,14 @@ appears on either surface without duplicate wiring.
 - **Position in the menu**: directly below the §49 / HS-8339 Provide
   Feedback item (when present). Both actions are note-related, so they
   cluster at the top of the menu where eye-tracking studies (and
-  observation) suggest first-action items belong.
+  observation) suggest first-action items belong. **HS-8414 (2026-05-15)**
+  — a separator follows the cluster (under Read Latest Note, below
+  Provide Feedback when present) to visually divide the two top
+  inspection affordances from the configuration submenus
+  (Category / Priority / Status / Up Next) that begin immediately below.
+  The separator is gated on single-selection — the same gate that
+  controls whether either top item renders — so multi-select menus
+  still open straight on the Category submenu without a leading sep.
 - **Icon**: Lucide `book-open-text` — the same glyph the §49 reader
   trigger uses on note rows and the Details label button. Users learn
   one icon for the reader entry-point.
@@ -59,25 +66,49 @@ signal the menu item uses to apply the `disabled` class.
 
 ## §65.4 Implementation pointer
 
-- Pure helper: `findLatestNonEmptyNote(notesJson: string)` in
-  `src/client/contextMenu.tsx`. Returns `{ text, created_at } | null`.
+- Pure helper: `collectNonEmptyNotes(notesJson: string)` in
+  `src/client/contextMenu.tsx`. Returns `{ entries, latestIndex } | null`
+  — a single pass through `parseNotesJson` yields the full non-empty
+  list plus the index of the latest entry, so the menu can pass a
+  §59 `navigation` slot to the reader without re-walking the array
+  (HS-8415 renamed the helper from `findLatestNonEmptyNote` for this).
 - Menu wiring: inside `showTicketContextMenu` after the Provide
   Feedback block — single-call to `addActionItem(menu, 'Read Latest
   Note', open, { icon, disabled })` with the existing
   `addActionItem` helper widened to support a `disabled?: boolean`
   option (which adds the CSS class and skips the click listener
-  attachment).
+  attachment). The click handler builds `navEntries` from
+  `collectNonEmptyNotes` and passes
+  `navigation: { entries, initialIndex }` to `openReaderOverlay` when
+  more than one non-empty note exists — chevron + ArrowUp / ArrowDown
+  step back through earlier notes (HS-8415; matches the per-note
+  book-icon trigger in `noteRenderer.tsx`).
+- Separator: `addSeparator(menu)` immediately after the Read Latest
+  Note `addActionItem` call, gated on `state.selectedIds.size === 1`
+  (HS-8414). The Push-to-backend insertion point further down the
+  menu is anchored on the `.context-menu-separator-backlog` marker
+  class — added via the `addSeparator(menu, extraClass)` parameter on
+  the separator above Move to Backlog — so adding the HS-8414
+  separator higher up doesn't shift the Push position.
 
 ## §65.5 Regression coverage
 
 `src/client/contextMenu.test.ts` under the
 `showTicketContextMenu — Read Latest Note (HS-8401)` describe block
-covers six cases: enabled item appears for tickets with non-empty
+covers nine cases: enabled item appears for tickets with non-empty
 notes, disabled when notes are empty, disabled when every note is
 placeholder-only (whitespace), clicking the enabled item opens the
 overlay with the latest non-empty markdown, the search walks back
-past empty newer notes to find the actual content, and multi-select
-omits the item.
+past empty newer notes to find the actual content, multi-select
+omits the item, and three HS-8415 navigation cases — chevrons render
+for multi-note tickets and are correctly disabled at the latest
+boundary, chevrons omitted when only one non-empty note exists, and
+the navigation list skips empty notes so chevron-up walks from later
+straight to earlier with the blank middle removed. A separate
+`HS-8414 separator under inspection block` describe block covers
+the separator placement (between Read Latest Note and Category for
+single-selection, present for feedback tickets too, omitted on
+multi-select).
 
 ## §65.6 Follow-up tickets
 

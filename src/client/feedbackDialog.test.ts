@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { buildOverlay, pickDraftForFeedbackNote } from './feedbackDialog.js';
+import {
+  buildOverlay,
+  pickDraftForFeedbackNote,
+  resetAutoShownFeedback,
+  shouldAutoShowFeedback,
+  suppressNextAutoShowFeedback,
+} from './feedbackDialog.js';
 import { _resetPrefixesForTesting } from './ticketRefs.js';
 
 /**
@@ -75,6 +81,68 @@ describe('pickDraftForFeedbackNote', () => {
     ];
     const picked = pickDraftForFeedbackNote(drafts, 'note-1');
     expect(picked?.id).toBe('with-ts');
+  });
+});
+
+/**
+ * HS-8416 — right-click selection cascades through
+ * `renderTicketList → updateBatchToolbar → syncDetailPanel`, and pre-fix
+ * the cascade auto-opened the feedback dialog on top of the context menu
+ * whenever the just-selected ticket had a pending FEEDBACK NEEDED note.
+ * `suppressNextAutoShowFeedback` is the one-shot guard the context menu
+ * sets before the selection re-render so the cascade's
+ * `shouldAutoShowFeedback` call returns false without recording the
+ * noteId in `lastAutoShownKey` — preserving the auto-show for a later
+ * normal click on the ticket.
+ */
+describe('shouldAutoShowFeedback — suppression guard (HS-8416)', () => {
+  beforeEach(() => {
+    resetAutoShownFeedback();
+  });
+
+  it('returns true on the first call for a (ticketId, noteId) pair (baseline)', () => {
+    expect(shouldAutoShowFeedback(1, 'n_1')).toBe(true);
+  });
+
+  it('returns false on the second call for the same pair (one-shot per pair)', () => {
+    expect(shouldAutoShowFeedback(1, 'n_1')).toBe(true);
+    expect(shouldAutoShowFeedback(1, 'n_1')).toBe(false);
+  });
+
+  it('returns false on the next call after suppressNextAutoShowFeedback()', () => {
+    suppressNextAutoShowFeedback();
+    expect(shouldAutoShowFeedback(1, 'n_1')).toBe(false);
+  });
+
+  it('only suppresses ONE call — a later legitimate navigation still auto-shows', () => {
+    // The whole point of HS-8416's "one-shot" suppression: right-click
+    // dismisses the auto-show for the right-click cascade only. A later
+    // normal click on the same ticket (after the user dismisses the
+    // menu) must still pop the feedback dialog on first arrival, since
+    // that's the legitimate user-initiated path.
+    suppressNextAutoShowFeedback();
+    expect(shouldAutoShowFeedback(1, 'n_1')).toBe(false);
+    // Suppression consumed; next call follows normal first-time-true rule.
+    expect(shouldAutoShowFeedback(1, 'n_1')).toBe(true);
+  });
+
+  it('suppression does NOT mark the (ticketId, noteId) pair as already-shown', () => {
+    // Without this guarantee the user would right-click a feedback
+    // ticket (suppressed), then click it normally — and the dialog
+    // would silently skip because the pair was recorded by the
+    // suppressed call. We have to NOT touch `lastAutoShownKey` while
+    // suppressing.
+    suppressNextAutoShowFeedback();
+    shouldAutoShowFeedback(2, 'n_42'); // suppressed → false, no record
+    expect(shouldAutoShowFeedback(2, 'n_42')).toBe(true); // first real call
+  });
+
+  it('resetAutoShownFeedback clears the suppress flag too', () => {
+    suppressNextAutoShowFeedback();
+    resetAutoShownFeedback();
+    // After reset the suppress flag is gone, so the next call honors
+    // the normal first-true rule.
+    expect(shouldAutoShowFeedback(3, 'n_x')).toBe(true);
   });
 });
 

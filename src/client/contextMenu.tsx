@@ -1,7 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
 import { toElement } from './dom.js';
-import { getTicketFeedbackState, showFeedbackDialog } from './feedbackDialog.js';
+import { getTicketFeedbackState, showFeedbackDialog, suppressNextAutoShowFeedback } from './feedbackDialog.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH } from './icons.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
@@ -22,18 +22,26 @@ const MEGAPHONE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height
  *  reader entry-point. */
 const BOOK_OPEN_TEXT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 12h2"/><path d="M6 8h2"/></svg>';
 
-/** HS-8401 — find the most recent note entry whose `text` is
- *  non-empty after trimming. Used by the Read Latest Note menu item
- *  to skip placeholder notes that may have been created but never
- *  filled in (the §49 reader-overlay renders "(empty)" for empty
- *  markdown, so opening a blank note from the menu would surprise
- *  the user). Returns `null` when no non-empty note exists. */
-function findLatestNonEmptyNote(notesJson: string): { text: string; created_at: string } | null {
+/** HS-8401 / HS-8415 — collect every non-empty note in display order plus
+ *  the index of the most recent one. The Read Latest Note menu item opens
+ *  the reader anchored on the latest non-empty note (HS-8401) and now also
+ *  passes a `navigation` slot built from the full list so the user can
+ *  chevron-up / ArrowUp back through earlier notes without re-opening the
+ *  menu (HS-8415 — matches the per-note reader trigger in `noteRenderer`).
+ *  Empty / whitespace-only notes are skipped so the reader can't surface
+ *  the §49 "(empty)" placeholder. Returns `null` when no non-empty note
+ *  exists. */
+function collectNonEmptyNotes(
+  notesJson: string,
+): { entries: { text: string; created_at: string }[]; latestIndex: number } | null {
   const notes = parseNotesJson(notesJson);
-  for (let i = notes.length - 1; i >= 0; i--) {
-    if (notes[i].text.trim() !== '') return { text: notes[i].text, created_at: notes[i].created_at };
+  const entries: { text: string; created_at: string }[] = [];
+  for (const n of notes) {
+    if (n.text.trim() === '') continue;
+    entries.push({ text: n.text, created_at: n.created_at });
   }
-  return null;
+  if (entries.length === 0) return null;
+  return { entries, latestIndex: entries.length - 1 };
 }
 
 export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
@@ -58,6 +66,16 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
     state.selectedIds.clear();
     state.selectedIds.add(ticket.id);
     state.lastClickedId = ticket.id;
+    // HS-8416 — `renderTicketList` cascades into
+    // `updateBatchToolbar → syncDetailPanel`, which auto-opens the
+    // feedback dialog whenever the just-selected ticket has a pending
+    // FEEDBACK NEEDED note. Pre-fix, right-clicking a feedback ticket
+    // popped the form on top of the menu and stole the user's intent
+    // (the user wanted the context menu's items, not the dialog).
+    // Suppress the auto-show for the cascade triggered by this
+    // selection update only; a later normal click on the ticket still
+    // auto-shows on first arrival.
+    suppressNextAutoShowFeedback();
     renderTicketList();
   }
 
@@ -90,15 +108,44 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   // overlay anchored on the most recent non-empty note's text +
   // created_at; the overlay's own dismiss / Esc / backdrop-click
   // behavior is unchanged.
+  // HS-8415 — also pass a `navigation` slot built from every non-empty
+  // note so the user can chevron / ArrowUp back through earlier notes
+  // from the same reader (parity with the per-note book-icon trigger
+  // in `noteRenderer.tsx`). When only one non-empty note exists, the
+  // chevrons are omitted (single-entry shape) — matches the
+  // `navEntries.length > 1` guard in `noteRenderer.tsx`.
   if (state.selectedIds.size === 1) {
-    const latestNote = findLatestNonEmptyNote(ticket.notes);
+    const nonEmpty = collectNonEmptyNotes(ticket.notes);
     addActionItem(menu, 'Read Latest Note', () => {
-      if (latestNote === null) return;
+      if (nonEmpty === null) return;
+      const latest = nonEmpty.entries[nonEmpty.latestIndex];
+      const navEntries = nonEmpty.entries.map((n) => ({
+        title: buildNoteReaderTitle(n.created_at),
+        markdown: n.text,
+      }));
       openReaderOverlay({
-        title: buildNoteReaderTitle(latestNote.created_at),
-        markdown: latestNote.text,
+        title: buildNoteReaderTitle(latest.created_at),
+        markdown: latest.text,
+        navigation: navEntries.length > 1
+          ? { entries: navEntries, initialIndex: nonEmpty.latestIndex }
+          : undefined,
       });
-    }, { icon: BOOK_OPEN_TEXT_SVG, disabled: latestNote === null });
+    }, { icon: BOOK_OPEN_TEXT_SVG, disabled: nonEmpty === null });
+  }
+
+  // HS-8414 — separator under the read / feedback inspection block when
+  // either item was rendered. Visually groups the two top affordances
+  // away from the configuration submenus (Category / Priority / Status /
+  // Up Next) below — pre-change the menu flowed straight from Read
+  // Latest Note into Category which looked cluttered. The Read Latest
+  // Note item is single-selection only, and Provide Feedback only
+  // appears when the ticket has a pending FEEDBACK NEEDED note, so this
+  // separator is gated on single-selection — the only case where either
+  // item could have been added. On the multi-select path the menu still
+  // opens straight into Category submenu (no top items, no trailing
+  // separator).
+  if (state.selectedIds.size === 1) {
+    addSeparator(menu);
   }
 
   // Completed ticket actions: Verified and Not Working
@@ -195,9 +242,13 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   if (state.selectedIds.size === 1 && !(ticket.id in syncedTicketMap)) {
     void api<{ id: string; name: string; icon?: string }[]>('/backends').then(backends => {
       if (backends.length === 0) return;
-      // Insert before the backlog separator (find the right position)
-      const separators = menu.querySelectorAll('.context-menu-separator');
-      const insertBefore = separators.length >= 2 ? separators[1] : null;
+      // Insert before the backlog separator. Anchored on the
+      // `.context-menu-separator-backlog` marker (HS-8414) rather than a
+      // positional index — adding a separator higher up the menu (e.g.
+      // the HS-8414 separator under Read Latest Note / Provide Feedback)
+      // used to shift `separators[1]` and silently misplace the Push
+      // items between Status and Up Next.
+      const insertBefore = menu.querySelector<HTMLElement>('.context-menu-separator-backlog');
       const pushSep = toElement(<div className="context-menu-separator"></div>);
       if (insertBefore) menu.insertBefore(pushSep, insertBefore);
       else menu.appendChild(pushSep);
@@ -229,7 +280,10 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
     });
   }
 
-  addSeparator(menu);
+  // Anchor for the Push-to-backend insertion below. The marker class
+  // lets the async backends-fetch find this separator by name instead
+  // of by index (see HS-8414 comment above the Push block).
+  addSeparator(menu, 'context-menu-separator-backlog');
 
   // Move to Backlog
   addActionItem(menu, 'Move to Backlog', () => applyToSelected('status', 'backlog'), {
@@ -358,8 +412,11 @@ function addActionItem(menu: HTMLElement, label: string, action: () => void, opt
   menu.appendChild(item);
 }
 
-function addSeparator(menu: HTMLElement) {
-  menu.appendChild(toElement(<div className="context-menu-separator"></div>));
+function addSeparator(menu: HTMLElement, extraClass?: string) {
+  const className = extraClass === undefined
+    ? 'context-menu-separator'
+    : `context-menu-separator ${extraClass}`;
+  menu.appendChild(toElement(<div className={className}></div>));
 }
 
 // --- Not Working dialog ---
