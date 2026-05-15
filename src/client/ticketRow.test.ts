@@ -555,3 +555,122 @@ describe('setupColumnCardEffects (HS-8357) — column-view reactivity for every 
     dispose();
   });
 });
+
+describe('setupColumnCardEffects (HS-8409) — tag chips stay in sync with ticket.tags', () => {
+  // Pre-fix the per-card effect updated category / priority / up_next / title
+  // but not tags, so a tag add / remove in the detail panel left the column
+  // card's chip row stale until the next column-view rebuild (e.g. column
+  // configuration change or project switch).
+
+  it('adds the .column-card-tags container when going from no tags to some tags', () => {
+    const t = makeTicket(1, { tags: '[]' });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    expect(card.querySelector('.column-card-tags')).toBeNull();
+
+    ticketsStore.actions.optimisticUpdate(1, { tags: JSON.stringify(['admin', 'dashboard']) });
+
+    const tagsEl = card.querySelector<HTMLElement>('.column-card-tags');
+    expect(tagsEl).not.toBeNull();
+    const chips = tagsEl!.querySelectorAll<HTMLElement>('.column-card-tag');
+    expect(chips).toHaveLength(2);
+    expect(chips[0].textContent).toBe('admin');
+    expect(chips[1].textContent).toBe('dashboard');
+
+    dispose();
+  });
+
+  it('removes the .column-card-tags container when the last tag is removed', () => {
+    const t = makeTicket(1, { tags: JSON.stringify(['only-tag']) });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    // Seed the card with the tags container so the test starts in the
+    // post-render state (the live JSX would have rendered it; the
+    // minimal-card helper omits it intentionally).
+    const seededTags1 = document.createElement('div');
+    seededTags1.className = 'column-card-tags';
+    seededTags1.innerHTML = '<span class="column-card-tag">only-tag</span>';
+    card.appendChild(seededTags1);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    ticketsStore.actions.optimisticUpdate(1, { tags: '[]' });
+
+    expect(card.querySelector('.column-card-tags')).toBeNull();
+
+    dispose();
+  });
+
+  it('rebuilds the chips in place when the tag set changes (container element identity preserved)', () => {
+    const t = makeTicket(1, { tags: JSON.stringify(['a', 'b']) });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    const seededTags2 = document.createElement('div');
+    seededTags2.className = 'column-card-tags';
+    seededTags2.innerHTML = '<span class="column-card-tag">a</span><span class="column-card-tag">b</span>';
+    card.appendChild(seededTags2);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    const originalContainer = card.querySelector<HTMLElement>('.column-card-tags')!;
+
+    ticketsStore.actions.optimisticUpdate(1, { tags: JSON.stringify(['c']) });
+
+    // Container element identity preserved across the rebuild.
+    expect(card.querySelector<HTMLElement>('.column-card-tags')).toBe(originalContainer);
+    const chips = originalContainer.querySelectorAll<HTMLElement>('.column-card-tag');
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent).toBe('c');
+
+    dispose();
+  });
+
+  it('inserts the container immediately after .column-card-title (matches JSX-literal order)', () => {
+    const t = makeTicket(1, { tags: '[]' });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    ticketsStore.actions.optimisticUpdate(1, { tags: JSON.stringify(['x']) });
+
+    const titleHost = card.querySelector<HTMLElement>('.column-card-title');
+    const tagsEl = card.querySelector<HTMLElement>('.column-card-tags');
+    expect(titleHost).not.toBeNull();
+    expect(tagsEl).not.toBeNull();
+    expect(titleHost!.nextElementSibling).toBe(tagsEl);
+
+    dispose();
+  });
+
+  it('server update with same tags string is a no-op (no DOM thrash)', () => {
+    const t = makeTicket(1, { tags: JSON.stringify(['stable']) });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    const seededTags3 = document.createElement('div');
+    seededTags3.className = 'column-card-tags';
+    seededTags3.innerHTML = '<span class="column-card-tag">stable</span>';
+    card.appendChild(seededTags3);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    const originalContainer = card.querySelector<HTMLElement>('.column-card-tags')!;
+    const originalChip = originalContainer.querySelector<HTMLElement>('.column-card-tag')!;
+
+    // Server pushes an update that doesn't change the tags — flip a
+    // different field. The dirty-check on the raw string should skip
+    // the tag-sync branch entirely; the chip element identity should
+    // be preserved.
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, {
+      title: 'New title',
+      tags: JSON.stringify(['stable']),
+    }));
+
+    expect(card.querySelector<HTMLElement>('.column-card-tag')).toBe(originalChip);
+
+    dispose();
+  });
+});

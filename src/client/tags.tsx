@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { state } from './state.js';
+import { ticketsStore } from './ticketsStore.js';
 
 /** Normalize a tag: collapse non-alphanumeric runs to single space, lowercase, trim. */
 export function normalizeTag(input: string): string {
@@ -60,9 +61,16 @@ export function renderDetailTags(tags: string[], readOnly: boolean) {
         if (!ticket) return;
         const currentTags = parseTags(ticket.tags);
         const updated = currentTags.filter(t => t !== tag);
-        await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { tags: JSON.stringify(updated) } });
-        ticket.tags = JSON.stringify(updated);
+        const updatedJson = JSON.stringify(updated);
+        // HS-8409 — fire the per-ticket signal so `setupColumnCardEffects`
+        // syncs the column card's chip row in place. Pre-fix this only
+        // mutated `ticket.tags` directly, which left the new ticketsStore
+        // signal stale — column-view chips stayed visible until the next
+        // full column rebuild (project switch, column-config change, etc.).
+        ticketsStore.actions.optimisticUpdate(state.activeTicketId, { tags: updatedJson });
+        ticket.tags = updatedJson;
         renderDetailTags(updated, false);
+        await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { tags: updatedJson } });
       });
     }
     container.appendChild(chip);

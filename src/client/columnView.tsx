@@ -559,6 +559,7 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
   const disposers: Array<() => void> = [];
   let firstRun = true;
   let lastAppliedTitle: string = ticket.title;
+  let lastAppliedTagsRaw: string = ticket.tags;
 
   const catBadge = card.querySelector<HTMLElement>('.ticket-category-badge');
   const priIndicator = card.querySelector<HTMLElement>('.ticket-priority-indicator');
@@ -570,6 +571,7 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
     if (firstRun) {
       firstRun = false;
       lastAppliedTitle = t.title;
+      lastAppliedTagsRaw = t.tags;
       return;
     }
 
@@ -611,6 +613,18 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
     } else if (titleHost !== null) {
       syncColumnCardUnreadDot(titleHost, t);
     }
+
+    // HS-8409 — tag chips. The JSX literal in `createColumnCard` only
+    // renders `.column-card-tags` when the tag list is non-empty, so a
+    // simple in-place rebuild on the cached element doesn't work — we
+    // have to add / remove the container as the empty / non-empty
+    // transition crosses zero. Tracks `tags` as a raw JSON string (the
+    // stored column type) for a cheap dirty-check; the parse + DOM work
+    // only runs when the string actually changes.
+    if (t.tags !== lastAppliedTagsRaw) {
+      syncColumnCardTags(card, t);
+      lastAppliedTagsRaw = t.tags;
+    }
   }));
 
   // .cut-pending — separate signal, separate effect.
@@ -639,6 +653,37 @@ function rebuildColumnCardTitleHost(host: HTMLElement, ticket: Ticket): void {
     host.appendChild(toElement(<span className={`ticket-unread-dot${dotType === 'feedback' ? ' feedback' : ''}`}></span>));
   }
   host.appendChild(document.createTextNode(ticket.title));
+}
+
+/** HS-8409 — keep the `.column-card-tags` chip container in sync with
+ *  the ticket's current tag list. Handles all three transitions: empty
+ *  → non-empty (add the container after `.column-card-title`), non-empty
+ *  → empty (remove the container), non-empty → different non-empty
+ *  (rebuild children in place — element identity preserved). */
+function syncColumnCardTags(card: HTMLElement, ticket: Ticket): void {
+  const newTags = parseTags(ticket.tags);
+  const existing = card.querySelector<HTMLElement>('.column-card-tags');
+  if (newTags.length === 0) {
+    if (existing !== null) existing.remove();
+    return;
+  }
+  if (existing !== null) {
+    existing.replaceChildren(...newTags.map(tag => toElement(<span className="column-card-tag">{tag}</span>)));
+    return;
+  }
+  const container = toElement(
+    <div className="column-card-tags">
+      {newTags.map(tag => <span className="column-card-tag">{tag}</span>)}
+    </div>
+  );
+  const titleHost = card.querySelector<HTMLElement>('.column-card-title');
+  if (titleHost !== null && titleHost.nextSibling !== null) {
+    card.insertBefore(container, titleHost.nextSibling);
+  } else if (titleHost !== null) {
+    card.appendChild(container);
+  } else {
+    card.appendChild(container);
+  }
 }
 
 /** Sync the `.ticket-unread-dot` element inside a column-card title

@@ -6,6 +6,7 @@ import { api } from './api.js';
 import { displayTag,hasTag, normalizeTag, parseTags, renderDetailTags } from './detail.js';
 import { byId, toElement } from './dom.js';
 import { allKnownTags, refreshAllKnownTags, state } from './state.js';
+import { ticketsStore } from './ticketsStore.js';
 
 export function bindDetailTagInput(): void {
   const tagInput = byId<HTMLInputElement>('detail-tag-input');
@@ -58,11 +59,17 @@ export function bindDetailTagInput(): void {
     const currentTags = parseTags(ticket.tags);
     if (hasTag(currentTags, normalized)) { tagInput.value = ''; return; }
     const updated = [...currentTags, normalized];
+    const updatedJson = JSON.stringify(updated);
     tagInput.value = '';
     closeAutocomplete();
-    await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { tags: JSON.stringify(updated) } });
-    ticket.tags = JSON.stringify(updated);
+    // HS-8409 — fire the per-ticket signal so `setupColumnCardEffects`
+    // syncs the column card's chip row in place. See the matching
+    // `optimisticUpdate` in `tags.tsx::renderDetailTags` (the chip-X
+    // removal path) for the same reasoning.
+    ticketsStore.actions.optimisticUpdate(state.activeTicketId, { tags: updatedJson });
+    ticket.tags = updatedJson;
     renderDetailTags(updated, false);
+    await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { tags: updatedJson } });
     if (!hasTag(allKnownTags, normalized)) allKnownTags.push(normalized);
   }
 
