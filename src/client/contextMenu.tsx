@@ -5,18 +5,53 @@ import { getTicketFeedbackState, showFeedbackDialog } from './feedbackDialog.js'
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH } from './icons.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
+import { buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS, syncedTicketMap, VERIFIED_SVG } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
 import { hasPendingFeedback } from './ticketRow.js';
+import { getTicketSignals } from './ticketsStore.js';
 import { toggleReadState, trackedBatch, trackedDelete, trackedPatch } from './undo/actions.js';
 
 const MEGAPHONE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>';
 
-export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
+/** HS-8401 — Lucide `book-open-text` glyph for the Read Latest Note
+ *  menu item. Same icon the §49 reader-overlay trigger uses on note
+ *  rows + the Details label, so users learn one affordance for the
+ *  reader entry-point. */
+const BOOK_OPEN_TEXT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 12h2"/><path d="M6 8h2"/></svg>';
+
+/** HS-8401 — find the most recent note entry whose `text` is
+ *  non-empty after trimming. Used by the Read Latest Note menu item
+ *  to skip placeholder notes that may have been created but never
+ *  filled in (the §49 reader-overlay renders "(empty)" for empty
+ *  markdown, so opening a blank note from the menu would surprise
+ *  the user). Returns `null` when no non-empty note exists. */
+function findLatestNonEmptyNote(notesJson: string): { text: string; created_at: string } | null {
+  const notes = parseNotesJson(notesJson);
+  for (let i = notes.length - 1; i >= 0; i--) {
+    if (notes[i].text.trim() !== '') return { text: notes[i].text, created_at: notes[i].created_at };
+  }
+  return null;
+}
+
+export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   e.preventDefault();
   closeContextMenu();
+
+  // HS-8400 — re-read the latest ticket from the store. The
+  // contextmenu listener in `ticketRow.tsx` / `columnView.tsx`
+  // captures the original ticket at row-creation time; per-ticket
+  // signal updates (e.g., a new `FEEDBACK NEEDED` note arriving via
+  // the channel mid-session) update the row's purple-dot + label via
+  // per-row effects but don't touch the listener closure. Without
+  // this lookup the menu's `hasPendingFeedback(ticket)` check ran
+  // against stale notes and dropped the Provide Feedback item even
+  // when the purple dot was showing. Fresh value from the store
+  // restores parity between the dot indicator and the menu item.
+  const sig = getTicketSignals(ticketArg.id);
+  const ticket = sig?.ticket.value ?? ticketArg;
 
   // Ensure the ticket is selected
   if (!state.selectedIds.has(ticket.id)) {
@@ -45,6 +80,25 @@ export function showTicketContextMenu(e: MouseEvent, ticket: Ticket) {
         showFeedbackDialog(ticket.id, ticket.ticket_number, feedback.prompt, undefined, feedback.noteId);
       }, { icon: MEGAPHONE_SVG });
     }
+  }
+
+  // HS-8401 — Read Latest Note. Single-selection only; the §49
+  // reader overlay targets one note at a time. Disabled when the
+  // ticket has no non-empty notes (placeholder notes with empty text
+  // count as "no notes" — opening one would surface the reader's
+  // "(empty)" placeholder which surprises the user). Opens the
+  // overlay anchored on the most recent non-empty note's text +
+  // created_at; the overlay's own dismiss / Esc / backdrop-click
+  // behavior is unchanged.
+  if (state.selectedIds.size === 1) {
+    const latestNote = findLatestNonEmptyNote(ticket.notes);
+    addActionItem(menu, 'Read Latest Note', () => {
+      if (latestNote === null) return;
+      openReaderOverlay({
+        title: buildNoteReaderTitle(latestNote.created_at),
+        markdown: latestNote.text,
+      });
+    }, { icon: BOOK_OPEN_TEXT_SVG, disabled: latestNote === null });
   }
 
   // Completed ticket actions: Verified and Not Working
@@ -286,18 +340,21 @@ function addSubmenuItem(menu: HTMLElement, label: string, items: SubItem[]) {
   menu.appendChild(item);
 }
 
-function addActionItem(menu: HTMLElement, label: string, action: () => void, options?: { danger?: boolean; icon?: string }) {
+function addActionItem(menu: HTMLElement, label: string, action: () => void, options?: { danger?: boolean; icon?: string; disabled?: boolean }) {
+  const disabled = options?.disabled === true;
   const item = toElement(
-    <div className={`context-menu-item${options?.danger === true ? ' danger' : ''}`}>
+    <div className={`context-menu-item${options?.danger === true ? ' danger' : ''}${disabled ? ' disabled' : ''}`}>
       {options?.icon !== undefined ? <span className="dropdown-icon">{raw(options.icon)}</span> : null}
       <span className="context-menu-label">{label}</span>
     </div>
   );
-  item.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    closeContextMenu();
-    action();
-  });
+  if (!disabled) {
+    item.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeContextMenu();
+      action();
+    });
+  }
   menu.appendChild(item);
 }
 
