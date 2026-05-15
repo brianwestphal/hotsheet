@@ -14,7 +14,6 @@ import {
   getProjectDefault,
   getSessionOverride,
   resolveAppearance,
-  type TerminalAppearance,
 } from './terminalAppearance.js';
 import { checkout,type CheckoutHandle } from './terminalCheckout.js';
 import {
@@ -308,63 +307,85 @@ const CENTER_ANIMATION_MS = 280;
 const SINGLE_CLICK_DELAY_MS = 220;
 
 /**
- * HS-8397 / HS-8402 — Cycle 1 starting shape for the lift-to-module-with-ctx
- * refactor. Each `mountTileGrid` factory call constructs a `TileGridContext`
- * that the lifted module-level functions read + write through. Future cycles
- * widen this shape:
+ * HS-8397 lift-to-module-with-ctx refactor — per-factory state container
+ * for the lifted module-level functions. Each `mountTileGrid` call builds
+ * one of these; every lifted function takes `ctx: TileGridContext` as
+ * its first arg.
  *
- * - **Cycle 1 (this commit, HS-8402):** the bell-clearing functions
- *   (`clearTileBell`, `postClearBell`, `isGridSurfaceUnoccluded`,
- *   `maybeAutoClearTileBell`, `clearBellsForVisibleTiles`) are lifted.
- *   They need read access to `tiles` + `visibleTileIds` and a way to
- *   ask "is the grid surface unoccluded right now". The `centered` and
- *   `dedicated` slots stay as `let` bindings inside the factory body
- *   for now (the center / dedicated subsystem isn't lifted yet); ctx
- *   exposes `isCentered()` + `isDedicated()` reader functions so the
- *   lifted bell code can answer the unoccluded check without touching
- *   the closure refs directly.
- * - **Cycle 2 (HS-8403):** lift the magnified-nav functions; ctx grows
- *   `centerCallbacks` for the cross-subsystem calls into center /
- *   dedicated paths that are still closure-resident.
- * - **Cycle 3 (HS-8404):** lift the center / dedicated subsystem; ctx
- *   replaces `isCentered` / `isDedicated` reader fns with proper
- *   boxed-current refs (`centered: { current: InternalTile | null }`
- *   etc.) so the lifted center / dedicated code can WRITE the slots.
- *   The Cycle 2 `centerCallbacks` bridge is removed.
- * - **Cycle 4 (HS-8405):** lift the remaining per-tile lifecycle +
- *   virtualization functions; ctx grows `virtState` / `virtTimers` /
- *   `virtRootToId` / `virtObserver` + the 13 derived CSS class strings.
- *   The cluster splits into per-concern sub-modules.
+ * Cycle history:
+ *   - HS-8402 (Cycle 1): bell-clearing functions lifted; ctx carries
+ *     `tiles` + `visibleTileIds` + reader fns for the still-closure
+ *     centered/dedicated slots.
+ *   - HS-8403 (Cycle 2): magnified-nav lifted; ctx grew the
+ *     `magnifiedNavListener` boxed slot.
+ *   - HS-8404 (Cycle 3): center / dedicated subsystem lifted; ctx grew
+ *     the `classes` block and a `centerCallbacks` bridge for the
+ *     still-closure per-tile lifecycle / sizing / rendering helpers.
+ *   - HS-8412 (Cycle 4a, this commit): per-tile lifecycle, sizing,
+ *     virtualization, rendering all lifted. The four mutable single-slot
+ *     refs (`centered`, `dedicated`, `centerBackdrop`,
+ *     `pendingSingleClickTimer`) become boxed `{ current }` slots; the
+ *     virtualization registries (`virtState`, `virtTimers`,
+ *     `virtRootToId`, `virtObserver`) move onto ctx; the `entriesSignal`
+ *     joins it; the `classes` block widens to cover every class string
+ *     the rendering / sizing functions need. The `centerCallbacks`
+ *     bridge is GONE — every former bridge entry collapses to either a
+ *     direct `.current` access or a direct module-level call.
  *
- * The `visibleTileIds` Set is a `const` reference shared between the
- * factory body and the lifted bell code — both read + write the same
- * Set instance, so they stay in sync without any additional plumbing.
+ * Cycle 4b (HS-8411) splits the cluster into per-concern sub-modules.
  */
 interface TileGridContext {
   opts: TileGridOptions;
+  cssPrefix: string;
   tiles: Map<string, InternalTile>;
+  /** HS-8046 — set of tileIds whose root is currently inside the
+   *  IntersectionObserver's viewport. Updated by `handleIntersectionEntries`
+   *  on every enter / exit transition. Used to gate the auto-clear path. */
   visibleTileIds: Set<string>;
-  isCentered: () => boolean;
-  isDedicated: () => boolean;
-  /** HS-8403 — Cycle 2 boxed-current slot for the magnified-nav
-   *  listener. Both `bindMagnifiedNavHandler` and `unbindMagnifiedNavHandler`
-   *  read + write `.current`; the boxing lets the lifted module-level
-   *  versions share the slot with the factory closure that constructed
-   *  the ctx without the closure needing to be aware of the indirection. */
+
+  /** Mutable single-slot refs — boxed for cross-module reads + writes.
+   *  Pre-Cycle-4 these were `let` bindings inside the factory closure
+   *  with get/set bridge fns; post-Cycle-4 they're direct `.current`
+   *  reads + writes. */
+  centered: { current: InternalTile | null };
+  dedicated: { current: DedicatedView | null };
+  centerBackdrop: { current: HTMLElement | null };
+  pendingSingleClickTimer: { current: number | null };
+
+  /** HS-8028 — boxed slot for the magnified-nav keyboard listener. The
+   *  lifted bind / unbind functions read + write `.current`. */
   magnifiedNavListener: { current: ((e: KeyboardEvent) => void) | null };
-  /** HS-8404 — Cycle 3 — CSS class strings the lifted center / dedicated
-   *  functions need for new DOM element construction (slot placeholder,
-   *  center backdrop, dedicated overlay layout, "Starting…" placeholder
-   *  during spawn-and-enlarge). Pre-fix the closures closed over the
-   *  factory locals; post-fix the module-level functions read them
-   *  through ctx so they don't need access to `opts.cssPrefix` for every
-   *  string concat. Cycle 4 will widen this with the remaining classes
-   *  the rendering / sizing functions need. */
+
+  /** HS-7968 virtualization registries. The composite `${secret}::${id}`
+   *  keying matches the `tiles` Map. */
+  virtState: Map<string, TileVirtualState>;
+  virtTimers: Map<string, ReturnType<typeof setTimeout>>;
+  virtRootToId: Map<Element, string>;
+  /** Boxed because the `IntersectionObserver` is wired AFTER ctx
+   *  construction so its callback can capture `ctx` for the
+   *  `handleIntersectionEntries(ctx, entries)` call. */
+  virtObserver: { current: IntersectionObserver | null };
+
+  /** HS-8313 — source-of-truth for the tile list. `rebuild()` writes a
+   *  fresh array here; `bindList` reconciles add / remove / reorder
+   *  against the previous value; the prop-update effect walks surviving
+   *  tiles to apply in-place updates. */
+  entriesSignal: Signal<readonly TileEntry[]>;
+
+  /** Derived CSS class strings the lifted functions use for new DOM
+   *  element construction. Pre-Cycle-4 the closures closed over the
+   *  factory's class-name locals; post-Cycle-4 they're passed via ctx
+   *  so the rendering / sizing / center / dedicated paths share a
+   *  single source of truth. */
   classes: {
     tileClass: string;
     previewClass: string;
+    labelClass: string;
+    xtermClass: string;
     placeholderClass: string;
+    placeholderColdClass: string;
     placeholderStartingClass: string;
+    placeholderStatusClass: string;
     slotClass: string;
     backdropClass: string;
     dedicatedClass: string;
@@ -373,1101 +394,107 @@ interface TileGridContext {
     dedicatedLabelClass: string;
     dedicatedBodyClass: string;
     dedicatedPaneClass: string;
-  };
-  /** HS-8403 / HS-8404 — bridge entries the lifted center / dedicated
-   *  functions use to read + write state still resident in the factory
-   *  closure. Cycle 3 grew this from the original 9 entries (just the
-   *  Cycle-2 magnified-nav reach-back) to the current shape: read+write
-   *  pairs for the four mutable single-slot refs (`centered` /
-   *  `dedicated` / `centerBackdrop` / `pendingSingleClickTimer`) plus a
-   *  set of temporary Cycle-4 bridge entries (`mountTileViaCheckout`,
-   *  `ensureTileMounted`, `applyTileScale`, `applySizing`,
-   *  `resolveTileAppearance`, `renderPreviewContent`, `markTileMounted`)
-   *  that the lifted Cycle-3 code still reaches back into.
-   *
-   *  Cycle 4 will (a) box the four mutable slots as `{ current: T }`
-   *  refs and collapse the get/set pairs, and (b) lift the
-   *  Cycle-4-bridge functions to module level so those entries drop
-   *  out entirely.
-   *
-   *  Note: `centerTile` / `enterDedicatedView` / `exitDedicatedView` /
-   *  `removeCenterBackdrop` / `finishUncenterTile` entries from Cycle 2
-   *  are GONE — Cycle 3 lifted those, so the `magnifyTile` lifted
-   *  function now calls the lifted versions directly (e.g.
-   *  `centerTile(ctx, ...)`) instead of via a callback.
-   *
-   *  `setDedicatedPriorCenteredTile` mutates a field on the held
-   *  DedicatedView object; `setDedicated` swaps the slot itself. */
-  centerCallbacks: {
-    getCentered: () => InternalTile | null;
-    setCentered: (next: InternalTile | null) => void;
-    getDedicated: () => DedicatedView | null;
-    setDedicated: (next: DedicatedView | null) => void;
-    setDedicatedPriorCenteredTile: (v: InternalTile | null) => void;
-    getCenterBackdrop: () => HTMLElement | null;
-    setCenterBackdrop: (next: HTMLElement | null) => void;
-    getPendingSingleClickTimer: () => number | null;
-    setPendingSingleClickTimer: (next: number | null) => void;
-    // Cycle-4 bridge entries — these reach into the per-tile lifecycle /
-    // sizing / rendering closures that Cycle 4 will lift. They collapse
-    // when Cycle 4 ships.
-    mountTileViaCheckout: (tile: InternalTile) => void;
-    ensureTileMounted: (tile: InternalTile) => void;
-    applyTileScale: (xtermRoot: HTMLElement, tileWidth: number, tileHeight: number) => void;
-    applySizing: () => void;
-    resolveTileAppearance: (tile: InternalTile) => TerminalAppearance;
-    renderPreviewContent: (state: TileSessionState, exitCode: number | null) => HTMLElement;
-    /** Bookkeeping helper that pairs with `mountTileViaCheckout` — updates
-     *  the virtualization state's `mounted` flag for the tile's composite
-     *  key. Pre-fix `renderTile` + `spawnAndEnlarge` both inlined this
-     *  three-liner; the bridge lets the lifted Cycle-3 spawn-and-enlarge
-     *  call it without needing access to the closure-resident `virtState`
-     *  Map. */
-    markTileMounted: (tile: InternalTile) => void;
+    cwdClass: string;
   };
 }
 
 export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
-  // HS-8285 follow-up — every internal Map below keys tiles by the
-  // composite `${secret}::${id}`, NOT just `id`. In flow mode (HS-7662 /
-  // §25.10.5) this single tile-grid handle holds tiles from EVERY
-  // registered project, and two different projects routinely have
-  // terminals with the same id (e.g. every project starts with a
-  // `default` terminal). Pre-fix the maps were keyed by `entry.id`
-  // alone, so the second project's `default` tile silently overwrote
-  // the first project's entry — the first tile was rendered into the
-  // DOM but completely absent from the registry, so its checkout was
-  // never released on rebuild and intersection / mouse / sizing
-  // lookups by id missed the orphan entirely. The user-reported
-  // "Terminal in use elsewhere" placeholder pinning onto a visible
-  // surface in flow mode was the orphan's stale handle still sitting
-  // on its checkout entry's stack, with the live xterm reparented
-  // through it.
-  const tiles = new Map<string, InternalTile>();
-  let centered: InternalTile | null = null;
-  let centerBackdrop: HTMLElement | null = null;
-  let dedicated: DedicatedView | null = null;
-  let pendingSingleClickTimer: number | null = null;
-
-  // HS-7968 / HS-8285 follow-up — virtualization state. Same composite
-  // `${secret}::${id}` keying as `tiles`.
-  const virtState = new Map<string, TileVirtualState>();
-  const virtTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const virtRootToId = new Map<Element, string>();
-  /** HS-8046 — set of tileIds whose root is currently inside the
-   *  IntersectionObserver's viewport. Updated by `handleIntersectionEntries`
-   *  on every enter / exit transition. Used to gate the auto-clear path.
-   *  HS-8402 — moved to the early-state block so the `TileGridContext`
-   *  literal below can reference it; the lifted bell functions read it
-   *  via `ctx.visibleTileIds`. The factory body still reads + writes
-   *  through the local `visibleTileIds` name (same Set instance, so
-   *  reads/writes stay in sync without extra plumbing). */
-  const visibleTileIds = new Set<string>();
-
-  /** HS-8285 follow-up — composite tile registry key. See the `tiles` Map
-   *  comment above for why `entry.id` alone is unsafe in flow mode. The
-   *  key shape `${secret}::${id}` matches the checkout module's entry-key
-   *  format so a tile's registry key is also debuggable as a checkout
-   *  lookup string. */
-  function tileKey(secret: string, id: string): string {
-    return `${secret}::${id}`;
-  }
-  function tileKeyFor(entry: { secret: string; id: string }): string {
-    return tileKey(entry.secret, entry.id);
-  }
-  const virtObserver = typeof IntersectionObserver !== 'undefined'
-    ? new IntersectionObserver(handleIntersectionEntries, {
-        root: null,
-        rootMargin: '200px',
-        threshold: 0,
-      })
-    : null;
-
+  // HS-8285 follow-up — every internal Map keys tiles by the composite
+  // `${secret}::${id}`, NOT just `id`. In flow mode (HS-7662 / §25.10.5)
+  // this single tile-grid handle holds tiles from EVERY registered
+  // project, and two different projects routinely have terminals with
+  // the same id (e.g. every project starts with a `default` terminal).
+  // Pre-fix the maps were keyed by `entry.id` alone, so the second
+  // project's `default` tile silently overwrote the first project's
+  // entry.
   const cssPrefix = opts.cssPrefix;
-  const tileClass = `${cssPrefix}-tile`;
-  const previewClass = `${cssPrefix}-tile-preview`;
-  const labelClass = `${cssPrefix}-tile-label`;
-  const xtermClass = `${cssPrefix}-tile-xterm`;
-  const placeholderClass = `${cssPrefix}-tile-placeholder`;
-  const placeholderColdClass = `${cssPrefix}-tile-placeholder-cold`;
-  const placeholderStartingClass = `${cssPrefix}-tile-placeholder-starting`;
-  const placeholderStatusClass = `${cssPrefix}-tile-placeholder-status`;
-  const slotClass = `${cssPrefix}-tile-slot`;
-  const backdropClass = `${cssPrefix}-center-backdrop`;
-  const dedicatedClass = `${cssPrefix}-dedicated`;
-  const dedicatedBarClass = `${cssPrefix}-dedicated-bar`;
-  const dedicatedBackClass = `${cssPrefix}-dedicated-back`;
-  const dedicatedLabelClass = `${cssPrefix}-dedicated-label`;
-  const dedicatedBodyClass = `${cssPrefix}-dedicated-body`;
-  const dedicatedPaneClass = `${cssPrefix}-dedicated-pane`;
+  const entriesSignal: Signal<readonly TileEntry[]> = signal([]);
 
-  // HS-8402 / HS-8403 / HS-8404 — TileGridContext for the lifted
-  // module-level functions. See the `TileGridContext` interface JSDoc
-  // for the cycle plan.
-  //
-  // `classes` carries the CSS class strings the lifted Cycle-3 center /
-  // dedicated code needs for new element construction. Pre-Cycle 3 the
-  // closures closed over the factory's `slotClass` / `backdropClass` /
-  // `dedicatedClass` etc. locals; post-Cycle 3 these are passed via ctx.
-  //
-  // `magnifiedNavListener` is a boxed-current slot so the lifted Cycle-2
-  // bind / unbind functions can swap the listener without needing the
-  // factory to plumb a setter.
-  //
-  // `centerCallbacks` now carries (1) get/set pairs for the four
-  // mutable single-slot refs (`centered` / `dedicated` /
-  // `centerBackdrop` / `pendingSingleClickTimer`) the lifted Cycle-3
-  // code reads + writes, and (2) Cycle-4 bridge entries that reach
-  // back into the per-tile lifecycle / sizing / rendering closures
-  // pending Cycle 4's lift. `function` declarations are hoisted so the
-  // forward references below resolve fine even though the actual
-  // function bodies appear later in the factory.
   const ctx: TileGridContext = {
     opts,
-    tiles,
-    visibleTileIds,
-    isCentered: () => centered !== null,
-    isDedicated: () => dedicated !== null,
+    cssPrefix,
+    tiles: new Map(),
+    visibleTileIds: new Set(),
+    centered: { current: null },
+    dedicated: { current: null },
+    centerBackdrop: { current: null },
+    pendingSingleClickTimer: { current: null },
     magnifiedNavListener: { current: null },
+    virtState: new Map(),
+    virtTimers: new Map(),
+    virtRootToId: new Map(),
+    virtObserver: { current: null },
+    entriesSignal,
     classes: {
-      tileClass,
-      previewClass,
-      placeholderClass,
-      placeholderStartingClass,
-      slotClass,
-      backdropClass,
-      dedicatedClass,
-      dedicatedBarClass,
-      dedicatedBackClass,
-      dedicatedLabelClass,
-      dedicatedBodyClass,
-      dedicatedPaneClass,
-    },
-    centerCallbacks: {
-      getCentered: () => centered,
-      setCentered: (next) => { centered = next; },
-      getDedicated: () => dedicated,
-      setDedicated: (next) => { dedicated = next; },
-      setDedicatedPriorCenteredTile: (v) => { if (dedicated !== null) dedicated.priorCenteredTile = v; },
-      getCenterBackdrop: () => centerBackdrop,
-      setCenterBackdrop: (next) => { centerBackdrop = next; },
-      getPendingSingleClickTimer: () => pendingSingleClickTimer,
-      setPendingSingleClickTimer: (next) => { pendingSingleClickTimer = next; },
-      mountTileViaCheckout: (tile) => { mountTileViaCheckout(tile); },
-      ensureTileMounted: (tile) => { ensureTileMounted(tile); },
-      applyTileScale: (xtermRoot, tileWidth, tileHeight) => { applyTileScale(xtermRoot, tileWidth, tileHeight); },
-      applySizing: () => { applySizing(); },
-      resolveTileAppearance: (tile) => resolveTileAppearance(tile),
-      renderPreviewContent: (state, exitCode) => toElement(renderPreviewContent(state, exitCode)),
-      markTileMounted: (tile) => {
-        const key = tileKeyFor(tile.entry);
-        const v = virtState.get(key);
-        if (v !== undefined) virtState.set(key, { ...v, mounted: true });
-      },
+      tileClass: `${cssPrefix}-tile`,
+      previewClass: `${cssPrefix}-tile-preview`,
+      labelClass: `${cssPrefix}-tile-label`,
+      xtermClass: `${cssPrefix}-tile-xterm`,
+      placeholderClass: `${cssPrefix}-tile-placeholder`,
+      placeholderColdClass: `${cssPrefix}-tile-placeholder-cold`,
+      placeholderStartingClass: `${cssPrefix}-tile-placeholder-starting`,
+      placeholderStatusClass: `${cssPrefix}-tile-placeholder-status`,
+      slotClass: `${cssPrefix}-tile-slot`,
+      backdropClass: `${cssPrefix}-center-backdrop`,
+      dedicatedClass: `${cssPrefix}-dedicated`,
+      dedicatedBarClass: `${cssPrefix}-dedicated-bar`,
+      dedicatedBackClass: `${cssPrefix}-dedicated-back`,
+      dedicatedLabelClass: `${cssPrefix}-dedicated-label`,
+      dedicatedBodyClass: `${cssPrefix}-dedicated-body`,
+      dedicatedPaneClass: `${cssPrefix}-dedicated-pane`,
+      cwdClass: `${cssPrefix}-tile-cwd`,
     },
   };
 
-  // --- DOM construction ---
+  // HS-7968 — wire the IntersectionObserver AFTER ctx construction so
+  // the callback can capture `ctx` for the lifted
+  // `handleIntersectionEntries(ctx, entries)` call. The boxed
+  // `ctx.virtObserver.current` stays null in test envs that lack
+  // `IntersectionObserver` (the eager-mount fallback in `renderTile`
+  // picks up the slack).
+  ctx.virtObserver.current = typeof IntersectionObserver !== 'undefined'
+    ? new IntersectionObserver(
+        (entries) => { handleIntersectionEntries(ctx, entries); },
+        { root: null, rootMargin: '200px', threshold: 0 },
+      )
+    : null;
 
-  function renderPreviewContent(state: TileSessionState, exitCode: number | null) {
-    if (state === 'alive') {
-      return <div className={placeholderClass}></div>;
-    }
-    const status = state === 'exited'
-      ? (exitCode === null ? 'Exited' : `Exited (code ${exitCode})`)
-      : 'Not yet started';
-    return (
-      <div className={`${placeholderClass} ${placeholderColdClass}`}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>
-        <span className={placeholderStatusClass}>{status}</span>
-      </div>
-    );
-  }
-
-  function renderTile(entry: TileEntry): HTMLElement {
-    const initialBell = entry.bellPending === true;
-    const cwdLabel = entry.cwdLabel ?? '';
-    const cwdRaw = entry.cwdRaw ?? '';
-    const cwdClass = `${cssPrefix}-tile-cwd`;
-    // HS-7662 — flow-mode project prefix: `{ProjectName} ›` BEFORE the
-    // terminal label on the first tile of each project's run. Absent in
-    // sectioned mode and on subsequent tiles in the same project run.
-    // HS-7824 dropped the colored badge dot that originally sat in front
-    // of the prefix.
-    const badge = entry.projectBadge;
-    const fullLabelTitle = badge?.name !== undefined && badge.name !== ''
-      ? `${badge.name} › ${entry.label}`
-      : entry.label;
-    const root = toElement(
-      <div
-        className={`${tileClass} ${tileClass}-${entry.state}${initialBell ? ' has-bell' : ''}`}
-        data-secret={entry.secret}
-        data-terminal-id={entry.id}
-      >
-        <div className={previewClass}>
-          {renderPreviewContent(entry.state, entry.exitCode)}
-        </div>
-        <div className={labelClass} title={fullLabelTitle}>
-          {badge?.name !== undefined && badge.name !== ''
-            // HS-7943 follow-up — only the project name itself should
-            // carry the link affordance (pointer cursor + accent underline
-            // on hover); the trailing ` › ` chevron stays as muted plain
-            // text. Pre-fix the whole `{name} › ` span was the click +
-            // hover target, so the chevron was underlined alongside the
-            // name. The click listener stays on the outer span so a click
-            // on the chevron still routes (matches the pre-fix click
-            // hitbox); SCSS scopes the hover affordance to the inner name
-            // span only.
-            ? <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}><span className={`${cssPrefix}-tile-project-name`}>{badge.name}</span>{' › '}</span>
-            : null}
-          <span className={`${cssPrefix}-tile-name`}>{entry.label}</span>
-          {/* HS-8286 — per-tile "Server slow" chip removed. Stall
-              detection feeds the global server-slow banner via the per-
-              entry watcher in `terminalCheckout.tsx::createEntry`. */}
-        </div>
-        {cwdLabel === ''
-          ? null
-          : <div className={cwdClass} title={cwdRaw}>{cwdLabel}</div>}
-      </div>
-    );
-
-    // HS-7943 — project-badge click switches to that project's tab. The
-    // listener is wired only when the callsite passes a handler (sectioned
-    // mode never renders the badge prefix, so its tiles get no listener
-    // either — checking the callback at attach time keeps the hover
-    // affordance consistent with the actual behavior). `stopPropagation`
-    // beats the tile-center click handler that sits on the tile root.
-    if (opts.onProjectBadgeClick !== undefined && badge?.name !== undefined && badge.name !== '') {
-      const projectEl = root.querySelector<HTMLElement>(`.${cssPrefix}-tile-project`);
-      const onProjectBadgeClick = opts.onProjectBadgeClick;
-      if (projectEl !== null) {
-        projectEl.addEventListener('click', (e) => {
-          e.stopPropagation();
-          onProjectBadgeClick(entry);
-        });
-      }
-    }
-    const preview = root.querySelector<HTMLElement>(`.${previewClass}`);
-    const labelEl = root.querySelector<HTMLElement>(`.${labelClass}`);
-    if (preview === null || labelEl === null) return root;
-
-    const tile: InternalTile = {
-      entry,
-      state: entry.state,
-      exitCode: entry.exitCode,
-      root,
-      preview,
-      labelEl,
-      checkout: null,
-      xtermRoot: null,
-      gridPreviewWidth: 0,
-      gridPreviewHeight: 0,
-      targetCols: TILE_INITIAL_COLS,
-      targetRows: TILE_INITIAL_ROWS,
-      cachedCellW: null,
-      cachedCellH: null,
-      slotPlaceholder: null,
-      screenObserver: null,
-      termHandlerDisposers: [],
-    };
-    const key = tileKeyFor(entry);
-    tiles.set(key, tile);
-
-    // HS-7968 — virtualized mount. Tile starts unmounted; the IntersectionObserver
-    // drives mount/dispose based on viewport visibility. Tiles in non-alive
-    // state never auto-mount (no PTY to attach to); spawn-and-enlarge still
-    // mounts eagerly via `spawnAndEnlarge` below. When the observer is
-    // unavailable (test envs without IO) we fall back to the eager-mount
-    // behavior so tests don't have to install a polyfill.
-    virtState.set(key, initialTileState());
-    if (virtObserver !== null) {
-      virtRootToId.set(root, key);
-      virtObserver.observe(root);
-    } else if (entry.state === 'alive') {
-      mountTileViaCheckout(tile);
-      const s = virtState.get(key);
-      if (s !== undefined) virtState.set(key, { ...s, mounted: true });
-    }
-
-    root.addEventListener('click', (e) => { onTileClick(ctx, tile, e); });
-    root.addEventListener('dblclick', (e) => { onTileDblClick(ctx, tile, e); });
-    if (opts.onContextMenu !== undefined) {
-      const handler = opts.onContextMenu;
-      root.addEventListener('contextmenu', (e) => { handler(tile.entry, e); });
-    }
-
-    return root;
-  }
-
-  // --- HS-7968 virtualization wiring ---
-
-  function handleIntersectionEntries(entries: IntersectionObserverEntry[]): void {
-    const now = performance.now();
-    for (const entry of entries) {
-      const tileId = virtRootToId.get(entry.target);
-      if (tileId === undefined) continue;
-      const tile = tiles.get(tileId);
-      if (tile === undefined) continue;
-      const current = virtState.get(tileId) ?? initialTileState();
-      if (entry.isIntersecting) {
-        // HS-8046 — track viewport membership so the auto-clear-bell
-        // logic knows which tiles the user is actually looking at, and
-        // immediately clear any bell that was already on this tile when
-        // it scrolled in.
-        visibleTileIds.add(tileId);
-        maybeAutoClearTileBell(ctx, tile);
-        // Only mount-if-not-mounted when the tile is alive — exited /
-        // not_spawned tiles don't have PTYs to attach to. The placeholder
-        // visual already conveys their state.
-        const mountIfNotMounted = tile.state === 'alive';
-        const step = onTileEnter(current, { tileId, mountIfNotMounted });
-        virtState.set(tileId, step.next);
-        for (const action of step.actions) {
-          if (action.type === 'cancelDispose') {
-            const t = virtTimers.get(tileId);
-            if (t !== undefined) { clearTimeout(t); virtTimers.delete(tileId); }
-          } else if (action.type === 'mount') {
-            mountTileViaCheckout(tile);
-          }
-        }
-      } else {
-        // HS-8046 — tile scrolled out of viewport; user can no longer see
-        // it, so subsequent bells must surface as the indicator.
-        visibleTileIds.delete(tileId);
-        const step = onTileExit(current, { tileId, now, debounceMs: VIRT_DEFAULT_DEBOUNCE_MS });
-        virtState.set(tileId, step.next);
-        for (const action of step.actions) {
-          if (action.type === 'scheduleDispose') {
-            const timer = setTimeout(() => {
-              virtTimers.delete(tileId);
-              const after = virtState.get(tileId) ?? initialTileState();
-              const fired = onDisposeTimerFired(after, { tileId });
-              virtState.set(tileId, fired.next);
-              for (const innerAction of fired.actions) {
-                if (innerAction.type === 'dispose') {
-                  softDisposeTile(tile);
-                }
-              }
-            }, action.afterMs);
-            virtTimers.set(tileId, timer);
-          }
-        }
-      }
-    }
-  }
-
-  /** HS-7968 + HS-8048 — release the tile's checkout handle without
-   *  removing the tile from the registry. The PTY + scrollback stay alive
-   *  server-side; on re-enter we re-mount via `mountTileViaCheckout` (a
-   *  fresh `checkout()` call creates a new entry if none exists, or
-   *  pushes onto an existing one if another consumer like the dedicated
-   *  view kept the entry alive). HS-8048 — pre-fix this disposed the
-   *  tile's own xterm + ws directly; post-fix `release()` either disposes
-   *  the entry on empty stack (matches pre-fix shape) or hands the live
-   *  xterm back to the next consumer (which would only happen if a
-   *  dedicated/quit-confirm view is up for the same terminal-id, in
-   *  which case the tile being virtualized off-screen leaving the
-   *  dedicated as the sole consumer is exactly the right outcome). */
-  function softDisposeTile(tile: InternalTile): void {
-    tile.screenObserver?.disconnect();
-    tile.screenObserver = null;
-    for (const d of tile.termHandlerDisposers) {
-      try { d.dispose(); } catch { /* already disposed */ }
-    }
-    tile.termHandlerDisposers = [];
-    if (tile.checkout !== null) {
-      try { tile.checkout.release(); } catch { /* already released */ }
-      tile.checkout = null;
-    }
-    tile.xtermRoot = null;
-    tile.cachedCellW = null;
-    tile.cachedCellH = null;
-    // HS-8059 — drop the inline theme-bg so the placeholder's own bg
-    // (`--bg-secondary` for cold/exited; the cold-card bg) paints instead
-    // of the previous live xterm's theme.
-    tile.preview.style.backgroundColor = '';
-    // Restore the placeholder visual so the off-screen-then-back-on tile
-    // doesn't briefly show an empty white box during the re-mount window.
-    tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
-  }
-
-  /** HS-7968 + HS-8048 — force-mount a tile and update the virtualization
-   *  state. Used by the click-before-IO defensive path in `centerTile` /
-   *  `enterDedicatedView`-via-tile-click so the user doesn't briefly see
-   *  a placeholder when the IntersectionObserver hadn't fired yet. */
-  function ensureTileMounted(tile: InternalTile): void {
-    if (tile.checkout !== null) return;
-    mountTileViaCheckout(tile);
-    const key = tileKeyFor(tile.entry);
-    const v = virtState.get(key);
-    if (v !== undefined) virtState.set(key, { ...v, mounted: true });
-    // If a dispose timer was pending (rare race), cancel it.
-    const t = virtTimers.get(key);
-    if (t !== undefined) { clearTimeout(t); virtTimers.delete(key); }
-  }
-
-  /** HS-7968 — fully forget the tile from the virtualization registry.
-   *  Called from `disposeTile` on full teardown. */
-  function forgetVirtualization(tile: InternalTile): void {
-    if (virtObserver !== null) virtObserver.unobserve(tile.root);
-    virtRootToId.delete(tile.root);
-    const key = tileKeyFor(tile.entry);
-    const timer = virtTimers.get(key);
-    if (timer !== undefined) { clearTimeout(timer); virtTimers.delete(key); }
-    virtState.delete(key);
-    // HS-8046 — drop the viewport-membership flag too so a re-rendered
-    // tile with the same id starts from a clean slate.
-    visibleTileIds.delete(key);
-  }
-
-  // --- xterm mount + WebSocket attach ---
-
-  function resolveTileAppearance(tile: InternalTile) {
-    const configOverride: { theme?: string; fontFamily?: string; fontSize?: number } = {};
-    if (tile.entry.theme !== undefined) configOverride.theme = tile.entry.theme;
-    if (tile.entry.fontFamily !== undefined) configOverride.fontFamily = tile.entry.fontFamily;
-    if (tile.entry.fontSize !== undefined) configOverride.fontSize = tile.entry.fontSize;
-    return resolveAppearance({
-      // HS-8283 — resolve against the TILE's project default, not the
-      // active project's. The Terminal Dashboard shows tiles for terminals
-      // across every open project; pre-fix every tile resolved against the
-      // single shared cache (which only ever held the active project's
-      // value), so non-active projects' tiles flashed to defaults whenever
-      // the active project switched.
-      projectDefault: getProjectDefault(tile.entry.secret),
-      configOverride,
-      sessionOverride: getSessionOverride(tile.entry.id),
-    });
-  }
-
-  /**
-   * HS-8048 — mount the tile via the `terminalCheckout` LIFO stack
-   * instead of constructing a per-tile `XTerm` + `WebSocket`. The
-   * checkout module owns the live xterm + WS for this terminal and
-   * shares them across consumers (this tile, plus any dedicated-view
-   * or quit-confirm-preview also looking at the same terminal). The
-   * `mountInto` argument is the per-tile `xtermRoot` div — when this
-   * tile is the LIFO top, the live xterm element is reparented into
-   * that div; when bumped down, a "Terminal in use elsewhere"
-   * placeholder is written into it instead.
-   *
-   * Replaces pre-fix `mountTileXterm` (per-tile `new XTerm({...})` +
-   * `term.open(xtermRoot)` + appearance + `term.onData(ws.send)` +
-   * `term.onBell`) AND `connectTileSocket` (per-tile `new WebSocket` +
-   * `'message'` listener with history-frame handling). Pre-fix
-   * cursorBlink=false + scrollback=1000 (HS-7990) — post-fix unified to
-   * checkout's shared defaults (`cursorBlink: true, scrollback: 10_000`)
-   * since per-consumer xterm option overrides on every stack swap is
-   * fragile (scrollback reduction at runtime can lose history). The
-   * 10× scrollback bump for tiles is fine — xterm allocates lazily and
-   * the HS-7968 virtualization disposes off-screen tiles via release()
-   * so only the on-screen subset pays for the buffer.
-   */
-  function mountTileViaCheckout(tile: InternalTile): void {
-    const xtermRoot = toElement(<div className={xtermClass}></div>);
-    tile.preview.replaceChildren(xtermRoot);
-
-    const appearance = resolveTileAppearance(tile);
-    const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
-    // HS-8059 — paint the tile preview's frame with the live theme bg so the
-    // sub-cell slop on the right + bottom of `.xterm-screen` (xterm sizes the
-    // canvas at exactly cols × cellW × rows × cellH, ≤ the preview's content
-    // area) reads as part of the terminal frame rather than a contrasting
-    // app-bg gutter. Mirrors the §22 drawer treatment (`terminal-body` HS-7960)
-    // and the §37 quit-confirm preview (HS-8058). Cleared in `softDisposeTile`
-    // + the `Starting…` placeholder branches so the placeholder's own
-    // `--bg-secondary` still shows through.
-    tile.preview.style.backgroundColor = themeData.background;
-
-    const handle = checkout({
-      projectSecret: tile.entry.secret,
-      terminalId: tile.entry.id,
-      cols: TILE_INITIAL_COLS,
-      rows: TILE_INITIAL_ROWS,
-      mountInto: xtermRoot,
-      // HS-8295 — paint the §54 bumped-down placeholder with this tile's
-      // theme bg so a dedicated view / preview borrowing the live xterm
-      // doesn't flash the tile to `--bg-secondary`.
-      placeholderBackground: themeData.background,
-      onBumpedDown() {
-        // HS-8048 — another consumer (dedicated view, quit-confirm
-        // preview, etc.) just took the live xterm. Disconnect the
-        // tile's screen ResizeObserver so its callback doesn't fire
-        // on the placeholder content (the placeholder div doesn't
-        // contain a `.xterm-screen` anyway, but the observer would
-        // still need to be re-attached on restore).
-        tile.screenObserver?.disconnect();
-        tile.screenObserver = null;
-      },
-      onRestoredToTop() {
-        // HS-8048 — live xterm reparented back into our `xtermRoot`.
-        // Re-apply CSS scale (the previous consumer's mount may have
-        // cleared transform/position styles). The screen ResizeObserver
-        // re-attaches here too so subsequent renders fire the visual
-        // scale recompute. HS-8051 follow-up #2 — convergence on tile-
-        // native cols × rows is driven by `term.onRender` →
-        // `handleTileRender` (which we wired once at mount time and is
-        // still alive across the bump-and-restore round-trip since the
-        // shared term itself survives). The next render after the
-        // restore — triggered by either xterm's dirty repaint or the
-        // first incoming output byte — will re-converge the term to
-        // tile-native via `handleTileRender`'s cell-metric path. We
-        // also kick a `checkout.resize(TILE_INITIAL_*)` here as the
-        // explicit signal so the convergence happens promptly even
-        // without external output.
-        tile.checkout?.resize(TILE_INITIAL_COLS, TILE_INITIAL_ROWS);
-        reapplyTileScaleFromPreview(tile);
-        attachScreenObserver(tile);
-      },
-    });
-
-    const term = handle.term;
-    // HS-8048 — apply tile-flavoured term tweaks. These persist on the
-    // shared term across consumers, but they're idempotent: a follow-up
-    // dedicated-view checkout will overwrite them with its own values.
-    term.options.theme = themeToXtermOptions(themeData);
-    term.options.linkHandler = {
-      activate: (_event, text) => { openExternalUrl(text); },
-    };
-    void applyAppearanceToTerm(term, appearance);
-
-    tile.checkout = handle;
-    tile.xtermRoot = xtermRoot;
-    tile.targetCols = term.cols;
-    tile.targetRows = term.rows;
-
-    // HS-8288 — defense in depth against the cascading-refresh /
-    // race-during-mount class of bug. If `checkout()` returned but
-    // `reparentXtermInto` hit its `term.element === undefined` early-return
-    // (recorded as the `reparent.no-element` event in the HS-8287/8288
-    // diagnostic instrumentation), the xtermRoot is empty: no live xterm,
-    // no placeholder, no path to recovery. The user sees a blank tile and
-    // there's no entry-side state we'd ever clean up. Detect the broken
-    // mount immediately and recover: release the checkout (which collapses
-    // the entry if we're the only consumer, freeing it for a fresh
-    // re-mount), restore the alive placeholder so the tile shows a
-    // coherent visual, and bail. The next `term.onRender` won't fire
-    // (we never wire it below), but the IntersectionObserver's next cycle
-    // / a manual click on the tile will go through `ensureTileMounted` →
-    // `mountTileViaCheckout` again with a fresh attempt.
-    if (xtermRoot.children.length === 0) {
-      try { handle.release(); } catch { /* swallow — already torn down */ }
-      tile.checkout = null;
-      tile.xtermRoot = null;
-      tile.preview.style.backgroundColor = '';
-      tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
-      return;
-    }
-
-    // HS-7097 → HS-8051 follow-up #2 — observe `.xterm-screen` so a
-    // change in natural xterm dims (font / theme swap; consumer
-    // hand-off) re-applies the CSS scale. Convergence on tile-native
-    // cols × rows is driven by `term.onRender` (wired below) — the
-    // observer is just a safety net for the visual scale.
-    attachScreenObserver(tile);
-
-    // HS-8048 — `term.onData` (keystroke-send) is wired by the checkout
-    // module's WS attachment so every consumer of the shared xterm gets
-    // it for free. Just register `term.onBell` for the per-tile
-    // indicator + auto-clear logic from HS-8046, and capture the
-    // disposer so a soft-dispose / release of this tile doesn't leave a
-    // stale handler attached to the shared term.
-    const bellDispose = term.onBell(() => {
-      // HS-8046 — skip the indicator entirely when the user is already
-      // viewing this tile in the unoccluded grid surface. Drop the
-      // server-side bellPending flag too so other surfaces (project-tab
-      // glyph, drawer tab) don't redundantly mark it.
-      if (isGridSurfaceUnoccluded(ctx) && visibleTileIds.has(tileKeyFor(tile.entry))) {
-        postClearBell(ctx, tile);
-        return;
-      }
-      tile.root.classList.add('has-bell');
-    });
-    tile.termHandlerDisposers.push(bellDispose);
-
-    // HS-8051 follow-up #2 — the convergence path that drives the tile to
-    // its 4:3 native cols × rows. `term.onRender` fires AFTER xterm
-    // commits a paint to DOM, so `term.cols/rows` and
-    // `screen.offsetWidth/Height` are guaranteed consistent at this
-    // moment — every other timing (rAF, ResizeObserver, history-frame
-    // handler) can race a pending paint and read stale dims. The
-    // sequence in steady state:
-    //   1. First render after mount → cellW/cellH measured + cached →
-    //      compute target dims → `checkout.resize(native)` if not
-    //      already there.
-    //   2. Second render (caused by step 1's resize) → `term.cols` is
-    //      now at native, target also at native → no-op return.
-    //   3. Subsequent renders (output, scrolling) → no-op return.
-    // Pre-fix the chained-rAF retry oscillated because it re-derived
-    // `cellW = screen.offsetWidth / term.cols` between paint frames
-    // where `term.cols` had updated but the screen hadn't. User's HS-8051
-    // second log: bad tile bounced from 1692×1200 (cols=80) to 841×1200
-    // (cols=40) — non-converging because cellW was being re-computed
-    // from a wrong ratio every iteration.
-    const renderDispose = term.onRender(() => {
-      handleTileRender(tile);
-    });
-    tile.termHandlerDisposers.push(renderDispose);
-
-    // HS-8286 — per-tile stall chip wiring deleted. Stall detection now
-    // feeds the global server-slow banner via the per-entry watcher in
-    // `terminalCheckout.tsx::createEntry` so a slow server surfaces ONCE
-    // (banner) instead of N times (one chip per visible tile).
-  }
-
-  /** HS-8051 follow-up #2 — runs on every `term.onRender` for a tile.
-   *  Caches cell metrics on the first render where they're measurable,
-   *  re-applies CSS scale, and (when top-of-stack) issues at most one
-   *  resize per render to converge on the cell-metric-derived 4:3
-   *  native cols × rows. */
-  function handleTileRender(tile: InternalTile): void {
-    if (tile.checkout === null || tile.xtermRoot === null) return;
-    const term = tile.checkout.term;
-    const screen = tile.xtermRoot.querySelector<HTMLElement>('.xterm-screen');
-    if (screen === null) return;
-    if (term.cols <= 0 || term.rows <= 0) return;
-    if (screen.offsetWidth <= 0 || screen.offsetHeight <= 0) return;
-
-    // Re-measure cellW/cellH on EVERY render — this is safe because
-    // onRender fires after the paint committed, so screen dims and
-    // `term.cols` are always consistent here. Cell metrics are stable
-    // unless the font / theme changes, in which case re-measurement
-    // automatically picks up the new values without any explicit
-    // invalidation path.
-    const cellW = screen.offsetWidth / term.cols;
-    const cellH = screen.offsetHeight / term.rows;
-    if (!Number.isFinite(cellW) || !Number.isFinite(cellH) || cellW <= 0 || cellH <= 0) return;
-    tile.cachedCellW = cellW;
-    tile.cachedCellH = cellH;
-
-    // Always re-apply the visual CSS scale so the natural xterm box fills
-    // the tile slot uniformly.
-    reapplyTileScaleFromPreview(tile);
-
-    // Resize the term + PTY toward the 4:3 native target only when WE
-    // own the live xterm. When another consumer (dedicated view, quit-
-    // confirm preview) is on top of the LIFO stack, the screen dims
-    // we measured here belong to THAT consumer's mount — we still
-    // refresh `cachedCellW/H` (cellW is font-driven, not consumer-driven)
-    // but skip the resize so we don't fight the active consumer.
-    if (!tile.checkout.isTopOfStack()) return;
-    const native = tileNativeGridFromCellMetrics(cellW, cellH);
-    if (term.cols === native.cols && term.rows === native.rows) {
-      // Already at native — sync the bookkeeping so a future
-      // `release()` → `restore()` round-trip's safe-stop also recognizes
-      // convergence.
-      tile.targetCols = native.cols;
-      tile.targetRows = native.rows;
-      return;
-    }
-    tile.targetCols = native.cols;
-    tile.targetRows = native.rows;
-    tile.checkout.resize(native.cols, native.rows);
-  }
-
-  /** HS-8048 → HS-8051 follow-up #2 — wire (or rewire) the tile's
-   *  `.xterm-screen` ResizeObserver. Now ONLY drives the CSS-scale re-fit
-   *  when natural xterm dims change (font/theme swap; consumer hand-off);
-   *  the cell-metric → native-cols/rows convergence path lives in
-   *  `handleTileRender` (driven by `term.onRender`), which is the only
-   *  signal that fires after a paint commits with consistent
-   *  `term.cols/rows` ↔ `screen.offsetWidth/Height` state.
-   *
-   *  Idempotent — safe to call from `onRestoredToTop` (the live xterm
-   *  came back with its own `.xterm-screen` element) without doubling
-   *  observer fires. `.xterm-screen` is created lazily by xterm on its
-   *  first render; if it isn't there yet we retry on the next rAF up to
-   *  a small budget. The first `term.onRender` will fire by then anyway
-   *  (and that's what drives convergence), so this is just a safety net
-   *  for the visual scale. */
-  function attachScreenObserver(tile: InternalTile, retriesRemaining: number = 30): void {
-    if (tile.xtermRoot === null) return;
-    if (tile.checkout === null) return;
-    tile.screenObserver?.disconnect();
-    const screen = tile.xtermRoot.querySelector<HTMLElement>('.xterm-screen');
-    if (screen === null) {
-      if (retriesRemaining > 0) {
-        requestAnimationFrame(() => { attachScreenObserver(tile, retriesRemaining - 1); });
-      }
-      return;
-    }
-    const observer = new ResizeObserver(() => {
-      reapplyTileScaleFromPreview(tile);
-    });
-    observer.observe(screen);
-    tile.screenObserver = observer;
-  }
-
-  // --- Tile sizing ---
-
-  function applySizing(): void {
-    const rootWidth = Math.max(0, opts.container.clientWidth - ROOT_PADDING * 2);
-    if (rootWidth <= 0) return;
-    const columnCount = opts.getColumnCount();
-    const tileWidth = tileWidthFromColumnCount(columnCount, rootWidth);
-    const tileHeight = Math.round(tileWidth / TILE_ASPECT);
-
-    for (const tile of opts.container.querySelectorAll<HTMLElement>(`.${tileClass}`)) {
-      if (!tile.classList.contains('centered')) {
-        tile.style.width = `${tileWidth}px`;
-      }
-      const preview = tile.querySelector<HTMLElement>(`.${previewClass}`);
-      if (preview !== null && !tile.classList.contains('centered')) {
-        preview.style.width = `${tileWidth}px`;
-        preview.style.height = `${tileHeight}px`;
-      }
-      const xtermRoot = tile.querySelector<HTMLElement>(`.${xtermClass}`);
-      if (xtermRoot !== null && !tile.classList.contains('centered')) {
-        applyTileScale(xtermRoot, tileWidth, tileHeight);
-      }
-      // HS-8285 follow-up — read both `data-secret` and `data-terminal-id`
-      // so the lookup hits the per-(secret, id) tile rather than the wrong
-      // project's tile when two projects share an id (e.g., 'default').
-      const tsec = tile.dataset.secret ?? '';
-      const tid = tile.dataset.terminalId ?? '';
-      const live = tiles.get(tileKey(tsec, tid));
-      if (live !== undefined) {
-        live.gridPreviewWidth = tileWidth;
-        live.gridPreviewHeight = tileHeight;
-      }
-    }
-  }
-
-  function reapplyTileScaleFromPreview(tile: InternalTile): void {
-    if (tile.xtermRoot === null) return;
-    const pw = tile.preview.offsetWidth;
-    const ph = tile.preview.offsetHeight;
-    if (pw <= 0 || ph <= 0) return;
-    applyTileScale(tile.xtermRoot, pw, ph);
-  }
-
-  function applyTileScale(xtermRoot: HTMLElement, tileWidth: number, tileHeight: number): void {
-    xtermRoot.style.transform = '';
-    xtermRoot.style.transformOrigin = 'top left';
-    xtermRoot.style.width = '';
-    xtermRoot.style.height = '';
-    xtermRoot.style.position = '';
-    xtermRoot.style.left = '';
-    xtermRoot.style.top = '';
-
-    const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
-    const naturalWidth = screen?.offsetWidth ?? 0;
-    const naturalHeight = screen?.offsetHeight ?? 0;
-    const scale = computeTileScale(tileWidth, tileHeight, naturalWidth, naturalHeight);
-    if (scale === null) {
-      // HS-8288 — when there's no live `.xterm-screen` in this xtermRoot
-      // (the consumer is currently bumped down — `mountInto` holds the
-      // `.terminal-checkout-placeholder` div instead of the live xterm)
-      // we still need to give the xtermRoot a definite box. Pre-fix the
-      // function bailed here AFTER clearing every inline size style, so
-      // xtermRoot rendered as 0×0 — and the placeholder's CSS
-      // `width: 100% / height: 100%` collapsed against the 0-height
-      // parent, leaving the user with a blank tile (or a totally
-      // missing tile in the layout, the "0x0 px" symptom). Snap to the
-      // tile slot dims so the placeholder fills the tile box just like
-      // the live xterm would. `position: relative` is required so the
-      // placeholder (which has its own `width: 100% / height: 100%`)
-      // resolves against this box. Tile dims of 0 (slot collapsed
-      // mid-relayout) still bail — let the next applySizing tick paint
-      // a real box.
-      if (tileWidth > 0 && tileHeight > 0) {
-        xtermRoot.style.position = 'relative';
-        xtermRoot.style.width = `${tileWidth}px`;
-        xtermRoot.style.height = `${tileHeight}px`;
-      }
-      return;
-    }
-
-    xtermRoot.style.position = 'absolute';
-    xtermRoot.style.left = `${scale.left}px`;
-    xtermRoot.style.top = `${scale.top}px`;
-    xtermRoot.style.width = `${scale.width}px`;
-    xtermRoot.style.height = `${scale.height}px`;
-    xtermRoot.style.transform = `scale(${scale.scale})`;
-  }
-
-  // HS-8402 (Cycle 1) — bell-clearing functions
-  // HS-8403 (Cycle 2) — magnified-nav functions
-  // HS-8404 (Cycle 3) — click / centered-overlay / dedicated-view functions
-  // ───────────────────────────────────────────────────────────────────────
-  // All twelve closures that lived here (Cycles 1+2+3) are now module-level
-  // functions taking `ctx: TileGridContext` as their first arg. See the
-  // bottom of the file for the lifted implementations. The factory passes
-  // `ctx` to every callsite; the four mutable single-slot refs (`centered`,
-  // `dedicated`, `centerBackdrop`, `pendingSingleClickTimer`) are reached
-  // through `ctx.centerCallbacks` get/set pairs. Cycle 4 will box those
-  // slots as `{ current: T }` refs and collapse the get/set pairs into
-  // direct `.current` reads / writes.
-  //
-  // The Cycle-2 `centerCallbacks.{centerTile, enterDedicatedView,
-  // exitDedicatedView, removeCenterBackdrop, finishUncenterTile}`
-  // transitional entries are GONE in Cycle 3 — the lifted `magnifyTile`
-  // now calls the lifted center / dedicated functions directly.
-
-  // --- Tile teardown ---
-
-  function disposeTile(tile: InternalTile): void {
-    forgetVirtualization(tile);
-    tile.screenObserver?.disconnect();
-    tile.screenObserver = null;
-    // HS-8048 — dispose the tile's term-level handlers (`term.onBell`)
-    // BEFORE releasing the checkout. The handlers live on the shared
-    // term — leaving them attached after release would leak state into
-    // a hypothetical re-checkout (the term would be disposed before
-    // re-creation since we're the only consumer in the dispose path,
-    // but the cleanup is symmetric and cheap).
-    for (const d of tile.termHandlerDisposers) {
-      try { d.dispose(); } catch { /* already disposed */ }
-    }
-    tile.termHandlerDisposers = [];
-    if (tile.checkout !== null) {
-      try { tile.checkout.release(); } catch { /* already released */ }
-      tile.checkout = null;
-    }
-    tile.xtermRoot = null;
-    tile.cachedCellW = null;
-    tile.cachedCellH = null;
-  }
-
-  // --- HS-8313 / §60 Phase 2 — bindList-driven rebuild ---
-
-  /** Source-of-truth for the tile list. `rebuild()` writes a fresh array
-   *  here; the `bindList` below reconciles add / remove / reorder against
-   *  the previous value, and the `propUpdateEffect` below it walks
-   *  surviving tiles to apply in-place property updates (state changes,
-   *  label / cwd / appearance changes). Pre-fix `rebuild()` did a full
-   *  teardown + re-render every poll tick — every tile, every checkout,
-   *  every screen observer reconstructed even when the entry list was
-   *  unchanged. The bindList migration preserves DOM identity for
-   *  surviving keys (the load-bearing benefit called out in HS-8313:
-   *  reorder no longer destroys + recreates every tile), and the
-   *  property-update effect preserves the property-change semantics the
-   *  old destroy-and-recreate path delivered. */
-  const entriesSignal: Signal<readonly TileEntry[]> = signal([]);
-
-  /** HS-8313 — `bindList` key is the registry `${secret}::${id}` so a
-   *  surviving terminal keeps its DOM + checkout + virtualization state
-   *  across rebuilds. State / exit-code / label / cwd / appearance
-   *  changes within a surviving key are NOT keyed — they're applied in
-   *  place by the `propUpdateEffect` below. The captured `tile`
-   *  reference (closed over at render time) is the dispose target so a
-   *  hypothetical successor under the same registry key wouldn't be
-   *  trashed (defensive — same-registry-key successors don't currently
-   *  arise because state changes update in place rather than remount). */
+  // HS-8313 — bindList-driven rebuild. The key is the registry
+  // `${secret}::${id}` so a surviving terminal keeps its DOM + checkout
+  // + virtualization state across rebuilds. The captured `tile`
+  // reference (closed over at render time) is the dispose target so a
+  // hypothetical successor under the same registry key wouldn't be
+  // trashed (defensive — same-registry-key successors don't currently
+  // arise because state changes update in place rather than remount).
   const bindListDispose = bindList(opts.container, entriesSignal, tileKeyFor, (entry) => {
-    const root = renderTile(entry);
-    const tile = tiles.get(tileKeyFor(entry))!;
+    const root = renderTile(ctx, entry);
+    const tile = ctx.tiles.get(tileKeyFor(entry))!;
     return {
       el: root,
       dispose: () => {
-        disposeTile(tile);
+        disposeTile(ctx, tile);
         const k = tileKeyFor(tile.entry);
-        if (tiles.get(k) === tile) tiles.delete(k);
+        if (ctx.tiles.get(k) === tile) ctx.tiles.delete(k);
       },
     };
   });
 
-  /** HS-8313 — in-place property updates for surviving tiles. Fires on
-   *  every signal write; walks the current list, looks up tiles whose
-   *  entry reference changed, and applies diffs (state transition,
-   *  label / cwd / appearance updates) WITHOUT destroying the tile.
-   *  New tiles (just rendered) have `tile.entry === entry`, so the
-   *  guard skips them. Dropped tiles are absent from `tiles`, so the
-   *  guard skips them too. */
+  // HS-8313 — in-place property updates for surviving tiles. Fires on
+  // every signal write; walks the current list, looks up tiles whose
+  // entry reference changed, and applies diffs (state transition,
+  // label / cwd / appearance updates) WITHOUT destroying the tile.
+  // New tiles (just rendered) have `tile.entry === entry`, so the
+  // guard skips them. Dropped tiles are absent from `ctx.tiles`, so
+  // the guard skips them too.
   const propUpdateDispose = effect(() => {
     const entries = entriesSignal.value;
     for (const entry of entries) {
-      const t = tiles.get(tileKeyFor(entry));
+      const t = ctx.tiles.get(tileKeyFor(entry));
       if (t !== undefined && t.entry !== entry) {
-        updateTileFromEntry(t, entry);
+        updateTileFromEntry(ctx, t, entry);
       }
     }
   });
-
-  /** HS-8313 — apply a fresh `TileEntry`'s property changes to a
-   *  surviving tile in place. Pre-fix every `rebuild()` destroyed and
-   *  re-created the tile, so all property changes propagated for free
-   *  via the renderTile path. The bindList migration preserves identity
-   *  for surviving keys, so we have to actively diff the entry fields
-   *  and update the matching DOM / checkout state. State transitions
-   *  (alive ↔ exited / not_spawned) are the most structural — they
-   *  release the checkout or re-mount it; the rest are cosmetic. */
-  function updateTileFromEntry(tile: InternalTile, newEntry: TileEntry): void {
-    const oldEntry = tile.entry;
-    tile.entry = newEntry;
-
-    const stateChanged = oldEntry.state !== newEntry.state;
-    const exitCodeChanged = oldEntry.exitCode !== newEntry.exitCode;
-
-    if (stateChanged) {
-      tile.root.classList.remove(`${tileClass}-${oldEntry.state}`);
-      tile.root.classList.add(`${tileClass}-${newEntry.state}`);
-      tile.state = newEntry.state;
-    }
-    if (exitCodeChanged) tile.exitCode = newEntry.exitCode;
-
-    if (stateChanged) {
-      if (oldEntry.state === 'alive' && newEntry.state !== 'alive') {
-        // alive → exited / not_spawned: release the live checkout, drop
-        // the preview to a placeholder. Reuses softDisposeTile, which
-        // leaves the tile in `tiles` + virtualization registries (same
-        // shape used by the off-screen virt-dispose path).
-        softDisposeTile(tile);
-      } else if (oldEntry.state !== 'alive' && newEntry.state === 'alive') {
-        // not-alive → alive: when IO is unavailable (test envs) the
-        // renderTile path eager-mounts; mirror that for in-place
-        // transitions so the new state is reflected immediately. With
-        // IO available, leave the mount to the next observer cycle —
-        // the tile may not be in the viewport, in which case eager-
-        // mounting would defeat virtualization. (Tile re-renders the
-        // alive placeholder via softDisposeTile-style cleanup of the
-        // stale exited / not_spawned placeholder.)
-        if (virtObserver === null) {
-          mountTileViaCheckout(tile);
-          const k = tileKeyFor(tile.entry);
-          const v = virtState.get(k);
-          if (v !== undefined) virtState.set(k, { ...v, mounted: true });
-        } else if (tile.checkout === null) {
-          // No live xterm — refresh placeholder so the visual matches
-          // the new alive state (will be replaced on next mount).
-          tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
-        }
-      } else if (tile.checkout === null) {
-        // exited ↔ not_spawned (both placeholder states): refresh the
-        // placeholder with the new label / icon.
-        tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
-      }
-    } else if (exitCodeChanged && newEntry.state !== 'alive' && tile.checkout === null) {
-      // Same not-alive state, exit code changed (e.g., a `not_spawned`
-      // becoming `exited` with the same outer state class — won't happen
-      // in practice but covered for completeness).
-      tile.preview.replaceChildren(toElement(renderPreviewContent(tile.state, tile.exitCode)));
-    }
-
-    // Label / projectBadge — re-render label area when either changed.
-    const oldBadgeName = oldEntry.projectBadge?.name ?? '';
-    const newBadgeName = newEntry.projectBadge?.name ?? '';
-    if (oldEntry.label !== newEntry.label || oldBadgeName !== newBadgeName) {
-      rerenderTileLabel(tile);
-    }
-
-    // CWD chip — add / remove / update the chip element.
-    const oldCwd = oldEntry.cwdLabel ?? '';
-    const newCwd = newEntry.cwdLabel ?? '';
-    const oldCwdRaw = oldEntry.cwdRaw ?? '';
-    const newCwdRaw = newEntry.cwdRaw ?? '';
-    if (oldCwd !== newCwd || oldCwdRaw !== newCwdRaw) {
-      updateTileCwdChip(tile, newCwd, newCwdRaw);
-    }
-
-    // Appearance — re-apply to the live xterm if mounted. (When not
-    // mounted, the next mountTileViaCheckout reads tile.entry directly
-    // via resolveTileAppearance so the new override values are picked
-    // up automatically without further work here.)
-    if (oldEntry.theme !== newEntry.theme
-        || oldEntry.fontFamily !== newEntry.fontFamily
-        || oldEntry.fontSize !== newEntry.fontSize) {
-      if (tile.checkout !== null) {
-        const appearance = resolveTileAppearance(tile);
-        const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
-        tile.checkout.term.options.theme = themeToXtermOptions(themeData);
-        void applyAppearanceToTerm(tile.checkout.term, appearance);
-        tile.preview.style.backgroundColor = themeData.background;
-      }
-    }
-  }
-
-  /** HS-8313 — rebuild the tile's labelEl content from `tile.entry`.
-   *  Mirrors the JSX in renderTile so flow-mode badge prefixes + the
-   *  inner clickable handler stay in sync across in-place label
-   *  updates. */
-  function rerenderTileLabel(tile: InternalTile): void {
-    const entry = tile.entry;
-    const badge = entry.projectBadge;
-    const fullLabelTitle = badge?.name !== undefined && badge.name !== ''
-      ? `${badge.name} › ${entry.label}`
-      : entry.label;
-    tile.labelEl.title = fullLabelTitle;
-
-    const newChildren: Element[] = [];
-    if (badge?.name !== undefined && badge.name !== '') {
-      const projectSpan = toElement(
-        <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}>
-          <span className={`${cssPrefix}-tile-project-name`}>{badge.name}</span>{' › '}
-        </span>,
-      );
-      if (opts.onProjectBadgeClick !== undefined) {
-        const onProjectBadgeClick = opts.onProjectBadgeClick;
-        projectSpan.addEventListener('click', (e) => {
-          e.stopPropagation();
-          onProjectBadgeClick(entry);
-        });
-      }
-      newChildren.push(projectSpan);
-    }
-    newChildren.push(toElement(<span className={`${cssPrefix}-tile-name`}>{entry.label}</span>));
-    tile.labelEl.replaceChildren(...newChildren);
-  }
-
-  /** HS-8313 — add / remove / update the optional CWD chip on a surviving
-   *  tile. The chip lives as a sibling of `tile.preview` + `tile.labelEl`
-   *  inside the tile root; renderTile only emits it when `cwdLabel` is
-   *  non-empty, so this helper has to handle the absent → present and
-   *  present → absent transitions in addition to text updates. */
-  function updateTileCwdChip(tile: InternalTile, cwdLabel: string, cwdRaw: string): void {
-    const cwdClass = `${cssPrefix}-tile-cwd`;
-    const existing = tile.root.querySelector<HTMLElement>(`.${cwdClass}`);
-    if (cwdLabel === '') {
-      existing?.remove();
-      return;
-    }
-    if (existing !== null) {
-      existing.textContent = cwdLabel;
-      existing.title = cwdRaw;
-    } else {
-      tile.root.appendChild(toElement(<div className={cwdClass} title={cwdRaw}>{cwdLabel}</div>));
-    }
-  }
-
-  /** HS-8313 — terminal cleanup that isn't tile-scoped. Tile teardown
-   *  happens through bindListDispose (which fires every per-row
-   *  dispose). Centered / dedicated state, the magnified-nav handler,
-   *  the single-click timer + virtualization registries / observer all
-   *  live above the per-tile layer and need explicit cleanup here. */
-  function teardownAmbientState(): void {
-    if (dedicated !== null) exitDedicatedView(ctx);
-    if (centered !== null) {
-      if (centered.slotPlaceholder !== null) centered.slotPlaceholder.remove();
-      centered.root.classList.remove('centered');
-      centered.root.style.transition = '';
-      centered.root.style.transform = '';
-      centered = null;
-    }
-    // HS-8028 — defensive: nothing's magnified after teardown so the
-    // nav handler must come off too. `exitDedicatedView` /
-    // `uncenterTile` may have already unbound; the helper is
-    // idempotent.
-    unbindMagnifiedNavHandler(ctx);
-    removeCenterBackdrop(ctx);
-    if (pendingSingleClickTimer !== null) {
-      window.clearTimeout(pendingSingleClickTimer);
-      pendingSingleClickTimer = null;
-    }
-    // HS-7968 — drop every pending dispose timer + disconnect the observer.
-    // Per-tile virt state (virtState entries, virtRootToId entries,
-    // visibleTileIds entries) was already cleared by each tile's
-    // forgetVirtualization() inside disposeTile via the bindList row
-    // disposers; the observer instance + any orphaned timers (none
-    // expected, but defensive) need an explicit disconnect.
-    for (const t of virtTimers.values()) clearTimeout(t);
-    virtTimers.clear();
-    virtState.clear();
-    virtRootToId.clear();
-    visibleTileIds.clear();
-    if (virtObserver !== null) virtObserver.disconnect();
-  }
-
-  // --- Public handle ---
 
   return {
     rebuild(entries) {
@@ -1478,14 +505,14 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       // after the signal write because both effects fire synchronously
       // on signal write per kerf's effect contract.
       entriesSignal.value = [...entries];
-      applySizing();
+      applySizing(ctx);
     },
-    applySizing,
+    applySizing: () => { applySizing(ctx); },
     recenterTile: () => { recenterTile(ctx); },
     uncenterTile: () => { uncenterTile(ctx); },
     exitDedicatedView: () => { exitDedicatedView(ctx); },
     syncBellState(pendingTileKeys) {
-      for (const tile of tiles.values()) {
+      for (const tile of ctx.tiles.values()) {
         const key = tileKeyFor(tile.entry);
         const want = pendingTileKeys.has(key);
         const has = tile.root.classList.contains('has-bell');
@@ -1493,7 +520,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
           // HS-8046 — server-pushed bellPending lands on a tile the user
           // is already looking at. Drop the server flag instead of
           // rendering the indicator.
-          if (isGridSurfaceUnoccluded(ctx) && visibleTileIds.has(key)) {
+          if (isGridSurfaceUnoccluded(ctx) && ctx.visibleTileIds.has(key)) {
             postClearBell(ctx, tile);
           } else {
             tile.root.classList.add('has-bell');
@@ -1504,11 +531,12 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       }
     },
     focusDedicatedTerm() {
-      if (dedicated === null) return;
-      try { dedicated.term.focus(); } catch { /* term disposed */ }
+      const view = ctx.dedicated.current;
+      if (view === null) return;
+      try { view.term.focus(); } catch { /* term disposed */ }
     },
-    isCentered() { return centered !== null; },
-    isDedicatedOpen() { return dedicated !== null; },
+    isCentered() { return ctx.centered.current !== null; },
+    isDedicatedOpen() { return ctx.dedicated.current !== null; },
     dispose() {
       // HS-8313 — bindListDispose disposes every live row's per-row
       // dispose (which runs disposeTile + tiles.delete), then
@@ -1517,19 +545,31 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
       // layer.
       bindListDispose();
       propUpdateDispose();
-      teardownAmbientState();
+      teardownAmbientState(ctx);
     },
   };
 }
 
 // =============================================================================
+// Pure helpers
+// =============================================================================
+
+/** HS-8285 follow-up — composite tile registry key. See the `ctx.tiles`
+ *  Map comment in the factory for why `entry.id` alone is unsafe in flow
+ *  mode. The key shape `${secret}::${id}` matches the checkout module's
+ *  entry-key format so a tile's registry key is also debuggable as a
+ *  checkout lookup string. */
+function tileKey(secret: string, id: string): string {
+  return `${secret}::${id}`;
+}
+
+function tileKeyFor(entry: { secret: string; id: string }): string {
+  return tileKey(entry.secret, entry.id);
+}
+
+// =============================================================================
 // HS-8402 Cycle 1 — lifted bell-clearing functions
 // =============================================================================
-// These functions used to live as nested closures inside `mountTileGrid`
-// (the factory's lexical scope). They've been hoisted to module level so
-// future cycles can split them into their own sub-module without rewriting
-// every callsite. Each takes `ctx: TileGridContext` as its first arg; the
-// factory passes its own `ctx` instance to every call.
 
 /** HS-8046 — true when nothing is occluding the grid layout, so a tile
  *  in the viewport really IS the surface the user is looking at. While
@@ -1537,7 +577,7 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
  *  visually behind / hidden, so bells for those tiles should NOT
  *  auto-clear (the user can't actually see them). */
 function isGridSurfaceUnoccluded(ctx: TileGridContext): boolean {
-  return !ctx.isCentered() && !ctx.isDedicated();
+  return ctx.centered.current === null && ctx.dedicated.current === null;
 }
 
 /** HS-8046 — POST `/clear-bell` for a tile WITHOUT first checking the
@@ -1563,11 +603,7 @@ function clearTileBell(ctx: TileGridContext, tile: InternalTile): void {
  *  this terminal — no reason to keep the bell indicator. */
 function maybeAutoClearTileBell(ctx: TileGridContext, tile: InternalTile): void {
   if (!isGridSurfaceUnoccluded(ctx)) return;
-  // Composite tile key — `${secret}::${id}` matches the factory's
-  // `tileKeyFor`. Computed inline so the lifted code doesn't need a
-  // back-reference into the factory scope.
-  const key = `${tile.entry.secret}::${tile.entry.id}`;
-  if (!ctx.visibleTileIds.has(key)) return;
+  if (!ctx.visibleTileIds.has(tileKeyFor(tile.entry))) return;
   clearTileBell(ctx, tile);
 }
 
@@ -1588,10 +624,7 @@ function clearBellsForVisibleTiles(ctx: TileGridContext): void {
 // =============================================================================
 // Shift+Cmd+Arrow (macOS) / Shift+Ctrl+Arrow (Linux/Windows) navigates
 // between tiles while one is centered or in dedicated view. Cross-subsystem
-// calls into `centerTile` / `enterDedicatedView` / `removeCenterBackdrop` /
-// `exitDedicatedView` go through `ctx.centerCallbacks` until Cycle 3 lifts
-// the center / dedicated subsystem itself, at which point this code calls
-// those lifted functions directly and the bridge is removed.
+// calls into the center / dedicated subsystem go direct (post-Cycle-3).
 
 function bindMagnifiedNavHandler(ctx: TileGridContext): void {
   if (ctx.magnifiedNavListener.current !== null) return;
@@ -1610,8 +643,8 @@ function bindMagnifiedNavHandler(ctx: TileGridContext): void {
       const isInXterm = target.closest('.xterm') !== null;
       if (isRegularInput && !isInXterm) return;
     }
-    const dedicated = ctx.centerCallbacks.getDedicated();
-    const centered = ctx.centerCallbacks.getCentered();
+    const dedicated = ctx.dedicated.current;
+    const centered = ctx.centered.current;
     const fromTile = dedicated !== null ? dedicated.tile : centered;
     if (fromTile === null) return;
     const next = findNextTileInDirection(ctx, fromTile, direction);
@@ -1661,20 +694,17 @@ function findNextTileInDirection(ctx: TileGridContext, from: InternalTile, direc
 }
 
 /** HS-8028 — switch the magnified view from the current tile to `next`,
- *  preserving the user's current magnification mode. HS-8404 — direct
- *  calls to the lifted center / dedicated functions instead of going
- *  through Cycle 2's `centerCallbacks` bridge (which is now collapsed). */
+ *  preserving the user's current magnification mode. */
 function magnifyTile(ctx: TileGridContext, next: InternalTile, mode: 'center' | 'dedicated'): void {
-  const cb = ctx.centerCallbacks;
   if (mode === 'center') {
     // Synchronously uncenter the prior tile without animation; the
     // new center will animate from its grid position to the centered
     // position right after, which feels like a single composite
     // transition.
-    const prev = cb.getCentered();
+    const prev = ctx.centered.current;
     if (prev !== null) {
       const placeholder = prev.slotPlaceholder;
-      cb.setCentered(null);
+      ctx.centered.current = null;
       removeCenterBackdrop(ctx);
       if (ctx.opts.onTileShrink !== undefined) ctx.opts.onTileShrink(prev.entry);
       finishUncenterTile(ctx, prev, placeholder);
@@ -1684,7 +714,7 @@ function magnifyTile(ctx: TileGridContext, next: InternalTile, mode: 'center' | 
     // Dedicated → swap. Force-clear `priorCenteredTile` so exit
     // doesn't animate through a stale centered state on the way out
     // (we're about to enter dedicated for `next` immediately).
-    cb.setDedicatedPriorCenteredTile(null);
+    if (ctx.dedicated.current !== null) ctx.dedicated.current.priorCenteredTile = null;
     exitDedicatedView(ctx);
     enterDedicatedView(ctx, next, null);
   }
@@ -1693,30 +723,18 @@ function magnifyTile(ctx: TileGridContext, next: InternalTile, mode: 'center' | 
 // =============================================================================
 // HS-8404 Cycle 3 — lifted center-zoom + dedicated-view functions
 // =============================================================================
-// All twelve closures (click dispatchers, spawn-and-enlarge, the FLIP-animation
-// center cluster, slot placeholder, center backdrop, dedicated-view enter/exit)
-// have been hoisted to module-level. Each takes `ctx: TileGridContext` as its
-// first arg. Cross-calls within the lifted set go direct (e.g.
-// `centerTile(ctx, ...)` calls `mountCenterBackdrop(ctx)` and
-// `bindMagnifiedNavHandler(ctx)` directly). State that lives in the factory
-// closure (`centered` / `dedicated` / `centerBackdrop` /
-// `pendingSingleClickTimer` slots, plus the Cycle-4 lifecycle / sizing /
-// rendering helpers `mountTileViaCheckout` / `ensureTileMounted` /
-// `applyTileScale` / `applySizing` / `resolveTileAppearance` /
-// `renderPreviewContent` / `markTileMounted`) is reached through
-// `ctx.centerCallbacks`. Cycle 4 will box the four mutable single-slot refs
-// and collapse the lifecycle / sizing / rendering bridge entries by lifting
-// those closures too.
+// Click / dblclick dispatchers, spawn-and-enlarge, the FLIP-animation
+// center cluster, the slot placeholder, the dim backdrop, and the
+// dedicated full-pane view.
 
 // --- Click → center / dblclick → dedicated ---
 
 function onTileClick(ctx: TileGridContext, tile: InternalTile, e: MouseEvent): void {
   e.stopPropagation();
-  const cb = ctx.centerCallbacks;
-  const prior = cb.getPendingSingleClickTimer();
+  const prior = ctx.pendingSingleClickTimer.current;
   if (prior !== null) window.clearTimeout(prior);
-  cb.setPendingSingleClickTimer(window.setTimeout(() => {
-    cb.setPendingSingleClickTimer(null);
+  ctx.pendingSingleClickTimer.current = window.setTimeout(() => {
+    ctx.pendingSingleClickTimer.current = null;
     if (tile.state !== 'alive') {
       void spawnAndEnlarge(ctx, tile, 'center');
       return;
@@ -1726,27 +744,26 @@ function onTileClick(ctx: TileGridContext, tile: InternalTile, e: MouseEvent): v
     // backdrop click handler in `centerTile`). Pre-fix the inside
     // click also uncentered, which made any click inside the
     // magnified terminal (text selection, focus, etc.) collapse it.
-    const centered = cb.getCentered();
+    const centered = ctx.centered.current;
     if (centered === tile) return;
     if (centered !== null) uncenterTile(ctx);
     centerTile(ctx, tile);
-  }, SINGLE_CLICK_DELAY_MS));
+  }, SINGLE_CLICK_DELAY_MS);
 }
 
 function onTileDblClick(ctx: TileGridContext, tile: InternalTile, e: MouseEvent): void {
   e.stopPropagation();
   e.preventDefault();
-  const cb = ctx.centerCallbacks;
-  const pending = cb.getPendingSingleClickTimer();
+  const pending = ctx.pendingSingleClickTimer.current;
   if (pending !== null) {
     window.clearTimeout(pending);
-    cb.setPendingSingleClickTimer(null);
+    ctx.pendingSingleClickTimer.current = null;
   }
   if (tile.state !== 'alive') {
     void spawnAndEnlarge(ctx, tile, 'dedicated');
     return;
   }
-  const centered = cb.getCentered();
+  const centered = ctx.centered.current;
   const prior = centered === tile ? null : centered;
   if (centered === tile) uncenterTile(ctx);
   try { enterDedicatedView(ctx, tile, prior); }
@@ -1754,7 +771,6 @@ function onTileDblClick(ctx: TileGridContext, tile: InternalTile, e: MouseEvent)
 }
 
 async function spawnAndEnlarge(ctx: TileGridContext, tile: InternalTile, target: 'center' | 'dedicated'): Promise<void> {
-  const cb = ctx.centerCallbacks;
   const wasExited = tile.state === 'exited';
   // HS-8059 — clear the inline theme-bg so the `Starting…` card uses its
   // own `--bg-secondary` instead of being painted with the previous mount's
@@ -1776,19 +792,27 @@ async function spawnAndEnlarge(ctx: TileGridContext, tile: InternalTile, target:
     tile.exitCode = null;
     tile.root.classList.remove(`${ctx.classes.tileClass}-not_spawned`, `${ctx.classes.tileClass}-exited`);
     tile.root.classList.add(`${ctx.classes.tileClass}-alive`);
-    cb.mountTileViaCheckout(tile);
+    mountTileViaCheckout(ctx, tile);
     // HS-7968 / HS-8285 follow-up — flag the tile as mounted in the
-    // virtualization state (composite key). The `markTileMounted` bridge
-    // does the `virtState.get/set` dance using the factory's Map; Cycle 4
-    // collapses the bridge when `virtState` is also lifted.
-    cb.markTileMounted(tile);
+    // virtualization state (composite key).
+    markTileMounted(ctx, tile);
   } catch (err) {
     console.error('terminalTileGrid: spawn failed', err);
-    tile.preview.replaceChildren(cb.renderPreviewContent(tile.state, tile.exitCode));
+    tile.preview.replaceChildren(renderPreviewContent(ctx, tile.state, tile.exitCode));
     return;
   }
   if (target === 'center') centerTile(ctx, tile);
   else enterDedicatedView(ctx, tile, null);
+}
+
+/** Mark a tile as mounted in the virtualization registry. Pre-Cycle-4
+ *  this was inlined at every callsite; lifted out so the bridge from
+ *  `spawnAndEnlarge` / `ensureTileMounted` / the eager-mount fallback
+ *  in `renderTile` is a one-liner. */
+function markTileMounted(ctx: TileGridContext, tile: InternalTile): void {
+  const key = tileKeyFor(tile.entry);
+  const v = ctx.virtState.get(key);
+  if (v !== undefined) ctx.virtState.set(key, { ...v, mounted: true });
 }
 
 // --- Centered overlay (FLIP animation, §25.7 / HS-6867) ---
@@ -1803,8 +827,7 @@ function getCenterReferenceRect(ctx: TileGridContext): DOMRect {
 }
 
 function centerTile(ctx: TileGridContext, tile: InternalTile): void {
-  const cb = ctx.centerCallbacks;
-  cb.setCentered(tile);
+  ctx.centered.current = tile;
   clearTileBell(ctx, tile);
   if (ctx.opts.onTileEnlarge !== undefined) ctx.opts.onTileEnlarge(tile.entry, 'center');
   // HS-8028 — install the magnified-nav keyboard listener (Shift+Cmd+
@@ -1816,7 +839,7 @@ function centerTile(ctx: TileGridContext, tile: InternalTile): void {
   // before the click landed), force-mount now so the centered tile shows
   // the live terminal instead of an empty placeholder.
   if (tile.state === 'alive' && tile.checkout === null) {
-    cb.ensureTileMounted(tile);
+    ensureTileMounted(ctx, tile);
   }
 
   const origRect = tile.root.getBoundingClientRect();
@@ -1838,7 +861,7 @@ function centerTile(ctx: TileGridContext, tile: InternalTile): void {
   tile.root.style.width = `${previewWidth}px`;
   tile.preview.style.width = `${previewWidth}px`;
   tile.preview.style.height = `${previewHeight}px`;
-  if (tile.xtermRoot !== null) cb.applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
+  if (tile.xtermRoot !== null) applyTileScale(ctx, tile.xtermRoot, previewWidth, previewHeight);
 
   mountCenterBackdrop(ctx);
 
@@ -1860,8 +883,7 @@ function centerTile(ctx: TileGridContext, tile: InternalTile): void {
 }
 
 function recenterTile(ctx: TileGridContext): void {
-  const cb = ctx.centerCallbacks;
-  const centered = cb.getCentered();
+  const centered = ctx.centered.current;
   if (centered === null || !centered.root.classList.contains('centered')) return;
   const refRect = getCenterReferenceRect(ctx);
   const availWidth = refRect.width * ctx.opts.centerSizeFrac;
@@ -1879,18 +901,17 @@ function recenterTile(ctx: TileGridContext): void {
   tile.root.style.width = `${previewWidth}px`;
   tile.preview.style.width = `${previewWidth}px`;
   tile.preview.style.height = `${previewHeight}px`;
-  if (tile.xtermRoot !== null) cb.applyTileScale(tile.xtermRoot, previewWidth, previewHeight);
+  if (tile.xtermRoot !== null) applyTileScale(ctx, tile.xtermRoot, previewWidth, previewHeight);
   void tile.root.offsetWidth;
   tile.root.style.transition = prev;
 }
 
 function uncenterTile(ctx: TileGridContext): void {
-  const cb = ctx.centerCallbacks;
-  const centered = cb.getCentered();
+  const centered = ctx.centered.current;
   if (centered === null) return;
   const tile = centered;
   const placeholder = tile.slotPlaceholder;
-  cb.setCentered(null);
+  ctx.centered.current = null;
   removeCenterBackdrop(ctx);
   // HS-8028 — uncentering returns the user to the bare grid; the
   // magnified-nav handler is no longer relevant (no magnified target
@@ -1898,7 +919,7 @@ function uncenterTile(ctx: TileGridContext): void {
   // either — `enterDedicatedView` may have called `uncenterTile`
   // internally on an open centered tile, in which case the nav
   // handler must stay armed for the dedicated path.
-  if (cb.getDedicated() === null) unbindMagnifiedNavHandler(ctx);
+  if (ctx.dedicated.current === null) unbindMagnifiedNavHandler(ctx);
   if (ctx.opts.onTileShrink !== undefined) ctx.opts.onTileShrink(tile.entry);
 
   if (placeholder === null) { finishUncenterTile(ctx, tile, null); return; }
@@ -1929,7 +950,6 @@ function uncenterTile(ctx: TileGridContext): void {
 }
 
 function finishUncenterTile(ctx: TileGridContext, tile: InternalTile, placeholder: HTMLElement | null): void {
-  const cb = ctx.centerCallbacks;
   tile.root.classList.remove('centered');
   tile.root.style.transition = '';
   tile.root.style.transform = '';
@@ -1940,7 +960,7 @@ function finishUncenterTile(ctx: TileGridContext, tile: InternalTile, placeholde
   tile.preview.style.width = `${tile.gridPreviewWidth}px`;
   tile.preview.style.height = `${tile.gridPreviewHeight}px`;
   if (tile.xtermRoot !== null && tile.gridPreviewWidth > 0 && tile.gridPreviewHeight > 0) {
-    cb.applyTileScale(tile.xtermRoot, tile.gridPreviewWidth, tile.gridPreviewHeight);
+    applyTileScale(ctx, tile.xtermRoot, tile.gridPreviewWidth, tile.gridPreviewHeight);
   }
   if (placeholder !== null && placeholder.parentElement !== null) {
     placeholder.parentElement.insertBefore(tile.root, placeholder);
@@ -1960,8 +980,7 @@ function createSlotPlaceholder(ctx: TileGridContext, width: number, height: numb
 }
 
 function mountCenterBackdrop(ctx: TileGridContext): void {
-  const cb = ctx.centerCallbacks;
-  if (cb.getCenterBackdrop() !== null) return;
+  if (ctx.centerBackdrop.current !== null) return;
   const backdrop = toElement(<div className={ctx.classes.backdropClass}></div>);
   backdrop.addEventListener('click', () => { uncenterTile(ctx); });
   if (ctx.opts.centerScope === 'viewport') {
@@ -1970,22 +989,20 @@ function mountCenterBackdrop(ctx: TileGridContext): void {
     const target = ctx.opts.centerReferenceEl ?? ctx.opts.container;
     target.appendChild(backdrop);
   }
-  cb.setCenterBackdrop(backdrop);
+  ctx.centerBackdrop.current = backdrop;
 }
 
 function removeCenterBackdrop(ctx: TileGridContext): void {
-  const cb = ctx.centerCallbacks;
-  const backdrop = cb.getCenterBackdrop();
+  const backdrop = ctx.centerBackdrop.current;
   if (backdrop === null) return;
   backdrop.remove();
-  cb.setCenterBackdrop(null);
+  ctx.centerBackdrop.current = null;
 }
 
 // --- Dedicated full-pane view (§25.8 / §36.5 / HS-7063 / HS-7098) ---
 
 function enterDedicatedView(ctx: TileGridContext, tile: InternalTile, priorCenteredTile: InternalTile | null): void {
-  const cb = ctx.centerCallbacks;
-  if (cb.getDedicated() !== null) exitDedicatedView(ctx);
+  if (ctx.dedicated.current !== null) exitDedicatedView(ctx);
   clearTileBell(ctx, tile);
   if (ctx.opts.onTileEnlarge !== undefined) ctx.opts.onTileEnlarge(tile.entry, 'dedicated');
   // HS-8028 — magnified-nav listener (Shift+Cmd+Arrow on macOS /
@@ -2029,7 +1046,7 @@ function enterDedicatedView(ctx: TileGridContext, tile: InternalTile, priorCente
   // below to apply the per-theme background color.
   backBtn.addEventListener('click', () => { exitDedicatedView(ctx); });
 
-  const appearance = cb.resolveTileAppearance(tile);
+  const appearance = resolveTileAppearance(ctx, tile);
   const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
   // HS-7960 — paint the dedicated-body padded gutter with the active
   // theme's bg so the area around the xterm canvas reads as part of the
@@ -2120,16 +1137,15 @@ function enterDedicatedView(ctx: TileGridContext, tile: InternalTile, priorCente
     if (typeof result === 'function') barDispose = result;
   }
 
-  cb.setDedicated({ tile, overlay, checkout: handle, term, fit, bodyResizeObserver, priorCenteredTile, barDispose });
+  ctx.dedicated.current = { tile, overlay, checkout: handle, term, fit, bodyResizeObserver, priorCenteredTile, barDispose };
   queueMicrotask(() => { term.focus(); });
 }
 
 function exitDedicatedView(ctx: TileGridContext): void {
-  const cb = ctx.centerCallbacks;
-  const dedicated = cb.getDedicated();
+  const dedicated = ctx.dedicated.current;
   if (dedicated === null) return;
   const view = dedicated;
-  cb.setDedicated(null);
+  ctx.dedicated.current = null;
   // HS-8028 — exit dedicated; if the user is returning to centered
   // (priorCenteredTile non-null) keep the nav handler armed since
   // `centerTile` would re-bind anyway. Otherwise unbind — the bare
@@ -2160,7 +1176,7 @@ function exitDedicatedView(ctx: TileGridContext): void {
     view.tile.checkout.resize(view.tile.targetCols, view.tile.targetRows);
   }
 
-  cb.applySizing();
+  applySizing(ctx);
   if (view.priorCenteredTile !== null) {
     centerTile(ctx, view.priorCenteredTile);
   } else {
@@ -2169,4 +1185,850 @@ function exitDedicatedView(ctx: TileGridContext): void {
     // bells that piled up while the dedicated view was up.
     clearBellsForVisibleTiles(ctx);
   }
+}
+
+// =============================================================================
+// HS-8412 Cycle 4a — lifted per-tile lifecycle, rendering, sizing
+// =============================================================================
+// Everything from here down used to live as nested closures inside
+// `mountTileGrid`. They've been hoisted to module level so HS-8411
+// (Cycle 4b) can split the cluster into per-concern sub-modules without
+// rewriting every callsite. Each takes `ctx: TileGridContext` as its
+// first arg.
+
+// --- Appearance ---
+
+function resolveTileAppearance(_ctx: TileGridContext, tile: InternalTile) {
+  const configOverride: { theme?: string; fontFamily?: string; fontSize?: number } = {};
+  if (tile.entry.theme !== undefined) configOverride.theme = tile.entry.theme;
+  if (tile.entry.fontFamily !== undefined) configOverride.fontFamily = tile.entry.fontFamily;
+  if (tile.entry.fontSize !== undefined) configOverride.fontSize = tile.entry.fontSize;
+  return resolveAppearance({
+    // HS-8283 — resolve against the TILE's project default, not the
+    // active project's. The Terminal Dashboard shows tiles for terminals
+    // across every open project; pre-fix every tile resolved against the
+    // single shared cache (which only ever held the active project's
+    // value), so non-active projects' tiles flashed to defaults whenever
+    // the active project switched.
+    projectDefault: getProjectDefault(tile.entry.secret),
+    configOverride,
+    sessionOverride: getSessionOverride(tile.entry.id),
+  });
+}
+
+// --- DOM construction ---
+
+function renderPreviewContent(ctx: TileGridContext, state: TileSessionState, exitCode: number | null): HTMLElement {
+  const c = ctx.classes;
+  if (state === 'alive') {
+    return toElement(<div className={c.placeholderClass}></div>);
+  }
+  const status = state === 'exited'
+    ? (exitCode === null ? 'Exited' : `Exited (code ${exitCode})`)
+    : 'Not yet started';
+  return toElement(
+    <div className={`${c.placeholderClass} ${c.placeholderColdClass}`}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+      <span className={c.placeholderStatusClass}>{status}</span>
+    </div>
+  );
+}
+
+function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement {
+  const c = ctx.classes;
+  const cssPrefix = ctx.cssPrefix;
+  const opts = ctx.opts;
+  const initialBell = entry.bellPending === true;
+  const cwdLabel = entry.cwdLabel ?? '';
+  const cwdRaw = entry.cwdRaw ?? '';
+  // HS-7662 — flow-mode project prefix: `{ProjectName} ›` BEFORE the
+  // terminal label on the first tile of each project's run. Absent in
+  // sectioned mode and on subsequent tiles in the same project run.
+  // HS-7824 dropped the colored badge dot that originally sat in front
+  // of the prefix.
+  const badge = entry.projectBadge;
+  const fullLabelTitle = badge?.name !== undefined && badge.name !== ''
+    ? `${badge.name} › ${entry.label}`
+    : entry.label;
+  const root = toElement(
+    <div
+      className={`${c.tileClass} ${c.tileClass}-${entry.state}${initialBell ? ' has-bell' : ''}`}
+      data-secret={entry.secret}
+      data-terminal-id={entry.id}
+    >
+      <div className={c.previewClass}>
+      </div>
+      <div className={c.labelClass} title={fullLabelTitle}>
+        {badge?.name !== undefined && badge.name !== ''
+          // HS-7943 follow-up — only the project name itself should
+          // carry the link affordance (pointer cursor + accent underline
+          // on hover); the trailing ` › ` chevron stays as muted plain
+          // text. Pre-fix the whole `{name} › ` span was the click +
+          // hover target, so the chevron was underlined alongside the
+          // name. The click listener stays on the outer span so a click
+          // on the chevron still routes (matches the pre-fix click
+          // hitbox); SCSS scopes the hover affordance to the inner name
+          // span only.
+          ? <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}><span className={`${cssPrefix}-tile-project-name`}>{badge.name}</span>{' › '}</span>
+          : null}
+        <span className={`${cssPrefix}-tile-name`}>{entry.label}</span>
+        {/* HS-8286 — per-tile "Server slow" chip removed. Stall
+            detection feeds the global server-slow banner via the per-
+            entry watcher in `terminalCheckout.tsx::createEntry`. */}
+      </div>
+      {cwdLabel === ''
+        ? null
+        : <div className={c.cwdClass} title={cwdRaw}>{cwdLabel}</div>}
+    </div>
+  );
+
+  // HS-7943 — project-badge click switches to that project's tab. The
+  // listener is wired only when the callsite passes a handler (sectioned
+  // mode never renders the badge prefix, so its tiles get no listener
+  // either — checking the callback at attach time keeps the hover
+  // affordance consistent with the actual behavior). `stopPropagation`
+  // beats the tile-center click handler that sits on the tile root.
+  if (opts.onProjectBadgeClick !== undefined && badge?.name !== undefined && badge.name !== '') {
+    const projectEl = root.querySelector<HTMLElement>(`.${cssPrefix}-tile-project`);
+    const onProjectBadgeClick = opts.onProjectBadgeClick;
+    if (projectEl !== null) {
+      projectEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onProjectBadgeClick(entry);
+      });
+    }
+  }
+  const preview = root.querySelector<HTMLElement>(`.${c.previewClass}`);
+  const labelEl = root.querySelector<HTMLElement>(`.${c.labelClass}`);
+  if (preview === null || labelEl === null) return root;
+  preview.appendChild(renderPreviewContent(ctx, entry.state, entry.exitCode));
+
+  const tile: InternalTile = {
+    entry,
+    state: entry.state,
+    exitCode: entry.exitCode,
+    root,
+    preview,
+    labelEl,
+    checkout: null,
+    xtermRoot: null,
+    gridPreviewWidth: 0,
+    gridPreviewHeight: 0,
+    targetCols: TILE_INITIAL_COLS,
+    targetRows: TILE_INITIAL_ROWS,
+    cachedCellW: null,
+    cachedCellH: null,
+    slotPlaceholder: null,
+    screenObserver: null,
+    termHandlerDisposers: [],
+  };
+  const key = tileKeyFor(entry);
+  ctx.tiles.set(key, tile);
+
+  // HS-7968 — virtualized mount. Tile starts unmounted; the IntersectionObserver
+  // drives mount/dispose based on viewport visibility. Tiles in non-alive
+  // state never auto-mount (no PTY to attach to); spawn-and-enlarge still
+  // mounts eagerly via `spawnAndEnlarge`. When the observer is unavailable
+  // (test envs without IO) we fall back to the eager-mount behavior so tests
+  // don't have to install a polyfill.
+  ctx.virtState.set(key, initialTileState());
+  const observer = ctx.virtObserver.current;
+  if (observer !== null) {
+    ctx.virtRootToId.set(root, key);
+    observer.observe(root);
+  } else if (entry.state === 'alive') {
+    mountTileViaCheckout(ctx, tile);
+    markTileMounted(ctx, tile);
+  }
+
+  root.addEventListener('click', (e) => { onTileClick(ctx, tile, e); });
+  root.addEventListener('dblclick', (e) => { onTileDblClick(ctx, tile, e); });
+  if (opts.onContextMenu !== undefined) {
+    const handler = opts.onContextMenu;
+    root.addEventListener('contextmenu', (e) => { handler(tile.entry, e); });
+  }
+
+  return root;
+}
+
+// --- HS-7968 virtualization wiring ---
+
+function handleIntersectionEntries(ctx: TileGridContext, entries: IntersectionObserverEntry[]): void {
+  const now = performance.now();
+  for (const entry of entries) {
+    const tileId = ctx.virtRootToId.get(entry.target);
+    if (tileId === undefined) continue;
+    const tile = ctx.tiles.get(tileId);
+    if (tile === undefined) continue;
+    const current = ctx.virtState.get(tileId) ?? initialTileState();
+    if (entry.isIntersecting) {
+      // HS-8046 — track viewport membership so the auto-clear-bell
+      // logic knows which tiles the user is actually looking at, and
+      // immediately clear any bell that was already on this tile when
+      // it scrolled in.
+      ctx.visibleTileIds.add(tileId);
+      maybeAutoClearTileBell(ctx, tile);
+      // Only mount-if-not-mounted when the tile is alive — exited /
+      // not_spawned tiles don't have PTYs to attach to. The placeholder
+      // visual already conveys their state.
+      const mountIfNotMounted = tile.state === 'alive';
+      const step = onTileEnter(current, { tileId, mountIfNotMounted });
+      ctx.virtState.set(tileId, step.next);
+      for (const action of step.actions) {
+        if (action.type === 'cancelDispose') {
+          const t = ctx.virtTimers.get(tileId);
+          if (t !== undefined) { clearTimeout(t); ctx.virtTimers.delete(tileId); }
+        } else if (action.type === 'mount') {
+          mountTileViaCheckout(ctx, tile);
+        }
+      }
+    } else {
+      // HS-8046 — tile scrolled out of viewport; user can no longer see
+      // it, so subsequent bells must surface as the indicator.
+      ctx.visibleTileIds.delete(tileId);
+      const step = onTileExit(current, { tileId, now, debounceMs: VIRT_DEFAULT_DEBOUNCE_MS });
+      ctx.virtState.set(tileId, step.next);
+      for (const action of step.actions) {
+        if (action.type === 'scheduleDispose') {
+          const timer = setTimeout(() => {
+            ctx.virtTimers.delete(tileId);
+            const after = ctx.virtState.get(tileId) ?? initialTileState();
+            const fired = onDisposeTimerFired(after, { tileId });
+            ctx.virtState.set(tileId, fired.next);
+            for (const innerAction of fired.actions) {
+              if (innerAction.type === 'dispose') {
+                softDisposeTile(ctx, tile);
+              }
+            }
+          }, action.afterMs);
+          ctx.virtTimers.set(tileId, timer);
+        }
+      }
+    }
+  }
+}
+
+/** HS-7968 + HS-8048 — release the tile's checkout handle without
+ *  removing the tile from the registry. The PTY + scrollback stay alive
+ *  server-side; on re-enter we re-mount via `mountTileViaCheckout` (a
+ *  fresh `checkout()` call creates a new entry if none exists, or
+ *  pushes onto an existing one if another consumer like the dedicated
+ *  view kept the entry alive). HS-8048 — pre-fix this disposed the
+ *  tile's own xterm + ws directly; post-fix `release()` either disposes
+ *  the entry on empty stack (matches pre-fix shape) or hands the live
+ *  xterm back to the next consumer (which would only happen if a
+ *  dedicated/quit-confirm view is up for the same terminal-id, in
+ *  which case the tile being virtualized off-screen leaving the
+ *  dedicated as the sole consumer is exactly the right outcome). */
+function softDisposeTile(ctx: TileGridContext, tile: InternalTile): void {
+  tile.screenObserver?.disconnect();
+  tile.screenObserver = null;
+  for (const d of tile.termHandlerDisposers) {
+    try { d.dispose(); } catch { /* already disposed */ }
+  }
+  tile.termHandlerDisposers = [];
+  if (tile.checkout !== null) {
+    try { tile.checkout.release(); } catch { /* already released */ }
+    tile.checkout = null;
+  }
+  tile.xtermRoot = null;
+  tile.cachedCellW = null;
+  tile.cachedCellH = null;
+  // HS-8059 — drop the inline theme-bg so the placeholder's own bg
+  // (`--bg-secondary` for cold/exited; the cold-card bg) paints instead
+  // of the previous live xterm's theme.
+  tile.preview.style.backgroundColor = '';
+  // Restore the placeholder visual so the off-screen-then-back-on tile
+  // doesn't briefly show an empty white box during the re-mount window.
+  tile.preview.replaceChildren(renderPreviewContent(ctx, tile.state, tile.exitCode));
+}
+
+/** HS-7968 + HS-8048 — force-mount a tile and update the virtualization
+ *  state. Used by the click-before-IO defensive path in `centerTile` /
+ *  `enterDedicatedView`-via-tile-click so the user doesn't briefly see
+ *  a placeholder when the IntersectionObserver hadn't fired yet. */
+function ensureTileMounted(ctx: TileGridContext, tile: InternalTile): void {
+  if (tile.checkout !== null) return;
+  mountTileViaCheckout(ctx, tile);
+  markTileMounted(ctx, tile);
+  // If a dispose timer was pending (rare race), cancel it.
+  const key = tileKeyFor(tile.entry);
+  const t = ctx.virtTimers.get(key);
+  if (t !== undefined) { clearTimeout(t); ctx.virtTimers.delete(key); }
+}
+
+/** HS-7968 — fully forget the tile from the virtualization registry.
+ *  Called from `disposeTile` on full teardown. */
+function forgetVirtualization(ctx: TileGridContext, tile: InternalTile): void {
+  if (ctx.virtObserver.current !== null) ctx.virtObserver.current.unobserve(tile.root);
+  ctx.virtRootToId.delete(tile.root);
+  const key = tileKeyFor(tile.entry);
+  const timer = ctx.virtTimers.get(key);
+  if (timer !== undefined) { clearTimeout(timer); ctx.virtTimers.delete(key); }
+  ctx.virtState.delete(key);
+  // HS-8046 — drop the viewport-membership flag too so a re-rendered
+  // tile with the same id starts from a clean slate.
+  ctx.visibleTileIds.delete(key);
+}
+
+// --- xterm mount + WebSocket attach ---
+
+/**
+ * HS-8048 — mount the tile via the `terminalCheckout` LIFO stack
+ * instead of constructing a per-tile `XTerm` + `WebSocket`. The
+ * checkout module owns the live xterm + WS for this terminal and
+ * shares them across consumers (this tile, plus any dedicated-view
+ * or quit-confirm-preview also looking at the same terminal). The
+ * `mountInto` argument is the per-tile `xtermRoot` div — when this
+ * tile is the LIFO top, the live xterm element is reparented into
+ * that div; when bumped down, a "Terminal in use elsewhere"
+ * placeholder is written into it instead.
+ *
+ * Replaces pre-fix `mountTileXterm` (per-tile `new XTerm({...})` +
+ * `term.open(xtermRoot)` + appearance + `term.onData(ws.send)` +
+ * `term.onBell`) AND `connectTileSocket` (per-tile `new WebSocket` +
+ * `'message'` listener with history-frame handling). Pre-fix
+ * cursorBlink=false + scrollback=1000 (HS-7990) — post-fix unified to
+ * checkout's shared defaults (`cursorBlink: true, scrollback: 10_000`)
+ * since per-consumer xterm option overrides on every stack swap is
+ * fragile (scrollback reduction at runtime can lose history). The
+ * 10× scrollback bump for tiles is fine — xterm allocates lazily and
+ * the HS-7968 virtualization disposes off-screen tiles via release()
+ * so only the on-screen subset pays for the buffer.
+ */
+function mountTileViaCheckout(ctx: TileGridContext, tile: InternalTile): void {
+  const xtermRoot = toElement(<div className={ctx.classes.xtermClass}></div>);
+  tile.preview.replaceChildren(xtermRoot);
+
+  const appearance = resolveTileAppearance(ctx, tile);
+  const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
+  // HS-8059 — paint the tile preview's frame with the live theme bg so the
+  // sub-cell slop on the right + bottom of `.xterm-screen` (xterm sizes the
+  // canvas at exactly cols × cellW × rows × cellH, ≤ the preview's content
+  // area) reads as part of the terminal frame rather than a contrasting
+  // app-bg gutter. Mirrors the §22 drawer treatment (`terminal-body` HS-7960)
+  // and the §37 quit-confirm preview (HS-8058). Cleared in `softDisposeTile`
+  // + the `Starting…` placeholder branches so the placeholder's own
+  // `--bg-secondary` still shows through.
+  tile.preview.style.backgroundColor = themeData.background;
+
+  const handle = checkout({
+    projectSecret: tile.entry.secret,
+    terminalId: tile.entry.id,
+    cols: TILE_INITIAL_COLS,
+    rows: TILE_INITIAL_ROWS,
+    mountInto: xtermRoot,
+    // HS-8295 — paint the §54 bumped-down placeholder with this tile's
+    // theme bg so a dedicated view / preview borrowing the live xterm
+    // doesn't flash the tile to `--bg-secondary`.
+    placeholderBackground: themeData.background,
+    onBumpedDown() {
+      // HS-8048 — another consumer (dedicated view, quit-confirm
+      // preview, etc.) just took the live xterm. Disconnect the
+      // tile's screen ResizeObserver so its callback doesn't fire
+      // on the placeholder content (the placeholder div doesn't
+      // contain a `.xterm-screen` anyway, but the observer would
+      // still need to be re-attached on restore).
+      tile.screenObserver?.disconnect();
+      tile.screenObserver = null;
+    },
+    onRestoredToTop() {
+      // HS-8048 — live xterm reparented back into our `xtermRoot`.
+      // Re-apply CSS scale (the previous consumer's mount may have
+      // cleared transform/position styles). The screen ResizeObserver
+      // re-attaches here too so subsequent renders fire the visual
+      // scale recompute. HS-8051 follow-up #2 — convergence on tile-
+      // native cols × rows is driven by `term.onRender` →
+      // `handleTileRender` (which we wired once at mount time and is
+      // still alive across the bump-and-restore round-trip since the
+      // shared term itself survives). The next render after the
+      // restore — triggered by either xterm's dirty repaint or the
+      // first incoming output byte — will re-converge the term to
+      // tile-native via `handleTileRender`'s cell-metric path. We
+      // also kick a `checkout.resize(TILE_INITIAL_*)` here as the
+      // explicit signal so the convergence happens promptly even
+      // without external output.
+      tile.checkout?.resize(TILE_INITIAL_COLS, TILE_INITIAL_ROWS);
+      reapplyTileScaleFromPreview(ctx, tile);
+      attachScreenObserver(ctx, tile);
+    },
+  });
+
+  const term = handle.term;
+  // HS-8048 — apply tile-flavoured term tweaks. These persist on the
+  // shared term across consumers, but they're idempotent: a follow-up
+  // dedicated-view checkout will overwrite them with its own values.
+  term.options.theme = themeToXtermOptions(themeData);
+  term.options.linkHandler = {
+    activate: (_event, text) => { openExternalUrl(text); },
+  };
+  void applyAppearanceToTerm(term, appearance);
+
+  tile.checkout = handle;
+  tile.xtermRoot = xtermRoot;
+  tile.targetCols = term.cols;
+  tile.targetRows = term.rows;
+
+  // HS-8288 — defense in depth against the cascading-refresh /
+  // race-during-mount class of bug. If `checkout()` returned but
+  // `reparentXtermInto` hit its `term.element === undefined` early-return
+  // (recorded as the `reparent.no-element` event in the HS-8287/8288
+  // diagnostic instrumentation), the xtermRoot is empty: no live xterm,
+  // no placeholder, no path to recovery. The user sees a blank tile and
+  // there's no entry-side state we'd ever clean up. Detect the broken
+  // mount immediately and recover: release the checkout (which collapses
+  // the entry if we're the only consumer, freeing it for a fresh
+  // re-mount), restore the alive placeholder so the tile shows a
+  // coherent visual, and bail. The next `term.onRender` won't fire
+  // (we never wire it below), but the IntersectionObserver's next cycle
+  // / a manual click on the tile will go through `ensureTileMounted` →
+  // `mountTileViaCheckout` again with a fresh attempt.
+  if (xtermRoot.children.length === 0) {
+    try { handle.release(); } catch { /* swallow — already torn down */ }
+    tile.checkout = null;
+    tile.xtermRoot = null;
+    tile.preview.style.backgroundColor = '';
+    tile.preview.replaceChildren(renderPreviewContent(ctx, tile.state, tile.exitCode));
+    return;
+  }
+
+  // HS-7097 → HS-8051 follow-up #2 — observe `.xterm-screen` so a
+  // change in natural xterm dims (font / theme swap; consumer
+  // hand-off) re-applies the CSS scale. Convergence on tile-native
+  // cols × rows is driven by `term.onRender` (wired below) — the
+  // observer is just a safety net for the visual scale.
+  attachScreenObserver(ctx, tile);
+
+  // HS-8048 — `term.onData` (keystroke-send) is wired by the checkout
+  // module's WS attachment so every consumer of the shared xterm gets
+  // it for free. Just register `term.onBell` for the per-tile
+  // indicator + auto-clear logic from HS-8046, and capture the
+  // disposer so a soft-dispose / release of this tile doesn't leave a
+  // stale handler attached to the shared term.
+  const bellDispose = term.onBell(() => {
+    // HS-8046 — skip the indicator entirely when the user is already
+    // viewing this tile in the unoccluded grid surface. Drop the
+    // server-side bellPending flag too so other surfaces (project-tab
+    // glyph, drawer tab) don't redundantly mark it.
+    if (isGridSurfaceUnoccluded(ctx) && ctx.visibleTileIds.has(tileKeyFor(tile.entry))) {
+      postClearBell(ctx, tile);
+      return;
+    }
+    tile.root.classList.add('has-bell');
+  });
+  tile.termHandlerDisposers.push(bellDispose);
+
+  // HS-8051 follow-up #2 — the convergence path that drives the tile to
+  // its 4:3 native cols × rows. `term.onRender` fires AFTER xterm
+  // commits a paint to DOM, so `term.cols/rows` and
+  // `screen.offsetWidth/Height` are guaranteed consistent at this
+  // moment — every other timing (rAF, ResizeObserver, history-frame
+  // handler) can race a pending paint and read stale dims. The
+  // sequence in steady state:
+  //   1. First render after mount → cellW/cellH measured + cached →
+  //      compute target dims → `checkout.resize(native)` if not
+  //      already there.
+  //   2. Second render (caused by step 1's resize) → `term.cols` is
+  //      now at native, target also at native → no-op return.
+  //   3. Subsequent renders (output, scrolling) → no-op return.
+  // Pre-fix the chained-rAF retry oscillated because it re-derived
+  // `cellW = screen.offsetWidth / term.cols` between paint frames
+  // where `term.cols` had updated but the screen hadn't. User's HS-8051
+  // second log: bad tile bounced from 1692×1200 (cols=80) to 841×1200
+  // (cols=40) — non-converging because cellW was being re-computed
+  // from a wrong ratio every iteration.
+  const renderDispose = term.onRender(() => {
+    handleTileRender(ctx, tile);
+  });
+  tile.termHandlerDisposers.push(renderDispose);
+
+  // HS-8286 — per-tile stall chip wiring deleted. Stall detection now
+  // feeds the global server-slow banner via the per-entry watcher in
+  // `terminalCheckout.tsx::createEntry` so a slow server surfaces ONCE
+  // (banner) instead of N times (one chip per visible tile).
+}
+
+/** HS-8051 follow-up #2 — runs on every `term.onRender` for a tile.
+ *  Caches cell metrics on the first render where they're measurable,
+ *  re-applies CSS scale, and (when top-of-stack) issues at most one
+ *  resize per render to converge on the cell-metric-derived 4:3
+ *  native cols × rows. */
+function handleTileRender(ctx: TileGridContext, tile: InternalTile): void {
+  if (tile.checkout === null || tile.xtermRoot === null) return;
+  const term = tile.checkout.term;
+  const screen = tile.xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+  if (screen === null) return;
+  if (term.cols <= 0 || term.rows <= 0) return;
+  if (screen.offsetWidth <= 0 || screen.offsetHeight <= 0) return;
+
+  // Re-measure cellW/cellH on EVERY render — this is safe because
+  // onRender fires after the paint committed, so screen dims and
+  // `term.cols` are always consistent here. Cell metrics are stable
+  // unless the font / theme changes, in which case re-measurement
+  // automatically picks up the new values without any explicit
+  // invalidation path.
+  const cellW = screen.offsetWidth / term.cols;
+  const cellH = screen.offsetHeight / term.rows;
+  if (!Number.isFinite(cellW) || !Number.isFinite(cellH) || cellW <= 0 || cellH <= 0) return;
+  tile.cachedCellW = cellW;
+  tile.cachedCellH = cellH;
+
+  // Always re-apply the visual CSS scale so the natural xterm box fills
+  // the tile slot uniformly.
+  reapplyTileScaleFromPreview(ctx, tile);
+
+  // Resize the term + PTY toward the 4:3 native target only when WE
+  // own the live xterm. When another consumer (dedicated view, quit-
+  // confirm preview) is on top of the LIFO stack, the screen dims
+  // we measured here belong to THAT consumer's mount — we still
+  // refresh `cachedCellW/H` (cellW is font-driven, not consumer-driven)
+  // but skip the resize so we don't fight the active consumer.
+  if (!tile.checkout.isTopOfStack()) return;
+  const native = tileNativeGridFromCellMetrics(cellW, cellH);
+  if (term.cols === native.cols && term.rows === native.rows) {
+    // Already at native — sync the bookkeeping so a future
+    // `release()` → `restore()` round-trip's safe-stop also recognizes
+    // convergence.
+    tile.targetCols = native.cols;
+    tile.targetRows = native.rows;
+    return;
+  }
+  tile.targetCols = native.cols;
+  tile.targetRows = native.rows;
+  tile.checkout.resize(native.cols, native.rows);
+}
+
+/** HS-8048 → HS-8051 follow-up #2 — wire (or rewire) the tile's
+ *  `.xterm-screen` ResizeObserver. Now ONLY drives the CSS-scale re-fit
+ *  when natural xterm dims change (font/theme swap; consumer hand-off);
+ *  the cell-metric → native-cols/rows convergence path lives in
+ *  `handleTileRender` (driven by `term.onRender`), which is the only
+ *  signal that fires after a paint commits with consistent
+ *  `term.cols/rows` ↔ `screen.offsetWidth/Height` state.
+ *
+ *  Idempotent — safe to call from `onRestoredToTop` (the live xterm
+ *  came back with its own `.xterm-screen` element) without doubling
+ *  observer fires. `.xterm-screen` is created lazily by xterm on its
+ *  first render; if it isn't there yet we retry on the next rAF up to
+ *  a small budget. The first `term.onRender` will fire by then anyway
+ *  (and that's what drives convergence), so this is just a safety net
+ *  for the visual scale. */
+function attachScreenObserver(ctx: TileGridContext, tile: InternalTile, retriesRemaining: number = 30): void {
+  if (tile.xtermRoot === null) return;
+  if (tile.checkout === null) return;
+  tile.screenObserver?.disconnect();
+  const screen = tile.xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+  if (screen === null) {
+    if (retriesRemaining > 0) {
+      requestAnimationFrame(() => { attachScreenObserver(ctx, tile, retriesRemaining - 1); });
+    }
+    return;
+  }
+  const observer = new ResizeObserver(() => {
+    reapplyTileScaleFromPreview(ctx, tile);
+  });
+  observer.observe(screen);
+  tile.screenObserver = observer;
+}
+
+// --- Tile sizing ---
+
+function applySizing(ctx: TileGridContext): void {
+  const c = ctx.classes;
+  const opts = ctx.opts;
+  const rootWidth = Math.max(0, opts.container.clientWidth - ROOT_PADDING * 2);
+  if (rootWidth <= 0) return;
+  const columnCount = opts.getColumnCount();
+  const tileWidth = tileWidthFromColumnCount(columnCount, rootWidth);
+  const tileHeight = Math.round(tileWidth / TILE_ASPECT);
+
+  for (const tile of opts.container.querySelectorAll<HTMLElement>(`.${c.tileClass}`)) {
+    if (!tile.classList.contains('centered')) {
+      tile.style.width = `${tileWidth}px`;
+    }
+    const preview = tile.querySelector<HTMLElement>(`.${c.previewClass}`);
+    if (preview !== null && !tile.classList.contains('centered')) {
+      preview.style.width = `${tileWidth}px`;
+      preview.style.height = `${tileHeight}px`;
+    }
+    const xtermRoot = tile.querySelector<HTMLElement>(`.${c.xtermClass}`);
+    if (xtermRoot !== null && !tile.classList.contains('centered')) {
+      applyTileScale(ctx, xtermRoot, tileWidth, tileHeight);
+    }
+    // HS-8285 follow-up — read both `data-secret` and `data-terminal-id`
+    // so the lookup hits the per-(secret, id) tile rather than the wrong
+    // project's tile when two projects share an id (e.g., 'default').
+    const tsec = tile.dataset.secret ?? '';
+    const tid = tile.dataset.terminalId ?? '';
+    const live = ctx.tiles.get(tileKey(tsec, tid));
+    if (live !== undefined) {
+      live.gridPreviewWidth = tileWidth;
+      live.gridPreviewHeight = tileHeight;
+    }
+  }
+}
+
+function reapplyTileScaleFromPreview(ctx: TileGridContext, tile: InternalTile): void {
+  if (tile.xtermRoot === null) return;
+  const pw = tile.preview.offsetWidth;
+  const ph = tile.preview.offsetHeight;
+  if (pw <= 0 || ph <= 0) return;
+  applyTileScale(ctx, tile.xtermRoot, pw, ph);
+}
+
+function applyTileScale(_ctx: TileGridContext, xtermRoot: HTMLElement, tileWidth: number, tileHeight: number): void {
+  xtermRoot.style.transform = '';
+  xtermRoot.style.transformOrigin = 'top left';
+  xtermRoot.style.width = '';
+  xtermRoot.style.height = '';
+  xtermRoot.style.position = '';
+  xtermRoot.style.left = '';
+  xtermRoot.style.top = '';
+
+  const screen = xtermRoot.querySelector<HTMLElement>('.xterm-screen');
+  const naturalWidth = screen?.offsetWidth ?? 0;
+  const naturalHeight = screen?.offsetHeight ?? 0;
+  const scale = computeTileScale(tileWidth, tileHeight, naturalWidth, naturalHeight);
+  if (scale === null) {
+    // HS-8288 — when there's no live `.xterm-screen` in this xtermRoot
+    // (the consumer is currently bumped down — `mountInto` holds the
+    // `.terminal-checkout-placeholder` div instead of the live xterm)
+    // we still need to give the xtermRoot a definite box. Pre-fix the
+    // function bailed here AFTER clearing every inline size style, so
+    // xtermRoot rendered as 0×0 — and the placeholder's CSS
+    // `width: 100% / height: 100%` collapsed against the 0-height
+    // parent, leaving the user with a blank tile (or a totally
+    // missing tile in the layout, the "0x0 px" symptom). Snap to the
+    // tile slot dims so the placeholder fills the tile box just like
+    // the live xterm would. `position: relative` is required so the
+    // placeholder (which has its own `width: 100% / height: 100%`)
+    // resolves against this box. Tile dims of 0 (slot collapsed
+    // mid-relayout) still bail — let the next applySizing tick paint
+    // a real box.
+    if (tileWidth > 0 && tileHeight > 0) {
+      xtermRoot.style.position = 'relative';
+      xtermRoot.style.width = `${tileWidth}px`;
+      xtermRoot.style.height = `${tileHeight}px`;
+    }
+    return;
+  }
+
+  xtermRoot.style.position = 'absolute';
+  xtermRoot.style.left = `${scale.left}px`;
+  xtermRoot.style.top = `${scale.top}px`;
+  xtermRoot.style.width = `${scale.width}px`;
+  xtermRoot.style.height = `${scale.height}px`;
+  xtermRoot.style.transform = `scale(${scale.scale})`;
+}
+
+// --- Tile teardown ---
+
+function disposeTile(ctx: TileGridContext, tile: InternalTile): void {
+  forgetVirtualization(ctx, tile);
+  tile.screenObserver?.disconnect();
+  tile.screenObserver = null;
+  // HS-8048 — dispose the tile's term-level handlers (`term.onBell`)
+  // BEFORE releasing the checkout. The handlers live on the shared
+  // term — leaving them attached after release would leak state into
+  // a hypothetical re-checkout (the term would be disposed before
+  // re-creation since we're the only consumer in the dispose path,
+  // but the cleanup is symmetric and cheap).
+  for (const d of tile.termHandlerDisposers) {
+    try { d.dispose(); } catch { /* already disposed */ }
+  }
+  tile.termHandlerDisposers = [];
+  if (tile.checkout !== null) {
+    try { tile.checkout.release(); } catch { /* already released */ }
+    tile.checkout = null;
+  }
+  tile.xtermRoot = null;
+  tile.cachedCellW = null;
+  tile.cachedCellH = null;
+}
+
+// --- HS-8313 — in-place property updates for surviving tiles ---
+
+/** HS-8313 — apply a fresh `TileEntry`'s property changes to a
+ *  surviving tile in place. Pre-fix every `rebuild()` destroyed and
+ *  re-created the tile, so all property changes propagated for free
+ *  via the renderTile path. The bindList migration preserves identity
+ *  for surviving keys, so we have to actively diff the entry fields
+ *  and update the matching DOM / checkout state. State transitions
+ *  (alive ↔ exited / not_spawned) are the most structural — they
+ *  release the checkout or re-mount it; the rest are cosmetic. */
+function updateTileFromEntry(ctx: TileGridContext, tile: InternalTile, newEntry: TileEntry): void {
+  const c = ctx.classes;
+  const oldEntry = tile.entry;
+  tile.entry = newEntry;
+
+  const stateChanged = oldEntry.state !== newEntry.state;
+  const exitCodeChanged = oldEntry.exitCode !== newEntry.exitCode;
+
+  if (stateChanged) {
+    tile.root.classList.remove(`${c.tileClass}-${oldEntry.state}`);
+    tile.root.classList.add(`${c.tileClass}-${newEntry.state}`);
+    tile.state = newEntry.state;
+  }
+  if (exitCodeChanged) tile.exitCode = newEntry.exitCode;
+
+  if (stateChanged) {
+    if (oldEntry.state === 'alive' && newEntry.state !== 'alive') {
+      // alive → exited / not_spawned: release the live checkout, drop
+      // the preview to a placeholder. Reuses softDisposeTile, which
+      // leaves the tile in `tiles` + virtualization registries (same
+      // shape used by the off-screen virt-dispose path).
+      softDisposeTile(ctx, tile);
+    } else if (oldEntry.state !== 'alive' && newEntry.state === 'alive') {
+      // not-alive → alive: when IO is unavailable (test envs) the
+      // renderTile path eager-mounts; mirror that for in-place
+      // transitions so the new state is reflected immediately. With
+      // IO available, leave the mount to the next observer cycle —
+      // the tile may not be in the viewport, in which case eager-
+      // mounting would defeat virtualization. (Tile re-renders the
+      // alive placeholder via softDisposeTile-style cleanup of the
+      // stale exited / not_spawned placeholder.)
+      if (ctx.virtObserver.current === null) {
+        mountTileViaCheckout(ctx, tile);
+        markTileMounted(ctx, tile);
+      } else if (tile.checkout === null) {
+        // No live xterm — refresh placeholder so the visual matches
+        // the new alive state (will be replaced on next mount).
+        tile.preview.replaceChildren(renderPreviewContent(ctx, tile.state, tile.exitCode));
+      }
+    } else if (tile.checkout === null) {
+      // exited ↔ not_spawned (both placeholder states): refresh the
+      // placeholder with the new label / icon.
+      tile.preview.replaceChildren(renderPreviewContent(ctx, tile.state, tile.exitCode));
+    }
+  } else if (exitCodeChanged && newEntry.state !== 'alive' && tile.checkout === null) {
+    // Same not-alive state, exit code changed (e.g., a `not_spawned`
+    // becoming `exited` with the same outer state class — won't happen
+    // in practice but covered for completeness).
+    tile.preview.replaceChildren(renderPreviewContent(ctx, tile.state, tile.exitCode));
+  }
+
+  // Label / projectBadge — re-render label area when either changed.
+  const oldBadgeName = oldEntry.projectBadge?.name ?? '';
+  const newBadgeName = newEntry.projectBadge?.name ?? '';
+  if (oldEntry.label !== newEntry.label || oldBadgeName !== newBadgeName) {
+    rerenderTileLabel(ctx, tile);
+  }
+
+  // CWD chip — add / remove / update the chip element.
+  const oldCwd = oldEntry.cwdLabel ?? '';
+  const newCwd = newEntry.cwdLabel ?? '';
+  const oldCwdRaw = oldEntry.cwdRaw ?? '';
+  const newCwdRaw = newEntry.cwdRaw ?? '';
+  if (oldCwd !== newCwd || oldCwdRaw !== newCwdRaw) {
+    updateTileCwdChip(ctx, tile, newCwd, newCwdRaw);
+  }
+
+  // Appearance — re-apply to the live xterm if mounted. (When not
+  // mounted, the next mountTileViaCheckout reads tile.entry directly
+  // via resolveTileAppearance so the new override values are picked
+  // up automatically without further work here.)
+  if (oldEntry.theme !== newEntry.theme
+      || oldEntry.fontFamily !== newEntry.fontFamily
+      || oldEntry.fontSize !== newEntry.fontSize) {
+    if (tile.checkout !== null) {
+      const appearance = resolveTileAppearance(ctx, tile);
+      const themeData = getThemeById(appearance.theme) ?? getThemeById('default')!;
+      tile.checkout.term.options.theme = themeToXtermOptions(themeData);
+      void applyAppearanceToTerm(tile.checkout.term, appearance);
+      tile.preview.style.backgroundColor = themeData.background;
+    }
+  }
+}
+
+/** HS-8313 — rebuild the tile's labelEl content from `tile.entry`.
+ *  Mirrors the JSX in renderTile so flow-mode badge prefixes + the
+ *  inner clickable handler stay in sync across in-place label
+ *  updates. */
+function rerenderTileLabel(ctx: TileGridContext, tile: InternalTile): void {
+  const cssPrefix = ctx.cssPrefix;
+  const opts = ctx.opts;
+  const entry = tile.entry;
+  const badge = entry.projectBadge;
+  const fullLabelTitle = badge?.name !== undefined && badge.name !== ''
+    ? `${badge.name} › ${entry.label}`
+    : entry.label;
+  tile.labelEl.title = fullLabelTitle;
+
+  const newChildren: Element[] = [];
+  if (badge?.name !== undefined && badge.name !== '') {
+    const projectSpan = toElement(
+      <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}>
+        <span className={`${cssPrefix}-tile-project-name`}>{badge.name}</span>{' › '}
+      </span>,
+    );
+    if (opts.onProjectBadgeClick !== undefined) {
+      const onProjectBadgeClick = opts.onProjectBadgeClick;
+      projectSpan.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onProjectBadgeClick(entry);
+      });
+    }
+    newChildren.push(projectSpan);
+  }
+  newChildren.push(toElement(<span className={`${cssPrefix}-tile-name`}>{entry.label}</span>));
+  tile.labelEl.replaceChildren(...newChildren);
+}
+
+/** HS-8313 — add / remove / update the optional CWD chip on a surviving
+ *  tile. The chip lives as a sibling of `tile.preview` + `tile.labelEl`
+ *  inside the tile root; renderTile only emits it when `cwdLabel` is
+ *  non-empty, so this helper has to handle the absent → present and
+ *  present → absent transitions in addition to text updates. */
+function updateTileCwdChip(ctx: TileGridContext, tile: InternalTile, cwdLabel: string, cwdRaw: string): void {
+  const cwdClass = ctx.classes.cwdClass;
+  const existing = tile.root.querySelector<HTMLElement>(`.${cwdClass}`);
+  if (cwdLabel === '') {
+    existing?.remove();
+    return;
+  }
+  if (existing !== null) {
+    existing.textContent = cwdLabel;
+    existing.title = cwdRaw;
+  } else {
+    tile.root.appendChild(toElement(<div className={cwdClass} title={cwdRaw}>{cwdLabel}</div>));
+  }
+}
+
+/** HS-8313 — terminal cleanup that isn't tile-scoped. Tile teardown
+ *  happens through bindListDispose (which fires every per-row
+ *  dispose). Centered / dedicated state, the magnified-nav handler,
+ *  the single-click timer + virtualization registries / observer all
+ *  live above the per-tile layer and need explicit cleanup here. */
+function teardownAmbientState(ctx: TileGridContext): void {
+  if (ctx.dedicated.current !== null) exitDedicatedView(ctx);
+  const centered = ctx.centered.current;
+  if (centered !== null) {
+    if (centered.slotPlaceholder !== null) centered.slotPlaceholder.remove();
+    centered.root.classList.remove('centered');
+    centered.root.style.transition = '';
+    centered.root.style.transform = '';
+    ctx.centered.current = null;
+  }
+  // HS-8028 — defensive: nothing's magnified after teardown so the
+  // nav handler must come off too. `exitDedicatedView` /
+  // `uncenterTile` may have already unbound; the helper is
+  // idempotent.
+  unbindMagnifiedNavHandler(ctx);
+  removeCenterBackdrop(ctx);
+  if (ctx.pendingSingleClickTimer.current !== null) {
+    window.clearTimeout(ctx.pendingSingleClickTimer.current);
+    ctx.pendingSingleClickTimer.current = null;
+  }
+  // HS-7968 — drop every pending dispose timer + disconnect the observer.
+  // Per-tile virt state (virtState entries, virtRootToId entries,
+  // visibleTileIds entries) was already cleared by each tile's
+  // forgetVirtualization() inside disposeTile via the bindList row
+  // disposers; the observer instance + any orphaned timers (none
+  // expected, but defensive) need an explicit disconnect.
+  for (const t of ctx.virtTimers.values()) clearTimeout(t);
+  ctx.virtTimers.clear();
+  ctx.virtState.clear();
+  ctx.virtRootToId.clear();
+  ctx.visibleTileIds.clear();
+  if (ctx.virtObserver.current !== null) ctx.virtObserver.current.disconnect();
 }

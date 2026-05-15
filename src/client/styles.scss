@@ -88,6 +88,11 @@ input, select, textarea {
   border-radius: 999px;
   white-space: nowrap;
   cursor: pointer;
+  // HS-8413 — `-webkit-user-select: none` is required for Tauri's
+  // WKWebView (older Safari ignores the unprefixed `user-select`). Without
+  // it, drag-selecting across the header would highlight tab text — the
+  // tabs are click affordances, not selectable content.
+  -webkit-user-select: none;
   user-select: none;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 

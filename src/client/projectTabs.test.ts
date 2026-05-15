@@ -163,6 +163,35 @@ describe('projectTabs trial migration (HS-8235)', () => {
   });
 });
 
+describe('project-tab non-selectable text (HS-8413)', () => {
+  // The bug class — Tauri's WKWebView ignores unprefixed `user-select`
+  // on older Safari/WKWebView versions, so a `.project-tab` rule with
+  // only `user-select: none` lets the user drag-select tab text across
+  // the header. Always pair with `-webkit-user-select: none`. happy-dom
+  // doesn't load the SCSS, so this is a static-text tripwire on the
+  // compiled rule block — if a future refactor drops the prefix the
+  // assertion catches it before the user does.
+  it('styles.scss `.project-tab` rule carries both `-webkit-user-select` and `user-select`', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const path = await import('node:path');
+    // happy-dom mangles `import.meta.url` to a non-`file:` scheme, so
+    // resolve from `process.cwd()` (vitest runs from the project root).
+    const scssPath = path.join(process.cwd(), 'src/client/styles.scss');
+    const source = await readFile(scssPath, 'utf8');
+    // Pull just the `.project-tab` rule body (NOT `.project-tab-name`
+    // or `.project-tab-dot`); the regex anchors on the bare class
+    // followed by a `{`, then captures until the matching `}` at the
+    // same nesting level. SCSS nests selectors inside but those
+    // children sit between balanced inner braces, so a non-greedy
+    // capture up to a `^}` on its own line gets the right block.
+    const match = source.match(/^\.project-tab\s*\{[\s\S]*?^\}/m);
+    expect(match, 'failed to find .project-tab rule in styles.scss').not.toBeNull();
+    const body = match![0];
+    expect(body).toContain('-webkit-user-select: none');
+    expect(body).toContain('user-select: none');
+  });
+});
+
 describe('refreshProjectFeedbackState (HS-8378)', () => {
   // Fetch-stub helper. `api()` in `src/client/api.tsx` calls `fetch(url,
   // { ... })` and reads `res.json()`; we only need a `.ok` + `.json()`
