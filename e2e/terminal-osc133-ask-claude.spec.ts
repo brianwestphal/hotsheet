@@ -113,6 +113,23 @@ test.describe('OSC 133 Phase 3 Ask Claude (HS-7332)', () => {
         body: JSON.stringify({ enabled: true, alive: true }),
       });
     });
+    // HS-8419 — also mock the bulk per-project channel-status endpoint.
+    // `refreshProjectChannelStatus` in projectTabs.tsx fetches this on
+    // every long-poll tick and calls `setChannelAlive(aliveProjects.has(
+    // activeSecret))`. The real backend returns `{enabled: false}` in the
+    // e2e env, so the active project's secret never lands in the alive
+    // set and the long-poll overrides initChannel's setChannelAlive(true)
+    // with setChannelAlive(false) — wiping out the Ask-Claude gate.
+    const activeProjects = await (await request.get('/api/projects')).json() as { secret: string }[];
+    const aliveMap: Record<string, boolean> = {};
+    for (const p of activeProjects) aliveMap[p.secret] = true;
+    await page.route(/\/api\/projects\/channel-status/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ enabled: true, projects: aliveMap }),
+      });
+    });
     await page.route(/\/api\/channel\/trigger/, async (route) => {
       const body = route.request().postDataJSON() as unknown;
       await page.evaluate((b) => {
@@ -147,10 +164,18 @@ test.describe('OSC 133 Phase 3 Ask Claude (HS-7332)', () => {
     await expect(glyphs).toHaveCount(1, { timeout: 5000 });
     await expect(glyphs.first()).toHaveClass(/terminal-osc133-gutter-failure/);
 
-    // Wait for the channel-status stub to have been hit at least once so
-    // initChannel + checkChannelDone has had a chance to set channelAliveLocal.
-    // The init fetch is fired when the bundle wires up; allow a brief tick.
-    await page.waitForTimeout(500);
+    // HS-8419 — wait for the channel-play section to be visible (proxy for
+    // initChannel's /api/channel/status fetch having resolved and
+    // `setChannelEnabledState(true)` having flipped the section's
+    // display). Pre-fix the 500ms blanket sleep raced the fetch: on
+    // slower runners the popover opened before
+    // `channelStore.state.value.alive` was set and the gate at
+    // gutterPopover.tsx:85 omitted the Ask-Claude button.
+    // HS-8419 — wait for the channel-disconnected warning to be hidden
+    // (proof that setChannelAlive(true) has landed). With both
+    // /channel/status AND /projects/channel-status mocked, the warning
+    // flips to display:none right after initChannel resolves.
+    await expect(page.locator('#channel-disconnected')).toBeHidden({ timeout: 5000 });
 
     // Hover the glyph — popover surfaces with all four buttons (channel
     // alive gate is satisfied via the stubbed /api/channel/status).
