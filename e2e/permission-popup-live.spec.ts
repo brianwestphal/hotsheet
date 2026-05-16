@@ -122,8 +122,12 @@ test.describe('Permission popup — live polling lifecycle (HS-8207)', () => {
   test('shows the popup with chrome from the polled permission', async ({ page }) => {
     const popup = page.locator('.permission-popup');
     await expect(popup).toBeVisible({ timeout: 5000 });
-    await expect(popup.locator('.dialog-shell-tool')).toContainText('Bash');
-    await expect(popup.locator('.dialog-shell-title')).toContainText('Run ls -la');
+    // HS-8419 — HS-8299 / HS-8296 carved Bash + Write out into custom dialog
+    // headers: Bash uses title "Allow Claude to run" and omits `toolChip`
+    // entirely (the title carries the verb, so a separate `Bash` chip would
+    // be redundant). See `permissionOverlay.tsx::isBashCustomLayout`.
+    await expect(popup.locator('.dialog-shell-tool')).toHaveCount(0);
+    await expect(popup.locator('.dialog-shell-title')).toContainText('Allow Claude to run');
     await expect(popup.locator('.permission-popup-allow')).toBeVisible();
     await expect(popup.locator('.permission-popup-deny')).toBeVisible();
   });

@@ -128,9 +128,11 @@ test.describe('Drawer terminal grid view (HS-6311)', () => {
     await toggle.click();
 
     // Set a non-default slider value and verify it sticks after exit+re-enter
-    // within the same session.
+    // within the same session. HS-8419 — Playwright's `fill()` rejects
+    // `<input type="range">` values with "Malformed value"; assign via
+    // `evaluate` then dispatch `input` so the change handler fires.
     const slider = page.locator('#drawer-grid-size-slider');
-    await slider.fill('60');
+    await slider.evaluate((el) => { (el as HTMLInputElement).value = '60'; });
     await slider.dispatchEvent('input');
     await toggle.click(); // exit
     await expect(page.locator('#drawer-terminal-grid')).toBeHidden();

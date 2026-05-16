@@ -85,9 +85,12 @@ test.describe('Terminal appearance gear popover (HS-6307)', () => {
    *  `.xterm` root element's `backgroundColor` CSS property reflects the
    *  active theme background on every render. */
   async function readBackgroundColor(page: import('@playwright/test').Page): Promise<string> {
+    // HS-8419 — appearance bg is applied to `.terminal-body` (the inst.body
+    // ref in `terminalDrawerMount.tsx:202`), not the inner `.xterm` element.
+    // xterm paints its canvas with the theme; the canvas isn't a CSS bg.
     return page.evaluate(() => {
       const el = document.querySelector<HTMLElement>(
-        '.drawer-terminal-pane[data-drawer-panel="terminal:appearance-terminal"] .xterm',
+        '.drawer-terminal-pane[data-drawer-panel="terminal:appearance-terminal"] .terminal-body',
       );
       if (el === null) return '';
       return window.getComputedStyle(el).backgroundColor;

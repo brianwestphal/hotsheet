@@ -169,7 +169,11 @@ test.describe('Terminal search widget (HS-7363)', () => {
     await expect(helper).toHaveCount(1, { timeout: 5000 });
     await helper.focus();
 
-    await page.keyboard.press('Meta+f');
+    // HS-8419 — `isFindShortcut` in `terminalKeybindings.ts` requires the
+    // platform-correct primary modifier (Cmd on Mac, Ctrl elsewhere). Use
+    // Playwright's `ControlOrMeta` so the chord works on both the local
+    // macOS dev box and the Linux CI runner.
+    await page.keyboard.press('ControlOrMeta+f');
 
     // The terminal-search input should take focus, not the app-header one.
     await expect(input).toBeFocused({ timeout: 3000 });

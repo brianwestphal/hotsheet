@@ -60,7 +60,11 @@ async function resetCrossSpecSettings(request: import('@playwright/test').APIReq
     // (detail.spec.ts, ticket-lifecycle.spec.ts, unread-indicators.spec.ts).
     // `detail_position: 'bottom'` leaks from ui-gaps.spec.ts:115.
     request.patch('/api/settings', { headers: authHeaders, data: { layout: 'list', view: 'all', sortBy: 'created', sortDir: 'desc', detail_visible: 'true', detail_position: 'side' } }),
-    request.patch('/api/file-settings', { headers: authHeaders, data: { drawer_open: 'false', drawer_active_tab: 'commands-log' } }),
+    // HS-8419 — `drawer_expanded: 'true'` leaks from drawer-expand.spec.ts:78
+    // ("expanded state persists across reload"). When set, `.app.drawer-expanded`
+    // applies `display: none` to `.app-body`, hiding the draft input + ticket
+    // list for any later spec that does `page.goto('/')`.
+    request.patch('/api/file-settings', { headers: authHeaders, data: { drawer_open: 'false', drawer_active_tab: 'commands-log', drawer_expanded: 'false' } }),
     // HS-8419 — `dashboard.layoutMode` moved from per-project file-settings
     // to global config in HS-8290. `terminal-dashboard-flow-layout.spec.ts`
     // test 42 toggles flow mode and persists via the UI (which writes to
@@ -95,6 +99,37 @@ async function resetCrossSpecSettings(request: import('@playwright/test').APIReq
         // batch action 'delete' moves to trash; then empty-trash hard-deletes.
         await request.post('/api/tickets/batch', { headers: authHeaders, data: { ids, action: 'delete' } });
         await request.post('/api/trash/empty', { headers: authHeaders });
+      }
+    }
+  } catch { /* swallow — best-effort */ }
+
+  // HS-8419 — kill every alive PTY + destroy every dynamic-terminal config
+  // so specs like `quit-confirm-dialog-growth.spec.ts` (which counts
+  // dialog rows against `/api/projects/quit-summary` =
+  // `listAliveTerminalsAcrossProjects`) start from zero alive terminals.
+  // Configured terminals from earlier specs' file-settings PATCHes have
+  // their PTYs survive across specs because `writeFileSettings` only
+  // updates the config; the PTY registry has its own lifecycle. The
+  // quit-confirm test's `beforeEach` only destroys *dynamic* terminals
+  // (the `for (const d of list.dynamic)` loop) — configured-but-still-alive
+  // PTYs from terminal.spec.ts / terminal-appearance.spec.ts /
+  // terminal-search.spec.ts persist, leak into `quit-summary`, and inflate
+  // the row count from the expected 3 to 6+.
+  try {
+    const listRes = await request.get('/api/terminal/list', { headers: authHeaders });
+    if (listRes.ok()) {
+      const list = await listRes.json() as {
+        configured?: { id: string; state?: string }[];
+        dynamic?: { id: string }[];
+      };
+      const killTargets = [
+        ...(list.configured ?? []).filter(t => t.state === 'alive').map(t => t.id),
+      ];
+      for (const id of killTargets) {
+        await request.post('/api/terminal/kill', { headers: authHeaders, data: { terminalId: id } }).catch(() => {});
+      }
+      for (const d of (list.dynamic ?? [])) {
+        await request.post('/api/terminal/destroy', { headers: authHeaders, data: { terminalId: d.id } }).catch(() => {});
       }
     }
   } catch { /* swallow — best-effort */ }
