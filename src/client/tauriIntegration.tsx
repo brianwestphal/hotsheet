@@ -114,7 +114,7 @@ export async function checkForUpdate() {
     if (delay > 0) await new Promise(r => setTimeout(r, delay));
     try {
       const version = (await invoke('get_pending_update')) as string | null;
-      if (version !== null && version !== '') {
+      if (typeof version === 'string' && version !== '') {
         showUpdateBanner(version);
         return;
       }

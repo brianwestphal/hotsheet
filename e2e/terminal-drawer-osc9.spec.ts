@@ -59,6 +59,10 @@ async function configureFixtureTerminal(
     .map(([k, v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
     .join(' ');
   const quotedFixture = FIXTURE.replace(/"/g, '\\"');
+  // Eager-spawn (lazy:false) is intentional here: the OSC 9 sequence must
+  // be emitted while the tab is inactive so the bell-state long-poll
+  // picks it up and the toast renders. Lazy spawn would defer the script
+  // to first attach (= tab click), defeating the test's premise.
   await request.patch('/api/file-settings', {
     headers,
     data: {

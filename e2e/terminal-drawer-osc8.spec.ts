@@ -65,9 +65,15 @@ test.describe('Terminal drawer OSC 8 + plain URL external open (HS-7274)', () =>
       }
     } catch { /* fine on first run */ }
 
-    // Configure a single eager-spawn terminal running the OSC 8 fixture. We
-    // pass HYPERLINK_URL / PLAIN_URL via env through bash -c so the spawned
+    // Configure a lazy-spawn terminal running the OSC 8 fixture. We pass
+    // HYPERLINK_URL / PLAIN_URL via env through bash -c so the spawned
     // shell has them available to the script.
+    // HS-8419 — lazy:true (pre-fix: lazy:false). On first real attach the
+    // server clears scrollback + sends Ctrl-L (HS-6799 redraw); for a
+    // print-once-then-sleep fixture that wipes the OSC 8 content out of
+    // the buffer entirely and the Ctrl-L echoes back as `^L`. Lazy spawn
+    // defers the PTY creation to first attach so the script's output
+    // streams straight into the live subscriber.
     const quotedFixture = FIXTURE.replace(/"/g, '\\"');
     await request.patch('/api/file-settings', {
       headers,
@@ -79,15 +85,17 @@ test.describe('Terminal drawer OSC 8 + plain URL external open (HS-7274)', () =>
             id: 'osc8',
             name: 'OSC8',
             command: `HYPERLINK_URL="${OSC8_URL}" PLAIN_URL="${PLAIN_URL}" /bin/bash "${quotedFixture}"`,
-            lazy: false,
+            lazy: true,
           },
         ],
       },
     });
 
-    // Restart any pre-existing PTY so a fresh one picks up the new command.
+    // Destroy any pre-existing session so the next attach falls through
+    // `!session` and spawns fresh. See terminal-search.spec.ts:73 for the
+    // kill-vs-destroy rationale.
     try {
-      await request.post('/api/terminal/restart', { headers, data: { terminalId: 'osc8' } });
+      await request.post('/api/terminal/destroy', { headers, data: { terminalId: 'osc8' } });
     } catch { /* first run */ }
   });
 

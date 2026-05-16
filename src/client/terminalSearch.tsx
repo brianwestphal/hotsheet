@@ -286,10 +286,19 @@ export function mountTerminalSearch(
       return;
     }
     // HS-7393 — Esc used to `closeBox()` which also cleared the input. The
-    // ticket requires Esc to only lose focus without clearing; the global
-    // keydown handler in `shortcuts.tsx` blurs any focused input on Esc.
-    // Users collapse / clear the widget explicitly via the close (×) button
-    // or the magnifier toggle.
+    // ticket requires Esc to only lose focus without clearing.
+    // HS-8419 — blur the input here rather than relying on
+    // `shortcuts.tsx`'s global blur handler. The search box lives inside
+    // `.drawer-terminal-pane`, so `shouldEscapeBypassHotsheet` (HS-8011)
+    // treats focus inside it as "terminal focused" and bypasses the
+    // global handler entirely — the input never lost focus on Esc in the
+    // drawer flow. Users collapse / clear the widget explicitly via the
+    // close (×) button or the magnifier toggle.
+    if (e.key === 'Escape' && !e.altKey) {
+      e.preventDefault();
+      input.blur();
+      return;
+    }
   });
   prev.addEventListener('click', () => { doFind('prev', false); input.focus(); });
   next.addEventListener('click', () => { doFind('next', false); input.focus(); });

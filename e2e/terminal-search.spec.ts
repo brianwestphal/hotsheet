@@ -57,8 +57,17 @@ test.describe('Terminal search widget (HS-7363)', () => {
       }
     } catch { /* first run */ }
 
-    // Eager-spawn the fruits fixture so the PTY exists at project boot and
-    // the scrollback is populated by the time the drawer / dashboard attach.
+    // HS-8419 — lazy-spawn the fruits fixture. Pre-fix this was lazy:false
+    // (eager spawn at project boot) so the printf output landed in the
+    // ring buffer before the test attached. But on first real attach, the
+    // server's `attach.ts` (HS-6799) clears the scrollback and sends
+    // Ctrl-L to redraw the prompt at the new client geometry — for the
+    // fruits.sh fixture (printf-then-`exec sleep 3600`), that wipes the
+    // useful output and the Ctrl-L gets echoed back by the line
+    // discipline as `^L` (sleep doesn't consume stdin). Result: xterm
+    // shows only `^L` instead of apple/banana. lazy:true defers the
+    // spawn to first attach, so the script's printf runs after the
+    // client's already subscribed and the bytes stream straight through.
     await request.patch('/api/file-settings', {
       headers,
       data: {
@@ -66,15 +75,19 @@ test.describe('Terminal search widget (HS-7363)', () => {
         drawer_open: 'false',
         drawer_active_tab: 'commands-log',
         terminals: [
-          { id: 'fruits', name: 'Fruits', command: FRUIT_SCRIPT, lazy: false },
+          { id: 'fruits', name: 'Fruits', command: FRUIT_SCRIPT, lazy: true },
         ],
       },
     });
 
-    // Restart any pre-existing PTY for this id so a fresh PTY runs the script
-    // (an earlier run may have changed the command).
+    // Destroy any pre-existing session for this id so a fresh lazy spawn
+    // picks up the script. Kill alone would leave session.exitCode set,
+    // and the lazy-attach branch in `attach.ts` skips spawn when
+    // `session.exitCode !== null`. Destroy removes the session entry
+    // entirely so the next attach falls through `!session` and creates +
+    // spawns fresh.
     try {
-      await request.post('/api/terminal/restart', { headers, data: { terminalId: 'fruits' } });
+      await request.post('/api/terminal/destroy', { headers, data: { terminalId: 'fruits' } });
     } catch { /* not yet spawned */ }
   });
 
