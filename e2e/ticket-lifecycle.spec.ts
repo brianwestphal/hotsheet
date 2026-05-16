@@ -38,10 +38,16 @@ test.describe('Full ticket lifecycle (HS-5628)', () => {
     await createTicket(page, title);
     await selectTicket(page, title);
 
-    // Edit title in detail panel — wait for debounced save before moving to next field
+    // Edit title in detail panel — wait for debounced save before moving to next field.
+    // HS-8367 — assert via `toHaveValue` (live `.value` property) rather than a
+    // `[value="..."]` attribute selector. The HS-8335 per-row reactive effect
+    // sets the input's `.value` property in place, leaving the markup `value=`
+    // attribute (the HTML DEFAULT value, not the current one) as the original.
     const detailTitle = page.locator('#detail-title');
     await detailTitle.fill(editedTitle);
-    await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${editedTitle}"]`)).toBeVisible({ timeout: 5000 });
+    await expect(
+      page.locator('.ticket-row[data-id] .ticket-title-input').filter({ hasNot: page.locator('.draft-input') }).first(),
+    ).toHaveValue(editedTitle, { timeout: 5000 });
 
     // Edit details
     const detailDetails = page.locator('#detail-details');
@@ -56,8 +62,11 @@ test.describe('Full ticket lifecycle (HS-5628)', () => {
     const priorityItems = page.locator('.dropdown-menu .dropdown-item');
     await priorityItems.nth(1).click();
 
-    // Verify the title was saved by reading it back (allow time for debounced save + re-render)
-    await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${editedTitle}"]`)).toBeVisible({ timeout: 8000 });
+    // Verify the title was saved by reading it back (allow time for debounced save + re-render).
+    // HS-8367 — `toHaveValue` for live-property reads (see comment above).
+    await expect(
+      page.locator('.ticket-row[data-id] .ticket-title-input').filter({ hasNot: page.locator('.draft-input') }).first(),
+    ).toHaveValue(editedTitle, { timeout: 8000 });
   });
 
   test('add note → edit note → delete note via context menu', async ({ page, request }) => {

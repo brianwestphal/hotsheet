@@ -1,11 +1,19 @@
 import { expect, test } from './coverage-fixture.js';
 
-/** Helper: create a ticket via the draft input and wait for it to appear in the list. */
+/** Helper: create a ticket via the draft input and wait for it to appear in the list.
+ * HS-202 auto-selects the new ticket — the lifecycle tests below start from a
+ * "nothing selected" baseline so they can exercise selection paths cleanly,
+ * so clear the auto-selection here. Two Escapes: the first blurs the draft
+ * input (the shortcut handler treats Escape on an editable element as
+ * "blur"), the second clears `state.selectedIds`. */
 async function createTicket(page: import('@playwright/test').Page, title: string) {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
   await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 5000 });
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#batch-count')).toHaveText('', { timeout: 3000 });
 }
 
 test.describe('Ticket lifecycle and batch operations', () => {

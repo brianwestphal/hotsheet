@@ -8,6 +8,13 @@ async function createTicket(page: import('@playwright/test').Page, title: string
   await draftInput.fill(title);
   await draftInput.press('Enter');
   await expect(page.locator(`.ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 3000 });
+  // HS-202 auto-selects the new ticket. `selectTicket` below clicks the
+  // checkbox to "select" — but on an already-selected ticket the click
+  // toggles OFF, leaving `state.selectedIds` empty and Cmd+C/X with
+  // nothing to act on. Two Escapes (first blurs the draft input, second
+  // clears selection) give the test a known clean baseline.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
 }
 
 async function selectTicket(page: import('@playwright/test').Page, title: string) {

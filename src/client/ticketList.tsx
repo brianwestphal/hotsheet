@@ -480,6 +480,17 @@ export function renderTicketList() {
     } else {
       restoreFocus(focusedId);
     }
+    // Symmetric with the preview branch above. Pre-HS-8331 the
+    // non-preview path re-created rows on every render so `.selected`
+    // came back through the JSX literal's `isSelected ? ' selected' : ''`
+    // ternary. Post-HS-8331 the bindList preserves DOM identity by
+    // ticket id, so a row created while it was unselected keeps its
+    // pre-existing class set when selection changes. The shift- and
+    // cmd-click paths in `ticketRow.tsx::handleRowClick` route through
+    // `callRenderTicketList()` to apply the selection change — without
+    // this call the bulk toolbar correctly read "N selected" but only
+    // the row painted at row-creation time wore `.selected`.
+    updateSelectionClasses();
     updateBatchToolbar();
   }
   void updateStats();

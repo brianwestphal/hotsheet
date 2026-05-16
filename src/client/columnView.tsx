@@ -297,7 +297,16 @@ export function renderColumnView() {
   const columns = getColumnsForView();
   const key = computeColumnsKey(columns, false);
   if (mountedColumnsKey === key) {
-    // Same config — bindLists still live + reacting; no rebuild.
+    // Same config — bindLists still live + reacting; no rebuild. The
+    // bindList preserves DOM identity by ticket id, so a card created
+    // while it was unselected keeps its pre-existing class set when
+    // selection changes elsewhere (HS-8331 follow-up — mirrors the
+    // `renderTicketList` non-preview branch fix). Without this call the
+    // column-view ArrowDown / ArrowUp keyboard nav in `shortcuts.tsx`
+    // updated `state.selectedIds` and called `renderTicketList()` to
+    // refresh, but the `.selected` class never propagated to the new
+    // card because nothing here sweeps the live DOM.
+    updateColumnSelectionClasses();
     callUpdateBatchToolbar();
     void updateStats();
     return;

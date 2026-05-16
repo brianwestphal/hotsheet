@@ -25,9 +25,69 @@ const SUPPRESS_UPGRADE_NUDGE_SCRIPT = `
   } catch { /* private mode etc. */ }
 `;
 
+// HS-8367 follow-up — server-persisted settings leak across specs because
+// the Playwright `webServer` runs ONE Hot Sheet instance for the whole
+// 375-test suite. If `columns.spec.ts` or `column-arrow-nav.spec.ts`
+// leaves `layout: 'columns'` saved (the layout button click PATCHes
+// /api/settings) and the next spec does `page.goto('/')` expecting list
+// view, every `.ticket-row[data-id] .ticket-title-input[value="..."]`
+// locator misses because column-view cards render `.column-card-title`
+// instead. Same shape for `drawer_open: 'true'` — a terminal spec that
+// opens the drawer can hide ticket rows behind the drawer for any
+// subsequent spec that doesn't explicitly reset it. Reset both keys per-
+// test so specs that need a non-default value PATCH it inside their own
+// `beforeEach` / test body AFTER this fixture has run.
+const RESET_SETTINGS_HEADERS = { 'Content-Type': 'application/json' };
+async function resetCrossSpecSettings(request: import('@playwright/test').APIRequestContext): Promise<void> {
+  let projects: { secret?: string }[] = [];
+  try {
+    projects = await (await request.get('/api/projects')).json() as { secret?: string }[];
+  } catch { return; }
+  const secret = projects[0]?.secret;
+  if (secret === undefined || secret === '') return;
+  const authHeaders = { ...RESET_SETTINGS_HEADERS, 'X-Hotsheet-Secret': secret };
+  await Promise.allSettled([
+    // `sortBy` + `sortDir` are server-persisted alongside layout/view, so a
+    // prior spec that flipped to "Oldest First" parks newly-created tickets
+    // off-viewport (with 350+ pre-existing rows accumulated across the
+    // sweep) and `bindListVirtualized` doesn't mount them. The locator
+    // resolves to nothing for the just-created ticket and the test times
+    // out at the `.click()` call. Reset to the implicit defaults.
+    request.patch('/api/settings', { headers: authHeaders, data: { layout: 'list', view: 'all', sortBy: 'created', sortDir: 'desc' } }),
+    request.patch('/api/file-settings', { headers: authHeaders, data: { drawer_open: 'false', drawer_active_tab: 'commands-log' } }),
+  ]);
+
+  // Wipe accumulated tickets so the per-test workload starts from an empty
+  // DB. The single Playwright `webServer` persists ticket rows across all
+  // 375 tests in a sweep, and once the count crosses
+  // `bindListVirtualized`'s 100-row threshold, the viewport math drops
+  // tickets that aren't in the rendered window — a `[value="..."]`
+  // locator for a row past the window resolves to nothing and the test
+  // times out. Specs that need a non-empty DB POST tickets in their own
+  // `beforeAll` / test body AFTER this fixture runs.
+  try {
+    const allRes = await request.get('/api/tickets?status=active', { headers: authHeaders });
+    if (allRes.ok()) {
+      const active = await allRes.json() as { id: number }[];
+      const trashRes = await request.get('/api/tickets?status=deleted', { headers: authHeaders });
+      const trashed = trashRes.ok() ? await trashRes.json() as { id: number }[] : [];
+      const ids = [...active.map(t => t.id), ...trashed.map(t => t.id)];
+      if (ids.length > 0) {
+        // batch action 'delete' moves to trash; then empty-trash hard-deletes.
+        await request.post('/api/tickets/batch', { headers: authHeaders, data: { ids, action: 'delete' } });
+        await request.post('/api/trash/empty', { headers: authHeaders });
+      }
+    }
+  } catch { /* swallow — best-effort */ }
+}
+
 // Collect browser JS coverage and write V8-format JSON for c8 to process.
 // Rewrites the URL from HTTP to the local file path so c8 can find the source map.
-export const test = base.extend<{ autoJSCoverage: void; suppressUpgradeNudge: void }>({
+export const test = base.extend<{ autoJSCoverage: void; suppressUpgradeNudge: void; resetSettings: void }>({
+  resetSettings: [async ({ request }, use) => {
+    await resetCrossSpecSettings(request);
+    await use();
+  }, { auto: true }],
   suppressUpgradeNudge: [async ({ page }, use) => {
     await page.addInitScript(SUPPRESS_UPGRADE_NUDGE_SCRIPT);
     await use();
