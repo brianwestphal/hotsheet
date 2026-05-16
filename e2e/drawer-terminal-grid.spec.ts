@@ -128,22 +128,24 @@ test.describe('Drawer terminal grid view (HS-6311)', () => {
     await toggle.click();
 
     // Set a non-default slider value and verify it sticks after exit+re-enter
-    // within the same session. HS-8419 — Playwright's `fill()` rejects
-    // `<input type="range">` values with "Malformed value"; assign via
-    // `evaluate` then dispatch `input` so the change handler fires.
+    // within the same session.
+    // HS-8419 — Playwright's `fill()` rejects `<input type="range">` values
+    // with "Malformed value"; assign via `evaluate` then dispatch `input` so
+    // the change handler fires. Slider is min=1 max=10 step=1 (see
+    // `pages.tsx::drawer-grid-size-slider`); '60' was a stale 0–100-scale
+    // value that the browser silently clamped to 10. Pick 3 instead so the
+    // post-snap value is a sane non-default-7 sentinel.
     const slider = page.locator('#drawer-grid-size-slider');
-    await slider.evaluate((el) => { (el as HTMLInputElement).value = '60'; });
+    await slider.evaluate((el) => { (el as HTMLInputElement).value = '3'; });
     await slider.dispatchEvent('input');
     await toggle.click(); // exit
     await expect(page.locator('#drawer-terminal-grid')).toBeHidden();
     await toggle.click(); // re-enter
     await expect(page.locator('#drawer-terminal-grid')).toBeVisible();
-    // Slider should reflect the saved-per-project value (may snap to a nearby
-    // N-tiles-per-row position, but should be close to 60). We check the
-    // value is in range rather than exact to allow for snap-point snapping.
+    // Slider should reflect the saved-per-project value. With a 1–10 range
+    // and step=1, the value is exact after re-entry (no snap rounding).
     const val = Number(await slider.inputValue());
-    expect(val).toBeGreaterThan(30);
-    expect(val).toBeLessThan(100);
+    expect(val).toBe(3);
   });
 
   // HS-7659 — when a tile is enlarged (centered or in dedicated view) inside

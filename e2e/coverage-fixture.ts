@@ -103,31 +103,20 @@ async function resetCrossSpecSettings(request: import('@playwright/test').APIReq
     }
   } catch { /* swallow — best-effort */ }
 
-  // HS-8419 — kill every alive PTY + destroy every dynamic-terminal config
-  // so specs like `quit-confirm-dialog-growth.spec.ts` (which counts
-  // dialog rows against `/api/projects/quit-summary` =
-  // `listAliveTerminalsAcrossProjects`) start from zero alive terminals.
-  // Configured terminals from earlier specs' file-settings PATCHes have
-  // their PTYs survive across specs because `writeFileSettings` only
-  // updates the config; the PTY registry has its own lifecycle. The
-  // quit-confirm test's `beforeEach` only destroys *dynamic* terminals
-  // (the `for (const d of list.dynamic)` loop) — configured-but-still-alive
-  // PTYs from terminal.spec.ts / terminal-appearance.spec.ts /
-  // terminal-search.spec.ts persist, leak into `quit-summary`, and inflate
-  // the row count from the expected 3 to 6+.
+  // HS-8419 — destroy every DYNAMIC terminal config so dyn-* terminals
+  // from `terminal.spec.ts` / drawer-terminal-grid.spec.ts don't
+  // accumulate. Configured terminals from earlier specs' file-settings
+  // PATCHes are NOT killed here — see HS-8419 comment in this file's
+  // commit history; killing them during the fixture aborts xterm
+  // WebSocket connections that the immediately-following test's
+  // page.goto / drawer-open sequence races against, leaving the
+  // drawer-expand button in a zero-height parent and timing out the
+  // visibility check. Specs that need a clean configured-terminal slate
+  // patch `terminals: [...]` in their own `beforeEach`.
   try {
     const listRes = await request.get('/api/terminal/list', { headers: authHeaders });
     if (listRes.ok()) {
-      const list = await listRes.json() as {
-        configured?: { id: string; state?: string }[];
-        dynamic?: { id: string }[];
-      };
-      const killTargets = [
-        ...(list.configured ?? []).filter(t => t.state === 'alive').map(t => t.id),
-      ];
-      for (const id of killTargets) {
-        await request.post('/api/terminal/kill', { headers: authHeaders, data: { terminalId: id } }).catch(() => {});
-      }
+      const list = await listRes.json() as { dynamic?: { id: string }[] };
       for (const d of (list.dynamic ?? [])) {
         await request.post('/api/terminal/destroy', { headers: authHeaders, data: { terminalId: d.id } }).catch(() => {});
       }
