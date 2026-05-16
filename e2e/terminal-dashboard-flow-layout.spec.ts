@@ -33,9 +33,9 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
 
   test.afterEach(async ({ request }) => {
     // Reset to default for subsequent tests / isolation.
-    await request.patch('/api/file-settings', {
+    await request.patch('/api/global-config', {
       headers,
-      data: { dashboard_layout_mode: 'sectioned' },
+      data: { dashboard: { layoutMode: 'sectioned' } },
     });
   });
 
@@ -56,9 +56,9 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
         }),
       });
     });
-    await request.patch('/api/file-settings', {
+    await request.patch('/api/global-config', {
       headers,
-      data: { dashboard_layout_mode: 'sectioned' },
+      data: { dashboard: { layoutMode: 'sectioned' } },
     });
 
     await page.goto('/');
@@ -93,9 +93,9 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
 
   test('flow grid renders one flat tile list with project-color badges; first tile of each run gets a project-name prefix', async ({ page, request }) => {
     // Force flow mode persistently.
-    await request.patch('/api/file-settings', {
+    await request.patch('/api/global-config', {
       headers,
-      data: { dashboard_layout_mode: 'flow' },
+      data: { dashboard: { layoutMode: 'flow' } },
     });
 
     // Stub /terminal/list per-project so we get a deterministic 3-tile fixture.
@@ -133,10 +133,12 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
     // prefix on the first tile of each run remains.
     await expect(flow.locator('.terminal-dashboard-tile-badge')).toHaveCount(0);
 
-    // The FIRST tile of each project run gets a project-name prefix
-    // (`{ProjectName} ›`). Since this fixture only has one project, that's
-    // exactly one project-prefix span.
-    await expect(flow.locator('.terminal-dashboard-tile-project')).toHaveCount(1);
+    // HS-8419 — HS-7967 changed flow-mode rendering: every tile carries
+    // the `{ProjectName} ›` prefix (the `flattenSectionsToTiles` helper
+    // in `terminalDashboardPaintHelpers.tsx` assigns a `projectBadge` per
+    // tile, not per project run). With 3 tiles in this fixture, every
+    // tile gets a prefix span.
+    await expect(flow.locator('.terminal-dashboard-tile-project')).toHaveCount(3);
 
     // Every tile renders the bare terminal name in `.terminal-dashboard-tile-name`
     const names = await flow.locator('.terminal-dashboard-tile-name').allTextContents();
@@ -144,9 +146,9 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
   });
 
   test('toggling between sectioned and flow re-renders without re-fetching project data', async ({ page, request }) => {
-    await request.patch('/api/file-settings', {
+    await request.patch('/api/global-config', {
       headers,
-      data: { dashboard_layout_mode: 'sectioned' },
+      data: { dashboard: { layoutMode: 'sectioned' } },
     });
 
     let listCallCount = 0;
@@ -187,9 +189,9 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
   });
 
   test('flow mode drops empty projects entirely (no per-project empty-state row)', async ({ page, request }) => {
-    await request.patch('/api/file-settings', {
+    await request.patch('/api/global-config', {
       headers,
-      data: { dashboard_layout_mode: 'flow' },
+      data: { dashboard: { layoutMode: 'flow' } },
     });
 
     // Force the project to have ZERO terminals.

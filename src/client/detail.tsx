@@ -13,8 +13,8 @@ import { syncDetailReaderButton } from './readerOverlay.js';
 import type { Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { parseTags, renderDetailTags } from './tags.js';
-import { callRenderTicketList } from './ticketListState.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
+import { ticketsStore } from './ticketsStore.js';
 
 // Re-export extracted modules for consumers that import from detail.js
 export type { NoteEntry } from './noteRenderer.js';
@@ -348,14 +348,18 @@ async function loadDetail(id: number) {
   );
   if (state.activeTicketId !== id) return;
 
-  // Mark ticket as read — only if it's currently unread (prevents unnecessary PATCHes on poll refresh)
+  // Mark ticket as read — only if it's currently unread (prevents unnecessary PATCHes on poll refresh).
+  // HS-8419 — route through `ticketsStore.actions.applyServerUpdate` so the
+  // per-ticket signal fires (HS-8335). Direct mutation of `inMemory.last_read_at`
+  // bypassed the store and the bindList-preserved row never re-ran its
+  // `syncUnreadDot` effect, so the blue dot stayed in the DOM until the next
+  // full poll cycle even though `state.tickets` had the new `last_read_at`.
   if (!suppressAutoRead) {
     const inMemory = state.tickets.find(t => t.id === id);
     const isUnread = inMemory != null && inMemory.last_read_at != null && inMemory.updated_at > inMemory.last_read_at;
     if (isUnread) {
       const readAt = new Date().toISOString();
-      inMemory.last_read_at = readAt;
-      callRenderTicketList(); // Immediately hide the blue dot in the list/column view
+      ticketsStore.actions.applyServerUpdate({ ...inMemory, last_read_at: readAt });
       void api(`/tickets/${id}`, { method: 'PATCH', body: { last_read_at: readAt } }).catch(() => {});
     }
   }

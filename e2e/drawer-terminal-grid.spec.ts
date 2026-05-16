@@ -210,7 +210,10 @@ test.describe('Drawer terminal grid view (HS-6311)', () => {
     await expect(page.locator('body.drawer-grid-tile-enlarged')).toHaveCount(0);
 
     // Press Esc to uncenter. Chrome remains visible and untouched.
-    await page.keyboard.press('Escape');
+    // HS-8419 — `centerTile` auto-focuses the xterm helper textarea; plain
+    // Esc inside a focused terminal goes to the PTY per HS-8011, so use
+    // Opt/Alt+Esc to reach the drawer-grid Esc handler.
+    await page.keyboard.press('Alt+Escape');
     await expect(centered).toHaveCount(0, { timeout: 5000 });
     await expect(page.locator('.app.drawer-expanded')).toHaveCount(0);
     await expect(expandBtn).toBeVisible();

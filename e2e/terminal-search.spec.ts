@@ -416,7 +416,10 @@ test.describe('Terminal search widget (HS-7363)', () => {
 
     // A second Esc (now that the input is blurred) should exit the dedicated
     // view — this is the pre-existing behavior and must not regress.
-    await page.keyboard.press('Escape');
+    // HS-8419 — after the first Esc the xterm helper textarea has focus, so
+    // the second plain Esc goes to the PTY per HS-8011. Use Opt/Alt+Esc to
+    // reach the dashboard Esc handler (§25.8 escape hatch).
+    await page.keyboard.press('Alt+Escape');
     await expect(overlay).toHaveCount(0, { timeout: 3000 });
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
   });

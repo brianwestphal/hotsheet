@@ -49,7 +49,11 @@ test.describe('Full ticket lifecycle (HS-5628)', () => {
       page.locator('.ticket-row[data-id] .ticket-title-input').filter({ hasNot: page.locator('.draft-input') }).first(),
     ).toHaveValue(editedTitle, { timeout: 5000 });
 
-    // Edit details
+    // Edit details. HS-8419 — Details body renders as a markdown view that
+    // swaps to a textarea only after the user clicks/tabs into it; click the
+    // rendered view first to enter edit mode, then fill the now-visible
+    // textarea.
+    await page.locator('#detail-details-rendered').click();
     const detailDetails = page.locator('#detail-details');
     await detailDetails.fill('This is the description');
 

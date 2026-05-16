@@ -342,7 +342,13 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await page.locator('.terminal-dashboard-tile[data-terminal-id="live"]').dblclick();
     await expect(page.locator('.terminal-dashboard-dedicated')).toBeVisible();
 
-    await page.keyboard.press('Escape');
+    // HS-8419 — `centerTile` / `enterDedicatedView` auto-focus the xterm
+    // helper textarea (`queueMicrotask(() => { term.focus(); })` in
+    // `terminalTileGridCenter.tsx`). Per HS-8011 plain Esc inside a focused
+    // terminal must reach the running program; Opt/Alt+Esc is the explicit
+    // dashboard-control escape hatch documented in §25.8 and implemented
+    // via `shouldEscapeBypassHotsheet(target, altKey)`.
+    await page.keyboard.press('Alt+Escape');
     await expect(page.locator('.terminal-dashboard-dedicated')).toHaveCount(0);
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
   });
@@ -944,11 +950,14 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await page.locator('.terminal-dashboard-tile[data-terminal-id="live"]').click();
     await expect(page.locator('.terminal-dashboard-tile.centered')).toHaveCount(1);
 
-    await page.keyboard.press('Escape');
+    // HS-8419 — see test 328 above. `centerTile` auto-focuses xterm, so
+    // plain Esc goes to the PTY per HS-8011; use Opt/Alt+Esc to reach the
+    // dashboard Esc handler.
+    await page.keyboard.press('Alt+Escape');
     await expect(page.locator('.terminal-dashboard-tile.centered')).toHaveCount(0);
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
 
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+Escape');
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(0);
   });
 });

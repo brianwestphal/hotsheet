@@ -33,6 +33,11 @@ test.describe('Detail panel interactions', () => {
     await createTicket(page, 'Detail persist ticket');
     await openDetail(page, 'Detail persist ticket');
 
+    // HS-8419 — Details body renders as a markdown view that swaps to a
+    // textarea only after the user clicks/tabs into it (`.is-editing` class
+    // on `.detail-details-wrap`). Click the rendered view first to enter
+    // edit mode, then fill the now-visible textarea.
+    await page.locator('#detail-details-rendered').click();
     const detailsArea = page.locator('#detail-details');
     await detailsArea.fill('These are the ticket details.');
 
@@ -44,6 +49,9 @@ test.describe('Detail panel interactions', () => {
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await openDetail(page, 'Detail persist ticket');
 
+    // After reload the wrap flips back to rendered mode. Re-enter editing
+    // to inspect the textarea's persisted value.
+    await page.locator('#detail-details-rendered').click();
     await expect(page.locator('#detail-details')).toHaveValue('These are the ticket details.');
   });
 
@@ -150,6 +158,9 @@ test.describe('Detail panel interactions', () => {
     await createTicket(page, 'HS-8291 long details ticket');
     await openDetail(page, 'HS-8291 long details ticket');
 
+    // HS-8419 — Details rendered view requires a click-to-edit before the
+    // textarea is visible.
+    await page.locator('#detail-details-rendered').click();
     const longString = 'b'.repeat(600);
     await page.locator('#detail-details').fill(longString);
     // Wait for debounced save + the rendered swap to land.

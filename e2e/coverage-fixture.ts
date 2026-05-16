@@ -53,8 +53,27 @@ async function resetCrossSpecSettings(request: import('@playwright/test').APIReq
     // sweep) and `bindListVirtualized` doesn't mount them. The locator
     // resolves to nothing for the just-created ticket and the test times
     // out at the `.click()` call. Reset to the implicit defaults.
-    request.patch('/api/settings', { headers: authHeaders, data: { layout: 'list', view: 'all', sortBy: 'created', sortDir: 'desc' } }),
+    // Settings stored as strings via /api/settings — booleans are read back
+    // via `settings.detail_visible !== 'false'` in `settingsLoader.tsx`.
+    // `detail_visible: 'false'` leaks from ui-gaps.spec.ts:144 (the
+    // "toggle off" test) into every spec that opens the detail panel
+    // (detail.spec.ts, ticket-lifecycle.spec.ts, unread-indicators.spec.ts).
+    // `detail_position: 'bottom'` leaks from ui-gaps.spec.ts:115.
+    request.patch('/api/settings', { headers: authHeaders, data: { layout: 'list', view: 'all', sortBy: 'created', sortDir: 'desc', detail_visible: 'true', detail_position: 'side' } }),
     request.patch('/api/file-settings', { headers: authHeaders, data: { drawer_open: 'false', drawer_active_tab: 'commands-log' } }),
+    // HS-8419 — `dashboard.layoutMode` moved from per-project file-settings
+    // to global config in HS-8290. `terminal-dashboard-flow-layout.spec.ts`
+    // test 42 toggles flow mode and persists via the UI (which writes to
+    // global-config), but its `afterEach` only resets via the dead
+    // `dashboard_layout_mode` file-settings key. Result: flow mode leaks
+    // across to terminal-dashboard.spec.ts:92 / :114, where the dashboard
+    // renders `.terminal-dashboard-grid-flow` instead of the per-project
+    // `.terminal-dashboard-section`s the tests expect to find. The
+    // /global-config endpoint is cross-project; the mutation-without-Origin
+    // CSRF gate in `server.ts` rejects with 403 unless we send the
+    // project's `X-Hotsheet-Secret`, so reuse `authHeaders` even though the
+    // request is logically project-agnostic.
+    request.patch('/api/global-config', { headers: authHeaders, data: { dashboard: { layoutMode: 'sectioned' } } }),
   ]);
 
   // Wipe accumulated tickets so the per-test workload starts from an empty
