@@ -88,23 +88,28 @@ test.describe('Quit-confirm dialog DOM growth (HS-8055)', () => {
       };
     });
 
-    // Tear down dynamic terminals AND kill every alive configured PTY
-    // from earlier tests. HS-8419 — configured-terminal PTYs persist
-    // across specs (writeFileSettings updates config but not the registry);
-    // /api/projects/quit-summary enumerates ALL alive PTYs across all
-    // projects, so leftover alive PTYs from terminal.spec.ts /
-    // terminal-appearance.spec.ts / terminal-search.spec.ts inflate the
-    // expected 3-row dialog to 6+. Killing here is spec-local (the global
-    // coverage-fixture intentionally doesn't kill configured PTYs because
-    // that races with drawer xterm WebSocket attaches in other specs).
+    // Tear down dynamic terminals AND kill every alive PTY (across the
+    // whole project, including configured-but-since-removed terminals).
+    // HS-8419 — configured-terminal PTYs persist across specs because
+    // writeFileSettings updates the config without touching the registry;
+    // when a later spec removes a terminal from file-settings.terminals
+    // the PTY survives but stops appearing in /api/terminal/list's
+    // `configured` array. /api/projects/quit-summary enumerates the
+    // server-side `listAliveTerminalsAcrossProjects()` registry directly,
+    // which sees those orphans — so we use it to find every alive id
+    // that needs killing.
     try {
+      const summary = await (await request.get('/api/projects/quit-summary', { headers })).json() as {
+        projects?: { secret: string; entries: { terminalId: string }[] }[];
+      };
+      const projects = summary.projects ?? [];
+      const ourProject = projects.find(p => p.secret === headers['X-Hotsheet-Secret']);
+      for (const entry of (ourProject?.entries ?? [])) {
+        await request.post('/api/terminal/kill', { headers, data: { terminalId: entry.terminalId } });
+      }
       const list = await (await request.get('/api/terminal/list', { headers })).json() as {
-        configured?: { id: string; state?: string }[];
         dynamic?: { id: string }[];
       };
-      for (const c of (list.configured ?? []).filter(t => t.state === 'alive')) {
-        await request.post('/api/terminal/kill', { headers, data: { terminalId: c.id } });
-      }
       for (const d of list.dynamic ?? []) {
         await request.post('/api/terminal/destroy', { headers, data: { terminalId: d.id } });
       }
