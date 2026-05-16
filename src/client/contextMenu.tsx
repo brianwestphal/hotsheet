@@ -277,6 +277,12 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
         if (insertBefore) menu.insertBefore(item, insertBefore);
         else menu.appendChild(item);
       }
+    }).catch(() => {
+      // Fire-and-forget — the api() helper already surfaces a network-
+      // error popup for genuine failures. Swallow here so a transient
+      // /backends miss on right-click doesn't leak as an unhandled
+      // rejection (and so tests that exercise the contextmenu without a
+      // running server don't trip vitest's unhandled-error guard).
     });
   }
 
