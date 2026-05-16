@@ -41,7 +41,7 @@ function triggerRedo() {
  * can read pre-computed booleans rather than re-querying the DOM in its
  * `match` predicate.
  */
-interface KeyContext {
+export interface KeyContext {
   readonly isInput: boolean;
   readonly isTerminalFocused: boolean;
   readonly isCommandsLogFocused: boolean;
@@ -78,6 +78,24 @@ interface KeyboardShortcut {
  * are also kept inline in {@link bindKeyboardShortcuts} because they must
  * run before any chord entry.
  */
+
+/**
+ * HS-8418 — true when a Backspace / Delete keystroke is unclaimed by any
+ * Hot Sheet editable surface and would otherwise reach the WebView's
+ * default handler, where it triggers `history.back()` and exits the
+ * Tauri shell back to its loading screen. The catch-all matcher uses
+ * this predicate to consume the keystroke without side effects.
+ *
+ * Exported so unit tests can pin the truth table directly without
+ * driving the full keydown dispatch.
+ */
+export function shouldPreventHistoryBackKey(e: KeyboardEvent, ctx: KeyContext): boolean {
+  if (e.key !== 'Backspace' && e.key !== 'Delete') return false;
+  if (ctx.isInput) return false;
+  if (ctx.isTerminalFocused) return false;
+  return true;
+}
+
 const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   {
     label: 'Cmd/Ctrl+Shift+[: previous project tab',
@@ -363,6 +381,28 @@ const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
         state.selectedIds.clear();
         void loadTickets();
       });
+      return 'handled';
+    },
+  },
+  {
+    // HS-8418 — guard against browser history-back navigation. In Tauri's
+    // WKWebView (and stock browsers) the default action for Backspace /
+    // Delete when no editable element owns focus is `history.back()` —
+    // which in the Tauri shell unloads the SPA back to the original
+    // loading screen, exiting the user out of their session entirely.
+    // The "delete selected tickets" entry above already prevents default
+    // when selection is non-empty, so this catch-all only kicks in for
+    // the no-editable-focus + no-selection case: the keystroke has no
+    // app-level meaning, but we must still consume it so the WebView
+    // doesn't navigate. Terminal-focused state already routes through
+    // xterm directly (xterm's own keydown handler claims the event
+    // before this listener) so the gate on `!ctx.isTerminalFocused`
+    // here is defensive — it lets the keystroke pass through unchanged
+    // if xterm somehow loses its claim mid-event.
+    label: 'Delete/Backspace: prevent WebView history-back (HS-8418)',
+    match: shouldPreventHistoryBackKey,
+    run: (e) => {
+      e.preventDefault();
       return 'handled';
     },
   },

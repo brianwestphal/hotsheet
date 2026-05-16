@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { KeyContext } from './shortcuts.js';
 import {
   decideShiftArrowTabAction,
   findVisibleModalOverlay,
@@ -16,6 +17,7 @@ import {
   pickNextDrawerTabId,
   shouldBailForActiveModal,
   shouldEscapeBypassHotsheet,
+  shouldPreventHistoryBackKey,
 } from './shortcuts.js';
 
 describe('isNewTerminalShortcut (HS-7926)', () => {
@@ -536,5 +538,50 @@ describe('decideShiftArrowTabAction (HS-8366)', () => {
         isCommandsLogFocused: true,
       })).toBe('fallthrough-alt');
     });
+  });
+});
+
+// HS-8418 — Backspace / Delete with no editable surface focused triggers the
+// WebView's default `history.back()` action, unloading the Tauri shell back
+// to its loading screen. The catch-all shortcut at the end of
+// KEYBOARD_SHORTCUTS consumes the keystroke when no other handler claims it;
+// this describe block pins the truth table for the gating predicate so a
+// future refactor that splits the helper apart can't silently regress the
+// guard.
+describe('shouldPreventHistoryBackKey (HS-8418)', () => {
+  const noFocusCtx: KeyContext = { isInput: false, isTerminalFocused: false, isCommandsLogFocused: false };
+  const inputCtx: KeyContext = { isInput: true, isTerminalFocused: false, isCommandsLogFocused: false };
+  const terminalCtx: KeyContext = { isInput: false, isTerminalFocused: true, isCommandsLogFocused: false };
+
+  function ev(key: string): KeyboardEvent {
+    return new KeyboardEvent('keydown', { key });
+  }
+
+  it('returns true for Backspace with no editable focus and no terminal focus', () => {
+    expect(shouldPreventHistoryBackKey(ev('Backspace'), noFocusCtx)).toBe(true);
+  });
+
+  it('returns true for Delete with no editable focus and no terminal focus', () => {
+    expect(shouldPreventHistoryBackKey(ev('Delete'), noFocusCtx)).toBe(true);
+  });
+
+  it('returns false for Backspace when an editable element owns focus (the user is typing)', () => {
+    expect(shouldPreventHistoryBackKey(ev('Backspace'), inputCtx)).toBe(false);
+  });
+
+  it('returns false for Delete when an editable element owns focus', () => {
+    expect(shouldPreventHistoryBackKey(ev('Delete'), inputCtx)).toBe(false);
+  });
+
+  it('returns false when a terminal is focused so xterm receives the keystroke unchanged', () => {
+    expect(shouldPreventHistoryBackKey(ev('Backspace'), terminalCtx)).toBe(false);
+    expect(shouldPreventHistoryBackKey(ev('Delete'), terminalCtx)).toBe(false);
+  });
+
+  it('returns false for keys other than Backspace / Delete', () => {
+    expect(shouldPreventHistoryBackKey(ev('a'), noFocusCtx)).toBe(false);
+    expect(shouldPreventHistoryBackKey(ev('Enter'), noFocusCtx)).toBe(false);
+    expect(shouldPreventHistoryBackKey(ev('ArrowLeft'), noFocusCtx)).toBe(false);
+    expect(shouldPreventHistoryBackKey(ev('Escape'), noFocusCtx)).toBe(false);
   });
 });
