@@ -159,6 +159,12 @@ test.describe('HS-8356 — show / hide terminals in the dashboard view', () => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await page.locator('#terminal-dashboard-toggle').click();
+    // HS-8419 — wait for at least one tile to render before clicking the
+    // hide button. The dialog reads `dashboardState.lastSectionData` which
+    // is populated by the dashboard's first render; without this wait the
+    // dialog can open against an empty `lastSectionData` and show the
+    // "No terminals registered." empty-state.
+    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="a"]')).toHaveCount(1, { timeout: 5000 });
 
     const hideBtn = page.locator('#terminal-dashboard-hide-btn, .terminal-dashboard-hide-btn').first();
     await hideBtn.click();

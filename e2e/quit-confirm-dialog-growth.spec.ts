@@ -88,12 +88,23 @@ test.describe('Quit-confirm dialog DOM growth (HS-8055)', () => {
       };
     });
 
-    // Tear down dynamic terminals from earlier tests so the project
-    // boots with a single known config.
+    // Tear down dynamic terminals AND kill every alive configured PTY
+    // from earlier tests. HS-8419 — configured-terminal PTYs persist
+    // across specs (writeFileSettings updates config but not the registry);
+    // /api/projects/quit-summary enumerates ALL alive PTYs across all
+    // projects, so leftover alive PTYs from terminal.spec.ts /
+    // terminal-appearance.spec.ts / terminal-search.spec.ts inflate the
+    // expected 3-row dialog to 6+. Killing here is spec-local (the global
+    // coverage-fixture intentionally doesn't kill configured PTYs because
+    // that races with drawer xterm WebSocket attaches in other specs).
     try {
       const list = await (await request.get('/api/terminal/list', { headers })).json() as {
+        configured?: { id: string; state?: string }[];
         dynamic?: { id: string }[];
       };
+      for (const c of (list.configured ?? []).filter(t => t.state === 'alive')) {
+        await request.post('/api/terminal/kill', { headers, data: { terminalId: c.id } });
+      }
       for (const d of list.dynamic ?? []) {
         await request.post('/api/terminal/destroy', { headers, data: { terminalId: d.id } });
       }
