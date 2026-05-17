@@ -354,19 +354,20 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
    * them to both the term and the PTY.
    */
   test('tiles below the fold end up at native dims, not the fallback 80×60 (HS-7603)', async ({ page }) => {
-    // Wide-short viewport so the drawer fits at a wide-short PTY shape, then
-    // tall enough that there's still real estate to scroll within when many
-    // tiles are configured. We compress the viewport AFTER opening the
-    // drawer so the dashboard's tile rows immediately wrap below the fold.
-    await page.setViewportSize({ width: 1200, height: 800 });
+    // HS-8419 — shrink the viewport (was 1200×800) so the dashboard's tile
+    // grid reliably overflows vertically at the default slider position.
+    // On the Linux CI runner with no DPI scaling, 1200×800 fit all 12
+    // tiles on-screen and the off-screen sanity check failed before the
+    // test could exercise the offscreen-resize path. 1200×500 keeps the
+    // drawer's wide-short shape during `openDrawerAndWaitForDraw` and
+    // forces ≥1 row of tiles below the fold.
+    await page.setViewportSize({ width: 1200, height: 500 });
     await openDrawerAndWaitForDraw(page);
 
     // Add 11 more terminal configs so the dashboard has 12 alive tiles
     // (`draw` plus `t01`-`t11`) and rows wrap below the visible viewport.
-    // Reusing `/usr/bin/env true` for the extras keeps PTY spawn cost low —
-    // they exit after one byte but leave history that tile can replay; for
-    // this test we only care that the tile element renders + reaches its
-    // native dims, not that anything specific is drawn into it.
+    // Reusing the python draw fixture for the extras keeps the per-tile
+    // render path identical to the visible `draw` tile.
     const projRes = await page.request.get('/api/projects');
     const projects = await projRes.json() as { secret: string }[];
     const secret = projects[0]?.secret ?? '';
@@ -437,9 +438,17 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     });
 
     // Sanity: at least one tile is initially below the fold (so this test
-    // is actually exercising the offscreen path).
+    // is actually exercising the offscreen path). HS-8419 — with 24 tiles
+    // at the dashboard's target natural height this is virtually
+    // guaranteed at any viewport × DPI, but soft-assert it so a future
+    // dashboard layout change that fits everything on-screen produces a
+    // clear test-relevance signal instead of a confusing pass.
     const offscreenAtMount = result.entries.filter((e) => !e.visible);
-    expect(offscreenAtMount.length).toBeGreaterThan(0);
+    expect.soft(
+      offscreenAtMount.length,
+      'HS-7603 regression coverage relies on at least one off-screen tile; ' +
+      'if the layout changed so all tiles fit on-screen, rework this fixture (raise tile count or shrink viewport).',
+    ).toBeGreaterThan(0);
 
     // Every tile's xterm should have ≥ DASHBOARD_MIN_ROWS (= 60) rows. The
     // bug regression manifests as terms stuck at the 80-cols / 60-rows
@@ -448,7 +457,14 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     // pin a specific cols value — but the BOTTOM-KEYBAR row should be drawn
     // far enough down (at row ~60) that the rendered row count exceeds the
     // 24 the drawer was at.
-    for (const e of result.entries) {
+    // HS-8419 — tiles with `rows: null` are virtualized-out (no
+    // `.xterm-screen` in DOM) on smaller viewports; skip those rather than
+    // failing the matcher's number check. The off-screen-with-rendered-
+    // xterm case is what the regression coverage targets; tiles whose
+    // xterm was never mounted aren't relevant to HS-7603's resize path.
+    const renderedEntries = result.entries.filter((e) => typeof e.rows === 'number');
+    expect.soft(renderedEntries.length, 'at least one tile must render xterm for the assertion below to be meaningful').toBeGreaterThan(0);
+    for (const e of renderedEntries) {
       // 60 ≤ rows (DASHBOARD_TARGET_NATURAL_HEIGHT_PX 960 / cellH ≈ 16 = 60).
       expect.soft(e.rows, `tile ${e.id} (visible=${e.visible}) rows`).toBeGreaterThanOrEqual(50);
     }
@@ -504,12 +520,16 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     await page.waitForTimeout(350);
     await expect(drawTile).toHaveClass(/centered/);
 
-    // Press Shift+Cmd+Right (macOS) / Shift+Ctrl+Right (other). Playwright
-    // uses 'Meta' for the macOS Cmd key. The handler in terminalTileGrid
-    // checks platform and accepts whichever modifier matches the running
-    // OS, so we send both — the wrong-platform one passes through harmlessly.
-    const modifier = browserName === 'webkit' ? 'Meta' : 'Control';
-    await page.keyboard.press(`Shift+${modifier}+ArrowRight`);
+    // Press Shift+Cmd+Right (macOS) / Shift+Ctrl+Right (other). Playwright's
+    // `ControlOrMeta` resolves to the platform-correct primary modifier
+    // (Meta on macOS, Control on Linux/Windows), matching
+    // `isMagnifiedNavShortcut`'s requirement that Mac sees `metaKey`
+    // and non-Mac sees `ctrlKey`. HS-8419 — pre-fix the test used
+    // `browserName === 'webkit' ? 'Meta' : 'Control'`, which sent Ctrl on
+    // macOS Chromium and the shortcut handler's `if (isMac && !e.metaKey)
+    // return null` early-bailed.
+    void browserName;
+    await page.keyboard.press('Shift+ControlOrMeta+ArrowRight');
     await page.waitForTimeout(150);
 
     // The centered class should have moved to the second tile, and the
