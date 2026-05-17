@@ -3,6 +3,7 @@ import { execFile } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
+import { pathToFileURL } from 'url';
 
 import { initBackupScheduler } from './backup.js';
 import { cleanupAttachments } from './cleanup.js';
@@ -11,6 +12,7 @@ import { handleClose, handleList, joinRunningInstance, shutdownRunningInstance }
 import { getDb, setDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
+import { enrichProcessPath } from './enrich-path.js';
 import { PLUGINS_ENABLED } from './feature-flags.js';
 import { ensureSecret, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
@@ -39,6 +41,15 @@ import { getErrorMessage } from './utils/errorMessage.js';
 if (process.env.UV_THREADPOOL_SIZE === undefined || process.env.UV_THREADPOOL_SIZE === '') {
   process.env.UV_THREADPOOL_SIZE = '16';
 }
+
+// macOS / Linux GUI launches (Dock, Spotlight, Finder) hand the Tauri app
+// a minimal PATH like `/usr/bin:/bin:/usr/sbin:/sbin`. That hides
+// user-installed binaries (`claude`, Homebrew, ~/.local/bin, asdf shims),
+// which then breaks `resolveTerminalCommand`'s `{{claudeCommand}}`
+// substitution — it can't find `claude` and falls back to a bare shell.
+// Enrich PATH from the user's login shell once, before anything reads PATH.
+// See `src/enrich-path.ts` for the full rationale + implementation.
+enrichProcessPath();
 
 /**
  * Handle early exit flags: --close, --list, --version, --help.
@@ -510,18 +521,26 @@ async function main() {
 // `createSignalHandler`) triggers the full Hot Sheet startup + a process
 // exit from inside the vitest worker. The check matches both raw `node`
 // invocation and `tsx` (which preserves `process.argv[1]`).
-const isEntryPoint = (() => {
+//
+// Exported pure helper so this can be unit-tested without spawning. The
+// raw `file://${entry}` compare used before was a bug: `import.meta.url`
+// percent-encodes path characters (spaces → %20) while `process.argv[1]`
+// does not, so an .app installed at `/Applications/Hot Sheet.app/...` (or
+// any path with a URL-reserved character) failed the equality check,
+// `main()` never ran, and the sidecar exited cleanly with code 0 and no
+// output. Comparing through `pathToFileURL` normalizes the encoding.
+export function computeIsEntryPoint(argv1: string | undefined, importMetaUrl: string): boolean {
   try {
-    const entry = process.argv[1];
-    if (typeof entry !== 'string' || entry === '') return false;
-    const url = import.meta.url;
-    if (url === `file://${entry}`) return true;
+    if (typeof argv1 !== 'string' || argv1 === '') return false;
+    if (importMetaUrl === pathToFileURL(argv1).href) return true;
     // tsx normalises paths but keeps the .ts extension; allow basename match.
-    return url.endsWith('/cli.ts') && entry.endsWith('/cli.ts');
+    return importMetaUrl.endsWith('/cli.ts') && argv1.endsWith('/cli.ts');
   } catch {
     return false;
   }
-})();
+}
+
+const isEntryPoint = computeIsEntryPoint(process.argv[1], import.meta.url);
 
 if (isEntryPoint) {
   main().catch((err: unknown) => {

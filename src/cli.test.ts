@@ -10,6 +10,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { computeIsEntryPoint } from './cli.js';
+
 /**
  * HS-8202 — precondition probe for tsx-child-spawn capability. Restricted
  * sandboxes (e.g. Claude Code on macOS) deny the `mkfifo` syscall tsx uses
@@ -167,5 +169,46 @@ describe.skipIf(!canSpawnTsxChild)('CLI — instance file and lock cleanup (skip
     // Cleanup
     try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
     try { rmSync(globalDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+});
+
+// Pure regression test for the entry-point detection. When the bundled
+// cli.js sits at a path that contains a URL-reserved character (e.g. the
+// space in `/Applications/Hot Sheet.app/...`), the raw `file://${argv1}`
+// compare used previously failed because `import.meta.url` percent-encodes
+// the space (`%20`) while `process.argv[1]` keeps it raw — so main() never
+// ran and the sidecar exited silently with code 0.
+describe('computeIsEntryPoint', () => {
+  it('matches a plain bundled path', () => {
+    expect(computeIsEntryPoint(
+      '/Users/dev/Documents/hotsheet/dist/cli.js',
+      'file:///Users/dev/Documents/hotsheet/dist/cli.js',
+    )).toBe(true);
+  });
+
+  it('matches when the path contains a space (e.g. /Applications/Hot Sheet.app/...)', () => {
+    expect(computeIsEntryPoint(
+      '/Applications/Hot Sheet.app/Contents/Resources/server/cli.js',
+      'file:///Applications/Hot%20Sheet.app/Contents/Resources/server/cli.js',
+    )).toBe(true);
+  });
+
+  it('matches tsx invocation by basename when both ends are cli.ts', () => {
+    expect(computeIsEntryPoint(
+      '/Users/dev/hotsheet/src/cli.ts',
+      'file:///Users/dev/hotsheet/src/cli.ts',
+    )).toBe(true);
+  });
+
+  it('returns false for an unrelated import.meta.url', () => {
+    expect(computeIsEntryPoint(
+      '/Users/dev/hotsheet/dist/cli.js',
+      'file:///Users/dev/hotsheet/dist/other.js',
+    )).toBe(false);
+  });
+
+  it('returns false when argv1 is missing', () => {
+    expect(computeIsEntryPoint(undefined, 'file:///x/cli.js')).toBe(false);
+    expect(computeIsEntryPoint('', 'file:///x/cli.js')).toBe(false);
   });
 });
