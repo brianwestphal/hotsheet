@@ -27,8 +27,17 @@ import { linkifyWithCachedPrefixes } from './ticketRefs.js';
  * chevron-down buttons in the header for stepping through a list of
  * entries (used by the per-note reader so the user can read through every
  * non-empty note without re-clicking the book icon for each). When
- * `navigation` is omitted (e.g. the Details reader), the buttons are not
- * rendered at all. See docs/59-reader-note-navigation.md.
+ * `navigation` is omitted, the buttons are not rendered at all. See
+ * docs/59-reader-note-navigation.md.
+ *
+ * **HS-8429 (2026-05-18)** — both the Details reader and the per-note
+ * reader now build a unified `[Details, ...non-empty notes]` entries
+ * list via `buildCombinedReaderEntries` and pass it to the same
+ * navigation slot. Prev/next on either surface walks the combined list,
+ * so the user can read a ticket front-to-back without re-clicking the
+ * book icon when crossing the Details↔Notes boundary. Empty Details or
+ * empty notes are skipped — they wouldn't have a book button anyway, so
+ * they shouldn't be reachable from the reader either.
  */
 
 export interface ReaderEntry {
@@ -230,6 +239,67 @@ export function buildNoteReaderTitle(createdAt: string | null | undefined): stri
   const ts = new Date(createdAt);
   if (Number.isNaN(ts.getTime())) return 'Note';
   return `Note from ${ts.toLocaleString()}`;
+}
+
+/**
+ * HS-8429 — pure helper: build the unified [Details, ...non-empty notes]
+ * entries list for the reader overlay.
+ *
+ * Pre-fix the Details reader (`app.tsx::bindDetailReaderButton`) and the
+ * per-note reader (`noteRenderer.tsx`) opened the overlay with disjoint
+ * navigation lists: the Details reader was always single-entry, and the
+ * note reader only stepped through notes. Reading through a ticket
+ * front-to-back required closing the Details reader and re-clicking the
+ * book icon on the first note (and then doing it again every time the
+ * user wanted to look back at the Details).
+ *
+ * Post-fix both surfaces build the same combined list via this helper:
+ * Details at index 0 (when non-empty), followed by every non-empty note
+ * in display order. Empty Details or empty notes are skipped — they
+ * wouldn't have a book button anyway, so they shouldn't be navigable
+ * from the reader either.
+ *
+ * Caller computes the initial index from this list:
+ *   - Details reader → 0 when the Details entry is included, otherwise
+ *     0 (the first note is the canonical starting point when Details is
+ *     empty — but in that case the Details reader's button is disabled
+ *     by `syncDetailReaderButton`, so this branch shouldn't fire in
+ *     practice).
+ *   - Note reader → the position of the clicked note in the combined
+ *     list (offset by +1 when Details is included).
+ *
+ * Pure: no DOM, no async, no module state. Exported for unit tests.
+ */
+export interface CombinedReaderEntry extends ReaderEntry {
+  /** Stable id so the note reader can locate the clicked note in the
+   *  combined list. `'details'` for the Details entry; the note's
+   *  client/server-assigned id for notes. */
+  id: string;
+}
+
+export function buildCombinedReaderEntries(input: {
+  ticketNumber: string | null | undefined;
+  ticketTitle: string | null | undefined;
+  detailsMarkdown: string;
+  notes: readonly { id?: string; text: string; created_at: string }[];
+}): CombinedReaderEntry[] {
+  const entries: CombinedReaderEntry[] = [];
+  if (input.detailsMarkdown.trim() !== '') {
+    entries.push({
+      id: 'details',
+      title: buildDetailsReaderTitle(input.ticketNumber, input.ticketTitle),
+      markdown: input.detailsMarkdown,
+    });
+  }
+  for (const n of input.notes) {
+    if (n.text.trim() === '') continue;
+    entries.push({
+      id: n.id ?? `__no-id-${entries.length.toString()}`,
+      title: buildNoteReaderTitle(n.created_at),
+      markdown: n.text,
+    });
+  }
+  return entries;
 }
 
 /**

@@ -9,7 +9,7 @@ import { isChannelEnabled } from './experimentalSettings.js';
 import { parseFeedbackPrefix, showFeedbackDialog } from './feedbackDialog.js';
 import { ICON_TRASH } from './icons.js';
 import { appendImageDownloadLinks, proxyGitHubImages } from './imageProxy.js';
-import { buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
+import { buildCombinedReaderEntries, buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
 import { state } from './state.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 import { BUTTON_BUSY_MS, TOAST_AUTOHIDE_MS } from './uiTimings.js';
@@ -171,36 +171,43 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
     // reader opened on a note that's already mid-edit shows the persisted
     // value (the inline edit-area writes back on commit, not on every
     // keystroke).
-    // HS-8233 — pass a `navigation` slot so the reader overlay can render
-    // chevron-up / chevron-down buttons stepping through every non-empty
-    // note in the same display order. The clicked note is the initial
-    // entry; the buttons are disabled at the list boundaries.
+    // HS-8233 / HS-8429 — pass a `navigation` slot so the reader overlay
+    // can render chevron-up / chevron-down buttons stepping through the
+    // unified [Details, ...non-empty notes] list. The clicked note is
+    // the initial entry; the buttons are disabled at the list boundaries.
+    // HS-8429 — Details is included at index 0 when the ticket has
+    // non-empty details, so chevron-up from the first note reaches the
+    // Details body. Symmetrical to the Details reader (which navigates
+    // forward into notes).
     {
       const readerBtn = entry.querySelector<HTMLButtonElement>('.note-reader-btn');
       if (readerBtn !== null) {
         readerBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          // Build the navigation list from every non-empty note in display
-          // order — empty notes don't have a reader button so they aren't
-          // navigable from this surface either. Snapshot at click time
-          // matches the per-note `note.text` snapshot above (reader is
-          // read-only; mid-edit changes happen outside this overlay).
-          const navEntries: { title: string; markdown: string; id: string | undefined }[] = [];
-          for (const n of notes) {
-            if (n.text.trim() === '') continue;
-            navEntries.push({
-              title: buildNoteReaderTitle(n.created_at),
-              markdown: n.text,
-              id: n.id,
-            });
-          }
-          const initialIndex = Math.max(0, navEntries.findIndex(e2 => e2.id === note.id));
+          // Snapshot at click time matches the per-note `note.text`
+          // snapshot above (reader is read-only; mid-edit changes happen
+          // outside this overlay). Look up the ticket for Details + ticket
+          // number/title — `state.tickets` is the same source the Details
+          // reader's button uses.
+          const ticket = state.tickets.find(t => t.id === ticketId) ?? null;
+          const combined = buildCombinedReaderEntries({
+            ticketNumber: ticket?.ticket_number,
+            ticketTitle: ticket?.title,
+            detailsMarkdown: ticket?.details ?? '',
+            notes,
+          });
+          // Locate the clicked note in the combined list (offset by +1
+          // when Details is included at index 0). Fall back to 0 if the
+          // note isn't found (defensive — would only happen if the
+          // clicked note's id doesn't appear in the snapshot, e.g. a
+          // race with a delete; the user lands on the first entry).
+          const initialIndex = Math.max(0, combined.findIndex(e2 => e2.id === note.id));
           openReaderOverlay({
             title: buildNoteReaderTitle(note.created_at),
             markdown: note.text,
-            navigation: navEntries.length > 1
+            navigation: combined.length > 1
               ? {
-                  entries: navEntries.map(e2 => ({ title: e2.title, markdown: e2.markdown })),
+                  entries: combined.map(e2 => ({ title: e2.title, markdown: e2.markdown })),
                   initialIndex,
                 }
               : undefined,

@@ -23,7 +23,7 @@ import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
 import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
 import { initQuitConfirm } from './quitConfirm.js';
-import { buildDetailsReaderTitle, openReaderOverlay, syncDetailReaderButton } from './readerOverlay.js';
+import { buildCombinedReaderEntries, buildDetailsReaderTitle, openReaderOverlay, syncDetailReaderButton } from './readerOverlay.js';
 import { bindSettingsDialog } from './settingsDialog.js';
 import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
 import { initShare } from './share.js';
@@ -485,13 +485,36 @@ function bindDetailAutoSave() {
 function bindDetailReaderButton() {
   const btn = byIdOrNull<HTMLButtonElement>('detail-reader-btn');
   if (btn === null) return;
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     if (btn.disabled) return;
     const detailsArea = byId<HTMLTextAreaElement>('detail-details');
     const ticket = state.tickets.find(t => t.id === state.activeTicketId) ?? null;
+    const detailsMarkdown = detailsArea.value;
+    // HS-8429 — build the unified [Details, ...non-empty notes] navigation
+    // list so the user can step from Details through every note via the
+    // chevron buttons + ArrowUp/Down. Lazy-import noteRenderer to dodge a
+    // circular dep (noteRenderer imports `state` which app.tsx initialises).
+    const { parseNotesJson } = await import('./noteRenderer.js');
+    const notes = ticket !== null ? parseNotesJson(ticket.notes) : [];
+    const entries = buildCombinedReaderEntries({
+      ticketNumber: ticket?.ticket_number,
+      ticketTitle: ticket?.title,
+      detailsMarkdown,
+      notes,
+    });
+    // Initial index = the Details entry's position in the combined list.
+    // When Details is non-empty (the typical case — the button is
+    // disabled when the textarea is empty) it's at index 0; when Details
+    // is empty buildCombinedReaderEntries omits it entirely and we land
+    // on the first note (defensive — shouldn't fire in practice).
+    const detailsIdx = entries.findIndex(e => e.id === 'details');
+    const initialIndex = detailsIdx === -1 ? 0 : detailsIdx;
     openReaderOverlay({
       title: buildDetailsReaderTitle(ticket?.ticket_number, ticket?.title),
-      markdown: detailsArea.value,
+      markdown: detailsMarkdown,
+      navigation: entries.length > 1
+        ? { entries: entries.map(({ title, markdown }) => ({ title, markdown })), initialIndex }
+        : undefined,
     });
   });
   // Sync on initial bind so a fresh page load with no ticket selected leaves

@@ -10,6 +10,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  buildCombinedReaderEntries,
   buildDetailsReaderTitle,
   buildNoteReaderTitle,
   openReaderOverlay,
@@ -289,6 +290,199 @@ describe('reader navigation (HS-8233)', () => {
     expect(overlay.getAttribute('aria-label')).toBe('a');
     (document.querySelector('.reader-mode-next') as HTMLButtonElement).click();
     expect(overlay.getAttribute('aria-label')).toBe('b');
+  });
+});
+
+describe('buildCombinedReaderEntries (HS-8429)', () => {
+  // HS-8429 — both the Details reader and the per-note reader build the
+  // same combined `[Details, ...non-empty notes]` list so prev/next on
+  // either surface walks across the boundary. Pure helper — no DOM.
+
+  it('returns Details at index 0 + every non-empty note in order', () => {
+    const out = buildCombinedReaderEntries({
+      ticketNumber: 'HS-42',
+      ticketTitle: 'Repro',
+      detailsMarkdown: '## Details\nBody',
+      notes: [
+        { id: 'n1', text: 'Note 1', created_at: '2026-05-01T00:00:00Z' },
+        { id: 'n2', text: 'Note 2', created_at: '2026-05-02T00:00:00Z' },
+      ],
+    });
+    expect(out).toHaveLength(3);
+    expect(out[0].id).toBe('details');
+    expect(out[0].title).toBe('Details for HS-42: Repro');
+    expect(out[0].markdown).toBe('## Details\nBody');
+    expect(out[1].id).toBe('n1');
+    expect(out[1].markdown).toBe('Note 1');
+    expect(out[2].id).toBe('n2');
+    expect(out[2].markdown).toBe('Note 2');
+  });
+
+  it('omits Details when its markdown is empty', () => {
+    const out = buildCombinedReaderEntries({
+      ticketNumber: 'HS-42',
+      ticketTitle: 'Repro',
+      detailsMarkdown: '',
+      notes: [{ id: 'n1', text: 'Note 1', created_at: '2026-05-01T00:00:00Z' }],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe('n1');
+  });
+
+  it('omits Details when its markdown is whitespace-only', () => {
+    const out = buildCombinedReaderEntries({
+      ticketNumber: 'HS-42',
+      ticketTitle: 'Repro',
+      detailsMarkdown: '   \n  \t  ',
+      notes: [{ id: 'n1', text: 'Note 1', created_at: '2026-05-01T00:00:00Z' }],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe('n1');
+  });
+
+  it('skips empty notes (mirrors the noteRenderer book-button gating)', () => {
+    const out = buildCombinedReaderEntries({
+      ticketNumber: 'HS-42',
+      ticketTitle: 'Repro',
+      detailsMarkdown: 'Details body',
+      notes: [
+        { id: 'n1', text: '', created_at: '2026-05-01T00:00:00Z' },
+        { id: 'n2', text: '  \n  ', created_at: '2026-05-01T00:00:00Z' },
+        { id: 'n3', text: 'Real note', created_at: '2026-05-02T00:00:00Z' },
+      ],
+    });
+    expect(out).toHaveLength(2);
+    expect(out[0].id).toBe('details');
+    expect(out[1].id).toBe('n3');
+  });
+
+  it('returns just Details when there are no non-empty notes', () => {
+    const out = buildCombinedReaderEntries({
+      ticketNumber: 'HS-42',
+      ticketTitle: 'Repro',
+      detailsMarkdown: 'Just the details',
+      notes: [],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe('details');
+  });
+
+  it('returns an empty array when both Details and notes are empty', () => {
+    const out = buildCombinedReaderEntries({
+      ticketNumber: null,
+      ticketTitle: null,
+      detailsMarkdown: '',
+      notes: [{ id: 'n1', text: '', created_at: '' }],
+    });
+    expect(out).toEqual([]);
+  });
+
+  it('falls back to a synthetic id for notes without an id field (defensive)', () => {
+    // Pre-fix the note reader's `findIndex(e2 => e2.id === note.id)` would
+    // collapse to -1 for every entry if multiple notes shared an undefined
+    // id, defeating the initial-index lookup. Now every entry gets a
+    // unique id even when the source note's id is undefined.
+    const out = buildCombinedReaderEntries({
+      ticketNumber: 'HS-1',
+      ticketTitle: 't',
+      detailsMarkdown: 'D',
+      notes: [
+        { text: 'A', created_at: '2026-05-01T00:00:00Z' },
+        { text: 'B', created_at: '2026-05-02T00:00:00Z' },
+      ],
+    });
+    expect(out).toHaveLength(3);
+    const ids = out.map(e => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('Details title uses buildDetailsReaderTitle conventions (number-only fallback)', () => {
+    const out = buildCombinedReaderEntries({
+      ticketNumber: 'HS-99',
+      ticketTitle: '',
+      detailsMarkdown: 'D',
+      notes: [],
+    });
+    expect(out[0].title).toBe('Details for HS-99');
+  });
+
+  it('Note titles use buildNoteReaderTitle conventions', () => {
+    const out = buildCombinedReaderEntries({
+      ticketNumber: 'HS-1',
+      ticketTitle: 't',
+      detailsMarkdown: '',
+      notes: [{ id: 'n1', text: 'body', created_at: '' }],
+    });
+    expect(out[0].title).toBe('Note');
+  });
+});
+
+/**
+ * HS-8429 — end-to-end integration of the combined reader entries with
+ * the openReaderOverlay navigation surface. Verifies that the unified
+ * list flows correctly through prev/next when supplied by either caller.
+ */
+describe('reader navigation across Details/Notes (HS-8429)', () => {
+  it('starts on Details and steps into the first note via Next', () => {
+    const combined = buildCombinedReaderEntries({
+      ticketNumber: 'HS-42',
+      ticketTitle: 'Repro',
+      detailsMarkdown: 'The details body',
+      notes: [
+        { id: 'n1', text: 'First note', created_at: '2026-05-01T00:00:00Z' },
+        { id: 'n2', text: 'Second note', created_at: '2026-05-02T00:00:00Z' },
+      ],
+    });
+    openReaderOverlay({
+      title: combined[0].title,
+      markdown: combined[0].markdown,
+      navigation: { entries: combined.map(({ title, markdown }) => ({ title, markdown })), initialIndex: 0 },
+    });
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('Details for HS-42: Repro');
+    (document.querySelector('.reader-mode-next') as HTMLButtonElement).click();
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('Note from ' + new Date('2026-05-01T00:00:00Z').toLocaleString());
+    expect(document.querySelector('.reader-mode-body')?.textContent).toContain('First note');
+  });
+
+  it('starts on the first note and steps back into Details via Prev', () => {
+    const combined = buildCombinedReaderEntries({
+      ticketNumber: 'HS-42',
+      ticketTitle: 'Repro',
+      detailsMarkdown: 'The details body',
+      notes: [
+        { id: 'n1', text: 'First note', created_at: '2026-05-01T00:00:00Z' },
+      ],
+    });
+    // Open as if from clicking the note reader button on note id 'n1'.
+    const initialIndex = combined.findIndex(e => e.id === 'n1');
+    expect(initialIndex).toBe(1);
+    openReaderOverlay({
+      title: combined[initialIndex].title,
+      markdown: combined[initialIndex].markdown,
+      navigation: { entries: combined.map(({ title, markdown }) => ({ title, markdown })), initialIndex },
+    });
+    expect(document.querySelector('.reader-mode-title')?.textContent).toContain('Note from ');
+    (document.querySelector('.reader-mode-prev') as HTMLButtonElement).click();
+    expect(document.querySelector('.reader-mode-title')?.textContent).toBe('Details for HS-42: Repro');
+    expect(document.querySelector('.reader-mode-body')?.textContent).toContain('The details body');
+  });
+
+  it('Prev is disabled when the combined list places the user on Details (index 0)', () => {
+    const combined = buildCombinedReaderEntries({
+      ticketNumber: 'HS-1',
+      ticketTitle: 't',
+      detailsMarkdown: 'Details body',
+      notes: [{ id: 'n1', text: 'Note', created_at: '2026-05-01T00:00:00Z' }],
+    });
+    openReaderOverlay({
+      title: combined[0].title,
+      markdown: combined[0].markdown,
+      navigation: { entries: combined.map(({ title, markdown }) => ({ title, markdown })), initialIndex: 0 },
+    });
+    const prev = document.querySelector('.reader-mode-prev') as HTMLButtonElement;
+    const next = document.querySelector('.reader-mode-next') as HTMLButtonElement;
+    expect(prev.disabled).toBe(true);
+    expect(next.disabled).toBe(false);
   });
 });
 

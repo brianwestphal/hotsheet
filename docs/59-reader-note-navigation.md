@@ -17,7 +17,7 @@ The §49 reader overlay was originally per-content: click the book icon on note 
 - The per-note book-button entry point in `noteRenderer.tsx` builds a navigation list of every non-empty note in display order and passes the clicked note's index as the initial.
 
 **Out of scope.**
-- Navigation for the ticket Details reader. The Details reader has only one entry — there's nothing to navigate. The buttons are not rendered when navigation isn't supplied.
+- ~~Navigation for the ticket Details reader. The Details reader has only one entry — there's nothing to navigate. The buttons are not rendered when navigation isn't supplied.~~ **Updated 2026-05-18 (HS-8429):** the Details reader now also navigates across the unified `[Details, ...non-empty notes]` list; see §59.9.
 - Cross-ticket navigation. The reader stays scoped to the active ticket's notes; navigation does not jump to the next ticket.
 - Wrapping. Past-the-end and before-the-beginning navigation is a no-op (button disabled, key handler bails). No wrap-around to the other end.
 - Edit-in-place from the reader. Still read-only per §49.
@@ -112,3 +112,35 @@ Plus 2 tests for the new exported pure helper:
 
 - [49-reader-mode.md](49-reader-mode.md) — the parent reader-mode design. §49.6 covers the overlay shell HS-8233 extends.
 - [3-ticket-management.md](3-ticket-management.md) — note ordering is determined by the canonical `notes` array on the ticket; HS-8233 doesn't change ordering, just lets the user step through it.
+
+## 59.9 Unified Details + Notes navigation (HS-8429)
+
+**HS-8429 (2026-05-18) — extended the navigation list across the Details/Notes boundary.** Pre-fix the Details reader was single-entry-only (HS-8233 explicitly scoped it out) and the per-note reader only stepped through notes. Reading a ticket front-to-back required closing the Details reader, scrolling to the first note, and re-clicking the book icon there — and the same friction in reverse for jumping back to Details from a note. The user reported this as exactly the round-trip the original HS-8233 work was supposed to eliminate, just shifted by one boundary.
+
+**Fix.** Both surfaces now build the same combined `[Details, ...non-empty notes]` list via a new pure helper:
+
+```ts
+export function buildCombinedReaderEntries(input: {
+  ticketNumber: string | null | undefined;
+  ticketTitle: string | null | undefined;
+  detailsMarkdown: string;
+  notes: readonly { id?: string; text: string; created_at: string }[];
+}): CombinedReaderEntry[]
+```
+
+- Details lands at index 0 when its markdown is non-empty (whitespace-only is treated as empty, same gate as the noteRenderer's empty-note filter — empty bodies don't have a book button so they shouldn't be reachable from the reader either).
+- Non-empty notes follow in display order, each carrying a stable `id` (the note's `id` field, or a synthetic `__no-id-<idx>` fallback so the noteRenderer's `findIndex(e => e.id === note.id)` lookup stays unique across notes without ids).
+- Titles use the existing `buildDetailsReaderTitle` and `buildNoteReaderTitle` helpers — no new title formatting.
+- Returns an empty array when both Details and every note are empty (defensive — caller still gates `navigation` on `entries.length > 1`).
+
+The helper is pure (no DOM, no async, no module state) so it's testable in isolation. Both `app.tsx::bindDetailReaderButton` and `noteRenderer.tsx`'s `.note-reader-btn` click handler call it; each computes its own `initialIndex` (Details reader → position of the Details entry, typically 0; note reader → position of the clicked note, +1 when Details is included).
+
+**Behavior summary.**
+
+| Starting point | Prev chevron | Next chevron | ArrowUp / ArrowDown |
+|----------------|--------------|--------------|---------------------|
+| Details reader, ticket has notes | disabled (at index 0) | walks into notes | same as chevrons |
+| Note reader, first note (Details non-empty) | walks back to Details | walks to next note (or disabled at last) | same |
+| Note reader, first note (Details empty) | disabled (at index 0) | walks to next note (or disabled if only one) | same |
+
+**Tests.** 9 new pure-helper cases in `readerOverlay.test.ts` under `describe('buildCombinedReaderEntries (HS-8429)')` cover: full list shape (Details + multiple notes), Details omission when empty, Details omission when whitespace-only, empty-note filtering, just-Details when there are no notes, fully-empty input returning `[]`, synthetic id fallback for notes without ids, Details title fallback (number-only / title-only), Note title fallback when `created_at` is missing. Plus 3 end-to-end integration cases under `describe('reader navigation across Details/Notes (HS-8429)')` exercise the full open → navigate flow: Details → next → first note, first-note → prev → Details, Prev disabled at the Details index.
