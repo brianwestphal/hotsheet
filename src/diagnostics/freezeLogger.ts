@@ -86,6 +86,7 @@ export interface FreezeEntry {
   source:
     | 'client-observer'        // PerformanceObserver({ type: 'longtask' })
     | 'client-heartbeat'       // 50 ms setInterval heartbeat
+    | 'client-server-busy-banner' // HS-8425 — global server-slow banner activation
     | 'server-heartbeat'       // 50 ms setInterval on the Node process
     | 'server-instrument-sync' // wrapped synchronous block
     | 'server-instrument-async' // wrapped async block

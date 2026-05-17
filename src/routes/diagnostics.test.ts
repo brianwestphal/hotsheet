@@ -33,6 +33,29 @@ describe('coerceFreezeEntry (HS-8054 v3)', () => {
     expect(out!.source).toBe('client-heartbeat');
   });
 
+  it('accepts a well-formed client-server-busy-banner entry (HS-8425)', () => {
+    const out = coerceFreezeEntry({
+      ts: '2026-05-17T22:30:00.000Z',
+      source: 'client-server-busy-banner',
+      durationMs: 4200,
+      context: JSON.stringify({
+        triggerKind: 'http',
+        triggerStartTs: 1747521000000,
+        triggerUrl: '/api/tickets',
+        triggerLabel: null,
+        peakInFlightCount: 3,
+        longestInFlightMs: 4200,
+        urlsSeen: ['http:/api/tickets', 'http:/api/file-settings'],
+      }),
+    });
+    expect(out).not.toBeNull();
+    expect(out!.source).toBe('client-server-busy-banner');
+    expect(out!.durationMs).toBe(4200);
+    const parsed = JSON.parse(out!.context) as { triggerKind: string; urlsSeen: string[] };
+    expect(parsed.triggerKind).toBe('http');
+    expect(parsed.urlsSeen).toContain('http:/api/tickets');
+  });
+
   it('rounds non-integer durations to integers', () => {
     const out = coerceFreezeEntry({
       ts: '2026-05-04T08:00:00.000Z',

@@ -2,9 +2,10 @@
  * HS-8175 — Tests for the global server-busy chip.
  */
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  _inspectActivationForTesting,
   _inspectServerBusyForTesting,
   _resetServerBusyChipForTesting,
   isLongPollUrl,
@@ -181,5 +182,179 @@ describe('trackPersistentSlowEvent (HS-8286)', () => {
     release();
     release();
     expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
+  });
+});
+
+// HS-8425 — module-level mock of `./api.js` so the chip's lazy
+// `await import('./api.js')` in `postBannerActivation` lands on our
+// stub. The dynamic-import cache is per-test-file, not per-test, so a
+// per-test `vi.doMock` only intercepts the FIRST dynamic resolution —
+// subsequent tests would see a stale closure. The fixed reference here
+// captures every post for every test; we clear the array in beforeEach.
+//
+// The `mock` prefix is required: `vi.mock` calls are hoisted to the
+// top of the file, and vitest only lets the factory close over outer
+// variables whose names begin with `mock` (others would land in a
+// temporal dead zone at hoist time).
+const mockPostedActivations: Array<{ url: string; body: unknown }> = [];
+vi.mock('./api.js', () => ({
+  api: (path: string, opts: { method?: string; body?: unknown }) => {
+    mockPostedActivations.push({ url: path, body: opts.body });
+    return Promise.resolve({ ok: true });
+  },
+}));
+
+describe('banner activation logging (HS-8425)', () => {
+  // HS-8425 — every banner show→hide cycle posts one entry to
+  // `/api/diagnostics/freeze` so the user can grep `freeze.log` for the
+  // banner's recent activations + diagnose what was in flight.
+
+  function mountBanner(): HTMLElement {
+    const el = document.createElement('div');
+    el.id = 'server-slow-banner';
+    el.className = 'server-slow-banner';
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  const posted = mockPostedActivations;
+
+  beforeEach(() => {
+    posted.length = 0;
+  });
+
+  afterEach(() => {
+    document.getElementById('server-slow-banner')?.remove();
+    vi.useRealTimers();
+  });
+
+  /** Helper — wait for the lazy `postBannerActivation` to drain. The
+   *  chain has `await import('./api.js')` (vitest's mock resolution
+   *  takes multiple microtask hops) + `await api(...)`; a single
+   *  `setTimeout(0)` defer past the next macrotask boundary is more
+   *  reliable than counting individual microtask awaits. */
+  function flushMicrotasks(): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  it('posts exactly one freeze.log entry per show→hide cycle', async () => {
+    mountBanner();
+    const release = trackPersistentSlowEvent('test-stall');
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+    release();
+    await flushMicrotasks();
+    expect(posted).toHaveLength(1);
+    expect(posted[0].url).toBe('/diagnostics/freeze');
+    const body = posted[0].body as { source: string; durationMs: number; context: string };
+    expect(body.source).toBe('client-server-busy-banner');
+    expect(body.durationMs).toBeGreaterThanOrEqual(0);
+    expect(typeof body.context).toBe('string');
+  });
+
+  it('does not post when the banner never shows (request finishes under threshold)', async () => {
+    mountBanner();
+    const done = trackServerRequest('/api/tickets');
+    done();
+    await flushMicrotasks();
+    expect(posted).toHaveLength(0);
+  });
+
+  it('records triggerKind=persistent + triggerLabel for terminal-stall path', async () => {
+    mountBanner();
+    const release = trackPersistentSlowEvent('terminal-stall:default');
+    const snap = _inspectActivationForTesting();
+    expect(snap).not.toBeNull();
+    expect(snap!.firstTriggerKind).toBe('persistent');
+    expect(snap!.firstTriggerLabel).toBe('terminal-stall:default');
+    expect(snap!.firstTriggerUrl).toBeNull();
+    release();
+    await flushMicrotasks();
+    const body = posted[0].body as { context: string };
+    const ctx = JSON.parse(body.context) as { triggerKind: string; triggerLabel: string };
+    expect(ctx.triggerKind).toBe('persistent');
+    expect(ctx.triggerLabel).toBe('terminal-stall:default');
+  });
+
+  it('records triggerKind=http + stripped URL when an HTTP request crosses the threshold', async () => {
+    mountBanner();
+    // Use fake timers so we can advance Date.now() past the 3 s threshold
+    // without the test taking 3 s of wall clock.
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const done = trackServerRequest('/api/tickets?include_archive=1');
+    // Banner not yet up — 0 ms elapsed.
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+    // Advance past threshold and let the evaluate timer fire.
+    vi.setSystemTime(1_000_000 + SERVER_BUSY_THRESHOLD_MS + 100);
+    vi.advanceTimersByTime(250);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+    const snap = _inspectActivationForTesting();
+    expect(snap!.firstTriggerKind).toBe('http');
+    // Query string stripped from the recorded URL.
+    expect(snap!.firstTriggerUrl).toBe('/api/tickets?include_archive=1');
+    done();
+    // Switch back to real timers so the dynamic-import microtask drain works.
+    vi.useRealTimers();
+    await flushMicrotasks();
+    const body = posted[0].body as { context: string };
+    const ctx = JSON.parse(body.context) as { urlsSeen: string[]; triggerUrl: string };
+    // URL in urlsSeen has the query stripped (path-only).
+    expect(ctx.urlsSeen).toContain('http:/api/tickets');
+    expect(ctx.triggerUrl).toBe('/api/tickets?include_archive=1');
+  });
+
+  it('captures multiple distinct URLs in urlsSeen during a single activation', async () => {
+    mountBanner();
+    // Stall token holds the banner open; HTTP requests joining
+    // mid-activation should be captured even though they finish < 250 ms.
+    const release = trackPersistentSlowEvent('test-stall');
+    const a = trackServerRequest('/api/tickets');
+    const b = trackServerRequest('/api/file-settings');
+    a();
+    b();
+    release();
+    await flushMicrotasks();
+    const body = posted[0].body as { context: string };
+    const ctx = JSON.parse(body.context) as { urlsSeen: string[]; peakInFlightCount: number };
+    expect(ctx.urlsSeen).toContain('persistent:test-stall');
+    expect(ctx.urlsSeen).toContain('http:/api/tickets');
+    expect(ctx.urlsSeen).toContain('http:/api/file-settings');
+    expect(ctx.peakInFlightCount).toBeGreaterThanOrEqual(3);
+  });
+
+  it('records longestInFlightMs from the oldest in-flight item observed', async () => {
+    mountBanner();
+    const release = trackPersistentSlowEvent('test-stall');
+    // Persistent tokens enter with `startTs = now - threshold - 1`, so the
+    // longest-observed should be at least threshold + 1 ms.
+    release();
+    await flushMicrotasks();
+    const body = posted[0].body as { context: string };
+    const ctx = JSON.parse(body.context) as { longestInFlightMs: number };
+    expect(ctx.longestInFlightMs).toBeGreaterThanOrEqual(SERVER_BUSY_THRESHOLD_MS);
+  });
+
+  it('opens a fresh activation on the next show after a hide', async () => {
+    mountBanner();
+    const r1 = trackPersistentSlowEvent('first');
+    r1();
+    await flushMicrotasks();
+    const r2 = trackPersistentSlowEvent('second');
+    r2();
+    await flushMicrotasks();
+    expect(posted).toHaveLength(2);
+    const ctx1 = JSON.parse((posted[0].body as { context: string }).context) as { triggerLabel: string };
+    const ctx2 = JSON.parse((posted[1].body as { context: string }).context) as { triggerLabel: string };
+    expect(ctx1.triggerLabel).toBe('first');
+    expect(ctx2.triggerLabel).toBe('second');
+  });
+
+  it('reset clears the activation so the next show is treated as a new one', () => {
+    mountBanner();
+    trackPersistentSlowEvent('leaked');
+    expect(_inspectActivationForTesting()).not.toBeNull();
+    _resetServerBusyChipForTesting();
+    expect(_inspectActivationForTesting()).toBeNull();
   });
 });

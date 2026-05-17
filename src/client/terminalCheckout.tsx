@@ -443,7 +443,12 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
   const evaluateGlobalStall = (): void => {
     const stalled = shouldShowStallIndicator(entry.lastTypeTs, entry.lastEchoTs, Date.now());
     if (stalled && entry.globalStallToken === null) {
-      entry.globalStallToken = trackPersistentSlowEvent();
+      // HS-8425 — pass a label so the freeze-log activation entry can
+      // name *which* terminal stalled. Don't include the project secret
+      // (it's a secret); the terminal id alone is sufficient to grep
+      // back through `freeze.log` and find every banner activation
+      // caused by this terminal.
+      entry.globalStallToken = trackPersistentSlowEvent(`terminal-stall:${entry.terminalId}`);
     } else if (!stalled && entry.globalStallToken !== null) {
       try { entry.globalStallToken(); } catch { /* swallow */ }
       entry.globalStallToken = null;

@@ -37,8 +37,9 @@ diagnosticsRoutes.post('/diagnostics/freeze', async (c) => {
  * Pure: validate + normalise a client-supplied freeze entry. Rejects any
  * shape we don't recognize so a malformed payload can't poison freeze.log
  * with garbage. Caller-supplied `source` is constrained to the client
- * detector tags (`client-observer` / `client-heartbeat`) — server tags
- * are produced server-side only.
+ * detector tags (`client-observer` / `client-heartbeat` /
+ * `client-server-busy-banner`) — server tags are produced server-side
+ * only.
  *
  * Exported for the unit test.
  */
@@ -46,7 +47,11 @@ export function coerceFreezeEntry(raw: unknown): FreezeEntry | null {
   if (raw === null || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const source = r.source;
-  if (source !== 'client-observer' && source !== 'client-heartbeat') return null;
+  if (
+    source !== 'client-observer'
+    && source !== 'client-heartbeat'
+    && source !== 'client-server-busy-banner'
+  ) return null;
   const durationMs = r.durationMs;
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs < 0) return null;
   const context = typeof r.context === 'string' ? r.context : '';
