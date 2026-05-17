@@ -132,6 +132,61 @@ jobs:
         run: bash scripts/build-sidecar.sh ${{ matrix.target }}
         shell: bash
 
+      # macOS-only: pre-sign native binaries embedded in the sidecar's
+      # bundled node_modules BEFORE tauri-action runs. Tauri's macOS bundler
+      # signs the main binary + externalBin (the hotsheet-node sidecar)
+      # but does NOT recursively sign Mach-O modules inside the resource
+      # tree — and Apple's notary scans the whole .app and rejects the
+      # submission as "Invalid" if it finds unsigned Mach-O. node-pty
+      # ships two native binaries inside prebuilds/darwin-{x64,arm64}/:
+      # `pty.node` (a Node N-API addon, already signed by node-pty's own
+      # CI) and `spawn-helper` (a tiny launcher executable, no extension,
+      # NOT pre-signed by upstream). We pre-sign both with the same
+      # Developer ID cert tauri-action will use so the whole .app passes
+      # notary in a single submission. Hardened runtime (`--options
+      # runtime`) is required because the parent .app uses it.
+      # See release-beta.yml for the matching step + HS-8419 notes on
+      # the precise notary log that named the failing binaries.
+      - name: Pre-sign native binaries (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          # macOS runners default to bash 3.x which lacks `mapfile`; use a
+          # newline-delimited string + portable `while IFS= read` loop.
+          NODE_BINS=$(find src-tauri/server/node_modules \( -name '*.node' -o -name 'spawn-helper' \) -type f 2>/dev/null || true)
+          if [ -z "$NODE_BINS" ]; then
+            echo "No native binaries under src-tauri/server/node_modules — nothing to pre-sign."
+            exit 0
+          fi
+          COUNT=$(printf '%s\n' "$NODE_BINS" | wc -l | tr -d ' ')
+          echo "Found ${COUNT} native binaries to pre-sign:"
+          printf '%s\n' "$NODE_BINS" | sed 's/^/  /'
+
+          KEYCHAIN="$RUNNER_TEMP/presign.keychain-db"
+          KEYCHAIN_PWD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | xargs)
+
+          printf '%s\n' "$NODE_BINS" | while IFS= read -r bin; do
+            codesign --force --options runtime --timestamp \
+              --sign "$APPLE_SIGNING_IDENTITY" "$bin"
+            codesign --verify --verbose "$bin"
+          done
+          echo "All ${COUNT} native binaries pre-signed."
+
       - name: Build Tauri app and upload to release
         uses: tauri-apps/tauri-action@v0
         env:
