@@ -30,6 +30,25 @@ const PLAIN_URL = 'https://plain-url.example.com/world';
 
 type InvokeCall = { cmd: string; args: Record<string, unknown> };
 
+type BoundingBox = { x: number; y: number; width: number; height: number };
+
+// HS-8419 — `Locator.boundingBox()` can return null in long sweeps where many
+// xterm instances accumulate and the row layer is mid-rebuild between the
+// `.toBeVisible()` resolve and the box query. Poll until a real geometry
+// lands (visible elements always have one eventually).
+async function pollForBoundingBox(
+  locator: import('@playwright/test').Locator,
+  timeoutMs = 5000,
+): Promise<BoundingBox> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const box = await locator.boundingBox();
+    if (box !== null && box.width > 0 && box.height > 0) return box;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`pollForBoundingBox: no non-null boundingBox within ${timeoutMs}ms`);
+}
+
 let headers: Record<string, string> = {};
 
 test.describe('Terminal drawer OSC 8 + plain URL external open (HS-7274)', () => {
@@ -126,11 +145,17 @@ test.describe('Terminal drawer OSC 8 + plain URL external open (HS-7274)', () =>
     // and drive `page.mouse.click(x, y)` at that coordinate so the click is
     // delivered to xterm's own mouse tracker (which fires the OSC 8
     // linkHandler) regardless of which layer is on top.
-    const osc8Text = pane.locator('.xterm-screen >> text=CLICK-OSC8-LINK').first();
+    //
+    // HS-8419 — pin the text matcher to `.xterm-rows` (the visible row tree)
+    // rather than the looser `.xterm-screen` parent. In a long sweep with
+    // many xterm instances, the bare text matcher inside `.xterm-screen`
+    // can resolve to a zero-size accessibility/aria text node first and
+    // `boundingBox()` returns null. The `.xterm-rows` selector is the
+    // visible row layer with real geometry.
+    const osc8Text = pane.locator('.xterm-rows >> text=CLICK-OSC8-LINK').first();
     await expect(osc8Text).toBeVisible();
-    const osc8Box = await osc8Text.boundingBox();
-    expect(osc8Box).not.toBeNull();
-    await page.mouse.click(osc8Box!.x + osc8Box!.width / 2, osc8Box!.y + osc8Box!.height / 2);
+    const osc8Box = await pollForBoundingBox(osc8Text);
+    await page.mouse.click(osc8Box.x + osc8Box.width / 2, osc8Box.y + osc8Box.height / 2);
 
     // Assert invoke('open_url', { url: OSC8_URL }) was called.
     await expect.poll(
@@ -144,11 +169,10 @@ test.describe('Terminal drawer OSC 8 + plain URL external open (HS-7274)', () =>
     // dispatches its handler with the URI. Our custom handler (set in
     // mountXterm, not WebLinksAddon's default window.open) routes through
     // openExternalUrl, so invoke('open_url', { url: PLAIN_URL }) fires.
-    const plainText = pane.locator('.xterm-screen >> text=plain-url.example.com').first();
+    const plainText = pane.locator('.xterm-rows >> text=plain-url.example.com').first();
     await expect(plainText).toBeVisible();
-    const plainBox = await plainText.boundingBox();
-    expect(plainBox).not.toBeNull();
-    await page.mouse.click(plainBox!.x + plainBox!.width / 2, plainBox!.y + plainBox!.height / 2);
+    const plainBox = await pollForBoundingBox(plainText);
+    await page.mouse.click(plainBox.x + plainBox.width / 2, plainBox.y + plainBox.height / 2);
 
     await expect.poll(
       async () => page.evaluate(() => (window as unknown as { __invokeCalls: InvokeCall[] }).__invokeCalls ?? []),
