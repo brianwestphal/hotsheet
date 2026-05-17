@@ -39,6 +39,7 @@ let lastPersisted: string | null = null;
 const DEBOUNCE_MS = 250;
 
 let subscriptionUnsub: (() => void) | null = null;
+let pagehideRegistered = false;
 
 /**
  * Sanitise + sort each grouping's hidden ids so the serialised payload is
@@ -142,6 +143,73 @@ export async function initPersistedHiddenTerminals(): Promise<void> {
   subscriptionUnsub = subscribeToHiddenChanges(() => {
     scheduleWrite();
   });
+  registerPageHideFlushOnce();
+}
+
+/**
+ * HS-8424 — best-effort flush on `pagehide`. Pre-fix a 250 ms debounce
+ * + no unload-safe flush meant a visibility toggle made within ~250 ms
+ * of quitting Hot Sheet (Cmd+Q from the keyboard, traffic-light close,
+ * Tauri's auto-relaunch on update install) silently dropped: the
+ * `setTimeout` was cleared by the WebView teardown before its
+ * `writeNow()` ran, and the user's next launch reverted to the
+ * pre-toggle state.
+ *
+ * `fetch(..., { keepalive: true })` is the modern unload-safe primitive
+ * — unlike `navigator.sendBeacon` it supports PATCH (the `/global-config`
+ * endpoint is PATCH-only). The browser dispatches the request to the
+ * network stack synchronously and lets it complete after the page
+ * unloads. 64 KB body cap; the visibility-groupings payload is
+ * comfortably under that.
+ *
+ * Idempotent registration — the listener is only attached once per
+ * module instance. `_resetForTests` does NOT remove the listener
+ * (happy-dom cleans up the window between test files); the
+ * `pagehideRegistered` flag short-circuits any re-registration if
+ * tests re-init within the same window.
+ */
+function registerPageHideFlushOnce(): void {
+  if (pagehideRegistered) return;
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+  window.addEventListener('pagehide', () => {
+    flushPendingViaKeepalive();
+  });
+  pagehideRegistered = true;
+}
+
+/**
+ * HS-8424 — synchronously dispatch the pending debounced write via
+ * `fetch(..., { keepalive: true })` so the WebView's teardown doesn't
+ * abort it. No-op when no write is pending (`writeTimer === null`).
+ * Mirrors `writeNow()`'s payload exactly; updates `lastPersisted` so a
+ * subsequent normal `writeNow()` short-circuits on the same payload.
+ *
+ * Exported for the unit test.
+ */
+export function flushPendingViaKeepalive(): void {
+  if (writeTimer === null) return;
+  clearTimeout(writeTimer);
+  writeTimer = null;
+  const state = getGlobalVisibilityState();
+  const persistedGroupings = computePersistedGroupings(state.groupings);
+  const payload = {
+    dashboard: {
+      visibilityGroupings: persistedGroupings,
+      activeVisibilityGroupingIdByScope: state.activeIdByScope,
+      activeVisibilityGroupingId: state.activeIdByScope[DASHBOARD_SCOPE] ?? DEFAULT_GROUPING_ID,
+    },
+  };
+  const serialised = JSON.stringify(payload);
+  if (lastPersisted === serialised) return;
+  lastPersisted = serialised;
+  try {
+    void fetch('/api/global-config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: serialised,
+      keepalive: true,
+    });
+  } catch { /* swallow — best-effort unload flush */ }
 }
 
 /** Test-only — flush the pending debounced write synchronously. */

@@ -14,6 +14,7 @@ import {
   _flushForTests,
   _resetForTests,
   computePersistedGroupings,
+  flushPendingViaKeepalive,
   initPersistedHiddenTerminals,
 } from './persistedHiddenTerminals.js';
 import { DEFAULT_GROUPING_ID, type VisibilityGrouping } from './visibilityGroupings.js';
@@ -174,6 +175,55 @@ describe('initPersistedHiddenTerminals — idempotency (HS-8293)', () => {
     // debounce hasn't fired.
     await initPersistedHiddenTerminals();
     expect(getGlobalVisibilityState().groupings[0].hiddenByProject.s1).toEqual(['tA']);
+  });
+
+  it('flushPendingViaKeepalive is a no-op when no debounced write is pending', () => {
+    // No init, no toggle — writeTimer is null. The keepalive flush must
+    // not synthesise a PATCH out of thin air.
+    flushPendingViaKeepalive();
+    expect(patchCount).toBe(0);
+  });
+
+  it('flushPendingViaKeepalive fires the pending debounced write via keepalive fetch (HS-8424)', async () => {
+    // Replay HS-8424's repro: user toggles a terminal hidden, then quits
+    // before the 250 ms debounce fires. Pre-fix the timer was cleared by
+    // teardown and the toggle was lost. Post-fix the pagehide flush
+    // dispatches a keepalive PATCH carrying the same payload writeNow
+    // would have sent.
+    await initPersistedHiddenTerminals();
+    const baselinePatches = patchCount;
+    setTerminalHiddenInGrouping('s1', DEFAULT_GROUPING_ID, 'tA', true);
+    // Don't call _flushForTests — we're simulating a quit BEFORE the
+    // debounce fires. flushPendingViaKeepalive must produce the PATCH.
+    flushPendingViaKeepalive();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(patchCount).toBe(baselinePatches + 1);
+    expect(serverState.dashboard?.visibilityGroupings?.[0]?.hiddenByProject?.s1).toEqual(['tA']);
+  });
+
+  it('flushPendingViaKeepalive uses keepalive: true on the fetch options', async () => {
+    // Direct contract assertion: the request must be marked keepalive so
+    // the WebView's teardown doesn't abort it. Reach into the fetch spy
+    // to inspect the init options of the PATCH call.
+    let observedInit: RequestInit | undefined;
+    const localFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'PATCH') observedInit = init;
+      return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    });
+    vi.stubGlobal('fetch', localFetch);
+    _resetForTests();
+    _resetHiddenForTests();
+
+    await initPersistedHiddenTerminals();
+    setTerminalHiddenInGrouping('s1', DEFAULT_GROUPING_ID, 'tA', true);
+    flushPendingViaKeepalive();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(observedInit).toBeDefined();
+    expect(observedInit!.keepalive).toBe(true);
+    expect(observedInit!.method).toBe('PATCH');
   });
 
   it('rapid toggles + simulated re-init do NOT lose changes from the eventual PATCH', async () => {
