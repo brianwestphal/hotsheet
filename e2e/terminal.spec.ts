@@ -93,9 +93,23 @@ test.describe('Embedded terminal drawer', () => {
 
     // Add a third terminal directly via the file-settings API — same code path
     // the settings UI uses (PATCH /file-settings with the new terminals array).
+    // HS-8419 — also PATCH `drawer_open: 'true'` in the same call so the
+    // post-reload drawer state is deterministic. Pre-fix the test relied on
+    // the prior click at line 91 saving drawer_open=true via a debounced
+    // file-settings PATCH; on slower CI runners that debounced save races
+    // the terminals PATCH below (the latter reads the on-disk current state
+    // and merges, so if the debounced save hadn't fired yet the merge
+    // leaves drawer_open at its beforeEach reset of 'false'). After reload
+    // wantOpen would then be false and `applyPerProjectDrawerState` would
+    // not auto-open the drawer — and the manual `if (!visible) click`
+    // fallback races the init's `if (panelOpen) closePanel()` synchronous
+    // block (the closePanel runs AFTER the click's openPanel because both
+    // sit on opposite sides of an `await api('/file-settings')`), leaving
+    // the panel permanently hidden.
     await request.patch('/api/file-settings', {
       headers,
       data: {
+        drawer_open: 'true',
         terminals: [
           { id: 'default', name: 'Default', command: '/bin/echo configured-default', lazy: true },
           { id: 'second', name: 'Second', command: '/bin/echo configured-second', lazy: true },
@@ -110,12 +124,10 @@ test.describe('Embedded terminal drawer', () => {
     // tab appears on a fresh page load.
     await page.reload();
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    // The drawer remembers it was open across reload (drawer_open in
-    // settings.json), so it should re-open automatically. Only toggle if it
-    // isn't visible yet.
-    const panel = page.locator('#command-log-panel');
-    if (!(await panel.isVisible())) await page.locator('#command-log-btn').click();
-    await expect(panel).toBeVisible({ timeout: 5000 });
+    // With drawer_open: 'true' explicitly persisted above, the drawer
+    // auto-opens via applyPerProjectDrawerState's openPanel(). No manual
+    // click fallback needed — and the racy fallback is what fails on CI.
+    await expect(page.locator('#command-log-panel')).toBeVisible({ timeout: 5000 });
     const thirdTab = page.locator('.drawer-terminal-tab[data-terminal-id="third"]');
     await expect(thirdTab).toBeVisible({ timeout: 5000 });
     await expect(thirdTab).toContainText('Third');
