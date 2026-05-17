@@ -268,13 +268,16 @@ jobs:
           # to sign (and stays useful for diagnosing future notary "Invalid"
           # cases). Bail early if there's nothing to sign — that means a
           # future bundle reshuffle dropped node-pty entirely.
-          mapfile -t NODE_BINS < <(find src-tauri/server/node_modules -type f -name '*.node' 2>/dev/null || true)
-          if [ ${#NODE_BINS[@]} -eq 0 ]; then
+          # macOS runners default to bash 3.x which lacks `mapfile`; use a
+          # newline-delimited string + portable `while IFS= read` loop.
+          NODE_BINS=$(find src-tauri/server/node_modules -type f -name '*.node' 2>/dev/null || true)
+          if [ -z "$NODE_BINS" ]; then
             echo "No .node binaries under src-tauri/server/node_modules — nothing to pre-sign."
             exit 0
           fi
-          echo "Found ${#NODE_BINS[@]} .node binaries to pre-sign:"
-          printf '  %s\n' "${NODE_BINS[@]}"
+          COUNT=$(printf '%s\n' "$NODE_BINS" | wc -l | tr -d ' ')
+          echo "Found ${COUNT} .node binaries to pre-sign:"
+          printf '%s\n' "$NODE_BINS" | sed 's/^/  /'
 
           # Import the same .p12 tauri-action uses into a temporary keychain
           # so codesign can resolve $APPLE_SIGNING_IDENTITY. tauri-action
@@ -293,12 +296,12 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | xargs)
 
-          for bin in "${NODE_BINS[@]}"; do
+          printf '%s\n' "$NODE_BINS" | while IFS= read -r bin; do
             codesign --force --options runtime --timestamp \
               --sign "$APPLE_SIGNING_IDENTITY" "$bin"
             codesign --verify --verbose "$bin"
           done
-          echo "All ${#NODE_BINS[@]} .node binaries pre-signed."
+          echo "All ${COUNT} .node binaries pre-signed."
 
       # Windows MSI bundler requires the optional pre-release identifier in
       # the app version to be numeric-only (e.g. `0.17.0-1`). Beta tags use
