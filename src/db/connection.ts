@@ -13,6 +13,55 @@ import { join } from 'path';
  *  matters. */
 export const SCHEMA_VERSION = 1;
 
+/**
+ * HS-8426 — pure helper: should this open-time error trigger the
+ * preserve-and-recreate recovery flow in `recoverFromOpenFailure`?
+ *
+ * Two error classes qualify:
+ *
+ *   1. **WASM-level traps.** PGLite throws `Aborted` (the `-sASSERTIONS=0`
+ *      production build's name for an emscripten assertion fault) or
+ *      `RuntimeError` (the `RuntimeError: unreachable` variant) when its
+ *      WASM Postgres can't even start against the on-disk cluster.
+ *      Match by message substring (`Aborted` / `RuntimeError`) OR by
+ *      constructor name (`RuntimeError`) — message-only matching missed
+ *      the `RuntimeError: unreachable` variant before HS-7889.
+ *
+ *   2. **Postgres-level catalog corruption.** When the cluster opens but
+ *      the system catalog is inconsistent (typical surface: the user's
+ *      cluster from an older PGLite/PG version, or a partially-applied
+ *      `ALTER TABLE` from an interrupted migration), PG raises errors
+ *      with the substring "catalog is missing" — one example surfaced
+ *      by HS-8426: "pg_attribute catalog is missing 1 attribute(s) for
+ *      relation OID 16386" — from inside `initSchema`'s first DDL. These
+ *      do NOT match the WASM patterns above. The phrase is specific to
+ *      PG's `relcache` consistency checks and never appears in benign
+ *      error paths (ENOSPC / EACCES / ENOENT).
+ *
+ * Other errors (`ENOSPC`, `EACCES`, `ENOENT`, schema mismatches surfaced
+ * by our own code) propagate unchanged so the user sees a clean failure
+ * instead of having their data preserved-aside.
+ *
+ * Pure: takes only the thrown value, returns a boolean. No filesystem
+ * or DB access. Exported for the unit test.
+ */
+export function isRecoverableOpenError(err: unknown): boolean {
+  if (err === null || err === undefined) return false;
+  let message: string;
+  if (err instanceof Error) message = err.message;
+  else if (typeof err === 'string') message = err;
+  else if (typeof err === 'number' || typeof err === 'boolean') message = String(err);
+  else return false; // non-Error, non-primitive: no message to inspect
+  const errName = err instanceof Error ? err.name : '';
+  if (message.includes('Aborted')) return true;
+  if (message.includes('RuntimeError')) return true;
+  if (errName === 'RuntimeError') return true;
+  // HS-8426 — PG-level catalog corruption (e.g. `pg_attribute catalog
+  // is missing 1 attribute(s) for relation OID ...`).
+  if (message.includes('catalog is missing')) return true;
+  return false;
+}
+
 /** HS-7899: written into a marker file when `recoverFromOpenFailure`
  *  falls all the way through to the rename-as-corrupt + fresh-cluster
  *  path. The client polls for this on launch so it can prompt the user
@@ -223,16 +272,7 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown): Promise<PGl
   const message = err instanceof Error ? err.message : String(err);
   const stack = err instanceof Error ? err.stack : undefined;
 
-  // Only attempt recovery for the WASM-aborted / runtime-error class that
-  // PGLite throws on a bad data dir. Other errors (permission, ENOSPC,
-  // schema mismatch, etc.) propagate unchanged. Match on either the
-  // message substring (production "Aborted()" case) or the constructor
-  // name "RuntimeError" — message-only matching missed the
-  // `RuntimeError: unreachable` variant.
-  const errName = err instanceof Error ? err.name : '';
-  const isRuntimeFailure =
-    message.includes('Aborted') || message.includes('RuntimeError') || errName === 'RuntimeError';
-  if (!isRuntimeFailure) throw err;
+  if (!isRecoverableOpenError(err)) throw err;
 
   // HS-7889: surface the underlying error. The previous "appears corrupt"
   // log hid both `err.message` (e.g. "Aborted(). Build with -sASSERTIONS

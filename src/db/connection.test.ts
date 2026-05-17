@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { clearRecoveryMarker, closeAllDatabases, closeDb, getDb, getDbForDir, readRecoveryMarker, setDataDir } from './connection.js';
+import { clearRecoveryMarker, closeAllDatabases, closeDb, getDb, getDbForDir, isRecoverableOpenError, readRecoveryMarker, setDataDir } from './connection.js';
 import { createTicket, getTickets } from './queries.js';
 
 let dataDir: string;
@@ -162,6 +162,57 @@ describe('DB recovery marker (HS-7899)', () => {
       JSON.stringify({ recoveredAt: new Date().toISOString() }) // missing corruptPath
     );
     expect(readRecoveryMarker(dataDir)).toBeNull();
+  });
+});
+
+/** HS-8426: classification helper that decides whether an open-time
+ *  error triggers the preserve-and-recreate recovery flow. Pure: takes
+ *  only the thrown value, returns boolean — no filesystem / DB. */
+describe('isRecoverableOpenError (HS-8426)', () => {
+  it('matches the WASM Aborted assertion-fault class', () => {
+    expect(isRecoverableOpenError(new Error('Aborted(). Build with -sASSERTIONS for more info.'))).toBe(true);
+  });
+
+  it('matches the RuntimeError unreachable variant via message substring', () => {
+    expect(isRecoverableOpenError(new Error('RuntimeError: unreachable'))).toBe(true);
+  });
+
+  it('matches the RuntimeError class by Error.name (when message is blank)', () => {
+    const e = new Error('');
+    e.name = 'RuntimeError';
+    expect(isRecoverableOpenError(e)).toBe(true);
+  });
+
+  it('matches the PG catalog-corruption error from the HS-8426 repro', () => {
+    // The exact string the user reported when trying to add the
+    // ~/Documents/glassbox project folder. OID is variable.
+    expect(isRecoverableOpenError(new Error('pg_attribute catalog is missing 1 attribute(s) for relation OID 16386'))).toBe(true);
+    // Same family with different OID + different attribute count.
+    expect(isRecoverableOpenError(new Error('pg_attribute catalog is missing 3 attribute(s) for relation OID 24578'))).toBe(true);
+  });
+
+  it('does NOT match benign FS errors that should propagate', () => {
+    const enospc = new Error('ENOSPC: no space left on device');
+    expect(isRecoverableOpenError(enospc)).toBe(false);
+    const eacces = new Error('EACCES: permission denied');
+    expect(isRecoverableOpenError(eacces)).toBe(false);
+    const enoent = new Error('ENOENT: no such file or directory');
+    expect(isRecoverableOpenError(enoent)).toBe(false);
+  });
+
+  it('does NOT match generic "missing" strings that lack the catalog signature', () => {
+    // Guards against an over-broad pattern that would swallow our own
+    // schema-mismatch errors.
+    expect(isRecoverableOpenError(new Error('column "foo" is missing'))).toBe(false);
+    expect(isRecoverableOpenError(new Error('missing required option'))).toBe(false);
+  });
+
+  it('returns false for null / undefined / non-Error values', () => {
+    expect(isRecoverableOpenError(null)).toBe(false);
+    expect(isRecoverableOpenError(undefined)).toBe(false);
+    expect(isRecoverableOpenError(42)).toBe(false);
+    // A plain string with the catalog phrase still matches via String(err).
+    expect(isRecoverableOpenError('pg_attribute catalog is missing 1 attribute(s)')).toBe(true);
   });
 });
 
