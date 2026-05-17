@@ -270,13 +270,23 @@ jobs:
           # future bundle reshuffle dropped node-pty entirely.
           # macOS runners default to bash 3.x which lacks `mapfile`; use a
           # newline-delimited string + portable `while IFS= read` loop.
-          NODE_BINS=$(find src-tauri/server/node_modules -type f -name '*.node' 2>/dev/null || true)
+          # NOTE: include `spawn-helper` (no extension) in addition to .node
+          # files. node-pty ships a tiny darwin/linux launcher binary at
+          # prebuilds/darwin-{x64,arm64}/spawn-helper that is a real Mach-O
+          # executable but isn't a Node native addon, so our prior
+          # `-name '*.node'` filter missed it. Apple's notary log on
+          # v0.17.0-beta.14 made this explicit: 6 errors (binary unsigned
+          # / no secure timestamp / hardened runtime not enabled) all on
+          # the two spawn-helpers, none on pty.node (which node-pty's own
+          # CI publishes pre-signed). The `\( ... -o ... \)` group must
+          # come BEFORE `-type f` for portable find behavior.
+          NODE_BINS=$(find src-tauri/server/node_modules \( -name '*.node' -o -name 'spawn-helper' \) -type f 2>/dev/null || true)
           if [ -z "$NODE_BINS" ]; then
-            echo "No .node binaries under src-tauri/server/node_modules — nothing to pre-sign."
+            echo "No native binaries under src-tauri/server/node_modules — nothing to pre-sign."
             exit 0
           fi
           COUNT=$(printf '%s\n' "$NODE_BINS" | wc -l | tr -d ' ')
-          echo "Found ${COUNT} .node binaries to pre-sign:"
+          echo "Found ${COUNT} native binaries to pre-sign:"
           printf '%s\n' "$NODE_BINS" | sed 's/^/  /'
 
           # Import the same .p12 tauri-action uses into a temporary keychain
@@ -301,7 +311,7 @@ jobs:
               --sign "$APPLE_SIGNING_IDENTITY" "$bin"
             codesign --verify --verbose "$bin"
           done
-          echo "All ${COUNT} .node binaries pre-signed."
+          echo "All ${COUNT} native binaries pre-signed."
 
       # Windows MSI bundler requires the optional pre-release identifier in
       # the app version to be numeric-only (e.g. `0.17.0-1`). Beta tags use
