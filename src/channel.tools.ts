@@ -130,7 +130,7 @@ async function proxyRequest(
 const UpdateTicketInputSchema = z.object({
   id: z.number().int().describe('Ticket id (numeric, e.g. 42)'),
   status: TicketStatusSchema.optional(),
-  notes: z.string().optional().describe('Replace the ticket\'s notes JSON. Pass the full notes array as a JSON string.'),
+  notes: z.string().optional().describe('Append a new note. Pass the markdown body as a plain string (NOT a JSON array — the server wraps the text in `{id, text, created_at}` automatically). HS-8427 — if you mistakenly pass a JSON-stringified note array like `[{"text":"..."}]`, the server unwraps it defensively so the body renders correctly, but plain text is the documented + preferred shape.'),
   priority: TicketPrioritySchema.optional(),
   category: z.string().optional().describe('Category id (e.g. "bug", "feature", "task", "issue")'),
   up_next: z.boolean().optional(),

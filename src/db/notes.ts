@@ -26,6 +26,67 @@ export function parseNotes(raw: string | null): NoteEntry[] {
   return [{ id: generateNoteId(), text: raw, created_at: new Date().toISOString() }];
 }
 
+/**
+ * HS-8427 — defensive unwrap for `updateTicket`'s notes-append path.
+ *
+ * The append surface (`PATCH /api/tickets/:id` with `notes: <body>`)
+ * treats the value as the **plain markdown body** of a new note and
+ * server-wraps it in a `{id, text, created_at}` entry that gets pushed
+ * onto the ticket's notes array. But AI agents (the `hotsheet_*` MCP
+ * tools, curl callers reading older skill docs, ad-hoc API consumers)
+ * routinely mis-encode this as a JSON-stringified note array — e.g.
+ * `'[{"text":"**TL;DR:** ..."}]'` — because the old MCP tool docstring
+ * said "Pass the full notes array as a JSON string". Pre-fix that
+ * payload was stored verbatim as the `text` of a single new note, so
+ * the rendered note looked like a literal JSON blob containing escaped
+ * markdown — the surface of HS-8427.
+ *
+ * This helper parses the agent's input, detects the misencoded shape,
+ * and returns the unwrapped text bodies in order. The caller appends
+ * each as its own note entry. Heuristic is intentionally narrow:
+ *
+ *   - Must JSON-parse cleanly to an array
+ *   - Every element must be an object with a string `text` field
+ *   - Any element with extra fields beyond `text` / `id` / `created_at`
+ *     bails out (treat as plain text) — protects against legitimate
+ *     markdown bodies that happen to start with `[{` and contain
+ *     enough JSON shape to fool a looser check
+ *
+ * Anything that doesn't pass the gate is returned as-is in a single-
+ * element array — same effect as the pre-fix codepath, no behavior
+ * change for plain-markdown callers.
+ *
+ * Pure: takes the raw input, returns an array of text bodies. No FS /
+ * DB / network. Exported for unit tests.
+ */
+export function normalizeNotesAppend(raw: string): string[] {
+  if (raw === '') return [];
+  // Quick exit when the input clearly isn't a JSON array — avoid the
+  // parse cost on every plain-text note (the overwhelmingly common case).
+  const trimmed = raw.trimStart();
+  if (!trimmed.startsWith('[')) return [raw];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [raw];
+  }
+  if (!Array.isArray(parsed)) return [raw];
+  if (parsed.length === 0) return [raw]; // empty array → treat as plain text body (probably user-meant)
+  const ALLOWED_KEYS = new Set(['text', 'id', 'created_at']);
+  const texts: string[] = [];
+  for (const entry of parsed) {
+    if (entry === null || typeof entry !== 'object') return [raw];
+    const obj = entry as Record<string, unknown>;
+    if (typeof obj.text !== 'string') return [raw];
+    for (const key of Object.keys(obj)) {
+      if (!ALLOWED_KEYS.has(key)) return [raw];
+    }
+    texts.push(obj.text);
+  }
+  return texts;
+}
+
 export async function editNote(ticketId: number, noteId: string, text: string): Promise<NoteEntry[] | null> {
   const db = await getDb();
   const result = await db.query<{ notes: string }>(`SELECT notes FROM tickets WHERE id = $1`, [ticketId]);

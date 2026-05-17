@@ -28,6 +28,7 @@ import {
   getUpNextTickets,
   hardDeleteTicket,
   nextTicketNumber,
+  normalizeNotesAppend,
   parseNotes,
   queryTickets,
   restoreTicket,
@@ -1082,6 +1083,140 @@ describe('deleteNote', () => {
     const remaining = parseNotes(updated!.notes);
     expect(remaining).toHaveLength(1);
     expect(remaining[0].text).toBe('Note 2');
+  });
+});
+
+describe('normalizeNotesAppend (HS-8427)', () => {
+  // HS-8427 — when an AI agent (or any caller) misencodes a notes-append
+  // payload as a JSON-stringified note array — the old `hotsheet_update_ticket`
+  // tool docstring told them to — the server unwraps the input so the
+  // rendered note doesn't show as a literal JSON blob.
+
+  it('returns plain text as a single-element array (the common case)', () => {
+    expect(normalizeNotesAppend('Just plain text')).toEqual(['Just plain text']);
+    expect(normalizeNotesAppend('**TL;DR:** A markdown note')).toEqual(['**TL;DR:** A markdown note']);
+  });
+
+  it('returns an empty array for empty input', () => {
+    expect(normalizeNotesAppend('')).toEqual([]);
+  });
+
+  it('unwraps a JSON-stringified single-note array to its text body', () => {
+    const input = JSON.stringify([{ text: '**TL;DR:** Fixed the thing' }]);
+    expect(normalizeNotesAppend(input)).toEqual(['**TL;DR:** Fixed the thing']);
+  });
+
+  it('unwraps a JSON-stringified multi-note array preserving order', () => {
+    const input = JSON.stringify([
+      { text: 'First note body' },
+      { text: 'Second note body' },
+      { text: 'Third note body' },
+    ]);
+    expect(normalizeNotesAppend(input)).toEqual([
+      'First note body',
+      'Second note body',
+      'Third note body',
+    ]);
+  });
+
+  it('tolerates id / created_at fields inside the unwrap entries', () => {
+    // The whole note-record shape (`{id, text, created_at}`) is the
+    // common mis-encoding — accept those keys without bailing out.
+    const input = JSON.stringify([
+      { id: 'n_abc', text: 'Body 1', created_at: '2026-05-17T00:00:00Z' },
+    ]);
+    expect(normalizeNotesAppend(input)).toEqual(['Body 1']);
+  });
+
+  it('does NOT unwrap when an entry carries extra unknown keys', () => {
+    // Defensive: a markdown body that happens to JSON-parse to an array
+    // of objects with extra fields beyond `{text, id, created_at}` is
+    // probably NOT a notes array — treat as plain text.
+    const input = JSON.stringify([{ text: 'Body', author: 'Alice' }]);
+    expect(normalizeNotesAppend(input)).toEqual([input]);
+  });
+
+  it('does NOT unwrap when an entry is missing `text`', () => {
+    const input = JSON.stringify([{ title: 'No text field here' }]);
+    expect(normalizeNotesAppend(input)).toEqual([input]);
+  });
+
+  it('does NOT unwrap when an entry is non-object', () => {
+    const input = JSON.stringify(['just a string', 'another string']);
+    expect(normalizeNotesAppend(input)).toEqual([input]);
+  });
+
+  it('does NOT unwrap when the parsed JSON is not an array', () => {
+    const input = JSON.stringify({ text: 'A note-shaped object, not an array' });
+    expect(normalizeNotesAppend(input)).toEqual([input]);
+  });
+
+  it('does NOT unwrap when the parsed JSON is an empty array', () => {
+    // Likely user-meant — a `[]` body should render as the literal `[]`,
+    // not vanish silently.
+    expect(normalizeNotesAppend('[]')).toEqual(['[]']);
+  });
+
+  it('does NOT unwrap when input does not start with `[` after trim', () => {
+    // Fast-path that avoids the JSON-parse cost on every plain-text note.
+    // A note body that contains a `[{` substring mid-text never reaches
+    // the parser.
+    const input = 'Note body that mentions `[{"text":"foo"}]` inline';
+    expect(normalizeNotesAppend(input)).toEqual([input]);
+  });
+
+  it('does NOT unwrap when JSON.parse throws (malformed JSON-array-looking input)', () => {
+    // Starts with `[` but isn't valid JSON — treat as plain text.
+    const input = '[not json {{{';
+    expect(normalizeNotesAppend(input)).toEqual([input]);
+  });
+
+  it('tolerates leading whitespace before the `[`', () => {
+    // Some agents pretty-print their JSON or accidentally prefix with `\n`.
+    const input = '\n  ' + JSON.stringify([{ text: 'Padded body' }]);
+    expect(normalizeNotesAppend(input)).toEqual(['Padded body']);
+  });
+});
+
+describe('updateTicket notes-append unwrap (HS-8427)', () => {
+  // HS-8427 — end-to-end: when the API receives a JSON-stringified note
+  // array as the `notes` field of a PATCH, the resulting stored note
+  // bodies contain the markdown text (NOT the literal JSON string).
+  // Regression test for the user-reported "claude sometimes sends JSON
+  // instead of text, for details and notes especially".
+  it('PATCH with a JSON-stringified single-note array stores the unwrapped text', async () => {
+    const t = await createTicket('Unwrap regression target');
+    const misencoded = JSON.stringify([{ text: '**TL;DR:** Fixed the thing\n\nMore detail.' }]);
+    await updateTicket(t.id, { notes: misencoded });
+    const updated = await getTicket(t.id);
+    const notes = parseNotes(updated!.notes);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toBe('**TL;DR:** Fixed the thing\n\nMore detail.');
+    // The literal JSON-array string must NOT have been stored verbatim.
+    expect(notes[0].text).not.toContain('[{');
+    expect(notes[0].text).not.toContain('"text":');
+  });
+
+  it('PATCH with a JSON-stringified multi-note array stores each entry as a separate note', async () => {
+    const t = await createTicket('Multi-note unwrap target');
+    const misencoded = JSON.stringify([
+      { text: 'First body' },
+      { text: 'Second body' },
+    ]);
+    await updateTicket(t.id, { notes: misencoded });
+    const updated = await getTicket(t.id);
+    const notes = parseNotes(updated!.notes);
+    expect(notes).toHaveLength(2);
+    expect(notes.map(n => n.text)).toEqual(['First body', 'Second body']);
+  });
+
+  it('PATCH with plain text still appends a single note (no regression for UI path)', async () => {
+    const t = await createTicket('Plain text passthrough target');
+    await updateTicket(t.id, { notes: 'Plain markdown body' });
+    const updated = await getTicket(t.id);
+    const notes = parseNotes(updated!.notes);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toBe('Plain markdown body');
   });
 });
 

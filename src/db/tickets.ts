@@ -1,6 +1,6 @@
 import type { Ticket, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
 import { getDb } from './connection.js';
-import { generateNoteId, parseNotes } from './notes.js';
+import { generateNoteId, normalizeNotesAppend, parseNotes } from './notes.js';
 
 /** Escape SQL ILIKE wildcard characters so they match literally. */
 function escapeIlike(value: string): string {
@@ -132,14 +132,25 @@ export async function updateTicket(id: number, updates: Partial<{
     paramIdx++;
   }
 
-  // Notes: append as a timestamped entry to the JSON array stored as text
+  // Notes: append as a timestamped entry to the JSON array stored as
+  // text. HS-8427 — pass the input through `normalizeNotesAppend` to
+  // unwrap an agent's accidentally-JSON-stringified note array
+  // (`[{"text":"..."}]`) into one or more plain-text bodies. Plain-text
+  // input passes through as a single-element array, so the UI path is
+  // unaffected.
   if (updates.notes !== undefined && updates.notes !== '') {
-    const current = await db.query<{ notes: string }>(`SELECT notes FROM tickets WHERE id = $1`, [id]);
-    const existing = parseNotes(current.rows[0]?.notes || '');
-    existing.push({ id: generateNoteId(), text: updates.notes, created_at: new Date().toISOString() });
-    sets.push(`notes = $${paramIdx}`);
-    values.push(JSON.stringify(existing));
-    paramIdx++;
+    const bodies = normalizeNotesAppend(updates.notes);
+    if (bodies.length > 0) {
+      const current = await db.query<{ notes: string }>(`SELECT notes FROM tickets WHERE id = $1`, [id]);
+      const existing = parseNotes(current.rows[0]?.notes || '');
+      const now = new Date().toISOString();
+      for (const body of bodies) {
+        existing.push({ id: generateNoteId(), text: body, created_at: now });
+      }
+      sets.push(`notes = $${paramIdx}`);
+      values.push(JSON.stringify(existing));
+      paramIdx++;
+    }
   }
 
   // Handle status transitions
