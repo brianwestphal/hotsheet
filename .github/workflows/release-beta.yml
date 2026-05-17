@@ -235,6 +235,71 @@ jobs:
       - run: bash scripts/build-sidecar.sh ${{ matrix.target }}
         shell: bash
 
+      # macOS-only: codesign every native `.node` binary embedded in the
+      # sidecar's bundled node_modules BEFORE tauri-action runs. Tauri's
+      # bundler signs the main binary + externalBin (the Node sidecar) but
+      # does NOT recursively sign Mach-O native modules inside the resource
+      # tree (e.g. `node-pty`'s `pty.node`). Apple's notary service scans
+      # the entire .app and rejects the submission as "Invalid" if it
+      # finds an unsigned Mach-O — which is what happened on v0.17.0-beta.11
+      # (the first beta to ship the embedded terminal's `node-pty` binary;
+      # the prior stable v0.16.2 was tagged ~4 hours before that dep was
+      # added to the bundle). We pre-sign with the same Developer ID
+      # certificate that tauri-action will use for the main bundle so the
+      # whole .app passes notary in a single submission. Hardened runtime
+      # is required (`--options runtime`) because the parent .app uses it.
+      # Decode the same `.p12` tauri-action uses and import it into a
+      # temporary keychain so `codesign` can find it before tauri-action
+      # gets its turn (tauri-action manages its OWN keychain after this
+      # step runs, but the certificate is in the login keychain at this
+      # point because we just imported it). NOTE: tauri-action will also
+      # do its full signing pass on top of these pre-signed .node files,
+      # which `codesign --force` upstream tolerates.
+      - name: Pre-sign native .node binaries (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          # Inventory first so the CI log clearly shows what we're about
+          # to sign (and stays useful for diagnosing future notary "Invalid"
+          # cases). Bail early if there's nothing to sign — that means a
+          # future bundle reshuffle dropped node-pty entirely.
+          mapfile -t NODE_BINS < <(find src-tauri/server/node_modules -type f -name '*.node' 2>/dev/null || true)
+          if [ ${#NODE_BINS[@]} -eq 0 ]; then
+            echo "No .node binaries under src-tauri/server/node_modules — nothing to pre-sign."
+            exit 0
+          fi
+          echo "Found ${#NODE_BINS[@]} .node binaries to pre-sign:"
+          printf '  %s\n' "${NODE_BINS[@]}"
+
+          # Import the same .p12 tauri-action uses into a temporary keychain
+          # so codesign can resolve $APPLE_SIGNING_IDENTITY. tauri-action
+          # will re-import into its own keychain after this; that's fine —
+          # macOS allows multiple keychains carrying the same identity.
+          KEYCHAIN="$RUNNER_TEMP/presign.keychain-db"
+          KEYCHAIN_PWD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | xargs)
+
+          for bin in "${NODE_BINS[@]}"; do
+            codesign --force --options runtime --timestamp \
+              --sign "$APPLE_SIGNING_IDENTITY" "$bin"
+            codesign --verify --verbose "$bin"
+          done
+          echo "All ${#NODE_BINS[@]} .node binaries pre-signed."
+
       # Windows MSI bundler requires the optional pre-release identifier in
       # the app version to be numeric-only (e.g. `0.17.0-1`). Beta tags use
       # the semver-standard `0.17.0-beta.N` form, which fails the MSI version

@@ -679,12 +679,20 @@ test.describe('Embedded terminal drawer', () => {
   // HS-6472: when focus is inside an xterm pane, Cmd+Shift+ArrowRight
   // cycles terminal tabs instead of project tabs; Cmd+Shift+Opt+ArrowRight
   // escapes back to project-tab navigation.
-  test('Cmd+Shift+Arrow switches terminal tabs when a terminal is focused (HS-6472)', async ({ page }) => {
+  test('Cmd+Shift+Arrow switches terminal tabs when a terminal is focused (HS-6472)', async ({ page, request }) => {
+    // HS-8419 — pre-open the drawer via file-settings so `applyPerProjectDrawerState`'s
+    // synchronous `if (panelOpen) closePanel()` block (which runs AFTER its own
+    // `await api('/file-settings')`, on the OTHER side of the async wait the
+    // beforeEach + applyPerProjectDrawerState own jointly) can't race the
+    // test's click-to-open. With drawer_open:'true' the drawer auto-opens
+    // during init AND `loadAndRenderTerminalTabs()` runs as part of that
+    // init, so the configured terminal tabs are in the DOM before
+    // `.draft-input` is visible — no post-click race window to fall into.
+    await request.patch('/api/file-settings', { headers, data: { drawer_open: 'true' } });
+
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
-    // Open the drawer and activate the first configured terminal.
-    await page.locator('#command-log-btn').click();
     const firstTab = page.locator('.drawer-terminal-tab[data-terminal-id="default"]');
     const secondTab = page.locator('.drawer-terminal-tab[data-terminal-id="second"]');
     await expect(firstTab).toBeVisible({ timeout: 5000 });

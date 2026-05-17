@@ -36,8 +36,14 @@ const CLI_PATH = join(process.cwd(), 'src', 'cli.ts');
 async function spawn(args: string[], opts?: { timeout?: number; env?: Record<string, string> }): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const { execFile } = await import('child_process');
   return new Promise((resolve) => {
+    // HS-8419 — bumped from 5000 → 15000ms. Under heavy CI-runner load
+    // `npx tsx src/cli.ts --help` can take > 5 s (npx prefix resolution +
+    // tsx loader warm-up + Node start-up), and the timeout fires with
+    // `error.status = undefined` which the resolver below collapses to
+    // exitCode 1 — making the test appear to fail with
+    // `expected 1 to be +0` even though the CLI behavior is correct.
     const proc = execFile('npx', ['tsx', CLI_PATH, ...args], {
-      timeout: opts?.timeout ?? 5000,
+      timeout: opts?.timeout ?? 15000,
       env: { ...process.env, ...opts?.env },
     }, (error, stdout, stderr) => {
       resolve({
@@ -53,8 +59,15 @@ async function spawn(args: string[], opts?: { timeout?: number; env?: Record<str
   });
 }
 
+// HS-8419 — `it.extend({ retry: 2 })` wraps the spawn-bearing tests with
+// vitest's per-test retry. The probe at module load proves tsx CAN spawn,
+// but under CI load an individual `npx tsx --help` invocation can still
+// exceed the 15s timeout (npm cache miss → resolver round trip → tsx
+// loader warm-up). Two retries = three total attempts, which is empirically
+// enough to absorb the tail of the spawn-latency distribution without
+// hiding a genuine regression (a real break would fail all three).
 describe.skipIf(!canSpawnTsxChild)('CLI — help and version (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
-  it('--help prints usage and exits 0', async () => {
+  it('--help prints usage and exits 0', { retry: 2 }, async () => {
     const { stdout, exitCode } = await spawn(['--help']);
     expect(exitCode).toBe(0);
     expect(stdout).toContain('Usage:');
@@ -63,7 +76,7 @@ describe.skipIf(!canSpawnTsxChild)('CLI — help and version (skipped: tsx subpr
     expect(stdout).toContain('--no-open');
   });
 
-  it('-h is an alias for --help', async () => {
+  it('-h is an alias for --help', { retry: 2 }, async () => {
     const { stdout, exitCode } = await spawn(['-h']);
     expect(exitCode).toBe(0);
     expect(stdout).toContain('Usage:');
