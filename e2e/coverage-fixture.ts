@@ -134,21 +134,17 @@ async function resetCrossSpecSettings(request: import('@playwright/test').APIReq
 // `persistedHiddenTerminals.ts::writeNow` swallowed the 400 in a
 // `try { ... } catch { /* best-effort */ }` and Playwright never saw it.
 //
-// **Two-phase rollout (see HS-8435 details).**
+// **Two-phase rollout (see HS-8435 details, completed in HS-8436).**
 //
-// - **Phase A (default, log-only):** capture console errors / pageerrors
-//   / 4xx-5xx responses into `errors[]`, attach the array to the
-//   playwright test as an artifact via `testInfo.attach` so a CI run
-//   surfaces the findings without failing the suite. Lets us audit ~50
-//   specs across one full run and categorise each finding as (a) real
-//   bug → file ticket, (b) legitimate test scenario → add to per-test
-//   allowlist, (c) ambient noise → add to global allowlist.
-// - **Phase B (`STRICT_E2E_ERRORS=1`, opt-in):** flip the `afterEach`
-//   from log-only to `expect(errors).toEqual([])`. Specs that
-//   legitimately expect an error opt in via the `allowErrors()` helper
-//   exposed on the fixture (per-test substring allowlist). The env-flag
-//   gate lets Phase B land in CI without breaking local runs first; once
-//   the suite is stable, flip the default in this file.
+// - **Phase A (HS-8435, log-only):** captured findings without failing
+//   the suite. Validated on a 31-test sample.
+// - **Phase B (HS-8436, default = strict):** completed audit pass across
+//   the full 281-test `npm run test:e2e:fast` suite, categorised every
+//   finding (real bug → HS-8437 + per-test allowlist; legit per-test
+//   scenarios → per-test allowlist with comments; ambient noise →
+//   `GLOBAL_ERROR_ALLOWLIST`). Default is now FAIL-on-unexpected-event.
+//   Set `STRICT_E2E_ERRORS=0` to opt out (local debugging only — CI
+//   should always run with the default).
 //
 // **Global allowlist.** Ambient noise the entire suite should ignore
 // regardless of spec. Add comments explaining each entry — otherwise
@@ -172,6 +168,15 @@ const GLOBAL_ERROR_ALLOWLIST: readonly (string | RegExp)[] = [
   // matches the existing prior-art in `clipboard.spec.ts` where no test
   // ever asserts against the OS clipboard contents.
   /Failed to execute 'writeText' on 'Clipboard'/,
+  // `longTaskObserver.tsx` deliberately uses `console.error` (see
+  // HS-8054 comment at `src/client/longTaskObserver.tsx:237-245`) so the
+  // developer can grep the `[hotsheet longtask]` prefix in the console
+  // for slow-main-thread events. These are an observability signal, not
+  // bugs — and e2e tests routinely trigger them (heavy mount paints,
+  // dashboard scrolls, etc.). Allowing globally so the gate doesn't
+  // surface them as failures; the developer console still shows them in
+  // local runs.
+  /\[hotsheet longtask\]/,
 ];
 
 interface ErrorCaptureFixture {
@@ -238,23 +243,25 @@ export const test = base.extend<{
       body: unexpected.join('\n'),
       contentType: 'text/plain',
     });
-    if (process.env.STRICT_E2E_ERRORS === '1') {
-      // Phase B — fail the test. Use a plain Error rather than `expect`
-      // so the message survives any custom `expect` formatter and the
-      // failure isn't hidden behind a diff-of-arrays render.
-      throw new Error(
-        `HS-8435 — ${unexpected.length} unexpected console/pageerror/4xx-5xx event(s) during this test ` +
-        `(set STRICT_E2E_ERRORS=0 to disable the gate):\n  ` +
-        unexpected.slice(0, 20).join('\n  ') +
-        (unexpected.length > 20 ? `\n  …and ${unexpected.length - 20} more.` : ''),
+    if (process.env.STRICT_E2E_ERRORS === '0') {
+      // HS-8436 opt-out (local debugging only) — log + attach without
+      // failing. CI should never set this; use the strict default.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[hs-8435 opt-out] ${testInfo.title}: ${unexpected.length} unexpected event(s) — ` +
+        `STRICT_E2E_ERRORS=0 is masking these:\n  ` +
+        unexpected.slice(0, 10).join('\n  '),
       );
+      return;
     }
-    // Phase A (log-only) — surface to stderr but don't fail.
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[hs-8435 phase-a] ${testInfo.title}: ${unexpected.length} unexpected event(s) — ` +
-      `set STRICT_E2E_ERRORS=1 to fail on these:\n  ` +
-      unexpected.slice(0, 10).join('\n  '),
+    // HS-8436 default — fail the test. Use a plain Error rather than
+    // `expect` so the message survives any custom `expect` formatter and
+    // the failure isn't hidden behind a diff-of-arrays render.
+    throw new Error(
+      `HS-8435 — ${unexpected.length} unexpected console/pageerror/4xx-5xx event(s) during this test ` +
+      `(set STRICT_E2E_ERRORS=0 to disable the gate):\n  ` +
+      unexpected.slice(0, 20).join('\n  ') +
+      (unexpected.length > 20 ? `\n  …and ${unexpected.length - 20} more.` : ''),
     );
   }, { auto: true }],
   autoJSCoverage: [async ({ page }, use) => {

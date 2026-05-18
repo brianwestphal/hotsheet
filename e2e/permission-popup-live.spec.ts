@@ -256,7 +256,12 @@ test.describe('Permission popup — live polling lifecycle (HS-8207)', () => {
 });
 
 test.describe('Permission popup — live-terminal-checkout body (HS-8207)', () => {
-  test('truncated input_preview surfaces the .permission-popup-live-terminal body slot', async ({ page }) => {
+  test('truncated input_preview surfaces the .permission-popup-live-terminal body slot', async ({ page, errorCapture }) => {
+    // HS-8436 — the test mocks the permission with a deliberately-fake
+    // `__HS8207_secret = 'fake-project-secret-A'`. The live-terminal
+    // checkout body slot then tries to open a WebSocket to that fake
+    // secret, which the server correctly rejects with 403. Expected.
+    errorCapture.allowErrors([/ws:\/\/.*terminal\/ws.*fake-project-secret/]);
     // A long Bash command with an UNTERMINATED `command` value (no closing
     // `"` or `}`) — `formatInputPreview`'s forgiving extractor returns the
     // recovered value with `…` appended, tripping `flatTruncated` in
