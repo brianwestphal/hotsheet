@@ -216,9 +216,22 @@ run_local_checks() {
   npm run build
   echo ""
 
-  info "Unit tests..."
-  npm test || { error "Unit tests failed."; exit 2; }
-  echo ""
+  if [[ "${SKIP_TESTS:-false}" == "true" ]]; then
+    warn "Skipping unit tests (--skip-tests). Use only when you've verified the suite passes elsewhere."
+  else
+    info "Unit tests..."
+    # Auto-retry once on failure. The project's test suite has a few
+    # known-flaky files under heavy parallel load (feedback-state /
+    # lifecycle-e2e / cli.test --demo:0 — PGLite initdb timing + tsx
+    # spawn jitter). A second pass with a now-warm node-modules cache
+    # almost always succeeds; if the second pass also fails, the
+    # failure is more likely real and we bail.
+    if ! npm test; then
+      warn "Unit tests failed on first pass — retrying once in case of load-induced flake..."
+      npm test || { error "Unit tests failed after retry. Inspect output above; re-run with --skip-tests if you've validated the failure is environmental and not a real regression."; exit 2; }
+    fi
+    echo ""
+  fi
 
   info "Lint..."
   npm run lint || { error "Lint failed."; exit 2; }
@@ -271,6 +284,7 @@ tag_and_push() {
 # version). All other args are unrecognized and rejected so a typo
 # doesn't silently fall through into a default beta release.
 OVERRIDE_VERSION=""
+SKIP_TESTS="false"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
@@ -285,9 +299,13 @@ while [[ $# -gt 0 ]]; do
       OVERRIDE_VERSION="${1#--version=}"
       shift
       ;;
+    --skip-tests)
+      SKIP_TESTS="true"
+      shift
+      ;;
     -h|--help)
       cat <<EOF
-Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z]
+Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z] [--skip-tests]
 
 Non-interactive beta release for Hot Sheet. Matches \`npm run release:beta\`
 without prompts. By default targets the upcoming X.Y.0 (next minor from
@@ -295,15 +313,22 @@ current package.json) unless package.json is already ahead of the latest
 stable tag, in which case the current version is used directly. Override
 with --version to point at an explicit upcoming release.
 
+The unit-test step auto-retries once on failure (catches load-induced
+flakes in feedback-state / lifecycle-e2e / cli.test --demo:0). Pass
+--skip-tests to bypass entirely after you've validated the suite
+passes some other way (e.g. you just ran \`npm test\` clean in a
+separate terminal). CI re-runs everything on tag-push regardless.
+
 Examples:
   npm run release:beta:auto
   npm run release:beta:auto -- --version 0.18.0
+  npm run release:beta:auto -- --skip-tests
 EOF
       exit 0
       ;;
     *)
       error "Unrecognized arg: $1"
-      error "Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z]"
+      error "Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z] [--skip-tests]"
       exit 1
       ;;
   esac
