@@ -106,11 +106,47 @@ preflight() {
 
 # --- Steps ---
 read_version() {
-  # Beta tags target the version currently in package.json (the next
-  # upcoming stable). The interactive flow's default is "Enter to keep
-  # current_version" — we match that.
-  VERSION=$(node -p "require('./package.json').version")
-  info "Target version: ${BOLD}${VERSION}${RESET} (beta tag will be v${VERSION}-beta.N for the next free N)"
+  # The interactive flow shows a menu (Enter = keep current, 1 = patch,
+  # 2 = minor, 3 = major, 4 = custom). In practice the user always picks
+  # 2 (minor) for beta releases — betas target the upcoming X.Y.0
+  # release, not the current X.Y.Z. So our default is "next minor" not
+  # "keep current". Explicit override via `--version X.Y.Z` for the rare
+  # case where the upcoming release is a patch / major / custom.
+  #
+  # We also guard the "next minor" pick against an already-stable
+  # version: if `v<NEXT_MINOR>-beta.N` tags exist, we're continuing that
+  # beta series — exactly what we want. If `v<CURRENT_VERSION>` is a
+  # tag (this version already shipped stable), we'd never want to target
+  # it — `next minor` is the only sensible default. If `v<CURRENT>`
+  # is NOT yet a tag, the current package.json is the upcoming release
+  # itself and we should target it directly — pick that.
+  if [[ -n "${OVERRIDE_VERSION:-}" ]]; then
+    VERSION="$OVERRIDE_VERSION"
+    info "Target version (from --version): ${BOLD}${VERSION}${RESET}"
+    return
+  fi
+
+  local current
+  current=$(node -p "require('./package.json').version")
+
+  # If package.json points at a version that hasn't shipped as a stable
+  # tag yet, package.json IS the upcoming target. Otherwise next-minor.
+  local target
+  if git rev-parse "v${current}" >/dev/null 2>&1; then
+    # Current is already a stable tag — package.json hasn't been bumped
+    # yet. Pick next-minor.
+    local major minor patch
+    IFS='.' read -r major minor patch <<< "$current"
+    target="${major}.$((minor + 1)).0"
+    info "Current package.json (${current}) is already a stable tag — targeting next minor: ${BOLD}${target}${RESET}"
+  else
+    # Current isn't a stable tag yet — package.json IS the upcoming target.
+    target="$current"
+    info "Current package.json (${target}) is not yet a stable tag — targeting it directly"
+  fi
+
+  VERSION="$target"
+  info "Beta tag will be ${BOLD}v${VERSION}-beta.N${RESET} for the next free N"
 }
 
 draft_release_notes() {
@@ -229,6 +265,49 @@ tag_and_push() {
   echo ""
   echo -e "  ${DIM}Monitor:${RESET} https://github.com/brianwestphal/hotsheet/actions"
 }
+
+# --- Argv parsing ---
+# Currently supports: --version X.Y.Z (override the auto-derived target
+# version). All other args are unrecognized and rejected so a typo
+# doesn't silently fall through into a default beta release.
+OVERRIDE_VERSION=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version)
+      OVERRIDE_VERSION="${2:-}"
+      if [[ -z "$OVERRIDE_VERSION" ]]; then
+        error "--version requires a value (e.g. --version 0.17.0)"
+        exit 1
+      fi
+      shift 2
+      ;;
+    --version=*)
+      OVERRIDE_VERSION="${1#--version=}"
+      shift
+      ;;
+    -h|--help)
+      cat <<EOF
+Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z]
+
+Non-interactive beta release for Hot Sheet. Matches \`npm run release:beta\`
+without prompts. By default targets the upcoming X.Y.0 (next minor from
+current package.json) unless package.json is already ahead of the latest
+stable tag, in which case the current version is used directly. Override
+with --version to point at an explicit upcoming release.
+
+Examples:
+  npm run release:beta:auto
+  npm run release:beta:auto -- --version 0.18.0
+EOF
+      exit 0
+      ;;
+    *)
+      error "Unrecognized arg: $1"
+      error "Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z]"
+      exit 1
+      ;;
+  esac
+done
 
 # --- Main ---
 echo ""
