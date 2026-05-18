@@ -10,9 +10,9 @@
 
 <br>
 
-**Hot Sheet** is a lightweight project management tool that runs entirely on your machine. Create tickets with a bullet-list interface, drag them into priority order, and your AI tools automatically get a structured worklist they can act on.
+**Hot Sheet** is a local-first project management tool wired into your AI coding workflow. Create tickets with a bullet-list interface, drag them into priority order, and your AI tools automatically get a structured worklist they can act on. A real PTY-backed terminal lives in the footer drawer — switch to the dashboard view to see every terminal across every project as a tile grid — so you can keep an eye on dev servers, tests, and the AI's own Claude Code session from the same window.
 
-No cloud. No logins. No JIRA. Just tickets and a tight feedback loop.
+No cloud. No logins. No JIRA. Just tickets, terminals, and a tight feedback loop.
 
 <br>
 
@@ -102,7 +102,11 @@ The loop stays tight because the AI always knows what to work on next — and yo
   <img src="docs/demo-6.png" alt="Detail panel in bottom orientation showing ticket details, tags, and notes" width="900">
 </p>
 
-**Embedded terminal** — a real PTY-backed terminal lives in the footer drawer next to the commands log. Configure multiple named terminals per project (dev server, tests, build, a Claude session, anything else), each with its own theme, font, and shell-init history. Switch to the **dashboard view** to see every terminal across every registered project as a tile grid — perfect for keeping an eye on multiple build/test pipelines at once. xterm.js renders the buffer; OSC 7 / 8 / 9 / 133 are all parsed (clickable hyperlinks, cwd-aware toolbar chip, desktop notifications, prompt/command/output marks with a "copy last output" + "ask Claude about this" popover). A macOS-Terminal.app-style quit-confirm catches Cmd+Q when long-running processes (claude, npm dev, anything heavier than an idle shell) are alive so you don't lose them by accident.
+**Embedded terminal** — a real PTY-backed terminal lives in the footer drawer next to the commands log. Configure multiple named terminals per project (dev server, tests, build, a Claude session, anything else), each with its own theme, font, and per-terminal shell-history pool — up-arrow on the dev-server tab won't surface the commit messages you typed on the deploy tab. **11 curated themes** (Default, Dracula, Solarized Dark/Light, Nord, Gruvbox, Monokai, One Dark, Tomorrow Night, GitHub Dark/Light) and 11 monospaced font choices, settable as a project default OR per-terminal via the gear popover. Right-click tabs to close, drag-to-reorder, single + button to spawn a one-off dynamic terminal. A macOS-Terminal.app-style quit-confirm catches Cmd+Q when long-running processes (claude, npm dev, anything heavier than an idle shell) are alive so you don't lose them by accident.
+
+**Shell integration that earns its keep** — xterm.js renders the buffer and Hot Sheet parses every standard shell-integration escape: **OSC 7** drives a cwd-aware toolbar chip you can click to open the working directory in Finder/Explorer; **OSC 8** makes hyperlinks emitted by `gh`, `cargo`, `ls --hyperlink=auto`, etc. actually clickable; **OSC 9** fires desktop toasts AND native OS notifications (system Notification Center / tray) when the window is backgrounded; **OSC 133** marks every prompt with a gutter glyph, supports `Cmd+Up`/`Cmd+Down` to jump between commands, and a hover popover with **Copy command** / **Copy output** / **Rerun** / **Ask Claude about this** buttons. A bell character (`\x07`) bounces the terminal tab and persists an accent outline until you visit it — and bells fired in **another project's** terminal surface as a dot on that project's tab so you don't miss them.
+
+**Terminal dashboard** — click the `square-terminal` button in the toolbar to enter a dedicated full-window view showing every terminal across every registered project as a grid of 4:3 tiles. Tiles stay live (xterm + scrollback + PTY all preserved); bells bounce the tile and outline it; the column-count slider scales the whole grid from "one giant tile" to "10-per-row dense overview." **Single-click** a tile to magnify it to ~70% viewport with keyboard input; **double-click** to enter a dedicated full-pane view that resizes the PTY to fit. **Shift+Cmd+Arrow** (macOS) / **Shift+Ctrl+Arrow** (Linux/Windows) walks to the next-magnified-target tile in the indicated direction — perfect for cycling through a row of build/test pipelines. **Hide / Show Terminals** with named **visibility groupings** (e.g. "claude only", "server logs", "single app") so you can switch contexts without re-toggling rows. A **flow layout mode** flattens projects into a single tagged grid; **sectioned mode** groups by project. Off-screen tiles unmount their xterm to keep memory tame; the PTY stays alive server-side so the bytes are waiting when you scroll back.
 
 **Unread indicators** — when tickets are created or updated externally (by AI tools, sync plugins, or the API), a blue dot appears next to the title. Your own edits in the UI never trigger unread status. Mark as Read/Unread from the context menu or batch toolbar. Tickets are automatically marked as read when you open them in the detail panel.
 
@@ -116,6 +120,10 @@ The loop stays tight because the AI always knows what to work on next — and yo
 
 <p align="center">
   <img src="docs/demo-11.png" alt="Embedded terminal in the footer drawer with named tabs for dev server, tests, and Claude" width="900">
+</p>
+
+<p align="center">
+  <img src="docs/demo-12.png" alt="Terminal dashboard view showing every terminal across every registered project as a tile grid" width="900">
 </p>
 
 **Multi-project tabs** — open multiple projects in a single window. Each project remembers its own sidebar view, settings, sort preferences, and layout. Tabs appear automatically when you register a second project via Open Folder (`Cmd+O`). Drag tabs to reorder, right-click for close options and "Show in Finder," switch with `Cmd+Shift+[/]`.

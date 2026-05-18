@@ -19,6 +19,7 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
   { id: 9, label: 'Claude Channel — AI integration with custom commands' },
   { id: 10, label: 'Multi-project tabs — multiple projects in one window' },
   { id: 11, label: 'Embedded terminal — drawer with named terminal tabs and PTY output' },
+  { id: 12, label: 'Terminal dashboard — every terminal across every project at once' },
 ];
 
 // --- Ticket data model ---
@@ -621,6 +622,7 @@ const SCENARIO_DATA: Record<number, DemoTicket[]> = {
   9: SCENARIO_9,
   10: SCENARIO_1, // Primary project uses hero data; extra projects added by seedDemoExtraProjects
   11: SCENARIO_1, // Reuses hero tickets so the screenshot shows tickets + terminal drawer together
+  12: SCENARIO_1, // Primary project for the dashboard demo; extra projects + terminal config added by seedDemoExtraProjects
 };
 
 // --- Custom views for scenario 3 ---
@@ -732,7 +734,7 @@ export async function seedDemoData(scenario: number): Promise<void> {
   // already column; that's preserved. Scenario 8 (Dashboard) overrides
   // the layout entirely with its own view so the setting doesn't
   // matter — left out for clarity.
-  const COLUMN_VIEW_SCENARIOS = new Set([1, 3, 4, 5, 7, 9, 10, 11]);
+  const COLUMN_VIEW_SCENARIOS = new Set([1, 3, 4, 5, 7, 9, 10, 11, 12]);
   if (COLUMN_VIEW_SCENARIOS.has(scenario)) {
     writeProjectSettings(dataDir, { layout: 'columns' });
   }
@@ -771,6 +773,22 @@ export async function seedDemoData(scenario: number): Promise<void> {
       terminals: JSON.stringify(SCENARIO_11_TERMINALS),
     });
   }
+  if (scenario === 12) {
+    // Terminal dashboard showcase. The dashboard's "see everything at
+    // once" appeal only lands when there are multiple projects each
+    // with multiple terminals — a single-project dashboard would just
+    // look like a project-scoped grid (which is what §36's drawer-grid
+    // is for). So we configure the primary project with the same three
+    // terminals as scenario 11, and `seedDemoExtraProjects` registers
+    // two additional projects (Mobile App + API Platform) each with
+    // their own 2-3 terminals. The dashboard-open flag is in-memory
+    // only (§25), so the user clicks the `square-terminal` toolbar
+    // button after launch to enter the view — the screenshot workflow
+    // then captures all ~7 terminals as a single grid.
+    writeProjectSettings(dataDir, {
+      terminals: JSON.stringify(SCENARIO_11_TERMINALS),
+    });
+  }
 }
 
 // --- Scenario 10: Multi-project tabs — extra projects ---
@@ -779,6 +797,39 @@ interface ExtraProject {
   appName: string;
   tickets: DemoTicket[];
 }
+
+/** Extra-project terminal configs for the §25 dashboard showcase
+ *  (scenario 12). Each project gets a couple of visibly-distinct
+ *  terminals so the dashboard grid has variety. The "printf then exec
+ *  sleep 3600" pattern matches `SCENARIO_11_TERMINALS`. */
+const SCENARIO_12_MOBILE_TERMINALS = [
+  {
+    id: 'metro',
+    name: 'Metro',
+    command: "printf '\\033[36m> npx react-native start\\033[0m\\n\\n  Welcome to Metro v0.81.0\\n  Fast - Scalable - Integrated\\n\\n\\033[32m  ✓ Bundling complete\\033[0m\\n\\033[2m  watching files for changes...\\033[0m\\n'; exec sleep 3600",
+    lazy: false,
+  },
+  {
+    id: 'logcat',
+    name: 'logcat',
+    command: "printf '\\033[2m11-18 09:42:01.213\\033[0m  Push.deeplink  Received: orders/9821\\n\\033[2m11-18 09:42:01.241\\033[0m  Push.deeplink  Resolving intent…\\n\\033[2m11-18 09:42:01.252\\033[0m  Push.deeplink  Routing to OrderDetail\\n\\033[2m11-18 09:42:01.318\\033[0m  Render         OrderDetailScreen mounted\\n'; exec sleep 3600",
+    lazy: false,
+  },
+];
+const SCENARIO_12_API_TERMINALS = [
+  {
+    id: 'server',
+    name: 'API Server',
+    command: "printf '\\033[36m> npm run dev:api\\033[0m\\n\\n  api.platform.local listening on :8080\\n  graphql:  http://localhost:8080/graphql\\n  rest:     http://localhost:8080/v1\\n  health:   ok\\n\\n\\033[33m  WARN \\033[0mrate-limiter: bucket high water mark 87%%\\n'; exec sleep 3600",
+    lazy: false,
+  },
+  {
+    id: 'db-tail',
+    name: 'pg log',
+    command: "printf '\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: 12.4 ms  SELECT * FROM orders WHERE id = \\$1\\n\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: 4.1 ms   UPDATE orders SET status=\\$1 WHERE id=\\$2\\n\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  checkpoint complete\\n'; exec sleep 3600",
+    lazy: false,
+  },
+];
 
 const EXTRA_PROJECTS: ExtraProject[] = [
   {
@@ -807,7 +858,8 @@ const EXTRA_PROJECTS: ExtraProject[] = [
  * Called from cli.ts after the server is running.
  */
 export async function seedDemoExtraProjects(scenario: number, primaryDataDir: string, port: number): Promise<void> {
-  if (scenario !== 10) return;
+  // Multi-project demos: scenario 10 (tabs) + scenario 12 (terminal dashboard).
+  if (scenario !== 10 && scenario !== 12) return;
 
   const fs = await import('fs');
   const path = await import('path');
@@ -841,8 +893,18 @@ export async function seedDemoExtraProjects(scenario: number, primaryDataDir: st
     }
     await db.query(`SELECT setval('ticket_seq', $1)`, [extra.tickets.length]);
 
-    // Set app name
-    writeFileSettings(extraDataDir, { appName: extra.appName });
+    // Settings: app name for both scenarios; scenario 12 also configures
+    // per-project terminals so the dashboard grid has variety.
+    const settings: Record<string, string> = { appName: extra.appName };
+    if (scenario === 12) {
+      const terminals = extra.appName === 'Mobile App'
+        ? SCENARIO_12_MOBILE_TERMINALS
+        : extra.appName === 'API Platform'
+          ? SCENARIO_12_API_TERMINALS
+          : [];
+      if (terminals.length > 0) settings.terminals = JSON.stringify(terminals);
+    }
+    writeFileSettings(extraDataDir, settings);
 
     // Register with the running server
     await registerProject(extraDataDir, port);
