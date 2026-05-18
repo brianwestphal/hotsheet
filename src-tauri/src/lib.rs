@@ -114,6 +114,32 @@ struct DataDirSettings {
     app_name: Option<String>,
 }
 
+/// Forward Hot Sheet CLI flags from the Tauri binary's argv to the spawned server.
+/// Tauri-controlled flags (`--no-open`, `--replace`, `--data-dir`) and early-exit flags
+/// (`--close`, `--list`, `--help`) are intentionally excluded — the caller handles
+/// data dir resolution itself and the early-exit flags would kill the server child
+/// before the window can navigate.
+fn collect_forwarded_server_args(app_args: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < app_args.len() {
+        let a = &app_args[i];
+        if a.starts_with("--demo:") {
+            out.push(a.clone());
+        } else if a == "--check-for-updates" || a == "--strict-port" || a == "--force" {
+            out.push(a.clone());
+        } else if a == "--port" {
+            if let Some(v) = app_args.get(i + 1) {
+                out.push(a.clone());
+                out.push(v.clone());
+                i += 1;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 #[cfg(not(debug_assertions))]
 /// Determines the app/window title from .hotsheet/settings.json or the parent folder name.
 fn resolve_app_name(data_dir: &str) -> String {
@@ -724,8 +750,9 @@ async fn pick_folder() -> Result<Option<String>, String> {
 async fn spawn_sidecar_and_navigate(
     app: &tauri::AppHandle,
     data_dir: &str,
+    extra_args: Vec<String>,
 ) -> Result<(), String> {
-    eprintln!("[sidecar] spawn_sidecar_and_navigate called with data_dir={}", data_dir);
+    eprintln!("[sidecar] spawn_sidecar_and_navigate called with data_dir={} extra_args={:?}", data_dir, extra_args);
     let resource_dir = app
         .path()
         .resource_dir()
@@ -733,12 +760,15 @@ async fn spawn_sidecar_and_navigate(
     let cli_js = resource_dir.join("server").join("cli.js");
     eprintln!("[sidecar] cli_js={}, exists={}", cli_js.display(), cli_js.exists());
 
-    let sidecar_args = vec![
+    let mut sidecar_args = vec![
         cli_js.to_string_lossy().to_string(),
         "--no-open".to_string(),
-        "--data-dir".to_string(),
-        data_dir.to_string(),
     ];
+    if !data_dir.is_empty() {
+        sidecar_args.push("--data-dir".to_string());
+        sidecar_args.push(data_dir.to_string());
+    }
+    sidecar_args.extend(extra_args);
     eprintln!("[sidecar] args={:?}", sidecar_args);
 
     let sidecar = app
@@ -760,9 +790,11 @@ async fn spawn_sidecar_and_navigate(
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
 
-    // Set window title from settings or project folder name
-    let name = resolve_app_name(data_dir);
-    let _ = window.set_title(&name);
+    // Set window title from settings or project folder name (skip in demo mode — no fixed dataDir)
+    if !data_dir.is_empty() {
+        let name = resolve_app_name(data_dir);
+        let _ = window.set_title(&name);
+    }
 
     let data_dir_owned = data_dir.to_string();
     tauri::async_runtime::spawn(async move {
@@ -803,8 +835,9 @@ async fn spawn_sidecar_and_navigate(
                 _ => {}
             }
         }
-        // Fallback: if sidecar exited without navigating, try reading port from settings.json
-        if !navigated {
+        // Fallback: if sidecar exited without navigating, try reading port from settings.json.
+        // Skipped in demo mode — the sidecar picks a temp dataDir we don't know up front.
+        if !navigated && !data_dir_owned.is_empty() {
             eprintln!("[sidecar] process exited without navigating, trying settings.json fallback");
             let settings_path = std::path::PathBuf::from(&data_dir_owned).join("settings.json");
             if let Ok(contents) = std::fs::read_to_string(&settings_path) {
@@ -844,7 +877,7 @@ async fn open_project(app: tauri::AppHandle, data_dir: String) -> Result<(), Str
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
-    spawn_sidecar_and_navigate(&app, &data_dir).await
+    spawn_sidecar_and_navigate(&app, &data_dir, Vec::new()).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1037,6 +1070,9 @@ pub fn run() {
                         server_args.push(dir.clone());
                     }
                 }
+                // Forward Hot Sheet CLI flags (--demo:N, --port, --strict-port, --force,
+                // --check-for-updates) from the Tauri binary's argv into the server child.
+                server_args.extend(collect_forwarded_server_args(&app_args));
 
                 // The Rust binary runs from src-tauri/, so set cwd to the project root
                 let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
@@ -1085,8 +1121,24 @@ pub fn run() {
             {
                 let app_args: Vec<String> = std::env::args().collect();
                 let has_data_dir = app_args.iter().any(|a| a == "--data-dir");
+                let has_demo = app_args.iter().any(|a| a.starts_with("--demo:"));
+                let forwarded = collect_forwarded_server_args(&app_args);
 
-                eprintln!("[setup] has_data_dir={}, args={:?}", has_data_dir, app_args);
+                eprintln!("[setup] has_data_dir={} has_demo={} args={:?}", has_data_dir, has_demo, app_args);
+
+                // Demo mode: bypass project restoration and let the sidecar pick its own
+                // temp dataDir (cli.ts resolveDemoDataDir). The forwarded --demo:N flag tells
+                // it which scenario to seed.
+                if has_demo && !has_data_dir {
+                    let handle = app.handle().clone();
+                    let extra = forwarded.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = spawn_sidecar_and_navigate(&handle, "", extra).await {
+                            eprintln!("[setup] failed to spawn demo sidecar: {e}");
+                        }
+                    });
+                    return Ok(());
+                }
 
                 if !has_data_dir {
                     // Check ~/.hotsheet/projects.json for previously opened projects
@@ -1121,8 +1173,9 @@ pub fn run() {
                         // Restore the most recent project — spawn sidecar and return
                         let handle = app.handle().clone();
                         let dir = data_dir.clone();
+                        let extra = forwarded.clone();
                         tauri::async_runtime::spawn(async move {
-                            if let Err(e) = spawn_sidecar_and_navigate(&handle, &dir).await {
+                            if let Err(e) = spawn_sidecar_and_navigate(&handle, &dir, extra).await {
                                 eprintln!("[setup] failed to restore project: {e}");
                                 // Navigate to welcome screen as fallback
                                 if let Some(window) = handle.get_webview_window("main") {
@@ -1195,8 +1248,9 @@ pub fn run() {
                         .cloned()
                         .unwrap_or_default();
                     let handle = app.handle().clone();
+                    let extra = forwarded.clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Err(e) = spawn_sidecar_and_navigate(&handle, &data_dir).await {
+                        if let Err(e) = spawn_sidecar_and_navigate(&handle, &data_dir, extra).await {
                             eprintln!("[setup] failed to spawn sidecar: {e}");
                         }
                     });
