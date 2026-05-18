@@ -7,7 +7,7 @@ import {
 } from './terminalAppearance.js';
 import {
   computeTileScale,
-  ROOT_PADDING,
+  innerContentWidth,
   TILE_ASPECT,
   tileWidthFromColumnCount,
 } from './terminalDashboardSizing.js';
@@ -193,7 +193,10 @@ export function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement 
 export function applySizing(ctx: TileGridContext): void {
   const c = ctx.classes;
   const opts = ctx.opts;
-  const rootWidth = Math.max(0, opts.container.clientWidth - ROOT_PADDING * 2);
+  // HS-8442 — use the container's actual content-area width, not the
+  // hard-coded outer-dashboard padding. See `innerContentWidth` for the
+  // failure mode this closes.
+  const rootWidth = innerContentWidth(opts.container);
   if (rootWidth <= 0) return;
   const columnCount = opts.getColumnCount();
   const tileWidth = tileWidthFromColumnCount(columnCount, rootWidth);

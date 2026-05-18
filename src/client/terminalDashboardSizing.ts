@@ -16,6 +16,40 @@ export const LABEL_ROW_HEIGHT = 26;
 export const HEADING_ROW_HEIGHT = 32;
 export const ROOT_PADDING = 20;
 
+/**
+ * HS-8442 — compute the horizontal content-area width of an element by
+ * subtracting its OWN left+right padding from its `clientWidth`. Per the
+ * box model, `clientWidth = contentWidth + paddingLeft + paddingRight`
+ * (when scrollbars aren't rendered), so subtracting padding yields the
+ * exact pixel width that flex children will lay out across.
+ *
+ * The previous form at the three call sites was
+ * `clientWidth - 2 * ROOT_PADDING`, hard-coded to the dashboard outer's 20 px. That was
+ * correct only when called on the outer `.terminal-dashboard` element
+ * itself; the same expression was also being applied to (a) the grid
+ * child (which has 0 horizontal padding, so subtracting 40 left a 40 px
+ * unused strip on the right of every row in `applySizing`), and (b)
+ * `.drawer-terminal-grid` (which has 12 px padding so the actual padding
+ * is 24, leaving a 16 px unused strip). Either way the visible result
+ * was the same class of bug: tiles sized for less space than is
+ * available, with the slack pooling on the right because flex-wrap
+ * defaults to `flex-start`. Reading the container's actual padding via
+ * `getComputedStyle` keeps every consumer correct without needing each
+ * call site to know which element it's been given.
+ *
+ * Falls back to 0 if `getComputedStyle` returns a non-pixel value (would
+ * only happen under a happy-dom test stub that overrides `clientWidth`
+ * but not the computed style); the test for the bug at
+ * `terminalTileGridRender.test.ts` exercises that code path.
+ */
+export function innerContentWidth(el: HTMLElement): number {
+  const cs = (typeof getComputedStyle === 'function') ? getComputedStyle(el) : null;
+  const left = cs !== null ? parseFloat(cs.paddingLeft) : NaN;
+  const right = cs !== null ? parseFloat(cs.paddingRight) : NaN;
+  const padding = (Number.isFinite(left) ? left : 0) + (Number.isFinite(right) ? right : 0);
+  return Math.max(0, el.clientWidth - padding);
+}
+
 /** HS-7031: the minimum tile width used by the size slider — same floor as
  *  `computeTileWidth` (100 px preview height at the 4:3 aspect). */
 export const SLIDER_MIN_TILE_WIDTH = Math.round(MIN_TILE_HEIGHT * TILE_ASPECT);

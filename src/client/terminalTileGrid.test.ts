@@ -741,3 +741,92 @@ describe('terminalTileGrid — visibility-change re-paint preserves tile sizing 
     grid.dispose();
   });
 });
+
+/**
+ * HS-8442 — `applySizing` must size tiles to fill the container's actual
+ * content area, not a stale dashboard-outer constant. The original
+ * `clientWidth - ROOT_PADDING * 2` form double-subtracted the outer
+ * dashboard's 20 px padding for the GRID child (which has 0 padding),
+ * leaving 40 px of unused space on the right of every flex-wrap row.
+ * For the drawer grid (12 px own padding) the mismatch was 16 px the
+ * opposite direction. Both broken the same way: tiles sized for less
+ * than the available width pool slack on the right because flex-wrap
+ * defaults to flex-start.
+ *
+ * These tests stub `clientWidth` (happy-dom doesn't run layout) and set
+ * inline `padding` so `getComputedStyle` returns the right values, then
+ * verify the sum `cols × tileWidth + (cols - 1) × TILE_GAP` consumes the
+ * full content area (within ± `cols` px for floor-rounding slop). They
+ * pin the regression at the integration level — a future refactor that
+ * reintroduces the hard-coded outer padding subtraction will trip both
+ * cases simultaneously.
+ */
+describe('terminalTileGrid — tiles fill the container content area (HS-8442)', () => {
+  const TILE_GAP = 12;
+
+  it('dashboard grid (zero own padding): tiles fully consume clientWidth modulo gaps and floor', () => {
+    const container = makeContainer();
+    Object.defineProperty(container, 'clientWidth', { value: 1280, configurable: true });
+
+    const grid = mountTileGrid({
+      container,
+      cssPrefix: 'terminal-dashboard',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getColumnCount: () => 4,
+    });
+    grid.rebuild([
+      makeEntry('s', 't1'), makeEntry('s', 't2'),
+      makeEntry('s', 't3'), makeEntry('s', 't4'),
+    ]);
+
+    const tiles = container.querySelectorAll<HTMLElement>('.terminal-dashboard-tile');
+    expect(tiles.length).toBe(4);
+    const tileWidth = parseFloat(tiles[0].style.width);
+    expect(tileWidth).toBeGreaterThan(0);
+
+    // Every tile in the same row has the same width.
+    for (const t of tiles) expect(parseFloat(t.style.width)).toBe(tileWidth);
+
+    // Sum of tile widths + gaps == clientWidth (within floor rounding slop = perRow).
+    const totalUsed = 4 * tileWidth + 3 * TILE_GAP;
+    const slack = container.clientWidth - totalUsed;
+    expect(slack).toBeGreaterThanOrEqual(0);
+    expect(slack).toBeLessThan(4);
+
+    grid.dispose();
+  });
+
+  it('drawer grid (12 px own padding): tiles consume clientWidth - 24 modulo gaps and floor', () => {
+    const container = makeContainer();
+    Object.defineProperty(container, 'clientWidth', { value: 1024, configurable: true });
+    // Mirrors `.drawer-terminal-grid` SCSS in `styles.scss:8206`.
+    container.style.padding = '12px';
+
+    const grid = mountTileGrid({
+      container,
+      cssPrefix: 'drawer-terminal-grid',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getColumnCount: () => 3,
+    });
+    grid.rebuild([
+      makeEntry('s', 't1'), makeEntry('s', 't2'), makeEntry('s', 't3'),
+    ]);
+
+    const tiles = container.querySelectorAll<HTMLElement>('.drawer-terminal-grid-tile');
+    expect(tiles.length).toBe(3);
+    const tileWidth = parseFloat(tiles[0].style.width);
+    expect(tileWidth).toBeGreaterThan(0);
+    for (const t of tiles) expect(parseFloat(t.style.width)).toBe(tileWidth);
+
+    // Available content area = clientWidth - paddingLeft - paddingRight = 1024 - 24 = 1000.
+    const availableContentWidth = container.clientWidth - 24;
+    const totalUsed = 3 * tileWidth + 2 * TILE_GAP;
+    const slack = availableContentWidth - totalUsed;
+    expect(slack).toBeGreaterThanOrEqual(0);
+    expect(slack).toBeLessThan(3);
+
+    grid.dispose();
+  });
+});

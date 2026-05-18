@@ -40,9 +40,9 @@ import {
 } from './terminalDashboardPaintHelpers.js';
 import {
   computeColumnSnapPoints,
+  innerContentWidth,
   MAX_TILES_PER_ROW,
   MIN_TILES_PER_ROW,
-  ROOT_PADDING,
   tickLeftPx,
 } from './terminalDashboardSizing.js';
 import { getColumnCount } from './terminalDashboardSlider.js';
@@ -110,7 +110,11 @@ export function applyAllSizingIfActive(): void {
  *  thumb width. */
 export function refreshSnapPointIndicators(): void {
   if (dashboardState.sizerContainer === null || dashboardState.rootElement === null || dashboardState.sizeSlider === null) return;
-  const rootWidth = dashboardState.rootElement.clientWidth - 2 * ROOT_PADDING;
+  // HS-8442 — use `innerContentWidth` so the dashboard outer's actual
+  // padding (currently 20 px each side) is read from the live computed
+  // style, not the hard-coded `ROOT_PADDING` constant. Keeps the snap-
+  // point compute in lockstep with `applySizing`'s width math.
+  const rootWidth = innerContentWidth(dashboardState.rootElement);
   dashboardState.currentSnapPoints = computeColumnSnapPoints(rootWidth);
 
   let ticksEl = dashboardState.sizerContainer.querySelector<HTMLElement>('.terminal-dashboard-sizer-ticks');

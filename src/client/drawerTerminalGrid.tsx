@@ -20,10 +20,10 @@ import { getTauriInvoke } from './tauriIntegration.js';
 import {
   computeColumnSnapPoints,
   DEFAULT_TILES_PER_ROW,
+  innerContentWidth,
   MAX_TILES_PER_ROW,
   MIN_TILES_PER_ROW,
   perRowToSliderPosition,
-  ROOT_PADDING,
   sliderPositionToPerRow,
   type SnapPoint,
   tickLeftPx,
@@ -627,7 +627,11 @@ function detachBellSubscription(): void {
 
 function refreshSnapPointIndicators(): void {
   if (drawerGridState.sizerContainer === null || drawerGridState.gridEl === null || drawerGridState.sizeSlider === null) return;
-  const rootWidth = drawerGridState.gridEl.clientWidth - 2 * ROOT_PADDING;
+  // HS-8442 — use `innerContentWidth` so the drawer grid's actual 12 px
+  // padding is read live instead of subtracting the dashboard's 20 px
+  // `ROOT_PADDING * 2`, which was leaving a 16 px sliver of unused space
+  // on the right of every drawer-grid row.
+  const rootWidth = innerContentWidth(drawerGridState.gridEl);
   drawerGridState.currentSnapPoints = computeColumnSnapPoints(rootWidth);
 
   let ticksEl = drawerGridState.sizerContainer.querySelector<HTMLElement>('.drawer-grid-sizer-ticks');
