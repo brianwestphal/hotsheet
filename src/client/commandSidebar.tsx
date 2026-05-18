@@ -4,7 +4,7 @@ import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './chann
 import { refreshLogBadge } from './commandLog.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
-import { CMD_COLORS, CMD_ICONS, type CommandItem, contrastColor, type CustomCommand, getCommandItems,isGroup } from './experimentalSettings.js';
+import { CMD_COLORS, CMD_ICONS, type CommandItem, contrastColor, type CustomCommand, getCommandItems,isGroup, noteCommandItemsMutation } from './experimentalSettings.js';
 import { renderIconSvg } from './icons.js';
 import { getActiveProject, state } from './state.js';
 import { showToast } from './toast.js';
@@ -247,6 +247,11 @@ export function renderChannelCommands() {
 
 /** Save command items via API and re-render sidebar. */
 async function saveCommandItemsExternal(commandItems: CommandItem[]) {
+  // HS-8440 — same epoch bump as `experimentalSettings.tsx::saveCommandItems`.
+  // This path saves the group-collapse mutation from the sidebar header
+  // click; without the bump a concurrent `reloadCustomCommands` could
+  // overwrite the collapsed flag back to its pre-click value.
+  noteCommandItemsMutation();
   await api('/settings', { method: 'PATCH', body: { custom_commands: JSON.stringify(commandItems) } });
   renderChannelCommands();
 }

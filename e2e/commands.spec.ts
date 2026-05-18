@@ -1,13 +1,25 @@
 import { expect, test } from './coverage-fixture.js';
 
-// Helper: open settings and switch to the Experimental tab
+// Helper: open settings and switch to the Experimental tab.
+//
+// HS-8440 — replaced the previous `await page.waitForTimeout(1500)` blind
+// sleep with a deterministic visibility wait on `.cmd-outline-add-btn`,
+// which `renderCustomCommandSettings` appends LAST after the for-loop
+// over `commandItems`. Its visibility proves at least one render
+// finished. The deeper "stale reload races with delete" race is closed
+// production-side in `experimentalSettings.tsx::reloadCustomCommands`
+// via a mutation-epoch guard (HS-8440 + HS-8441 merged) — once a local
+// edit has bumped the epoch, any in-flight reload whose `await` started
+// before the edit is dropped on resolution, so we don't need a network
+// sync wait here. `networkidle` would not work anyway: the app keeps a
+// persistent long-poll open for ticket updates, so the network is never
+// idle.
 async function openExperimentalSettings(page: import('@playwright/test').Page) {
   await page.locator('#settings-btn').click();
   await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
   await page.locator('.settings-tab[data-tab="experimental"]').click();
   await expect(page.locator('.settings-tab-panel[data-panel="experimental"]')).toHaveClass(/active/);
-  // Wait for async command reload from API
-  await page.waitForTimeout(1500);
+  await expect(page.locator('.cmd-outline-add-btn')).toBeVisible({ timeout: 5000 });
 }
 
 // Helper: set custom commands via API then reload to pick them up
@@ -70,9 +82,13 @@ test.describe('Custom commands', () => {
     const groupRow = page.locator('.cmd-outline-group-row');
     await expect(groupRow.first()).toBeVisible({ timeout: 3000 });
 
-    // Delete the empty group
+    // Delete the empty group. HS-8440 — dropped the 300ms blind wait
+    // between the click and the assertion; `toHaveCount(0)` already polls
+    // with a 5s default and the delete handler is synchronous (splice +
+    // re-render), so the bald sleep added overhead without addressing the
+    // real race (stale `reloadCustomCommands` resolving post-delete), which
+    // is now closed in `openExperimentalSettings` via the networkidle wait.
     await groupRow.first().locator('.cmd-outline-delete-btn').click();
-    await page.waitForTimeout(300);
 
     // Group should be gone
     await expect(page.locator('.cmd-outline-group-row')).toHaveCount(0);

@@ -52,6 +52,28 @@ export const CMD_COLORS = [
 
 let commandItems: CommandItem[] = [];
 
+// HS-8440 — mutation epoch for the in-memory `commandItems` list.
+// `reloadCustomCommands()` is fire-and-forget from two paths in this file
+// (line ~199 on settings-btn click; line ~249 at bind time) plus the
+// project-switch path. Pre-fix, any in-flight reload whose `await
+// api('/settings')` had not yet resolved would, on resolution, blindly
+// reassign `commandItems` to the fetched snapshot — even if the user (or
+// in CI, the test) had just performed a local edit (delete / add / name-
+// change). The local edit was silently overwritten and the row reappeared.
+// Surfaced as a CI e2e flake on v0.17.0-beta.18 (`commands.spec.ts › delete
+// an empty group`); the production exposure is small but real on slow disks
+// where /api/settings takes >100ms to respond and the user clicks delete
+// within that window. Guard: every local mutation calls
+// `noteCommandItemsMutation()` before its `saveCommandItems()` PATCH;
+// `reloadCustomCommands()` captures the epoch BEFORE awaiting and abandons
+// its response (no reassignment, no render) if the epoch has advanced. The
+// saveCommandItems PATCH is the authoritative write — stale reloads
+// shouldn't re-introduce pre-edit state.
+let commandItemsMutationEpoch = 0;
+export function noteCommandItemsMutation(): void {
+  commandItemsMutationEpoch++;
+}
+
 let channelEnabledState = false;
 
 /** Reference to a command item: either top-level or a child within a group. */
@@ -139,10 +161,23 @@ function migrateOldFormat(data: unknown[]): CommandItem[] {
   return result;
 }
 
-/** Reload custom commands from the active project's settings. Called on project switch. */
+/** Reload custom commands from the active project's settings. Called on project switch.
+ *
+ * HS-8440 — guards against stale-reload-overwrites-local-edit. Captures the
+ * mutation epoch BEFORE the `await`; if a local mutation
+ * (`noteCommandItemsMutation()`) ran while the fetch was in flight, the
+ * resolved snapshot is discarded — `commandItems` keeps its post-edit
+ * state, and the caller's `.then(renderCustomCommandSettings)` chain still
+ * runs but renders from the unchanged (post-edit) `commandItems`. The
+ * skipped reload is intentionally silent (no toast, no log) — the next
+ * mutation's `saveCommandItems()` PATCH is the authoritative write and
+ * any subsequent reload will pick up the correct state.
+ */
 export async function reloadCustomCommands(): Promise<void> {
+  const epochBeforeFetch = commandItemsMutationEpoch;
   try {
     const settings = await api<Record<string, string>>('/settings');
+    if (commandItemsMutationEpoch !== epochBeforeFetch) return;
     if (settings.custom_commands !== '') {
       try {
         const parsed = JSON.parse(settings.custom_commands) as unknown[];
@@ -152,6 +187,7 @@ export async function reloadCustomCommands(): Promise<void> {
       commandItems = [];
     }
   } catch {
+    if (commandItemsMutationEpoch !== epochBeforeFetch) return;
     commandItems = [];
   }
 }
@@ -181,6 +217,11 @@ function getCommandItems(): CommandItem[] {
 }
 
 export async function saveCommandItems() {
+  // HS-8440 — bump BEFORE the await so any in-flight `reloadCustomCommands`
+  // whose fetch is currently suspended sees a stale epoch on resume and
+  // abandons its response. Centralized here (the chokepoint for every
+  // local-mutation save) so individual callsites don't have to remember.
+  noteCommandItemsMutation();
   await api('/settings', { method: 'PATCH', body: { custom_commands: JSON.stringify(commandItems) } });
   renderChannelCommands();
 }

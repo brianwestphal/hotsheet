@@ -12,6 +12,7 @@ import {
   isChannelEnabled,
   isGroup,
   type ItemRef,
+  noteCommandItemsMutation,
   resolveCommand,
   saveCommandItems,
   updateCommand,
@@ -359,6 +360,13 @@ export function renderCustomCommandSettings() {
   btnRow.querySelector('.cmd-outline-add-btn')!.addEventListener('click', () => {
     const defaultTarget = channelCheckbox?.checked === true ? undefined : 'shell' as const;
     commandItems.push({ name: '', prompt: '', target: defaultTarget });
+    // HS-8440 — the Add Command path mutates `commandItems` synchronously
+    // but defers the `saveCommandItems` PATCH until the user clicks Save
+    // inside the modal. Without an explicit epoch bump here a still-in-
+    // flight `reloadCustomCommands` could resolve between this push and
+    // the modal-save, blow away the just-pushed command, and leave the
+    // user's typed-out form pointing at a stale `ItemRef`.
+    noteCommandItemsMutation();
     showCommandEditorModal({ type: 'top', index: commandItems.length - 1 });
     renderCustomCommandSettings();
   });
