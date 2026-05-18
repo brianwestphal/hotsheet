@@ -271,7 +271,23 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
         entry.appendChild(textarea);
         textarea.focus();
 
+        // HS-8437 — re-entrancy guard. The first `save()` call (from
+        // Cmd+Enter's keydown handler) ends with `renderNotes(...)`,
+        // whose `container.replaceChildren(...)` detaches the .note-entry
+        // containing the focused textarea. That detach fires `blur`
+        // synchronously DURING `replaceChildren`'s remove-children loop,
+        // which runs the blur handler's `save()` call, which (since
+        // `newText === note.text` after the keydown save committed)
+        // skips the PATCH branch and immediately re-enters `renderNotes`
+        // → a second `container.replaceChildren(...)` re-entered inside
+        // the first. The outer loop then trips on "the node to be
+        // removed is no longer a child of this node" because the inner
+        // call already cleared the container. Flag-based guard ensures
+        // the second entry is a no-op.
+        let committed = false;
         const save = async () => {
+          if (committed) return;
+          committed = true;
           const newText = textarea.value.trim();
           if (newText && newText !== note.text) {
             const ticket = state.tickets.find(t => t.id === ticketId);
