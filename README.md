@@ -96,18 +96,26 @@ The loop stays tight because the AI always knows what to work on next — and yo
   <img src="docs/demo-5.png" alt="Multiple tickets selected with the batch toolbar and context menu" width="900">
 </p>
 
-**Detail panel** — side or bottom orientation (toggle in the toolbar), resizable, collapsible. Shows category, priority, status, and Up Next in a compact grid, plus title, details, tags, attachments, and editable notes. Click a note to edit inline; right-click to delete.
+**Detail panel** — side or bottom orientation (toggle in the toolbar), resizable, collapsible. Shows category, priority, status, and Up Next in a compact grid, plus title, details, tags, attachments, and editable notes. Click a note to edit inline; right-click to delete. **Reader mode** (book icon) opens any note — or the details body — in a distraction-free overlay that you can step through with chevrons or arrow keys without re-clicking the icon.
 
 <p align="center">
   <img src="docs/demo-6.png" alt="Detail panel in bottom orientation showing ticket details, tags, and notes" width="900">
 </p>
 
+**Embedded terminal** — a real PTY-backed terminal lives in the footer drawer next to the commands log. Configure multiple named terminals per project (dev server, tests, build, a Claude session, anything else), each with its own theme, font, and shell-init history. Switch to the **dashboard view** to see every terminal across every registered project as a tile grid — perfect for keeping an eye on multiple build/test pipelines at once. xterm.js renders the buffer; OSC 7 / 8 / 9 / 133 are all parsed (clickable hyperlinks, cwd-aware toolbar chip, desktop notifications, prompt/command/output marks with a "copy last output" + "ask Claude about this" popover). A macOS-Terminal.app-style quit-confirm catches Cmd+Q when long-running processes (claude, npm dev, anything heavier than an idle shell) are alive so you don't lose them by accident.
+
 **Unread indicators** — when tickets are created or updated externally (by AI tools, sync plugins, or the API), a blue dot appears next to the title. Your own edits in the UI never trigger unread status. Mark as Read/Unread from the context menu or batch toolbar. Tickets are automatically marked as read when you open them in the detail panel.
+
+**Git status tracker** — auto-detected sidebar chip shows your current branch, dirty-file count, and ahead/behind upstream commits. Click to expand a popover with the file lists; one-click `git fetch` updates remote counts without leaving Hot Sheet. Silent no-op for non-git projects.
 
 **Stats dashboard** — click the sidebar widget to open a full analytics page with throughput charts, created-vs-completed trends, cumulative flow diagram, category breakdown, and cycle time scatter plot. Hover any chart for detailed tooltips.
 
 <p align="center">
   <img src="docs/demo-8.png" alt="Stats dashboard showing throughput, flow, and cycle time charts" width="900">
+</p>
+
+<p align="center">
+  <img src="docs/demo-11.png" alt="Embedded terminal in the footer drawer with named tabs for dev server, tests, and Claude" width="900">
 </p>
 
 **Multi-project tabs** — open multiple projects in a single window. Each project remembers its own sidebar view, settings, sort preferences, and layout. Tabs appear automatically when you register a second project via Open Folder (`Cmd+O`). Drag tabs to reorder, right-click for close options and "Show in Finder," switch with `Cmd+Shift+[/]`.
@@ -124,15 +132,16 @@ The loop stays tight because the AI always knows what to work on next — and yo
 - **Up Next flag** — star tickets to add them to the AI worklist
 - **Drag and drop** — drag tickets onto sidebar views to change category, priority, or status; drop files onto the detail panel to attach; reorder project tabs and custom views
 - **Right-click context menus** — full context menu on tickets with category/priority/status submenus, tags, duplicate, mark as read/unread, backlog, archive, delete
-- **Search** — full-text search across ticket titles, details, ticket numbers, and tags
+- **Search** — full-text search across ticket titles, details, ticket numbers, and tags. When matches sit in the backlog or archive, gray "Include N backlog / N archive" rows surface under the search bar so you can mix them in with one click without leaving the current view
+- **Ticket cross-references** — `HS-NNNN`-style references inside notes, details, and reader-mode become clickable links that open a stacking modal showing the referenced ticket; click another reference inside that modal to push it onto the stack
 - **Print** — print the dashboard, all tickets, selected tickets, or individual tickets in checklist, summary, or full-detail format
 - **Keyboard-driven** — `Enter` to create, `Cmd+I/B/F/R/K/G` for categories, `Alt+1-5` for priority, `Cmd+D` for Up Next, `Delete` to trash, `Cmd+P` to print, `Cmd+Z/Shift+Z` for undo/redo
 - **Undo/redo** — `Cmd+Z` and `Cmd+Shift+Z` for all operations including notes, batch changes, and deletions
 - **Animated transitions** — smooth FLIP animations when tickets reorder after property changes
 - **Copy / cut / paste** — `Cmd+C` copies selected tickets (formatted text to clipboard + structured data for paste), `Cmd+X` cuts, `Cmd+V` pastes into the current project with title dedup. Works across projects.
-- **File attachments** — attach files via file picker or drag-and-drop onto the detail panel, reveal in file manager
+- **File attachments** — attach files via file picker or drag-and-drop onto the detail panel, reveal in file manager. Feedback-dialog drafts also save their attachments — Save Draft persists files alongside the text so you can pick up where you left off.
 - **Markdown sync** — `worklist.md` and `open-tickets.md` auto-generated on every change
-- **Automatic backups** — tiered snapshots (every 5 min, hourly, daily) with preview-before-restore recovery
+- **Automatic backups** — tiered snapshots (every 5 min, hourly, daily) with preview-before-restore recovery. A **Database Repair** panel in Settings can find a working backup automatically and run `pg_resetwal` if the live cluster ever needs it.
 - **Auto-cleanup** — verified tickets auto-archive after a configurable number of days; trashed tickets auto-delete
 - **Portable settings** — all project settings stored in `settings.json` for easy copying between projects
 - **App icon variants** — 9 icon variants to choose from in Settings, applied instantly to the dock icon
@@ -173,10 +182,11 @@ Hot Sheet can push events directly to a running Claude Code session via MCP chan
 - **Play button** — appears in the sidebar. Single-click sends the worklist to Claude on demand. Pending worklist changes are flushed immediately so the AI always reads up-to-date data.
 - **Auto mode** — double-click the play button to enable automatic mode. Claude is triggered immediately, then continues monitoring for new Up Next items with debounce. Exponential backoff prevents runaway retries.
 - **Auto-prioritize** — when no tickets are flagged as Up Next, Claude automatically evaluates open tickets and picks the most important ones to work on.
-- **Feedback loop** — Claude can request user input by adding notes prefixed with `FEEDBACK NEEDED:` or `IMMEDIATE FEEDBACK NEEDED:`. A dialog appears in the UI for the user to respond, and Claude is automatically re-triggered with the feedback. Blue dots on project tabs indicate pending feedback.
-- **Custom commands** — create named buttons that send custom prompts to Claude **or run shell commands** directly. Organize into collapsible groups. Toggle between "Claude Code" and "Shell" targets per command. Shell commands execute server-side with stdout/stderr captured to the commands log.
-- **Permission relay** — when Claude needs tool approval (Bash, Edit, etc.), a full-screen overlay shows the tool name and command preview with Allow/Deny/Dismiss buttons — no need to switch to the terminal.
-- **Commands log** — a resizable bottom panel that records all communication: triggers, completions, permission requests, and shell command output. Filter by type, search, and copy entries. Shell commands show a stop button for running processes.
+- **Feedback loop** — Claude can request user input by adding notes prefixed with `FEEDBACK NEEDED:` or `IMMEDIATE FEEDBACK NEEDED:`. A rich dialog appears in the UI with inline-response slots between every prompt block, a catch-all field, and file attachment support. Save Draft to come back later (text + attachments survive); Submit re-triggers Claude with your response. Blue dots on project tabs indicate pending feedback.
+- **Custom commands** — create named buttons that send custom prompts to Claude **or run shell commands** directly. Organize into collapsible groups. Toggle between "Claude Code" and "Shell" targets per command. Shell commands execute server-side with stdout/stderr streamed to the commands log in real time.
+- **Permission relay** — when Claude needs tool approval (Bash, Edit, etc.), a full-screen overlay shows the tool name and command preview with Allow/Deny/Dismiss buttons — no need to switch to the terminal. Per-project **allow-rules** can auto-approve specific tool+pattern pairs (e.g. always allow `Bash:npm test`) so trusted commands skip the overlay entirely.
+- **Commands log + embedded terminal** — the footer drawer hosts both a resizable commands log (every trigger, completion, permission request, shell output) AND tabs for any number of project-scoped terminals. Hop between an `npm run dev` terminal, the Claude session, and the audit log without leaving Hot Sheet.
+- **MCP tools** — Claude Code sees Hot Sheet as a connected MCP server with schema-validated tools: `hotsheet_create_ticket`, `hotsheet_update_ticket`, `hotsheet_query_tickets`, `hotsheet_batch`, `hotsheet_signal_done`, `hotsheet_request_feedback`, and 8 more. Tickets, notes, and attachments all round-trip without the AI hand-crafting curl commands.
 - **Status indicator** — shows "Claude working" / "Shell running" / idle in the footer.
 
 Requires Claude Code v2.1.80+ with channel support. See [docs/12-claude-channel.md](docs/12-claude-channel.md) for setup details.
@@ -418,8 +428,8 @@ npm install
 
 npm run dev              # Build client assets, then run via tsx
 npm run build            # Build to dist/cli.js
-npm test                 # Unit tests with coverage (626 tests)
-npm run test:e2e         # E2E browser tests (120+ tests)
+npm test                 # Unit tests with coverage (3000+ tests)
+npm run test:e2e         # E2E browser tests (375 tests)
 npm run test:fast        # Unit + fast E2E (skips GitHub plugin tests)
 npm run test:all         # Merged coverage report (unit + E2E)
 npm run lint             # ESLint
@@ -427,7 +437,7 @@ npm run clean            # Remove dist and caches
 npm link                 # Symlink for global 'hotsheet' command
 ```
 
-The project has comprehensive test coverage with 626 unit tests (vitest) and 120+ Playwright E2E browser tests, plus smoke tests for production install verification.
+The project has comprehensive test coverage with 3000+ unit tests (vitest) and 375 Playwright E2E browser tests, plus smoke tests for production install verification.
 
 ---
 

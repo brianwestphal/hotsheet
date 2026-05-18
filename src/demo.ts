@@ -18,6 +18,7 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
   { id: 8, label: 'Dashboard — stats and charts' },
   { id: 9, label: 'Claude Channel — AI integration with custom commands' },
   { id: 10, label: 'Multi-project tabs — multiple projects in one window' },
+  { id: 11, label: 'Embedded terminal — drawer with named terminal tabs and PTY output' },
 ];
 
 // --- Ticket data model ---
@@ -619,6 +620,7 @@ const SCENARIO_DATA: Record<number, DemoTicket[]> = {
   8: SCENARIO_8,
   9: SCENARIO_9,
   10: SCENARIO_1, // Primary project uses hero data; extra projects added by seedDemoExtraProjects
+  11: SCENARIO_1, // Reuses hero tickets so the screenshot shows tickets + terminal drawer together
 };
 
 // --- Custom views for scenario 3 ---
@@ -656,6 +658,36 @@ const SCENARIO_9_COMMANDS = [
     { name: 'Deploy Staging', prompt: 'Deploy the current branch to the staging environment.', icon: 'rocket', color: '#f97316' },
     { name: 'Deploy Production', prompt: 'Deploy to production after staging verification.', icon: 'rocket', color: '#ef4444', target: 'shell' },
   ]},
+];
+
+// --- Configured terminals for scenario 11 (embedded terminal showcase) ---
+//
+// Each entry shows a different visible-output shape so the screenshot
+// communicates what the integrated terminal looks like in practice. The
+// `printf` calls produce the visible content; `exec sleep 3600` keeps the
+// PTY alive without spawning an interactive shell prompt that would
+// clutter the screenshot. The user (or whoever captures the screenshot)
+// can recapture with real commands if they want a more realistic look.
+
+const SCENARIO_11_TERMINALS = [
+  {
+    id: 'dev-server',
+    name: 'Dev Server',
+    command: "printf '\\033[36m> npm run dev\\033[0m\\n\\n  ➜  Local:   http://localhost:3000/\\n  ➜  Network: http://192.168.1.42:3000/\\n\\n  ready in 412ms\\n\\n\\033[2m  watching for changes...\\033[0m\\n'; exec sleep 3600",
+    lazy: false,
+  },
+  {
+    id: 'tests',
+    name: 'Tests',
+    command: "printf '\\033[36m> npm run test:watch\\033[0m\\n\\n\\033[32m  ✓\\033[0m auth/session.test.ts (12)\\n\\033[32m  ✓\\033[0m api/tickets.test.ts (47)\\n\\033[32m  ✓\\033[0m db/queries.test.ts (89)\\n\\033[32m  ✓\\033[0m client/dom.test.ts (23)\\n\\n\\033[32m Test Files \\033[0m\\033[1m4 passed\\033[0m\\033[90m (4)\\033[0m\\n\\033[32m      Tests \\033[0m\\033[1m171 passed\\033[0m\\033[90m (171)\\033[0m\\n\\n\\033[2m  watching for changes...\\033[0m\\n'; exec sleep 3600",
+    lazy: false,
+  },
+  {
+    id: 'claude',
+    name: 'Claude',
+    command: '{{claudeCommand}}',
+    lazy: true,
+  },
 ];
 
 // --- Seeding ---
@@ -700,7 +732,7 @@ export async function seedDemoData(scenario: number): Promise<void> {
   // already column; that's preserved. Scenario 8 (Dashboard) overrides
   // the layout entirely with its own view so the setting doesn't
   // matter — left out for clarity.
-  const COLUMN_VIEW_SCENARIOS = new Set([1, 3, 4, 5, 7, 9, 10]);
+  const COLUMN_VIEW_SCENARIOS = new Set([1, 3, 4, 5, 7, 9, 10, 11]);
   if (COLUMN_VIEW_SCENARIOS.has(scenario)) {
     writeProjectSettings(dataDir, { layout: 'columns' });
   }
@@ -722,6 +754,21 @@ export async function seedDemoData(scenario: number): Promise<void> {
     writeProjectSettings(dataDir, {
       channel_enabled: 'true',
       custom_commands: JSON.stringify(SCENARIO_9_COMMANDS),
+    });
+  }
+  if (scenario === 11) {
+    // HS-8430 follow-up — embedded terminal showcase. Open the drawer
+    // on the first terminal tab and configure three terminals with
+    // canned PTY output so the screenshot shows what the integrated
+    // terminal actually looks like (rather than an empty prompt that
+    // could be any shell). Each terminal uses `printf` for the visible
+    // output then `exec sleep 3600` so the PTY stays alive without
+    // surfacing a shell prompt that would clutter the screenshot.
+    writeProjectSettings(dataDir, {
+      drawer_open: 'true',
+      drawer_expanded: 'true',
+      drawer_active_tab: 'terminal:dev-server',
+      terminals: JSON.stringify(SCENARIO_11_TERMINALS),
     });
   }
 }
