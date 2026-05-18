@@ -687,14 +687,29 @@ export async function seedDemoData(scenario: number): Promise<void> {
   const { getDataDir } = await import('./db/connection.js');
   const { writeProjectSettings } = await import('./file-settings.js');
   const dataDir = getDataDir();
+
+  // HS-8430 — column view is the more visually compelling + more
+  // representative mode for marketing screenshots, so default the demo
+  // scenarios to column layout. Two exceptions stay in list view:
+  //   - Scenario 2 (Quick entry): the bullet-list entry row is the
+  //     demo's content; list view IS the demo.
+  //   - Scenario 6 (Detail panel bottom orientation): bottom-panel UX
+  //     is the demo's focus, and list view + bottom panel is the
+  //     natural pairing the screenshot wants to show.
+  // Scenario 7 (the explicit "Column view — kanban board" demo) was
+  // already column; that's preserved. Scenario 8 (Dashboard) overrides
+  // the layout entirely with its own view so the setting doesn't
+  // matter — left out for clarity.
+  const COLUMN_VIEW_SCENARIOS = new Set([1, 3, 4, 5, 7, 9, 10]);
+  if (COLUMN_VIEW_SCENARIOS.has(scenario)) {
+    writeProjectSettings(dataDir, { layout: 'columns' });
+  }
+
   if (scenario === 3) {
     writeProjectSettings(dataDir, { custom_views: JSON.stringify(SCENARIO_3_VIEWS) });
   }
   if (scenario === 6) {
     writeProjectSettings(dataDir, { detail_position: 'bottom', detail_height: '280' });
-  }
-  if (scenario === 7) {
-    writeProjectSettings(dataDir, { layout: 'columns' });
   }
   if (scenario === 8) {
     // Backfill stats snapshots for dashboard charts

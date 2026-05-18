@@ -118,8 +118,8 @@ Each scenario uses realistic e-commerce project data with a mix of categories, p
 | 10 | Multi-Project Tabs | Multiple projects in one window — registers additional projects with independent ticket data |
 
 #### Scenario-Specific Settings
+- **Scenarios 1, 3, 4, 5, 7, 9, 10** set `layout` to `columns` (HS-8430). Column view is the more visually compelling + representative mode, so it's the default for the marketing-screenshot scenarios. Scenarios 2 and 6 stay in list view because list view IS what they demonstrate (bullet-list quick entry / bottom detail panel respectively). Scenario 8 (Dashboard) overrides the layout entirely with its own view, so the setting is omitted.
 - Scenario 6 sets `detail_position` to `bottom` and `detail_height` to `280`.
-- Scenario 7 sets `layout` to `columns`.
 - Scenario 10 creates and registers two additional projects ("Mobile App" and "API Platform") with their own ticket data, demonstrating the tabbed multi-project interface.
 
 #### Demo Data Characteristics
