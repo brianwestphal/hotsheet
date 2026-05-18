@@ -455,6 +455,10 @@ async function loadDetail(id: number) {
               parentNoteId: seed.parentNoteId,
               promptText: seed.promptText,
               partitions: seed.partitions,
+              // HS-8428 — pass the server-hydrated draft attachments so a
+              // reopen surfaces the user's previously-uploaded files
+              // without needing a follow-up round-trip.
+              attachments: seed.attachments ?? [],
             });
           } else {
             showFeedbackDialog(ticket.id, ticket.ticket_number, feedbackState.prompt);

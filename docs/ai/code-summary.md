@@ -92,7 +92,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 |---|---|
 | `api.ts` | Composes all sub-routers + `/api/poll`, `/api/shutdown`, `/api/ensure-skills`, etc. |
 | `tickets.ts` | `GET/POST/PATCH/DELETE /api/tickets[...]`, `/batch`, `/query`, `/duplicate`, `/restore`, `/up-next`, notes bulk/single. HS-8337 — `GET /api/tickets` now accepts `limit` (positive int, max 10000) + `offset` (non-negative int) query params; bad values return 400. Forwarded to `getTickets({...filters, limit, offset})` in `src/db/tickets.ts` which appends `LIMIT $N OFFSET $M` to the SELECT. |
-| `attachments.ts` | `POST /api/tickets/:id/attachments`, `DELETE /api/attachments/:id`, `POST /:id/reveal`, `GET /api/attachments/file/*` |
+| `attachments.ts` | `POST /api/tickets/:id/attachments`, `DELETE /api/attachments/:id`, `POST /:id/reveal`, `GET /api/attachments/file/*`. **HS-8428 (2026-05-18)** — adds `POST /api/tickets/:id/feedback-drafts/:draftId/attachments` (upload-on-attach for the feedback dialog, stamps `draft_id` so it's hidden from the ticket's main list) + `POST /api/tickets/:id/feedback-drafts/:draftId/promote-attachments` (single `UPDATE … SET draft_id = NULL` invoked by the Submit handler before the note PATCH). |
 | `settings.ts` | `/api/categories`, `/api/category-presets`, `/api/tags`, DB `/api/settings`, file `/api/file-settings`, `/api/gitignore` |
 | `channel.ts` | `/api/channel/{status,trigger,heartbeat,claude-check,permission,permission/respond,permission/dismiss,permission/notify,done}` |
 | `commandLog.ts` | `GET /api/command-log`, `DELETE /api/command-log`, `GET /api/command-log/count` |
@@ -117,7 +117,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `connection.ts` | PGLite instance per dataDir, `initSchema()` — all `CREATE TABLE` + migrations live here |
 | `queries.ts` | Aggregates/re-exports query helpers |
 | `tickets.ts` | CRUD, filtering, batch, status transitions. HS-8036 `listKnownTicketPrefixes()` for cross-reference linkification. Search-counts helper (`countSearchMatchesInExcludedStatuses`) for HS-7756 include-rows |
-| `attachments.ts` | Attachment row ops |
+| `attachments.ts` | Attachment row ops. **HS-8428 (2026-05-18)** — new helpers `addDraftAttachment(ticketId, draftId, ...)` / `getDraftAttachments(draftId)` / `promoteDraftAttachments(draftId)` (single UPDATE clearing `draft_id` on every row, atomic) / `deleteDraftAttachments(draftId)` (returns rows so the route handler can `rmSync` files on disk) / `listOrphanDraftAttachments(olderThanMs)` (LEFT JOIN feedback_drafts to find rows whose draft no longer exists). `getAttachments(ticketId)` now filters `WHERE draft_id IS NULL` so draft-scoped uploads stay hidden from the ticket's main attachment list until promote-on-submit. |
 | `notes.ts` | JSON-serialized notes; `note_id` generation |
 | `tags.ts` | Normalization (lowercase), extraction from `[tag]` syntax |
 | `settings.ts` | Plugin-scoped DB settings (`plugin:{id}:{key}`, `plugin_enabled:{id}`) |

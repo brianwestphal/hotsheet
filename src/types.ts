@@ -42,6 +42,11 @@ export interface Attachment {
   original_filename: string;
   stored_path: string;
   created_at: string;
+  /** HS-8428 — when non-null, this attachment belongs to an in-flight
+   *  feedback-dialog draft and is hidden from the ticket's main
+   *  attachment list (`getAttachments` filters `WHERE draft_id IS NULL`).
+   *  Cleared to `null` by the promote-on-submit path. */
+  draft_id: string | null;
 }
 
 export interface TicketFilters {

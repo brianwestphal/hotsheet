@@ -32,7 +32,21 @@ export type NoteEntry = { id?: string; text: string; created_at: string };
 /** HS-7599 — feedback draft as returned by `/api/tickets/:id/feedback-drafts`.
  *  `partitions` mirrors the feedback dialog's working state so a saved draft
  *  round-trips back to the same UI on click-to-reopen, even after future
- *  changes to `parseFeedbackBlocks` heuristics. */
+ *  changes to `parseFeedbackBlocks` heuristics.
+ *
+ *  HS-8428 — `attachments` carries every draft-scoped attachment hydrated
+ *  server-side from the `attachments` table by `draft_id` so a click-to-
+ *  reopen flow can pre-populate the dialog's file list without an extra
+ *  round-trip. May be missing on payloads from older servers — handle
+ *  defensively with `?? []`. */
+export interface FeedbackDraftAttachmentSummary {
+  id: number;
+  ticket_id: number;
+  draft_id: string | null;
+  original_filename: string;
+  stored_path: string;
+  created_at: string;
+}
 export interface FeedbackDraft {
   id: string;
   ticketId: number;
@@ -43,6 +57,7 @@ export interface FeedbackDraft {
     inlineResponses: { blockIndex: number; text: string }[];
     catchAll: string;
   };
+  attachments?: FeedbackDraftAttachmentSummary[];
   createdAt: string;
   updatedAt: string;
 }
@@ -425,6 +440,9 @@ function buildDraftEntry(ticketId: number, draft: FeedbackDraft, notes: NoteEntr
       parentNoteId: draft.parentNoteId,
       promptText: draft.promptText,
       partitions: draft.partitions,
+      // HS-8428 — forward the server-hydrated draft attachments so the
+      // reopened dialog shows the user's previously-uploaded files.
+      attachments: draft.attachments ?? [],
     });
   });
   // Right-click → Delete this draft. Mirrors the right-click delete on

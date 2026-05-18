@@ -1,5 +1,5 @@
 import { raw } from '../jsx-runtime.js';
-import { api, apiUpload } from './api.js';
+import { api } from './api.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
 import {
   type BlockResponse,
@@ -92,6 +92,11 @@ export interface FeedbackDraftSeed {
     inlineResponses: { blockIndex: number; text: string }[];
     catchAll: string;
   };
+  /** HS-8428 — draft-scoped attachments already uploaded on a prior
+   *  session of the same draft. Pre-populates the dialog's file list so
+   *  the user sees their previous uploads on reopen. May be missing on
+   *  payloads from older servers — caller treats `undefined` as `[]`. */
+  attachments?: { id: number; original_filename: string }[];
 }
 
 /**
@@ -181,7 +186,30 @@ export function showFeedbackDialog(
     catchAll.value = draftSeed.partitions.catchAll;
   }
 
-  const pendingFiles: File[] = [];
+  // HS-8428 — generate a stable `sessionDraftId` for the dialog session.
+  // When reopening an existing draft, reuse its id so newly-attached
+  // files are linked to the same draft. When opening fresh, generate
+  // upfront so the user can attach files BEFORE clicking Save Draft —
+  // the file goes directly to the new draft-attachment endpoint and
+  // gets linked by `draft_id`. The draft ROW itself doesn't have to
+  // exist yet; the server's POST attachment route doesn't FK-check it.
+  // If the user closes the dialog without ever clicking Save Draft, the
+  // server-side cleanup sweep GC's the orphan rows (HS-8428 §cleanup).
+  const sessionDraftId = draftSeed?.id ?? `fd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  // Whether the draft ROW exists server-side. Used by the close-without-
+  // save path to decide whether to fire an orphan-cleanup DELETE.
+  let draftPersistedToServer = draftSeed !== undefined;
+  // Whether attachments are in their "final" state — promoted to real
+  // (Submit) OR linked to a persisted draft row (Save Draft). Drives the
+  // close-without-save cleanup decision.
+  let attachmentsCommitted = draftSeed !== undefined;
+
+  // HS-8428 — pending draft attachments. Replaces the pre-fix
+  // `pendingFiles: File[]` array. Each entry has a server-assigned `id`
+  // because the file is uploaded on attach (not on Submit), so a Save
+  // Draft + close path no longer silently drops the user's files.
+  const pendingAttachments: { id: number; original_filename: string }[] =
+    (draftSeed?.attachments ?? []).map(a => ({ id: a.id, original_filename: a.original_filename }));
   const fileListEl = overlay.querySelector('#feedback-files')!;
   const fileInput = overlay.querySelector('#feedback-file-input') as HTMLInputElement;
 
@@ -196,17 +224,26 @@ export function showFeedbackDialog(
     const btn = (e.target as HTMLElement | null)?.closest<HTMLButtonElement>('.category-delete-btn');
     if (btn === null || btn === undefined || !fileListEl.contains(btn)) return;
     const idx = parseInt(btn.dataset.idx ?? '-1', 10);
-    if (Number.isNaN(idx) || idx < 0 || idx >= pendingFiles.length) return;
-    pendingFiles.splice(idx, 1);
+    if (Number.isNaN(idx) || idx < 0 || idx >= pendingAttachments.length) return;
+    // HS-8428 — DELETE the server-side attachment row + file on disk.
+    // Best-effort: if the DELETE fails (network, server restart), the
+    // attachment will eventually be cleaned up via the orphan sweep
+    // (the draft row doesn't exist yet for an in-flight unsaved draft;
+    // for a persisted draft the attachment would survive until the next
+    // promote / discard cycle). Splice locally either way so the UI
+    // reflects the user's intent immediately.
+    const attachment = pendingAttachments[idx];
+    pendingAttachments.splice(idx, 1);
     renderFileList();
+    void api(`/attachments/${String(attachment.id)}`, { method: 'DELETE' });
   });
 
   function renderFileList() {
     const template = toElement(
       <div>
-        {pendingFiles.map((file, i) => (
-          <div className="not-working-file-row" data-key={`${String(i)}:${file.name}`}>
-            <span>{file.name}</span>
+        {pendingAttachments.map((att, i) => (
+          <div className="not-working-file-row" data-key={`${String(att.id)}:${att.original_filename}`}>
+            <span>{att.original_filename}</span>
             <button className="category-delete-btn" data-idx={String(i)}>{'×'}</button>
           </div>
         ))}
@@ -215,11 +252,38 @@ export function showFeedbackDialog(
     morph(fileListEl, template);
   }
 
+  // HS-8428 — upload a file to the draft-attachment endpoint and append
+  // to the pendingAttachments list. Fire-and-forget from the caller's
+  // perspective; the file row appears as soon as the POST resolves. On
+  // failure the file is silently dropped — same surface as the pre-fix
+  // upload-on-submit path (which also had no UI for upload errors).
+  async function uploadDraftAttachment(file: File): Promise<void> {
+    // Direct `fetch` with FormData + the secret header — `apiUpload`
+    // hits `/api/tickets/:id/attachments` directly; we need a different
+    // path that includes the draft id.
+    const url = `/api/tickets/${String(ticketId)}/feedback-drafts/${sessionDraftId}/attachments`;
+    const form = new FormData();
+    form.append('file', file);
+    const headers: Record<string, string> = {};
+    const { getActiveProject } = await import('./state.js');
+    const proj = getActiveProject();
+    if (proj !== null) headers['X-Hotsheet-Secret'] = proj.secret;
+    try {
+      const res = await fetch(url, { method: 'POST', body: form, headers });
+      if (!res.ok) return;
+      const att = await res.json() as { id: number; original_filename: string };
+      pendingAttachments.push({ id: att.id, original_filename: att.original_filename });
+      // Uploading a new file resets the "committed" flag — until the
+      // next Save Draft / Submit, this attachment is unsaved.
+      attachmentsCommitted = false;
+      renderFileList();
+    } catch { /* swallow — best-effort upload */ }
+  }
+
   requireChild<HTMLButtonElement>(overlay, '#feedback-add-file').addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', () => {
     if (fileInput.files) {
-      for (const f of Array.from(fileInput.files)) pendingFiles.push(f);
-      renderFileList();
+      for (const f of Array.from(fileInput.files)) void uploadDraftAttachment(f);
     }
     fileInput.value = '';
   });
@@ -229,10 +293,13 @@ export function showFeedbackDialog(
   overlay.addEventListener('drop', (e) => {
     e.preventDefault();
     if (e.dataTransfer?.files) {
-      for (const f of Array.from(e.dataTransfer.files)) pendingFiles.push(f);
-      renderFileList();
+      for (const f of Array.from(e.dataTransfer.files)) void uploadDraftAttachment(f);
     }
   });
+
+  // Initial render so a reopen with prior-session attachments shows them
+  // before the first user interaction.
+  renderFileList();
 
   // HS-7930 — the slot itself is the click target so the user can drop a
   // response anywhere in the gap between two blocks. The hover-only
@@ -256,7 +323,27 @@ export function showFeedbackDialog(
     });
   });
 
-  const close = () => overlay.remove();
+  // HS-8428 — close cleans up orphaned attachments. Save Draft / Submit
+  // set `attachmentsCommitted = true` before calling `close()` so the
+  // cleanup only fires on the "user dismissed without saving" paths
+  // (× button, Later button, outside-click-when-no-text). Cleanup
+  // strategy:
+  //   - If `draftPersistedToServer` is true (Save Draft was clicked at
+  //     least once during this session), the attachments are linked to
+  //     a real draft row — leaving them in place is the right behavior;
+  //     they'll resurface on the next reopen of that draft.
+  //   - Otherwise, the user uploaded files in a fresh dialog and never
+  //     hit Save Draft, so there's no draft row to anchor them to.
+  //     Fire DELETE on the (non-existent-but-tolerant) draft id; the
+  //     server's DELETE handler drops the orphan attachments + their
+  //     files on disk and returns ok.
+  const close = () => {
+    if (!attachmentsCommitted && !draftPersistedToServer && pendingAttachments.length > 0) {
+      // Fire-and-forget — overlay removal can race the response.
+      void api(`/tickets/${String(ticketId)}/feedback-drafts/${sessionDraftId}`, { method: 'DELETE' }).catch(() => { /* swallow */ });
+    }
+    overlay.remove();
+  };
   requireChild<HTMLButtonElement>(overlay, '#feedback-close').addEventListener('click', close);
   requireChild<HTMLButtonElement>(overlay, '#feedback-later').addEventListener('click', close);
   // HS-7599: click outside the dialog dismisses ONLY when no text has been
@@ -297,7 +384,12 @@ export function showFeedbackDialog(
   // free-floating at the end if `parentNoteId` is null).
   overlay.querySelector('#feedback-save-draft')!.addEventListener('click', async () => {
     const partitions = collectPartitions(overlay, blocks);
-    if (!partitionsHaveText(partitions)) {
+    // HS-8428 — allow Save Draft when the user has only attached files
+    // (no text yet) since the attachments are themselves draft state worth
+    // preserving. Pre-fix the button required text and silently dropped
+    // any attached files; with Option 1 the files are already uploaded
+    // and just need a draft row to anchor them across reopens.
+    if (!partitionsHaveText(partitions) && pendingAttachments.length === 0) {
       focusFirstInput(overlay);
       return;
     }
@@ -307,22 +399,30 @@ export function showFeedbackDialog(
     btn.textContent = 'Saving...';
 
     try {
-      if (draftSeed !== undefined) {
-        await api(`/tickets/${ticketId}/feedback-drafts/${draftSeed.id}`, {
+      if (draftPersistedToServer) {
+        await api(`/tickets/${ticketId}/feedback-drafts/${sessionDraftId}`, {
           method: 'PATCH', body: { partitions },
         });
       } else {
-        const draftId = `fd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        // HS-8428 — use the pre-generated `sessionDraftId` (same id the
+        // file-attach path already used for any uploads). The draft row
+        // now anchors all the attachments that were uploaded earlier in
+        // this session.
         await api(`/tickets/${ticketId}/feedback-drafts`, {
           method: 'POST',
           body: {
-            id: draftId,
+            id: sessionDraftId,
             parent_note_id: effectiveParentNoteId,
             prompt_text: effectivePrompt,
             partitions,
           },
         });
+        draftPersistedToServer = true;
       }
+      // HS-8428 — flip both flags so the close handler doesn't fire the
+      // orphan-cleanup DELETE. Attachments are now linked to a real
+      // draft row.
+      attachmentsCommitted = true;
       close();
       void loadTickets();
     } catch {
@@ -334,7 +434,7 @@ export function showFeedbackDialog(
   // Submit
   overlay.querySelector('#feedback-submit')!.addEventListener('click', async () => {
     const text = collectResponse(overlay, blocks);
-    if ((text === null || text === '') && pendingFiles.length === 0) {
+    if ((text === null || text === '') && pendingAttachments.length === 0) {
       focusFirstInput(overlay);
       return;
     }
@@ -344,23 +444,41 @@ export function showFeedbackDialog(
     submitBtn.textContent = 'Submitting...';
 
     try {
+      // HS-8428 — promote draft-scoped attachments to real before the
+      // note PATCH so the attachment list reflects the new attachments
+      // by the time `loadTickets()` re-renders. Single UPDATE on the
+      // server side so the transition is atomic. The promote endpoint
+      // is a no-op when the draft has no attachments (the common case
+      // for text-only submissions), so we can fire it unconditionally.
+      if (pendingAttachments.length > 0) {
+        await api(`/tickets/${ticketId}/feedback-drafts/${sessionDraftId}/promote-attachments`, {
+          method: 'POST', body: {},
+        });
+      }
+
       if (text !== null && text !== '') {
         await api(`/tickets/${ticketId}`, {
           method: 'PATCH', body: { notes: text },
         });
       }
 
-      for (const file of pendingFiles) {
-        await apiUpload(`/tickets/${ticketId}/attachments`, file);
-      }
-
-      // HS-7599: clear the seed draft on successful submit so the user
-      // doesn't see a now-stale draft alongside the just-sent note.
-      if (draftSeed !== undefined) {
+      // HS-7599 / HS-8428: clear the draft on successful submit so the
+      // user doesn't see a now-stale draft alongside the just-sent note.
+      // The DELETE handler also cleans up any non-promoted draft
+      // attachments — but since we just promoted them all (draft_id
+      // cleared), the DELETE is a no-op on the attachment side and
+      // only drops the draft row itself.
+      if (draftPersistedToServer) {
         try {
-          await api(`/tickets/${ticketId}/feedback-drafts/${draftSeed.id}`, { method: 'DELETE' });
+          await api(`/tickets/${ticketId}/feedback-drafts/${sessionDraftId}`, { method: 'DELETE' });
         } catch { /* draft already gone — fine */ }
       }
+
+      // HS-8428 — set both flags so the `close()` handler doesn't fire
+      // the orphan-cleanup DELETE. Submit is the cleanest "we're done
+      // with this dialog" exit; everything is committed.
+      attachmentsCommitted = true;
+      draftPersistedToServer = false; // draft row is gone, but no orphans
 
       close();
       void loadTickets();

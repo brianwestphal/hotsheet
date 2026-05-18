@@ -11,7 +11,7 @@ import { join } from 'path';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -415,6 +415,21 @@ async function initSchema(db: PGlite): Promise<void> {
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMPTZ;
   `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (columns):', e.message); });
+
+  // HS-8428 — draft-scoped attachments. A nullable `draft_id` lets the
+  // server distinguish attachments that belong to an in-flight feedback
+  // draft (rendered only inside the feedback dialog, not in the ticket's
+  // main attachment list) from attachments that have been promoted to
+  // the ticket. The feedback dialog uploads on file-select, links by
+  // `draft_id`; on submit a single `UPDATE … SET draft_id = NULL`
+  // promotes the whole batch atomically. No FK to feedback_drafts.id —
+  // the client may upload before the draft row exists (orphans get
+  // GC'd by the cleanup sweep, see src/cleanup.ts). Index on draft_id
+  // for the promote / cleanup scans.
+  await db.exec(`
+    ALTER TABLE attachments ADD COLUMN IF NOT EXISTS draft_id TEXT;
+    CREATE INDEX IF NOT EXISTS idx_attachments_draft ON attachments(draft_id);
+  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (attachments.draft_id):', e.message); });
 
   // Plugin sync tables
   await db.exec(`

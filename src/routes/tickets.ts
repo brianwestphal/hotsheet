@@ -334,7 +334,17 @@ ticketRoutes.get('/tickets/:id/feedback-drafts', async (c) => {
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const { listFeedbackDrafts } = await import('../db/feedbackDrafts.js');
   const drafts = await listFeedbackDrafts(id);
-  return c.json(drafts);
+  // HS-8428 — hydrate each draft with its draft-scoped attachments so a
+  // reopen surfaces the previously-uploaded files alongside the text
+  // partitions. One small SELECT per draft (the typical ticket has ≤ a
+  // few drafts open at a time); could be batched with a single JOIN if
+  // a perf problem ever surfaces.
+  const { getDraftAttachments } = await import('../db/attachments.js');
+  const hydrated = await Promise.all(drafts.map(async d => ({
+    ...d,
+    attachments: await getDraftAttachments(d.id),
+  })));
+  return c.json(hydrated);
 });
 
 ticketRoutes.post('/tickets/:id/feedback-drafts', async (c) => {
@@ -374,10 +384,27 @@ ticketRoutes.delete('/tickets/:id/feedback-drafts/:draftId', async (c) => {
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const draftId = c.req.param('draftId');
   const { deleteFeedbackDraft } = await import('../db/feedbackDrafts.js');
+  // HS-8428 — drop any draft-scoped attachments BEFORE the draft row
+  // itself so the cleanup sweep doesn't have to mop them up. Attachments
+  // are deleted by `draft_id`, not by FK cascade (we intentionally don't
+  // FK to feedback_drafts.id so uploads can precede draft creation).
+  // The DB rows go first, then the files on disk — surviving the rare
+  // case where the DB delete succeeds but the rmSync throws (the
+  // physical file leaks but `getAttachments` already excludes the row
+  // by the draft_id filter, so no inconsistency surfaces).
+  const { deleteDraftAttachments } = await import('../db/attachments.js');
+  const droppedAttachments = await deleteDraftAttachments(draftId);
+  for (const att of droppedAttachments) {
+    try { rmSync(att.stored_path, { force: true }); } catch { /* file may already be gone */ }
+  }
   const deleted = await deleteFeedbackDraft(draftId);
-  if (!deleted) return c.json({ error: 'Not found' }, 404);
+  // HS-8428 — if the draft row was already gone but the client uploaded
+  // attachments (orphan-cleanup path the client fires on dialog close-
+  // without-save), we still want to report success when attachments were
+  // cleaned up. Return 404 only when nothing happened on either surface.
+  if (!deleted && droppedAttachments.length === 0) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
-  return c.json({ ok: true });
+  return c.json({ ok: true, droppedAttachments: droppedAttachments.length });
 });
 
 ticketRoutes.delete('/tickets/:id/hard', async (c) => {

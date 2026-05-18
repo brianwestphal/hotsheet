@@ -897,6 +897,113 @@ describe('attachments', () => {
   });
 });
 
+describe('draft-scoped attachments (HS-8428)', () => {
+  // HS-8428 — feedback dialog uploads on file-attach to a new draft-scoped
+  // endpoint so a Save Draft + close path no longer drops the user's files.
+  // The new addDraftAttachment + promoteDraftAttachments + deleteDraftAttachments
+  // helpers are the DB primitives; getAttachments filters draft_id IS NULL.
+
+  it('addDraftAttachment stamps draft_id; getAttachments excludes the row', async () => {
+    const { addDraftAttachment, getDraftAttachments } = await import('./attachments.js');
+    const t = await createTicket('Draft attachment basic');
+    const att = await addDraftAttachment(t.id, 'fd_test_1', 'doc.pdf', '/tmp/doc.pdf');
+    expect(att.draft_id).toBe('fd_test_1');
+    expect(att.original_filename).toBe('doc.pdf');
+    // Real list excludes the draft-scoped row.
+    expect(await getAttachments(t.id)).toHaveLength(0);
+    // Draft list includes it.
+    const draftList = await getDraftAttachments('fd_test_1');
+    expect(draftList).toHaveLength(1);
+    expect(draftList[0].id).toBe(att.id);
+  });
+
+  it('promoteDraftAttachments clears draft_id atomically across N rows', async () => {
+    const { addDraftAttachment, promoteDraftAttachments } = await import('./attachments.js');
+    const t = await createTicket('Promote target');
+    await addDraftAttachment(t.id, 'fd_promote', 'a.pdf', '/tmp/a.pdf');
+    await addDraftAttachment(t.id, 'fd_promote', 'b.pdf', '/tmp/b.pdf');
+    // Pre-promote: real list is empty.
+    expect(await getAttachments(t.id)).toHaveLength(0);
+    const promoted = await promoteDraftAttachments('fd_promote');
+    expect(promoted).toHaveLength(2);
+    expect(promoted.every(p => p.draft_id === null)).toBe(true);
+    // Post-promote: real list has both rows.
+    const real = await getAttachments(t.id);
+    expect(real).toHaveLength(2);
+    expect(real.map(r => r.original_filename).sort()).toEqual(['a.pdf', 'b.pdf']);
+  });
+
+  it('promoteDraftAttachments is a no-op when no rows match (returns []) ', async () => {
+    const { promoteDraftAttachments } = await import('./attachments.js');
+    const promoted = await promoteDraftAttachments('fd_no_match_for_promote');
+    expect(promoted).toEqual([]);
+  });
+
+  it('deleteDraftAttachments drops all rows for a draft + returns them for disk cleanup', async () => {
+    const { addDraftAttachment, deleteDraftAttachments } = await import('./attachments.js');
+    const t = await createTicket('Discard target');
+    await addDraftAttachment(t.id, 'fd_discard', 'one.png', '/tmp/one.png');
+    await addDraftAttachment(t.id, 'fd_discard', 'two.png', '/tmp/two.png');
+    const dropped = await deleteDraftAttachments('fd_discard');
+    expect(dropped).toHaveLength(2);
+    expect(dropped.map(r => r.original_filename).sort()).toEqual(['one.png', 'two.png']);
+    // DB-level confirmation.
+    const db = await getDb();
+    const remaining = await db.query(`SELECT id FROM attachments WHERE draft_id = $1`, ['fd_discard']);
+    expect(remaining.rows).toHaveLength(0);
+  });
+
+  it('a draft attachment does NOT leak into another ticket\'s list', async () => {
+    const { addDraftAttachment } = await import('./attachments.js');
+    const a = await createTicket('Owner A');
+    const b = await createTicket('Owner B');
+    await addDraftAttachment(a.id, 'fd_isolation', 'a.png', '/tmp/a.png');
+    expect(await getAttachments(a.id)).toHaveLength(0); // hidden from a's real list
+    expect(await getAttachments(b.id)).toHaveLength(0); // and not in b's list either
+  });
+
+  it('listOrphanDraftAttachments finds rows whose draft no longer exists past the horizon', async () => {
+    const { listOrphanDraftAttachments } = await import('./attachments.js');
+    const db = await getDb();
+    const t = await createTicket('Orphan horizon target');
+    await db.query(
+      `INSERT INTO attachments (ticket_id, draft_id, original_filename, stored_path, created_at)
+       VALUES ($1, 'fd_orphan_hrz_old', 'old.bin', '/tmp/old.bin', NOW() - INTERVAL '10 days')`,
+      [t.id],
+    );
+    await db.query(
+      `INSERT INTO attachments (ticket_id, draft_id, original_filename, stored_path, created_at)
+       VALUES ($1, 'fd_orphan_hrz_new', 'new.bin', '/tmp/new.bin', NOW() - INTERVAL '1 days')`,
+      [t.id],
+    );
+    // Horizon is 7 days. The 10-day-old row qualifies; the 1-day-old one
+    // doesn't.
+    const orphans = await listOrphanDraftAttachments(7 * 24 * 60 * 60 * 1000);
+    const filenames = orphans.map(o => o.original_filename);
+    expect(filenames).toContain('old.bin');
+    expect(filenames).not.toContain('new.bin');
+  });
+
+  it('listOrphanDraftAttachments excludes rows whose draft row still exists', async () => {
+    const { listOrphanDraftAttachments } = await import('./attachments.js');
+    const db = await getDb();
+    const t = await createTicket('Orphan exclude target');
+    // Create a draft row + a matching attachment, both backdated past the horizon.
+    await db.query(
+      `INSERT INTO feedback_drafts (id, ticket_id, prompt_text, partitions_json, created_at, updated_at)
+       VALUES ('fd_live', $1, '', '{}', NOW() - INTERVAL '30 days', NOW() - INTERVAL '30 days')`,
+      [t.id],
+    );
+    await db.query(
+      `INSERT INTO attachments (ticket_id, draft_id, original_filename, stored_path, created_at)
+       VALUES ($1, 'fd_live', 'live.bin', '/tmp/live.bin', NOW() - INTERVAL '30 days')`,
+      [t.id],
+    );
+    const orphans = await listOrphanDraftAttachments(7 * 24 * 60 * 60 * 1000);
+    expect(orphans.map(o => o.original_filename)).not.toContain('live.bin');
+  });
+});
+
 describe('cleanup query', () => {
   it('returns verified tickets past threshold', async () => {
     const db = await getDb();
