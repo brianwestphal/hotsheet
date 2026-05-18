@@ -285,3 +285,94 @@ describe('applyShellPartialEvent — twin-pre wiring (HS-8015 follow-up #2)', ()
     expect(full?.textContent).toBe('one\ntwo\nthree\nfour\n');
   });
 });
+
+/**
+ * HS-8443 — `applyPerProjectDrawerState` must NOT clobber a user-driven
+ * `openPanel` whose click landed during the async `/api/file-settings`
+ * fetch. Pre-fix, the function read `drawer_open: 'false'` from the
+ * (e2e-fixture-reset) server, returned to the synchronous restore body,
+ * and ran `if (panelOpen) closePanel()` — undoing the user's mid-fetch
+ * open. On CI under 375-test load the fetch window stretches to 100+ ms,
+ * wide enough for an e2e test to race ahead and trip the assertion.
+ *
+ * Test shape: stub `globalThis.fetch` to return a controllable Promise.
+ * Start `applyPerProjectDrawerState`, simulate the user click via
+ * `_openPanelForTesting` during the await, resolve the fetch with
+ * `drawer_open: 'false'`, await completion, assert the panel is still
+ * open. The pre-fix code path leaves `display: 'none'`; the post-fix
+ * mutation-epoch guard short-circuits and `display` stays empty.
+ */
+describe('applyPerProjectDrawerState — user mid-fetch click wins (HS-8443)', () => {
+  let originalFetch: typeof globalThis.fetch | undefined;
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch;
+    document.body.innerHTML = `
+      <div id="command-log-panel" class="command-log-panel" style="display:none"></div>
+      <button id="command-log-btn" type="button"></button>
+      <button id="command-log-expand-btn" type="button"></button>
+      <div id="drawer-tabs-container"></div>
+      <div id="drawer-terminal-tabs-wrap" style="display:none"></div>
+      <div id="command-log-entries"></div>
+    `;
+    const { _resetPanelStateForTesting } = await import('./commandLog.js');
+    _resetPanelStateForTesting();
+  });
+
+  afterEach(() => {
+    if (originalFetch !== undefined) globalThis.fetch = originalFetch;
+    document.body.innerHTML = '';
+  });
+
+  it('mid-fetch openPanel is preserved when the restore reads drawer_open: false', async () => {
+    // Hand-controlled Promise for `/api/file-settings`. Any other fetch
+    // (e.g. `terminal/list` from `loadAndRenderTerminalTabs`) immediately
+    // resolves to an empty response so the rest of the restore body can
+    // run to completion.
+    let resolveFileSettings!: (response: Response) => void;
+    const fileSettingsPromise = new Promise<Response>((resolve) => { resolveFileSettings = resolve; });
+    globalThis.fetch = ((input: RequestInfo | URL): Promise<Response> => {
+      const url = typeof input === 'string' ? input : (input instanceof URL ? input.toString() : input.url);
+      if (url.includes('/api/file-settings')) return fileSettingsPromise;
+      // `loadEntries` (called from `openPanel`'s `startPolling` path)
+      // hits `/command-log` + `/shell/running`. Return the shapes those
+      // consumers expect so the per-test unhandled rejection on
+      // `commandLogStore.setEntries(serverEntries.map …)` doesn't fire.
+      if (url.includes('/api/command-log')) {
+        return Promise.resolve(new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/api/shell/running')) {
+        return Promise.resolve(new Response(JSON.stringify({ ids: [], outputs: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      // Default: empty 200 JSON for any other endpoint the boot path touches.
+      return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }) as typeof globalThis.fetch;
+
+    const { applyPerProjectDrawerState, _openPanelForTesting } = await import('./commandLog.js');
+
+    // Kick off the restore. It will await the file-settings fetch.
+    const restorePromise = applyPerProjectDrawerState();
+
+    // Yield to let the dynamic import + the file-settings fetch issue land.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Simulate the user clicking `#command-log-btn` mid-fetch. The
+    // toggle handler routes through `togglePanel → openPanel`; tests
+    // skip the click wiring and call `_openPanelForTesting` directly
+    // (same code path, same epoch bump).
+    _openPanelForTesting();
+    expect(document.getElementById('command-log-panel')!.style.display).toBe('');
+
+    // Now resolve the file-settings fetch with `drawer_open: 'false'`.
+    // Pre-fix the restore body would run `closePanel()` here.
+    resolveFileSettings(new Response(
+      JSON.stringify({ drawer_open: 'false', drawer_active_tab: 'commands-log', drawer_expanded: 'false' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+
+    await restorePromise;
+
+    // Post-fix: epoch-guard returns early, panel stays open.
+    expect(document.getElementById('command-log-panel')!.style.display).toBe('');
+  });
+});

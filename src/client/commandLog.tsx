@@ -47,6 +47,28 @@ type LogEntry = AnnotatedEntry;
 let panelOpen = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastSeenId = 0;
+
+// HS-8443 — drawer-state mutation epoch. `applyPerProjectDrawerState` is
+// called fire-and-forget from `initCommandLog`'s startup IIFE
+// (`commandLog.tsx:543`) and from `reloadAppState`'s project-switch
+// path (`app.tsx:150`). Both await `/api/file-settings` and then run a
+// `closePanel() → maybe openPanel()` restore sequence. Pre-fix, any
+// user-driven `openPanel` / `closePanel` whose click landed during the
+// async fetch window would be silently undone when the restore resumed
+// and ran its unconditional `if (panelOpen) closePanel()` at line 330.
+// On CI under 375-test load the fetch window stretches to 100+ ms,
+// wide enough for an e2e test's `#command-log-btn` click to race ahead
+// (the HS-8443 flake on `terminal-search.spec.ts:310`). Same shape as
+// HS-8440 (commandItems) and HS-8424 (terminal visibility) — a recurring
+// "async server-state restore overwrites synchronous user interaction"
+// pattern. Guard: bump epoch from `openPanel` + `closePanel` (the two
+// user-facing mutation entry points); `applyPerProjectDrawerState`
+// captures epoch BEFORE its fetch await, compares on resume, and
+// abandons the restore branch if the epoch advanced.
+let drawerStateMutationEpoch = 0;
+function noteDrawerStateMutation(): void {
+  drawerStateMutationEpoch++;
+}
 /** HS-8318 — top-level bindList disposer + per-row effect cleanups for
  *  the Commands Log entries container. Mounted once per
  *  `#command-log-entries` lifetime via `mountEntriesBindList()` and torn
@@ -97,6 +119,19 @@ export function _unmountEntriesBindListForTesting(): void {
     try { entriesBindListDispose(); } catch { /* swallow */ }
     entriesBindListDispose = null;
   }
+}
+
+/** **HS-8443 — TEST ONLY.** Drive the user-facing `openPanel` /
+ *  `closePanel` mutations (which bump `drawerStateMutationEpoch`)
+ *  without having to wire up the `#command-log-btn` click + the rest
+ *  of `initCommandLog`'s bindings. Lets the HS-8443 race regression
+ *  test simulate a user click landing mid-fetch in
+ *  `applyPerProjectDrawerState`. */
+export function _openPanelForTesting(): void { openPanel(); }
+export function _closePanelForTesting(): void { closePanel(); }
+export function _resetPanelStateForTesting(): void {
+  panelOpen = false;
+  drawerStateMutationEpoch = 0;
 }
 
 // --- Load entries from API ---
@@ -199,6 +234,10 @@ export function switchDrawerTab(tab: string) {
 }
 
 function openPanel() {
+  // HS-8443 — bump BEFORE any side effects so a still-in-flight
+  // `applyPerProjectDrawerState` whose fetch is currently suspended sees
+  // a stale epoch on resume and abandons its overwrite branch.
+  noteDrawerStateMutation();
   const panel = byId('command-log-panel');
   panel.style.display = '';
   panelOpen = true;
@@ -306,6 +345,14 @@ function toggleDrawerExpanded(): void {
  * then applies the saved drawer state (visibility + active tab).
  */
 export async function applyPerProjectDrawerState(): Promise<void> {
+  // HS-8443 — capture the mutation epoch BEFORE the first await so any
+  // user-driven `openPanel` / `closePanel` whose click landed during the
+  // fetch window is detected on resume. If the user interacted, the
+  // user's drawer state is now the authoritative one; abandoning the
+  // restore here is the right semantic (matches HS-8440's commandItems
+  // guard shape).
+  const epochBeforeFetch = drawerStateMutationEpoch;
+
   const { onProjectSwitch, loadAndRenderTerminalTabs } = await import('./terminal.js');
   onProjectSwitch();
 
@@ -315,6 +362,12 @@ export async function applyPerProjectDrawerState(): Promise<void> {
   } catch {
     fs = {};
   }
+  // HS-8443 — bail if the user did anything drawer-related between
+  // entry and now. The user's action set the authoritative state; the
+  // restore would silently overwrite it (the pre-fix flake mode that
+  // tripped `terminal-search.spec.ts:310` on CI under load).
+  if (drawerStateMutationEpoch !== epochBeforeFetch) return;
+
   const wantOpen = fs.drawer_open === true || fs.drawer_open === 'true';
   const wantExpanded = fs.drawer_expanded === true || fs.drawer_expanded === 'true';
   const savedTab = typeof fs.drawer_active_tab === 'string' && fs.drawer_active_tab !== ''
@@ -367,6 +420,10 @@ export function showLogEntryById(logId: number) {
 }
 
 function closePanel() {
+  // HS-8443 — paired with `openPanel`. Bump on every close too so a
+  // user-driven close mid-fetch can't be undone by the restore reopening
+  // the panel from a stale `wantOpen=true` snapshot.
+  noteDrawerStateMutation();
   const panel = byId('command-log-panel');
   panel.style.display = 'none';
   panelOpen = false;
