@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+#
+# Non-interactive beta release. Mirrors `npm run release:beta` (which runs
+# `scripts/release.sh --beta`) but answers every prompt automatically so it
+# can be invoked from automation (or by Claude when the user says "push a
+# beta").
+#
+# Why a separate script instead of piping into release.sh?
+# The interactive script has multiple `read`-driven branches (version-bump
+# menu, "use this text?" confirms, "proceed with this BETA release?"
+# confirm, resume-from-state prompts) that can't be cleanly answered with
+# echo-pipes — answers depend on the run's saved state which would need to
+# be pre-stubbed. Cleaner to re-implement the beta path here than to bend
+# the interactive script into something it isn't.
+#
+# What this script does — matches release.sh --beta exactly:
+#   1. Preflight: working tree must be clean; must be on main/master.
+#      (Skips the `npm whoami` check the interactive script does — beta
+#      releases publish via GitHub Actions' NPM_TOKEN, not the local
+#      user's credentials, so local npm login isn't required for the
+#      tag-and-push path. Stable releases still need it but they're not
+#      this script's job.)
+#   2. Read current version from package.json (interactive default for
+#      "Enter to keep current_version"). Beta tags target the upcoming
+#      stable version; CI's release-beta.yml bumps it ephemerally via
+#      `npm version --no-git-tag-version` at publish time.
+#   3. Draft release notes via `claude -p` from the commit-subject log
+#      since the last tag — same prompt and post-process as the
+#      interactive flow's `step_release_notes`. Falls back to a generic
+#      "see git log" body if `claude` isn't on PATH or returns empty.
+#   4. Build + test + lint + typecheck (same as interactive step 7).
+#   5. Auto-increment the beta number: find the highest existing
+#      `v<version>-beta.N` tag and pick N+1. Same logic as the
+#      interactive `step_beta_tag_and_push`.
+#   6. Annotated git tag with the release notes as the message; push the
+#      tag (NOT a commit — beta mode skips version-file bumps + the
+#      release commit).
+#
+# What CI does on push of the tag — release-beta.yml:
+#   1. Re-runs tests + lint + build verification.
+#   2. Publishes hotsheet@<version>-beta.N to npm with `--tag beta`
+#      (does NOT promote to `@latest`).
+#   3. Builds Tauri bundles (macOS-arm64 + macOS-x64 + Linux + Windows).
+#   4. Creates a GitHub Release flagged prerelease: true so the Tauri
+#      updater + the §50 upgrade-nudge skip it (they only resolve
+#      releases/latest, which GitHub auto-filters past prereleases).
+#
+# To install the beta:
+#   - npm:        npm install hotsheet@beta
+#   - desktop:    download the binary from the GitHub Release page
+#
+# To revert a beta tag (if a release is botched before CI completes):
+#   git tag -d v<version>-beta.N
+#   git push origin :refs/tags/v<version>-beta.N
+#
+# Exit codes:
+#   0 — beta tag pushed; CI is running.
+#   1 — preflight failure (dirty tree, wrong branch, missing tools).
+#   2 — local checks failed (test / lint / tsc).
+#   3 — git tag or push failed (often: tag already exists, or upstream
+#       rejected — usually means we need to pull first).
+#
+set -euo pipefail
+
+# --- Colors (stripped on non-tty for log readability) ---
+if [[ -t 1 ]]; then
+  BOLD="\033[1m"; DIM="\033[2m"; GREEN="\033[32m"; YELLOW="\033[33m"
+  RED="\033[31m"; CYAN="\033[36m"; RESET="\033[0m"
+else
+  BOLD=""; DIM=""; GREEN=""; YELLOW=""; RED=""; CYAN=""; RESET=""
+fi
+info()    { echo -e "${CYAN}${BOLD}>>>${RESET} $1"; }
+success() { echo -e "${GREEN}${BOLD}>>>${RESET} $1"; }
+warn()    { echo -e "${YELLOW}${BOLD}>>>${RESET} $1"; }
+error()   { echo -e "${RED}${BOLD}>>>${RESET} $1" >&2; }
+
+# --- Preflight ---
+preflight() {
+  info "Preflight..."
+
+  if [[ ! -f "package.json" ]]; then
+    error "No package.json — run from the project root."
+    exit 1
+  fi
+
+  if [[ -n "$(git status --porcelain)" ]]; then
+    error "Working tree is dirty. Commit or stash before running a beta."
+    git status --short >&2
+    exit 1
+  fi
+
+  local branch
+  branch=$(git branch --show-current)
+  if [[ "$branch" != "main" && "$branch" != "master" ]]; then
+    error "Current branch is '${branch}', not main/master. Refusing to push a beta from a side branch."
+    exit 1
+  fi
+
+  if ! command -v node >/dev/null; then
+    error "node not found on PATH."
+    exit 1
+  fi
+
+  success "Preflight clean (branch=${branch}, tree clean)"
+}
+
+# --- Steps ---
+read_version() {
+  # Beta tags target the version currently in package.json (the next
+  # upcoming stable). The interactive flow's default is "Enter to keep
+  # current_version" — we match that.
+  VERSION=$(node -p "require('./package.json').version")
+  info "Target version: ${BOLD}${VERSION}${RESET} (beta tag will be v${VERSION}-beta.N for the next free N)"
+}
+
+draft_release_notes() {
+  # Mirror release.sh::step_release_notes minus the editor loop. Commits
+  # since the last tag drive a `claude -p` summarization. Bodies are
+  # intentionally not included — this repo's commit bodies are very long
+  # dev diaries and the subjects already encode enough scope.
+  local last_tag
+  last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+  local log_range="${last_tag:+${last_tag}..HEAD}"
+
+  local commit_log
+  commit_log=$(git log ${log_range:-"-30"} --format="%s" --no-decorate)
+
+  if [[ -z "$commit_log" ]]; then
+    warn "No commits since ${last_tag:-the last 30}. Notes will be a placeholder."
+    NOTES="- (no new commits since ${last_tag:-HEAD~30})"
+    return
+  fi
+
+  if ! command -v claude >/dev/null; then
+    warn "'claude' CLI not on PATH — falling back to a generic placeholder body."
+    NOTES="- See \`git log ${log_range:-HEAD~30..HEAD}\` for details."
+    return
+  fi
+
+  info "Drafting release notes with Claude (commits since ${last_tag:-last 30})..."
+  local prompt
+  prompt=$(cat <<EOF
+Draft release notes for Hot Sheet (a developer-focused CLI project management tool) from the commit subjects below.
+
+Rules:
+- Output ONLY markdown bullets — no heading, no preamble, no closing remarks.
+- Each bullet is ONE short line (~80 chars max), user-facing.
+- Group related changes into single bullets.
+- INCLUDE: new features, UX improvements, bug fixes, breaking changes — anything a user upgrading would notice.
+- EXCLUDE: ticket IDs (HS-NNNN), internal refactors, test additions, doc-only changes, implementation rationale, build/CI tweaks.
+- Aim for 5–10 bullets total. Fewer is better.
+
+Commits:
+${commit_log}
+EOF
+)
+  # Same post-processing as release.sh: strip code-fence wrappers, strip
+  # leading/trailing blank lines.
+  local generated
+  generated=$(claude -p "$prompt" 2>/dev/null || true)
+  generated=$(echo "$generated" | sed -e '/^```/d' -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
+
+  if [[ -z "$generated" ]]; then
+    warn "Claude draft was empty — falling back to placeholder."
+    NOTES="- See \`git log ${log_range:-HEAD~30..HEAD}\` for details."
+    return
+  fi
+
+  NOTES="$generated"
+
+  echo ""
+  echo -e "    ${DIM}Drafted notes:${RESET}"
+  echo "$NOTES" | sed 's/^/    /'
+  echo ""
+}
+
+run_local_checks() {
+  info "Build + tests + lint + typecheck..."
+
+  npm run build
+  echo ""
+
+  info "Unit tests..."
+  npm test || { error "Unit tests failed."; exit 2; }
+  echo ""
+
+  info "Lint..."
+  npm run lint || { error "Lint failed."; exit 2; }
+  echo ""
+
+  info "Type check..."
+  npx tsc --noEmit || { error "tsc failed."; exit 2; }
+  echo ""
+
+  success "All local checks passed"
+}
+
+tag_and_push() {
+  # Same auto-increment logic as release.sh::step_beta_tag_and_push.
+  local n=1
+  while git rev-parse "v${VERSION}-beta.${n}" >/dev/null 2>&1; do
+    n=$((n + 1))
+  done
+  BETA_TAG="v${VERSION}-beta.${n}"
+
+  info "Creating tag ${BOLD}${BETA_TAG}${RESET} with the drafted release notes..."
+  # Annotated tag, notes as the message.
+  echo -e "$NOTES" | git tag -a "$BETA_TAG" -F - || { error "git tag -a failed."; exit 3; }
+
+  info "Pushing tag to origin..."
+  git push origin "$BETA_TAG" || {
+    error "git push failed. Tag exists locally but not on origin."
+    error "To retry after fixing: git push origin ${BETA_TAG}"
+    error "To unwind: git tag -d ${BETA_TAG}"
+    exit 3
+  }
+
+  echo ""
+  success "Beta tag ${BOLD}${BETA_TAG}${RESET} pushed."
+  echo ""
+  echo -e "  ${DIM}CI is now:${RESET}"
+  echo -e "    1. Re-running tests, lint, build verification."
+  echo -e "    2. Publishing hotsheet@${VERSION}-beta.${n} to npm with --tag beta."
+  echo -e "    3. Building Tauri bundles for every platform."
+  echo -e "    4. Creating a GitHub Release flagged ${BOLD}prerelease: true${RESET}."
+  echo ""
+  echo -e "  ${DIM}Install via:${RESET}  npm install hotsheet@beta"
+  echo -e "  ${DIM}Or from the GitHub Release page once the bundles upload.${RESET}"
+  echo ""
+  echo -e "  ${DIM}Monitor:${RESET} https://github.com/brianwestphal/hotsheet/actions"
+}
+
+# --- Main ---
+echo ""
+echo -e "${BOLD}  Hot Sheet Beta — auto/non-interactive${RESET}"
+echo ""
+
+preflight
+read_version
+draft_release_notes
+run_local_checks
+tag_and_push
