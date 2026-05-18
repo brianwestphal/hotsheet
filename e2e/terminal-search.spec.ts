@@ -22,6 +22,7 @@
  * scrollback to search across for the full test.
  */
 import { expect, test } from './coverage-fixture.js';
+import { expectXtermContainsText } from './xtermDiagnostics.js';
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -96,7 +97,10 @@ test.describe('Terminal search widget (HS-7363)', () => {
    * for the three "apple" lines plus "banana" to land in the xterm screen so
    * the SearchAddon has content to match against.
    */
-  async function openDrawerAndWaitForFruits(page: import('@playwright/test').Page): Promise<void> {
+  async function openDrawerAndWaitForFruits(
+    page: import('@playwright/test').Page,
+    testInfo?: import('@playwright/test').TestInfo,
+  ): Promise<void> {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
@@ -108,16 +112,19 @@ test.describe('Terminal search widget (HS-7363)', () => {
     await tab.click();
     const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:fruits"]');
     await expect(pane).toBeVisible({ timeout: 5000 });
-    await expect(pane.locator('.xterm-screen')).toContainText('banana', { timeout: 8000 });
-    await expect(pane.locator('.xterm-screen')).toContainText('apple', { timeout: 8000 });
+    // HS-8421 — wrap the two key assertions with the diagnostic helper so
+    // a CI failure attaches the xterm buffer dump to the Playwright report.
+    // No behavior change on success.
+    await expectXtermContainsText(pane, 'banana', { testInfo, label: 'banana-after-tab-activate' });
+    await expectXtermContainsText(pane, 'apple', { testInfo, label: 'apple-after-tab-activate' });
   }
 
   // 1. Drawer flow — open the widget, type "apple", step through matches with
   // Enter / Shift+Enter, close via the × button (HS-7393 removed the Esc-
   // closes-widget behavior; the close button is now the single explicit
   // close+clear path).
-  test('drawer: open + type + step through matches + close via × button', async ({ page }) => {
-    await openDrawerAndWaitForFruits(page);
+  test('drawer: open + type + step through matches + close via × button', async ({ page }, testInfo) => {
+    await openDrawerAndWaitForFruits(page, testInfo);
 
     const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:fruits"]');
     const searchBox = pane.locator('.terminal-search-box');
@@ -169,8 +176,8 @@ test.describe('Terminal search widget (HS-7363)', () => {
   // 2. Cmd+F routing — when a terminal is focused, the global Cmd/Ctrl+F
   // handler in shortcuts.tsx routes through focusActiveTerminalSearch()
   // instead of the app-header ticket search (#search-input).
-  test('Cmd+F with a drawer terminal focused opens the terminal search', async ({ page }) => {
-    await openDrawerAndWaitForFruits(page);
+  test('Cmd+F with a drawer terminal focused opens the terminal search', async ({ page }, testInfo) => {
+    await openDrawerAndWaitForFruits(page, testInfo);
 
     const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:fruits"]');
     const searchBox = pane.locator('.terminal-search-box');
@@ -202,8 +209,8 @@ test.describe('Terminal search widget (HS-7363)', () => {
   // grid view's sizer remains the visible control while no dedicated view
   // is up; entering the dedicated view hides the sizer (no slot to toggle
   // anymore — the widget appears inside the overlay's own bar).
-  test('dedicated view mounts the search widget into the dedicated bar; Back restores the sizer (HS-8341)', async ({ page }) => {
-    await openDrawerAndWaitForFruits(page);
+  test('dedicated view mounts the search widget into the dedicated bar; Back restores the sizer (HS-8341)', async ({ page }, testInfo) => {
+    await openDrawerAndWaitForFruits(page, testInfo);
 
     // Enter the dashboard. Grid view: sizer visible.
     await page.locator('#terminal-dashboard-toggle').click();
@@ -251,8 +258,8 @@ test.describe('Terminal search widget (HS-7363)', () => {
   // distinct submitted queries in MRU order; ArrowDown returns to the draft.
   // Validates the per-xterm WeakMap, MRU-at-tail ordering, and draft
   // preservation against a real PTY + xterm + SearchAddon stack.
-  test('drawer: ArrowUp walks back through three submitted queries (HS-7427)', async ({ page }) => {
-    await openDrawerAndWaitForFruits(page);
+  test('drawer: ArrowUp walks back through three submitted queries (HS-7427)', async ({ page }, testInfo) => {
+    await openDrawerAndWaitForFruits(page, testInfo);
 
     const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:fruits"]');
     const searchBox = pane.locator('.terminal-search-box');
@@ -300,8 +307,8 @@ test.describe('Terminal search widget (HS-7363)', () => {
   // 5. HS-7426 — match-mode toggles: enable regex, type the pattern `app.e`
   // (the `.` is a regex wildcard that matches any character), and assert the
   // count chip reads "1/3" because all three "apple" lines match.
-  test('drawer: regex toggle on `app.e` matches three lines (HS-7426)', async ({ page }) => {
-    await openDrawerAndWaitForFruits(page);
+  test('drawer: regex toggle on `app.e` matches three lines (HS-7426)', async ({ page }, testInfo) => {
+    await openDrawerAndWaitForFruits(page, testInfo);
 
     const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:fruits"]');
     const searchBox = pane.locator('.terminal-search-box');
@@ -357,8 +364,8 @@ test.describe('Terminal search widget (HS-7363)', () => {
   // widget has enough width AND the input itself still has room to type
   // after all the other controls lay out — any future addition that eats
   // back into that budget fails this test before a user has to file a bug.
-  test('drawer: open widget is wide enough for a realistic query (HS-7525)', async ({ page }) => {
-    await openDrawerAndWaitForFruits(page);
+  test('drawer: open widget is wide enough for a realistic query (HS-7525)', async ({ page }, testInfo) => {
+    await openDrawerAndWaitForFruits(page, testInfo);
 
     const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:fruits"]');
     const searchBox = pane.locator('.terminal-search-box');
@@ -394,8 +401,8 @@ test.describe('Terminal search widget (HS-7363)', () => {
   // `exitDedicatedView()` on any Esc regardless of focus target, which meant
   // users typing in the search lost their whole dedicated-view context when
   // they just wanted to leave the input.
-  test('dedicated view: Esc in search blurs input + focuses terminal (HS-7526)', async ({ page }) => {
-    await openDrawerAndWaitForFruits(page);
+  test('dedicated view: Esc in search blurs input + focuses terminal (HS-7526)', async ({ page }, testInfo) => {
+    await openDrawerAndWaitForFruits(page, testInfo);
 
     // Enter the dashboard and double-click the fruits tile to get into the
     // dedicated view.

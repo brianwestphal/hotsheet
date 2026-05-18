@@ -18,6 +18,7 @@
  * second `invoke('open_url', ...)` call with the plain URL.
  */
 import { expect, test } from './coverage-fixture.js';
+import { expectXtermContainsText } from './xtermDiagnostics.js';
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -118,7 +119,7 @@ test.describe('Terminal drawer OSC 8 + plain URL external open (HS-7274)', () =>
     } catch { /* first run */ }
   });
 
-  test('OSC 8 link click invokes open_url with the wrapped URL, plain URL click invokes open_url with the plain URL', async ({ page }) => {
+  test('OSC 8 link click invokes open_url with the wrapped URL, plain URL click invokes open_url with the plain URL', async ({ page }, testInfo) => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
@@ -135,9 +136,12 @@ test.describe('Terminal drawer OSC 8 + plain URL external open (HS-7274)', () =>
 
     // Wait for the fixture's READY marker — by then both the OSC 8 link line
     // and the plain-URL line are in the scrollback.
-    await expect(pane.locator('.xterm-screen')).toContainText(/CLICK-OSC8-LINK/, { timeout: 10000 });
-    await expect(pane.locator('.xterm-screen')).toContainText(/plain-url\.example\.com/, { timeout: 10000 });
-    await expect(pane.locator('.xterm-screen')).toContainText(/READY/, { timeout: 10000 });
+    // HS-8421 — wrap with the diagnostic helper so a CI failure attaches
+    // the xterm buffer dump to the Playwright report (Linux runner shows
+    // `^L` instead of the script output; no-repro on local Linux).
+    await expectXtermContainsText(pane, /CLICK-OSC8-LINK/, { timeout: 10000, testInfo, label: 'osc8-link' });
+    await expectXtermContainsText(pane, /plain-url\.example\.com/, { timeout: 10000, testInfo, label: 'plain-url' });
+    await expectXtermContainsText(pane, /READY/, { timeout: 10000, testInfo, label: 'osc8-ready' });
 
     // Click the OSC 8 hyperlink text. xterm.js layers its canvas above the
     // DOM text row, so clicking the text locator's center box hits the canvas

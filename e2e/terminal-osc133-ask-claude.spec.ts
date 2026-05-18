@@ -21,6 +21,7 @@
  * scenario).
  */
 import { expect, test } from './coverage-fixture.js';
+import { expectXtermContainsText } from './xtermDiagnostics.js';
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,7 +100,7 @@ test.describe('OSC 133 Phase 3 Ask Claude (HS-7332)', () => {
     });
   });
 
-  test('channel alive: popover surfaces Ask Claude + click POSTs the rendered prompt to /api/channel/trigger (HS-7332)', async ({ page, request }) => {
+  test('channel alive: popover surfaces Ask Claude + click POSTs the rendered prompt to /api/channel/trigger (HS-7332)', async ({ page, request }, testInfo) => {
     // Capture any POST to /api/channel/trigger and short-circuit it so the
     // server doesn't try to reach a real MCP. The body is recorded in
     // window.__channelTriggers for the assertion below.
@@ -156,8 +157,12 @@ test.describe('OSC 133 Phase 3 Ask Claude (HS-7332)', () => {
     await tab.click();
 
     const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:osc133-fail-alive"]');
-    await expect(pane.locator('.xterm-screen')).toContainText('phase3-ask-claude-marker', { timeout: 8000 });
-    await expect(pane.locator('.xterm-screen')).toContainText('READY', { timeout: 8000 });
+    // HS-8421 — wrap with the diagnostic helper so a CI failure surfaces
+    // the xterm buffer in the Playwright report (the recurring Linux-
+    // runner symptom is the xterm showing only `^L` instead of the
+    // script output, which we can't currently see in the CI logs).
+    await expectXtermContainsText(pane, 'phase3-ask-claude-marker', { timeout: 8000, testInfo, label: 'phase3-marker-alive' });
+    await expectXtermContainsText(pane, 'READY', { timeout: 8000, testInfo, label: 'phase3-ready-alive' });
 
     // One OSC 133 prompt cycle → one gutter glyph (red because exit:7).
     const glyphs = pane.locator('.terminal-osc133-gutter');
