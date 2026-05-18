@@ -671,24 +671,36 @@ const SCENARIO_9_COMMANDS = [
 // clutter the screenshot. The user (or whoever captures the screenshot)
 // can recapture with real commands if they want a more realistic look.
 
+// HS-8419 sweep 6 / commit bac041c: the printf-then-`exec sleep 3600`
+// pattern only renders correctly when `lazy: true`. Eager-spawned sessions
+// hit attach.ts:93's HS-6799 redraw-on-first-attach path which clears
+// scrollback and writes Ctrl-L to the PTY — sleep doesn't consume stdin,
+// so the line discipline echoes the Ctrl-L back as `^L` and the printf
+// output is wiped. Lazy terminals spawn on first WS attach, so the printf
+// streams directly into the live subscriber after the no-op resize branch.
+const DEMO_TERMINAL_APPEARANCE = { theme: 'github-dark', fontSize: 15 } as const;
+
 const SCENARIO_11_TERMINALS = [
   {
     id: 'dev-server',
     name: 'Dev Server',
     command: "printf '\\033[36m> npm run dev\\033[0m\\n\\n  ➜  Local:   http://localhost:3000/\\n  ➜  Network: http://192.168.1.42:3000/\\n\\n  ready in 412ms\\n\\n\\033[2m  watching for changes...\\033[0m\\n'; exec sleep 3600",
-    lazy: false,
+    lazy: true,
+    ...DEMO_TERMINAL_APPEARANCE,
   },
   {
     id: 'tests',
     name: 'Tests',
     command: "printf '\\033[36m> npm run test:watch\\033[0m\\n\\n\\033[32m  ✓\\033[0m auth/session.test.ts (12)\\n\\033[32m  ✓\\033[0m api/tickets.test.ts (47)\\n\\033[32m  ✓\\033[0m db/queries.test.ts (89)\\n\\033[32m  ✓\\033[0m client/dom.test.ts (23)\\n\\n\\033[32m Test Files \\033[0m\\033[1m4 passed\\033[0m\\033[90m (4)\\033[0m\\n\\033[32m      Tests \\033[0m\\033[1m171 passed\\033[0m\\033[90m (171)\\033[0m\\n\\n\\033[2m  watching for changes...\\033[0m\\n'; exec sleep 3600",
-    lazy: false,
+    lazy: true,
+    ...DEMO_TERMINAL_APPEARANCE,
   },
   {
     id: 'claude',
     name: 'Claude',
     command: '{{claudeCommand}}',
     lazy: true,
+    ...DEMO_TERMINAL_APPEARANCE,
   },
 ];
 
@@ -807,13 +819,15 @@ const SCENARIO_12_MOBILE_TERMINALS = [
     id: 'metro',
     name: 'Metro',
     command: "printf '\\033[36m> npx react-native start\\033[0m\\n\\n  Welcome to Metro v0.81.0\\n  Fast - Scalable - Integrated\\n\\n\\033[32m  ✓ Bundling complete\\033[0m\\n\\033[2m  watching files for changes...\\033[0m\\n'; exec sleep 3600",
-    lazy: false,
+    lazy: true,
+    ...DEMO_TERMINAL_APPEARANCE,
   },
   {
     id: 'logcat',
     name: 'logcat',
     command: "printf '\\033[2m11-18 09:42:01.213\\033[0m  Push.deeplink  Received: orders/9821\\n\\033[2m11-18 09:42:01.241\\033[0m  Push.deeplink  Resolving intent…\\n\\033[2m11-18 09:42:01.252\\033[0m  Push.deeplink  Routing to OrderDetail\\n\\033[2m11-18 09:42:01.318\\033[0m  Render         OrderDetailScreen mounted\\n'; exec sleep 3600",
-    lazy: false,
+    lazy: true,
+    ...DEMO_TERMINAL_APPEARANCE,
   },
 ];
 const SCENARIO_12_API_TERMINALS = [
@@ -821,13 +835,15 @@ const SCENARIO_12_API_TERMINALS = [
     id: 'server',
     name: 'API Server',
     command: "printf '\\033[36m> npm run dev:api\\033[0m\\n\\n  api.platform.local listening on :8080\\n  graphql:  http://localhost:8080/graphql\\n  rest:     http://localhost:8080/v1\\n  health:   ok\\n\\n\\033[33m  WARN \\033[0mrate-limiter: bucket high water mark 87%%\\n'; exec sleep 3600",
-    lazy: false,
+    lazy: true,
+    ...DEMO_TERMINAL_APPEARANCE,
   },
   {
     id: 'db-tail',
     name: 'pg log',
     command: "printf '\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: 12.4 ms  SELECT * FROM orders WHERE id = \\$1\\n\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: 4.1 ms   UPDATE orders SET status=\\$1 WHERE id=\\$2\\n\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  checkpoint complete\\n'; exec sleep 3600",
-    lazy: false,
+    lazy: true,
+    ...DEMO_TERMINAL_APPEARANCE,
   },
 ];
 
