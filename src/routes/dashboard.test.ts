@@ -216,6 +216,28 @@ describe('PATCH /global-config', () => {
     const res = await app.request('/api/global-config', patch({ dashboard: { layoutMode: 'flat' } }));
     expect(res.status).toBe(400);
   });
+
+  /**
+   * HS-8424 — HS-8406 added per-scope active-grouping selection on the
+   * client (`activeVisibilityGroupingIdByScope`), but the server-side
+   * `.strict()` schema didn't accept the key, so every visibility PATCH
+   * after HS-8406 landed was rejected with 400 — no hide/show toggle
+   * persisted across relaunches. The user reported the dashboard hide
+   * action reverting after relaunch while inside the "Claude" grouping.
+   */
+  it('accepts dashboard.activeVisibilityGroupingIdByScope (HS-8424)', async () => {
+    const res = await app.request('/api/global-config', patch({
+      dashboard: {
+        visibilityGroupings: [
+          { id: 'default', name: 'Default', hiddenByProject: {} },
+          { id: 'g-claude', name: 'Claude', hiddenByProject: { 's1': ['t1'] } },
+        ],
+        activeVisibilityGroupingIdByScope: { dashboard: 'g-claude' },
+        activeVisibilityGroupingId: 'g-claude',
+      },
+    }));
+    expect(res.status).toBe(200);
+  });
 });
 
 describe('POST /ensure-skills', () => {

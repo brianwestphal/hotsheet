@@ -23,6 +23,10 @@ const DashboardConfigSchema = z.object({
   columnsPerRow: z.number().optional(),
   visibilityGroupings: z.array(VisibilityGroupingSchema).optional(),
   activeVisibilityGroupingId: z.string().optional(),
+  // HS-8424 — HS-8406 added per-scope active-grouping selection on the
+  // client; this storage schema must also accept the key, otherwise a
+  // stored config containing it would parse as empty on read.
+  activeVisibilityGroupingIdByScope: z.record(z.string(), z.string()).optional(),
 }).strict();
 
 const GlobalConfigSchema = z.object({

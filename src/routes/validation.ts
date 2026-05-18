@@ -192,6 +192,11 @@ const DashboardConfigSchema = z.object({
   columnsPerRow: z.number().optional(),
   visibilityGroupings: z.array(VisibilityGroupingSchema).optional(),
   activeVisibilityGroupingId: z.string().optional(),
+  // HS-8424 — HS-8406 added per-scope active-grouping selection on the
+  // client; without it here, the `.strict()` parser rejected every
+  // visibility PATCH (the client always sends both keys), so no toggle
+  // made after HS-8406 landed could persist across relaunches.
+  activeVisibilityGroupingIdByScope: z.record(z.string(), z.string()).optional(),
 }).strict();
 
 export const GlobalConfigSchema = z.object({

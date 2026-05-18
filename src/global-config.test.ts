@@ -89,4 +89,31 @@ describe('writeGlobalConfig', () => {
     writeGlobalConfig({ dashboard: { layoutMode: 'sectioned' } });
     expect(readGlobalConfig().dashboard?.layoutMode).toBe('sectioned');
   });
+
+  /**
+   * HS-8424 — HS-8406 added per-scope active-grouping selection on the
+   * client (`activeVisibilityGroupingIdByScope`). The storage schema
+   * (`DashboardConfigSchema` in `src/global-config.ts`) didn't include
+   * the key, so a config that contained it parsed back as `{}` on read
+   * even when it had been written successfully. Symptom: hide actions
+   * inside a non-Default grouping reverted on relaunch.
+   */
+  it('round-trips dashboard.activeVisibilityGroupingIdByScope (HS-8424)', () => {
+    writeGlobalConfig({
+      dashboard: {
+        visibilityGroupings: [
+          { id: 'default', name: 'Default', hiddenByProject: {} },
+          { id: 'g-claude', name: 'Claude', hiddenByProject: { 's1': ['t1'] } },
+        ],
+        activeVisibilityGroupingIdByScope: { dashboard: 'g-claude' },
+        activeVisibilityGroupingId: 'g-claude',
+      },
+    });
+    const reread = readGlobalConfig();
+    expect(reread.dashboard?.activeVisibilityGroupingIdByScope).toEqual({ dashboard: 'g-claude' });
+    expect(reread.dashboard?.visibilityGroupings).toEqual([
+      { id: 'default', name: 'Default', hiddenByProject: {} },
+      { id: 'g-claude', name: 'Claude', hiddenByProject: { 's1': ['t1'] } },
+    ]);
+  });
 });
