@@ -62,6 +62,7 @@
  * freeze log is a diagnostic-only path.
  */
 import { byIdOrNull } from './dom.js';
+import { isDiagnosticsEnabled } from './globalDiagnostics.js';
 
 export const SERVER_BUSY_THRESHOLD_MS = 3000;
 
@@ -173,8 +174,16 @@ function stopEvaluateTimerIfIdle(): void {
 /** HS-8425 — central show/hide state machine. Both `evaluate()` (timer
  *  tick) and `stopEvaluateTimerIfIdle()` (last in-flight item drained)
  *  go through here so every show→hide transition flushes an activation
- *  entry exactly once. */
+ *  entry exactly once.
+ *
+ *  HS-8446 — gated on the global `diagnosticsEnabled` flag. When off
+ *  (the default), `show` is forced to `false` here at the last DOM-
+ *  touching step so the underlying in-flight tracking + activation
+ *  bookkeeping continues to run (so flipping the flag mid-session
+ *  doesn't need a reload to take effect) but the banner element never
+ *  paints and no `client-server-busy-banner` freeze-log entry fires. */
 function setBannerVisible(show: boolean, now: number, banner: HTMLElement | null): void {
+  if (show && !isDiagnosticsEnabled()) show = false;
   if (banner !== null) banner.style.display = show ? '' : 'none';
   const wasShown = activation !== null;
   if (show && !wasShown) {

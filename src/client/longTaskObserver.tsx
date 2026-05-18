@@ -32,14 +32,12 @@
  * supported because it's free — no recurring timer overhead.
  */
 
-// HS-8162 — read the diagnostics freeze-toast gate from app state at
-// toast-decision time so flipping the Settings → Experimental →
-// Diagnostics checkbox takes effect on the next freeze without
-// needing a page reload. Lazy import (`require`-style) would
-// dependency-cycle through `app.tsx → longTaskObserver.tsx → state.tsx`
-// at module load — `state.tsx` is loaded already by app boot, so a
-// direct `import` resolves cleanly and the value is read at runtime.
-import { state } from './state.js';
+// HS-8446 — gate moved from the per-project
+// `state.settings.diagnostics_freeze_toast_enabled` (HS-8162) to the
+// global `diagnosticsEnabled` flag. Read at toast-decision time so
+// flipping the Settings → Experimental → Diagnostics checkbox takes
+// effect on the next freeze without needing a page reload.
+import { isDiagnosticsEnabled } from './globalDiagnostics.js';
 
 const LONG_TASK_THRESHOLD_MS = 100;
 const INTERACTION_BUFFER_SIZE = 30;
@@ -247,14 +245,13 @@ function recordLongTask(durationMs: number, source: LongTaskSource): void {
   // HS-8054 follow-up — toast on each ≥ 500 ms block so the user notices
   // the instrumentation working without DevTools. Rate-limited to once
   // per 10 s.
-  // HS-8162 (2026-05-15) — gated on
-  // `state.settings.diagnostics_freeze_toast_enabled` (default false).
-  // The toast was useful while building HS-8054 but was visual noise
-  // during normal use; power users flip it on in Settings →
-  // Experimental → Diagnostics when actively investigating a hang.
-  // The console.error + freeze.log + in-memory buffer continue to fire
-  // unconditionally — the gate only suppresses the toast surface.
-  if (shouldEmitFreezeToast(durationMs, ts, lastToastTs, state.settings.diagnostics_freeze_toast_enabled)) {
+  // HS-8162 (2026-05-15) — gated on the diagnostics opt-in.
+  // HS-8446 — gate is now the global `diagnosticsEnabled` flag (was a
+  // per-project setting under HS-8162). Power users flip it on in
+  // Settings → Experimental → Diagnostics when actively investigating
+  // a hang. The console.error + freeze.log + in-memory buffer continue
+  // to fire unconditionally — the gate only suppresses the toast.
+  if (shouldEmitFreezeToast(durationMs, ts, lastToastTs, isDiagnosticsEnabled())) {
     lastToastTs = ts;
     void showLongTaskToast(durationMs, source, recentInteractions);
   }

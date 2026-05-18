@@ -4,6 +4,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { _setDiagnosticsEnabledForTesting } from './globalDiagnostics.js';
 import {
   _inspectActivationForTesting,
   _inspectServerBusyForTesting,
@@ -15,8 +16,17 @@ import {
   trackServerRequest,
 } from './serverBusyChip.js';
 
+// HS-8446 — the banner now requires the global diagnostics opt-in to
+// paint. The existing HS-8175 / HS-8226 / HS-8286 / HS-8425 cases
+// assume the banner can show, so default the gate ON for the file and
+// override per-test where the off-state is what's being asserted.
+beforeEach(() => {
+  _setDiagnosticsEnabledForTesting(true);
+});
+
 afterEach(() => {
   _resetServerBusyChipForTesting();
+  _setDiagnosticsEnabledForTesting(false);
 });
 
 describe('isLongPollUrl (HS-8175)', () => {
@@ -356,5 +366,78 @@ describe('banner activation logging (HS-8425)', () => {
     expect(_inspectActivationForTesting()).not.toBeNull();
     _resetServerBusyChipForTesting();
     expect(_inspectActivationForTesting()).toBeNull();
+  });
+});
+
+describe('diagnostics opt-in gate (HS-8446)', () => {
+  // HS-8446 — the slow-server banner only paints when the global
+  // `diagnosticsEnabled` flag is on. With the gate off (the default for
+  // every fresh install) the banner must stay hidden AND no activation
+  // freeze.log entry must fire — both surfaces are gated together so a
+  // user who hasn't opted into diagnostic UI doesn't get either of them.
+
+  function mountBanner(): HTMLElement {
+    const el = document.createElement('div');
+    el.id = 'server-slow-banner';
+    el.className = 'server-slow-banner';
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  const posted = mockPostedActivations;
+
+  beforeEach(() => {
+    posted.length = 0;
+  });
+
+  afterEach(() => {
+    document.getElementById('server-slow-banner')?.remove();
+  });
+
+  it('banner stays hidden when diagnostics is off, even with a persistent slow event open', () => {
+    _setDiagnosticsEnabledForTesting(false);
+    mountBanner();
+    const release = trackPersistentSlowEvent('test-stall');
+    // In-flight tracking continues to run (so flipping the flag mid-
+    // session takes effect on the next tick) — but the banner DOM stays
+    // at display:none and no activation is recorded.
+    expect(_inspectServerBusyForTesting().inFlightCount).toBe(1);
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+    expect(_inspectActivationForTesting()).toBeNull();
+    release();
+  });
+
+  it('does NOT post a client-server-busy-banner freeze.log entry when diagnostics is off', async () => {
+    _setDiagnosticsEnabledForTesting(false);
+    mountBanner();
+    const release = trackPersistentSlowEvent('test-stall');
+    release();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(posted).toHaveLength(0);
+  });
+
+  it('banner surfaces immediately on the next tick after the flag flips on', async () => {
+    _setDiagnosticsEnabledForTesting(false);
+    mountBanner();
+    const release = trackPersistentSlowEvent('test-stall');
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+    // Flip the gate ON; the next evaluate() call (driven by the 250 ms
+    // timer or by the release path) will see the new value and paint.
+    _setDiagnosticsEnabledForTesting(true);
+    // Add another in-flight item to force a re-evaluate without waiting
+    // 250 ms for the timer — trackServerRequest's body calls evaluate()
+    // via startEvaluateTimer.
+    const httpDone = trackServerRequest('/api/tickets');
+    // The banner should now be visible — the persistent token's
+    // synthetic startTs is already past the threshold so the very next
+    // tick crosses the show line.
+    // Force one evaluate tick by completing httpDone (its done() calls
+    // evaluate() / stopEvaluateTimerIfIdle()).
+    httpDone();
+    expect(_inspectServerBusyForTesting().chipVisible).toBe(true);
+    release();
+    // Drain the lazy POST so it doesn't bleed into the next test's posted[].
+    await new Promise(resolve => setTimeout(resolve, 0));
   });
 });

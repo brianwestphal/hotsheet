@@ -16,6 +16,7 @@ import { byId, byIdOrNull, toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
+import { loadGlobalDiagnostics } from './globalDiagnostics.js';
 import { parseJsonArrayOr } from './json.js';
 import { initLongTaskObserver } from './longTaskObserver.js';
 import { bindOpenFolder } from './openFolder.js';
@@ -164,6 +165,13 @@ async function loadInitialState(): Promise<void> {
     await reloadAppState();
   });
   await loadSettings();
+  // HS-8446 — hydrate the global diagnostics flag before the
+  // slow-server banner gate (`serverBusyChip.setBannerVisible`) and the
+  // longtask toast gate first evaluate. Fire-and-forget — both gates
+  // default to "diagnostics off" until the load resolves, which matches
+  // the intended default-off behavior. Failures leave the cached value
+  // at `false`, which is the safe default.
+  void loadGlobalDiagnostics();
   await loadCategories(rebuildCategoryUI);
   await loadCustomViews();
   void loadAppName();

@@ -38,6 +38,14 @@ const GlobalConfigSchema = z.object({
   // are inherently cross-project since the dashboard shows tiles for every
   // registered project in one view). See docs/39-visibility-groupings.md.
   dashboard: DashboardConfigSchema.optional(),
+  // HS-8446 — global diagnostics opt-in. When true, the slow-server
+  // banner (HS-8175 / HS-8226) is allowed to surface AND the HS-8054
+  // UI-hang toast fires. Default false so the noisier diagnostic
+  // surfaces stay opt-in across every project on this machine. The
+  // freeze-log entries (`<dataDir>/freeze.log`) and the server-side
+  // event-loop heartbeat continue to fire regardless — the gate only
+  // suppresses the in-window UI surfaces.
+  diagnosticsEnabled: z.boolean().optional(),
 }).strict();
 
 export type VisibilityGroupingPersisted = z.infer<typeof VisibilityGroupingSchema>;

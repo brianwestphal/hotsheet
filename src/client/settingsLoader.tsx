@@ -44,13 +44,6 @@ export async function loadSettings() {
     if (settings.shell_streaming_enabled !== '') {
       state.settings.shell_streaming_enabled = settings.shell_streaming_enabled !== 'false';
     }
-    // HS-8162 — diagnostics freeze-toast gate. Default false (the toast
-    // was useful while debugging HS-8054 but is visual noise during
-    // normal use); power users flip it on in Settings → Experimental →
-    // Diagnostics when actively investigating a hang.
-    if (settings.diagnostics_freeze_toast_enabled !== '') {
-      state.settings.diagnostics_freeze_toast_enabled = settings.diagnostics_freeze_toast_enabled === 'true';
-    }
     if (settings.sort_by) state.sortBy = settings.sort_by;
     if (settings.sort_dir) state.sortDir = settings.sort_dir;
   } catch { /* use defaults */ }

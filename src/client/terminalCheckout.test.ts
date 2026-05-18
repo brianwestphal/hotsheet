@@ -13,6 +13,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { _setDiagnosticsEnabledForTesting } from './globalDiagnostics.js';
 import {
   _inspectServerBusyForTesting,
   _resetServerBusyChipForTesting,
@@ -30,11 +31,18 @@ beforeEach(() => {
   document.body.innerHTML = '';
   _resetForTesting();
   _resetServerBusyChipForTesting();
+  // HS-8446 — the per-entry stall watcher feeds the slow-server banner
+  // via `trackPersistentSlowEvent`; the banner now requires the global
+  // diagnostics opt-in to actually paint. Enable for this file so the
+  // existing chipVisible assertions stay valid; the off-state is pinned
+  // by the dedicated HS-8446 cases in `serverBusyChip.test.ts`.
+  _setDiagnosticsEnabledForTesting(true);
 });
 
 afterEach(() => {
   _resetForTesting();
   _resetServerBusyChipForTesting();
+  _setDiagnosticsEnabledForTesting(false);
   document.body.innerHTML = '';
 });
 

@@ -311,8 +311,9 @@ describe('longTaskObserver (HS-8054)', () => {
    * HS-8162 — pure helper tests for the toast-gate decision. The
    * gate combines three conditions; this describe pins every
    * combination so a future refactor can't drop one of them silently.
-   * Integration with the live `state.settings.diagnostics_freeze_toast_enabled`
-   * flag is covered by `recordLongTask` reading the same flag —
+   * Integration with the live `globalDiagnostics.isDiagnosticsEnabled()`
+   * gate (HS-8446 collapsed the per-project HS-8162 flag into a global
+   * one) is covered by `recordLongTask` reading the same value —
    * tested via manual UI flow + the gated freeze.log POST keeps firing.
    */
   describe('shouldEmitFreezeToast (HS-8162)', () => {

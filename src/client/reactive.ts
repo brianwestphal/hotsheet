@@ -32,6 +32,31 @@
  * affect the four-primitive + store surface this module re-exports today;
  * `morph` is added to the re-export list (HS-8365) so the first wave of
  * consumers landed in `readerOverlay.tsx` + `feedbackDialog.tsx`.
+ *
+ * HS-8444 — bumped kerfjs `^0.6.0` → `^0.8.0` (2026-05-18). 0.7.0
+ * brought a fistful of additive changes: in-place granular list updates
+ * now preserve focus / scroll / IME state / `<details open>` /
+ * `<dialog open>` / `data-morph-skip` subtrees through `each()` row
+ * updates; lowercase HTML attribute names (`class`, `for`, `tabindex`,
+ * `autofocus`, `autocomplete`, `spellcheck`) are now first-class in
+ * the JSX types; two new opt-in dev warnings (`KERF_DEV_WARN_REBUILT_LISTENERS`,
+ * `KERF_DEV_WARN_UNTRACKED_SIGNALS`); `defineStore`'s `get()` snapshot
+ * is now frozen in dev so accidental mutation throws a `TypeError`
+ * rather than silently desyncing reactive consumers; `mount()` throws
+ * when called on an element already inside a mounted tree (we don't
+ * call `mount()` directly — every UI surface goes through
+ * `toElement` + manual signals, so this guard is a no-op for us);
+ * clearer JSX runtime error pointing at `delegate()` for
+ * `onClick={fn}`-style attributes (always was an error, message is
+ * better). 0.8.0 adds an opt-in `KERF_DEV_WARN_NARROW_SET` dev warning
+ * + widens `contentEditable` to accept `'plaintext-only'` + a lowercase
+ * `contenteditable` alias. We audited every `get()` call across the
+ * defineStore consumers (`commandLogStore` / `commandLogSelectionStore`
+ * / `projectsStore` / `channelStore` / `visibilityGroupingsStore` + the
+ * `channelUI` attention-dot trial) — every `get()` is either read-only
+ * or spread into a fresh object, no mutation antipattern, so the new
+ * frozen-snapshot semantics surface no regressions. All 3099 unit
+ * tests + tsc + lint + build pass after the bump.
  */
 export type { ReadonlySignal, Signal, Store } from 'kerfjs';
 export { batch, computed, defineStore, effect, morph, resetAllStores, signal } from 'kerfjs';

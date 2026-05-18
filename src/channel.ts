@@ -24,6 +24,7 @@ import {
   enqueuePermission,
   peekPending,
 } from './channelPermissions.js';
+import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
 
 // HS-8346 — bumped from 4 → 5 for the new MCP tool surface (tools/list +
 // tools/call handlers exposing hotsheet_update_ticket / hotsheet_create_ticket /
@@ -108,6 +109,22 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Connect to Claude Code over stdio
 await mcp.connect(new StdioServerTransport());
+
+// HS-8447 — detect when Claude Code's end of the stdio pipe goes
+// away. The MCP SDK's `StdioServerTransport` only listens for 'data'
+// + 'error' on stdin and only fires its `onclose` from its explicit
+// `close()` method, so on a real disconnect the channel-server keeps
+// running with a working HTTP server and a broken stdout pipe — the
+// main server's `isChannelAlive` poll returns true (it checks
+// `/health`, which is unaffected) and every `/trigger` POST silently
+// vanishes into the disconnected stdout. See
+// `src/channelStdioWatcher.ts` for the full mechanism.
+installStdioDisconnectHandler({
+  stdin: process.stdin,
+  stdout: process.stdout,
+  log: (msg) => process.stderr.write(`${serverName}: ${msg}\n`),
+  onDisconnect: () => { void cleanup(); },
+});
 
 // Handle permission requests from Claude Code
 const PermissionRequestSchema = z.object({
@@ -365,4 +382,15 @@ async function cleanup() {
 }
 process.on('SIGTERM', () => void cleanup());
 process.on('SIGINT', () => void cleanup());
+// HS-8447 — also handle SIGHUP, which is what the OS sends when the
+// controlling terminal of the parent (Claude Code) goes away. Without
+// this, killing the terminal that hosts Claude Code would leave the
+// channel-server process orphaned with a working HTTP server and a
+// disconnected stdio — exactly the silent-disconnect mode the
+// stdio watcher exists to close. Belt-and-braces alongside the
+// watcher: the OS signal path catches the kill-the-terminal flavour;
+// the watcher path catches the close-the-pipe-without-killing
+// flavour (e.g. `/mcp` reconnect that closes the pipe but spawns a
+// fresh process).
+process.on('SIGHUP', () => void cleanup());
 process.on('exit', () => { try { unlinkSync(portFile); } catch { /* ignore */ } });

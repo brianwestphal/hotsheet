@@ -630,19 +630,21 @@ pageRoutes.get('/', (c) => {
                   </div>
                 </div>
               </div>
-              {/* HS-8162 — Diagnostics subsection. Houses the UI-hang
-                  toast gate from the HS-8054 longtask observer (default
-                  off — the toast was useful while building HS-8054 but
-                  was visual noise during normal use). Future diagnostic
-                  opt-ins (server-event-loop heartbeat surfaces, etc.)
-                  can land here without a new tab. */}
+              {/* HS-8162 — Diagnostics subsection. HS-8446 collapsed the
+                  former per-project UI-hang-toast toggle into a single
+                  GLOBAL "Enable diagnostic UI surfaces" checkbox that
+                  also gates the slow-server banner. The flag lives in
+                  `~/.hotsheet/config.json` under `diagnosticsEnabled`
+                  so it applies across every project on this machine.
+                  Future diagnostic opt-ins (server-event-loop heartbeat
+                  surfaces, etc.) can land here without a new tab. */}
               <div className="settings-section" style="margin-top:16px">
                 <div className="settings-section-header">
-                  <h3>Diagnostics</h3>
+                  <h3>Diagnostics <span className="settings-scope-badge" title="This setting applies to every project on this machine.">Global</span></h3>
                 </div>
                 <div className="settings-field settings-field-checkbox">
-                  <label><input type="checkbox" id="settings-diagnostics-freeze-toast" /> Show UI-hang toast when freezes are detected</label>
-                  <span className="settings-hint">When on, a small toast pops in for each ≥ 500 ms UI hang the HS-8054 longtask observer catches (rate-limited to once every 10 s). Off by default. Freezes are always logged to <code>&lt;dataDir&gt;/freeze.log</code> for diagnostics regardless of this setting.</span>
+                  <label><input type="checkbox" id="settings-diagnostics-enabled" /> Enable diagnostic UI surfaces (slow-server banner + UI-hang toast)</label>
+                  <span className="settings-hint">When on, the slow-server banner (HS-8175 / HS-8226) surfaces when an HTTP request stays in flight past 3 s, and the HS-8054 longtask observer emits a small toast for each ≥ 500 ms UI hang (rate-limited to once every 10 s). Off by default — both surfaces are primarily useful when actively investigating event-loop blocks. Freezes are always logged to <code>&lt;dataDir&gt;/freeze.log</code> for diagnostics regardless of this setting.</span>
                 </div>
               </div>
             </div>

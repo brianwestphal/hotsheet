@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { loadBackupList } from './backups.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings } from './experimentalSettings.js';
+import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics.js';
 import { bindCategorySettings } from './settingsCategories.js';
 import type { NotifyLevel } from './state.js';
 import { state } from './state.js';
@@ -99,11 +100,12 @@ function bindGeneralTab() {
   const hideVerifiedCheckbox = byId<HTMLInputElement>('settings-hide-verified-column');
   const shellIntegrationCheckbox = byId<HTMLInputElement>('settings-shell-integration-ui');
   const shellStreamingCheckbox = byId<HTMLInputElement>('settings-shell-streaming-enabled');
-  // HS-8162 — diagnostics freeze-toast toggle. Lives in Settings →
-  // Experimental → Diagnostics; default off so the toast doesn't fire
-  // during normal use. Wired the same per-project shape as the other
-  // experimental toggles so it persists across reloads.
-  const diagnosticsFreezeToastCheckbox = byId<HTMLInputElement>('settings-diagnostics-freeze-toast');
+  // HS-8446 — global diagnostics opt-in. Single checkbox in Settings →
+  // Experimental → Diagnostics that gates BOTH the slow-server banner
+  // (HS-8175) AND the HS-8054 UI-hang toast. Stored in
+  // `~/.hotsheet/config.json` under `diagnosticsEnabled` (was the
+  // per-project `diagnostics_freeze_toast_enabled` key pre-HS-8446).
+  const diagnosticsEnabledCheckbox = byId<HTMLInputElement>('settings-diagnostics-enabled');
   const notifyPermSelect = byId<HTMLSelectElement>('settings-notify-permission');
   const notifyCompSelect = byId<HTMLSelectElement>('settings-notify-completed');
   const appNameInput = byId<HTMLInputElement>('settings-app-name');
@@ -118,8 +120,9 @@ function bindGeneralTab() {
     shellIntegrationCheckbox.checked = state.settings.shell_integration_ui;
     // HS-7984 — §53 Phase 4 streaming toggle.
     shellStreamingCheckbox.checked = state.settings.shell_streaming_enabled;
-    // HS-8162 — diagnostics freeze-toast gate.
-    diagnosticsFreezeToastCheckbox.checked = state.settings.diagnostics_freeze_toast_enabled;
+    // HS-8446 — global diagnostics opt-in (read from the in-memory
+    // cache hydrated at app boot by `loadGlobalDiagnostics`).
+    diagnosticsEnabledCheckbox.checked = isDiagnosticsEnabled();
     notifyPermSelect.value = state.settings.notify_permission;
     notifyCompSelect.value = state.settings.notify_completed;
     void api<FileSettingsForGeneralAndTerminal>('/file-settings').then((fs) => {
@@ -190,13 +193,14 @@ function bindGeneralTab() {
     void api('/settings', { method: 'PATCH', body: { shell_streaming_enabled: String(shellStreamingCheckbox.checked) } });
   });
 
-  // HS-8162 — diagnostics freeze-toast toggle. Same per-project shape;
-  // the long-task observer reads `state.settings.diagnostics_freeze_toast_enabled`
-  // on every detected hang so flipping this takes effect immediately
-  // without a page reload.
-  diagnosticsFreezeToastCheckbox.addEventListener('change', () => {
-    state.settings.diagnostics_freeze_toast_enabled = diagnosticsFreezeToastCheckbox.checked;
-    void api('/settings', { method: 'PATCH', body: { diagnostics_freeze_toast_enabled: String(diagnosticsFreezeToastCheckbox.checked) } });
+  // HS-8446 — global diagnostics opt-in. PATCH `/api/global-config`
+  // (not `/api/settings`) — the value lives in `~/.hotsheet/config.json`
+  // under `diagnosticsEnabled` so it applies across every project on
+  // this machine. The serverBusyChip + longTaskObserver gates read the
+  // cached value synchronously, so flipping the checkbox takes effect
+  // immediately without a page reload.
+  diagnosticsEnabledCheckbox.addEventListener('change', () => {
+    void setDiagnosticsEnabled(diagnosticsEnabledCheckbox.checked);
   });
 
   // Notification dropdowns
