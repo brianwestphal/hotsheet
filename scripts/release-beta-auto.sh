@@ -154,9 +154,22 @@ draft_release_notes() {
   # since the last tag drive a `claude -p` summarization. Bodies are
   # intentionally not included — this repo's commit bodies are very long
   # dev diaries and the subjects already encode enough scope.
+  #
+  # `--notes <file>` / `--notes-stdin` short-circuit the `claude -p` call
+  # entirely. Intended for callers (humans or other Claude sessions)
+  # that have the notes drafted already and don't want to spawn a nested
+  # Claude session that may fail the sandbox network-allowlist (HS-8439).
   local last_tag
   last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
   local log_range="${last_tag:+${last_tag}..HEAD}"
+
+  if [[ -n "${NOTES_OVERRIDE:-}" ]]; then
+    NOTES="$NOTES_OVERRIDE"
+    info "Using release notes from ${BOLD}${NOTES_SOURCE_LABEL}${RESET}:"
+    echo "$NOTES" | sed 's/^/    /'
+    echo ""
+    return
+  fi
 
   local commit_log
   commit_log=$(git log ${log_range:-"-30"} --format="%s" --no-decorate)
@@ -195,6 +208,17 @@ EOF
   local generated
   generated=$(claude -p "$prompt" 2>/dev/null || true)
   generated=$(echo "$generated" | sed -e '/^```/d' -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
+
+  # HS-8439 — `claude -p` can return 200 OK with an auth/network error
+  # text on stdout (e.g. "Failed to authenticate. API Error: 403 ...").
+  # Pre-fix that string passed the empty-stdout guard and became the
+  # annotated tag message + GitHub Release body. Treat known error
+  # signatures as empty so the placeholder fallback fires.
+  if echo "$generated" | head -1 | grep -qE '^(Failed to authenticate|API Error:|Error:)'; then
+    warn "Claude draft looks like an auth/network error — falling back to placeholder."
+    warn "  First line: $(echo "$generated" | head -1)"
+    generated=""
+  fi
 
   if [[ -z "$generated" ]]; then
     warn "Claude draft was empty — falling back to placeholder."
@@ -281,10 +305,15 @@ tag_and_push() {
 
 # --- Argv parsing ---
 # Currently supports: --version X.Y.Z (override the auto-derived target
-# version). All other args are unrecognized and rejected so a typo
-# doesn't silently fall through into a default beta release.
+# version), --skip-tests (bypass the local unit-test step),
+# --notes <file> / --notes-stdin (supply pre-drafted release notes and
+# skip the nested `claude -p` call — HS-8439). All other args are
+# unrecognized and rejected so a typo doesn't silently fall through into
+# a default beta release.
 OVERRIDE_VERSION=""
 SKIP_TESTS="false"
+NOTES_OVERRIDE=""
+NOTES_SOURCE_LABEL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
@@ -303,9 +332,37 @@ while [[ $# -gt 0 ]]; do
       SKIP_TESTS="true"
       shift
       ;;
+    --notes)
+      if [[ -z "${2:-}" ]]; then
+        error "--notes requires a file path (e.g. --notes /tmp/notes.md). Use --notes-stdin to read from stdin."
+        exit 1
+      fi
+      if [[ ! -f "$2" ]]; then
+        error "--notes file not found: $2"
+        exit 1
+      fi
+      NOTES_OVERRIDE=$(cat "$2")
+      NOTES_SOURCE_LABEL="--notes $2"
+      shift 2
+      ;;
+    --notes=*)
+      notes_path="${1#--notes=}"
+      if [[ ! -f "$notes_path" ]]; then
+        error "--notes file not found: $notes_path"
+        exit 1
+      fi
+      NOTES_OVERRIDE=$(cat "$notes_path")
+      NOTES_SOURCE_LABEL="--notes=$notes_path"
+      shift
+      ;;
+    --notes-stdin)
+      NOTES_OVERRIDE=$(cat)
+      NOTES_SOURCE_LABEL="--notes-stdin"
+      shift
+      ;;
     -h|--help)
       cat <<EOF
-Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z] [--skip-tests]
+Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z] [--skip-tests] [--notes <file> | --notes-stdin]
 
 Non-interactive beta release for Hot Sheet. Matches \`npm run release:beta\`
 without prompts. By default targets the upcoming X.Y.0 (next minor from
@@ -319,16 +376,24 @@ flakes in feedback-state / lifecycle-e2e / cli.test --demo:0). Pass
 passes some other way (e.g. you just ran \`npm test\` clean in a
 separate terminal). CI re-runs everything on tag-push regardless.
 
+Release notes default to a \`claude -p\` summarization of commit subjects
+since the last tag. Pass --notes <file> (or --notes-stdin) to supply
+pre-drafted notes and skip the nested Claude invocation entirely —
+useful when running from inside another Claude session (the parent can
+draft notes directly) or when \`claude -p\` is unreachable.
+
 Examples:
   npm run release:beta:auto
   npm run release:beta:auto -- --version 0.18.0
   npm run release:beta:auto -- --skip-tests
+  npm run release:beta:auto -- --notes /tmp/notes.md
+  echo "- fix bug X" | npm run release:beta:auto -- --notes-stdin
 EOF
       exit 0
       ;;
     *)
       error "Unrecognized arg: $1"
-      error "Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z] [--skip-tests]"
+      error "Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z] [--skip-tests] [--notes <file> | --notes-stdin]"
       exit 1
       ;;
   esac
