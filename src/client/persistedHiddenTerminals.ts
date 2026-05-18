@@ -19,6 +19,7 @@
  * lifetime is per-session.
  */
 
+import type { GlobalConfig } from '../global-config.js';
 import { api } from './api.js';
 import {
   getGlobalVisibilityState,
@@ -69,7 +70,12 @@ function scheduleWrite(): void {
 async function writeNow(): Promise<void> {
   const state = getGlobalVisibilityState();
   const persistedGroupings = computePersistedGroupings(state.groupings);
-  const payload = {
+  // HS-8434 — type the PATCH body against the shared schema so a key
+  // added here without a matching schema entry is a compile error. This
+  // is exactly the gate HS-8424 needed: HS-8406 added
+  // `activeVisibilityGroupingIdByScope` to this literal but the server
+  // `DashboardConfigSchema` was untouched, so every PATCH 400'd silently.
+  const payload: Partial<GlobalConfig> = {
     dashboard: {
       visibilityGroupings: persistedGroupings,
       // HS-8406 — per-scope active grouping selections (`'dashboard'`
@@ -192,7 +198,8 @@ export function flushPendingViaKeepalive(): void {
   writeTimer = null;
   const state = getGlobalVisibilityState();
   const persistedGroupings = computePersistedGroupings(state.groupings);
-  const payload = {
+  // HS-8434 — see writeNow() comment.
+  const payload: Partial<GlobalConfig> = {
     dashboard: {
       visibilityGroupings: persistedGroupings,
       activeVisibilityGroupingIdByScope: state.activeIdByScope,

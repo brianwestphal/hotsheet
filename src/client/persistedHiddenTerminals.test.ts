@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { GlobalConfig as GlobalConfigForGateCheck } from '../global-config.js';
 import {
   _resetForTests as _resetHiddenForTests,
   addGrouping,
@@ -250,5 +251,39 @@ describe('initPersistedHiddenTerminals — idempotency (HS-8293)', () => {
     expect(patchCount).toBe(2);
     expect(serverState.dashboard?.visibilityGroupings?.[0]?.hiddenByProject?.s1?.sort())
       .toEqual(['tA', 'tB']);
+  });
+});
+
+/**
+ * HS-8434 — compile-time gate proving that a PATCH body containing a key
+ * the shared `GlobalConfig` schema does NOT know about is a type error.
+ *
+ * This is the exact gate HS-8424 needed: HS-8406 added
+ * `activeVisibilityGroupingIdByScope` to the client payload literal but
+ * left the server schema untouched, so every PATCH 400'd silently. Had
+ * `writeNow()`'s payload been typed `Partial<GlobalConfig>` at the time,
+ * HS-8406 would have failed to compile until the schema was extended.
+ *
+ * The two `@ts-expect-error` lines below are load-bearing: the runtime
+ * value of each `bad` constant is irrelevant — the assertion lives in
+ * the build. If somebody weakens the strict typing on `DashboardConfig`
+ * / `GlobalConfig`, or actually adds these specific keys to the schema,
+ * `@ts-expect-error` becomes "expected error not found" and the file
+ * fails `tsc --noEmit`. That is the regression signal.
+ */
+describe('compile-time gate against unknown PATCH-body keys (HS-8434)', () => {
+  it('runtime-noop — the real assertion is the @ts-expect-error lines below', () => {
+    // @ts-expect-error — `unknownTopLevelKey` is not in `GlobalConfigSchema`.
+    const _badTopLevel: Partial<GlobalConfigForGateCheck> = { unknownTopLevelKey: 'x' };
+    // @ts-expect-error — `unknownDashboardKey` is not in `DashboardConfigSchema`.
+    // Mirrors the exact HS-8424 / HS-8406 failure shape (a new client-side
+    // dashboard key landing without a schema entry).
+    const _badDashboard: Partial<GlobalConfigForGateCheck> = { dashboard: { unknownDashboardKey: 'x' } };
+    // Positive control — a known key compiles, proving the type isn't
+    // accidentally `any` (which would make the @ts-expect-error lines
+    // silently succeed for the wrong reason).
+    const _good: Partial<GlobalConfigForGateCheck> = { dashboard: { layoutMode: 'flow' } };
+    void _badTopLevel; void _badDashboard; void _good;
+    expect(true).toBe(true);
   });
 });

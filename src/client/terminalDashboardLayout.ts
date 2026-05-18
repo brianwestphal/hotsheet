@@ -17,6 +17,7 @@
  * `dashboardState`.
  */
 
+import type { GlobalConfig } from '../global-config.js';
 import { api } from './api.js';
 
 export type LayoutMode = 'sectioned' | 'flow';
@@ -88,10 +89,11 @@ export function setLayoutMode(next: LayoutMode, onChanged: () => void): void {
   layoutState.layoutMode = next;
   applyLayoutToggleVisualState();
   // Persist in the background — don't block the re-render on the network.
-  void api('/global-config', {
-    method: 'PATCH',
-    body: { dashboard: { layoutMode: next } },
-  }).catch(() => { /* swallow — UI flip already happened */ });
+  // HS-8434 — type the PATCH body against the shared schema so a key
+  // added here without a matching schema entry is a compile error.
+  const body: Partial<GlobalConfig> = { dashboard: { layoutMode: next } };
+  void api('/global-config', { method: 'PATCH', body })
+    .catch(() => { /* swallow — UI flip already happened */ });
   onChanged();
 }
 

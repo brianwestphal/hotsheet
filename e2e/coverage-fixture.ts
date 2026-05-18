@@ -124,9 +124,81 @@ async function resetCrossSpecSettings(request: import('@playwright/test').APIReq
   } catch { /* swallow — best-effort */ }
 }
 
+// HS-8435 — error-capture fixture. Prior to this, the entire e2e suite
+// was blind to silent client-side failures: `playwright.config.ts` had
+// no global error hook, this fixture had none either, and exactly ONE
+// spec out of ~50 (`project-tab-reorder.spec.ts:331-332`) wired
+// `page.on('console')` + `page.on('pageerror')` and even that one only
+// appended to a debug array without asserting. The HS-8424 schema-drift
+// bug was therefore invisible to every spec that ever ran against it —
+// `persistedHiddenTerminals.ts::writeNow` swallowed the 400 in a
+// `try { ... } catch { /* best-effort */ }` and Playwright never saw it.
+//
+// **Two-phase rollout (see HS-8435 details).**
+//
+// - **Phase A (default, log-only):** capture console errors / pageerrors
+//   / 4xx-5xx responses into `errors[]`, attach the array to the
+//   playwright test as an artifact via `testInfo.attach` so a CI run
+//   surfaces the findings without failing the suite. Lets us audit ~50
+//   specs across one full run and categorise each finding as (a) real
+//   bug → file ticket, (b) legitimate test scenario → add to per-test
+//   allowlist, (c) ambient noise → add to global allowlist.
+// - **Phase B (`STRICT_E2E_ERRORS=1`, opt-in):** flip the `afterEach`
+//   from log-only to `expect(errors).toEqual([])`. Specs that
+//   legitimately expect an error opt in via the `allowErrors()` helper
+//   exposed on the fixture (per-test substring allowlist). The env-flag
+//   gate lets Phase B land in CI without breaking local runs first; once
+//   the suite is stable, flip the default in this file.
+//
+// **Global allowlist.** Ambient noise the entire suite should ignore
+// regardless of spec. Add comments explaining each entry — otherwise
+// future maintainers can't tell which entries are still load-bearing.
+const GLOBAL_ERROR_ALLOWLIST: readonly (string | RegExp)[] = [
+  // `/api/poll` long-poll requests get aborted on page unload / nav, which
+  // surfaces in Playwright as a `response` event with status 0 in some
+  // edge cases AND a `console.error` from the `fetch` rejection. The poll
+  // helper already handles this — not a real failure.
+  /\/api\/poll/,
+  // Plugin sync 404s for projects that never had GitHub credentials
+  // configured. Real installations gate the call; tests don't bother.
+  /\/api\/plugins\/.+\/sync.*404/,
+  // Playwright Chromium doesn't auto-grant clipboard permissions, so the
+  // `navigator.clipboard.writeText(...)` fallback in `clipboard.ts`'s
+  // copy path rejects in test envs. The production code path is correct
+  // (the OS clipboard write succeeds when permission is granted, and
+  // pasting in the test goes through the in-memory clipboard ring, not
+  // the OS clipboard). Specs touching clipboard could request the
+  // `clipboard-write` permission, but global-allowlisting is simpler and
+  // matches the existing prior-art in `clipboard.spec.ts` where no test
+  // ever asserts against the OS clipboard contents.
+  /Failed to execute 'writeText' on 'Clipboard'/,
+];
+
+interface ErrorCaptureFixture {
+  /** Allow specific error patterns (substring or regex) to pass through
+   *  the assertion in Phase B for this single test. Add immediately at
+   *  the top of the test body. No-op in Phase A. */
+  allowErrors: (patterns: readonly (string | RegExp)[]) => void;
+}
+
+function matchesAllowlist(
+  message: string,
+  allowlist: readonly (string | RegExp)[],
+): boolean {
+  for (const p of allowlist) {
+    if (typeof p === 'string' ? message.includes(p) : p.test(message)) return true;
+  }
+  return false;
+}
+
 // Collect browser JS coverage and write V8-format JSON for c8 to process.
 // Rewrites the URL from HTTP to the local file path so c8 can find the source map.
-export const test = base.extend<{ autoJSCoverage: void; suppressUpgradeNudge: void; resetSettings: void }>({
+export const test = base.extend<{
+  autoJSCoverage: void;
+  suppressUpgradeNudge: void;
+  resetSettings: void;
+  errorCapture: ErrorCaptureFixture;
+}>({
   resetSettings: [async ({ request }, use) => {
     await resetCrossSpecSettings(request);
     await use();
@@ -134,6 +206,56 @@ export const test = base.extend<{ autoJSCoverage: void; suppressUpgradeNudge: vo
   suppressUpgradeNudge: [async ({ page }, use) => {
     await page.addInitScript(SUPPRESS_UPGRADE_NUDGE_SCRIPT);
     await use();
+  }, { auto: true }],
+  errorCapture: [async ({ page }, use, testInfo) => {
+    const errors: string[] = [];
+    const perTestAllowlist: (string | RegExp)[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() !== 'error') return;
+      errors.push(`[console.error] ${msg.text()}`);
+    });
+    page.on('pageerror', (err) => {
+      errors.push(`[pageerror] ${err.message}`);
+    });
+    page.on('response', (res) => {
+      const status = res.status();
+      if (status < 400) return;
+      errors.push(`[response ${status}] ${res.request().method()} ${res.url()}`);
+    });
+
+    const fixture: ErrorCaptureFixture = {
+      allowErrors: (patterns) => { perTestAllowlist.push(...patterns); },
+    };
+    await use(fixture);
+
+    const unexpected = errors.filter(e =>
+      !matchesAllowlist(e, GLOBAL_ERROR_ALLOWLIST) &&
+      !matchesAllowlist(e, perTestAllowlist),
+    );
+    if (unexpected.length === 0) return;
+    // Always attach so the audit pass can see what each spec produced.
+    await testInfo.attach('hs-8435-unexpected-errors', {
+      body: unexpected.join('\n'),
+      contentType: 'text/plain',
+    });
+    if (process.env.STRICT_E2E_ERRORS === '1') {
+      // Phase B — fail the test. Use a plain Error rather than `expect`
+      // so the message survives any custom `expect` formatter and the
+      // failure isn't hidden behind a diff-of-arrays render.
+      throw new Error(
+        `HS-8435 — ${unexpected.length} unexpected console/pageerror/4xx-5xx event(s) during this test ` +
+        `(set STRICT_E2E_ERRORS=0 to disable the gate):\n  ` +
+        unexpected.slice(0, 20).join('\n  ') +
+        (unexpected.length > 20 ? `\n  …and ${unexpected.length - 20} more.` : ''),
+      );
+    }
+    // Phase A (log-only) — surface to stderr but don't fail.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[hs-8435 phase-a] ${testInfo.title}: ${unexpected.length} unexpected event(s) — ` +
+      `set STRICT_E2E_ERRORS=1 to fail on these:\n  ` +
+      unexpected.slice(0, 10).join('\n  '),
+    );
   }, { auto: true }],
   autoJSCoverage: [async ({ page }, use) => {
     const coverageDir = process.env.BROWSER_V8_COVERAGE;

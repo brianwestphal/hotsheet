@@ -438,6 +438,7 @@ npm run dev              # Build client assets, then run via tsx
 npm run build            # Build to dist/cli.js
 npm test                 # Unit tests with coverage (3000+ tests)
 npm run test:e2e         # E2E browser tests (375 tests)
+STRICT_E2E_ERRORS=1 npm run test:e2e   # Fail any test with unexpected console errors / pageerrors / 4xx-5xx responses (HS-8435)
 npm run test:fast        # Unit + fast E2E (skips GitHub plugin tests)
 npm run test:all         # Merged coverage report (unit + E2E)
 npm run lint             # ESLint
@@ -446,6 +447,8 @@ npm link                 # Symlink for global 'hotsheet' command
 ```
 
 The project has comprehensive test coverage with 3000+ unit tests (vitest) and 375 Playwright E2E browser tests, plus smoke tests for production install verification.
+
+The E2E suite carries an error-capture fixture (HS-8435, `e2e/coverage-fixture.ts`) that surfaces unexpected `console.error` / `pageerror` / 4xx-5xx response events from every page. In its default Phase A mode it logs findings to stderr and attaches them to the test report without failing — letting an audit pass categorise findings before the gate goes hard. Set `STRICT_E2E_ERRORS=1` to fail any test with an unexpected event. Specs that legitimately expect an error opt in via the per-test `errorCapture.allowErrors([patterns])` fixture helper; global noise lives in the `GLOBAL_ERROR_ALLOWLIST` constant.
 
 ---
 

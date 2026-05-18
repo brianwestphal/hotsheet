@@ -16,6 +16,7 @@
  * entry point.
  */
 
+import type { GlobalConfig } from '../global-config.js';
 import { api } from './api.js';
 import {
   DEFAULT_TILES_PER_ROW,
@@ -136,9 +137,10 @@ function schedulePersistColumnCount(): void {
   if (sliderState.sliderPersistTimeout !== null) clearTimeout(sliderState.sliderPersistTimeout);
   sliderState.sliderPersistTimeout = setTimeout(() => {
     sliderState.sliderPersistTimeout = null;
-    void api('/global-config', {
-      method: 'PATCH',
-      body: { dashboard: { columnsPerRow: sliderState.columnCount } },
-    }).catch(() => { /* swallow — UI already reflects the new value */ });
+    // HS-8434 — type the PATCH body against the shared schema so a key
+    // added here without a matching schema entry is a compile error.
+    const body: Partial<GlobalConfig> = { dashboard: { columnsPerRow: sliderState.columnCount } };
+    void api('/global-config', { method: 'PATCH', body })
+      .catch(() => { /* swallow — UI already reflects the new value */ });
   }, SLIDER_PERSIST_DEBOUNCE_MS);
 }

@@ -37,7 +37,10 @@ async function accumulateAndCheck(): Promise<void> {
   try {
     const config = await api<GlobalConfig>('/global-config');
     const newTotal = (config.shareTotalSeconds ?? 0) + elapsed;
-    await api('/global-config', { method: 'PATCH', body: { shareTotalSeconds: newTotal } });
+    // HS-8434 — type the PATCH body against the shared schema so a key
+    // added here without a matching schema entry is a compile error.
+    const body: Partial<GlobalConfig> = { shareTotalSeconds: newTotal };
+    await api('/global-config', { method: 'PATCH', body });
 
     // Check if we should show the prompt
     if (config.shareAccepted === true) return;
@@ -74,7 +77,8 @@ async function dismissBanner(): Promise<void> {
   const banner = byIdOrNull('share-banner');
   if (banner) banner.style.display = 'none';
   try {
-    await api('/global-config', { method: 'PATCH', body: { shareLastPrompted: new Date().toISOString() } });
+    const body: Partial<GlobalConfig> = { shareLastPrompted: new Date().toISOString() };
+    await api('/global-config', { method: 'PATCH', body });
   } catch { /* ignore */ }
 }
 
@@ -84,10 +88,8 @@ async function handleBannerShare(): Promise<void> {
   const banner = byIdOrNull('share-banner');
   if (banner) banner.style.display = 'none';
   try {
-    await api('/global-config', {
-      method: 'PATCH',
-      body: { shareAccepted: true, shareLastPrompted: new Date().toISOString() },
-    });
+    const body: Partial<GlobalConfig> = { shareAccepted: true, shareLastPrompted: new Date().toISOString() };
+    await api('/global-config', { method: 'PATCH', body });
   } catch { /* ignore */ }
 }
 
