@@ -130,10 +130,54 @@ export async function switchProject(project: ProjectInfo): Promise<void> {
   }
 }
 
+/** **HS-8431** — secrets of the user's most recent drag-reorder, held
+ *  here while the corresponding `/api/projects/reorder` POST is in
+ *  flight (or just landed but the server's GET `/api/projects` hasn't
+ *  caught up yet). `refreshProjectTabs` re-projects the server's
+ *  response through this order before calling `setProjects`, so a
+ *  poll-driven GET that races the unawaited POST can't snap the tabs
+ *  back to their pre-drop arrangement. Cleared when the POST resolves
+ *  (success or error). */
+let pendingReorderSecrets: readonly string[] | null = null;
+
 /** Re-fetch and re-render tabs (e.g., after adding/removing a project). */
 export async function refreshProjectTabs(): Promise<void> {
   try {
-    projectsStore.actions.setProjects(await api<ProjectInfo[]>('/projects'));
+    let list = await api<ProjectInfo[]>('/projects');
+    // HS-8431 — re-sort the server response by the user's pending
+    // reorder so a GET that races the unawaited reorder POST can't
+    // visually revert the drop. The flag stays set until a GET
+    // response actually confirms the server has applied the reorder
+    // (i.e. its first N entries match `pendingReorderSecrets`). Only
+    // then is it safe to forget the pending order — clearing earlier
+    // (e.g. in the POST's `finally`) loses to in-flight GETs whose
+    // responses arrive AFTER the POST's response but with the pre-
+    // reorder server order. That was the production-only race the
+    // user kept hitting: a fast POST + a GET issued mid-POST whose
+    // response landed after the clear.
+    if (pendingReorderSecrets !== null) {
+      const matches = list.length >= pendingReorderSecrets.length
+        && pendingReorderSecrets.every((s, i) => list[i].secret === s);
+      if (matches) {
+        // Server has caught up — the reorder is fully persisted and
+        // visible. Forget the pending order so future GETs pass
+        // through verbatim (a different-from-pending order from
+        // here on represents real server state, not race lag).
+        pendingReorderSecrets = null;
+      } else {
+        const byId = new Map(list.map(p => [p.secret, p]));
+        const sorted: ProjectInfo[] = [];
+        for (const s of pendingReorderSecrets) {
+          const p = byId.get(s);
+          if (p !== undefined) sorted.push(p);
+        }
+        for (const p of list) {
+          if (!sorted.includes(p)) sorted.push(p);
+        }
+        list = sorted;
+      }
+    }
+    projectsStore.actions.setProjects(list);
   } catch {
     projectsStore.actions.setProjects([]);
   }
@@ -292,7 +336,16 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
 
 let dragSecret: string | null = null;
 let dropIndicator: HTMLElement | null = null;
-let dropTarget: { secret: string; side: 'before' | 'after' } | null = null;
+/** **HS-8432** — single insertion-index model over the visible tab strip
+ *  (0..tabs.length). Pre-fix the handler tracked `{secret, side}` per
+ *  tab, so "right half of tab N" and "left half of tab N+1" — which
+ *  represent the SAME drop position — produced two different indicator
+ *  X-coordinates (the +1 / -1 fudges around each tab's edge, plus the
+ *  4 px CSS gap, added up to a visible ~2 px jitter as the cursor
+ *  crossed the gap). Collapsing the model to one index per gap means
+ *  there is genuinely one drop spot per position; the indicator stays
+ *  put while the cursor traverses the gap. */
+let dropInsertIdx: number | null = null;
 
 function ensureDropIndicator(): HTMLElement {
   if (!dropIndicator) {
@@ -301,25 +354,40 @@ function ensureDropIndicator(): HTMLElement {
   return dropIndicator;
 }
 
-function positionIndicator(el: HTMLElement, side: 'before' | 'after') {
+/** Position the 2 px indicator at gap `insertIdx` in the visible tab
+ *  strip. Gap 0 is before the first tab; gap N is after the last; gaps
+ *  in between sit centered in the 4 px CSS gap between adjacent tabs so
+ *  "after tab N" and "before tab N+1" land on identical pixels. */
+function positionIndicator(tabs: HTMLElement[], insertIdx: number) {
+  if (tabs.length === 0) return;
   const indicator = ensureDropIndicator();
-  const container = el.closest('.project-tabs-inner');
+  const container = tabs[0].closest('.project-tabs-inner');
   if (container === null) return;
   if (!indicator.parentElement) container.appendChild(indicator);
 
   const containerRect = container.getBoundingClientRect();
-  const tabRect = el.getBoundingClientRect();
-  const x = side === 'before'
-    ? tabRect.left - containerRect.left + container.scrollLeft - 1
-    : tabRect.right - containerRect.left + container.scrollLeft + 1;
+  const indicatorWidth = indicator.offsetWidth || 2;
+  const halfWidth = indicatorWidth / 2;
 
+  let centerX: number;
+  if (insertIdx <= 0) {
+    centerX = tabs[0].getBoundingClientRect().left - 2;
+  } else if (insertIdx >= tabs.length) {
+    centerX = tabs[tabs.length - 1].getBoundingClientRect().right + 2;
+  } else {
+    const prev = tabs[insertIdx - 1].getBoundingClientRect();
+    const next = tabs[insertIdx].getBoundingClientRect();
+    centerX = (prev.right + next.left) / 2;
+  }
+
+  const x = centerX - containerRect.left + container.scrollLeft - halfWidth;
   indicator.style.left = `${x}px`;
   indicator.style.display = '';
 }
 
 function hideIndicator() {
   if (dropIndicator) dropIndicator.style.display = 'none';
-  dropTarget = null;
+  dropInsertIdx = null;
 }
 
 function handleDragStart(e: DragEvent, project: ProjectInfo) {
@@ -328,49 +396,96 @@ function handleDragStart(e: DragEvent, project: ProjectInfo) {
   (e.target as HTMLElement).classList.add('dragging');
 }
 
+/** HS-8432 — translate `(hovered tab, cursor side)` into a single gap
+ *  index in the visible tab strip. The strip is the source of truth so
+ *  every cursor position over a given gap (whether by hovering the
+ *  right half of the preceding tab or the left half of the following
+ *  tab) maps to the same insertion index. Returns null when the cursor
+ *  is over the dragged tab itself (the visible drag opacity is the
+ *  affordance for that — no indicator needed). */
+function computeInsertIdx(el: HTMLElement, clientX: number, tabs: HTMLElement[]): number | null {
+  const tabIdx = tabs.indexOf(el);
+  if (tabIdx === -1) return null;
+  if (el.dataset.secret === dragSecret) return null;
+  const rect = el.getBoundingClientRect();
+  const side = clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+  return side === 'before' ? tabIdx : tabIdx + 1;
+}
+
 function handleDragOver(e: DragEvent) {
   e.preventDefault();
   e.dataTransfer!.dropEffect = 'move';
   const el = e.currentTarget as HTMLElement;
-  const secret = el.dataset.secret;
-  if (secret === dragSecret) {
+  const container = el.parentElement;
+  if (container === null) return;
+  const tabs = Array.from(container.querySelectorAll<HTMLElement>('.project-tab'));
+  const insertIdx = computeInsertIdx(el, e.clientX, tabs);
+  if (insertIdx === null) {
     hideIndicator();
     return;
   }
-  const rect = el.getBoundingClientRect();
-  const side = e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
-  // Avoid redundant repositioning
-  if (dropTarget && dropTarget.secret === secret && dropTarget.side === side) return;
-  dropTarget = { secret: secret!, side };
-  positionIndicator(el, side);
+  if (dropInsertIdx === insertIdx) return;
+  dropInsertIdx = insertIdx;
+  positionIndicator(tabs, insertIdx);
 }
 
-function handleDrop(e: DragEvent, targetProject: ProjectInfo) {
+function handleDrop(e: DragEvent, _targetProject: ProjectInfo) {
   e.preventDefault();
+  const insertIdx = dropInsertIdx;
   hideIndicator();
-  if (dragSecret === null || dragSecret === targetProject.secret) return;
+  if (dragSecret === null || insertIdx === null) return;
 
-  // HS-8235 — immutable update so the signal write fires reactivity.
-  // Pre-fix this path mutated the array in place via two `splice` calls
-  // and called `renderTabs()` to force a rebuild; the new tab strip
-  // re-reconciles via `bindList` automatically on the signal write.
-  const next = [...projectsStore.state.value.projects];
-  const fromIdx = next.findIndex(p => p.secret === dragSecret);
-  const toIdx = next.findIndex(p => p.secret === targetProject.secret);
-  if (fromIdx === -1 || toIdx === -1) return;
+  // HS-8431 — write through the kerf `reorderProjects` action so the
+  // signal's `set(...)` contract fires and `bindList` reconciles the
+  // tab strip; direct mutation on `projectsStore.state.value.projects`
+  // doesn't change the value reference, so kerf signals never emit.
+  const current = projectsStore.state.value.projects;
+  const sourceIdx = current.findIndex(p => p.secret === dragSecret);
+  if (sourceIdx === -1) return;
+  // No-op when the gap is on either side of the dragged tab itself —
+  // the resulting order would be identical, so skip the store action
+  // and the network POST.
+  if (insertIdx === sourceIdx || insertIdx === sourceIdx + 1) return;
 
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  const side = e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
-  const [moved] = next.splice(fromIdx, 1);
-  let insertIdx = next.findIndex(p => p.secret === targetProject.secret);
-  if (side === 'after') insertIdx++;
-  next.splice(insertIdx, 0, moved);
-  projectsStore.state.value.projects = next;
+  const withoutDragged = current.filter(p => p.secret !== dragSecret);
+  // Translate strip-index → without-dragged-index. Gaps strictly to the
+  // right of the source's original position shift down by one once the
+  // source is removed.
+  const insertAt = insertIdx > sourceIdx ? insertIdx - 1 : insertIdx;
+  const orderedSecrets = [
+    ...withoutDragged.slice(0, insertAt).map(p => p.secret),
+    dragSecret,
+    ...withoutDragged.slice(insertAt).map(p => p.secret),
+  ];
+  projectsStore.actions.reorderProjects(orderedSecrets);
 
-  void api('/projects/reorder', {
-    method: 'POST',
-    body: { secrets: next.map(p => p.secret) },
-  });
+  // HS-8431 — guard against a poll-driven `refreshProjectTabs` racing
+  // ahead with a stale GET response and undoing the optimistic local
+  // update. The flag stays set until a refresh CONFIRMS the server's
+  // GET response now reflects this order — clearing on POST success
+  // alone is too early because GETs issued mid-POST can resolve AFTER
+  // the POST response with stale order, and a cleared flag means no
+  // re-projection. `refreshProjectTabs` clears the flag itself once
+  // the server's first-N entries match `orderedSecrets`. On POST
+  // failure we DO clear here, so the next refresh shows actual server
+  // state instead of pinning to an order the server never accepted.
+  pendingReorderSecrets = orderedSecrets;
+  void (async () => {
+    try {
+      await api('/projects/reorder', {
+        method: 'POST',
+        body: { secrets: orderedSecrets },
+      });
+    } catch (err) {
+      console.error('reorder POST failed:', err);
+      // Only clear if this drop is still the latest pending one —
+      // a second drop landing before this POST resolves overwrites
+      // the flag with a fresher order that must outlive this catch.
+      if (pendingReorderSecrets === orderedSecrets) {
+        pendingReorderSecrets = null;
+      }
+    }
+  })();
 }
 
 function handleDragEnd(e: DragEvent) {
@@ -526,7 +641,7 @@ function tearDownMultiTabState(): void {
  *  closure doesn't go stale across reorder. */
 function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
   const row = toElement(
-    <div className="project-tab" data-secret={p.secret} draggable={true}>
+    <div className="project-tab" data-secret={p.secret} draggable="true">
       <span className="project-tab-dot"></span>
       <span className="project-tab-name">{p.name}</span>
       <span className="project-tab-bell"></span>
@@ -617,6 +732,34 @@ function renderTabs() {
 export function _resetProjectTabsForTesting(): void {
   tearDownMultiTabState();
   projectsStore.reset();
+  pendingReorderSecrets = null;
+  dragSecret = null;
+  dropInsertIdx = null;
+  if (dropIndicator?.parentElement) dropIndicator.parentElement.removeChild(dropIndicator);
+  dropIndicator = null;
+}
+
+/** **HS-8432 — TEST ONLY.** Read the current drop-insertion gap index so
+ *  unit tests can verify that `dragover` collapses "right half of N" and
+ *  "left half of N+1" into the same insertion position without poking
+ *  at the indicator DOM. */
+export function _getDropInsertIdxForTesting(): number | null {
+  return dropInsertIdx;
+}
+
+/** **HS-8432 — TEST ONLY.** Drive a synthetic drag start so tests can
+ *  exercise `handleDragOver` / `handleDrop` without dispatching a full
+ *  DragEvent chain (happy-dom's DragEvent constructor doesn't set the
+ *  `dataTransfer` we need on `dragstart`). */
+export function _setDragSecretForTesting(secret: string | null): void {
+  dragSecret = secret;
+}
+
+/** **HS-8431 — TEST ONLY.** Drive the pending-reorder guard from a unit
+ *  test so the race-during-refresh path can be exercised without
+ *  reaching through `handleDrop`. */
+export function _setPendingReorderSecretsForTesting(secrets: readonly string[] | null): void {
+  pendingReorderSecrets = secrets;
 }
 
 /** **HS-8235 / HS-8317 — TEST ONLY.** Drive the store from a unit test
