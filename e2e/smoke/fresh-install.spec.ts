@@ -7,6 +7,13 @@ import { expect, test } from '@playwright/test';
 
 test.describe('Fresh install smoke test', () => {
   test.beforeEach(async ({ page }) => {
+    // Suppress the §50 upgrade nudge — npm-installed + empty-localStorage is
+    // exactly the state that triggers it, and the modal sits on top of every
+    // first-boot click target. Pre-seed the throttle key with the
+    // never-show-again sentinel before navigation.
+    await page.addInitScript(() => {
+      localStorage.setItem('hotsheet_upgrade_nudge_last_shown', String(Number.MAX_SAFE_INTEGER));
+    });
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 15000 });
   });
