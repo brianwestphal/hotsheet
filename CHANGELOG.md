@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.17.1] - 2026-05-20
+
+
+- Embedded terminal support - run Claude and other tools from right inside Hot Sheet
+- Terminal Dashboard view (toolbar `square-terminal` button) showing every terminal across every project as a tile grid, with click-to-magnify, double-click for a dedicateDDd full-pane view
+- Reader mode for notes and Details: distraction-free read-only overlay
+- Ticket cross-references and optimized reading
+- Custom shell command button improvements: live logging to Commands Log drawer and spinner when active
+- Search "Include backlog/archive" rows: when search has hits in normally-hidden buckets
+- "Recently Modified" sort option in the ticket list dropdown.
+- Improved database backup and repair
+- Attachment backups
+- Git status tracker
+- MCP tool surface for AI agents
+- Many improvements around feedback requests
+- Unsolicited-feedback megaphone on every user-authored note (when the channel is enabled) to push the note's content to Claude on demand.
+- "Read Latest Note" right-click menu item; "Move to Open" right-click item for backlog tickets; "Provide Feedback" right-click item for tickets with a pending FEEDBACK NEEDED note.
+- Cross-project feedback indicator: project tabs light purple when any ticket in that project has an open FEEDBACK NEEDED prompt (excluding backlog/archive/trash).
+- List-view pagination
+- A ton of UX improvements and bug fixes
+
 ## [0.17.0] - 2026-05-19
 
 
