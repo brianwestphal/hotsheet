@@ -211,4 +211,43 @@ describe('computeIsEntryPoint', () => {
     expect(computeIsEntryPoint(undefined, 'file:///x/cli.js')).toBe(false);
     expect(computeIsEntryPoint('', 'file:///x/cli.js')).toBe(false);
   });
+
+  // HS-8457 — when `npm install -g hotsheet` puts a symlink at
+  // /usr/local/bin/hotsheet pointing at the real cli.js,
+  // `process.argv[1]` is the symlink path but `import.meta.url` is the
+  // resolved real path. Pre-fix the equality check failed, `main()` never
+  // ran, and the CLI exited cleanly with code 0 and no output — caught
+  // for the first time by the smoke tests against v0.17.0-rc.1.
+  it('matches an npm-installed symlink (argv[1] is the bin shim)', () => {
+    const fakeRealpath = (p: string): string => {
+      if (p === '/usr/local/bin/hotsheet') return '/usr/local/lib/node_modules/hotsheet/dist/cli.js';
+      return p;
+    };
+    expect(computeIsEntryPoint(
+      '/usr/local/bin/hotsheet',
+      'file:///usr/local/lib/node_modules/hotsheet/dist/cli.js',
+      fakeRealpath,
+    )).toBe(true);
+  });
+
+  it('still returns false when the realpath resolves to an unrelated file', () => {
+    const fakeRealpath = (p: string): string => {
+      if (p === '/usr/local/bin/other-tool') return '/some/other/path.js';
+      return p;
+    };
+    expect(computeIsEntryPoint(
+      '/usr/local/bin/other-tool',
+      'file:///usr/local/lib/node_modules/hotsheet/dist/cli.js',
+      fakeRealpath,
+    )).toBe(false);
+  });
+
+  it('tolerates realpath throwing (e.g. dangling symlink)', () => {
+    const throwingRealpath = (): string => { throw new Error('ENOENT'); };
+    expect(computeIsEntryPoint(
+      '/usr/local/bin/hotsheet',
+      'file:///usr/local/lib/node_modules/hotsheet/dist/cli.js',
+      throwingRealpath,
+    )).toBe(false);
+  });
 });

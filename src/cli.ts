@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { execFile } from 'child_process';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
@@ -516,23 +516,40 @@ async function main() {
   }
 }
 
-// HS-7934 — only run `main()` when this file is the actual entry point.
-// Without the guard, importing `cli.js` from a unit test (e.g. to grab
-// `createSignalHandler`) triggers the full Hot Sheet startup + a process
-// exit from inside the vitest worker. The check matches both raw `node`
-// invocation and `tsx` (which preserves `process.argv[1]`).
+// HS-7934 / HS-8457 — only run `main()` when this file is the actual entry
+// point. Without the guard, importing `cli.js` from a unit test (e.g. to
+// grab `createSignalHandler`) triggers the full Hot Sheet startup + a
+// process exit from inside the vitest worker. The check matches three
+// invocation shapes:
+//   1. Raw `node /path/to/cli.js` — argv[1] equals import.meta.url.
+//   2. tsx `tsx src/cli.ts` — paths preserved, basename .ts match.
+//   3. npm-installed CLI symlink (`npm install -g hotsheet` → `hotsheet`).
+//      argv[1] is `/usr/local/bin/hotsheet` but import.meta.url resolves
+//      to the real path `/usr/local/lib/node_modules/hotsheet/dist/cli.js`.
+//      Resolve argv[1] through realpath to compare against the real path.
 //
-// Exported pure helper so this can be unit-tested without spawning. The
-// raw `file://${entry}` compare used before was a bug: `import.meta.url`
-// percent-encodes path characters (spaces → %20) while `process.argv[1]`
-// does not, so an .app installed at `/Applications/Hot Sheet.app/...` (or
-// any path with a URL-reserved character) failed the equality check,
-// `main()` never ran, and the sidecar exited cleanly with code 0 and no
-// output. Comparing through `pathToFileURL` normalizes the encoding.
-export function computeIsEntryPoint(argv1: string | undefined, importMetaUrl: string): boolean {
+// Three historical failure modes this guards against — all silent exit 0:
+//   - URL-reserved characters in the path (`/Applications/Hot Sheet.app/`)
+//     — fixed by routing both sides through `pathToFileURL` for consistent
+//     percent-encoding.
+//   - npm global install symlink — fixed by the realpath branch below.
+//   - tsx invocation — basename `/cli.ts` match.
+export function computeIsEntryPoint(
+  argv1: string | undefined,
+  importMetaUrl: string,
+  resolveRealpath: (p: string) => string = realpathSync,
+): boolean {
   try {
     if (typeof argv1 !== 'string' || argv1 === '') return false;
     if (importMetaUrl === pathToFileURL(argv1).href) return true;
+    // npm install -g hotsheet creates a symlink at /usr/local/bin/hotsheet
+    // → /usr/local/lib/node_modules/hotsheet/dist/cli.js. argv[1] is the
+    // symlink path; import.meta.url is the resolved real path. Resolve
+    // argv[1] through realpath and retry the URL comparison.
+    try {
+      const real = resolveRealpath(argv1);
+      if (real !== argv1 && importMetaUrl === pathToFileURL(real).href) return true;
+    } catch { /* realpath throws if the path doesn't exist — fall through */ }
     // tsx normalises paths but keeps the .ts extension; allow basename match.
     return importMetaUrl.endsWith('/cli.ts') && argv1.endsWith('/cli.ts');
   } catch {

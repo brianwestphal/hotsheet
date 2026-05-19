@@ -149,17 +149,43 @@ jobs:
       - run: npx playwright install chromium --with-deps
 
       - name: Install beta globally and start server
+        # HS-8457 — capture server stdout/stderr to a log file and poll for
+        # readiness instead of `sleep 5`. Pre-fix the server's output was
+        # eaten by `&` and a silent exit (HS-8422 isEntryPoint regression on
+        # the npm symlink) looked identical to a slow boot — ERR_CONNECTION_REFUSED
+        # in Playwright with zero diagnostic in the CI log.
         run: |
           for i in 1 2 3 4 5; do
             npm install -g hotsheet@${{ needs.beta-publish.outputs.rc_version }} && break
             echo "Attempt $i failed, waiting 15s for npm registry propagation..."
             sleep 15
           done
-          hotsheet --data-dir /tmp/smoke-fresh --no-open --port 4195 &
-          sleep 5
+          hotsheet --data-dir /tmp/smoke-fresh --no-open --port 4195 > /tmp/hotsheet-fresh.log 2>&1 &
+          HS_PID=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4195/ > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              exit 0
+            fi
+            if ! kill -0 $HS_PID 2>/dev/null; then
+              echo "::error::Server process died before binding to port 4195"
+              echo "--- server log ---"
+              cat /tmp/hotsheet-fresh.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::Server did not bind to port 4195 within 30s"
+          echo "--- server log ---"
+          cat /tmp/hotsheet-fresh.log
+          exit 1
 
       - name: Run fresh install smoke tests
         run: SMOKE_PORT=4195 npx playwright test --config playwright.config.smoke.ts e2e/smoke/fresh-install.spec.ts
+
+      - name: Dump server log on failure
+        if: failure()
+        run: cat /tmp/hotsheet-fresh.log 2>/dev/null || echo "no log"
 
       - name: Stop server
         if: always()
@@ -178,8 +204,15 @@ jobs:
       - name: Install stable version and seed data
         run: |
           npm install -g hotsheet
-          hotsheet --data-dir /tmp/smoke-upgrade --no-open --port 4195 &
-          sleep 5
+          hotsheet --data-dir /tmp/smoke-upgrade --no-open --port 4195 > /tmp/hotsheet-stable.log 2>&1 &
+          HS_PID=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4195/ > /dev/null 2>&1; then break; fi
+            if ! kill -0 $HS_PID 2>/dev/null; then
+              echo "::error::Stable hotsheet died before binding"; cat /tmp/hotsheet-stable.log; exit 1
+            fi
+            sleep 1
+          done
           bash scripts/seed-upgrade-data.sh 4195
           kill $(lsof -ti:4195) 2>/dev/null || true
           sleep 2
@@ -191,11 +224,34 @@ jobs:
             echo "Attempt $i failed, waiting 15s for npm registry propagation..."
             sleep 15
           done
-          hotsheet --data-dir /tmp/smoke-upgrade --no-open --port 4195 &
-          sleep 5
+          hotsheet --data-dir /tmp/smoke-upgrade --no-open --port 4195 > /tmp/hotsheet-upgrade.log 2>&1 &
+          HS_PID=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4195/ > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              exit 0
+            fi
+            if ! kill -0 $HS_PID 2>/dev/null; then
+              echo "::error::Server process died before binding to port 4195"
+              echo "--- server log ---"
+              cat /tmp/hotsheet-upgrade.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::Server did not bind to port 4195 within 30s"
+          echo "--- server log ---"
+          cat /tmp/hotsheet-upgrade.log
+          exit 1
 
       - name: Run upgrade smoke tests
         run: SMOKE_PORT=4195 npx playwright test --config playwright.config.smoke.ts e2e/smoke/upgrade-install.spec.ts
+
+      - name: Dump server log on failure
+        if: failure()
+        run: |
+          echo "--- stable log ---"; cat /tmp/hotsheet-stable.log 2>/dev/null || echo "(none)"
+          echo "--- upgrade log ---"; cat /tmp/hotsheet-upgrade.log 2>/dev/null || echo "(none)"
 
       - name: Stop server
         if: always()

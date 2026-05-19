@@ -7,12 +7,23 @@ name: Release Beta
 # `releases/latest` skips prereleases automatically).
 #
 # Differences from release-candidate.yml:
-# - No smoke-fresh / smoke-upgrade phases (betas are opt-in; users testing them
-#   are expected to surface issues themselves).
 # - No promote phase, no workflow_dispatch to release-desktop.yml.
 # - Tauri bundles are uploaded directly to the GH Release inside this workflow,
 #   not via the separate release-desktop.yml flow (which hardcodes
 #   `prerelease: false`).
+#
+# HS-8458 — every beta cut runs the same smoke matrix as the RC (treat every
+# beta as if it could be promoted to production), since betas have shipped
+# regressions that only the smoke tests would catch (HS-8457 / HS-8422 was
+# the trigger: 24 betas + an RC silently exited on the npm-install symlink
+# path without anyone noticing — the RC workflow's smoke jobs caught it but
+# only at promote-time, by which point we'd already eaten the cycle to get
+# there). Smoke jobs run AFTER beta-publish so the build artifact always
+# exists for debugging even when smoke fails — the workflow goes red and
+# the maintainer can yank `--tag beta` manually if needed. The upgrade
+# test is `latest production stable → new beta` (NOT beta-to-beta — users
+# on a beta are already opted into the experimental track; the path that
+# actually matters is the stable user trying out a beta).
 
 permissions:
   contents: write
@@ -341,3 +352,127 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.target }}${{ matrix.target == 'x86_64-pc-windows-msvc' && ' --bundles nsis' || '' }}
+
+  # --- Phase 5: Smoke tests against the just-published beta (HS-8458) ---
+  #
+  # Same shape as release-candidate.yml's smoke phases. The boot block uses
+  # the HS-8457 ready-poll pattern (capture stdout, poll `/` for up to 30s,
+  # dump the log on failure) so a future silent-exit regression is visible
+  # in the CI log instead of looking like a slow boot.
+
+  smoke-fresh:
+    needs: beta-publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+
+      - name: Install beta globally and start server
+        run: |
+          for i in 1 2 3 4 5; do
+            npm install -g hotsheet@${{ needs.create-release.outputs.beta_version }} && break
+            echo "Attempt $i failed, waiting 15s for npm registry propagation..."
+            sleep 15
+          done
+          hotsheet --data-dir /tmp/smoke-fresh --no-open --port 4195 > /tmp/hotsheet-fresh.log 2>&1 &
+          HS_PID=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4195/ > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              exit 0
+            fi
+            if ! kill -0 $HS_PID 2>/dev/null; then
+              echo "::error::Server process died before binding to port 4195"
+              echo "--- server log ---"
+              cat /tmp/hotsheet-fresh.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::Server did not bind to port 4195 within 30s"
+          echo "--- server log ---"
+          cat /tmp/hotsheet-fresh.log
+          exit 1
+
+      - name: Run fresh install smoke tests
+        run: SMOKE_PORT=4195 npx playwright test --config playwright.config.smoke.ts e2e/smoke/fresh-install.spec.ts
+
+      - name: Dump server log on failure
+        if: failure()
+        run: cat /tmp/hotsheet-fresh.log 2>/dev/null || echo "no log"
+
+      - name: Stop server
+        if: always()
+        run: kill $(lsof -ti:4195) 2>/dev/null || true
+
+  smoke-upgrade:
+    needs: beta-publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+
+      # Upgrade path: latest production stable → new beta. `npm install -g
+      # hotsheet` (no version) resolves the `latest` dist-tag, which is the
+      # current production release; the `beta` dist-tag is separate.
+      - name: Install stable version and seed data
+        run: |
+          npm install -g hotsheet
+          hotsheet --data-dir /tmp/smoke-upgrade --no-open --port 4195 > /tmp/hotsheet-stable.log 2>&1 &
+          HS_PID=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4195/ > /dev/null 2>&1; then break; fi
+            if ! kill -0 $HS_PID 2>/dev/null; then
+              echo "::error::Stable hotsheet died before binding"; cat /tmp/hotsheet-stable.log; exit 1
+            fi
+            sleep 1
+          done
+          bash scripts/seed-upgrade-data.sh 4195
+          kill $(lsof -ti:4195) 2>/dev/null || true
+          sleep 2
+
+      - name: Upgrade to beta and start server
+        run: |
+          for i in 1 2 3 4 5; do
+            npm install -g hotsheet@${{ needs.create-release.outputs.beta_version }} && break
+            echo "Attempt $i failed, waiting 15s for npm registry propagation..."
+            sleep 15
+          done
+          hotsheet --data-dir /tmp/smoke-upgrade --no-open --port 4195 > /tmp/hotsheet-upgrade.log 2>&1 &
+          HS_PID=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4195/ > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              exit 0
+            fi
+            if ! kill -0 $HS_PID 2>/dev/null; then
+              echo "::error::Server process died before binding to port 4195"
+              echo "--- server log ---"
+              cat /tmp/hotsheet-upgrade.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::Server did not bind to port 4195 within 30s"
+          echo "--- server log ---"
+          cat /tmp/hotsheet-upgrade.log
+          exit 1
+
+      - name: Run upgrade smoke tests
+        run: SMOKE_PORT=4195 npx playwright test --config playwright.config.smoke.ts e2e/smoke/upgrade-install.spec.ts
+
+      - name: Dump server log on failure
+        if: failure()
+        run: |
+          echo "--- stable log ---"; cat /tmp/hotsheet-stable.log 2>/dev/null || echo "(none)"
+          echo "--- upgrade log ---"; cat /tmp/hotsheet-upgrade.log 2>/dev/null || echo "(none)"
+
+      - name: Stop server
+        if: always()
+        run: kill $(lsof -ti:4195) 2>/dev/null || true
