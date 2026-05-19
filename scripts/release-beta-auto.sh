@@ -203,10 +203,17 @@ Commits:
 ${commit_log}
 EOF
 )
+  # HS-8453 — pipe the prompt via stdin instead of as a positional argv so a
+  # commit-log spike (e.g. a long gap between betas where the diff balloons
+  # to 100+ commits) doesn't run into the kernel's ARG_MAX (1 MB on macOS).
+  # Betas in practice are 5–20 commits so this is defense-in-depth, but the
+  # cost is zero and it keeps the two release scripts symmetric with the
+  # stable path in release.sh::step_release_notes.
+  #
   # Same post-processing as release.sh: strip code-fence wrappers, strip
   # leading/trailing blank lines.
   local generated
-  generated=$(claude -p "$prompt" 2>/dev/null || true)
+  generated=$(printf '%s' "$prompt" | claude -p 2>/dev/null || true)
   generated=$(echo "$generated" | sed -e '/^```/d' -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
 
   # HS-8439 — `claude -p` can return 200 OK with an auth/network error

@@ -26,6 +26,7 @@ import {
   peekPending,
 } from './channelPermissions.js';
 import { maybeUnlinkPortFile, writeChannelInfo } from './channelPortFile.js';
+import { installPortFileWatcher } from './channelPortFileWatcher.js';
 import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
 
 // HS-8346 — bumped from 4 → 5 for the new MCP tool surface (tools/list +
@@ -400,6 +401,11 @@ function notifyMainServer(abortSignal?: AbortSignal): Promise<void> {
 // registration. Null until the http server has bound and reported its port.
 let myPort: number | null = null;
 
+// HS-8455 — dispose handle for the self-heal port-file watcher. Captured
+// at install time in the `httpServer.listen` callback below; cleared in
+// `cleanup()` so the timer doesn't keep the event loop alive after exit.
+let disposePortFileWatcher: (() => void) | null = null;
+
 // HS-8454 (revised after 2026-05-19 incident) — earlier drafts of this ticket
 // added a startup-time collision lock: if `isExistingChannelAlive(dataDir)`
 // returned true, the new channel-server process would exit cleanly so its
@@ -424,20 +430,34 @@ httpServer.listen(0, '127.0.0.1', () => {
   if (addr !== null && typeof addr !== 'string') {
     const port = addr.port;
     myPort = port;
+    // HS-8454 — JSON shape carrying full ownership identity. The
+    // `readChannelInfo` reader accepts BOTH this shape and the legacy
+    // bare-number format that older clusters wrote, so a downgrade is
+    // safe in either direction during a single upgrade window.
+    const myInfo = {
+      port,
+      pid: process.pid,
+      slug: serverSlug,
+      startedAt: processStartedAt,
+    };
     try {
-      // HS-8454 — JSON shape carrying full ownership identity. The
-      // `readChannelInfo` reader accepts BOTH this shape and the legacy
-      // bare-number format that older clusters wrote, so a downgrade is
-      // safe in either direction during a single upgrade window.
-      writeChannelInfo(portFile, {
-        port,
-        pid: process.pid,
-        slug: serverSlug,
-        startedAt: processStartedAt,
-      });
+      writeChannelInfo(portFile, myInfo);
     } catch {
       // data dir may not exist yet
     }
+    // HS-8455 — self-heal poll. If a transient sibling process wipes /
+    // overwrites our port file (the captured HS-8452 trace), or the user
+    // manually `rm`'s it, this 5-second tick re-writes our identity and
+    // wakes the main server's `isChannelAlive` poll. Livelock guard caps
+    // rewrites at 5/min to avoid hot-spinning. Dispose handle stored at
+    // module scope so `cleanup()` can clear it.
+    disposePortFileWatcher = installPortFileWatcher({
+      portFile,
+      info: myInfo,
+      intervalMs: 5_000,
+      log: (event, details) => channelLog.log(event, details),
+      notify: () => { void notifyMainServer(); },
+    });
     // Log to stderr (stdout is reserved for MCP stdio transport)
     process.stderr.write(`${serverName} listening on port ${port}\n`);
     channelLog.log('http-listen', `port=${port}`);
@@ -458,10 +478,25 @@ const heartbeatInterval = setInterval(() => {
 // own — if every other event-loop hook drains, we should still exit.
 heartbeatInterval.unref();
 
+// HS-8455 — re-entrancy guard. SIGTERM + the stdio-disconnect watcher
+// can fire near-simultaneously; without this, both call `cleanup()` and
+// we race two near-simultaneous `process.exit(0)` calls + double
+// notifications. The first caller wins; subsequent callers no-op.
+let cleanupInFlight = false;
+
 // Cleanup on exit
 async function cleanup(reason: string = 'unspecified') {
+  if (cleanupInFlight) return;
+  cleanupInFlight = true;
   channelLog.log('cleanup-start', `reason=${reason}`);
   clearInterval(heartbeatInterval);
+  // HS-8455 — stop the self-heal watcher before we unlink the port file,
+  // otherwise the watcher's next tick could rewrite the file we just
+  // deleted (cleanup unlinks → 5s later watcher sees missing → rewrites).
+  if (disposePortFileWatcher !== null) {
+    disposePortFileWatcher();
+    disposePortFileWatcher = null;
+  }
   // HS-8452 — only delete the port file if it still points at THIS
   // process. Pre-fix the unconditional `unlinkSync` would wipe a sibling
   // process's registration whenever a transient second channel server

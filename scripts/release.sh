@@ -295,33 +295,69 @@ step_release_notes() {
 
   local commit_log
   commit_log=$(git log ${log_range:-"-30"} --format="%s" --no-decorate)
+  local commit_count
+  commit_count=$(echo "$commit_log" | grep -c '^' || echo "0")
 
-  # Ask Claude to draft a SHORT, user-facing bullet list from the commit
-  # subjects. We only use the subjects (not the bodies) because this repo's
-  # bodies are intentionally very long dev diaries — the subjects already
-  # encode enough scope for a release-notes summary.
+  # HS-8453 — branch the prompt body on BETA_MODE. A beta cycle diffs against
+  # the immediately-previous tag (5–20 commits typically) and wants a tight
+  # 5–10-bullet summary so each beta's notes don't repeat the prior one's.
+  # A stable cut diffs against the last PRODUCTION tag, which over a v0.X
+  # → v0.X+1 cycle can be 200+ commits totalling 1 MB of subject text; the
+  # tight beta budget instructs the model to drop ~95% of the content, so
+  # the stable prompt asks for a much wider, section-grouped summary plus
+  # tells the model how many commits it's summarizing so it self-paces.
   local generated=""
   if command -v claude &>/dev/null; then
-    info "Drafting release notes with Claude (commits since ${last_tag:-last 30})..."
+    info "Drafting release notes with Claude (${commit_count} commits since ${last_tag:-last 30})..."
     local prompt
-    prompt=$(cat <<EOF
-Draft release notes for Hot Sheet (a developer-focused CLI project management tool) from the commit subjects below.
-
-Rules:
+    local beta_rules
+    beta_rules="Rules:
 - Output ONLY markdown bullets — no heading, no preamble, no closing remarks.
 - Each bullet is ONE short line (~80 chars max), user-facing.
 - Group related changes into single bullets.
 - INCLUDE: new features, UX improvements, bug fixes, breaking changes — anything a user upgrading would notice.
 - EXCLUDE: ticket IDs (HS-NNNN), internal refactors, test additions, doc-only changes, implementation rationale, build/CI tweaks.
-- Aim for 5–10 bullets total. Fewer is better.
+- Aim for 5–10 bullets total. Fewer is better."
+    local stable_rules
+    stable_rules="This is a STABLE release summarizing ${commit_count} commits since the last production release ${last_tag:-HEAD~30}. Be thorough — these notes will land in CHANGELOG.md.
+
+Rules:
+- Group bullets under H2 markdown headings: \"## New features\", \"## UX improvements\", \"## Bug fixes\", \"## Performance\", \"## Developer-facing\". Omit any heading whose section is empty.
+- Each bullet is ONE short line (~80 chars max), user-facing.
+- Group several related commits into single bullets when they cover the same feature area.
+- INCLUDE: new features, UX improvements, bug fixes, breaking changes, performance improvements, notable refactors that change user-observable behavior.
+- EXCLUDE: ticket IDs (HS-NNNN), pure internal refactors, test-only additions, doc-only changes, implementation rationale, build/CI tweaks.
+- For a ${commit_count}-commit release cycle aim for 15–40 total bullets, scaled to the volume of user-visible work. Don't pad — if a section has nothing user-facing, drop it. Don't under-deliver either — a stable release of this size shouldn't summarize down to 5 bullets."
+    local body
+    if [[ "${BETA_MODE:-false}" == "true" ]]; then
+      body="$beta_rules"
+    else
+      body="$stable_rules"
+    fi
+    prompt="Draft release notes for Hot Sheet (a developer-focused CLI project management tool) from the commit subjects below.
+
+${body}
 
 Commits:
-${commit_log}
-EOF
-)
-    generated=$(claude -p "$prompt" 2>/dev/null || true)
+${commit_log}"
+    # HS-8453 — pipe the prompt via stdin instead of "claude -p \$prompt" so
+    # we don't blow past ARG_MAX (1 MB on macOS — a stable cycle's
+    # commit-subject volume is regularly 900 KB+, putting the positional-arg
+    # form right at the kernel's E2BIG cliff with truncation observed in
+    # the wild).
+    generated=$(printf '%s' "$prompt" | claude -p 2>/dev/null || true)
     # Strip leading/trailing blank lines + any stray code-fence wrappers
     generated=$(echo "$generated" | sed -e '/^```/d' -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
+    # HS-8453 / HS-8439 — `claude -p` can return 200 OK with an auth/network
+    # error printed to stdout (e.g. "Failed to authenticate. API Error: 403
+    # ..."). Pre-fix that text would pass the empty-stdout guard below and
+    # become the CHANGELOG entry / annotated tag body. Treat known error
+    # signatures as empty so the placeholder fallback fires instead.
+    if echo "$generated" | head -1 | grep -qE '^(Failed to authenticate|API Error:|Error:)'; then
+      warn "Claude draft looks like an auth/network error — opening blank editor."
+      warn "  First line: $(echo "$generated" | head -1)"
+      generated=""
+    fi
   fi
 
   local initial
