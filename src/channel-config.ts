@@ -3,6 +3,8 @@ import { basename, dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
+import { appendMainServerEvent } from './channelLog.js';
+import { readChannelInfo } from './channelPortFile.js';
 import { syncClaudeAllowRule, unsyncClaudeAllowRule } from './claude-allow-rule.js';
 
 const McpConfigSchema = z.object({
@@ -168,15 +170,12 @@ export function unregisterChannelForAll(dataDirs: string[]): void {
   }
 }
 
-/** Read the channel port from the port file */
+/** Read the channel port from the port file. Thin wrapper over the richer
+ *  `readChannelInfo` from `channelPortFile.ts` (HS-8454) — preserved for
+ *  the many existing callers that only care about the port number. */
 export function getChannelPort(dataDir: string): number | null {
-  try {
-    const portStr = readFileSync(join(dataDir, 'channel-port'), 'utf-8').trim();
-    const port = parseInt(portStr, 10);
-    return isNaN(port) ? null : port;
-  } catch {
-    return null;
-  }
+  const info = readChannelInfo(join(dataDir, 'channel-port'));
+  return info === null ? null : info.port;
 }
 
 /** Clean up stale channel port files (dead servers only).
@@ -185,12 +184,21 @@ export function getChannelPort(dataDir: string): number | null {
  *  Called on app startup. */
 export async function cleanupStaleChannel(dataDir: string): Promise<void> {
   const port = getChannelPort(dataDir);
-  if (port === null) return;
+  if (port === null) {
+    // HS-8456 — record the outcome so a `tail -f mcp.log` session can see
+    // the main server's startup decision tree without re-running the
+    // probe by hand.
+    appendMainServerEvent(dataDir, 'cleanup-stale-channel', 'result=no-port-file');
+    return;
+  }
 
   const alive = await isChannelAlive(dataDir);
   if (!alive) {
     // Port file exists but server is dead — clean up the stale port file
     try { unlinkSync(join(dataDir, 'channel-port')); } catch { /* ignore */ }
+    appendMainServerEvent(dataDir, 'cleanup-stale-channel', `result=unlinked port=${String(port)}`);
+  } else {
+    appendMainServerEvent(dataDir, 'cleanup-stale-channel', `result=left-alive port=${String(port)}`);
   }
   // If alive, leave it alone — it's connected to Claude Code
 }
@@ -206,9 +214,26 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
  *  duplicate_tickets / batch / edit_note / delete_note / query_tickets).
  *  HS-8349 — bumped from 6 → 7 for the Phase 4 multi-project tool naming
  *  (`.mcp.json` key + `Server({name})` are now per-project `hotsheet-channel-<slug>`).
+ *  HS-8454 — bumped from 7 → 8 for the richer `/health` echo body
+ *  (`{ok, version, pid, slug, startedAt}`) + the port-file JSON shape.
+ *  Users on a v7 channel server see the "reconnect via `/mcp`" prompt
+ *  when the main server boots with v8; reconnecting respawns the
+ *  channel server at the new version.
  *  Users who have the channel registered will see a "reconnect via `/mcp`"
  *  prompt when the main server boots with the newer version. */
-const EXPECTED_CHANNEL_VERSION = 7;
+const EXPECTED_CHANNEL_VERSION = 8;
+
+/** HS-8454 — shape of the `/health` response body the channel server
+ *  returns. `pid` / `slug` / `startedAt` are present only on v8+; on a v7
+ *  channel server probing across the upgrade window, they're `undefined`
+ *  and the consumer falls back to a port-only liveness check. */
+interface ChannelHealthBody {
+  ok?: boolean;
+  version?: number;
+  pid?: number;
+  slug?: string;
+  startedAt?: string;
+}
 
 /** Check if the running channel server's version matches the expected version.
  *  Returns null if no channel, true if matching, false if mismatched. */
@@ -236,14 +261,38 @@ export async function shutdownChannel(dataDir: string): Promise<void> {
   try { unlinkSync(join(dataDir, 'channel-port')); } catch { /* ignore */ }
 }
 
-/** Check if the channel server is reachable */
+/** Check if the channel server is reachable AND is the owner of the port
+ *  file (HS-8454 — the `/health` echo includes pid + slug; the response
+ *  must match the port file's recorded identity).
+ *
+ *  Returns `false` when:
+ *   - no port file exists
+ *   - `/health` is unreachable / non-JSON / `ok !== true`
+ *   - the echo's pid or slug doesn't match the port file's recorded
+ *     identity (covers the "kernel reassigned our port to an unrelated
+ *     process" case + the "different project's channel server bound to
+ *     the same port" case)
+ *
+ *  Returns `true` when the port file is legacy (pid / slug = null —
+ *  pre-v0.17.x) AND the `/health` response is OK. We can't verify identity
+ *  in the back-compat case but a v7 channel server's positive `/health`
+ *  response is still a useful signal.
+ */
 export async function isChannelAlive(dataDir: string): Promise<boolean> {
-  const port = getChannelPort(dataDir);
-  if (port === null) return false;
+  const info = readChannelInfo(join(dataDir, 'channel-port'));
+  if (info === null) return false;
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/health`);
-    const data = await res.json() as { ok: boolean };
-    return data.ok;
+    const res = await fetch(`http://127.0.0.1:${info.port}/health`);
+    if (!res.ok) return false;
+    const data = await res.json() as ChannelHealthBody;
+    if (data.ok !== true) return false;
+    // HS-8454 — identity verification when both sides carry pid / slug.
+    // Legacy port files (pid === null) fall back to "any OK /health is
+    // good enough." Legacy /health bodies (pid === undefined) fall back
+    // similarly — we can't verify what the server doesn't echo.
+    if (info.pid !== null && data.pid !== undefined && info.pid !== data.pid) return false;
+    if (info.slug !== null && data.slug !== undefined && info.slug !== data.slug) return false;
+    return true;
   } catch {
     return false;
   }

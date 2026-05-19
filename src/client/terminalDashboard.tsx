@@ -1,4 +1,5 @@
 import { api, apiWithSecret } from './api.js';
+import { setAppTitle, setAppTitleFromActiveProject } from './appTitle.js';
 import { subscribeToBellState } from './bellPoll.js';
 import {
   applyHideButtonBadge,
@@ -235,6 +236,8 @@ export function isDashboardActive(): boolean {
 export function exitDashboard(): void {
   if (!dashboardState.active) return;
   dashboardState.active = false;
+  // HS-8451 — back to the active project's view, so restore its name.
+  setAppTitleFromActiveProject();
   document.body.classList.remove(BODY_CLASS);
   teardownAllHandles();
   if (dashboardState.rootElement !== null) {
@@ -315,6 +318,10 @@ function enterDashboard(): void {
   restoreTicketList();
   closeDetail();
   dashboardState.active = true;
+  // HS-8451 — the terminal dashboard is a cross-project view; while it's
+  // active the project-name title is misleading. "Terminals" matches the
+  // label on the toggle button + the sidebar widget label.
+  setAppTitle('Terminals');
   document.body.classList.add(BODY_CLASS);
   if (dashboardState.toggleButton !== null) dashboardState.toggleButton.classList.add('active');
   if (dashboardState.sizerContainer !== null) dashboardState.sizerContainer.style.display = '';

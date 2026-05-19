@@ -42,6 +42,7 @@
  *    visually separated in the file.
  */
 import { appendFileSync, renameSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface ChannelLogger {
   /** Append a structured event line to the log file. */
@@ -51,11 +52,23 @@ export interface ChannelLogger {
 /** Maximum size before the active log is rotated to `<path>.old`. */
 export const CHANNEL_LOG_MAX_BYTES = 1_048_576;
 
+/** Options for `createChannelLogger`. */
+export interface ChannelLoggerOptions {
+  /** Optional label appended after the pid in the line prefix.
+   *  HS-8456 — main-server callers pass `'main'` so their entries appear
+   *  as `[pid 4174 main]` and stay visually distinct from the channel
+   *  server's own `[pid 12964]` entries when both write to the same
+   *  `<dataDir>/mcp.log`. Default `undefined` preserves the legacy
+   *  `[pid <n>]` shape. */
+  pidLabel?: string;
+}
+
 /** Build a logger that writes to `<dataDir>/mcp.log`. The logger is
  *  best-effort — every filesystem error is swallowed so the channel
  *  server never crashes because the log path went away. */
-export function createChannelLogger(logPath: string): ChannelLogger {
+export function createChannelLogger(logPath: string, options: ChannelLoggerOptions = {}): ChannelLogger {
   let injectedBlankLine = false;
+  const pidSuffix = options.pidLabel !== undefined && options.pidLabel !== '' ? ` ${options.pidLabel}` : '';
   return {
     log(event: string, details?: string): void {
       try {
@@ -70,12 +83,44 @@ export function createChannelLogger(logPath: string): ChannelLogger {
         // makes successive lifetimes easy to spot in `tail` output.
         const prefix = !injectedBlankLine && size > 0 ? '\n' : '';
         injectedBlankLine = true;
-        appendFileSync(logPath, `${prefix}[${ts}] [pid ${process.pid}] ${event}:${detailsText}\n`, 'utf-8');
+        appendFileSync(logPath, `${prefix}[${ts}] [pid ${process.pid}${pidSuffix}] ${event}:${detailsText}\n`, 'utf-8');
       } catch {
         // Log writes must never crash the channel server.
       }
     },
   };
+}
+
+/** HS-8456 — per-dataDir main-server logger cache. The main server has
+ *  one process for many projects (each with its own dataDir); reusing a
+ *  single logger per dataDir avoids re-doing the blank-separator
+ *  injection on every event. */
+const mainServerLoggers = new Map<string, ChannelLogger>();
+
+/** HS-8456 — append a single event to `<dataDir>/mcp.log` from the main
+ *  server, tagged so it's visually distinguishable from the channel
+ *  server's own entries. Use for channel-state decisions (alive/dead
+ *  transitions, cleanupStaleChannel outcomes, version mismatches) where
+ *  cross-process correlation matters during a disconnect post-mortem.
+ *
+ *  Identical failure-open contract as `createChannelLogger`: a
+ *  filesystem error never throws. */
+export function appendMainServerEvent(dataDir: string, event: string, details?: string): void {
+  let logger = mainServerLoggers.get(dataDir);
+  if (logger === undefined) {
+    logger = createChannelLogger(join(dataDir, 'mcp.log'), { pidLabel: 'main' });
+    mainServerLoggers.set(dataDir, logger);
+  }
+  logger.log(event, details);
+}
+
+/** HS-8456 — test-only escape hatch. The per-dataDir logger cache memoises
+ *  the blank-separator state across calls, which is what we want in
+ *  production but trips up tests that recreate the file under a fresh
+ *  temp dir per case. Exported so the test file can clear between cases.
+ *  Not part of the public API. */
+export function _resetMainServerLoggersForTesting(): void {
+  mainServerLoggers.clear();
 }
 
 /** Return the byte size of `path`, or `0` if `path` does not exist

@@ -1,5 +1,6 @@
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { api } from './api.js';
+import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings } from './experimentalSettings.js';
@@ -221,11 +222,12 @@ function bindGeneralTab() {
     appNameTimeout = setTimeout(() => {
       const val = appNameInput.value.trim();
       void api('/file-settings', { method: 'PATCH', body: { appName: val } }).then(() => {
-        const displayName = val || 'Hot Sheet';
-        document.title = displayName;
-        const h1 = document.querySelector('.app-title h1');
-        if (h1) h1.textContent = displayName;
-        appNameHint.textContent = val ? 'Saved. Restart the desktop app to update the title bar.' : 'Using default name.';
+        // HS-8451 — `setAppTitle` now also pushes the title through to
+        // the native Tauri window via `set_window_title`, so the
+        // "Restart the desktop app to update the title bar" hint that
+        // used to live here is obsolete for the title-bar case.
+        setAppTitle(val || 'Hot Sheet');
+        appNameHint.textContent = val ? 'Saved.' : 'Using default name.';
       });
     }, 800);
   });

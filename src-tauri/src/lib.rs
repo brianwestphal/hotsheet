@@ -675,6 +675,17 @@ async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// HS-8451 — update the native window title from the WKWebView side. Tauri does
+/// not auto-sync `document.title` to the native window title bar, so a
+/// `loadAppName()` / project-switch / dashboard-enter must explicitly invoke
+/// this command for the desktop window chrome to reflect the new label.
+#[tauri::command]
+fn set_window_title(app: tauri::AppHandle, title: String) -> Result<(), String> {
+    let win = app.get_webview_window("main")
+        .ok_or_else(|| "window 'main' not found".to_string())?;
+    win.set_title(&title).map_err(|e| e.to_string())
+}
+
 /// HS-7596 / §37 — flip the QuitConfirmed flag and re-issue the quit. Called
 /// from JS after the user clicks "Quit Anyway" in the §37 confirm dialog.
 /// Uses `app.exit(0)` (not `window.close()`) so the same code path covers
@@ -1033,6 +1044,7 @@ pub fn run() {
             request_attention_once,
             pick_folder,
             open_url,
+            set_window_title,
             show_native_notification,
             quicklook,
             confirm_quit,

@@ -134,7 +134,7 @@ async function reloadAppState() {
   // setActiveProject() already repopulated state.search from the projectSearches
   // map; this writes that back into the DOM input and toggles `.has-value`.
   syncSearchInputFromState();
-  void loadAppName();
+  loadAppName();
   suppressAnimation();
   await loadTickets();
   // HS-7993 — refresh the sidebar git chip on every project switch. Without
@@ -174,7 +174,7 @@ async function loadInitialState(): Promise<void> {
   void loadGlobalDiagnostics();
   await loadCategories(rebuildCategoryUI);
   await loadCustomViews();
-  void loadAppName();
+  loadAppName();
   suppressAnimation();
   await loadTickets();
 }

@@ -114,4 +114,58 @@ describe('channelLog — append-only diagnostic logger (HS-8447 follow-up)', () 
     const logger = createChannelLogger(bogus);
     expect(() => logger.log('event-into-the-void')).not.toThrow();
   });
+
+  // HS-8456 — pidLabel + appendMainServerEvent test surface.
+  it('appends the optional pidLabel inside the prefix to disambiguate main vs channel-server entries', () => {
+    const logger = createChannelLogger(logPath, { pidLabel: 'main' });
+    logger.log('channel-alive-transition', 'false → true');
+    const text = readFileSync(logPath, 'utf-8');
+    expect(text).toMatch(new RegExp(`^\\[[^\\]]+\\] \\[pid ${process.pid} main\\] channel-alive-transition: false → true\\n$`));
+  });
+
+  it('omits the pidLabel suffix when undefined or empty (legacy channel-server entries unchanged)', () => {
+    const logger = createChannelLogger(logPath, { pidLabel: '' });
+    logger.log('process-start');
+    const text = readFileSync(logPath, 'utf-8');
+    expect(text).toMatch(new RegExp(`^\\[[^\\]]+\\] \\[pid ${process.pid}\\] process-start:\\n$`));
+  });
+});
+
+describe('appendMainServerEvent (HS-8456)', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'hotsheet-mainlog-'));
+    const { _resetMainServerLoggersForTesting } = await import('./channelLog.js');
+    _resetMainServerLoggersForTesting();
+  });
+
+  afterEach(() => {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('writes to `<dataDir>/mcp.log` with the `main` pid label', async () => {
+    const { appendMainServerEvent } = await import('./channelLog.js');
+    appendMainServerEvent(dir, 'channel-alive-transition', 'false → true');
+    const logFile = join(dir, 'mcp.log');
+    const text = readFileSync(logFile, 'utf-8');
+    expect(text).toMatch(new RegExp(`\\[pid ${process.pid} main\\] channel-alive-transition: false → true`));
+  });
+
+  it('memoises the per-dataDir logger so consecutive writes append to the same file', async () => {
+    const { appendMainServerEvent } = await import('./channelLog.js');
+    appendMainServerEvent(dir, 'event-1', 'first');
+    appendMainServerEvent(dir, 'event-2', 'second');
+    const text = readFileSync(join(dir, 'mcp.log'), 'utf-8');
+    const lines = text.split('\n').filter(l => l !== '');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('event-1: first');
+    expect(lines[1]).toContain('event-2: second');
+  });
+
+  it('swallows write errors when the dataDir does not exist', async () => {
+    const { appendMainServerEvent } = await import('./channelLog.js');
+    const missing = join(dir, 'no-such-subdir');
+    expect(() => appendMainServerEvent(missing, 'into-the-void')).not.toThrow();
+  });
 });

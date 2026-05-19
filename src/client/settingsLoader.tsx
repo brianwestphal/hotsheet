@@ -1,5 +1,6 @@
 import { suppressAnimation } from './animate.js';
 import { api } from './api.js';
+import { setAppTitleFromActiveProject } from './appTitle.js';
 import { applyDetailPosition, applyDetailSize, updateDetailCategory } from './detail.js';
 import { byIdOrNull, toElement } from './dom.js';
 import type { CategoryDef } from './state.js';
@@ -105,16 +106,18 @@ export function rebuildCategoryUI() {
   }
 }
 
-/** Load the app name from file-based settings and update the title bar. */
-export async function loadAppName() {
-  try {
-    const fs = await api<{ appName?: string }>('/file-settings');
-    if (fs.appName !== undefined && fs.appName !== '') {
-      document.title = fs.appName;
-      const h1 = document.querySelector('.app-title h1');
-      if (h1) h1.textContent = fs.appName;
-    }
-  } catch { /* ignore */ }
+/** HS-8451 — sync the visible app title (browser tab + sidebar `<h1>` + native
+ *  Tauri window title) to the active project's display name. Pre-fix this
+ *  fetched `/file-settings` and ONLY updated the title when `appName` was a
+ *  non-empty string, so switching from a project-with-appName to one without
+ *  left the title frozen at the previous project's name — the user-reported
+ *  "title is always the first project" symptom. The `ProjectInfo.name` field
+ *  on the active project already carries the right value (appName or folder
+ *  fallback per `src/projects.ts`), so we delegate to the shared
+ *  `setAppTitleFromActiveProject` helper in `appTitle.tsx` and drop the
+ *  redundant `/file-settings` round-trip. */
+export function loadAppName() {
+  setAppTitleFromActiveProject();
 }
 
 // Callback for restoring ticket list view — set by dashboardMode

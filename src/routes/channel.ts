@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 
+import { appendMainServerEvent } from '../channelLog.js';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
 import { readFileSettings } from '../file-settings.js';
@@ -9,6 +10,35 @@ import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js
 import { ChannelHeartbeatSchema, ChannelTriggerSchema, parseBody, PermissionRespondSchema } from './validation.js';
 
 export const channelRoutes = new Hono<AppEnv>();
+
+// HS-8456 — track the last-known channel-alive state per dataDir so the
+// `/channel/status` handler can write a single line to `<dataDir>/mcp.log`
+// on every false→true / true→false flip without flooding the log on
+// every poll. `null` = no probe has run yet. Module-private because
+// only the status handler reads / writes.
+const lastAliveByDataDir = new Map<string, boolean>();
+
+/** HS-8456 — record an alive/dead transition. Returns the prior value
+ *  (or `null` if this is the first probe for `dataDir`). Exported for
+ *  test reset; production callers go through `noteChannelAliveProbe`. */
+export function _resetChannelAliveTrackerForTesting(): void {
+  lastAliveByDataDir.clear();
+}
+
+/** HS-8456 — call after every `isChannelAlive(dataDir)` probe. Writes a
+ *  single `channel-alive-transition` line to `<dataDir>/mcp.log` if the
+ *  observed value differs from the last one we saw. No-op on the first
+ *  probe of a fresh process (no prior value → no transition to record),
+ *  which keeps the first dashboard load from spamming the log with the
+ *  baseline state. Failure-open via the underlying `appendMainServerEvent`.
+ *  Exported so the unit test in `channelAliveTracker.test.ts` can call it
+ *  directly without standing up a full Hono request flow. */
+export function noteChannelAliveProbe(dataDir: string, alive: boolean): void {
+  const prior = lastAliveByDataDir.get(dataDir);
+  lastAliveByDataDir.set(dataDir, alive);
+  if (prior === undefined || prior === alive) return;
+  appendMainServerEvent(dataDir, 'channel-alive-transition', `${String(prior)} → ${String(alive)}`);
+}
 
 // Per-project done flags, keyed by project secret
 const channelDoneFlags = new Map<string, boolean>();
@@ -49,6 +79,11 @@ channelRoutes.get('/channel/status', async (c) => {
   }
   const port = getChannelPort(dataDir);
   const alive = enabled ? await isChannelAlive(dataDir) : false;
+  // HS-8456 — record alive transitions in `<dataDir>/mcp.log` so a
+  // disconnect post-mortem has the main server's half of the timeline
+  // alongside the channel server's `process-start` / `disconnect` /
+  // `cleanup-end` entries. No-op on the steady state to avoid flooding.
+  noteChannelAliveProbe(dataDir, alive);
   // Consume the done flag for this project (read once, then clear)
   const projectSecret = c.get('projectSecret');
   const done = channelDoneFlags.get(projectSecret) === true;
@@ -57,7 +92,13 @@ channelRoutes.get('/channel/status', async (c) => {
   let versionMismatch = false;
   if (alive) {
     const vCheck = await checkChannelVersion(dataDir);
-    if (vCheck !== null && !vCheck.match) versionMismatch = true;
+    if (vCheck !== null && !vCheck.match) {
+      versionMismatch = true;
+      // HS-8456 — surface the actual version pair so an upgrade /
+      // rollback boundary is obvious in `mcp.log` without grepping the
+      // codebase for the current expected value.
+      appendMainServerEvent(dataDir, 'channel-version-mismatch', `running=${String(vCheck.running)} expected=${String(vCheck.expected)}`);
+    }
   }
   // HS-8349 — the per-project MCP server name. The client uses this to
   // render the per-project `claude --dangerously-load-development-channels

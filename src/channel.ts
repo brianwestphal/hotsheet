@@ -11,7 +11,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { createServer } from 'http';
 import { join } from 'path';
 import { z } from 'zod';
@@ -25,6 +25,7 @@ import {
   enqueuePermission,
   peekPending,
 } from './channelPermissions.js';
+import { maybeUnlinkPortFile, writeChannelInfo } from './channelPortFile.js';
 import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
 
 // HS-8346 — bumped from 4 → 5 for the new MCP tool surface (tools/list +
@@ -35,8 +36,12 @@ import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
 // duplicate_tickets / batch / edit_note / delete_note / query_tickets).
 // HS-8349 — bumped from 6 → 7 for the Phase 4 multi-project tool naming
 // (`.mcp.json` key + Server({name}) are now per-project `hotsheet-channel-<slug>`).
+// HS-8454 — bumped from 7 → 8 for the richer `/health` echo body
+// (`{ok, version, pid, slug, startedAt}`) + the port-file JSON shape via
+// `writeChannelInfo` + the startup-time collision lock that defers when
+// an existing channel server is alive for the same dataDir.
 // `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` bumped in lockstep.
-export const CHANNEL_VERSION = 7;
+export const CHANNEL_VERSION = 8;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -55,6 +60,10 @@ const portFile = join(dataDir, 'channel-port');
 // tool list when multiple projects are open in the same session.
 const serverSlug = slugifyDataDir(dataDir);
 const serverName = `hotsheet-channel-${serverSlug}`;
+// HS-8454 — captured once at module load so the `/health` echo and the
+// `writeChannelInfo` call below report the same value. Used by the main
+// server's `isChannelAlive` identity check + by `mcp.log` diagnostics.
+const processStartedAt = new Date().toISOString();
 
 // HS-8447 follow-up — append-only diagnostic log at `<dataDir>/mcp.log`
 // so unexpected disconnects can be post-mortem'd with `tail` instead of
@@ -198,7 +207,17 @@ const httpServer = createServer(async (req, res) => {
 
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, version: CHANNEL_VERSION }));
+    // HS-8454 — echo ownership identity so `isChannelAlive` can verify
+    // the responder is OUR channel server for this dataDir, not an
+    // unrelated process the kernel reassigned the port to, or a
+    // different project's channel server on the same port.
+    res.end(JSON.stringify({
+      ok: true,
+      version: CHANNEL_VERSION,
+      pid: process.pid,
+      slug: serverSlug,
+      startedAt: processStartedAt,
+    }));
     return;
   }
 
@@ -374,13 +393,48 @@ function notifyMainServer(abortSignal?: AbortSignal): Promise<void> {
   }
 }
 
+// HS-8452 — captured into module scope so `cleanup()` + the `exit` handler
+// can pass it to `maybeUnlinkPortFile`. The port-aware unlink only deletes
+// the port file when its on-disk contents match THIS process's port, so a
+// sibling channel-server's cleanup never wipes a still-live owner's
+// registration. Null until the http server has bound and reported its port.
+let myPort: number | null = null;
+
+// HS-8454 (revised after 2026-05-19 incident) — earlier drafts of this ticket
+// added a startup-time collision lock: if `isExistingChannelAlive(dataDir)`
+// returned true, the new channel-server process would exit cleanly so its
+// writes wouldn't clobber the existing live process's registration. That
+// design works for the captured HS-8452 parallel-server case (two channel
+// servers running for the same dataDir) but is FATAL for the normal
+// `/mcp` reconnect case, where Claude Code intentionally tears down the
+// old process's stdio while spawning the new one. The brief probe window
+// catches the old process still answering `/health`, the new process
+// defers and exits, then the old process's stdio-disconnect watcher fires
+// and exits too — leaving NO channel server and NO port file behind.
+//
+// Correct semantics: the new process always takes over. `writeChannelInfo`
+// below writes our pid into the port file (HS-8454 — JSON shape), so the
+// pid-aware `maybeUnlinkPortFile` (HS-8452 + HS-8454) keeps the old
+// process's cleanup from wiping our registration. The parallel-server
+// recovery case is owned by HS-8455's self-heal watcher.
+
 // Find an available port
 httpServer.listen(0, '127.0.0.1', () => {
   const addr = httpServer.address();
   if (addr !== null && typeof addr !== 'string') {
     const port = addr.port;
+    myPort = port;
     try {
-      writeFileSync(portFile, String(port), 'utf-8');
+      // HS-8454 — JSON shape carrying full ownership identity. The
+      // `readChannelInfo` reader accepts BOTH this shape and the legacy
+      // bare-number format that older clusters wrote, so a downgrade is
+      // safe in either direction during a single upgrade window.
+      writeChannelInfo(portFile, {
+        port,
+        pid: process.pid,
+        slug: serverSlug,
+        startedAt: processStartedAt,
+      });
     } catch {
       // data dir may not exist yet
     }
@@ -408,7 +462,11 @@ heartbeatInterval.unref();
 async function cleanup(reason: string = 'unspecified') {
   channelLog.log('cleanup-start', `reason=${reason}`);
   clearInterval(heartbeatInterval);
-  try { unlinkSync(portFile); } catch { /* ignore */ }
+  // HS-8452 — only delete the port file if it still points at THIS
+  // process. Pre-fix the unconditional `unlinkSync` would wipe a sibling
+  // process's registration whenever a transient second channel server
+  // exited (e.g. on the `/mcp` reconnect race captured in `mcp.log`).
+  if (myPort !== null) maybeUnlinkPortFile(portFile, myPort);
   // Notify main server synchronously before exiting — use a short timeout
   // so we don't hang if the server is down
   try {
@@ -434,5 +492,9 @@ process.on('SIGINT', () => { channelLog.log('signal', 'SIGINT'); void cleanup('S
 process.on('SIGHUP', () => { channelLog.log('signal', 'SIGHUP'); void cleanup('SIGHUP'); });
 process.on('exit', (code) => {
   channelLog.log('exit', `code=${code}`);
-  try { unlinkSync(portFile); } catch { /* ignore */ }
+  // HS-8452 — same port-aware unlink as `cleanup()`. The `exit` handler
+  // is a defense-in-depth path that runs even if the async `cleanup()`
+  // was bypassed (e.g. `process.exit` called from elsewhere); it must
+  // not wipe a sibling owner's registration.
+  if (myPort !== null) maybeUnlinkPortFile(portFile, myPort);
 });
