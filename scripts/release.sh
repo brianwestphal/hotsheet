@@ -279,8 +279,18 @@ step_release_notes() {
     return
   fi
 
+  # Stable releases anchor at the last PRODUCTION tag (`vX.Y.Z` with no
+  # `-beta.N` / `-rc.N` suffix) so the CHANGELOG entry summarizes every
+  # change since the previous stable, not just since the most recent
+  # beta. Beta releases anchor at whatever the previous tag was (beta or
+  # stable) — they're incremental and shouldn't repeat bullets that
+  # already appeared in an earlier beta's notes.
   local last_tag
-  last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+  if [[ "${BETA_MODE:-false}" == "true" ]]; then
+    last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+  else
+    last_tag=$(git tag --list --sort=-v:refname 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+  fi
   local log_range="${last_tag:+${last_tag}..HEAD}"
 
   local commit_log
