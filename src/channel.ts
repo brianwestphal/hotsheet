@@ -27,6 +27,12 @@ import {
 } from './channelPermissions.js';
 import { maybeUnlinkPortFile, writeChannelInfo } from './channelPortFile.js';
 import { installPortFileWatcher } from './channelPortFileWatcher.js';
+import {
+  listAliveEntries,
+  pickLeader,
+  registerSelf,
+  unregisterSelf,
+} from './channelRegistry.js';
 import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
 
 // HS-8346 — bumped from 4 → 5 for the new MCP tool surface (tools/list +
@@ -41,8 +47,16 @@ import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
 // (`{ok, version, pid, slug, startedAt}`) + the port-file JSON shape via
 // `writeChannelInfo` + the startup-time collision lock that defers when
 // an existing channel server is alive for the same dataDir.
+// HS-8460 — bumped from 8 → 9 for the per-pid registry at
+// `<dataDir>/channel-ports.d/<pid>.json`. The single `channel-port`
+// file is now a view that always points to the FIFO leader (oldest
+// alive by `startedAt`); when the leader exits the next-oldest's
+// watcher promotes itself. Fixes the multi-Claude scenario where two
+// channel servers fought over the single port file and triggers
+// routed to whichever won the duel, not to the Claude the user was
+// looking at.
 // `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` bumped in lockstep.
-export const CHANNEL_VERSION = 8;
+export const CHANNEL_VERSION = 9;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -440,19 +454,32 @@ httpServer.listen(0, '127.0.0.1', () => {
       slug: serverSlug,
       startedAt: processStartedAt,
     };
+    // HS-8460 — register our per-pid entry in `<dataDir>/channel-ports.d/`
+    // FIRST so the leader-selection below sees us. Then determine the
+    // leader: if it's us, write `channel-port` with our identity; if
+    // it's an older sibling channel-server, leave `channel-port`
+    // alone (its watcher owns it). The HS-8455 watcher installed
+    // below will promote us automatically the moment the older
+    // leader exits.
     try {
-      writeChannelInfo(portFile, myInfo);
+      registerSelf(dataDir, myInfo);
+    } catch (err) {
+      channelLog.log('registry-register-error', String(err));
+    }
+    try {
+      const alive = listAliveEntries(dataDir);
+      const leader = pickLeader(alive);
+      if (leader === null || leader.pid === process.pid) {
+        writeChannelInfo(portFile, myInfo);
+      } else {
+        channelLog.log('startup-follower', `leader-pid=${String(leader.pid)} aliveCount=${String(alive.length)}`);
+      }
     } catch {
       // data dir may not exist yet
     }
-    // HS-8455 — self-heal poll. If a transient sibling process wipes /
-    // overwrites our port file (the captured HS-8452 trace), or the user
-    // manually `rm`'s it, this 5-second tick re-writes our identity and
-    // wakes the main server's `isChannelAlive` poll. Livelock guard caps
-    // rewrites at 5/min to avoid hot-spinning. Dispose handle stored at
-    // module scope so `cleanup()` can clear it.
     disposePortFileWatcher = installPortFileWatcher({
       portFile,
+      dataDir,
       info: myInfo,
       intervalMs: 5_000,
       log: (event, details) => channelLog.log(event, details),
@@ -501,7 +528,10 @@ async function cleanup(reason: string = 'unspecified') {
   // process. Pre-fix the unconditional `unlinkSync` would wipe a sibling
   // process's registration whenever a transient second channel server
   // exited (e.g. on the `/mcp` reconnect race captured in `mcp.log`).
+  // HS-8460 — also remove our per-pid registry entry so the surviving
+  // siblings' next watcher tick re-picks the leader without us.
   if (myPort !== null) maybeUnlinkPortFile(portFile, myPort);
+  unregisterSelf(dataDir, process.pid);
   // Notify main server synchronously before exiting — use a short timeout
   // so we don't hang if the server is down
   try {

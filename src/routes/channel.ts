@@ -104,7 +104,17 @@ channelRoutes.get('/channel/status', async (c) => {
   // render the per-project `claude --dangerously-load-development-channels
   // server:hotsheet-channel-<slug>` command in Settings → Experimental.
   const serverName = `hotsheet-channel-${slugifyDataDir(dataDir)}`;
-  return c.json({ enabled, alive, port, done, versionMismatch, serverName });
+  // HS-8460 — count alive channel-servers for the multi-connection
+  // warning indicator. When > 1, the client surfaces "N Claude
+  // connections active — triggers route to the oldest one." Lazy
+  // import to keep this route's cold-path cost zero when the channel
+  // is disabled.
+  let aliveCount = 0;
+  if (alive) {
+    const { listAliveEntries } = await import('../channelRegistry.js');
+    aliveCount = listAliveEntries(dataDir).length;
+  }
+  return c.json({ enabled, alive, port, done, versionMismatch, serverName, aliveCount });
 });
 
 channelRoutes.post('/channel/trigger', async (c) => {

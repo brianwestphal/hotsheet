@@ -216,12 +216,16 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
  *  (`.mcp.json` key + `Server({name})` are now per-project `hotsheet-channel-<slug>`).
  *  HS-8454 — bumped from 7 → 8 for the richer `/health` echo body
  *  (`{ok, version, pid, slug, startedAt}`) + the port-file JSON shape.
- *  Users on a v7 channel server see the "reconnect via `/mcp`" prompt
- *  when the main server boots with v8; reconnecting respawns the
- *  channel server at the new version.
+ *  HS-8460 — bumped from 8 → 9 for the per-pid registry at
+ *  `<dataDir>/channel-ports.d/<pid>.json` + FIFO leader-selection
+ *  for the single `channel-port` file. Users on a v8 channel server
+ *  who keep that channel running won't auto-register in the new
+ *  registry, so the main server will continue to see only the v8
+ *  entry via the legacy `channel-port` file — `/mcp` reconnect
+ *  respawns at v9 and populates the registry.
  *  Users who have the channel registered will see a "reconnect via `/mcp`"
  *  prompt when the main server boots with the newer version. */
-const EXPECTED_CHANNEL_VERSION = 8;
+const EXPECTED_CHANNEL_VERSION = 9;
 
 /** HS-8454 — shape of the `/health` response body the channel server
  *  returns. `pid` / `slug` / `startedAt` are present only on v8+; on a v7

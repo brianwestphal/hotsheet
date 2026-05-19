@@ -383,9 +383,9 @@ function showNoUpNextAlert() {
 }
 
 export async function initChannel() {
-  let status: { enabled: boolean; alive: boolean; versionMismatch?: boolean } | null = null;
+  let status: { enabled: boolean; alive: boolean; versionMismatch?: boolean; aliveCount?: number } | null = null;
   try {
-    status = await api<{ enabled: boolean; alive: boolean; versionMismatch?: boolean }>('/channel/status');
+    status = await api<{ enabled: boolean; alive: boolean; versionMismatch?: boolean; aliveCount?: number }>('/channel/status');
   } catch { /* endpoint may not exist yet */ }
   // If we couldn't reach the server, keep the previous state
   if (status === null) return;
@@ -437,6 +437,23 @@ export async function initChannel() {
   const versionWarning = byIdOrNull('channel-version-warning');
   if (versionWarning) {
     versionWarning.style.display = status.versionMismatch === true ? '' : 'none';
+  }
+  // HS-8460 — multi-connection warning. When > 1 channel server is
+  // alive for this dataDir (e.g. user has two Claude Code instances
+  // open in the same project), surface a banner so the silent-failure
+  // user experience is replaced with "I see; the trigger is going
+  // somewhere else." Triggers route to the FIFO leader (oldest by
+  // startedAt); when it disconnects the next-oldest takes over within
+  // ~5 s. Hidden when count <= 1.
+  const multiWarning = byIdOrNull('channel-multi-warning');
+  if (multiWarning) {
+    const count = typeof status.aliveCount === 'number' ? status.aliveCount : 0;
+    if (count > 1) {
+      multiWarning.textContent = `${String(count)} Claude connections active — triggers route to the oldest one`;
+      multiWarning.style.display = '';
+    } else {
+      multiWarning.style.display = 'none';
+    }
   }
   // Only bind the click handler once (initChannel is called on every project switch)
   if (btn.dataset.bound !== undefined && btn.dataset.bound !== '') return;

@@ -1925,6 +1925,21 @@ body.terminal-dashboard-active {
   }
 }
 
+// HS-8460 — multi-connection warning. Same visual shape as
+// channel-version-warning above so the two banners stack cleanly when
+// both fire; amber tint matches the project's existing "heads up"
+// vocabulary.
+.channel-multi-warning {
+  margin: 4px 10px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #f97316;
+  text-align: center;
+  border: 1px solid #f9731640;
+  border-radius: var(--radius);
+  background: #f9731610;
+}
+
 .no-upnext-alert {
   display: flex;
   align-items: center;

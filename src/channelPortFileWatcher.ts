@@ -1,71 +1,83 @@
 import type { ChannelInfo } from './channelPortFile.js';
 import { readChannelInfo, writeChannelInfo } from './channelPortFile.js';
+import {
+  defaultIsPidAlive,
+  listAliveEntries,
+  pickLeader,
+  registerSelf,
+} from './channelRegistry.js';
 
-/** HS-8455 — self-heal watcher for the channel-server's port file.
+/** HS-8455 + HS-8460 — self-heal watcher for the channel-server's port
+ *  file. Reconciles three pieces of state every tick:
  *
- *  A live channel-server process pre-fix had no way to notice that its
- *  registration was wiped out from under it. Two captured failure modes:
+ *   1. **Our per-pid registry entry** at
+ *      `<dataDir>/channel-ports.d/<pid>.json` — self-heal if it
+ *      vanished (e.g. user wiped `.hotsheet/`).
+ *   2. **The shared `<dataDir>/channel-port` file** — the FIFO view onto
+ *      the registry. Always holds the **leader** (oldest alive by
+ *      `startedAt`). Only the leader's watcher writes it; followers
+ *      leave it alone. When the leader exits, the next-oldest's
+ *      watcher promotes itself within one tick.
+ *   3. **Notification to the main server** when our actions might
+ *      change what the dashboard sees — only on a leader-write or a
+ *      leader-handoff. Steady-state ticks are silent.
  *
- *   1. **Sibling-process collateral damage.** A transient second
- *      channel-server (e.g. brief `/mcp` reconnect race, sub-agent
- *      spawn) writes its own pid to `<dataDir>/channel-port`, then dies.
- *      HS-8454's pid-aware `maybeUnlinkPortFile` correctly lets it
- *      unlink — the file IS still pointing at the dying sibling. But
- *      the first process (which was serving Claude Code over its still-
- *      open stdio pipe) now has NO registration. The main server's
- *      `isChannelAlive` returns false. UI flips to "not connected."
- *
- *   2. **Manual `rm` / `cleanupStaleChannel` race.** A user testing
- *      backup-restore wipes `.hotsheet/`, or `cleanupStaleChannel`'s
- *      `/health` probe times out (existing process slow under load) and
- *      decides to unlink. The file is gone but the channel server is
- *      still alive.
- *
- *  This module exports `installPortFileWatcher(...)` which runs a
- *  periodic check (default 5 s) of the on-disk port file. If the file is
- *  missing OR carries a pid that isn't ours, we re-write it with our
- *  identity and notify the main server. A livelock guard caps the
- *  rewrite rate at 5 per 60 s — if exceeded, the watcher logs and stops
- *  rewriting to avoid hot-spinning against another live process. In
- *  practice the cap should never fire (real parallel-server collisions
- *  resolve in seconds when the transient process exits); the cap exists
- *  for the paranoid case.
+ *  Pre-HS-8460 the watcher's contract was "rewrite the port file if
+ *  it doesn't match our identity." When two channel-servers ran for
+ *  the same dataDir (multi-Claude workflow), they dueled — each
+ *  process's tick would clobber the other's pid until the livelock
+ *  guard fired. Triggers went to whichever won; the user's other
+ *  Claude saw nothing. The HS-8460 fix replaces the duel with
+ *  deterministic FIFO leader-selection. The livelock guard is gone —
+ *  it can't happen now because followers don't try to claim the
+ *  port file.
  *
  *  Why periodic poll instead of `fs.watch`: poll-based recovery works
- *  identically on every platform + every filesystem (NFS, FUSE, Tauri
- *  sandbox), can't be defeated by a `rm` that happens before the watcher
- *  is reinstalled on the new inode, and has a tiny surface area. The
- *  worst-case 5 s lag before recovery is well below the user's "did the
- *  channel break?" attention threshold.
+ *  identically on every platform + filesystem (NFS, FUSE, Tauri
+ *  sandbox), can't be defeated by `rm` happening before the watcher
+ *  is reinstalled on the new inode, and has a tiny surface area.
+ *  Worst-case 5 s lag before recovery is well below the user's
+ *  "did the channel break?" attention threshold.
  */
 
 export interface PortFileWatcherOptions {
   /** Absolute path to `<dataDir>/channel-port`. */
   portFile: string;
-  /** The ownership info we'd re-write with on a heal. Captured at
-   *  install-time; the watcher doesn't mutate it. */
+  /** Absolute path to the dataDir (parent of `channel-port` +
+   *  `channel-ports.d/`). Used by the registry. */
+  dataDir: string;
+  /** Our identity. Captured at install-time; the watcher doesn't
+   *  mutate it. */
   info: ChannelInfo;
   /** Poll interval in milliseconds. Default 5_000. Tests pass a tiny
    *  value via `setIntervalFn`. */
   intervalMs?: number;
   /** Diagnostic logger — same shape as `channelLog.ts`'s log function.
-   *  Events emitted: port-file-heal-rewrite (we re-wrote the file),
-   *  port-file-heal-livelock (rewrite cap exceeded — watcher gave up). */
+   *  Events emitted:
+   *    - `port-file-leader-write` — we are the leader and (re)wrote
+   *      `channel-port` with our identity (either because the file was
+   *      missing OR because it carried a different pid — the previous
+   *      leader exited and we just took over).
+   *    - `port-file-follower-defer` — we are NOT the leader and the
+   *      port file currently points to someone else; we left it alone.
+   *      Logged on transitions only (we became a follower OR the
+   *      leader changed) to keep steady-state silent.
+   *    - `port-file-registry-heal` — our per-pid registry entry was
+   *      missing and we re-wrote it.
+   *    - `port-file-heal-error` — write threw (e.g. dataDir removed).
+   *  Note: pre-HS-8460 events `port-file-heal-rewrite` and
+   *  `port-file-heal-livelock` are gone. */
   log?: (event: string, details?: string) => void;
-  /** Called after every successful re-write so the main server's
-   *  `isChannelAlive` poll wakes immediately rather than waiting for
-   *  the next dashboard refresh. */
+  /** Called after a leader-write so the main server's `isChannelAlive`
+   *  poll wakes immediately. Not called on follower ticks. */
   notify?: () => void;
-  /** Injection point for tests so they can drive the interval
-   *  synchronously. Production callers pass `undefined` and the watcher
-   *  uses the platform `setInterval` + `clearInterval`. */
+  /** Injection point for tests. Production callers pass `undefined`. */
   setIntervalFn?: (cb: () => void, ms: number) => unknown;
   clearIntervalFn?: (handle: unknown) => void;
+  /** Injection point for the liveness probe. Defaults to
+   *  `process.kill(pid, 0)`-based. */
+  isPidAlive?: (pid: number) => boolean;
 }
-
-/** Cap: 5 rewrites in 60 seconds → suspect a livelock; stop trying. */
-const REWRITE_BURST_MAX = 5;
-const REWRITE_BURST_WINDOW_MS = 60_000;
 
 /** Install the watcher. Returns a dispose function the caller should
  *  invoke from `cleanup()` so the timer doesn't keep the process alive. */
@@ -74,51 +86,85 @@ export function installPortFileWatcher(opts: PortFileWatcherOptions): () => void
   const setIntervalFn: (cb: () => void, ms: number) => unknown = opts.setIntervalFn ?? setInterval;
   const clearIntervalFn: (handle: unknown) => void = opts.clearIntervalFn
     ?? ((handle: unknown) => { clearInterval(handle as ReturnType<typeof setInterval>); });
+  const isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
 
-  // Rolling window of rewrite timestamps (ms since epoch). Pruned each
-  // tick to drop entries older than `REWRITE_BURST_WINDOW_MS`.
-  const rewriteTimestamps: number[] = [];
-  let livelocked = false;
+  // Track our last role (leader / follower) so we only log on
+  // transitions — steady-state ticks stay silent and `mcp.log` only
+  // captures actual state changes.
+  type Role = 'unknown' | 'leader' | 'follower';
+  let lastRole: Role = 'unknown';
+  let lastLeaderPid: number | null = null;
 
   const tick = (): void => {
-    if (livelocked) return;
-    const current = readChannelInfo(opts.portFile);
-    // File OK + pid matches → no-op. (Slug + port mismatches treated as
-    // healable too: if a different project's slug ended up in our
-    // file somehow, the recovery is the same.)
-    if (
-      current !== null
-      && current.pid === opts.info.pid
-      && current.port === opts.info.port
-      && current.slug === opts.info.slug
-    ) {
+    // 1. Self-heal our registry entry first. If it was deleted (user
+    //    wiped `.hotsheet/`, race with another GC pass), re-register
+    //    so the leader-selection below sees us.
+    if (opts.info.pid !== null) {
+      const allEntries = listAliveEntries(opts.dataDir, isPidAlive);
+      const ourEntry = allEntries.find(e => e.pid === opts.info.pid);
+      if (ourEntry === undefined) {
+        try {
+          registerSelf(opts.dataDir, opts.info);
+          opts.log?.('port-file-registry-heal', `pid=${String(opts.info.pid)}`);
+        } catch (err) {
+          opts.log?.('port-file-heal-error', `registerSelf: ${String(err)}`);
+          return;
+        }
+      }
+    }
+
+    // 2. Re-read the registry after the heal (so our entry is in the
+    //    list when picking the leader).
+    const alive = listAliveEntries(opts.dataDir, isPidAlive);
+    const leader = pickLeader(alive);
+
+    if (leader === null) {
+      // No alive entries at all — nothing to do this tick. (Could
+      //   happen during a wipe race; next tick's registry-heal will
+      //   put us back.)
       return;
     }
 
-    // Livelock check before rewriting.
-    const now = Date.now();
-    while (rewriteTimestamps.length > 0 && now - rewriteTimestamps[0] > REWRITE_BURST_WINDOW_MS) {
-      rewriteTimestamps.shift();
-    }
-    if (rewriteTimestamps.length >= REWRITE_BURST_MAX) {
-      livelocked = true;
-      opts.log?.('port-file-heal-livelock', `${String(REWRITE_BURST_MAX)} rewrites in ${String(REWRITE_BURST_WINDOW_MS)}ms — giving up to avoid hot-spin`);
-      return;
-    }
-    rewriteTimestamps.push(now);
+    const weAreLeader = leader.pid === opts.info.pid;
 
-    const reason = current === null
-      ? 'vanished'
-      : `pid-mismatch on-disk=${String(current.pid)} ours=${String(opts.info.pid)}`;
-    try {
-      writeChannelInfo(opts.portFile, opts.info);
-      opts.log?.('port-file-heal-rewrite', reason);
-      opts.notify?.();
-    } catch (err) {
-      // writeChannelInfo throws if the dataDir was deleted underneath
-      // us (uncommon — would mean the user wiped `.hotsheet/` mid-
-      // session). Log + keep ticking; the next interval will retry.
-      opts.log?.('port-file-heal-error', String(err));
+    if (weAreLeader) {
+      // 3a. Leader path: ensure channel-port matches our identity.
+      const current = readChannelInfo(opts.portFile);
+      const matches = current !== null
+        && current.pid === opts.info.pid
+        && current.port === opts.info.port
+        && current.slug === opts.info.slug;
+
+      if (!matches) {
+        try {
+          writeChannelInfo(opts.portFile, opts.info);
+          const reason = current === null
+            ? 'missing'
+            : `previous-leader-pid=${String(current.pid)}`;
+          opts.log?.('port-file-leader-write', reason);
+          opts.notify?.();
+        } catch (err) {
+          opts.log?.('port-file-heal-error', `writeChannelInfo: ${String(err)}`);
+          return;
+        }
+      }
+
+      // Role transition: were we previously a follower (or unknown)?
+      // The leader-write log above covers content changes; this is
+      // just promotion bookkeeping.
+      if (lastRole !== 'leader') {
+        lastRole = 'leader';
+        lastLeaderPid = opts.info.pid;
+      }
+    } else {
+      // 3b. Follower path: leave channel-port alone. Log only on
+      //     transition (we became a follower, OR a different leader
+      //     emerged while we were already following).
+      if (lastRole !== 'follower' || lastLeaderPid !== leader.pid) {
+        opts.log?.('port-file-follower-defer', `leader-pid=${String(leader.pid)} ours=${String(opts.info.pid)}`);
+        lastRole = 'follower';
+        lastLeaderPid = leader.pid;
+      }
     }
   };
 

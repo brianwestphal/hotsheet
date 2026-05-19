@@ -138,6 +138,12 @@ pageRoutes.get('/', (c) => {
           <nav className="sidebar">
             <div className="channel-disconnected-warning" id="channel-disconnected" style="display:none">Claude not connected</div>
             <div className="channel-version-warning" id="channel-version-warning" style="display:none">Channel outdated — run <code>/mcp</code> in Claude Code to reconnect</div>
+            {/* HS-8460 — multi-connection warning. Shown when more than
+                one channel-server is alive for this dataDir (each Claude
+                Code instance spawns its own MCP child). Triggers route
+                to the oldest connection by `startedAt`; when it
+                disconnects, the next-oldest takes over within ~5 s. */}
+            <div className="channel-multi-warning" id="channel-multi-warning" style="display:none"></div>
             {/* HS-7954 — git status chip. Hidden by default; populated +
                 shown by `gitStatusChip.tsx` once the first /api/git/status
                 resolves to a non-null GitStatus. HS-7975 — moved ABOVE the
