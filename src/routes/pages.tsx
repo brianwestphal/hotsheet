@@ -637,10 +637,14 @@ pageRoutes.get('/', (c) => {
                   `~/.hotsheet/config.json` under `diagnosticsEnabled`
                   so it applies across every project on this machine.
                   Future diagnostic opt-ins (server-event-loop heartbeat
-                  surfaces, etc.) can land here without a new tab. */}
+                  surfaces, etc.) can land here without a new tab.
+                  HS-8450 — unified the "Global Setting" pill style with
+                  the CLI / Claude-channel rows above; previously this
+                  section rendered a gray uppercase chip via the now-
+                  removed `.settings-scope-badge` class. */}
               <div className="settings-section" style="margin-top:16px">
                 <div className="settings-section-header">
-                  <h3>Diagnostics <span className="settings-scope-badge" title="This setting applies to every project on this machine.">Global</span></h3>
+                  <h3>Diagnostics <span className="global-setting-badge" title="This setting applies to every project on this machine.">Global Setting</span></h3>
                 </div>
                 <div className="settings-field settings-field-checkbox">
                   <label><input type="checkbox" id="settings-diagnostics-enabled" /> Enable diagnostic UI surfaces (slow-server banner + UI-hang toast)</label>

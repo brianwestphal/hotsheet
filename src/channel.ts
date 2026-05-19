@@ -18,6 +18,7 @@ import { z } from 'zod';
 
 import { callTool, listTools } from './channel.tools.js';
 import { slugifyDataDir } from './channel-config.js';
+import { createChannelLogger } from './channelLog.js';
 import {
   clearAllPermissions,
   completePermission,
@@ -55,6 +56,13 @@ const portFile = join(dataDir, 'channel-port');
 const serverSlug = slugifyDataDir(dataDir);
 const serverName = `hotsheet-channel-${serverSlug}`;
 
+// HS-8447 follow-up — append-only diagnostic log at `<dataDir>/mcp.log`
+// so unexpected disconnects can be post-mortem'd with `tail` instead of
+// having to relaunch Claude Code with stderr-redirect. Every channel-
+// server lifecycle event below also gets mirrored here.
+const channelLog = createChannelLogger(join(dataDir, 'mcp.log'));
+channelLog.log('process-start', `argv=${process.argv.slice(2).join(' ')} dataDir=${dataDir} serverName=${serverName}`);
+
 // Create MCP server with channel capability
 // eslint-disable-next-line @typescript-eslint/no-deprecated -- Server is needed for low-level MCP channel/permission protocol
 const mcp = new Server(
@@ -91,6 +99,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, () => {
 });
 mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+  channelLog.log('tools/call', `name=${name}`);
   const result = await callTool(name, args ?? {}, dataDir);
   // The MCP SDK's `CallToolResult` is a union — one branch requires
   // `task`. Our tools return the standard `{ content, isError? }`
@@ -109,6 +118,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Connect to Claude Code over stdio
 await mcp.connect(new StdioServerTransport());
+channelLog.log('mcp-connect', 'StdioServerTransport ready');
 
 // HS-8447 — detect when Claude Code's end of the stdio pipe goes
 // away. The MCP SDK's `StdioServerTransport` only listens for 'data'
@@ -119,11 +129,22 @@ await mcp.connect(new StdioServerTransport());
 // `/health`, which is unaffected) and every `/trigger` POST silently
 // vanishes into the disconnected stdout. See
 // `src/channelStdioWatcher.ts` for the full mechanism.
+//
+// HS-8447 follow-up — every signal observed by the watcher also gets
+// recorded in `<dataDir>/mcp.log` so we can post-mortem the case the
+// user reported where the channel-server died while Claude Code's MCP
+// client list still thought the channel was connected.
 installStdioDisconnectHandler({
   stdin: process.stdin,
   stdout: process.stdout,
-  log: (msg) => process.stderr.write(`${serverName}: ${msg}\n`),
-  onDisconnect: () => { void cleanup(); },
+  log: (msg) => {
+    process.stderr.write(`${serverName}: ${msg}\n`);
+    channelLog.log('stdio-watcher', msg);
+  },
+  onDisconnect: (reason) => {
+    channelLog.log('disconnect', `reason=${reason} — invoking cleanup`);
+    void cleanup(`stdio-${reason}`);
+  },
 });
 
 // Handle permission requests from Claude Code
@@ -295,6 +316,7 @@ const httpServer = createServer(async (req, res) => {
       body += String(chunk);
     }
 
+    channelLog.log('trigger', `bodyBytes=${body.length}`);
     try {
       await mcp.notification({
         method: 'notifications/claude/channel',
@@ -306,6 +328,7 @@ const httpServer = createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
+      channelLog.log('trigger-error', String(err));
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: String(err) }));
     }
@@ -363,13 +386,28 @@ httpServer.listen(0, '127.0.0.1', () => {
     }
     // Log to stderr (stdout is reserved for MCP stdio transport)
     process.stderr.write(`${serverName} listening on port ${port}\n`);
+    channelLog.log('http-listen', `port=${port}`);
     // Notify main server that channel is now connected
     void notifyMainServer();
   }
 });
 
+// HS-8447 follow-up — periodic heartbeat so a `tail -f mcp.log`
+// session can confirm the channel-server is still running. 60 s
+// strikes a balance between log noise and useful "process was alive
+// at HH:MM:SS then went dark" evidence on the next crash.
+const heartbeatInterval = setInterval(() => {
+  const mem = process.memoryUsage();
+  channelLog.log('heartbeat', `uptime=${process.uptime().toFixed(1)}s rss=${(mem.rss / 1024 / 1024).toFixed(1)}MiB`);
+}, 60_000);
+// `unref` so the heartbeat timer never keeps the process alive on its
+// own — if every other event-loop hook drains, we should still exit.
+heartbeatInterval.unref();
+
 // Cleanup on exit
-async function cleanup() {
+async function cleanup(reason: string = 'unspecified') {
+  channelLog.log('cleanup-start', `reason=${reason}`);
+  clearInterval(heartbeatInterval);
   try { unlinkSync(portFile); } catch { /* ignore */ }
   // Notify main server synchronously before exiting — use a short timeout
   // so we don't hang if the server is down
@@ -378,10 +416,11 @@ async function cleanup() {
     setTimeout(() => controller.abort(), 1000);
     await notifyMainServer(controller.signal);
   } catch { /* ignore */ }
+  channelLog.log('cleanup-end', `reason=${reason} — exiting`);
   process.exit(0);
 }
-process.on('SIGTERM', () => void cleanup());
-process.on('SIGINT', () => void cleanup());
+process.on('SIGTERM', () => { channelLog.log('signal', 'SIGTERM'); void cleanup('SIGTERM'); });
+process.on('SIGINT', () => { channelLog.log('signal', 'SIGINT'); void cleanup('SIGINT'); });
 // HS-8447 — also handle SIGHUP, which is what the OS sends when the
 // controlling terminal of the parent (Claude Code) goes away. Without
 // this, killing the terminal that hosts Claude Code would leave the
@@ -392,5 +431,8 @@ process.on('SIGINT', () => void cleanup());
 // the watcher path catches the close-the-pipe-without-killing
 // flavour (e.g. `/mcp` reconnect that closes the pipe but spawns a
 // fresh process).
-process.on('SIGHUP', () => void cleanup());
-process.on('exit', () => { try { unlinkSync(portFile); } catch { /* ignore */ } });
+process.on('SIGHUP', () => { channelLog.log('signal', 'SIGHUP'); void cleanup('SIGHUP'); });
+process.on('exit', (code) => {
+  channelLog.log('exit', `code=${code}`);
+  try { unlinkSync(portFile); } catch { /* ignore */ }
+});

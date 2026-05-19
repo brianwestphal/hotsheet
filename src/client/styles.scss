@@ -4691,25 +4691,6 @@ body.terminal-dashboard-active {
   margin-bottom: 12px;
 }
 
-// HS-8446 — small "Global" chip next to a Settings section header to
-// signal that the toggles inside apply to every project on this
-// machine instead of the per-project default. Used by the Diagnostics
-// subsection in Settings → Experimental.
-.settings-scope-badge {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 1px 6px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  vertical-align: middle;
-}
-
 // --- Category Management ---
 
 .category-list {
