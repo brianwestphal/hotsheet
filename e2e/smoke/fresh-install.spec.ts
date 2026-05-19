@@ -43,8 +43,17 @@ test.describe('Fresh install smoke test', () => {
     await detailTitle.fill('Updated smoke title');
     await page.waitForTimeout(500); // Wait for debounced save
 
-    // Verify the list row updated
-    await expect(page.locator('.ticket-title-input[value="Updated smoke title"]')).toBeVisible({ timeout: 5000 });
+    // Verify the list row updated. NOTE: must use `toHaveValue` (which
+    // reads the live `.value` property), NOT a `[value="..."]` attribute
+    // selector. The §60 / kerf-backed morph re-render in
+    // `src/client/reactive.ts` updates `input.value` (property) but not
+    // the HTML `value` attribute, so the attribute selector matches the
+    // INITIAL render only and goes stale after any in-place edit.
+    // Attribute-selector matches still work for assertions made right
+    // after a row's first render (used elsewhere in this spec) — they
+    // fail only in the post-edit / post-morph case captured here.
+    const updatedRow = page.locator('.ticket-row[data-id] .ticket-title-input').first();
+    await expect(updatedRow).toHaveValue('Updated smoke title', { timeout: 5000 });
   });
 
   test('change ticket status and toggle up-next', async ({ page }) => {
