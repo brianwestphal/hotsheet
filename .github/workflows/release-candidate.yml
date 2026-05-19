@@ -1,24 +1,57 @@
-name: Release Candidate
+name: Release
+
+# Unified release workflow — HS-8464.
+#
+# Triggered by both `v*-rc.*` (release candidate, cut by `bash scripts/release.sh`)
+# and `v*-beta.*` (beta, cut by `bash scripts/release.sh --beta`) tags. Single
+# workflow because npm allows exactly one trusted publisher per package and it's
+# filename-scoped — keeping the file named `release-candidate.yml` (rather than
+# renaming) preserves the existing npmjs.org trusted-publisher binding so neither
+# tag track needs an `NPM_TOKEN` secret to publish. All `npm publish` invocations
+# below intentionally omit `NODE_AUTH_TOKEN` so the npm CLI uses the OIDC token
+# minted via the `id-token: write` permission instead of a long-lived token. See
+# HS-8464 for the merge history + the token-expired regression that triggered it.
+#
+# Tag → behavior:
+#   - `v*-rc.*`    → validation → tauri-build gate → publish → smoke → promote → dispatch release-desktop.yml
+#   - `v*-beta.*`  → validation → tauri-build gate → publish → smoke
+#                                                  → create-release + signed `build` (uploads to prerelease) in parallel
+#
+# Beta tags do NOT run the `promote` phase (betas stay on the `beta` dist-tag
+# and do not flip `latest`) and do NOT dispatch `release-desktop.yml` — instead
+# the beta-only `build` job produces signed Tauri bundles and uploads them
+# directly to the GitHub Release shell that `create-release` creates with
+# `prerelease: true`. GitHub's `releases/latest` skips prereleases, so the
+# Tauri updater + §50 upgrade nudge keep pointing at the prior stable release.
+#
+# Beta tags DO run smoke (per HS-8458 + HS-8464 follow-up decision) — same
+# rationale as for RCs: the same install/upgrade regression class can ship
+# through a beta, and a user running `npm install -g hotsheet@beta` is hitting
+# the exact code path the smoke jobs exercise.
 
 permissions:
   contents: write
-  actions: write   # Required to trigger release-desktop.yml via workflow_dispatch
-  id-token: write  # Required for npm OIDC trusted publishing
+  actions: write   # rc-only `promote` step dispatches release-desktop.yml
+  id-token: write  # npm OIDC trusted publishing (replaces NPM_TOKEN — see HS-8464)
 
 on:
   push:
     tags:
       - 'v*-rc.*'
+      - 'v*-beta.*'
 
+# Two concurrency groups so an in-flight rc and an in-flight beta never block
+# each other — but two rcs (or two betas) in quick succession do cancel the
+# older. Matches the pre-merge behavior of the two separate workflows.
 concurrency:
-  group: release-candidate
+  group: release-${{ contains(github.ref, '-beta.') && 'beta' || 'rc' }}
   cancel-in-progress: true
 
 env:
   NODE_VERSION: '20'
 
 jobs:
-  # --- Phase 1: Validation (parallel) ---
+  # === Phase 1: Validation (parallel, both tag types) ===
 
   test:
     runs-on: ubuntu-latest
@@ -60,6 +93,15 @@ jobs:
       - run: npm pack --dry-run
 
   tauri-build:
+    # Unsigned Tauri build that gates `publish` for both tag tracks. Runs
+    # against the committed package.json / tauri.conf.json version (the
+    # release script does NOT bump in-tree versions for beta tags, and for
+    # rc tags it bumps to the clean stable version with no pre-release
+    # identifier), so the Windows MSI bundler's "pre-release identifier
+    # must be numeric-only" check is never tripped here — the bundles
+    # produced are debug-only and discarded; the real signed beta bundles
+    # come from the `build` phase below which DOES do the bump and
+    # therefore needs the MSI-skip conditional.
     strategy:
       fail-fast: false
       matrix:
@@ -98,14 +140,93 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
 
-  # --- Phase 2: Beta Publish via OIDC trusted publishing ---
+  # === Phase 2 (beta-only): Create the GitHub Release shell ===
+  #
+  # Beta path only. Creates the prerelease that the `build` job uploads
+  # bundles to. The rc path doesn't need this — `promote` creates the
+  # final clean tag, and `release-desktop.yml` (dispatched from `promote`)
+  # owns its own release creation.
 
-  beta-publish:
+  create-release:
+    if: contains(github.ref, '-beta.')
+    needs: [test, e2e, lint, npm-dry-run, tauri-build]
+    runs-on: ubuntu-latest
+    outputs:
+      beta_version: ${{ steps.version.outputs.beta_version }}
+      release_id: ${{ steps.create.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract beta version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          BETA_VERSION="${TAG#v}"
+          echo "beta_version=$BETA_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Beta version: $BETA_VERSION"
+
+      - name: Build release notes body
+        id: notes
+        env:
+          TAG: ${{ github.ref_name }}
+          BETA_VERSION: ${{ steps.version.outputs.beta_version }}
+          REPO: ${{ github.repository }}
+        run: |
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+          NOTES=$(git tag -l --format='%(contents)' "$TAG" | sed '/^$/d')
+
+          {
+            echo "> **Beta / pre-release.** This build is opt-in. The Tauri auto-updater and the in-app upgrade nudge will continue to point at the prior stable release."
+            echo ""
+            if [ -n "$NOTES" ]; then
+              echo "$NOTES"
+              echo ""
+            fi
+            echo "## Try it out"
+            echo ""
+            echo "**npm:** \`npm install -g hotsheet@${BETA_VERSION}\` (or \`hotsheet@beta\` for the latest beta)"
+            echo ""
+            echo "**Desktop bundles:** see Assets below."
+          } > /tmp/beta-notes.md
+
+          echo "body<<ENDOFNOTES" >> "$GITHUB_OUTPUT"
+          cat /tmp/beta-notes.md >> "$GITHUB_OUTPUT"
+          echo "ENDOFNOTES" >> "$GITHUB_OUTPUT"
+
+      - name: Create prerelease
+        id: create
+        uses: actions/github-script@v7
+        env:
+          RELEASE_BODY: ${{ steps.notes.outputs.body }}
+        with:
+          script: |
+            const tag = '${{ github.ref_name }}';
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Hot Sheet ${tag} (beta)`,
+              body: process.env.RELEASE_BODY,
+              draft: false,
+              prerelease: true,
+              make_latest: 'false',
+            });
+            return data.id;
+
+  # === Phase 3: Publish npm with --tag beta (both tag types) ===
+  #
+  # Uses npm OIDC trusted publishing — no `NODE_AUTH_TOKEN` env block, no
+  # `NPM_TOKEN` secret reference. The trusted publisher configured at
+  # npmjs.org against this workflow's filename mints a short-lived token
+  # from the GitHub OIDC ID token, so this PUT cannot be broken by an
+  # expired or rotated long-lived token (HS-8464 root cause).
+
+  publish:
     needs: [test, e2e, lint, npm-dry-run, tauri-build]
     runs-on: ubuntu-latest
     environment: npm-publish
     outputs:
-      rc_version: ${{ steps.version.outputs.rc_version }}
+      version: ${{ steps.version.outputs.version }}
       base_version: ${{ steps.version.outputs.base_version }}
     steps:
       - uses: actions/checkout@v4
@@ -116,30 +237,197 @@ jobs:
           cache: npm
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Extract versions from tag
+      - name: Extract version from tag
         id: version
         run: |
           TAG="${GITHUB_REF_NAME}"
-          RC_VERSION="${TAG#v}"
-          BASE_VERSION=$(echo "$RC_VERSION" | sed 's/-rc\.[0-9]*//')
-          echo "rc_version=$RC_VERSION" >> "$GITHUB_OUTPUT"
+          VERSION="${TAG#v}"
+          # base_version only meaningful for rc tags — strips `-rc.N` to
+          # give the clean stable version that `promote` will publish.
+          # Harmless to compute on beta tags (no `-rc.N` to strip), it
+          # just isn't consumed there.
+          BASE_VERSION=$(echo "$VERSION" | sed 's/-rc\.[0-9]*//')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "base_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "RC version: $RC_VERSION, Base version: $BASE_VERSION"
+          echo "Version: $VERSION, Base version (rc-only): $BASE_VERSION"
 
       - run: npm ci
 
       - name: Set version and publish beta
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm version "${{ steps.version.outputs.rc_version }}" --no-git-tag-version --allow-same-version
+          npm version "${{ steps.version.outputs.version }}" --no-git-tag-version --allow-same-version
           npm run build
           npm publish --tag beta --provenance --access public
 
-  # --- Phase 3: Smoke Tests (after beta publish, parallel) ---
+  # === Phase 4 (beta-only): Signed Tauri bundles → prerelease ===
+  #
+  # Runs in parallel with `publish`. Bumps the in-tree version to the beta
+  # version BEFORE building so the Tauri bundles carry the right version
+  # string (release.sh's beta path intentionally skips the in-tree version
+  # bump — see HS-8246 — so CI has to do it ephemerally here).
+
+  build:
+    if: contains(github.ref, '-beta.')
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: '${{ matrix.target }}' }
+
+      - if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
+
+      - run: npm ci
+
+      - name: Set version for bundle build
+        shell: bash
+        run: |
+          VER="${{ needs.create-release.outputs.beta_version }}"
+          npm version "$VER" --no-git-tag-version --allow-same-version
+
+          if [ -f src-tauri/tauri.conf.json ]; then
+            node -e "
+              const fs = require('fs');
+              const f = 'src-tauri/tauri.conf.json';
+              const c = JSON.parse(fs.readFileSync(f, 'utf8'));
+              c.version = process.argv[1];
+              fs.writeFileSync(f, JSON.stringify(c, null, 2) + '\n');
+            " "$VER"
+          fi
+
+          if [ -f src-tauri/Cargo.toml ]; then
+            # Use Node for cross-platform in-place replace (BSD/GNU sed differ).
+            node -e "
+              const fs = require('fs');
+              const p = 'src-tauri/Cargo.toml';
+              const t = fs.readFileSync(p, 'utf8').replace(/^version = \".*\"/m, 'version = \"' + process.argv[1] + '\"');
+              fs.writeFileSync(p, t);
+            " "$VER"
+          fi
+
+      - run: bash scripts/build-sidecar.sh ${{ matrix.target }}
+        shell: bash
+
+      # macOS-only: codesign every native `.node` binary + node-pty's
+      # `spawn-helper` Mach-O launcher embedded in the sidecar's bundled
+      # node_modules BEFORE tauri-action runs. Tauri's bundler signs the
+      # main binary + externalBin (the Node sidecar) but does NOT
+      # recursively sign Mach-O native modules inside the resource tree
+      # (e.g. `node-pty`'s `pty.node` + `spawn-helper`). Apple's notary
+      # scans the entire .app and rejects the submission as "Invalid" if
+      # it finds an unsigned Mach-O — that's the v0.17.0-beta.11 +
+      # v0.17.0-beta.14 regression class (HS-8419 sweep 13 + d6bc215).
+      # Pre-sign with the same Developer ID certificate that tauri-action
+      # will use for the main bundle so the whole .app passes notary in a
+      # single submission. Hardened runtime is required (`--options
+      # runtime`) because the parent .app uses it. tauri-action does its
+      # own signing pass on top of these pre-signed binaries, which
+      # `codesign --force` upstream tolerates.
+      - name: Pre-sign native .node binaries (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          # macOS runners default to bash 3.x which lacks `mapfile`; use a
+          # newline-delimited string + portable `while IFS= read` loop.
+          # Include `spawn-helper` (no extension) in addition to .node
+          # files — see comment above for the notary-log evidence that
+          # required this.
+          NODE_BINS=$(find src-tauri/server/node_modules \( -name '*.node' -o -name 'spawn-helper' \) -type f 2>/dev/null || true)
+          if [ -z "$NODE_BINS" ]; then
+            echo "No native binaries under src-tauri/server/node_modules — nothing to pre-sign."
+            exit 0
+          fi
+          COUNT=$(printf '%s\n' "$NODE_BINS" | wc -l | tr -d ' ')
+          echo "Found ${COUNT} native binaries to pre-sign:"
+          printf '%s\n' "$NODE_BINS" | sed 's/^/  /'
+
+          KEYCHAIN="$RUNNER_TEMP/presign.keychain-db"
+          KEYCHAIN_PWD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | xargs)
+
+          printf '%s\n' "$NODE_BINS" | while IFS= read -r bin; do
+            codesign --force --options runtime --timestamp \
+              --sign "$APPLE_SIGNING_IDENTITY" "$bin"
+            codesign --verify --verbose "$bin"
+          done
+          echo "All ${COUNT} native binaries pre-signed."
+
+      # Windows MSI bundler requires the optional pre-release identifier
+      # in the app version to be numeric-only (e.g. `0.17.0-1`). Beta
+      # tags use the semver-standard `0.17.0-beta.N` form, which fails
+      # the MSI version check ("optional pre-release identifier in app
+      # version must be numeric-only and cannot be greater than 65535
+      # for msi target"). Skip MSI on Windows betas and ship NSIS `.exe`
+      # only. Stable releases (built by release-desktop.yml on
+      # `v[0-9]*` tags) still produce both NSIS and MSI because their
+      # version has no pre-release identifier.
+      - name: Build Tauri app and upload to release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: --target ${{ matrix.target }}${{ matrix.target == 'x86_64-pc-windows-msvc' && ' --bundles nsis' || '' }}
+
+  # === Phase 5: Smoke tests (both tag types) ===
+  #
+  # Per HS-8464 follow-up decision: betas run the same smoke matrix as
+  # RCs. The install/upgrade surface is the only path a user gets the
+  # beta (via `npm install -g hotsheet@beta`) and is where the same
+  # regression class HS-8457/8458 caught for RCs lurks for betas too.
+  # Smoke runs AFTER publish so the npm artifact always exists for
+  # debugging when smoke fails; the workflow goes red and the maintainer
+  # can yank `--tag beta` manually if needed.
+  #
+  # Both jobs use the HS-8457 ready-poll pattern (capture stdout, poll
+  # `/` for up to 30s, dump the log on failure) so a future silent-exit
+  # regression on the npm-install symlink path is visible in the CI log
+  # instead of looking like a slow boot.
 
   smoke-fresh:
-    needs: beta-publish
+    needs: publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -149,14 +437,9 @@ jobs:
       - run: npx playwright install chromium --with-deps
 
       - name: Install beta globally and start server
-        # HS-8457 — capture server stdout/stderr to a log file and poll for
-        # readiness instead of `sleep 5`. Pre-fix the server's output was
-        # eaten by `&` and a silent exit (HS-8422 isEntryPoint regression on
-        # the npm symlink) looked identical to a slow boot — ERR_CONNECTION_REFUSED
-        # in Playwright with zero diagnostic in the CI log.
         run: |
           for i in 1 2 3 4 5; do
-            npm install -g hotsheet@${{ needs.beta-publish.outputs.rc_version }} && break
+            npm install -g hotsheet@${{ needs.publish.outputs.version }} && break
             echo "Attempt $i failed, waiting 15s for npm registry propagation..."
             sleep 15
           done
@@ -192,7 +475,7 @@ jobs:
         run: kill $(lsof -ti:4195) 2>/dev/null || true
 
   smoke-upgrade:
-    needs: beta-publish
+    needs: publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -201,6 +484,8 @@ jobs:
       - run: npm ci
       - run: npx playwright install chromium --with-deps
 
+      # Upgrade path: latest production stable → published beta. `npm
+      # install -g hotsheet` (no version) resolves the `latest` dist-tag.
       - name: Install stable version and seed data
         run: |
           npm install -g hotsheet
@@ -220,7 +505,7 @@ jobs:
       - name: Upgrade to beta and start server
         run: |
           for i in 1 2 3 4 5; do
-            npm install -g hotsheet@${{ needs.beta-publish.outputs.rc_version }} && break
+            npm install -g hotsheet@${{ needs.publish.outputs.version }} && break
             echo "Attempt $i failed, waiting 15s for npm registry propagation..."
             sleep 15
           done
@@ -257,10 +542,17 @@ jobs:
         if: always()
         run: kill $(lsof -ti:4195) 2>/dev/null || true
 
-  # --- Phase 4: Auto Promote (after all smoke tests pass) ---
+  # === Phase 6 (rc-only): Promote to clean stable + dispatch desktop release ===
+  #
+  # Only RC tags reach this phase — beta tags stay on the `beta` dist-tag.
+  # Publishes the clean `0.17.X` stable to npm (also via OIDC trusted
+  # publishing, no token), creates the matching `v0.17.X` tag carrying
+  # the RC tag's notes, and dispatches `release-desktop.yml` to produce
+  # the signed Tauri bundles for the stable release.
 
   promote:
-    needs: [beta-publish, smoke-fresh, smoke-upgrade]
+    if: contains(github.ref, '-rc.')
+    needs: [publish, smoke-fresh, smoke-upgrade]
     runs-on: ubuntu-latest
     environment: npm-publish
     steps:
@@ -278,19 +570,17 @@ jobs:
       - run: npm ci
 
       - name: Publish clean release version to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm version "${{ needs.beta-publish.outputs.base_version }}" --no-git-tag-version --allow-same-version
+          npm version "${{ needs.publish.outputs.base_version }}" --no-git-tag-version --allow-same-version
           npm run build
           npm publish --provenance --access public
-          echo "Published hotsheet@${{ needs.beta-publish.outputs.base_version }} to npm"
+          echo "Published hotsheet@${{ needs.publish.outputs.base_version }} to npm"
 
       - name: Create final release tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          FINAL_TAG="v${{ needs.beta-publish.outputs.base_version }}"
+          FINAL_TAG="v${{ needs.publish.outputs.base_version }}"
           RC_TAG="${GITHUB_REF_NAME}"
           NOTES=$(git tag -l --format='%(contents)' "$RC_TAG")
           echo "$NOTES" | git tag -a "$FINAL_TAG" -F -
@@ -306,6 +596,6 @@ jobs:
               repo: context.repo.repo,
               workflow_id: 'release-desktop.yml',
               ref: 'main',
-              inputs: { tag: 'v${{ needs.beta-publish.outputs.base_version }}' },
+              inputs: { tag: 'v${{ needs.publish.outputs.base_version }}' },
             });
-            console.log('Triggered desktop release for v${{ needs.beta-publish.outputs.base_version }}');
+            console.log('Triggered desktop release for v${{ needs.publish.outputs.base_version }}');

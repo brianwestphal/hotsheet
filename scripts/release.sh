@@ -541,7 +541,8 @@ step_rc_tag_and_push() {
 
 # Beta tag-and-push: like the RC path but creates v{ver}-beta.{N} tags off
 # HEAD without first committing version-file bumps. The CI workflow
-# (release-beta.yml) extracts the version from the tag, publishes npm with
+# (release-candidate.yml — unified workflow that triggers on both rc + beta
+# tags per HS-8464) extracts the version from the tag, publishes npm with
 # `--tag beta`, and creates a GitHub Release flagged `prerelease: true` so
 # `releases/latest` (Tauri updater + §50 upgrade-nudge) keeps pointing at the
 # prior stable. There is no auto-promote — betas stay opt-in via

@@ -22,7 +22,7 @@
 #      this script's job.)
 #   2. Read current version from package.json (interactive default for
 #      "Enter to keep current_version"). Beta tags target the upcoming
-#      stable version; CI's release-beta.yml bumps it ephemerally via
+#      stable version; CI's release-candidate.yml bumps it ephemerally via
 #      `npm version --no-git-tag-version` at publish time.
 #   3. Draft release notes via `claude -p` from the commit-subject log
 #      since the last tag — same prompt and post-process as the
@@ -36,7 +36,8 @@
 #      tag (NOT a commit — beta mode skips version-file bumps + the
 #      release commit).
 #
-# What CI does on push of the tag — release-beta.yml:
+# What CI does on push of the tag — release-candidate.yml (unified workflow,
+# triggers on both `v*-rc.*` and `v*-beta.*` tags; see HS-8464):
 #   1. Re-runs tests + lint + build verification.
 #   2. Publishes hotsheet@<version>-beta.N to npm with `--tag beta`
 #      (does NOT promote to `@latest`).
