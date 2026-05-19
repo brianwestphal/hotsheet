@@ -211,6 +211,25 @@ preflight() {
       exit 1
     fi
   fi
+
+  # HS-8453 follow-up — fetch tags from origin before any tag-list reads.
+  # `step_release_notes` (this script) + `step_beta_tag_and_push` /
+  # `step_rc_tag_and_push` (auto-increment) + `step_changelog_diff` all
+  # depend on the local tag list being current. If a teammate (or a
+  # different machine of the same maintainer) pushed a tag the local
+  # clone doesn't know about, `git tag` returns stale data and we'd
+  # either compute the wrong "previous tag" anchor for the notes diff,
+  # OR auto-increment to a tag number the remote already holds (causing
+  # the eventual `git push origin <tag>` to fail with "tag already
+  # exists on remote"). Intentionally NOT using `--prune-tags`: deleting
+  # local-only tags the user is in the middle of testing would be too
+  # aggressive. Failure here is non-fatal (offline / no remote / network
+  # blip — proceed with whatever local state we have, the downstream
+  # push would have surfaced any conflict anyway).
+  info "Fetching tags from origin..."
+  if ! git fetch --tags origin 2>/dev/null; then
+    warn "git fetch --tags failed (offline?) — proceeding with local tag list."
+  fi
 }
 
 # --- Steps ---

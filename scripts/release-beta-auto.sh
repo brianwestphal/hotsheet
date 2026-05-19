@@ -101,6 +101,21 @@ preflight() {
     exit 1
   fi
 
+  # HS-8453 follow-up — fetch tags from origin before `read_version` /
+  # `draft_release_notes` / `tag_and_push` read the local tag list. A
+  # stale local clone would (a) compute the wrong "previous tag"
+  # anchor for the notes diff, (b) auto-increment to a beta number the
+  # remote already holds (causing the subsequent `git push origin
+  # <tag>` to fail). Intentionally NOT using `--prune-tags` — deleting
+  # local-only tags that haven't been pushed yet would be too
+  # aggressive. Failure is non-fatal (offline / no remote / network
+  # blip): proceed with whatever local state we have, and the
+  # downstream push surfaces any conflict.
+  info "Fetching tags from origin..."
+  if ! git fetch --tags origin 2>/dev/null; then
+    warn "git fetch --tags failed (offline?) — proceeding with local tag list."
+  fi
+
   success "Preflight clean (branch=${branch}, tree clean)"
 }
 
