@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { copyTickets } from './clipboard.js';
 import { setupColumnCardEffects } from './columnView.js';
+import { toElement } from './dom.js';
 import type { Ticket } from './state.js';
 import { state } from './state.js';
 import { setupTicketRowEffects } from './ticketRow.js';
@@ -76,15 +77,16 @@ function buildMinimalListRow(t: Ticket): HTMLElement {
   const row = document.createElement('div');
   row.className = `ticket-row${t.up_next ? ' up-next' : ''}`;
   row.dataset.id = String(t.id);
-  row.innerHTML = `
-    <input type="checkbox" class="ticket-checkbox" />
-    <span class="ticket-category-badge" style="background-color:#abc" title="${t.category}">CAT</span>
-    <span class="ticket-number">${t.ticket_number}</span>
-    <button class="ticket-status-btn" title="${t.status}"></button>
-    <input type="text" class="ticket-title-input" value="${t.title}" />
-    <span class="ticket-priority-indicator" style="color:#def" title="${t.priority}"></span>
-    <button class="ticket-star${t.up_next ? ' active' : ''}" title="x">${t.up_next ? '★' : '☆'}</button>
-  `;
+  // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+  row.replaceChildren(
+    toElement(<input type="checkbox" className="ticket-checkbox" />),
+    toElement(<span className="ticket-category-badge" style="background-color:#abc" title={t.category}>CAT</span>),
+    toElement(<span className="ticket-number">{t.ticket_number}</span>),
+    toElement(<button className="ticket-status-btn" title={t.status}></button>),
+    toElement(<input type="text" className="ticket-title-input" value={t.title} />),
+    toElement(<span className="ticket-priority-indicator" style="color:#def" title={t.priority}></span>),
+    toElement(<button className={`ticket-star${t.up_next ? ' active' : ''}`} title="x">{t.up_next ? '★' : '☆'}</button>),
+  );
   return row;
 }
 
@@ -92,15 +94,18 @@ function buildMinimalColumnCard(t: Ticket): HTMLElement {
   const card = document.createElement('div');
   card.className = `column-card${t.up_next ? ' up-next' : ''} status-${t.status}`;
   card.dataset.id = String(t.id);
-  card.innerHTML = `
-    <div class="column-card-header">
-      <span class="ticket-category-badge" style="background-color:#abc">CAT</span>
-      <span class="ticket-number">${t.ticket_number}</span>
-      <span class="ticket-priority-indicator" style="color:#def"></span>
-      <button class="ticket-star${t.up_next ? ' active' : ''}" title="x">${t.up_next ? '★' : '☆'}</button>
-    </div>
-    <div class="column-card-title">${t.title}</div>
-  `;
+  // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+  card.replaceChildren(
+    toElement(
+      <div className="column-card-header">
+        <span className="ticket-category-badge" style="background-color:#abc">CAT</span>
+        <span className="ticket-number">{t.ticket_number}</span>
+        <span className="ticket-priority-indicator" style="color:#def"></span>
+        <button className={`ticket-star${t.up_next ? ' active' : ''}`} title="x">{t.up_next ? '★' : '☆'}</button>
+      </div>
+    ),
+    toElement(<div className="column-card-title">{t.title}</div>),
+  );
   return card;
 }
 
@@ -334,7 +339,12 @@ describe('setupTicketRowEffects (HS-8357) — list-view reactivity for every mut
     const row = buildMinimalListRow(t);
     const seedTags = document.createElement('div');
     seedTags.className = 'ticket-row-tags';
-    seedTags.innerHTML = '<span class="ticket-row-tag">alpha</span><span class="ticket-row-tag">beta</span><span class="ticket-row-tag">gamma</span>';
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    seedTags.replaceChildren(
+      toElement(<span className="ticket-row-tag">alpha</span>),
+      toElement(<span className="ticket-row-tag">beta</span>),
+      toElement(<span className="ticket-row-tag">gamma</span>),
+    );
     const priIndicator = row.querySelector<HTMLElement>('.ticket-priority-indicator')!;
     row.insertBefore(seedTags, priIndicator);
     document.body.appendChild(row);
@@ -374,7 +384,10 @@ describe('setupTicketRowEffects (HS-8357) — list-view reactivity for every mut
     const row = buildMinimalListRow(t);
     const seed = document.createElement('div');
     seed.className = 'ticket-row-tags';
-    seed.innerHTML = '<span class="ticket-row-tag">a</span><span class="ticket-row-tag">b</span>';
+    seed.replaceChildren(
+      toElement(<span className="ticket-row-tag">a</span>),
+      toElement(<span className="ticket-row-tag">b</span>),
+    );
     const priIndicator = row.querySelector<HTMLElement>('.ticket-priority-indicator')!;
     row.insertBefore(seed, priIndicator);
     document.body.appendChild(row);
@@ -636,7 +649,7 @@ describe('setupColumnCardEffects (HS-8409) — tag chips stay in sync with ticke
     // minimal-card helper omits it intentionally).
     const seededTags1 = document.createElement('div');
     seededTags1.className = 'column-card-tags';
-    seededTags1.innerHTML = '<span class="column-card-tag">only-tag</span>';
+    seededTags1.replaceChildren(toElement(<span className="column-card-tag">only-tag</span>));
     card.appendChild(seededTags1);
     document.body.appendChild(card);
     const dispose = setupColumnCardEffects(card, t);
@@ -654,7 +667,10 @@ describe('setupColumnCardEffects (HS-8409) — tag chips stay in sync with ticke
     const card = buildMinimalColumnCard(t);
     const seededTags2 = document.createElement('div');
     seededTags2.className = 'column-card-tags';
-    seededTags2.innerHTML = '<span class="column-card-tag">a</span><span class="column-card-tag">b</span>';
+    seededTags2.replaceChildren(
+      toElement(<span className="column-card-tag">a</span>),
+      toElement(<span className="column-card-tag">b</span>),
+    );
     card.appendChild(seededTags2);
     document.body.appendChild(card);
     const dispose = setupColumnCardEffects(card, t);
@@ -696,7 +712,7 @@ describe('setupColumnCardEffects (HS-8409) — tag chips stay in sync with ticke
     const card = buildMinimalColumnCard(t);
     const seededTags3 = document.createElement('div');
     seededTags3.className = 'column-card-tags';
-    seededTags3.innerHTML = '<span class="column-card-tag">stable</span>';
+    seededTags3.replaceChildren(toElement(<span className="column-card-tag">stable</span>));
     card.appendChild(seededTags3);
     document.body.appendChild(card);
     const dispose = setupColumnCardEffects(card, t);

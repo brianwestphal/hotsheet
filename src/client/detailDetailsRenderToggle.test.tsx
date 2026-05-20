@@ -19,6 +19,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { toElement } from './dom.js';
 import type * as StateModule from './state.js';
 
 const { apiMock } = vi.hoisted(() => ({
@@ -46,12 +47,13 @@ beforeEach(async () => {
     mod.bindTicketRefGlobalClickHandler();
     globalHandlerBound = true;
   }
-  document.body.innerHTML = `
-    <div class="detail-details-wrap">
-      <div id="detail-details-rendered" class="detail-details-rendered note-markdown" tabindex="0"></div>
+  // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+  document.body.replaceChildren(toElement(
+    <div className="detail-details-wrap">
+      <div id="detail-details-rendered" className="detail-details-rendered note-markdown" tabindex="0"></div>
       <textarea id="detail-details" rows="6"></textarea>
     </div>
-  `;
+  ));
   apiMock.mockReset();
   // Hang any prefix lookups so the dialog open path doesn't tear down DOM.
   apiMock.mockReturnValue(new Promise(() => { /* never */ }));
@@ -65,7 +67,7 @@ describe('bindDetailDetailsRenderToggle — WKWebView focus-delegation guard (HS
     detail.bindDetailDetailsRenderToggle();
 
     const rendered = document.getElementById('detail-details-rendered')!;
-    rendered.innerHTML = '<p>see <a class="ticket-ref" data-ticket-number="HS-1234" href="javascript:void(0)">HS-1234</a></p>';
+    rendered.replaceChildren(toElement(<p>see <a className="ticket-ref" data-ticket-number="HS-1234" href="javascript:void(0)">HS-1234</a></p>));
 
     const anchor = rendered.querySelector('.ticket-ref') as HTMLElement;
     anchor.click();
@@ -79,7 +81,7 @@ describe('bindDetailDetailsRenderToggle — WKWebView focus-delegation guard (HS
     detail.bindDetailDetailsRenderToggle();
 
     const rendered = document.getElementById('detail-details-rendered')!;
-    rendered.innerHTML = '<p>see <a class="ticket-ref" data-ticket-number="HS-1234" href="javascript:void(0)">HS-1234</a></p>';
+    rendered.replaceChildren(toElement(<p>see <a className="ticket-ref" data-ticket-number="HS-1234" href="javascript:void(0)">HS-1234</a></p>));
 
     // Simulate the WKWebView path: mousedown lands inside rendered, then
     // focus is delegated to rendered (not the anchor) because of the
@@ -126,7 +128,7 @@ describe('bindDetailDetailsRenderToggle — WKWebView focus-delegation guard (HS
     detail.bindDetailDetailsRenderToggle();
 
     const rendered = document.getElementById('detail-details-rendered')!;
-    rendered.innerHTML = '<p>just some plain prose</p>';
+    rendered.replaceChildren(toElement(<p>just some plain prose</p>));
 
     const p = rendered.querySelector('p')!;
     p.click();

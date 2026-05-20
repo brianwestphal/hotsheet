@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { toElement } from './dom.js';
 import { _resetTerminalSearchForTests, focusActiveTerminalSearch, mountTerminalSearch } from './terminalSearch.js';
 
 // Minimal XTerm / SearchAddon stubs — enough for the widget's lifecycle:
@@ -37,7 +38,8 @@ describe('mountTerminalSearch (HS-7331)', () => {
     vi.stubGlobal('requestAnimationFrame', (cb: () => void) => { cb(); return 1; });
     // Mount slot so `document.body.contains(handle.root)` returns true in
     // `focusActiveTerminalSearch` path assertions.
-    document.body.innerHTML = '<div id="slot"></div>';
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    document.body.replaceChildren(toElement(<div id="slot"></div>));
   });
 
   afterEach(() => {
@@ -202,7 +204,8 @@ describe('mountTerminalSearch — recent-query history (HS-7427)', () => {
   beforeEach(() => {
     _resetTerminalSearchForTests();
     vi.stubGlobal('requestAnimationFrame', (cb: () => void) => { cb(); return 1; });
-    document.body.innerHTML = '<div id="slot"></div>';
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    document.body.replaceChildren(toElement(<div id="slot"></div>));
   });
 
   afterEach(() => {
@@ -377,7 +380,8 @@ describe('mountTerminalSearch — match-mode toggles (HS-7426)', () => {
   beforeEach(() => {
     _resetTerminalSearchForTests();
     vi.stubGlobal('requestAnimationFrame', (cb: () => void) => { cb(); return 1; });
-    document.body.innerHTML = '<div id="slot"></div>';
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    document.body.replaceChildren(toElement(<div id="slot"></div>));
   });
 
   afterEach(() => {
@@ -554,7 +558,8 @@ describe('focusActiveTerminalSearch (HS-7331)', () => {
   beforeEach(() => {
     _resetTerminalSearchForTests();
     vi.stubGlobal('requestAnimationFrame', (cb: () => void) => { cb(); return 1; });
-    document.body.innerHTML = '<div id="slot"></div>';
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    document.body.replaceChildren(toElement(<div id="slot"></div>));
   });
 
   afterEach(() => {

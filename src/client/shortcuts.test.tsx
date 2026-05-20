@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { toElement } from './dom.js';
 import type { KeyContext } from './shortcuts.js';
 import {
   decideShiftArrowTabAction,
@@ -116,32 +117,33 @@ describe('isCommandsLogFocused (HS-7927 follow-up)', () => {
     document.body.innerHTML = '';
   });
 
-  function panel(inner: string, displayNone = false): void {
-    const styleAttr = displayNone ? ' style="display:none"' : '';
-    document.body.innerHTML = `
-      <div id="command-log-panel"${styleAttr}>
-        ${inner}
-      </div>
-    `;
+  // HS-8467 — panel() takes a JSX child instead of an HTML string so the
+  // entire fixture is typed.
+  function panel(inner: HTMLElement, displayNone = false): void {
+    const root = displayNone
+      ? toElement(<div id="command-log-panel" style="display:none"></div>)
+      : toElement(<div id="command-log-panel"></div>);
+    root.appendChild(inner);
+    document.body.replaceChildren(root);
   }
 
   it('returns true when the panel is visible and the active drawer tab is commands-log (default activeTab)', () => {
-    panel('<div id="drawer-panel-commands-log"></div>');
+    panel(toElement(<div id="drawer-panel-commands-log"></div>));
     expect(isCommandsLogFocused()).toBe(true);
   });
 
   it('returns true regardless of which element has focus, so long as the panel is visible and commands-log is active', () => {
-    panel(`
+    panel(toElement(
       <div id="drawer-panel-commands-log">
         <input id="command-log-search" />
       </div>
-    `);
+    ));
     (document.getElementById('command-log-search') as HTMLInputElement).focus();
     expect(isCommandsLogFocused()).toBe(true);
   });
 
   it('returns true when focus is on body (the user-reported HS-7927 third-follow-up case)', () => {
-    panel('<div id="drawer-panel-commands-log"></div>');
+    panel(toElement(<div id="drawer-panel-commands-log"></div>));
     // No element focused — activeElement === body. Pre-fix this returned
     // false and Cmd+Shift+Arrow fell through to project-tab cycling.
     (document.body).focus();
@@ -149,7 +151,7 @@ describe('isCommandsLogFocused (HS-7927 follow-up)', () => {
   });
 
   it('returns false when the drawer panel is hidden (display:none)', () => {
-    panel('<div id="drawer-panel-commands-log"></div>', true);
+    panel(toElement(<div id="drawer-panel-commands-log"></div>), true);
     expect(isCommandsLogFocused()).toBe(false);
   });
 
@@ -185,24 +187,24 @@ describe('isEditableTarget (HS-7978)', () => {
   });
 
   it('returns true for a contenteditable=true span (the custom-command-group rename case)', () => {
-    document.body.innerHTML = `<span contenteditable="true">Group name</span>`;
+    document.body.replaceChildren(toElement(<span contenteditable="true">Group name</span>));
     const span = document.querySelector('span') as HTMLSpanElement;
     expect(isEditableTarget(span)).toBe(true);
   });
 
   it('returns true for a div nested under a contenteditable ancestor', () => {
-    document.body.innerHTML = `
+    document.body.replaceChildren(toElement(
       <div contenteditable="true">
         <div id="nested">child</div>
       </div>
-    `;
+    ));
     const nested = document.getElementById('nested') as HTMLDivElement;
     // isContentEditable propagates to descendants in standard DOM semantics.
     expect(isEditableTarget(nested)).toBe(true);
   });
 
   it('returns false for a regular non-editable span', () => {
-    document.body.innerHTML = `<span>Plain text</span>`;
+    document.body.replaceChildren(toElement(<span>Plain text</span>));
     const span = document.querySelector('span') as HTMLSpanElement;
     expect(isEditableTarget(span)).toBe(false);
   });
@@ -213,11 +215,11 @@ describe('isEditableTarget (HS-7978)', () => {
   });
 
   it('returns false for a contenteditable=false span (explicit opt-out beneath an editable ancestor)', () => {
-    document.body.innerHTML = `
+    document.body.replaceChildren(toElement(
       <div contenteditable="true">
         <span id="opt-out" contenteditable="false">Pinned text</span>
       </div>
-    `;
+    ));
     const span = document.getElementById('opt-out') as HTMLSpanElement;
     expect(isEditableTarget(span)).toBe(false);
   });
@@ -241,35 +243,35 @@ describe('isElementInTerminal (HS-8011)', () => {
   });
 
   it('returns true for a target inside a .xterm container', () => {
-    document.body.innerHTML = `
-      <div class="xterm">
+    document.body.replaceChildren(toElement(
+      <div className="xterm">
         <textarea id="helper"></textarea>
       </div>
-    `;
+    ));
     const helper = document.getElementById('helper');
     expect(isElementInTerminal(helper)).toBe(true);
   });
 
   it('returns true for a target inside .drawer-terminal-pane', () => {
-    document.body.innerHTML = `
-      <div class="drawer-terminal-pane">
+    document.body.replaceChildren(toElement(
+      <div className="drawer-terminal-pane">
         <div id="inside"></div>
       </div>
-    `;
+    ));
     expect(isElementInTerminal(document.getElementById('inside'))).toBe(true);
   });
 
   it('returns true when the target itself is .xterm', () => {
-    document.body.innerHTML = `<div class="xterm" id="root"></div>`;
+    document.body.replaceChildren(toElement(<div className="xterm" id="root"></div>));
     expect(isElementInTerminal(document.getElementById('root'))).toBe(true);
   });
 
   it('returns false for a target outside any terminal container', () => {
-    document.body.innerHTML = `
-      <div class="some-other-pane">
+    document.body.replaceChildren(toElement(
+      <div className="some-other-pane">
         <textarea id="t"></textarea>
       </div>
-    `;
+    ));
     expect(isElementInTerminal(document.getElementById('t'))).toBe(false);
   });
 
@@ -289,11 +291,11 @@ describe('shouldEscapeBypassHotsheet (HS-8011)', () => {
   });
 
   function inTerminal(): EventTarget {
-    document.body.innerHTML = `<div class="xterm"><textarea id="t"></textarea></div>`;
+    document.body.replaceChildren(toElement(<div className="xterm"><textarea id="t"></textarea></div>));
     return document.getElementById('t') as EventTarget;
   }
   function outsideTerminal(): EventTarget {
-    document.body.innerHTML = `<div class="ticket-list"><input id="search" /></div>`;
+    document.body.replaceChildren(toElement(<div className="ticket-list"><input id="search" /></div>));
     return document.getElementById('search') as EventTarget;
   }
 
@@ -329,47 +331,47 @@ describe('findVisibleModalOverlay (HS-8033)', () => {
   });
 
   it('returns null when no modal overlay is mounted', () => {
-    document.body.innerHTML = '<div class="ticket-list"></div>';
+    document.body.replaceChildren(toElement(<div className="ticket-list"></div>));
     expect(findVisibleModalOverlay(document)).toBe(null);
   });
 
   it('finds the settings overlay by id', () => {
-    document.body.innerHTML = '<div id="settings-overlay" style="display:block"></div>';
+    document.body.replaceChildren(toElement(<div id="settings-overlay" style="display:block"></div>));
     const found = findVisibleModalOverlay(document);
     expect(found?.id).toBe('settings-overlay');
   });
 
   it('finds the open-folder overlay by id', () => {
-    document.body.innerHTML = '<div id="open-folder-overlay" style="display:flex"></div>';
+    document.body.replaceChildren(toElement(<div id="open-folder-overlay" style="display:flex"></div>));
     const found = findVisibleModalOverlay(document);
     expect(found?.id).toBe('open-folder-overlay');
   });
 
   it('skips an overlay whose inline display is "none"', () => {
-    document.body.innerHTML = '<div id="settings-overlay" style="display:none"></div>';
+    document.body.replaceChildren(toElement(<div id="settings-overlay" style="display:none"></div>));
     expect(findVisibleModalOverlay(document)).toBe(null);
   });
 
   it('finds class-based dialog backdrops (confirm-dialog-overlay)', () => {
-    document.body.innerHTML = '<div class="confirm-dialog-overlay"></div>';
+    document.body.replaceChildren(toElement(<div className="confirm-dialog-overlay"></div>));
     const found = findVisibleModalOverlay(document);
     expect(found?.classList.contains('confirm-dialog-overlay')).toBe(true);
   });
 
   it('finds class-based dialog backdrops (feedback-dialog-overlay)', () => {
-    document.body.innerHTML = '<div class="feedback-dialog-overlay"></div>';
+    document.body.replaceChildren(toElement(<div className="feedback-dialog-overlay"></div>));
     const found = findVisibleModalOverlay(document);
     expect(found?.classList.contains('feedback-dialog-overlay')).toBe(true);
   });
 
   it('finds class-based dialog backdrops (quit-confirm-overlay)', () => {
-    document.body.innerHTML = '<div class="quit-confirm-overlay"></div>';
+    document.body.replaceChildren(toElement(<div className="quit-confirm-overlay"></div>));
     const found = findVisibleModalOverlay(document);
     expect(found?.classList.contains('quit-confirm-overlay')).toBe(true);
   });
 
   it('skips a hidden element via the `hidden` attribute', () => {
-    document.body.innerHTML = '<div class="confirm-dialog-overlay" hidden></div>';
+    document.body.replaceChildren(toElement(<div className="confirm-dialog-overlay" hidden></div>));
     expect(findVisibleModalOverlay(document)).toBe(null);
   });
 
@@ -377,11 +379,11 @@ describe('findVisibleModalOverlay (HS-8033)', () => {
     // Terminal-prompt overlay, permission popup, context menu — all
     // popups, not modals. They should NOT trigger the bail because they
     // don't take focus from the underlying surface.
-    document.body.innerHTML = `
-      <div class="terminal-prompt-overlay"></div>
-      <div class="permission-popup"></div>
-      <div class="context-menu"></div>
-    `;
+    document.body.replaceChildren(
+      toElement(<div className="terminal-prompt-overlay"></div>),
+      toElement(<div className="permission-popup"></div>),
+      toElement(<div className="context-menu"></div>),
+    );
     expect(findVisibleModalOverlay(document)).toBe(null);
   });
 
@@ -401,22 +403,22 @@ describe('shouldBailForActiveModal (HS-8033)', () => {
   });
 
   it('returns false when no modal is open', () => {
-    document.body.innerHTML = '<div class="ticket-list"><div id="ticket-row"></div></div>';
+    document.body.replaceChildren(toElement(<div className="ticket-list"><div id="ticket-row"></div></div>));
     expect(shouldBailForActiveModal(document.getElementById('ticket-row'))).toBe(false);
   });
 
   it('returns true when a modal is open and the target is OUTSIDE it', () => {
-    document.body.innerHTML = `
-      <div class="ticket-list"><div id="ticket-row"></div></div>
-      <div class="confirm-dialog-overlay"><button>OK</button></div>
-    `;
+    document.body.replaceChildren(
+      toElement(<div className="ticket-list"><div id="ticket-row"></div></div>),
+      toElement(<div className="confirm-dialog-overlay"><button>OK</button></div>),
+    );
     expect(shouldBailForActiveModal(document.getElementById('ticket-row'))).toBe(true);
   });
 
   it('returns true when a modal is open and the target is INSIDE it', () => {
-    document.body.innerHTML = `
-      <div class="confirm-dialog-overlay"><input id="cancel-input" /></div>
-    `;
+    document.body.replaceChildren(toElement(
+      <div className="confirm-dialog-overlay"><input id="cancel-input" /></div>
+    ));
     // Bail either way — focus inside the modal still wants the modal's
     // own per-element handlers to win, not the global ones.
     expect(shouldBailForActiveModal(document.getElementById('cancel-input'))).toBe(true);
@@ -428,15 +430,15 @@ describe('shouldBailForActiveModal (HS-8033)', () => {
   });
 
   it('returns true for a null target when a modal IS open (defensive bail)', () => {
-    document.body.innerHTML = '<div class="confirm-dialog-overlay"></div>';
+    document.body.replaceChildren(toElement(<div className="confirm-dialog-overlay"></div>));
     expect(shouldBailForActiveModal(null)).toBe(true);
   });
 
   it('does NOT bail for a non-modal popup like .terminal-prompt-overlay', () => {
-    document.body.innerHTML = `
-      <div class="ticket-list"><div id="ticket-row"></div></div>
-      <div class="terminal-prompt-overlay"><button>Allow</button></div>
-    `;
+    document.body.replaceChildren(
+      toElement(<div className="ticket-list"><div id="ticket-row"></div></div>),
+      toElement(<div className="terminal-prompt-overlay"><button>Allow</button></div>),
+    );
     expect(shouldBailForActiveModal(document.getElementById('ticket-row'))).toBe(false);
   });
 });
