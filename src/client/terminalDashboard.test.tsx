@@ -13,6 +13,7 @@
 // by the dedicated overlay, so the user never saw it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { toElement } from './dom.js';
 import { attachDedicatedBarSearch, parsePersistedColumnCount } from './terminalDashboard.js';
 import { _resetTerminalSearchForTests } from './terminalSearch.js';
 
@@ -74,7 +75,8 @@ describe('attachDedicatedBarSearch (HS-8341)', () => {
   beforeEach(() => {
     _resetTerminalSearchForTests();
     vi.stubGlobal('requestAnimationFrame', (cb: () => void) => { cb(); return 1; });
-    document.body.innerHTML = '<div class="terminal-dashboard-dedicated-bar"></div>';
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    document.body.replaceChildren(toElement(<div className="terminal-dashboard-dedicated-bar"></div>));
   });
 
   afterEach(() => {

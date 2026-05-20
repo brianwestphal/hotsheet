@@ -78,17 +78,23 @@ export async function loadBackupList(): Promise<void> {
       ));
 
       for (const backup of items) {
+        // HS-8468 — row carries `data-tier` / `data-filename` /
+        // `data-created-at` so the delegated click listener installed in
+        // `bindBackupsUI` can read all three off the dataset via
+        // `closest('.backup-row')`. No per-row `addEventListener` here.
         const row = toElement(
-          <div className="backup-row" data-tier={backup.tier} data-filename={backup.filename}>
+          <div
+            className="backup-row"
+            data-tier={backup.tier}
+            data-filename={backup.filename}
+            data-created-at={backup.createdAt}
+          >
             <span className="backup-row-time">{timeAgo(backup.createdAt)}</span>
             <span className="backup-row-meta">
               {new Date(backup.createdAt).toLocaleString()} · {formatSize(backup.sizeBytes)}
             </span>
           </div>
         );
-        row.addEventListener('click', () => {
-          void startPreview(backup.tier, backup.filename, backup.createdAt);
-        });
         container.appendChild(row);
       }
     }
@@ -179,6 +185,23 @@ export function bindBackupsUI(): void {
   // HS-7897: Database Repair panel lives in the same Settings → Backups
   // tab; bind its buttons here so the wiring runs once at app init.
   bindDbRepairUI();
+
+  // HS-8468 — delegated click handler for backup rows. Single listener
+  // on the container survives every `loadBackupList()` rebuild (rows
+  // come and go inside `#backup-list`, but the container element is
+  // permanent), so the per-row `addEventListener` pattern that used to
+  // re-bind on every reload is gone. Rows carry `data-tier` /
+  // `data-filename` / `data-created-at` for the closest()-style lookup.
+  byIdOrNull('backup-list')?.addEventListener('click', (e) => {
+    const row = (e.target as HTMLElement | null)?.closest<HTMLElement>('.backup-row');
+    if (row === null || row === undefined) return;
+    const tier = row.dataset.tier;
+    const filename = row.dataset.filename;
+    const createdAt = row.dataset.createdAt;
+    if (tier === undefined || filename === undefined || createdAt === undefined) return;
+    void startPreview(tier, filename, createdAt);
+  });
+
   byIdOrNull('backup-cancel-btn')?.addEventListener('click', () => {
     void cancelPreview();
   });

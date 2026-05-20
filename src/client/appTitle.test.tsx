@@ -16,6 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setAppTitle, setAppTitleFromActiveProject } from './appTitle.js';
+import { toElement } from './dom.js';
 import type { ProjectInfo } from './state.js';
 
 let mockActiveProject: ProjectInfo | null = null;
@@ -31,7 +32,8 @@ vi.mock('./tauriIntegration.js', () => ({
 }));
 
 beforeEach(() => {
-  document.body.innerHTML = '<div class="app-title"><h1>initial</h1></div>';
+  // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+  document.body.replaceChildren(toElement(<div className="app-title"><h1>initial</h1></div>));
   document.title = 'initial';
   mockActiveProject = null;
   mockInvoke.mockReset();

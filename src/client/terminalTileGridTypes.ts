@@ -71,6 +71,20 @@ export interface InternalTile {
    *  a re-mount of the tile would stack a second `onBell` on top of the
    *  first. */
   termHandlerDisposers: Array<{ dispose(): void }>;
+  /** HS-8469 — per-tile bell-pending state as a signal so consumers
+   *  write the value instead of mutating `.has-bell` on the DOM
+   *  directly. Driven by `syncBellState`'s pending-key set + the
+   *  server-pushed `bellPending` flag on the initial entry; consumed by
+   *  the `bellEffectDispose` effect below which toggles the class. Lives
+   *  for the entire tile lifetime (NOT cleared by `softDisposeTile`
+   *  during virtualization — bell state survives mount/unmount). */
+  bellPending: Signal<boolean>;
+  /** HS-8469 — disposer for the effect that mirrors `bellPending` →
+   *  `root.classList.toggle('has-bell', value)`. Kept in its own slot
+   *  (not pushed to `termHandlerDisposers`) because that bag is cleared
+   *  by `softDisposeTile` on virtualization-unmount, while the bell
+   *  effect should live for the tile's full lifetime. */
+  bellEffectDispose: (() => void) | null;
 }
 
 export interface DedicatedView {

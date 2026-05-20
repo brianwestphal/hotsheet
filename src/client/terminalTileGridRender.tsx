@@ -1,4 +1,5 @@
 import { toElement } from './dom.js';
+import { effect, signal } from './reactive.js';
 import {
   applyAppearanceToTerm,
   getProjectDefault,
@@ -87,9 +88,15 @@ export function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement 
   const fullLabelTitle = badge?.name !== undefined && badge.name !== ''
     ? `${badge.name} › ${entry.label}`
     : entry.label;
+  // HS-8469 — `has-bell` is no longer baked into the initial className.
+  // The bell-effect below subscribes to `bellPending` and toggles the
+  // class via `classList.toggle`, so the class only exists when the
+  // signal says so. `bellPending` is seeded with `initialBell` and the
+  // effect fires synchronously on creation, applying the initial class
+  // (if any) before the tile is returned.
   const root = toElement(
     <div
-      className={`${c.tileClass} ${c.tileClass}-${entry.state}${initialBell ? ' has-bell' : ''}`}
+      className={`${c.tileClass} ${c.tileClass}-${entry.state}`}
       data-secret={entry.secret}
       data-terminal-id={entry.id}
     >
@@ -140,6 +147,16 @@ export function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement 
   if (preview === null || labelEl === null) return root;
   preview.appendChild(renderPreviewContent(ctx, entry.state, entry.exitCode));
 
+  // HS-8469 — bell-pending signal + class-toggle effect. The signal is
+  // the source of truth (consumers in `syncBellState` write to it); the
+  // effect mirrors writes to `root.classList`. Fires synchronously on
+  // creation so the initial-bell case applies the class before the
+  // caller receives the element.
+  const bellPending = signal<boolean>(initialBell);
+  const bellEffectDispose = effect(() => {
+    root.classList.toggle('has-bell', bellPending.value);
+  });
+
   const tile: InternalTile = {
     entry,
     state: entry.state,
@@ -158,6 +175,8 @@ export function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement 
     slotPlaceholder: null,
     screenObserver: null,
     termHandlerDisposers: [],
+    bellPending,
+    bellEffectDispose,
   };
   const key = tileKeyFor(entry);
   ctx.tiles.set(key, tile);

@@ -130,8 +130,10 @@ export default tseslint.config(
       "src/client/settingsLoader.tsx",
       "src/client/tags.tsx",
       "src/client/tagsDialog.tsx",
-      "src/client/terminal.tsx",
-      "src/client/terminalDashboard.tsx",
+      // HS-8448 — `src/client/terminal.tsx` + `src/client/terminalDashboard.tsx`
+      // no longer contain any `innerHTML =` assignments (migrated incrementally
+      // under HS-8365 / §54), removed from the allowlist so new innerHTML
+      // assignments in these files get caught by the lint rule.
       "src/client/terminalDefaultAppearanceUI.tsx",
       // HS-8365 — `src/client/terminalsSettings.tsx` retains popover-rebuild
       // innerHTML usage (HS-8365 non-target — popover dismisses on focus loss,

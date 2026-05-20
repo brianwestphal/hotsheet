@@ -325,7 +325,9 @@ export function mountTileViaCheckout(ctx: TileGridContext, tile: InternalTile): 
       postClearBell(ctx, tile);
       return;
     }
-    tile.root.classList.add('has-bell');
+    // HS-8469 — write the signal; the class is mirrored by the
+    // bell-effect installed in `renderTile`.
+    tile.bellPending.value = true;
   });
   tile.termHandlerDisposers.push(bellDispose);
 
@@ -458,6 +460,13 @@ export function disposeTile(ctx: TileGridContext, tile: InternalTile): void {
     try { d.dispose(); } catch { /* already disposed */ }
   }
   tile.termHandlerDisposers = [];
+  // HS-8469 — dispose the bell-class effect installed in `renderTile`.
+  // Outlives the term-handler bag above (which is cleared on every
+  // softDispose), so it gets its own slot.
+  if (tile.bellEffectDispose !== null) {
+    try { tile.bellEffectDispose(); } catch { /* already disposed */ }
+    tile.bellEffectDispose = null;
+  }
   if (tile.checkout !== null) {
     try { tile.checkout.release(); } catch { /* already released */ }
     tile.checkout = null;

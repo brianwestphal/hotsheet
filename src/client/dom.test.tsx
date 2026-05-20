@@ -18,7 +18,8 @@ afterEach(() => { document.body.innerHTML = ''; });
 describe('requireChild (HS-8092)', () => {
   it('returns the element when the selector matches', () => {
     const root = document.createElement('div');
-    root.innerHTML = '<button id="ok" class="primary">click me</button>';
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    root.replaceChildren(toElement(<button id="ok" className="primary">click me</button>));
     const btn = requireChild<HTMLButtonElement>(root, '#ok');
     expect(btn.tagName).toBe('BUTTON');
     expect(btn.id).toBe('ok');
@@ -30,7 +31,7 @@ describe('requireChild (HS-8092)', () => {
 
   it('returns the FIRST match for selectors that resolve multiple', () => {
     const root = document.createElement('div');
-    root.innerHTML = '<button>a</button><button>b</button>';
+    root.replaceChildren(toElement(<button>a</button>), toElement(<button>b</button>));
     expect(requireChild<HTMLButtonElement>(root, 'button').textContent).toBe('a');
   });
 
@@ -38,7 +39,7 @@ describe('requireChild (HS-8092)', () => {
     const root = document.createElement('div');
     root.id = 'feedback-overlay';
     root.className = 'permission-popup';
-    root.innerHTML = '<span>nothing matching</span>';
+    root.replaceChildren(toElement(<span>nothing matching</span>));
     expect(() => requireChild(root, '#missing-id')).toThrow(/no match for "#missing-id"/);
     expect(() => requireChild(root, '#missing-id')).toThrow(/<div id="feedback-overlay" class="permission-popup">/);
   });
@@ -54,7 +55,7 @@ describe('requireChild (HS-8092)', () => {
 
   it('defaults the return type to HTMLElement when no generic is supplied', () => {
     const root = document.createElement('div');
-    root.innerHTML = '<p>hi</p>';
+    root.replaceChildren(toElement(<p>hi</p>));
     const el = requireChild(root, 'p');
     // Type-level assertion: `el` is `HTMLElement` so this access compiles.
     el.style.color = 'red';
@@ -64,7 +65,7 @@ describe('requireChild (HS-8092)', () => {
 
 describe('byId / byIdOrNull (HS-8083)', () => {
   it('byId returns the element when the id matches', () => {
-    document.body.innerHTML = '<input id="foo" type="text" />';
+    document.body.replaceChildren(toElement(<input id="foo" type="text" />));
     const el = byId<HTMLInputElement>('foo');
     expect(el.tagName).toBe('INPUT');
     el.value = 'hello';
@@ -77,14 +78,14 @@ describe('byId / byIdOrNull (HS-8083)', () => {
   });
 
   it('byId defaults to HTMLElement when no generic is supplied', () => {
-    document.body.innerHTML = '<div id="bar"></div>';
+    document.body.replaceChildren(toElement(<div id="bar"></div>));
     const el = byId('bar');
     el.style.color = 'red';
     expect(el.style.color).toBe('red');
   });
 
   it('byIdOrNull returns the element when present', () => {
-    document.body.innerHTML = '<button id="b"></button>';
+    document.body.replaceChildren(toElement(<button id="b"></button>));
     expect(byIdOrNull<HTMLButtonElement>('b')?.tagName).toBe('BUTTON');
   });
 

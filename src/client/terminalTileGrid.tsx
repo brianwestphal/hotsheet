@@ -316,10 +316,15 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
     uncenterTile: () => { uncenterTile(ctx); },
     exitDedicatedView: () => { exitDedicatedView(ctx); },
     syncBellState(pendingTileKeys) {
+      // HS-8469 — bell state is signal-backed (`tile.bellPending`). The
+      // effect created in `renderTile` mirrors the signal value onto the
+      // `has-bell` class, so this method just writes the signal. Reads
+      // use `.peek()` because we're outside any kerf-effect context and
+      // don't want to register a subscription.
       for (const tile of ctx.tiles.values()) {
         const key = tileKeyFor(tile.entry);
         const want = pendingTileKeys.has(key);
-        const has = tile.root.classList.contains('has-bell');
+        const has = tile.bellPending.peek();
         if (want && !has) {
           // HS-8046 — server-pushed bellPending lands on a tile the user
           // is already looking at. Drop the server flag instead of
@@ -327,10 +332,10 @@ export function mountTileGrid(opts: TileGridOptions): TileGridHandle {
           if (isGridSurfaceUnoccluded(ctx) && ctx.visibleTileIds.has(key)) {
             postClearBell(ctx, tile);
           } else {
-            tile.root.classList.add('has-bell');
+            tile.bellPending.value = true;
           }
         } else if (!want && has) {
-          tile.root.classList.remove('has-bell');
+          tile.bellPending.value = false;
         }
       }
     },

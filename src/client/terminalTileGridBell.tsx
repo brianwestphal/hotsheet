@@ -33,8 +33,11 @@ export function postClearBell(_ctx: TileGridContext, tile: InternalTile): void {
 }
 
 export function clearTileBell(ctx: TileGridContext, tile: InternalTile): void {
-  if (!tile.root.classList.contains('has-bell')) return;
-  tile.root.classList.remove('has-bell');
+  // HS-8469 — read + write the signal; the `has-bell` class is mirrored
+  // via the effect installed in `renderTile`. `.peek()` because we're
+  // outside a kerf-effect context and don't want a subscription.
+  if (!tile.bellPending.peek()) return;
+  tile.bellPending.value = false;
   postClearBell(ctx, tile);
 }
 
