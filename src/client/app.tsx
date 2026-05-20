@@ -198,6 +198,10 @@ function bindAllUiHandlers(): void {
   // HS-7954 — wire the sidebar git status chip. Initial fetch happens
   // immediately; subsequent refetches driven by `/api/poll` + `window.focus`.
   initGitStatusChip();
+  // HS-8148 — install the §67.10.2 Telemetry drawer-tab scope-toggle
+  // delegated click listener. The actual data fetch is lazy — runs
+  // only when the user activates the tab (via commandLog.tsx::switchDrawerTab).
+  void import('./telemetryDrawer.js').then(({ initTelemetryDrawer }) => { initTelemetryDrawer(); });
   // HS-8036 — load the project's known ticket-number prefixes; HS-8062 —
   // refresh detail after resolution so pre-cache markdown re-linkifies.
   void loadTicketPrefixes().then(() => refreshDetail()).catch(() => { /* swallow */ });

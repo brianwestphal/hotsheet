@@ -331,6 +331,10 @@ pageRoutes.get('/', (c) => {
             <button className="drawer-tab drawer-tab-icon active" data-drawer-tab="commands-log" id="drawer-tab-commands-log" title="Commands Log" aria-label="Commands Log">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-3"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>
             </button>
+            {/* HS-8148 — §67.10.2 footer drawer Telemetry tab. Activates `loadAndRenderTelemetryDrawer` from `src/client/telemetryDrawer.tsx`. */}
+            <button className="drawer-tab drawer-tab-icon" data-drawer-tab="telemetry" id="drawer-tab-telemetry" title="Telemetry" aria-label="Telemetry">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            </button>
             <span className="drawer-tabs-divider" aria-hidden="true" style="display:none"></span>
             <div className="drawer-terminal-tabs-wrap" id="drawer-terminal-tabs-wrap" style="display:none">
               <div className="drawer-terminal-tabs-scroll">
@@ -391,6 +395,10 @@ pageRoutes.get('/', (c) => {
               <button id="command-log-clear" className="command-log-clear-btn" title="Clear log"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
             </div>
             <div id="command-log-entries" className="command-log-entries"></div>
+          </div>
+          {/* HS-8148 — Telemetry tab content panel. `telemetryDrawer.tsx::loadAndRenderTelemetryDrawer` populates this on tab activation. Default-hidden via inline display:none so the panel doesn't flash before the tab-switcher hides it. */}
+          <div className="drawer-tab-content" data-drawer-panel="telemetry" id="drawer-panel-telemetry" style="display:none">
+            <div className="telemetry-drawer-loading">Loading telemetry…</div>
           </div>
           <div id="drawer-terminal-panes" className="drawer-terminal-panes"></div>
           {/* HS-6311 — terminal grid view container. Hidden until the user

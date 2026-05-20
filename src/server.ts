@@ -18,6 +18,7 @@ import { gitRoutes } from './routes/git.js';
 import { otelRoutes } from './routes/otel.js';
 import { pageRoutes } from './routes/pages.js';
 import { projectRoutes } from './routes/projects.js';
+import { telemetryRoutes } from './routes/telemetry.js';
 import { wireTerminalWebSocket } from './terminals/websocket.js';
 import type { AppEnv } from './types.js';
 
@@ -155,6 +156,11 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   // `hotsheet_project` resource-attribute drop + the localhost bind.
   // See src/routes/otel.ts file-level comment for full rationale.
   app.route('/', otelRoutes);
+
+  // HS-8148 — telemetry rollup API for the footer drawer Telemetry tab
+  // (§67.10.2). `GET /api/telemetry/drawer?scope=project|all` returns
+  // the drawer's full payload in one round trip.
+  app.route('/api', telemetryRoutes);
 
   // Graceful shutdown endpoint (used by stale instance cleanup and `--close`).
   // HS-7528: kill every live PTY before the process exits so interactive
