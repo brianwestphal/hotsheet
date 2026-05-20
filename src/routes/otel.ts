@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { persistLogsPayload, persistMetricsPayload, persistTracesPayload } from '../db/otelWriters.js';
 import { getProjectBySecret } from '../projects.js';
 import type { AppEnv } from '../types.js';
+import { decodeProtobufPayload, type SignalType } from './otelDecoder.js';
 
 /**
  * HS-8143 — OTLP/HTTP receiver foundation (Phase 1: hello-world).
@@ -69,17 +70,24 @@ interface OtlpSummary {
   resourceAttrFound: boolean;
   hotsheetProject: string | null;
   recordCount: number | null;
+  /** HS-8471 — decoded JSON-shape object when the payload was either
+   *  `application/json` (parsed directly) or `application/x-protobuf`
+   *  (decoded via `otelDecoder.ts`). The receiver's persistence
+   *  dispatch hands this to the writers regardless of wire format. */
+  parsed: unknown;
 }
 
 /**
- * Phase-1 summary builder. For JSON payloads, parses + counts records +
- * extracts the first `hotsheet_project` resource attribute it can find.
- * For protobuf payloads, just reports byte length — decoding is deferred
- * to the persistence phase per the file-level comment.
+ * Summary builder. Decodes the payload into a parsed JS object the
+ * writers can consume directly — JSON payloads via `JSON.parse`,
+ * protobuf payloads via `decodeProtobufPayload` (HS-8471). Both wire
+ * formats produce the same JSON-shape object, so the rest of the
+ * pipeline (project-secret extraction, record counting, writer
+ * dispatch) treats them identically.
  *
  * Returns `null` if the payload is malformed (caller returns `400`).
  */
-function summarizeOtlpPayload(contentType: string, body: ArrayBuffer): OtlpSummary | null {
+function summarizeOtlpPayload(signalType: SignalType, contentType: string, body: ArrayBuffer): OtlpSummary | null {
   const byteLength = body.byteLength;
 
   if (contentType.startsWith(SIGNAL_JSON)) {
@@ -89,17 +97,17 @@ function summarizeOtlpPayload(contentType: string, body: ArrayBuffer): OtlpSumma
     } catch {
       return null;
     }
-    return summarizeJsonPayload(parsed, byteLength);
+    return summarizeJsonPayload(parsed, byteLength, SIGNAL_JSON);
   }
 
   if (contentType.startsWith(SIGNAL_PROTOBUF)) {
-    return {
-      contentType: SIGNAL_PROTOBUF,
-      byteLength,
-      resourceAttrFound: false, // unknowable without decoding
-      hotsheetProject: null,
-      recordCount: null,
-    };
+    let parsed: unknown;
+    try {
+      parsed = decodeProtobufPayload(signalType, new Uint8Array(body));
+    } catch {
+      return null;
+    }
+    return summarizeJsonPayload(parsed, byteLength, SIGNAL_PROTOBUF);
   }
 
   return null;
@@ -111,9 +119,11 @@ function summarizeOtlpPayload(contentType: string, body: ArrayBuffer): OtlpSumma
  * traces. Each top-level array entry has a `resource.attributes`
  * key-value list. We walk down to find the `hotsheet_project`
  * attribute. The traversal is shape-tolerant — malformed payloads
- * return a summary with `recordCount: 0`.
+ * return a summary with `recordCount: 0`. HS-8471 — `contentType` is
+ * passed through so the receiver's log line + downstream handling
+ * can distinguish protobuf-decoded payloads from JSON ones.
  */
-function summarizeJsonPayload(parsed: unknown, byteLength: number): OtlpSummary {
+function summarizeJsonPayload(parsed: unknown, byteLength: number, contentType: string = SIGNAL_JSON): OtlpSummary {
   let hotsheetProject: string | null = null;
   let recordCount = 0;
 
@@ -144,11 +154,12 @@ function summarizeJsonPayload(parsed: unknown, byteLength: number): OtlpSummary 
   }
 
   return {
-    contentType: SIGNAL_JSON,
+    contentType,
     byteLength,
     resourceAttrFound: hotsheetProject !== null,
     hotsheetProject,
     recordCount,
+    parsed,
   };
 }
 
@@ -167,14 +178,15 @@ function logOtlp(signalType: string, summary: OtlpSummary, persist: { inserted: 
 }
 
 /**
- * HS-8470 — JSON payload persistence dispatch. Calls the writer for
- * the matching signal type. Returns `null` for protobuf payloads
- * (Phase 2b will handle those). The `isKnownProject` lookup gates
- * the §67.5.3 anti-pollution drop — `getProjectBySecret` returns
- * `undefined` for an unknown secret.
+ * HS-8470 + HS-8471 — payload persistence dispatch. The parsed object
+ * has the same JSON-shape regardless of wire format (the protobuf
+ * decoder in `otelDecoder.ts` normalizes to OTLP/JSON shape) so the
+ * three writer functions handle both transparently. The
+ * `isKnownProject` lookup gates the §67.5.3 anti-pollution drop —
+ * `getProjectBySecret` returns `undefined` for an unknown secret.
  */
-async function persistJsonPayload(
-  signalType: 'metrics' | 'logs' | 'traces',
+async function persistDecodedPayload(
+  signalType: SignalType,
   parsed: unknown,
 ): Promise<{ inserted: number; dropped: number }> {
   const isKnownProject = (s: string): boolean => getProjectBySecret(s) !== undefined;
@@ -183,7 +195,7 @@ async function persistJsonPayload(
   return persistTracesPayload(parsed, isKnownProject);
 }
 
-async function handleOtlpRoute(c: { req: { header: (n: string) => string | undefined; arrayBuffer: () => Promise<ArrayBuffer> }; body: (s: string | null, init?: { status: number }) => Response }, signalType: 'metrics' | 'logs' | 'traces'): Promise<Response> {
+async function handleOtlpRoute(c: { req: { header: (n: string) => string | undefined; arrayBuffer: () => Promise<ArrayBuffer> }; body: (s: string | null, init?: { status: number }) => Response }, signalType: SignalType): Promise<Response> {
   const contentType = c.req.header('Content-Type') ?? '';
   let body: ArrayBuffer;
   try {
@@ -191,25 +203,21 @@ async function handleOtlpRoute(c: { req: { header: (n: string) => string | undef
   } catch {
     return c.body(null, { status: 400 });
   }
-  const summary = summarizeOtlpPayload(contentType, body);
+  const summary = summarizeOtlpPayload(signalType, contentType, body);
   if (summary === null) {
     return c.body(null, { status: 400 });
   }
 
-  // HS-8470 — Phase 2 persistence. JSON payloads get parsed-and-written;
-  // protobuf payloads still flow through (Phase 1 shape) — Phase 2b
-  // will decode them and call the same writers.
+  // HS-8470 + HS-8471 — persist both JSON and protobuf payloads.
+  // `summary.parsed` is the JSON-shape object regardless of wire
+  // format (the protobuf decoder normalized to JSON shape).
   let persist: { inserted: number; dropped: number } | null = null;
-  if (summary.contentType === SIGNAL_JSON) {
-    try {
-      // Safe to re-parse — `summarizeOtlpPayload` already validated the JSON.
-      const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
-      persist = await persistJsonPayload(signalType, parsed);
-    } catch (err) {
-      // Persistence failure is logged but doesn't surface as a 5xx —
-      // OTLP retry-storm avoidance. The receiver still returns 200.
-      console.debug('[otel] persistence failed:', err);
-    }
+  try {
+    persist = await persistDecodedPayload(signalType, summary.parsed);
+  } catch (err) {
+    // Persistence failure is logged but doesn't surface as a 5xx —
+    // OTLP retry-storm avoidance. The receiver still returns 200.
+    console.debug('[otel] persistence failed:', err);
   }
 
   logOtlp(signalType, summary, persist);

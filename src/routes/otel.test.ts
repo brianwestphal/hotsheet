@@ -15,6 +15,7 @@ import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 
 import { _testing, otelRoutes } from './otel.js';
+import { _testing as _decoderTesting } from './otelDecoder.js';
 
 function makeApp(): Hono {
   // The real server wires `otelRoutes` at `/`. Mirror that here.
@@ -91,16 +92,39 @@ describe('OTLP receiver (HS-8143 / §67.5)', () => {
       expect(body).toBe('');
     });
 
-    it('accepts application/x-protobuf as opaque bytes + returns 200', async () => {
+    it('accepts a valid OTLP/Protobuf metrics payload and returns 200 (HS-8471)', async () => {
       const app = makeApp();
-      // Phase 1: protobuf bytes are not decoded. Any bytestream of the
-      // declared content type produces a 200.
+      // Encode a real OTLP metrics request via protobufjs's encode API
+      // (mirror of the Claude Code exporter's wire format).
+      const Type = _decoderTesting.MetricsRequest;
+      const msg = Type.create({
+        resourceMetrics: [{
+          resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: 'secret-A' } }] },
+          scopeMetrics: [{
+            metrics: [{ name: 'claude_code.cost.usage', gauge: { dataPoints: [{ timeUnixNano: '1700000000000000000', asDouble: 0.42 }] } }],
+          }],
+        }],
+      });
+      const bytes = Type.encode(msg).finish();
       const res = await app.request('/v1/metrics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-protobuf' },
-        body: new Uint8Array([0x0a, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f]),
+        body: bytes as BodyInit,
       });
       expect(res.status).toBe(200);
+    });
+
+    it('rejects malformed protobuf bytes with 400 (HS-8471)', async () => {
+      const app = makeApp();
+      // Tag 0x0a (field 1, wire type 2 = length-delimited) followed by
+      // a length-prefix of 0xff which exceeds the remaining buffer →
+      // malformed; protobufjs throws + the receiver returns 400.
+      const res = await app.request('/v1/metrics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-protobuf' },
+        body: new Uint8Array([0x0a, 0xff, 0x68, 0x65]),
+      });
+      expect(res.status).toBe(400);
     });
 
     it('rejects malformed JSON with 400', async () => {
@@ -135,12 +159,27 @@ describe('OTLP receiver (HS-8143 / §67.5)', () => {
       expect(res.status).toBe(200);
     });
 
-    it('accepts protobuf-content-type and 200s', async () => {
+    it('accepts a valid OTLP/Protobuf logs payload and returns 200 (HS-8471)', async () => {
       const app = makeApp();
+      const Type = _decoderTesting.LogsRequest;
+      const msg = Type.create({
+        resourceLogs: [{
+          resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: 'secret-A' } }] },
+          scopeLogs: [{
+            logRecords: [{
+              timeUnixNano: '1700000000000000000',
+              eventName: 'claude_code.user_prompt',
+              body: { stringValue: 'hi' },
+              attributes: [{ key: 'prompt.id', value: { stringValue: 'prompt-xyz' } }],
+            }],
+          }],
+        }],
+      });
+      const bytes = Type.encode(msg).finish();
       const res = await app.request('/v1/logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-protobuf' },
-        body: new Uint8Array([0x0a, 0x01]),
+        body: bytes as BodyInit,
       });
       expect(res.status).toBe(200);
     });
@@ -157,12 +196,28 @@ describe('OTLP receiver (HS-8143 / §67.5)', () => {
       expect(res.status).toBe(200);
     });
 
-    it('accepts protobuf-content-type and 200s', async () => {
+    it('accepts a valid OTLP/Protobuf traces payload and returns 200 (HS-8471)', async () => {
       const app = makeApp();
+      const Type = _decoderTesting.TraceRequest;
+      const msg = Type.create({
+        resourceSpans: [{
+          resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: 'secret-A' } }] },
+          scopeSpans: [{
+            spans: [{
+              traceId: new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99]),
+              spanId: new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]),
+              name: 'turn',
+              startTimeUnixNano: '1700000000000000000',
+              endTimeUnixNano: '1700000001000000000',
+            }],
+          }],
+        }],
+      });
+      const bytes = Type.encode(msg).finish();
       const res = await app.request('/v1/traces', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-protobuf' },
-        body: new Uint8Array([0x0a, 0x01]),
+        body: bytes as BodyInit,
       });
       expect(res.status).toBe(200);
     });
