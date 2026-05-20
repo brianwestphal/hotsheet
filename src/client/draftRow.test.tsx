@@ -11,6 +11,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_CATEGORIES } from '../types.js';
+import { toElement } from './dom.js';
 import { syncDraftBadge } from './draftRow.js';
 import { state } from './state.js';
 
@@ -21,14 +22,15 @@ describe('syncDraftBadge (HS-8375)', () => {
     // with — six entries (issue / bug / feature / requirement_change /
     // task / investigation).
     state.categories = [...DEFAULT_CATEGORIES];
-    document.body.innerHTML = `
-      <div class="ticket-row draft-row">
-        <span class="ticket-checkbox-spacer"></span>
-        <span class="ticket-status-btn"></span>
-        <span class="ticket-category-badge" style="background-color: rgb(107, 114, 128)">ISS</span>
-        <input class="ticket-title-input draft-input" type="text" />
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    document.body.replaceChildren(toElement(
+      <div className="ticket-row draft-row">
+        <span className="ticket-checkbox-spacer"></span>
+        <span className="ticket-status-btn"></span>
+        <span className="ticket-category-badge" style="background-color: rgb(107, 114, 128)">ISS</span>
+        <input className="ticket-title-input draft-input" type="text" />
       </div>
-    `;
+    ));
   });
 
   it('repaints the badge label and color when the category changes (issue → bug)', () => {
@@ -57,7 +59,7 @@ describe('syncDraftBadge (HS-8375)', () => {
   });
 
   it('is a no-op when no draft row is mounted', () => {
-    document.body.innerHTML = '<div class="some-other-view"></div>';
+    document.body.replaceChildren(toElement(<div className="some-other-view"></div>));
     expect(() => { syncDraftBadge('bug'); }).not.toThrow();
   });
 

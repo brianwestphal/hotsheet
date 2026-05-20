@@ -26,6 +26,7 @@ import {
   type CommandLogEntry,
   commandLogStore,
 } from './commandLogStore.js';
+import { toElement } from './dom.js';
 import { state } from './state.js';
 
 describe('shouldAutoScrollToBottom (HS-7983)', () => {
@@ -307,14 +308,15 @@ describe('applyPerProjectDrawerState — user mid-fetch click wins (HS-8443)', (
 
   beforeEach(async () => {
     originalFetch = globalThis.fetch;
-    document.body.innerHTML = `
-      <div id="command-log-panel" class="command-log-panel" style="display:none"></div>
-      <button id="command-log-btn" type="button"></button>
-      <button id="command-log-expand-btn" type="button"></button>
-      <div id="drawer-tabs-container"></div>
-      <div id="drawer-terminal-tabs-wrap" style="display:none"></div>
-      <div id="command-log-entries"></div>
-    `;
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    document.body.replaceChildren(
+      toElement(<div id="command-log-panel" className="command-log-panel" style="display:none"></div>),
+      toElement(<button id="command-log-btn" type="button"></button>),
+      toElement(<button id="command-log-expand-btn" type="button"></button>),
+      toElement(<div id="drawer-tabs-container"></div>),
+      toElement(<div id="drawer-terminal-tabs-wrap" style="display:none"></div>),
+      toElement(<div id="command-log-entries"></div>),
+    );
     const { _resetPanelStateForTesting } = await import('./commandLog.js');
     _resetPanelStateForTesting();
   });

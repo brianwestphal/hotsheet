@@ -23,6 +23,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { toElement } from './dom.js';
 import { setActiveProject } from './state.js';
 import type * as tauriIntegrationModule from './tauriIntegration.js';
 import {
@@ -76,11 +77,12 @@ vi.mock('./drawerTerminalGrid.js', () => ({
 const ACTIVE_SECRET = 'sec-terminal-tests';
 
 function setupDom(): void {
-  document.body.innerHTML = `
-    <div id="drawer-terminal-tabs"></div>
-    <div id="drawer-terminal-panes"></div>
-    <button id="drawer-add-terminal-btn"></button>
-  `;
+  // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+  document.body.replaceChildren(
+    toElement(<div id="drawer-terminal-tabs"></div>),
+    toElement(<div id="drawer-terminal-panes"></div>),
+    toElement(<button id="drawer-add-terminal-btn"></button>),
+  );
 }
 
 beforeEach(() => {

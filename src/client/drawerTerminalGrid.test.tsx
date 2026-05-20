@@ -17,6 +17,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { toElement } from './dom.js';
 import {
   _resetStateForTesting,
   type DrawerGridTileEntry,
@@ -121,14 +122,15 @@ vi.mock('./visibilityGroupingSelect.js', () => ({
 const ACTIVE_SECRET = 'sec-active';
 
 function setupDom(): void {
-  document.body.innerHTML = `
-    <div id="drawer-terminal-grid"></div>
-    <button id="drawer-grid-toggle"></button>
-    <div id="drawer-grid-sizer"></div>
-    <input id="drawer-grid-size-slider" type="range" min="1" max="10" value="4" />
-    <button id="drawer-grid-hide-btn"></button>
-    <select id="drawer-grid-grouping-select"></select>
-  `;
+  // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+  document.body.replaceChildren(
+    toElement(<div id="drawer-terminal-grid"></div>),
+    toElement(<button id="drawer-grid-toggle"></button>),
+    toElement(<div id="drawer-grid-sizer"></div>),
+    toElement(<input id="drawer-grid-size-slider" type="range" min="1" max="10" value="4" />),
+    toElement(<button id="drawer-grid-hide-btn"></button>),
+    toElement(<select id="drawer-grid-grouping-select"></select>),
+  );
 }
 
 function makeEntry(id: string, name = 'sh'): DrawerGridTileEntry {

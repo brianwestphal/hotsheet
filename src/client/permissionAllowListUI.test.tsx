@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { api } from './api.js';
+import { toElement } from './dom.js';
 import {
   type AllowRule,
   buildAlwaysAllowAffordance,
@@ -115,7 +116,8 @@ vi.mock('./confirm.js', () => ({
 describe('loadAndRenderAllowList row layout (HS-8026)', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
-    document.body.innerHTML = '<div id="permission-allow-list"></div>';
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    document.body.replaceChildren(toElement(<div id="permission-allow-list"></div>));
   });
   afterEach(() => {
     document.querySelectorAll('.cmd-editor-overlay').forEach(el => el.remove());
@@ -215,7 +217,8 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
 describe('openRuleEditor (HS-8026)', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
-    document.body.innerHTML = '<div id="permission-allow-list"></div>';
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    document.body.replaceChildren(toElement(<div id="permission-allow-list"></div>));
   });
   afterEach(() => {
     document.querySelectorAll('.cmd-editor-overlay').forEach(el => el.remove());

@@ -18,6 +18,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _resetRunningButtonsForTesting, _runningButtonsForTesting,commandKey, decideShellPartialEvents, maybeFireShellStreamFirstUseToast, renderChannelCommands, runningKey } from './commandSidebar.js';
+import { toElement } from './dom.js';
 import type { CustomCommand } from './experimentalSettings.js';
 import type * as experimentalSettings from './experimentalSettings.js';
 import { setActiveProject, state } from './state.js';
@@ -201,10 +202,11 @@ function makeShellCommand(name: string, prompt = `echo ${name}`): CustomCommand 
 }
 
 function setupSidebarDOM(): HTMLElement {
-  document.body.innerHTML = `
-    <div id="channel-play-section" style="display:none"></div>
-    <div id="channel-commands-container"></div>
-  `;
+  // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+  document.body.replaceChildren(
+    toElement(<div id="channel-play-section" style="display:none"></div>),
+    toElement(<div id="channel-commands-container"></div>),
+  );
   return document.getElementById('channel-commands-container')!;
 }
 

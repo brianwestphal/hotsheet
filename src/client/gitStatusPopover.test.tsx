@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { toElement } from './dom.js';
 import { buildAheadBehindLine, buildBranchLine, paintPopover } from './gitStatusPopover.js';
 
 function status(o: Partial<{
@@ -94,14 +95,15 @@ describe('buildAheadBehindLine (HS-7956)', () => {
 // separate.
 describe('paintPopover bucket-strip suppression (HS-7975 follow-up)', () => {
   function mountPopover(): HTMLElement {
-    const popover = document.createElement('div');
-    popover.className = 'git-popover';
-    popover.innerHTML = `
-      <div class="git-popover-header">
-        <div class="git-popover-title"></div>
+    // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
+    const popover = toElement(
+      <div className="git-popover">
+        <div className="git-popover-header">
+          <div className="git-popover-title"></div>
+        </div>
+        <div className="git-popover-body"></div>
       </div>
-      <div class="git-popover-body"></div>
-    `;
+    );
     document.body.appendChild(popover);
     return popover;
   }
