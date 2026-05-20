@@ -253,6 +253,20 @@ jobs:
 
       - run: npm ci
 
+      # npm's "Trusted Publishing" OIDC handshake (which authenticates the
+      # PUT for a token-free `npm publish`) landed in npm 11.5.1. Node 20
+      # ships npm 10.x, which knows how to attach a `--provenance`
+      # sigstore attestation (separate flow that uses the runner's OIDC
+      # token directly) but DOES NOT know how to use that OIDC token as
+      # the bearer for the PUT — it falls through to whatever's in the
+      # `.npmrc` `_authToken=` line that `actions/setup-node@v4` writes
+      # when `NODE_AUTH_TOKEN` is unset (empty string), the registry
+      # rejects empty auth, and npm helpfully reports the rejection as a
+      # 404 to obscure package existence. Upgrading to npm 11+ here makes
+      # the OIDC handshake actually happen. See HS-8464 follow-up.
+      - name: Upgrade npm for OIDC trusted publishing (>=11.5.1)
+        run: npm install -g npm@latest
+
       - name: Set version and publish beta
         run: |
           npm version "${{ steps.version.outputs.version }}" --no-git-tag-version --allow-same-version
@@ -568,6 +582,11 @@ jobs:
           cache: npm
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
+
+      # See `publish` job for why this matters — npm 10.x can't do OIDC
+      # trusted publishing for the PUT itself.
+      - name: Upgrade npm for OIDC trusted publishing (>=11.5.1)
+        run: npm install -g npm@latest
 
       - name: Publish clean release version to npm
         run: |
