@@ -584,6 +584,30 @@ export function updateProjectBellIndicators(
   }
 }
 
+/**
+ * HS-8147 — update the per-project "today's cost" chip on every tab.
+ * `costs` is the bulk-query response keyed by project secret; a secret
+ * not in the map has zero cost today (the chip stays hidden).
+ *
+ * Renders cost as `$N.NN` (or sub-cent indicator for very small values); shows
+ * nothing when cost is zero per §67.10.1 (chip only rendered when
+ * today's value is non-zero). Polled from `bellPoll.subscribers` so the
+ * refresh cadence matches the existing bell-state long-poll.
+ */
+export function updateProjectCostChips(costs: Record<string, number>): void {
+  for (const chip of document.querySelectorAll<HTMLElement>('.project-tab-cost')) {
+    const secret = chip.dataset.secret ?? '';
+    const cost = costs[secret] ?? 0;
+    if (cost > 0) {
+      chip.textContent = cost < 0.01 ? '<$0.01' : `$${cost.toFixed(2)}`;
+      chip.style.display = '';
+    } else {
+      chip.textContent = '';
+      chip.style.display = 'none';
+    }
+  }
+}
+
 // --- Scroll active tab into view ---
 
 function scrollActiveTabIntoView() {
@@ -644,6 +668,11 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
     <div className="project-tab" data-secret={p.secret} draggable="true">
       <span className="project-tab-dot"></span>
       <span className="project-tab-name">{p.name}</span>
+      {/* HS-8147 — per-project "today's cost" chip (§67.10.1). Hidden
+          by default; `updateProjectCostChips` populates + reveals when
+          today's cost > 0. Click → opens the drawer Telemetry tab
+          scoped to this project. */}
+      <span className="project-tab-cost" data-secret={p.secret} style="display:none" title="Claude usage today (resets at local midnight)"></span>
       <span className="project-tab-bell"></span>
     </div>,
   );
@@ -658,7 +687,22 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
     else row.classList.remove('active');
   });
 
-  row.addEventListener('click', () => {
+  row.addEventListener('click', (e) => {
+    // HS-8147 — clicking the cost chip opens the drawer Telemetry tab
+    // scoped to this project, NOT the project-switch flow below.
+    const target = e.target as HTMLElement | null;
+    if (target !== null && target.closest('.project-tab-cost') !== null) {
+      e.stopPropagation();
+      void (async () => {
+        if (activeProjectSignal.value?.secret !== p.secret) await switchProject(p);
+        // `previewDrawerTab` opens the panel (if closed) + switches to
+        // the named tab; we don't call the returned disposer because
+        // we WANT the user to stay on Telemetry, not bounce back.
+        const { previewDrawerTab } = await import('./commandLog.js');
+        previewDrawerTab('telemetry');
+      })();
+      return;
+    }
     void (async () => {
       // HS-6832: clicking a project tab while the terminal dashboard is
       // active exits the dashboard first and then navigates to the clicked

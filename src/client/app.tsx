@@ -202,6 +202,10 @@ function bindAllUiHandlers(): void {
   // delegated click listener. The actual data fetch is lazy — runs
   // only when the user activates the tab (via commandLog.tsx::switchDrawerTab).
   void import('./telemetryDrawer.js').then(({ initTelemetryDrawer }) => { initTelemetryDrawer(); });
+  // HS-8147 — wire the per-project tab cost chip refresh loop.
+  // Subscribes to the bell-state long-poll so chip refreshes piggyback
+  // on the existing cadence (§67.10.1).
+  void import('./costPoll.js').then(({ initCostPoll }) => { initCostPoll(); });
   // HS-8036 — load the project's known ticket-number prefixes; HS-8062 —
   // refresh detail after resolution so pre-cache markdown re-linkifies.
   void loadTicketPrefixes().then(() => refreshDetail()).catch(() => { /* swallow */ });

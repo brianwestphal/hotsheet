@@ -261,6 +261,128 @@ export async function getRecentPrompts(
 }
 
 /**
+ * HS-8147 — cheap "today's cost" query for the per-project tab cost
+ * chip. Equivalent to `getWindowTotals(secret, midnight).cost` but
+ * returns just the number, no tokens / prompt count overhead. Used
+ * on the bell-state poll cadence so it has to be fast — single
+ * indexed SUM over `(project_secret, ts DESC)`.
+ */
+export async function getTodayCost(projectSecret: string): Promise<number> {
+  const db = await getDb();
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const result = await db.query<{ total: string | null }>(
+    `SELECT SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
+     FROM otel_metrics
+     WHERE metric_name = $1 AND project_secret = $2 AND ts >= $3`,
+    ['claude_code.cost.usage', projectSecret, midnight],
+  );
+  return Number(result.rows[0]?.total ?? 0);
+}
+
+/**
+ * HS-8147 — bulk variant. Returns `{secret → cost}` for every project
+ * with any cost today, all in one round trip. Polled on the
+ * bell-state cadence so the chip stays cheap to refresh.
+ *
+ * Projects not in the result map have zero cost (the chip is hidden
+ * entirely in that case per §67.10.1 — chip rendered only when
+ * `cost > 0`).
+ */
+export async function getTodayCostByProject(): Promise<Record<string, number>> {
+  const db = await getDb();
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const result = await db.query<{ project_secret: string; total: string | null }>(
+    `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
+     FROM otel_metrics
+     WHERE metric_name = $1 AND ts >= $2
+     GROUP BY project_secret
+     HAVING SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) > 0`,
+    ['claude_code.cost.usage', midnight],
+  );
+  const out: Record<string, number> = {};
+  for (const row of result.rows) {
+    out[row.project_secret] = Number(row.total ?? 0);
+  }
+  return out;
+}
+
+/**
+ * HS-8149 — per-prompt timeline query. Returns every event correlated
+ * by `prompt_id` in start-ts order. The drilldown modal renders each
+ * row as a timeline entry; clicking expands to show `attributes_json`
+ * + `body_json` verbatim for debugging.
+ */
+export interface PromptTimelineEntry {
+  id: number;
+  ts: string;
+  eventName: string;
+  attributesJson: Record<string, unknown>;
+  bodyJson: Record<string, unknown> | null;
+}
+
+export interface PromptTimeline {
+  promptId: string;
+  /** Project secret of the first event in the timeline — used to
+   *  display a project-name badge in the drilldown header. */
+  projectSecret: string | null;
+  /** Earliest ts among the entries — the "prompt fired at" timestamp. */
+  firstTs: string | null;
+  /** Latest ts among the entries — the "prompt last activity" timestamp. */
+  lastTs: string | null;
+  /** Best-effort model name pulled from the first user_prompt event's
+   *  attributes (when present). */
+  model: string | null;
+  entries: PromptTimelineEntry[];
+}
+
+export async function getPromptTimeline(promptId: string): Promise<PromptTimeline> {
+  const db = await getDb();
+  const result = await db.query<{
+    id: number;
+    ts: string;
+    project_secret: string;
+    event_name: string;
+    attributes_json: Record<string, unknown> | null;
+    body_json: Record<string, unknown> | null;
+  }>(
+    `SELECT id, ts, project_secret, event_name, attributes_json, body_json
+     FROM otel_events
+     WHERE prompt_id = $1
+     ORDER BY ts ASC, id ASC`,
+    [promptId],
+  );
+
+  if (result.rows.length === 0) {
+    return { promptId, projectSecret: null, firstTs: null, lastTs: null, model: null, entries: [] };
+  }
+
+  const entries: PromptTimelineEntry[] = result.rows.map(r => ({
+    id: r.id,
+    ts: typeof r.ts === 'string' ? r.ts : new Date(r.ts).toISOString(),
+    eventName: r.event_name,
+    attributesJson: r.attributes_json ?? {},
+    bodyJson: r.body_json,
+  }));
+
+  // Pull model from the first user_prompt event's attributes when present.
+  const userPromptEntry = entries.find(e => e.eventName === 'claude_code.user_prompt');
+  const model = userPromptEntry !== undefined && typeof userPromptEntry.attributesJson['model'] === 'string'
+    ? userPromptEntry.attributesJson['model']
+    : null;
+
+  return {
+    promptId,
+    projectSecret: result.rows[0].project_secret,
+    firstTs: entries[0].ts,
+    lastTs: entries[entries.length - 1].ts,
+    model,
+    entries,
+  };
+}
+
+/**
  * Combined drawer payload — one round trip returns every section the
  * footer drawer Telemetry tab renders. The drawer triggers a refetch
  * on tab activation + on every export-tick poll; bundling reduces

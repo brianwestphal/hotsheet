@@ -324,8 +324,8 @@ export async function loadAndRenderTelemetryDrawer(): Promise<void> {
 
 /**
  * One-time wiring at app init. Installs a delegated click listener on
- * the panel for the scope-toggle buttons; switching scope triggers a
- * re-fetch + re-render.
+ * the panel for the scope-toggle buttons + the recent-prompt rows
+ * (HS-8149 — clicking a row opens the per-prompt drilldown modal).
  */
 export function initTelemetryDrawer(): void {
   const panel = byIdOrNull('drawer-panel-telemetry');
@@ -333,14 +333,29 @@ export function initTelemetryDrawer(): void {
 
   panel.addEventListener('click', (e) => {
     const target = e.target as HTMLElement | null;
-    const scopeBtn = target?.closest<HTMLElement>('.telemetry-scope-btn');
-    if (scopeBtn !== null && scopeBtn !== undefined) {
+    if (target === null) return;
+
+    // Scope-toggle button → re-fetch with the new scope.
+    const scopeBtn = target.closest<HTMLElement>('.telemetry-scope-btn');
+    if (scopeBtn !== null) {
       const scope = scopeBtn.dataset.scope;
       if (scope === 'project' || scope === 'all') {
         if (scope !== currentScope) {
           currentScope = scope;
           void loadAndRenderTelemetryDrawer();
         }
+      }
+      return;
+    }
+
+    // HS-8149 — recent-prompt row → open the drilldown modal.
+    const promptRow = target.closest<HTMLElement>('.telemetry-recent-prompt');
+    if (promptRow !== null) {
+      const promptId = promptRow.dataset.promptId;
+      if (typeof promptId === 'string' && promptId !== '') {
+        void import('./promptDrilldown.js').then(({ openPromptDrilldown }) => {
+          openPromptDrilldown(promptId);
+        });
       }
     }
   });

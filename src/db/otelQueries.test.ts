@@ -10,8 +10,10 @@ import { getDb } from './connection.js';
 import {
   getCostByModel,
   getDrawerPayload,
+  getPromptTimeline,
   getQuerySourceRollup,
   getRecentPrompts,
+  getTodayCost,
   getToolRollup,
   getWindowTotals,
 } from './otelQueries.js';
@@ -214,6 +216,83 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       // limit 99999 should still work (clamped to 500); just ensure no SQL error.
       const result = await getRecentPrompts(SECRET_A, 99999);
       expect(result).toHaveLength(1);
+    });
+  });
+
+  describe('getTodayCost (HS-8147)', () => {
+    it('sums cost_usage data points since local midnight for the project', async () => {
+      const now = new Date();
+      const morning = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      await insertCostMetric({ ts: morning, projectSecret: SECRET_A, cost: 0.42 });
+      await insertCostMetric({ ts: morning, projectSecret: SECRET_A, cost: 0.18 });
+      await insertCostMetric({ ts: yesterday, projectSecret: SECRET_A, cost: 99.0 });
+
+      const cost = await getTodayCost(SECRET_A);
+      expect(cost).toBe(0.60);
+    });
+
+    it('returns 0 for a project with no telemetry yet', async () => {
+      const cost = await getTodayCost(SECRET_A);
+      expect(cost).toBe(0);
+    });
+
+    it('isolates by project_secret', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.5 });
+      await insertCostMetric({ ts: now, projectSecret: SECRET_B, cost: 5.0 });
+
+      expect(await getTodayCost(SECRET_A)).toBe(0.5);
+      expect(await getTodayCost(SECRET_B)).toBe(5.0);
+    });
+  });
+
+  describe('getPromptTimeline (HS-8149)', () => {
+    async function insertEvent(opts: {
+      ts: Date;
+      projectSecret: string;
+      promptId: string;
+      eventName: string;
+      attrs?: Record<string, unknown>;
+      body?: Record<string, unknown>;
+    }): Promise<void> {
+      const db = await getDb();
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [opts.ts, opts.projectSecret, 'session-1', opts.promptId, opts.eventName, JSON.stringify(opts.attrs ?? {}), JSON.stringify(opts.body ?? {})],
+      );
+    }
+
+    it('returns every event for the prompt id, ordered by ts ASC', async () => {
+      const t1 = new Date('2026-05-20T10:00:00Z');
+      const t2 = new Date('2026-05-20T10:00:05Z');
+      const t3 = new Date('2026-05-20T10:00:10Z');
+      await insertEvent({ ts: t2, projectSecret: SECRET_A, promptId: 'p1', eventName: 'claude_code.api_request' });
+      await insertEvent({ ts: t1, projectSecret: SECRET_A, promptId: 'p1', eventName: 'claude_code.user_prompt', attrs: { model: 'sonnet-4' } });
+      await insertEvent({ ts: t3, projectSecret: SECRET_A, promptId: 'p1', eventName: 'claude_code.tool_result' });
+      // Different prompt — should NOT appear.
+      await insertEvent({ ts: t2, projectSecret: SECRET_A, promptId: 'p2', eventName: 'claude_code.user_prompt' });
+
+      const timeline = await getPromptTimeline('p1');
+      expect(timeline.promptId).toBe('p1');
+      expect(timeline.projectSecret).toBe(SECRET_A);
+      expect(timeline.entries).toHaveLength(3);
+      expect(timeline.entries[0].eventName).toBe('claude_code.user_prompt');
+      expect(timeline.entries[1].eventName).toBe('claude_code.api_request');
+      expect(timeline.entries[2].eventName).toBe('claude_code.tool_result');
+      // Model pulled from the user_prompt event's attributes.
+      expect(timeline.model).toBe('sonnet-4');
+      expect(timeline.firstTs).toBe(t1.toISOString());
+      expect(timeline.lastTs).toBe(t3.toISOString());
+    });
+
+    it('returns an empty-entries timeline for an unknown prompt id', async () => {
+      const timeline = await getPromptTimeline('does-not-exist');
+      expect(timeline.entries).toHaveLength(0);
+      expect(timeline.projectSecret).toBeNull();
+      expect(timeline.firstTs).toBeNull();
+      expect(timeline.model).toBeNull();
     });
   });
 
