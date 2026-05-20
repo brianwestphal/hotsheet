@@ -15,6 +15,7 @@ import { apiRoutes } from './routes/api.js';
 import { backupRoutes } from './routes/backups.js';
 import { dbRoutes } from './routes/db.js';
 import { gitRoutes } from './routes/git.js';
+import { otelRoutes } from './routes/otel.js';
 import { pageRoutes } from './routes/pages.js';
 import { projectRoutes } from './routes/projects.js';
 import { wireTerminalWebSocket } from './terminals/websocket.js';
@@ -146,6 +147,14 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   app.route('/api/projects', projectRoutes);
   // HS-7954 — git status chip. `GET /api/git/status` returns `GitStatus | null`.
   app.route('/api', gitRoutes);
+
+  // HS-8143 — Claude Code OTLP/HTTP receiver (§67.5). Three routes on
+  // `/v1/{metrics,logs,traces}`. NOT under `/api/*` so the
+  // `X-Hotsheet-Secret` middleware doesn't reject Claude Code's bundled
+  // exporter (it can't send that header). Security model is the
+  // `hotsheet_project` resource-attribute drop + the localhost bind.
+  // See src/routes/otel.ts file-level comment for full rationale.
+  app.route('/', otelRoutes);
 
   // Graceful shutdown endpoint (used by stale instance cleanup and `--close`).
   // HS-7528: kill every live PTY before the process exits so interactive

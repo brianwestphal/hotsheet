@@ -455,6 +455,8 @@ All API calls require header `X-Hotsheet-Secret: <settings.secret>` for non-loca
 
 **Static/HTML:** `GET /` (page), `GET /static/app.js`, `GET /static/styles.css`, `GET /static/assets/*`.
 
+**Telemetry / OTLP (HS-8143 / §67.5):** `POST /v1/metrics`, `POST /v1/logs`, `POST /v1/traces` — Claude Code OTLP/HTTP receiver routes. Same-port topology (live on the main Hono server, NOT under `/api/*` so the `X-Hotsheet-Secret` middleware doesn't reject Claude Code's bundled exporter — see `src/routes/otel.ts` file-level comment). Accept `application/x-protobuf` (Claude Code default) + `application/json` (humans + tests). Phase 1 (HS-8143): logs a one-line summary + returns `200 OK` empty body — NO persistence. Phase 2 (persistence) writes to the `otel_metrics` / `otel_events` / `otel_spans` tables (schema in HS-8144). Security model: localhost-bind + `hotsheet_project` resource-attribute drop (foreign OTLP traffic can't pollute Hot Sheet's tables even if it tries).
+
 ---
 
 ## 5. Database schema
@@ -473,6 +475,11 @@ Schema lives in one place: `src/db/connection.ts` `initSchema()` function — al
 | `sync_outbox` | `ticket_id`, `plugin_id`, `action` (`create`/`delete`), `field_changes`, `attempts`, `last_error` | 5+ failed attempts → permanent removal |
 | `note_sync` | `ticket_id`, `note_id`, `plugin_id`, `remote_comment_id`, `last_synced_at`, `last_synced_text`. UNIQUE(ticket_id, note_id, plugin_id) | `last_synced_text` = baseline for three-way merge |
 | `feedback_drafts` | `id TEXT PK`, `ticket_id (FK→tickets CASCADE)`, `parent_note_id TEXT?` (nulled when parent deleted; HS-7599 §21), `prompt_text TEXT` (snapshot of FEEDBACK NEEDED prompt at save-time so click-to-reopen works after parent deletion), `partitions_json TEXT` (block structure + inline responses + catch-all verbatim per §21.2.3), `created_at/updated_at TIMESTAMPTZ` | `idx_feedback_drafts_ticket`, `idx_feedback_drafts_parent_note`. Local-only — drafts never sync to GitHub / plugin backends. |
+| `otel_metrics` (HS-8144 / §67.6) | `id SERIAL PK`, `ts TIMESTAMPTZ`, `project_secret TEXT`, `session_id TEXT?`, `metric_name TEXT`, `attributes_json JSONB?`, `value_json JSONB` | `idx_otel_metrics_project_ts (project_secret, ts DESC)`, `idx_otel_metrics_session_ts`, `idx_otel_metrics_name`. JSONB attribute bags so the schema doesn't drift every time Claude Code adds a new metric. Written by the HS-8143 receiver's persistence phase. |
+| `otel_events` (HS-8144 / §67.6) | `id`, `ts`, `project_secret`, `session_id?`, `prompt_id?`, `event_name TEXT`, `attributes_json JSONB?`, `body_json JSONB?` | `idx_otel_events_project_ts`, `idx_otel_events_session_ts`, `idx_otel_events_prompt`. `prompt_id` is the join key for the per-prompt timeline drilldown (§67.10.3). |
+| `otel_spans` (HS-8144 / §67.6) | `id`, `trace_id TEXT`, `span_id TEXT`, `parent_span_id TEXT?`, `project_secret`, `session_id?`, `prompt_id?`, `span_name TEXT`, `start_ts/end_ts TIMESTAMPTZ`, `attributes_json JSONB?`, `status_code TEXT?` | `idx_otel_spans_project_ts (project_secret, start_ts DESC)`, `idx_otel_spans_session_ts`, `idx_otel_spans_prompt`, `idx_otel_spans_trace`. Beta — only populated when `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` is in the spawn env. |
+
+**`SCHEMA_VERSION` bumped 2 → 3 (HS-8144)** to invalidate older JSON co-save files per the §41 / §45 convention.
 
 All timestamp columns are `TIMESTAMPTZ` (older DBs migrated in place).
 

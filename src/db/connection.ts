@@ -11,7 +11,7 @@ import { join } from 'path';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -499,6 +499,61 @@ async function initSchema(db: PGlite): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_feedback_drafts_ticket ON feedback_drafts(ticket_id);
     CREATE INDEX IF NOT EXISTS idx_feedback_drafts_parent_note ON feedback_drafts(parent_note_id);
+
+    -- HS-8144 — Claude Code OpenTelemetry raw-row tables (§67.6).
+    -- Three signal types, each with its own table; JSONB attribute bags
+    -- keep the schema flexible against Claude Code's evolving metric set
+    -- without per-metric hand-mapped columns. Indexes target the three
+    -- rollup patterns the UI surfaces in §67.10 actually run:
+    --   - (project_secret, ts DESC) for per-project today/week rollups
+    --   - (session_id, ts) for per-session drilldown
+    --   - (prompt_id) for the per-prompt timeline modal (events + spans)
+    -- See docs/67-telemetry.md for the full design + rationale.
+    CREATE TABLE IF NOT EXISTS otel_metrics (
+      id SERIAL PRIMARY KEY,
+      ts TIMESTAMPTZ NOT NULL,
+      project_secret TEXT NOT NULL,
+      session_id TEXT,
+      metric_name TEXT NOT NULL,
+      attributes_json JSONB,
+      value_json JSONB NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_otel_metrics_project_ts ON otel_metrics(project_secret, ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_otel_metrics_session_ts ON otel_metrics(session_id, ts);
+    CREATE INDEX IF NOT EXISTS idx_otel_metrics_name ON otel_metrics(metric_name);
+
+    CREATE TABLE IF NOT EXISTS otel_events (
+      id SERIAL PRIMARY KEY,
+      ts TIMESTAMPTZ NOT NULL,
+      project_secret TEXT NOT NULL,
+      session_id TEXT,
+      prompt_id TEXT,
+      event_name TEXT NOT NULL,
+      attributes_json JSONB,
+      body_json JSONB
+    );
+    CREATE INDEX IF NOT EXISTS idx_otel_events_project_ts ON otel_events(project_secret, ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_otel_events_session_ts ON otel_events(session_id, ts);
+    CREATE INDEX IF NOT EXISTS idx_otel_events_prompt ON otel_events(prompt_id);
+
+    CREATE TABLE IF NOT EXISTS otel_spans (
+      id SERIAL PRIMARY KEY,
+      trace_id TEXT NOT NULL,
+      span_id TEXT NOT NULL,
+      parent_span_id TEXT,
+      project_secret TEXT NOT NULL,
+      session_id TEXT,
+      prompt_id TEXT,
+      span_name TEXT NOT NULL,
+      start_ts TIMESTAMPTZ NOT NULL,
+      end_ts TIMESTAMPTZ NOT NULL,
+      attributes_json JSONB,
+      status_code TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_otel_spans_project_ts ON otel_spans(project_secret, start_ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_otel_spans_session_ts ON otel_spans(session_id, start_ts);
+    CREATE INDEX IF NOT EXISTS idx_otel_spans_prompt ON otel_spans(prompt_id);
+    CREATE INDEX IF NOT EXISTS idx_otel_spans_trace ON otel_spans(trace_id);
   `);
 
   // Migration: ensure all existing notes have stable persisted IDs
