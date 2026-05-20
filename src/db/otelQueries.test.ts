@@ -15,6 +15,7 @@ import {
   getQuerySourceRollup,
   getRecentPrompts,
   getTodayCost,
+  getToolLatencyHistogram,
   getToolRollup,
   getWindowTotals,
 } from './otelQueries.js';
@@ -294,6 +295,75 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(timeline.projectSecret).toBeNull();
       expect(timeline.firstTs).toBeNull();
       expect(timeline.model).toBeNull();
+    });
+  });
+
+  describe('getToolLatencyHistogram (HS-8150 / §67.10.5)', () => {
+    async function insertToolDuration(opts: {
+      ts: Date;
+      projectSecret: string;
+      toolName: string;
+      durationMs: number;
+    }): Promise<void> {
+      const db = await getDb();
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [opts.ts, opts.projectSecret, 'session-1', 'p1', 'claude_code.tool_result', JSON.stringify({ tool_name: opts.toolName, duration_ms: opts.durationMs }), JSON.stringify({})],
+      );
+    }
+
+    it('returns empty when there are no tool_result events with duration_ms', async () => {
+      const result = await getToolLatencyHistogram(SECRET_A, null);
+      expect(result).toEqual([]);
+    });
+
+    it('computes p50 + buckets across multiple invocations', async () => {
+      const now = new Date();
+      // Edit tool: 10 fast ones (5 ms) + 1 slow one (1500 ms).
+      for (let i = 0; i < 10; i++) {
+        await insertToolDuration({ ts: now, projectSecret: SECRET_A, toolName: 'Edit', durationMs: 5 });
+      }
+      await insertToolDuration({ ts: now, projectSecret: SECRET_A, toolName: 'Edit', durationMs: 1500 });
+
+      const result = await getToolLatencyHistogram(SECRET_A, null);
+      expect(result).toHaveLength(1);
+      const editRow = result[0];
+      expect(editRow.tool).toBe('Edit');
+      expect(editRow.count).toBe(11);
+      expect(editRow.totalMs).toBe(50 + 1500);
+      // p50 of [5×10, 1500] is 5 (the median lies in the dense low bucket).
+      expect(editRow.p50).toBe(5);
+      // 11 rows: 10 in bucket 0 (<10ms), 1 in bucket 5 (1-5s).
+      expect(editRow.buckets[0]).toBe(10);
+      expect(editRow.buckets[5]).toBe(1);
+      expect(editRow.buckets[1]).toBe(0);
+    });
+
+    it('groups by tool_name + sorts by count DESC', async () => {
+      const now = new Date();
+      // Edit: 3 invocations. Read: 1 invocation.
+      for (let i = 0; i < 3; i++) {
+        await insertToolDuration({ ts: now, projectSecret: SECRET_A, toolName: 'Edit', durationMs: 100 });
+      }
+      await insertToolDuration({ ts: now, projectSecret: SECRET_A, toolName: 'Read', durationMs: 50 });
+
+      const result = await getToolLatencyHistogram(SECRET_A, null);
+      expect(result).toHaveLength(2);
+      expect(result[0].tool).toBe('Edit');
+      expect(result[0].count).toBe(3);
+      expect(result[1].tool).toBe('Read');
+      expect(result[1].count).toBe(1);
+    });
+
+    it('isolates by project_secret', async () => {
+      const now = new Date();
+      await insertToolDuration({ ts: now, projectSecret: SECRET_A, toolName: 'Edit', durationMs: 100 });
+      await insertToolDuration({ ts: now, projectSecret: SECRET_B, toolName: 'Edit', durationMs: 999 });
+
+      const a = await getToolLatencyHistogram(SECRET_A, null);
+      expect(a[0].count).toBe(1);
+      expect(a[0].totalMs).toBe(100);
     });
   });
 

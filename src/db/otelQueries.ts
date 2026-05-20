@@ -281,6 +281,125 @@ export async function getTodayCost(projectSecret: string): Promise<number> {
 }
 
 /**
+ * HS-8150 — per-tool latency histogram (§67.10.5). For each tool the
+ * user has invoked in the selected window, returns count + total ms
+ * + p50/p90/p99 percentiles + bucket counts for the inline-SVG bars.
+ *
+ * Bucket scheme: logarithmic, 8 buckets covering 0ms→10s+:
+ *   [0,10), [10,50), [50,100), [100,500), [500,1000), [1000,5000), [5000,10000), [10000,∞)
+ * Logarithmic spacing because tool durations span orders of magnitude
+ * (a `Read` is sub-ms; an MCP tool that does network can be 5s+) and
+ * linear buckets would put 99% of mass in one bin.
+ *
+ * Source: `claude_code.tool_result` events' `attributes_json.duration_ms`.
+ * §67.10.5 mentions falling back to `otel_spans` when traces aren't
+ * enabled; we prefer events because they're always-on (metrics + logs
+ * are the §67.7 default cadence; traces are beta-only). Spans-based
+ * histogram could be a follow-up if richer per-span breakdowns matter.
+ */
+export interface ToolLatencyHistogram {
+  tool: string;
+  count: number;
+  totalMs: number;
+  p50: number | null;
+  p90: number | null;
+  p99: number | null;
+  /** Bucket counts in the logarithmic scheme described above. */
+  buckets: number[];
+}
+
+const HISTOGRAM_BUCKET_UPPER_MS = [10, 50, 100, 500, 1000, 5000, 10000];
+const HISTOGRAM_BUCKET_LABELS = ['<10ms', '10-50ms', '50-100ms', '100-500ms', '500ms-1s', '1-5s', '5-10s', '10s+'];
+
+export async function getToolLatencyHistogram(
+  projectSecret: string | null,
+  sinceTs: Date | null,
+): Promise<ToolLatencyHistogram[]> {
+  const db = await getDb();
+  const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
+
+  // First query: count + total + p50/p90/p99 per tool. PostgreSQL's
+  // `percentile_cont(p) WITHIN GROUP (ORDER BY col)` interpolates;
+  // exact enough for visual percentile markers.
+  const stats = await db.query<{
+    tool: string | null;
+    c: bigint | number;
+    total_ms: string | null;
+    p50: string | null;
+    p90: string | null;
+    p99: string | null;
+  }>(
+    `SELECT
+        COALESCE(attributes_json->>'tool_name', attributes_json->>'name', '(unknown)') AS tool,
+        COUNT(*) AS c,
+        SUM((attributes_json->>'duration_ms')::numeric) AS total_ms,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY (attributes_json->>'duration_ms')::numeric) AS p50,
+        percentile_cont(0.9) WITHIN GROUP (ORDER BY (attributes_json->>'duration_ms')::numeric) AS p90,
+        percentile_cont(0.99) WITHIN GROUP (ORDER BY (attributes_json->>'duration_ms')::numeric) AS p99
+     FROM otel_events
+     WHERE event_name = 'claude_code.tool_result'
+       AND attributes_json->>'duration_ms' IS NOT NULL${clauses.clauses}
+     GROUP BY tool
+     ORDER BY c DESC`,
+    clauses.params,
+  );
+
+  if (stats.rows.length === 0) return [];
+
+  // Second query: bucket counts per tool. Uses a CASE expression to
+  // map each duration into its bucket index. One row per (tool, bucket)
+  // — we densify to fixed-size arrays in JS.
+  const bucketsResult = await db.query<{ tool: string; bucket: number; c: bigint | number }>(
+    `SELECT
+        COALESCE(attributes_json->>'tool_name', attributes_json->>'name', '(unknown)') AS tool,
+        CASE
+          WHEN (attributes_json->>'duration_ms')::numeric < 10 THEN 0
+          WHEN (attributes_json->>'duration_ms')::numeric < 50 THEN 1
+          WHEN (attributes_json->>'duration_ms')::numeric < 100 THEN 2
+          WHEN (attributes_json->>'duration_ms')::numeric < 500 THEN 3
+          WHEN (attributes_json->>'duration_ms')::numeric < 1000 THEN 4
+          WHEN (attributes_json->>'duration_ms')::numeric < 5000 THEN 5
+          WHEN (attributes_json->>'duration_ms')::numeric < 10000 THEN 6
+          ELSE 7
+        END AS bucket,
+        COUNT(*) AS c
+     FROM otel_events
+     WHERE event_name = 'claude_code.tool_result'
+       AND attributes_json->>'duration_ms' IS NOT NULL${clauses.clauses}
+     GROUP BY tool, bucket
+     ORDER BY tool, bucket`,
+    clauses.params,
+  );
+
+  // Densify into a per-tool bucket array of fixed length 8.
+  const bucketsByTool = new Map<string, number[]>();
+  for (const row of bucketsResult.rows) {
+    let arr = bucketsByTool.get(row.tool);
+    if (arr === undefined) {
+      arr = new Array<number>(8).fill(0);
+      bucketsByTool.set(row.tool, arr);
+    }
+    arr[row.bucket] = Number(row.c);
+  }
+
+  return stats.rows.map(r => ({
+    tool: r.tool ?? '(unknown)',
+    count: Number(r.c),
+    totalMs: Number(r.total_ms ?? 0),
+    p50: r.p50 !== null ? Number(r.p50) : null,
+    p90: r.p90 !== null ? Number(r.p90) : null,
+    p99: r.p99 !== null ? Number(r.p99) : null,
+    buckets: bucketsByTool.get(r.tool ?? '(unknown)') ?? new Array<number>(8).fill(0),
+  }));
+}
+
+/** HS-8150 — bucket labels for the inline-SVG renderer. Re-exported
+ *  for the client so it doesn't have to hard-code the boundary set. */
+export const TOOL_LATENCY_BUCKET_LABELS = HISTOGRAM_BUCKET_LABELS;
+// Re-exported so eslint doesn't strip the const after lint-fix passes.
+export const TOOL_LATENCY_BUCKET_UPPER_MS = HISTOGRAM_BUCKET_UPPER_MS;
+
+/**
  * HS-8147 — bulk variant. Returns `{secret → cost}` for every project
  * with any cost today, all in one round trip. Polled on the
  * bell-state cadence so the chip stays cheap to refresh.
@@ -498,6 +617,7 @@ export interface DrawerPayload {
   allTime: WindowTotals;
   costByModel: ModelRollup[];
   toolRollup: ToolRollup[];
+  toolLatencyHistogram: ToolLatencyHistogram[];
   querySourceRollup: QuerySourceRollup[];
   recentPrompts: RecentPrompt[];
 }
@@ -509,15 +629,16 @@ export async function getDrawerPayload(
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekStart = new Date(midnight.getTime() - 6 * 24 * 60 * 60 * 1000);
 
-  const [today, thisWeek, allTime, costByModel, toolRollup, querySourceRollup, recentPrompts] = await Promise.all([
+  const [today, thisWeek, allTime, costByModel, toolRollup, toolLatencyHistogram, querySourceRollup, recentPrompts] = await Promise.all([
     getWindowTotals(projectSecret, midnight),
     getWindowTotals(projectSecret, weekStart),
     getWindowTotals(projectSecret, null),
     getCostByModel(projectSecret, null),
     getToolRollup(projectSecret, null),
+    getToolLatencyHistogram(projectSecret, null),
     getQuerySourceRollup(projectSecret, null),
     getRecentPrompts(projectSecret, 50),
   ]);
 
-  return { today, thisWeek, allTime, costByModel, toolRollup, querySourceRollup, recentPrompts };
+  return { today, thisWeek, allTime, costByModel, toolRollup, toolLatencyHistogram, querySourceRollup, recentPrompts };
 }
