@@ -4,30 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.17.1] - 2026-05-20
-
-
-- Embedded terminal support - run Claude and other tools from right inside Hot Sheet
-- Terminal Dashboard view (toolbar `square-terminal` button) showing every terminal across every project as a tile grid, with click-to-magnify, double-click for a dedicateDDd full-pane view
-- Reader mode for notes and Details: distraction-free read-only overlay
-- Ticket cross-references and optimized reading
-- Custom shell command button improvements: live logging to Commands Log drawer and spinner when active
-- Search "Include backlog/archive" rows: when search has hits in normally-hidden buckets
-- "Recently Modified" sort option in the ticket list dropdown.
-- Improved database backup and repair
-- Attachment backups
-- Git status tracker
-- MCP tool surface for AI agents
-- Many improvements around feedback requests
-- Unsolicited-feedback megaphone on every user-authored note (when the channel is enabled) to push the note's content to Claude on demand.
-- "Read Latest Note" right-click menu item; "Move to Open" right-click item for backlog tickets; "Provide Feedback" right-click item for tickets with a pending FEEDBACK NEEDED note.
-- Cross-project feedback indicator: project tabs light purple when any ticket in that project has an open FEEDBACK NEEDED prompt (excluding backlog/archive/trash).
-- List-view pagination
-- A ton of UX improvements and bug fixes
-
-## [0.17.0] - 2026-05-19
-
-
+## [0.17.2] - 2026-05-20
 
 - Embedded terminal support - run Claude and other tools from right inside Hot Sheet
 - Terminal Dashboard view (toolbar `square-terminal` button) showing every terminal across every project as a tile grid, with click-to-magnify, double-click for a dedicateDDd full-pane view
@@ -61,12 +38,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - UX improvements for attachments, including quicklook previewing (use spacebar and arrow keys to select attachments)
 - Add Claude Code hooks for accurate busy/idle detection, clarify feedback prefix instructions
 
-## [0.16.0] - 2026-04-20
-
-- Add compact permission popup for non-active project tabs
-- UX improvements for attachments, including quicklook previewing (use spacebar and arrow keys to select attachments)
-- Add Claude Code hooks for accurate busy/idle detection, clarify feedback prefix instructions
-
 ## [0.15.4] - 2026-04-18
 
 - Better attachment drag and drop support
@@ -88,14 +59,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.15.0] - 2026-04-16
 
-- Made an e2e test more resiliant for GitHub actions environment
-
-## [0.15.0] - 2026-04-16
-
-- Made an e2e test more resiliant for GitHub actions environment
-
-## [0.15.0] - 2026-04-16
-
 - Made a few e2e tests more resiliant for GitHub actions environment
 
 ## [0.15.0] - 2026-04-15
@@ -107,6 +70,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Various bug fixes
 
 BETA FEATURES:
+
 - Support for plugins
   - Includes beta plugin for GitHub issues integration
 
@@ -140,16 +104,6 @@ BETA FEATURES:
 - Fixed an issue with the CLI script when Hot Sheet is already running
 - Add a Share Hot Sheet button and periodic prompt to share Hot Sheet with friends and colleagues
 
-## [0.12.3] - 2026-04-08
-
-- Fixed an issue with the CLI script when Hot Sheet is already running
-- Add a Share Hot Sheet button and periodic prompt to share Hot Sheet with friends and colleagues
-
-## [0.12.3] - 2026-04-08
-
-- Fixed an issue with the CLI script when Hot Sheet is already running
-- Add a Share Hot Sheet button and periodic prompt to share Hot Sheet with friends and colleagues
-
 ## [0.12.2] - 2026-04-07
 
 - Fixed an issue with the CLI script
@@ -158,19 +112,9 @@ BETA FEATURES:
 
 - Improved permissions prompt handling
 
-## [0.12.1] - 2026-04-07
-
-- Improved permissions prompt handling
-
 ## [0.12.0] - 2026-04-07
 
-- Multi-project support within a single app instance.  Tabbed interface.
-- Custom ticket prefix
-- Various usability improvements
-
-## [0.12.0] - 2026-04-07
-
-- Multi-project support within a single app instance.  Tabbed interface.
+- Multi-project support within a single app instance. Tabbed interface.
 - Custom ticket prefix
 - Various usability improvements
 
@@ -290,7 +234,7 @@ When creating a new ticket, titles like "[my tag] [another tag] my title" get tu
 ## [0.5.0] - 2026-03-24
 
 - Added experimental support for Claude channels
-- Added support for using delete key to delete items 
+- Added support for using delete key to delete items
 - Fixed undo/redo support for notes
 
 ## [0.4.0] - 2026-03-23
@@ -338,48 +282,58 @@ When creating a new ticket, titles like "[my tag] [another tag] my title" get tu
 ## [0.2.9] - 2026-03-16
 
 ### Fixed
+
 - Fixed Windows build (cross-platform asset copying in tsup config)
 
 ## [0.2.8] - 2026-03-16
 
 ### Added
+
 - Undo/redo support (Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z) for ticket field changes, deletion, batch operations, and drag-and-drop
 - Glassbox integration — when Glassbox is detected, an icon appears in the header to launch it on the same project folder
 
 ## [0.2.7] - 2026-03-14
 
 ### Added
+
 - Check for Updates option in settings panel
 
 ### Changed
+
 - Generated AI tool skills files no longer include port number, which can change on each use
 
 ### Fixed
+
 - Fixed automatic updates support
 
 ## [0.2.6] - 2026-03-13
 
 ### Added
+
 - Backlog and Archive statuses for tickets
 
 ## [0.2.5] - 2026-03-13
 
 ### Added
+
 - App name setting exposed in settings panel
 - Navigate to folder containing attachments with a button click
 
 ### Fixed
+
 - Fixed an issue where updating tickets caused columns/lists to scroll back to the top
 
 ## [0.2.4] - 2026-03-13
 
 ### Fixed
+
 - Fixed issue where hotsheet-node process wasn't properly killed on exit
 - Fixed random system changes popup caused by software update running in background — now prompts to install
 
 ## [0.2.3] - 2026-03-13
 
 ### Added
+
 - Database backup and restore with configurable storage locations
 - AI tool skills for creating tickets directly (e.g., `/hs-bug something isn't working`)
 - Other usability improvements
@@ -387,37 +341,44 @@ When creating a new ticket, titles like "[my tag] [another tag] my title" get tu
 ## [0.2.2] - 2026-03-12
 
 ### Fixed
+
 - Fixed release script not properly updating version numbers on native binaries
 - Improved support for multiple instances of Hot Sheet running simultaneously, especially on macOS
 
 ## [0.2.1] - 2026-03-12
 
 ### Added
+
 - Tauri desktop app — GitHub Actions now create native binaries for macOS, Linux, and Windows
 
 ## [0.2.0] - 2026-03-12
 
 ### Added
+
 - Column (kanban) layout with drag-and-drop between status columns
 - Detail panel position toggle (side or bottom) in the toolbar
 - Drag-and-drop onto sidebar items to change category, priority, or status
 - Non-Verified view
 
 ### Fixed
+
 - Fixed issue where the wrong port could be listed in worklist.md when dynamically switching ports
 
 ## [0.1.2] - 2026-03-11
 
 ### Added
+
 - Cmd/Ctrl+C copies ticket titles, descriptions, and notes — useful for commit messages
 
 ### Fixed
+
 - Fixed issue where the wrong port number was listed in worklist.md when using a non-default port
 - Improved ticket entry usability
 
 ## [0.1.1] - 2026-03-11
 
 ### Added
+
 - Automatic software update checking
 
 ## [0.1.0] - 2026-03-11
