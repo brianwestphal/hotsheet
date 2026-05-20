@@ -1,5 +1,6 @@
 import eslint from "@eslint/js";
 import importX from "eslint-plugin-import-x";
+import kerfjs from "eslint-plugin-kerfjs";
 import simpleImportSort from "eslint-plugin-simple-import-sort";
 import tsdoc from "eslint-plugin-tsdoc";
 import tseslint from "typescript-eslint";
@@ -157,4 +158,16 @@ export default tseslint.config(
       ],
     },
   },
+  // HS-8466 — `eslint-plugin-kerfjs` recommended preset (flat config).
+  // Adds the four kerf AST rules at `error` severity:
+  //   - `kerfjs/no-inline-jsx-event-handlers` (Hard Rule 9)
+  //   - `kerfjs/require-data-key-in-each` (Hard Rule 2)
+  //   - `kerfjs/no-nested-mount` (Hard Rule 5)
+  //   - `kerfjs/prefer-module-jsx-augmentation` (Hard Rule 11)
+  // Complements the project-local `no-restricted-syntax` rules above
+  // (`bindText`/`bindAttr`/`bindList` disposer capture + the §62.6
+  // Phase 3 `innerHTML` ban). Placed last so the kerf rules apply to
+  // all files including the allowlisted ones — the allowlist above
+  // only narrows `no-restricted-syntax`, not the kerf rules.
+  kerfjs.configs.recommended,
 );

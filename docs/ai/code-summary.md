@@ -630,6 +630,13 @@ Env flags: `PLUGINS_ENABLED` (build/runtime toggle), `NO_WEB_SERVER` (E2E), `NOD
   5. **Long-lived id Sets** (e.g. `commandLog.tsx::expandedEntryIds`, `selectedLogIds`) — bounded by total ever-created entity ids; Set membership is O(1) so growth is non-issue. Don't over-engineer pruning.
 
   Code-quality scans should not re-flag these as hygiene concerns. The pattern is intentional — refactor-to-class adds indirection without removing state.
+- **Lint enforcement from `eslint-plugin-kerfjs` (HS-8466).** `eslint.config.mjs` consumes the plugin's `recommended` flat-config preset, which enforces four kerf-authored rules at `error` severity across all source files:
+  1. **`kerfjs/no-inline-jsx-event-handlers`** (Hard Rule 9) — JSX `onClick={() => …}` / `onInput={(e) => …}` creates a new closure on every re-render, defeating kerf's render-stability guarantees. Hoist the handler to a named function or `useCallback`-equivalent module-level const.
+  2. **`kerfjs/require-data-key-in-each`** (Hard Rule 2) — every element rendered inside a list iteration must carry a `data-key` (or `key`-equivalent) attribute so the keyed-list reconciler can match rows across renders. Without it, `bindList` falls back to positional matching and tears focus / scroll / selection on insert/delete.
+  3. **`kerfjs/no-nested-mount`** (Hard Rule 5) — a `mount()` call must not appear inside another mount's render function. Nested mounts create dual ownership of the child subtree and leak disposers on parent unmount.
+  4. **`kerfjs/prefer-module-jsx-augmentation`** (Hard Rule 11) — JSX type augmentations (custom attributes, new intrinsic elements) belong in module-level `declare module` blocks, not inline `as any` casts. Keeps the JSX type surface centralized and discoverable.
+
+  These complement the project-local `no-restricted-syntax` rules in the same config that enforce (a) `bindText` / `bindAttr` / `bindList` disposer capture (HS-8235 / §60.6) and (b) the §62.6 Phase 3 ban on direct `innerHTML =` assignments (HS-8243). All existing code passed without changes when the plugin was wired in.
 
 ---
 
