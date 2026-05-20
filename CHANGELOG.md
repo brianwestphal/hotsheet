@@ -143,21 +143,9 @@ BETA FEATURES:
 ## [0.10.1] - 2026-04-03
 
 - Fix beta publish
-
-## [0.10.1] - 2026-04-03
-
 - Fix tauri build in RC workflow
-
-## [0.10.1] - 2026-04-03
-
 - Fix E2E smoke test isolation and strict mode violations
-
-## [0.10.1] - 2026-04-03
-
 - Using GitHub actions for more complex testing / release process
-
-## [0.10.1] - 2026-04-03
-
 - Updated release script
 - Updated GitHub actions configuration
 

@@ -193,7 +193,19 @@ jobs:
           cat /tmp/beta-notes.md >> "$GITHUB_OUTPUT"
           echo "ENDOFNOTES" >> "$GITHUB_OUTPUT"
 
-      - name: Create prerelease
+      # HS-8465 — create as draft + prerelease. The downstream `build`
+      # matrix takes 10–30 minutes to upload signed Tauri bundles to
+      # this release, and embedded asset links in the release notes
+      # would otherwise 404 for that entire window. Drafting holds the
+      # prerelease page invisible until the final `publish-release`
+      # job flips `draft:false`. `prerelease: true` stays set so this
+      # release is skipped by GitHub's `releases/latest` pointer (the
+      # Tauri updater + §50 upgrade nudge keep pointing at the prior
+      # stable release) — drafting is the broken-link-window fix,
+      # `prerelease` is the stable-channel-protection setting, and the
+      # two are orthogonal. See release-desktop.yml's `create-release`
+      # for the matching stable-release pattern.
+      - name: Create prerelease (as draft — flipped by publish-release at end)
         id: create
         uses: actions/github-script@v7
         env:
@@ -207,7 +219,7 @@ jobs:
               tag_name: tag,
               name: `Hot Sheet ${tag} (beta)`,
               body: process.env.RELEASE_BODY,
-              draft: false,
+              draft: true,
               prerelease: true,
               make_latest: 'false',
             });
@@ -618,3 +630,42 @@ jobs:
               inputs: { tag: 'v${{ needs.publish.outputs.base_version }}' },
             });
             console.log('Triggered desktop release for v${{ needs.publish.outputs.base_version }}');
+
+  # === Phase 7 (beta-only): Flip the beta prerelease from draft → published ===
+  #
+  # HS-8465 — atomic publication. The beta `create-release` job above
+  # creates the prerelease as a draft so the `build` matrix can upload
+  # every signed Tauri bundle into an invisible release shell. Only
+  # after every platform's `build` has uploaded its bundles do we flip
+  # `draft:false`, making the prerelease page publicly visible with
+  # every embedded download link already resolvable.
+  #
+  # `prerelease: true` stays set — this release should NOT become
+  # GitHub's `releases/latest` (the Tauri updater + §50 upgrade nudge
+  # keep pointing at the prior stable). Drafting closes the
+  # broken-link window; the prerelease flag protects the stable
+  # channel. The two are orthogonal.
+  #
+  # RC tags don't need a flip job here — they don't create a GitHub
+  # Release in this workflow at all. The RC `promote` phase dispatches
+  # release-desktop.yml which owns its own draft → flip cycle for the
+  # final stable release.
+  publish-release:
+    if: contains(github.ref, '-beta.')
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Flip prerelease from draft → published
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releaseId = ${{ needs.create-release.outputs.release_id }};
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              draft: false,
+              prerelease: true,
+              make_latest: 'false',
+            });
+            console.log(`Beta prerelease ${releaseId} flipped from draft → published`);
