@@ -10,6 +10,7 @@ import { getDb } from './connection.js';
 import {
   getCostByModel,
   getDrawerPayload,
+  getPerTicketRollup,
   getPromptTimeline,
   getQuerySourceRollup,
   getRecentPrompts,
@@ -293,6 +294,138 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(timeline.projectSecret).toBeNull();
       expect(timeline.firstTs).toBeNull();
       expect(timeline.model).toBeNull();
+    });
+  });
+
+  describe('getPerTicketRollup (HS-8152 / §67.10.7)', () => {
+    async function insertEventWithBody(opts: {
+      ts: Date;
+      projectSecret: string;
+      promptId: string;
+      eventName: string;
+      attrs?: Record<string, unknown>;
+      body?: Record<string, unknown>;
+    }): Promise<void> {
+      const db = await getDb();
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [opts.ts, opts.projectSecret, 'session-1', opts.promptId, opts.eventName, JSON.stringify(opts.attrs ?? {}), JSON.stringify(opts.body ?? {})],
+      );
+    }
+
+    it('returns zero rollup for an unattributed ticket', async () => {
+      const result = await getPerTicketRollup('HS-9999');
+      expect(result.ticketNumber).toBe('HS-9999');
+      expect(result.promptCount).toBe(0);
+      expect(result.totalCost).toBe(0);
+      expect(result.totalTokens).toBe(0);
+    });
+
+    it('attributes cost + tokens to a ticket via the marker in user_prompt body', async () => {
+      const t = new Date('2026-05-20T10:00:00Z');
+      // Two prompts tagged for HS-1234, plus their api_request events.
+      await insertEventWithBody({
+        ts: t,
+        projectSecret: SECRET_A,
+        promptId: 'p1',
+        eventName: 'claude_code.user_prompt',
+        body: { body: '<!-- hotsheet:ticket=HS-1234 -->\n\nDo the thing' },
+      });
+      await insertEventWithBody({
+        ts: new Date(t.getTime() + 100),
+        projectSecret: SECRET_A,
+        promptId: 'p1',
+        eventName: 'claude_code.api_request',
+        attrs: { cost: 0.5, tokens: 1000 },
+      });
+      await insertEventWithBody({
+        ts: new Date(t.getTime() + 5000),
+        projectSecret: SECRET_A,
+        promptId: 'p1',
+        eventName: 'claude_code.api_request',
+        attrs: { cost: 0.25, tokens: 500 },
+      });
+      // Second prompt also tagged HS-1234.
+      await insertEventWithBody({
+        ts: new Date(t.getTime() + 10000),
+        projectSecret: SECRET_A,
+        promptId: 'p2',
+        eventName: 'claude_code.user_prompt',
+        body: { body: '<!-- hotsheet:ticket=HS-1234 -->\n\nFollow-up' },
+      });
+      await insertEventWithBody({
+        ts: new Date(t.getTime() + 10100),
+        projectSecret: SECRET_A,
+        promptId: 'p2',
+        eventName: 'claude_code.api_request',
+        attrs: { cost: 0.1, tokens: 200 },
+      });
+
+      const result = await getPerTicketRollup('HS-1234');
+      expect(result.promptCount).toBe(2);
+      expect(result.totalCost).toBeCloseTo(0.85, 6);
+      expect(result.totalTokens).toBe(1700);
+      expect(result.totalDurationSeconds).toBeGreaterThan(0);
+    });
+
+    it('excludes prompts tagged for a different ticket', async () => {
+      const t = new Date('2026-05-20T10:00:00Z');
+      await insertEventWithBody({
+        ts: t,
+        projectSecret: SECRET_A,
+        promptId: 'p1',
+        eventName: 'claude_code.user_prompt',
+        body: { body: '<!-- hotsheet:ticket=HS-1234 -->\n\nMine' },
+      });
+      await insertEventWithBody({
+        ts: t,
+        projectSecret: SECRET_A,
+        promptId: 'p2',
+        eventName: 'claude_code.user_prompt',
+        body: { body: '<!-- hotsheet:ticket=HS-9999 -->\n\nNot mine' },
+      });
+      await insertEventWithBody({
+        ts: t,
+        projectSecret: SECRET_A,
+        promptId: 'p1',
+        eventName: 'claude_code.api_request',
+        attrs: { cost: 1.0, tokens: 1000 },
+      });
+      await insertEventWithBody({
+        ts: t,
+        projectSecret: SECRET_A,
+        promptId: 'p2',
+        eventName: 'claude_code.api_request',
+        attrs: { cost: 99.0, tokens: 99999 },
+      });
+
+      const result = await getPerTicketRollup('HS-1234');
+      expect(result.promptCount).toBe(1);
+      expect(result.totalCost).toBe(1.0);
+      expect(result.totalTokens).toBe(1000);
+    });
+
+    it('handles untagged prompts (no marker = no attribution)', async () => {
+      const t = new Date('2026-05-20T10:00:00Z');
+      await insertEventWithBody({
+        ts: t,
+        projectSecret: SECRET_A,
+        promptId: 'p-untagged',
+        eventName: 'claude_code.user_prompt',
+        body: { body: 'No marker here' },
+      });
+      await insertEventWithBody({
+        ts: t,
+        projectSecret: SECRET_A,
+        promptId: 'p-untagged',
+        eventName: 'claude_code.api_request',
+        attrs: { cost: 5.0, tokens: 5000 },
+      });
+
+      const result = await getPerTicketRollup('HS-1234');
+      expect(result.promptCount).toBe(0);
+      expect(result.totalCost).toBe(0);
     });
   });
 

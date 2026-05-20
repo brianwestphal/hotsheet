@@ -501,6 +501,15 @@ async function loadDetail(id: number) {
     </> : null}
   </>).toString();
 
+  // HS-8152 — per-ticket Claude usage stats block (§67.10.7). Clear
+  // the previous ticket's stats immediately + fetch the new ticket's
+  // rollup. The fetch is async; the block renders empty during the
+  // loading window so stale data never shows.
+  void import('./ticketTelemetryStats.js').then(({ clearTicketTelemetryStats, loadAndRenderTicketTelemetry }) => {
+    clearTicketTelemetryStats();
+    void loadAndRenderTicketTelemetry(ticket.ticket_number);
+  });
+
   // Render plugin UI extensions for the detail panel
   const detailTop = byIdOrNull('plugin-detail-top');
   const detailBottom = byIdOrNull('plugin-detail-bottom');

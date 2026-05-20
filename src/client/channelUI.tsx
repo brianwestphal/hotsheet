@@ -319,11 +319,39 @@ export function setChannelBusy(busy: boolean) {
   }
 }
 
+/**
+ * HS-8152 / HS-8151 Option 3 — prepend a hotsheet-ticket marker to
+ * channel-triggered prompts when there's an active ticket. The marker
+ * rides into `claude_code.user_prompt`'s body verbatim; the per-ticket
+ * rollup query in `src/db/otelQueries.ts::getPerTicketRollup` parses
+ * it out to attribute cost/tokens/duration back to a ticket.
+ *
+ * Format: `<!-- hotsheet:ticket=HS-NNNN -->\n\n<original message>`.
+ * HTML-comment shape so the marker is invisible to Claude's logic but
+ * preserved as raw bytes through every prompt rewrite.
+ *
+ * Returns the original message unchanged when there's no active
+ * ticket or no current message — both are valid (channel-only ping
+ * without a ticket context).
+ */
+function tagMessageWithActiveTicket(message: string | undefined): string | undefined {
+  if (message === undefined || message === '') return message;
+  const activeId = state.activeTicketId;
+  if (activeId === null) return message;
+  const ticket = state.tickets.find(t => t.id === activeId);
+  if (ticket === undefined) return message;
+  return `<!-- hotsheet:ticket=${ticket.ticket_number} -->\n\n${message}`;
+}
+
 function triggerChannelAndMarkBusy(message?: string) {
   setChannelBusy(true);
   // Ensure AI tool skills are installed/up-to-date before triggering
   void api('/ensure-skills', { method: 'POST' });
-  void api('/channel/trigger', { method: 'POST', body: { message } });
+  // HS-8152 — tag the message with the active ticket (when present)
+  // so the per-ticket cost rollup can attribute downstream OTel events
+  // back to the ticket via the marker in `claude_code.user_prompt`.
+  const tagged = tagMessageWithActiveTicket(message);
+  void api('/channel/trigger', { method: 'POST', body: { message: tagged } });
   // Timeout fallback: clear busy after 60s if Claude never calls /done
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
   channelBusyTimeout = setTimeout(() => {

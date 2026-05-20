@@ -317,6 +317,8 @@ pageRoutes.get('/', (c) => {
                   <div id="detail-notes" className="detail-notes"></div>
                 </div>
                 <div className="detail-meta detail-field-full" id="detail-meta"></div>
+                {/* HS-8152 — per-ticket Claude usage stats block (§67.10.7). Populated by `loadAndRenderTicketTelemetry` from `src/client/ticketTelemetryStats.tsx` when the ticket has attributed prompts; empty otherwise. */}
+                <div className="detail-telemetry-stats detail-field-full" id="detail-telemetry-stats"></div>
                 <div className="plugin-detail-bottom" id="plugin-detail-bottom"></div>
               </div>
             </aside>

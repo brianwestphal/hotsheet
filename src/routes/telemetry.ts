@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 
-import { getDrawerPayload, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
+import { getDrawerPayload, getPerTicketRollup, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
 import type { AppEnv } from '../types.js';
 
 /**
@@ -76,4 +76,25 @@ telemetryRoutes.get('/telemetry/prompt/:id', async (c) => {
   const promptId = c.req.param('id');
   const timeline = await getPromptTimeline(promptId);
   return c.json(timeline);
+});
+
+/**
+ * HS-8152 / §67.10.7 — per-ticket Claude usage rollup. Returns the
+ * aggregate cost / tokens / prompt count / wall-clock duration
+ * attributed to a given Hot Sheet ticket by the HS-8151 marker
+ * mechanism (channel-triggered prompts carry an HTML-comment marker
+ * `<!-- hotsheet:ticket=HS-NNNN -->` that lands in the
+ * `claude_code.user_prompt` event body).
+ *
+ * Returns zero values when the ticket has no attributed prompts
+ * (200 OK, not 404 — the detail panel renders nothing in that case).
+ *
+ * Path parameter is the human-readable `ticket_number` (e.g.
+ * `HS-1234`), not the numeric id, so the URL is shareable and
+ * scrutable.
+ */
+telemetryRoutes.get('/telemetry/ticket/:number', async (c) => {
+  const ticketNumber = c.req.param('number');
+  const rollup = await getPerTicketRollup(ticketNumber);
+  return c.json(rollup);
 });

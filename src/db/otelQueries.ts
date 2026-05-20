@@ -383,6 +383,110 @@ export async function getPromptTimeline(promptId: string): Promise<PromptTimelin
 }
 
 /**
+ * HS-8152 / §67.10.7 — per-ticket cost rollup. Returns aggregate
+ * cost / tokens / prompt count / total duration attributed to a
+ * given Hot Sheet ticket number via the HS-8151 marker mechanism.
+ *
+ * Attribution path: when Hot Sheet's channel-trigger flow fires with
+ * an active ticket, the client (in `triggerChannelAndMarkBusy`)
+ * prepends `<!-- hotsheet:ticket=HS-NNNN -->` to the prompt message.
+ * Claude Code captures the user's prompt verbatim, so the marker
+ * lands in the `claude_code.user_prompt` event's body. This query
+ * uses a string-LIKE match against `body_json` to find tagged
+ * prompts + then joins on `prompt_id` to sum the cost/tokens from
+ * `claude_code.api_request` events (which carry the per-LLM-call
+ * cost + token attributes).
+ *
+ * The LIKE is fast in practice because the marker is rare in
+ * arbitrary text + the events table is bounded by retention (§67.6).
+ * If a future user reports slow per-ticket rollups, migrate to a
+ * dedicated `ticket_id` column on `otel_events` (the HS-8151 design
+ * note's "Option B" — schema bump, indexable).
+ */
+export interface TicketRollup {
+  ticketNumber: string;
+  promptCount: number;
+  totalCost: number;
+  totalTokens: number;
+  /** Total wall-clock duration across the tagged prompts, in seconds.
+   *  Derived as the sum of `(lastEventTs - firstEventTs)` per prompt
+   *  — represents "time Claude spent working on this ticket" rather
+   *  than the user's calendar time. */
+  totalDurationSeconds: number;
+}
+
+export async function getPerTicketRollup(ticketNumber: string): Promise<TicketRollup> {
+  const db = await getDb();
+
+  // The marker substring we LIKE for. Same format the client
+  // injects in `channelUI.tsx::tagMessageWithActiveTicket`.
+  const marker = `hotsheet:ticket=${ticketNumber}`;
+
+  // Find every prompt id whose user_prompt event body carries the
+  // marker. Body_json is JSONB; LIKE on the cast-to-text matches
+  // anywhere in the serialized form (including inside the body
+  // string field).
+  const tagged = await db.query<{ prompt_id: string }>(
+    `SELECT DISTINCT prompt_id FROM otel_events
+     WHERE event_name = $1
+       AND prompt_id IS NOT NULL
+       AND body_json::text LIKE $2`,
+    ['claude_code.user_prompt', `%${marker}%`],
+  );
+
+  if (tagged.rows.length === 0) {
+    return { ticketNumber, promptCount: 0, totalCost: 0, totalTokens: 0, totalDurationSeconds: 0 };
+  }
+
+  const promptIds = tagged.rows.map(r => r.prompt_id);
+
+  // Sum cost + tokens from api_request events for the tagged prompts.
+  // The per-LLM-call attributes Claude Code emits on api_request
+  // include `cost` (USD) and `tokens` (total). Different versions of
+  // Claude Code may name them differently; this query is permissive +
+  // tries common variants via COALESCE.
+  const sumsResult = await db.query<{ total_cost: string | null; total_tokens: string | null }>(
+    `SELECT
+        SUM(COALESCE(
+          (attributes_json->>'cost')::numeric,
+          (attributes_json->>'cost_usd')::numeric,
+          0
+        )) AS total_cost,
+        SUM(COALESCE(
+          (attributes_json->>'tokens')::numeric,
+          (attributes_json->>'total_tokens')::numeric,
+          (attributes_json->>'input_tokens')::numeric + (attributes_json->>'output_tokens')::numeric,
+          0
+        )) AS total_tokens
+     FROM otel_events
+     WHERE event_name = 'claude_code.api_request'
+       AND prompt_id = ANY($1::text[])`,
+    [promptIds],
+  );
+
+  // Per-prompt wall-clock duration (last event ts - first event ts),
+  // summed across every tagged prompt.
+  const durationsResult = await db.query<{ total_seconds: string | null }>(
+    `SELECT SUM(EXTRACT(EPOCH FROM (max_ts - min_ts))) AS total_seconds
+     FROM (
+       SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts
+       FROM otel_events
+       WHERE prompt_id = ANY($1::text[])
+       GROUP BY prompt_id
+     ) AS per_prompt`,
+    [promptIds],
+  );
+
+  return {
+    ticketNumber,
+    promptCount: promptIds.length,
+    totalCost: Number(sumsResult.rows[0]?.total_cost ?? 0),
+    totalTokens: Number(sumsResult.rows[0]?.total_tokens ?? 0),
+    totalDurationSeconds: Number(durationsResult.rows[0]?.total_seconds ?? 0),
+  };
+}
+
+/**
  * Combined drawer payload — one round trip returns every section the
  * footer drawer Telemetry tab renders. The drawer triggers a refetch
  * on tab activation + on every export-tick poll; bundling reduces
