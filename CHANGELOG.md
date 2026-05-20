@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.17.3] - 2026-05-20
+
+
+- Auto-updater and in-app upgrade nudge no longer point at half-published releases with 404ing download links during a release build.
+
+- Release workflow now publishes atomically: drafts the GitHub Release, uploads and renames all platform assets, then flips to public as the final step.
+
+## [0.17.3] - 2026-05-20
+
+
+- Auto-updater and in-app upgrade nudge no longer point at half-published releases with 404ing download links during a release build.
+
+- Release workflow now publishes atomically: drafts the GitHub Release, uploads and renames all platform assets, then flips to public as the final step.
+
 ## [0.17.2] - 2026-05-20
 
 - Embedded terminal support - run Claude and other tools from right inside Hot Sheet
