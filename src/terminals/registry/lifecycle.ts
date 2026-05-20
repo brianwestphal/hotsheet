@@ -11,6 +11,7 @@ import { killProcessTreeBestEffort } from '../processInspect.js';
 import { resolveTerminalCommand } from '../resolveCommand.js';
 import { RingBuffer } from '../ringBuffer.js';
 import { setupShellHistoryForSpawn } from '../shellHistory.js';
+import { buildOtelEnv } from './otelEnv.js';
 import {
   DEFAULT_COLS,
   DEFAULT_ROWS,
@@ -88,7 +89,7 @@ export function spawnIntoSession(session: SessionState, dataDir: string): void {
     cwd: resolved.cwd,
     cols: session.cols,
     rows: session.rows,
-    env: buildEnv(shellInit.env),
+    env: buildEnv(shellInit.env, dataDir),
   });
 
   session.pty = pty;
@@ -323,7 +324,7 @@ export function destroyAllTerminals(): void {
 
 // --- Env scrub + buildEnv ---
 
-function buildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+function buildEnv(extra: Record<string, string> = {}, dataDir?: string): NodeJS.ProcessEnv {
   return {
     ...scrubParentEnv(process.env),
     TERM: 'xterm-256color',
@@ -331,6 +332,11 @@ function buildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     HOTSHEET_IN_TERMINAL: '1',
     // HS-7965 — per-(project, terminal) shell-history overrides.
     ...extra,
+    // HS-8145 — Claude Code OpenTelemetry env injection (§67.3).
+    // Default-empty when `dataDir` isn't known (test fixtures) or when
+    // the project's `telemetry_enabled` setting isn't `true`. Helper
+    // is in `./otelEnv.ts`.
+    ...(dataDir !== undefined ? buildOtelEnv(dataDir) : {}),
   };
 }
 

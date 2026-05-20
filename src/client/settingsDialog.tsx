@@ -24,6 +24,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindGeneralTab();
   bindBackupsTab();
   bindTerminalTab();
+  bindTelemetryTab();
 
   bindAutoContextSettings();
   if (PLUGINS_ENABLED) {
@@ -634,5 +635,81 @@ function bindCliToolSettings() {
       if (data?.installed === true) showInstalled();
       else showNotInstalled();
     }).catch(() => {});
+  });
+}
+
+/**
+ * HS-8146 — §67 Claude Code Telemetry settings panel. Per-project
+ * file-settings (`telemetry_enabled` master + `telemetry_*_enabled`
+ * sub-toggles + `telemetry_retention_days`). All values live in
+ * `<dataDir>/settings.json` and are PATCHed via `/api/file-settings`.
+ *
+ * Master toggle gates spawn-env injection (HS-8145's
+ * `buildOtelEnv(dataDir)` reads the same setting). When the master is
+ * off, sub-toggles are still visually editable but their values don't
+ * matter — flipping the master back on uses whatever the sub-toggles
+ * were last set to. This matches the §52 terminal-prompts settings
+ * pattern (no cascading disable on the master).
+ *
+ * Retention picker writes `telemetry_retention_days` as a number; `0`
+ * = keep forever per §67.6 / HS-8154.
+ */
+interface TelemetryFileSettings {
+  telemetry_enabled?: boolean;
+  telemetry_metrics_enabled?: boolean;
+  telemetry_logs_enabled?: boolean;
+  telemetry_traces_enabled?: boolean;
+  telemetry_retention_days?: number;
+}
+
+function bindTelemetryTab() {
+  const masterEl = byIdOrNull<HTMLInputElement>('settings-telemetry-enabled');
+  const metricsEl = byIdOrNull<HTMLInputElement>('settings-telemetry-metrics-enabled');
+  const logsEl = byIdOrNull<HTMLInputElement>('settings-telemetry-logs-enabled');
+  const tracesEl = byIdOrNull<HTMLInputElement>('settings-telemetry-traces-enabled');
+  const retentionEl = byIdOrNull<HTMLInputElement>('settings-telemetry-retention-days');
+  if (masterEl === null || metricsEl === null || logsEl === null || tracesEl === null || retentionEl === null) return;
+
+  // Per-checkbox change → PATCH the matching file-settings key. The
+  // §67.9 contract treats undefined sub-toggles as "default-on for
+  // metrics + logs, default-off for traces" — so we always write the
+  // explicit boolean rather than rely on absence.
+  masterEl.addEventListener('change', () => {
+    void api('/file-settings', { method: 'PATCH', body: { telemetry_enabled: masterEl.checked } });
+  });
+  metricsEl.addEventListener('change', () => {
+    void api('/file-settings', { method: 'PATCH', body: { telemetry_metrics_enabled: metricsEl.checked } });
+  });
+  logsEl.addEventListener('change', () => {
+    void api('/file-settings', { method: 'PATCH', body: { telemetry_logs_enabled: logsEl.checked } });
+  });
+  tracesEl.addEventListener('change', () => {
+    void api('/file-settings', { method: 'PATCH', body: { telemetry_traces_enabled: tracesEl.checked } });
+  });
+
+  // Retention picker — debounced (matches the §52 scrollback pattern
+  // upstream). Clamp negative values to 0 ("keep forever" per §67.6).
+  let retentionTimeout: ReturnType<typeof setTimeout> | null = null;
+  retentionEl.addEventListener('input', () => {
+    if (retentionTimeout !== null) clearTimeout(retentionTimeout);
+    retentionTimeout = setTimeout(() => {
+      const raw = retentionEl.value.trim();
+      const n = raw === '' ? 30 : Math.max(0, parseInt(raw, 10) || 0);
+      retentionEl.value = String(n);
+      void api('/file-settings', { method: 'PATCH', body: { telemetry_retention_days: n } });
+    }, 600);
+  });
+
+  // On Settings open → fetch current file-settings + populate the form.
+  const settingsBtn = byId('settings-btn');
+  settingsBtn.addEventListener('click', () => {
+    void api<TelemetryFileSettings>('/file-settings').then((fs) => {
+      masterEl.checked = fs.telemetry_enabled === true;
+      // Defaults: metrics + logs ON, traces OFF — matches §67.9.
+      metricsEl.checked = fs.telemetry_metrics_enabled !== false;
+      logsEl.checked = fs.telemetry_logs_enabled !== false;
+      tracesEl.checked = fs.telemetry_traces_enabled === true;
+      retentionEl.value = String(typeof fs.telemetry_retention_days === 'number' ? fs.telemetry_retention_days : 30);
+    });
   });
 }

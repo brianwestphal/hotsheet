@@ -6,7 +6,7 @@ import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 
 import { initBackupScheduler } from './backup.js';
-import { cleanupAttachments } from './cleanup.js';
+import { cleanupAttachments, cleanupTelemetryRows } from './cleanup.js';
 import { parseArgs, type ParsedArgs, printUsage } from './cli/args.js';
 import { handleClose, handleList, joinRunningInstance, shutdownRunningInstance } from './cli/close.js';
 import { getDb, setDataDir } from './db/connection.js';
@@ -113,6 +113,9 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
     await runWithDataDir(dataDir, () => migrateDbSettingsToFile(dataDir));
     console.error(`[init-project ${elapsed()}] cleaning up attachments...`);
     await runWithDataDir(dataDir, () => cleanupAttachments());
+    // HS-8154 — telemetry retention sweep. No-op when telemetry hasn't
+    // been used in this project (the tables exist but stay empty).
+    await runWithDataDir(dataDir, () => cleanupTelemetryRows(dataDir));
     console.error(`[init-project ${elapsed()}] done`);
   }
 

@@ -453,6 +453,11 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               <span>Permissions</span>
             </button>
+            {/* HS-8146 — Telemetry tab. Master toggle + per-signal sub-toggles + retention picker for the §67 Claude Code telemetry integration. */}
+            <button className="settings-tab" data-tab="telemetry" id="settings-tab-telemetry">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              <span>Telemetry</span>
+            </button>
             <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>
               <span>Experimental</span>
@@ -600,6 +605,46 @@ pageRoutes.get('/', (c) => {
                   opens the same modal editor used by the per-row pencil
                   affordance, so add / edit share one validation path. */}
               <div id="permission-allow-list" className="permission-allow-list">Loading rules…</div>
+            </div>
+            {/* HS-8146 — §67 Claude Code Telemetry settings panel.
+                Per-project file-settings: telemetry_enabled (master),
+                telemetry_metrics_enabled / telemetry_logs_enabled /
+                telemetry_traces_enabled (sub-toggles), and
+                telemetry_retention_days (retention window). Default off
+                so no spawn-env injection happens until the user opts
+                in. See docs/67-telemetry.md §67.9 for the contract. */}
+            <div className="settings-tab-panel" data-panel="telemetry" id="settings-telemetry-panel">
+              <div className="settings-section-header">
+                <h3>Claude Code Telemetry</h3>
+              </div>
+              <p className="settings-hint">When enabled, Claude Code processes running inside Hot Sheet terminals export <a href="https://opentelemetry.io/" target="_blank" rel="noopener">OpenTelemetry</a> metrics + logs (+ optional traces) to a local receiver. Data stays on this machine. <a href="https://code.claude.com/docs/en/monitoring-usage.md" target="_blank" rel="noopener">Learn more</a>.</p>
+              <div className="settings-field settings-field-checkbox">
+                <label><input type="checkbox" id="settings-telemetry-enabled" /> Enable telemetry for this project</label>
+                <span className="settings-hint">When off, no telemetry env vars are injected when spawning terminals — Claude Code runs without exporters. Default off.</span>
+              </div>
+              <div className="settings-section-header">
+                <h3>Signals to collect</h3>
+              </div>
+              <div className="settings-field settings-field-checkbox">
+                <label><input type="checkbox" id="settings-telemetry-metrics-enabled" /> Metrics</label>
+                <span className="settings-hint">Token usage, cost, lines of code, commit/PR counts, code-edit decisions, active time. Cadence: every 60 s.</span>
+              </div>
+              <div className="settings-field settings-field-checkbox">
+                <label><input type="checkbox" id="settings-telemetry-logs-enabled" /> Logs &amp; events</label>
+                <span className="settings-hint">User prompts, API requests/errors, tool decisions, tool results. Cadence: every 5 s. Needed for the per-prompt timeline drilldown.</span>
+              </div>
+              <div className="settings-field settings-field-checkbox">
+                <label><input type="checkbox" id="settings-telemetry-traces-enabled" /> Traces (beta)</label>
+                <span className="settings-hint">Turn-level + sub-span detail for the Chrome-style waterfall view. Marked beta upstream; format may shift.</span>
+              </div>
+              <div className="settings-section-header">
+                <h3>Retention</h3>
+              </div>
+              <div className="settings-field">
+                <label>Keep raw rows for (days)</label>
+                <input type="number" id="settings-telemetry-retention-days" min="0" value="30" style="width: 120px" />
+                <span className="settings-hint">Older rows are deleted automatically on every Hot Sheet startup. Use <code>0</code> to keep forever.</span>
+              </div>
             </div>
             <div className="settings-tab-panel" data-panel="experimental" id="settings-experimental-panel">
               <div className="settings-field">

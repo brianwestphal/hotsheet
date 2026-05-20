@@ -1,0 +1,103 @@
+/**
+ * HS-8145 — pure-helper tests for the spawn-env OTLP injector.
+ * Verifies the §67.3 contract: off by default, on when
+ * `telemetry_enabled: true`, sub-toggles + beta traces, defensive
+ * empties when port/secret missing.
+ */
+import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { buildOtelEnv } from './otelEnv.js';
+
+function makeDataDir(settings: Record<string, unknown>): string {
+  const dir = join(tmpdir(), `hs-otel-env-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify(settings));
+  return dir;
+}
+
+describe('buildOtelEnv (HS-8145 / §67.3)', () => {
+  const cleanup: string[] = [];
+
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+    cleanup.length = 0;
+  });
+
+  function dir(settings: Record<string, unknown>): string {
+    const d = makeDataDir(settings);
+    cleanup.push(d);
+    return d;
+  }
+
+  it('returns {} when telemetry_enabled is missing (default-off)', () => {
+    const d = dir({ secret: 'abc', port: 4174 });
+    expect(buildOtelEnv(d)).toEqual({});
+  });
+
+  it('returns {} when telemetry_enabled is explicitly false', () => {
+    const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: false });
+    expect(buildOtelEnv(d)).toEqual({});
+  });
+
+  it('returns the full env block when telemetry_enabled is true (default sub-toggles)', () => {
+    const d = dir({ secret: 'abc-secret', port: 4174, telemetry_enabled: true });
+    const env = buildOtelEnv(d);
+    expect(env.CLAUDE_CODE_ENABLE_TELEMETRY).toBe('1');
+    expect(env.OTEL_EXPORTER_OTLP_PROTOCOL).toBe('http/protobuf');
+    expect(env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://localhost:4174');
+    expect(env.OTEL_RESOURCE_ATTRIBUTES).toContain('hotsheet_project=abc-secret');
+    expect(env.OTEL_RESOURCE_ATTRIBUTES).toContain(`working_dir=${d}`);
+    // Default sub-toggles: metrics + logs ON, traces OFF.
+    expect(env.OTEL_METRICS_EXPORTER).toBe('otlp');
+    expect(env.OTEL_LOGS_EXPORTER).toBe('otlp');
+    expect(env.OTEL_TRACES_EXPORTER).toBeUndefined();
+    expect(env.CLAUDE_CODE_ENHANCED_TELEMETRY_BETA).toBeUndefined();
+  });
+
+  it('omits OTEL_METRICS_EXPORTER when telemetry_metrics_enabled is false', () => {
+    const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: true, telemetry_metrics_enabled: false });
+    const env = buildOtelEnv(d);
+    expect(env.OTEL_METRICS_EXPORTER).toBeUndefined();
+    expect(env.OTEL_LOGS_EXPORTER).toBe('otlp');
+  });
+
+  it('omits OTEL_LOGS_EXPORTER when telemetry_logs_enabled is false', () => {
+    const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: true, telemetry_logs_enabled: false });
+    const env = buildOtelEnv(d);
+    expect(env.OTEL_METRICS_EXPORTER).toBe('otlp');
+    expect(env.OTEL_LOGS_EXPORTER).toBeUndefined();
+  });
+
+  it('adds OTEL_TRACES_EXPORTER + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA when telemetry_traces_enabled is true', () => {
+    const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: true, telemetry_traces_enabled: true });
+    const env = buildOtelEnv(d);
+    expect(env.OTEL_TRACES_EXPORTER).toBe('otlp');
+    expect(env.CLAUDE_CODE_ENHANCED_TELEMETRY_BETA).toBe('1');
+  });
+
+  it('returns {} when secret is missing despite telemetry_enabled', () => {
+    const d = dir({ port: 4174, telemetry_enabled: true });
+    expect(buildOtelEnv(d)).toEqual({});
+  });
+
+  it('returns {} when port is missing despite telemetry_enabled', () => {
+    const d = dir({ secret: 'abc', telemetry_enabled: true });
+    expect(buildOtelEnv(d)).toEqual({});
+  });
+
+  it('returns {} when secret is the empty string', () => {
+    const d = dir({ secret: '', port: 4174, telemetry_enabled: true });
+    expect(buildOtelEnv(d)).toEqual({});
+  });
+
+  it('encodes the dataDir into OTEL_RESOURCE_ATTRIBUTES (working_dir)', () => {
+    const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: true });
+    const env = buildOtelEnv(d);
+    expect(env.OTEL_RESOURCE_ATTRIBUTES).toMatch(/working_dir=\//);
+  });
+});
