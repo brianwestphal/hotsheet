@@ -424,6 +424,50 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(a[0].count).toBe(1);
       expect(a[0].totalMs).toBe(100);
     });
+
+    describe('HS-8478 — spans-first source', () => {
+      async function insertToolSpan(opts: {
+        startTs: Date;
+        endTs: Date;
+        projectSecret: string;
+        spanName: string;
+      }): Promise<void> {
+        const db = await getDb();
+        await db.query(
+          `INSERT INTO otel_spans (trace_id, span_id, parent_span_id, project_secret, session_id, prompt_id, span_name, start_ts, end_ts, attributes_json, status_code)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
+          ['trace-1', `span-${String(Math.random())}`, null, opts.projectSecret, 'session-1', 'p-1', opts.spanName, opts.startTs, opts.endTs, JSON.stringify({}), 'OK'],
+        );
+      }
+
+      it('prefers spans when present + extracts tool name from span_name suffix', async () => {
+        const t1 = new Date('2026-05-21T10:00:00.000Z');
+        const t2 = new Date('2026-05-21T10:00:00.050Z'); // span1: 50 ms
+        const t3 = new Date('2026-05-21T10:00:00.200Z'); // span2: 200 ms
+        await insertToolSpan({ startTs: t1, endTs: t2, projectSecret: SECRET_A, spanName: 'claude_code.tool.bash' });
+        await insertToolSpan({ startTs: t1, endTs: t3, projectSecret: SECRET_A, spanName: 'claude_code.tool.bash' });
+        // Also seed an event with a different duration — should NOT
+        // be used because spans take precedence when present.
+        await insertToolDuration({ ts: t1, projectSecret: SECRET_A, toolName: 'bash', durationMs: 9999 });
+
+        const result = await getToolLatencyHistogram(SECRET_A, null);
+        expect(result).toHaveLength(1);
+        expect(result[0].tool).toBe('bash');
+        expect(result[0].count).toBe(2);
+        // totalMs should be 50 + 200 = 250 ms, NOT the 9999 from the event.
+        expect(result[0].totalMs).toBeGreaterThan(240);
+        expect(result[0].totalMs).toBeLessThan(260);
+      });
+
+      it('falls back to events when no matching spans exist', async () => {
+        const now = new Date();
+        await insertToolDuration({ ts: now, projectSecret: SECRET_A, toolName: 'Read', durationMs: 30 });
+        const result = await getToolLatencyHistogram(SECRET_A, null);
+        expect(result).toHaveLength(1);
+        expect(result[0].tool).toBe('Read');
+        expect(result[0].totalMs).toBe(30);
+      });
+    });
   });
 
   describe('getPerTicketRollup (HS-8152 / §67.10.7)', () => {

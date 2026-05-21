@@ -316,6 +316,33 @@ export async function getToolLatencyHistogram(
   sinceTs: Date | null,
 ): Promise<ToolLatencyHistogram[]> {
   const db = await getDb();
+
+  // HS-8478 — prefer `otel_spans` when traces are enabled. Probe for
+  // at least one `claude_code.tool.*` span in the project + window; if
+  // present, source the histogram from spans (higher-fidelity duration,
+  // measured by the runtime instead of the tool reporting it). When no
+  // spans exist (the common non-beta case), fall back to the events-
+  // based path which has been the source since HS-8150.
+  const probeClauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'start_ts', 0);
+  const probe = await db.query<{ x: number }>(
+    `SELECT 1 AS x FROM otel_spans
+     WHERE span_name LIKE 'claude_code.tool.%'${probeClauses.clauses}
+     LIMIT 1`,
+    probeClauses.params,
+  );
+  const useSpans = probe.rows.length > 0;
+
+  if (useSpans) {
+    return getToolLatencyHistogramFromSpans(projectSecret, sinceTs);
+  }
+  return getToolLatencyHistogramFromEvents(projectSecret, sinceTs);
+}
+
+async function getToolLatencyHistogramFromEvents(
+  projectSecret: string | null,
+  sinceTs: Date | null,
+): Promise<ToolLatencyHistogram[]> {
+  const db = await getDb();
   const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
 
   // First query: count + total + p50/p90/p99 per tool. PostgreSQL's
@@ -390,6 +417,88 @@ export async function getToolLatencyHistogram(
     p90: r.p90 !== null ? Number(r.p90) : null,
     p99: r.p99 !== null ? Number(r.p99) : null,
     buckets: bucketsByTool.get(r.tool ?? '(unknown)') ?? new Array<number>(8).fill(0),
+  }));
+}
+
+/**
+ * HS-8478 — spans-based variant. Source = `otel_spans` rows whose
+ * `span_name` matches `claude_code.tool.%`. Tool name is the suffix
+ * after `claude_code.tool.` (e.g. `claude_code.tool.bash` → `bash`).
+ * Duration computed as `EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000`
+ * — higher fidelity than the event-based `duration_ms` attribute since
+ * it's measured at the span boundary by the runtime instead of being
+ * self-reported by the tool wrapper.
+ */
+async function getToolLatencyHistogramFromSpans(
+  projectSecret: string | null,
+  sinceTs: Date | null,
+): Promise<ToolLatencyHistogram[]> {
+  const db = await getDb();
+  const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'start_ts', 0);
+
+  const stats = await db.query<{
+    tool: string;
+    c: bigint | number;
+    total_ms: string | null;
+    p50: string | null;
+    p90: string | null;
+    p99: string | null;
+  }>(
+    `SELECT
+        SUBSTRING(span_name FROM 18) AS tool,
+        COUNT(*) AS c,
+        SUM(EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000) AS total_ms,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000) AS p50,
+        percentile_cont(0.9) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000) AS p90,
+        percentile_cont(0.99) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000) AS p99
+     FROM otel_spans
+     WHERE span_name LIKE 'claude_code.tool.%'${clauses.clauses}
+     GROUP BY tool
+     ORDER BY c DESC`,
+    clauses.params,
+  );
+
+  if (stats.rows.length === 0) return [];
+
+  const bucketsResult = await db.query<{ tool: string; bucket: number; c: bigint | number }>(
+    `SELECT
+        SUBSTRING(span_name FROM 18) AS tool,
+        CASE
+          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 10 THEN 0
+          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 50 THEN 1
+          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 100 THEN 2
+          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 500 THEN 3
+          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 1000 THEN 4
+          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 5000 THEN 5
+          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 10000 THEN 6
+          ELSE 7
+        END AS bucket,
+        COUNT(*) AS c
+     FROM otel_spans
+     WHERE span_name LIKE 'claude_code.tool.%'${clauses.clauses}
+     GROUP BY tool, bucket
+     ORDER BY tool, bucket`,
+    clauses.params,
+  );
+
+  const bucketsByTool = new Map<string, number[]>();
+  for (const row of bucketsResult.rows) {
+    let arr = bucketsByTool.get(row.tool);
+    if (arr === undefined) {
+      arr = new Array<number>(8).fill(0);
+      bucketsByTool.set(row.tool, arr);
+    }
+    arr[row.bucket] = Number(row.c);
+  }
+
+  return stats.rows.map(r => ({
+    tool: r.tool,
+    count: Number(r.c),
+    totalMs: Number(r.total_ms ?? 0),
+    p50: r.p50 !== null ? Number(r.p50) : null,
+    p90: r.p90 !== null ? Number(r.p90) : null,
+    p99: r.p99 !== null ? Number(r.p99) : null,
+    buckets: bucketsByTool.get(r.tool) ?? new Array<number>(8).fill(0),
   }));
 }
 
