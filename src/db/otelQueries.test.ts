@@ -9,7 +9,10 @@ import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { getDb } from './connection.js';
 import {
   getCostByModel,
+  getCostByProject,
+  getDashboardPayload,
   getDrawerPayload,
+  getHourlyActivityHeatmap,
   getPerTicketRollup,
   getPromptTimeline,
   getQuerySourceRollup,
@@ -17,7 +20,9 @@ import {
   getTodayCost,
   getToolLatencyHistogram,
   getToolRollup,
+  getTopExpensivePrompts,
   getWindowTotals,
+  resolveDashboardWindowSinceTs,
 } from './otelQueries.js';
 
 const SECRET_A = 'secret-A';
@@ -571,6 +576,164 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(payload.querySourceRollup[0].source).toBe('main_agent');
       expect(payload.recentPrompts).toHaveLength(1);
       expect(payload.recentPrompts[0].promptId).toBe('p1');
+    });
+  });
+
+  describe('getCostByProject (HS-8480 / §69.3.2)', () => {
+    it('returns one row per project that has any cost in the window, sorted by cost DESC', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.5 });
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.25 });
+      await insertCostMetric({ ts: now, projectSecret: SECRET_B, cost: 1.5 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, tokens: 1000 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_B, tokens: 3000 });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1' });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p2' });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_B, promptId: 'p3' });
+
+      const rows = await getCostByProject(null);
+      expect(rows).toHaveLength(2);
+      // Sorted by cost DESC — SECRET_B's $1.50 comes first.
+      expect(rows[0].projectSecret).toBe(SECRET_B);
+      expect(rows[0].cost).toBe(1.5);
+      expect(rows[0].tokens).toBe(3000);
+      expect(rows[0].promptCount).toBe(1);
+      expect(rows[1].projectSecret).toBe(SECRET_A);
+      expect(rows[1].cost).toBe(0.75);
+      expect(rows[1].tokens).toBe(1000);
+      expect(rows[1].promptCount).toBe(2);
+    });
+
+    it('filters by window — pre-window rows excluded', async () => {
+      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      const now = new Date();
+      await insertCostMetric({ ts: fiveDaysAgo, projectSecret: SECRET_A, cost: 1.0 });
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.5 });
+      const oneDayAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+      const rows = await getCostByProject(oneDayAgo);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].cost).toBe(0.5);
+    });
+
+    it('returns empty array when no project has cost', async () => {
+      const rows = await getCostByProject(null);
+      expect(rows).toEqual([]);
+    });
+  });
+
+  describe('getHourlyActivityHeatmap (HS-8480 / §69.3.4)', () => {
+    it('densifies to 168 cells with zero defaults', async () => {
+      const cells = await getHourlyActivityHeatmap(null);
+      expect(cells).toHaveLength(168);
+      for (const cell of cells) {
+        expect(cell.cost).toBe(0);
+        expect(cell.promptCount).toBe(0);
+      }
+    });
+
+    it('aggregates cost + distinct prompts by (dow, hour)', async () => {
+      // Two cost rows at the same UTC hour → cost sums; one at a different hour.
+      const t1 = new Date('2026-05-18T10:30:00Z'); // Monday 10:00 UTC
+      const t2 = new Date('2026-05-18T10:45:00Z'); // Monday 10:00 UTC
+      const t3 = new Date('2026-05-18T14:00:00Z'); // Monday 14:00 UTC
+      await insertCostMetric({ ts: t1, projectSecret: SECRET_A, cost: 0.5 });
+      await insertCostMetric({ ts: t2, projectSecret: SECRET_A, cost: 0.25 });
+      await insertCostMetric({ ts: t3, projectSecret: SECRET_A, cost: 1.0 });
+      await insertPromptEvent({ ts: t1, projectSecret: SECRET_A, promptId: 'p1' });
+      await insertPromptEvent({ ts: t2, projectSecret: SECRET_A, promptId: 'p2' });
+
+      const cells = await getHourlyActivityHeatmap(null, 'UTC');
+      // Monday = DOW 1 in PG's EXTRACT (0=Sunday). 1 * 24 + 10 = 34
+      expect(cells[34].cost).toBeCloseTo(0.75);
+      expect(cells[34].promptCount).toBe(2);
+      // 1 * 24 + 14 = 38
+      expect(cells[38].cost).toBeCloseTo(1.0);
+      expect(cells[38].promptCount).toBe(0);
+    });
+  });
+
+  describe('getTopExpensivePrompts (HS-8480 / §69.3.5)', () => {
+    async function insertApiRequestEvent(opts: {
+      ts: Date;
+      projectSecret: string;
+      promptId: string;
+      cost: number;
+    }): Promise<void> {
+      const db = await getDb();
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [opts.ts, opts.projectSecret, 'session-1', opts.promptId, 'claude_code.api_request', JSON.stringify({ cost: opts.cost }), JSON.stringify({})],
+      );
+    }
+
+    it('returns top N prompts by cost across every project', async () => {
+      const now = new Date();
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', model: 'sonnet' });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_B, promptId: 'p2', model: 'opus' });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p3', model: 'sonnet' });
+
+      await insertApiRequestEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', cost: 0.5 });
+      await insertApiRequestEvent({ ts: now, projectSecret: SECRET_B, promptId: 'p2', cost: 2.0 });
+      await insertApiRequestEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p3', cost: 1.0 });
+
+      const rows = await getTopExpensivePrompts(null, 10);
+      expect(rows).toHaveLength(3);
+      expect(rows[0].promptId).toBe('p2');
+      expect(rows[0].cost).toBe(2);
+      expect(rows[0].model).toBe('opus');
+      expect(rows[0].projectSecret).toBe(SECRET_B);
+      expect(rows[1].promptId).toBe('p3');
+      expect(rows[1].cost).toBe(1);
+      expect(rows[2].promptId).toBe('p1');
+      expect(rows[2].cost).toBe(0.5);
+    });
+
+    it('returns empty when no api_request events have cost > 0', async () => {
+      const rows = await getTopExpensivePrompts(null, 10);
+      expect(rows).toEqual([]);
+    });
+  });
+
+  describe('resolveDashboardWindowSinceTs (HS-8480 / §69.4)', () => {
+    it('returns null for the all window', () => {
+      expect(resolveDashboardWindowSinceTs('all')).toBeNull();
+    });
+
+    it('returns midnight-local for today', () => {
+      const now = new Date('2026-05-21T14:30:00');
+      const since = resolveDashboardWindowSinceTs('today', now);
+      expect(since).not.toBeNull();
+      if (since !== null) {
+        expect(since.getHours()).toBe(0);
+        expect(since.getMinutes()).toBe(0);
+        expect(since.getDate()).toBe(21);
+      }
+    });
+
+    it('returns midnight 6 days ago for week', () => {
+      const now = new Date('2026-05-21T14:30:00');
+      const since = resolveDashboardWindowSinceTs('week', now);
+      expect(since).not.toBeNull();
+      if (since !== null) expect(since.getDate()).toBe(15);
+    });
+  });
+
+  describe('getDashboardPayload (HS-8480 / §69.4)', () => {
+    it('returns every section bundled in one call', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertCostMetric({ ts: now, projectSecret: SECRET_B, model: 'opus', cost: 1.0 });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', model: 'sonnet' });
+
+      const payload = await getDashboardPayload('all', 'UTC');
+      expect(payload.window).toBe('all');
+      expect(payload.windowTotals.allTime.cost).toBeCloseTo(1.5);
+      expect(payload.costByProject).toHaveLength(2);
+      expect(payload.costByProject[0].projectSecret).toBe(SECRET_B); // higher cost first
+      expect(payload.costByModel.length).toBeGreaterThan(0);
+      expect(payload.hourlyActivity).toHaveLength(168);
+      expect(payload.topExpensivePrompts).toEqual([]); // no api_request events seeded
     });
   });
 });

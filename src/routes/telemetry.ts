@@ -1,7 +1,28 @@
 import { Hono } from 'hono';
 
-import { getDrawerPayload, getPerTicketRollup, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
+import { type DashboardWindow, getDashboardPayload, getDrawerPayload, getPerTicketRollup, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
+import { readFileSettings } from '../file-settings.js';
+import { readProjectList } from '../project-list.js';
 import type { AppEnv } from '../types.js';
+
+/**
+ * HS-8479 / §69.2 — true when at least one registered project has
+ * `telemetry_enabled === true` in its `<dataDir>/.hotsheet/settings.json`.
+ * Drives the conditional visibility of the global Telemetry sidebar
+ * entry (and only that — does not gate anything else).
+ *
+ * Iterates `~/.hotsheet/projects.json` for the dataDirs + reads each
+ * file-settings file. At single-user scale (handful of projects) this
+ * is cheap; no cache needed.
+ */
+function anyProjectHasTelemetryEnabled(): boolean {
+  const dataDirs = readProjectList();
+  for (const dataDir of dataDirs) {
+    const settings = readFileSettings(dataDir);
+    if (settings['telemetry_enabled'] === true) return true;
+  }
+  return false;
+}
 
 /**
  * HS-8148 — backend API for the footer drawer Telemetry tab (§67.10.2).
@@ -97,4 +118,43 @@ telemetryRoutes.get('/telemetry/ticket/:number', async (c) => {
   const ticketNumber = c.req.param('number');
   const rollup = await getPerTicketRollup(ticketNumber);
   return c.json(rollup);
+});
+
+/**
+ * HS-8480 / §69.4 — bundled cross-project dashboard payload. One
+ * round-trip + one error point for the §69.3 cross-project dashboard
+ * view. Matches the drawer-tab `getDrawerPayload` precedent.
+ *
+ * Query params:
+ *   - `window`: `today` | `week` | `month` | `90d` | `all`. Default `month`.
+ *     Narrows the cost-by-project / cost-by-model / heatmap /
+ *     top-prompts sections. Window-totals chips always carry today /
+ *     week / month / allTime regardless.
+ *   - `tz`: IANA timezone name (e.g. `America/Los_Angeles`). Used for
+ *     the 7×24 heatmap's day-of-week + hour bucketing. Default `UTC`.
+ *     The client passes `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+ *
+ * Read-only `GET`. Subject to the existing `/api/*` middleware.
+ */
+/**
+ * HS-8479 / §69.2 — drives the conditional Telemetry sidebar entry.
+ * Returns `{ enabled: boolean }` — `true` iff at least one project
+ * has the master `telemetry_enabled` toggle on. Polled at app boot;
+ * the client also re-fetches on the `applyFileSettings` broadcast
+ * so toggling the master setting instantly shows / hides the entry
+ * (no 5 s bell-tick lag).
+ */
+telemetryRoutes.get('/telemetry/enabled-anywhere', (c) => {
+  return c.json({ enabled: anyProjectHasTelemetryEnabled() });
+});
+
+telemetryRoutes.get('/telemetry/dashboard', async (c) => {
+  const windowRaw = c.req.query('window') ?? 'month';
+  const knownWindows: DashboardWindow[] = ['today', 'week', 'month', '90d', 'all'];
+  const window: DashboardWindow = (knownWindows as string[]).includes(windowRaw)
+    ? (windowRaw as DashboardWindow)
+    : 'month';
+  const timezone = c.req.query('tz') ?? 'UTC';
+  const payload = await getDashboardPayload(window, timezone);
+  return c.json(payload);
 });

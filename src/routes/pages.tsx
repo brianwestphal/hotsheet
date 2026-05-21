@@ -168,6 +168,10 @@ pageRoutes.get('/', (c) => {
                 <span id="copy-prompt-label">Copy AI prompt</span>
               </button>
             </div>
+            <div className="sidebar-section sidebar-section-telemetry" id="sidebar-section-telemetry" style="display:none">
+              <div className="sidebar-label">Dashboard</div>
+              <button className="sidebar-item" data-view="telemetry-dashboard"><span className="sidebar-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg></span> Telemetry</button>
+            </div>
             <div className="sidebar-section">
               <div className="sidebar-label">Views <button className="sidebar-add-view-btn" id="add-custom-view-btn" title="New custom view"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 12h8"/><path d="M12 8v8"/></svg></button></div>
               <button className="sidebar-item active" data-view="all"><span className="sidebar-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h18"/><path d="M3 6h18"/><path d="M3 18h18"/></svg></span> All Tickets</button>

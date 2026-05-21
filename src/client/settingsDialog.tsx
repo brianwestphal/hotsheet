@@ -675,7 +675,13 @@ function bindTelemetryTab() {
   // metrics + logs, default-off for traces" — so we always write the
   // explicit boolean rather than rely on absence.
   masterEl.addEventListener('change', () => {
-    void api('/file-settings', { method: 'PATCH', body: { telemetry_enabled: masterEl.checked } });
+    void api('/file-settings', { method: 'PATCH', body: { telemetry_enabled: masterEl.checked } }).then(() => {
+      // HS-8479 — refresh the conditional Telemetry sidebar entry so
+      // it appears / disappears instantly on toggle.
+      void import('./telemetrySidebar.js').then(({ refreshTelemetrySidebarVisibility }) => {
+        void refreshTelemetrySidebarVisibility();
+      });
+    });
   });
   metricsEl.addEventListener('change', () => {
     void api('/file-settings', { method: 'PATCH', body: { telemetry_metrics_enabled: metricsEl.checked } });

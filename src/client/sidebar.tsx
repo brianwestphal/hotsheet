@@ -45,6 +45,11 @@ async function applyDropAction(view: string, ids: number[]) {
 export function bindSidebar(restoreTicketList: () => void, updateLayoutToggle: () => void) {
   const items = document.querySelectorAll('.sidebar-item[data-view]');
   items.forEach(item => {
+    // HS-8479 — the Telemetry sidebar entry (`data-view="telemetry-dashboard"`)
+    // owns its own click handler in `telemetrySidebar.tsx`; bypass the
+    // standard ticket-list activation flow for it. The other sidebar
+    // items keep their existing behavior.
+    if ((item as HTMLElement).dataset.view === 'telemetry-dashboard') return;
     item.addEventListener('click', () => {
       document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
       item.classList.add('active');

@@ -696,3 +696,335 @@ export async function getDrawerPayload(
 
   return { today, thisWeek, allTime, costByModel, toolRollup, toolLatencyHistogram, querySourceRollup, recentPrompts };
 }
+
+/**
+ * HS-8480 — cross-project rollup queries for the global Telemetry
+ * dashboard view (§69.3 / docs/69-telemetry-dashboard.md). These are
+ * always cross-project — no `projectSecret` parameter; the dashboard
+ * is explicitly the "all projects" surface.
+ */
+
+export interface ProjectCostRow {
+  projectSecret: string;
+  cost: number;
+  tokens: number;
+  promptCount: number;
+  /** Latest activity ts across this project's metrics in the window. */
+  lastActivityTs: string | null;
+}
+
+/**
+ * Cost-by-project: one row per project that has any cost-bearing
+ * `claude_code.cost.usage` data points in the window. Tokens come
+ * from `claude_code.token.usage` over the same per-project group;
+ * promptCount is distinct `prompt_id` count over `user_prompt` events.
+ * `lastActivityTs` is the latest metric ts in the window.
+ *
+ * Three subqueries grouped by project_secret + a single client-side
+ * merge so the SQL stays straightforward — at single-user scale the
+ * three indexed scans each return in well under 10 ms per §67.6's
+ * "no precomputed rollup tables" decision.
+ */
+export async function getCostByProject(sinceTs: Date | null): Promise<ProjectCostRow[]> {
+  const db = await getDb();
+  const tsClause = sinceTs === null ? '' : ' AND ts >= $2';
+  const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
+
+  const [costResult, tokensResult, promptsResult, lastTsResult] = await Promise.all([
+    db.query<{ project_secret: string; total: string | null }>(
+      `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
+       FROM otel_metrics
+       WHERE metric_name = $1${tsClause}
+       GROUP BY project_secret`,
+      ['claude_code.cost.usage', ...tsParams],
+    ),
+    db.query<{ project_secret: string; total: string | null }>(
+      `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
+       FROM otel_metrics
+       WHERE metric_name = $1${tsClause}
+       GROUP BY project_secret`,
+      ['claude_code.token.usage', ...tsParams],
+    ),
+    db.query<{ project_secret: string; c: bigint | number }>(
+      `SELECT project_secret, COUNT(DISTINCT prompt_id) AS c
+       FROM otel_events
+       WHERE event_name = $1 AND prompt_id IS NOT NULL${tsClause}
+       GROUP BY project_secret`,
+      ['claude_code.user_prompt', ...tsParams],
+    ),
+    db.query<{ project_secret: string; last_ts: string }>(
+      `SELECT project_secret, MAX(ts) AS last_ts
+       FROM otel_metrics
+       WHERE metric_name = $1${tsClause}
+       GROUP BY project_secret`,
+      ['claude_code.cost.usage', ...tsParams],
+    ),
+  ]);
+
+  // Merge by project_secret. Cost-row is the primary key set — projects
+  // with no cost in the window don't appear even if they have tokens
+  // or prompts.
+  const byProject = new Map<string, ProjectCostRow>();
+  for (const r of costResult.rows) {
+    byProject.set(r.project_secret, {
+      projectSecret: r.project_secret,
+      cost: Number(r.total ?? 0),
+      tokens: 0,
+      promptCount: 0,
+      lastActivityTs: null,
+    });
+  }
+  for (const r of tokensResult.rows) {
+    const row = byProject.get(r.project_secret);
+    if (row !== undefined) row.tokens = Number(r.total ?? 0);
+  }
+  for (const r of promptsResult.rows) {
+    const row = byProject.get(r.project_secret);
+    if (row !== undefined) row.promptCount = Number(r.c);
+  }
+  for (const r of lastTsResult.rows) {
+    const row = byProject.get(r.project_secret);
+    if (row !== undefined) {
+      row.lastActivityTs = typeof r.last_ts === 'string' ? r.last_ts : new Date(r.last_ts).toISOString();
+    }
+  }
+  return Array.from(byProject.values()).sort((a, b) => b.cost - a.cost);
+}
+
+export interface HourlyActivityCell {
+  /** Day of week, 0 = Sunday … 6 = Saturday (PostgreSQL EXTRACT(DOW) convention). */
+  dow: number;
+  /** Hour of day, 0 → 23. */
+  hour: number;
+  cost: number;
+  promptCount: number;
+}
+
+/**
+ * 7×24 hourly activity heatmap. Cells densified client-side so the
+ * 168-entry array always contains every (dow, hour) combination
+ * regardless of whether data exists for that bucket. Server-side
+ * uses PG's `EXTRACT(DOW … AT TIME ZONE …)` against the user's
+ * local timezone (passed in `timezone`) so the buckets match the
+ * user's clock.
+ *
+ * `timezone` defaults to `UTC` for tests + headless usage; the
+ * dashboard endpoint resolves the user's timezone from the
+ * `Intl.DateTimeFormat().resolvedOptions().timeZone` value (passed
+ * as a query parameter from the client so the server doesn't have
+ * to guess).
+ */
+export async function getHourlyActivityHeatmap(
+  sinceTs: Date | null,
+  timezone = 'UTC',
+): Promise<HourlyActivityCell[]> {
+  const db = await getDb();
+  const tsClause = sinceTs === null ? '' : ' AND ts >= $3';
+  const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
+
+  // Cost per (dow, hour) bucket.
+  const costResult = await db.query<{ dow: string | number; hour: string | number; total: string | null }>(
+    `SELECT
+        EXTRACT(DOW FROM ts AT TIME ZONE $2)::int AS dow,
+        EXTRACT(HOUR FROM ts AT TIME ZONE $2)::int AS hour,
+        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
+     FROM otel_metrics
+     WHERE metric_name = $1${tsClause}
+     GROUP BY dow, hour`,
+    ['claude_code.cost.usage', timezone, ...tsParams],
+  );
+
+  // Distinct-prompt count per (dow, hour) bucket.
+  const promptsClause = sinceTs === null ? '' : ' AND ts >= $3';
+  const promptsResult = await db.query<{ dow: string | number; hour: string | number; c: bigint | number }>(
+    `SELECT
+        EXTRACT(DOW FROM ts AT TIME ZONE $2)::int AS dow,
+        EXTRACT(HOUR FROM ts AT TIME ZONE $2)::int AS hour,
+        COUNT(DISTINCT prompt_id) AS c
+     FROM otel_events
+     WHERE event_name = $1 AND prompt_id IS NOT NULL${promptsClause}
+     GROUP BY dow, hour`,
+    ['claude_code.user_prompt', timezone, ...tsParams],
+  );
+
+  // Densify to 168 entries — every (dow, hour) combination.
+  const cells: HourlyActivityCell[] = [];
+  for (let dow = 0; dow < 7; dow++) {
+    for (let hour = 0; hour < 24; hour++) {
+      cells.push({ dow, hour, cost: 0, promptCount: 0 });
+    }
+  }
+  for (const r of costResult.rows) {
+    const dow = Number(r.dow);
+    const hour = Number(r.hour);
+    const idx = dow * 24 + hour;
+    if (idx >= 0 && idx < 168) cells[idx].cost = Number(r.total ?? 0);
+  }
+  for (const r of promptsResult.rows) {
+    const dow = Number(r.dow);
+    const hour = Number(r.hour);
+    const idx = dow * 24 + hour;
+    if (idx >= 0 && idx < 168) cells[idx].promptCount = Number(r.c);
+  }
+  return cells;
+}
+
+export interface TopPromptRow {
+  promptId: string;
+  ts: string;
+  projectSecret: string;
+  cost: number;
+  model: string | null;
+  /** First-line preview pulled from `user_prompt.body_json.prompt_preview`
+   *  or `body_json.prompt` when present (Claude Code emits both shapes
+   *  across versions); truncated to 80 chars. `null` when neither key
+   *  exists in the body. */
+  preview: string | null;
+}
+
+/**
+ * Top-N most expensive prompts across every project. Joins per-prompt
+ * cost sums (from `claude_code.api_request` events that carry the
+ * cost attribute) against the `claude_code.user_prompt` event for
+ * the preview text + model.
+ */
+export async function getTopExpensivePrompts(
+  sinceTs: Date | null,
+  limit = 10,
+): Promise<TopPromptRow[]> {
+  const db = await getDb();
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+  const tsClause = sinceTs === null ? '' : ' AND ts >= $2';
+  const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
+
+  // Sum per-prompt cost from api_request events (the same source
+  // getPerTicketRollup uses). Use COALESCE across the common attribute-
+  // name variants so a Claude Code rename doesn't break the query.
+  const result = await db.query<{
+    prompt_id: string;
+    project_secret: string;
+    cost: string | null;
+    first_ts: string;
+  }>(
+    `SELECT
+        prompt_id,
+        MIN(project_secret) AS project_secret,
+        SUM(COALESCE((attributes_json->>'cost')::numeric, (attributes_json->>'cost_usd')::numeric, 0)) AS cost,
+        MIN(ts) AS first_ts
+     FROM otel_events
+     WHERE event_name = $1 AND prompt_id IS NOT NULL${tsClause}
+     GROUP BY prompt_id
+     HAVING SUM(COALESCE((attributes_json->>'cost')::numeric, (attributes_json->>'cost_usd')::numeric, 0)) > 0
+     ORDER BY cost DESC
+     LIMIT ${String(safeLimit)}`,
+    ['claude_code.api_request', ...tsParams],
+  );
+
+  if (result.rows.length === 0) return [];
+
+  // Pull model + preview from the user_prompt event for each top prompt.
+  const promptIds = result.rows.map(r => r.prompt_id);
+  const promptParams = promptIds.map((_, i) => `$${String(i + 2)}`).join(', ');
+  const userPromptsResult = await db.query<{
+    prompt_id: string;
+    model: string | null;
+    body_json: Record<string, unknown> | null;
+  }>(
+    `SELECT prompt_id, attributes_json->>'model' AS model, body_json
+     FROM otel_events
+     WHERE event_name = $1 AND prompt_id IN (${promptParams})`,
+    ['claude_code.user_prompt', ...promptIds],
+  );
+  const byPromptId = new Map<string, { model: string | null; preview: string | null }>();
+  for (const r of userPromptsResult.rows) {
+    const body = r.body_json ?? {};
+    const previewRaw = typeof body['prompt_preview'] === 'string'
+      ? body['prompt_preview']
+      : typeof body['prompt'] === 'string' ? body['prompt'] : null;
+    const preview = previewRaw === null ? null : previewRaw.split('\n')[0].slice(0, 80);
+    byPromptId.set(r.prompt_id, { model: r.model, preview });
+  }
+
+  return result.rows.map(r => {
+    const meta = byPromptId.get(r.prompt_id) ?? { model: null, preview: null };
+    return {
+      promptId: r.prompt_id,
+      ts: typeof r.first_ts === 'string' ? r.first_ts : new Date(r.first_ts).toISOString(),
+      projectSecret: r.project_secret,
+      cost: Number(r.cost ?? 0),
+      model: meta.model,
+      preview: meta.preview,
+    };
+  });
+}
+
+/**
+ * Window enum for the dashboard endpoint. Resolves to a `Date | null`
+ * sinceTs in the user's local time:
+ *   - `today` → midnight local
+ *   - `week` → midnight 6 days ago (start-of-week, ISO-flexible)
+ *   - `month` → midnight 30 days ago (trailing 30 days, not calendar month)
+ *   - `90d` → midnight 89 days ago (trailing 90 days)
+ *   - `all` → null (no time filter)
+ */
+export type DashboardWindow = 'today' | 'week' | 'month' | '90d' | 'all';
+
+export function resolveDashboardWindowSinceTs(window: DashboardWindow, now: Date = new Date()): Date | null {
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (window === 'today') return midnight;
+  if (window === 'week') return new Date(midnight.getTime() - 6 * 24 * 60 * 60 * 1000);
+  if (window === 'month') return new Date(midnight.getTime() - 29 * 24 * 60 * 60 * 1000);
+  if (window === '90d') return new Date(midnight.getTime() - 89 * 24 * 60 * 60 * 1000);
+  return null;
+}
+
+export interface DashboardPayload {
+  window: DashboardWindow;
+  windowTotals: { today: WindowTotals; week: WindowTotals; month: WindowTotals; allTime: WindowTotals };
+  costByProject: ProjectCostRow[];
+  costByModel: ModelRollup[];
+  hourlyActivity: HourlyActivityCell[];
+  topExpensivePrompts: TopPromptRow[];
+}
+
+/**
+ * Bundled dashboard payload — one round-trip + one error point for
+ * the §69.3 cross-project dashboard view. Matches the drawer-tab
+ * `getDrawerPayload` precedent.
+ *
+ * `windowTotals` always carries today / week / month / allTime
+ * regardless of the selected `window` because the three chips at
+ * the top of the dashboard always show all three breakdowns. The
+ * `window` parameter narrows the cost-by-project / cost-by-model /
+ * heatmap / top-prompts sections.
+ */
+export async function getDashboardPayload(
+  window: DashboardWindow,
+  timezone = 'UTC',
+  now: Date = new Date(),
+): Promise<DashboardPayload> {
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekStart = new Date(midnight.getTime() - 6 * 24 * 60 * 60 * 1000);
+  const monthStart = new Date(midnight.getTime() - 29 * 24 * 60 * 60 * 1000);
+  const windowSinceTs = resolveDashboardWindowSinceTs(window, now);
+
+  const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, topExpensivePrompts] = await Promise.all([
+    getWindowTotals(null, midnight),
+    getWindowTotals(null, weekStart),
+    getWindowTotals(null, monthStart),
+    getWindowTotals(null, null),
+    getCostByProject(windowSinceTs),
+    getCostByModel(null, windowSinceTs),
+    getHourlyActivityHeatmap(windowSinceTs, timezone),
+    getTopExpensivePrompts(windowSinceTs, 10),
+  ]);
+
+  return {
+    window,
+    windowTotals: { today, week: week, month, allTime },
+    costByProject,
+    costByModel,
+    hourlyActivity,
+    topExpensivePrompts,
+  };
+}

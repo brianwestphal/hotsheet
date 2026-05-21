@@ -206,6 +206,11 @@ function bindAllUiHandlers(): void {
   // Subscribes to the bell-state long-poll so chip refreshes piggyback
   // on the existing cadence (§67.10.1).
   void import('./costPoll.js').then(({ initCostPoll }) => { initCostPoll(); });
+  // HS-8479 — install the conditional Telemetry sidebar entry click
+  // handler + run the visibility check (§69.2). The entry appears only
+  // when at least one project has telemetry_enabled === true; the
+  // settings dialog's master toggle also re-fetches after a PATCH.
+  void import('./telemetrySidebar.js').then(({ initTelemetrySidebar }) => { initTelemetrySidebar(); });
   // HS-8036 — load the project's known ticket-number prefixes; HS-8062 —
   // refresh detail after resolution so pre-cache markdown re-linkifies.
   void loadTicketPrefixes().then(() => refreshDetail()).catch(() => { /* swallow */ });
