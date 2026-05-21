@@ -122,4 +122,35 @@ test.describe('Sidebar navigation and custom views', () => {
       await expect(dashboard).toBeVisible({ timeout: 5000 });
     }
   });
+
+  // HS-8504 — exiting the project stats (analytics dashboard) view back
+  // to a ticket-list view should show tickets immediately, not require
+  // toggling between views several times. The pre-fix bug: entering the
+  // dashboard wipes `#ticket-list`'s contents without disposing the
+  // bindList; on return, `ensureBindListMount` hit a same-variant
+  // early-return path and left the rows container detached, so the
+  // visible list stayed empty until a variant switch (e.g. Trash) forced
+  // a full remount.
+  test('exiting the dashboard view returns to tickets in one click', async ({ page }) => {
+    await createTicket(page, 'Return-from-dashboard ticket');
+
+    const widget = page.locator('#sidebar-dashboard-widget');
+    const widgetVisible = await widget.isVisible().catch(() => false);
+    test.skip(!widgetVisible, 'dashboard widget not rendered for this run');
+
+    // Enter dashboard.
+    await widget.click();
+    await expect(page.locator('#dashboard-container')).toBeVisible({ timeout: 5000 });
+
+    // Single click on "All Tickets" should restore the list AND render
+    // the row in the same pass.
+    await page.locator('.sidebar-item[data-view="all"]').click();
+    await expect(page.locator('#ticket-list')).toBeVisible({ timeout: 3000 });
+    await expect(
+      page.locator('.ticket-row[data-id] .ticket-title-input[value="Return-from-dashboard ticket"]'),
+    ).toBeVisible({ timeout: 3000 });
+    // The rows-container element must exist (the regression made it
+    // disappear until a variant switch forced a remount).
+    await expect(page.locator('#ticket-list > .ticket-list-rows')).toHaveCount(1);
+  });
 });

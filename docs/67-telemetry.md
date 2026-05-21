@@ -242,11 +242,15 @@ Five separate user-facing surfaces, each its own ticket:
 
 ### 67.10.1 Per-project tab-header cost chip (HS-8147)
 
-Small monospace dollar-amount pill in the project tab header. Rendered only when `telemetry_enabled === true` AND today's cumulative cost > $0. Refreshes on the same poll cadence as the existing tab-bell-state poll. Click → opens the footer-drawer telemetry tab scoped to that project. Tooltip: "Claude usage today (resets at local midnight)."
+Small monospace dollar-amount pill in the project tab header. Rendered only when `telemetry_enabled === true` AND today's cumulative cost > $0. Refreshes on the same poll cadence as the existing tab-bell-state poll. Click → opens the **analytics dashboard** scoped to that project (post-HS-8503 — pre-reshape it opened the drawer Telemetry tab, which is removed). Tooltip: "Claude usage today (resets at local midnight)."
 
 Source query: `SUM((value_json->>'value')::numeric) FROM otel_metrics WHERE project_secret = ? AND metric_name = 'claude_code.cost.usage' AND ts >= midnight_local`. Single sum, indexed scan, ~1 ms.
 
-### 67.10.2 Footer drawer "Telemetry" tab (HS-8148)
+### 67.10.2 Footer drawer "Telemetry" tab (HS-8148 — REMOVED in HS-8503)
+
+> **HS-8503 (2026-05-21) — supersession.** The drawer Telemetry tab is removed. Per-project rollups move to the **analytics dashboard** (see §69.10.5 in [69-telemetry-dashboard.md](69-telemetry-dashboard.md)); cross-project rollups move to the new **Cross-project stats page** (header icon, see §69.10.1). The per-project tab cost chip (§67.10.1) now opens the analytics dashboard instead.
+
+Original pre-reshape spec (preserved for historical context):
 
 New tab in the footer drawer alongside Commands Log + Terminal. Default scope: active project. Toolbar toggle for "all projects."
 
@@ -281,7 +285,7 @@ When traces are enabled, the per-prompt drilldown gains a "Trace" button → ope
 
 ### 67.10.5 Per-tool latency histograms (HS-8150)
 
-Histogram-per-tool widget in the Telemetry drawer tab (or its own sub-tab if it grows). For each tool the user has invoked in the selected time window:
+Histogram-per-tool widget. **Post-HS-8503: lives on the analytics dashboard's per-project telemetry section** (see §69.10.5 in [69-telemetry-dashboard.md](69-telemetry-dashboard.md)) — pre-reshape it lived on the drawer Telemetry tab. Per-project only; no cross-project variant. For each tool the user has invoked in the selected time window:
 
 - Bucketed latency distribution (p50 / p90 / p99 markers).
 - Total invocation count + total time spent.
@@ -289,17 +293,21 @@ Histogram-per-tool widget in the Telemetry drawer tab (or its own sub-tab if it 
 
 Source: `otel_spans` (preferred) with `otel_events.attributes_json.duration_ms` as a fallback when traces aren't enabled. Lightweight inline `<svg>` histogram, no chart library dep.
 
-### 67.10.6 Cross-project global dashboard (HS-8153)
+### 67.10.6 Cross-project global dashboard (HS-8153, reshaped by HS-8503)
 
-New left-sidebar view (sibling to project list / search): "Telemetry." Full-width cross-project dashboard, NOT scoped to any one project.
+**Post-HS-8503:** Full-width **Cross-project stats page** launched from a header-bar icon (line-chart Lucide glyph) placed next to `#terminal-dashboard-toggle`. Sidebar entry removed. Page scope is cross-project only; no per-project filter (clicking a project row jumps to that project's analytics dashboard).
 
-- **Today / Week / Month** total cost.
+Sections:
+
+- **Today / Week / Month / All-time** total cost chips.
+- **Cost over time** — stacked-area chart with a Stacked / Overlay toggle (one (project, model) band per series; see §69.10.4 for mode details).
 - **Cost by project** — table, sortable.
-- **Cost by model** — pie or stacked-bar (small SVG, no library dep).
-- **Hourly activity heatmap** — when do you actually do work.
-- **Top 10 most expensive prompts** — across every project, click-through to the per-prompt drilldown.
+- **Cost by model** — donut + legend (small SVG, no library dep).
+- **Hourly activity heatmap** — 7×24 day-of-week × hour grid.
 
-Same source as the per-project drawer tab with the project filter dropped.
+**Removed in HS-8503:** the original "Top 10 most expensive prompts" list (per-project recent-prompts drilldown lives on the analytics dashboard instead — see §69.10.5).
+
+Same source as the (now-removed) per-project drawer tab with the project filter dropped. See [69-telemetry-dashboard.md](69-telemetry-dashboard.md) §69.10 for the full reshape spec.
 
 ### 67.10.7 Per-ticket cost rollup (HS-8152)
 

@@ -36,6 +36,7 @@ import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, shoul
 import { bindDetailTagInput } from './tagAutocomplete.js'; // .tsx file, JSX enabled
 import { showTagsDialog } from './tagsDialog.js';
 import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
+import { loadTelemetryCostMode } from './telemetryCostMode.js';
 import { initTerminal } from './terminal.js';
 import { initTerminalDashboard } from './terminalDashboard.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
@@ -173,6 +174,12 @@ async function loadInitialState(): Promise<void> {
   // the intended default-off behavior. Failures leave the cached value
   // at `false`, which is the safe default.
   void loadGlobalDiagnostics();
+  // HS-8497 — load the telemetry billing mode synchronously into the
+  // cache so the per-tab cost chip + the drawer + the dashboard make
+  // the right hide/annotate decision on first paint. Fire-and-forget;
+  // the default cached value `'api'` is what we want until the load
+  // resolves, which matches the no-subscription happy path.
+  void loadTelemetryCostMode();
   await loadCategories(rebuildCategoryUI);
   await loadCustomViews();
   loadAppName();

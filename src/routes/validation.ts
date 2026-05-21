@@ -205,6 +205,10 @@ export const GlobalConfigSchema = z.object({
   shareLastPrompted: z.string().optional(),
   shareAccepted: z.boolean().optional(),
   dashboard: DashboardConfigSchema.optional(),
+  diagnosticsEnabled: z.boolean().optional(),
+  // HS-8497 — billing model for telemetry cost display. See
+  // `global-config.ts` for the contract.
+  telemetryCostMode: z.enum(['api', 'subscription']).optional(),
 }).strict();
 
 // --- Plugin routes ---

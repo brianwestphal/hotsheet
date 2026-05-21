@@ -26,6 +26,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { projectsByIdSignal } from './projectsStore.js';
+import { getTelemetryCostMode } from './telemetryCostMode.js';
 
 interface WindowTotals {
   cost: number;
@@ -489,6 +490,24 @@ function renderShell(payload: DashboardPayload, container: HTMLElement): void {
   if (isEmpty) {
     container.appendChild(renderEmptyState());
     return;
+  }
+
+  // HS-8497 — when the user is on a Claude Pro/Max subscription, the
+  // dollar amounts shown across the dashboard are API-equivalent
+  // estimates rather than what they actually pay. Surface a notice
+  // banner above the dashboard chrome so the numbers are interpreted
+  // correctly.
+  if (getTelemetryCostMode() === 'subscription') {
+    const notice = toElement(
+      <div className="telemetry-subscription-notice" role="note">
+        <strong>Subscription mode:</strong> The dollar amounts below are the API-equivalent cost of your Claude Code usage. Your actual bill is your Claude Pro / Max subscription fee. Switch to <em>Pay-per-token</em> in <button type="button" className="telemetry-subscription-notice-link" data-action="open-telemetry-settings">Settings → Telemetry → Billing</button> if you're on an API key.
+      </div>
+    );
+    container.appendChild(notice);
+    notice.querySelector('.telemetry-subscription-notice-link')?.addEventListener('click', () => {
+      const settingsBtn = byIdOrNull('settings-btn');
+      if (settingsBtn !== null) (settingsBtn).click();
+    });
   }
 
   const root = toElement(

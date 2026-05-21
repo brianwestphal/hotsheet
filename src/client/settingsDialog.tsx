@@ -10,6 +10,7 @@ import { bindCategorySettings } from './settingsCategories.js';
 import type { NotifyLevel } from './state.js';
 import { state } from './state.js';
 import { getTauriInvoke, showUpdateBanner } from './tauriIntegration.js';
+import { getTelemetryCostMode, setTelemetryCostMode } from './telemetryCostMode.js';
 
 interface FileSettingsForGeneralAndTerminal {
   appName?: string;
@@ -676,6 +677,9 @@ function bindTelemetryTab() {
   const logsEl = byIdOrNull<HTMLInputElement>('settings-telemetry-logs-enabled');
   const tracesEl = byIdOrNull<HTMLInputElement>('settings-telemetry-traces-enabled');
   const retentionEl = byIdOrNull<HTMLInputElement>('settings-telemetry-retention-days');
+  // HS-8497 — billing-model select (global setting, not part of the
+  // per-project TelemetryFileSettings shape).
+  const costModeEl = byIdOrNull<HTMLSelectElement>('settings-telemetry-cost-mode');
   if (masterEl === null || metricsEl === null || logsEl === null || tracesEl === null || retentionEl === null) return;
 
   // Per-checkbox change → PATCH the matching file-settings key. The
@@ -714,6 +718,29 @@ function bindTelemetryTab() {
     }, 600);
   });
 
+  // HS-8497 — billing-model select. Updates the global cost-mode and
+  // notifies any visible cost surfaces so they reflect the new mode on
+  // the next paint without needing a reload.
+  if (costModeEl !== null) {
+    costModeEl.addEventListener('change', () => {
+      const v = costModeEl.value === 'subscription' ? 'subscription' : 'api';
+      void setTelemetryCostMode(v).then(() => {
+        // Refresh the per-tab cost chip visibility (lives in projectTabs).
+        void import('./projectTabs.js').then(({ refreshAllCostChips }) => {
+          refreshAllCostChips();
+        }).catch(() => {});
+        // Re-render the drawer telemetry tab if it's the active drawer
+        // panel, so the notice banner appears/disappears immediately.
+        void import('./telemetryDrawer.js').then(({ loadAndRenderTelemetryDrawer }) => {
+          const panel = byIdOrNull('drawer-panel-telemetry');
+          if (panel !== null && (panel).style.display !== 'none') {
+            void loadAndRenderTelemetryDrawer();
+          }
+        }).catch(() => {});
+      });
+    });
+  }
+
   // On Settings open → fetch current file-settings + populate the form.
   const settingsBtn = byId('settings-btn');
   settingsBtn.addEventListener('click', () => {
@@ -725,5 +752,11 @@ function bindTelemetryTab() {
       tracesEl.checked = fs.telemetry_traces_enabled === true;
       retentionEl.value = String(typeof fs.telemetry_retention_days === 'number' ? fs.telemetry_retention_days : 30);
     });
+    // HS-8497 — read the cached global cost mode (already loaded at app
+    // boot) so the select reflects the current value without a second
+    // round-trip.
+    if (costModeEl !== null) {
+      costModeEl.value = getTelemetryCostMode();
+    }
   });
 }

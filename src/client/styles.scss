@@ -3162,10 +3162,13 @@ body.terminal-dashboard-active {
 .ticket-row-tag {
   display: inline-block;
   font-size: 10px;
+  font-weight: 500;
   padding: 1px 6px;
   border-radius: 3px;
   background: var(--bg-hover);
-  color: var(--text-muted);
+  // HS-8493 — bumped from --text-muted (#9ca3af, ~2.5:1 against bg-hover —
+  // fails WCAG AA) to --text-secondary (#6b7280, ~4.8:1, passes AA).
+  color: var(--text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -5510,10 +5513,12 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 .column-card-tag {
   display: inline-block;
   font-size: 10px;
+  font-weight: 500;
   padding: 1px 6px;
   border-radius: 3px;
   background: var(--bg-hover);
-  color: var(--text-muted);
+  // HS-8493 — see .ticket-row-tag for the contrast rationale.
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -10831,4 +10836,284 @@ label.detail-details-label {
   color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
+}
+
+// ----- Telemetry drawer-tab chrome (HS-8148 / §67.10.2 — polished under HS-8496) -----
+//
+// The drawer Telemetry tab content panel previously rendered with no CSS at
+// all — the empty-state "No telemetry data yet" message + scope toggle were
+// bare unstyled `<p>` and `<button>` elements crammed at the top-left of the
+// drawer, with the vast remainder of the drawer space empty. This block adds
+// the missing rules so the panel matches the dashboard's onboarding-card
+// aesthetic + uses the available drawer whitespace deliberately.
+
+.telemetry-drawer-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.telemetry-drawer-loading,
+.telemetry-drawer-error {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 32px;
+  text-align: center;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.telemetry-drawer-error { color: var(--danger); font-style: normal; }
+
+// Scope toggle (project / all-projects) — segmented pill control.
+.telemetry-scope-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  padding: 2px;
+  gap: 2px;
+}
+
+.telemetry-scope-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+
+  &:hover { color: var(--text); }
+
+  &.active {
+    background: var(--bg);
+    color: var(--text);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+}
+
+// Empty-state card — vertically + horizontally centered onboarding hint
+// when the project has no telemetry rows yet. Mirrors the dashboard's
+// `.telemetry-dashboard-empty` card but sized for the drawer's smaller
+// viewport.
+.telemetry-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 20px;
+  text-align: center;
+
+  > p {
+    margin: 0;
+    max-width: 480px;
+  }
+
+  > p:first-of-type {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+}
+
+.telemetry-empty-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+
+  code {
+    background: var(--bg-secondary);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+  }
+}
+
+// Window-totals chips row (today / week / all-time) — three-column grid
+// mirroring the dashboard's four-column chips.
+.telemetry-window-chips {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.telemetry-chip {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.telemetry-chip-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.telemetry-chip-cost {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.telemetry-chip-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+// Per-rollup section containers.
+.telemetry-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  h3 {
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+}
+
+.telemetry-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+
+  th {
+    text-align: left;
+    padding: 4px 8px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  .telemetry-num { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+}
+
+.telemetry-histograms {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--accent);
+}
+
+.telemetry-histogram-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.telemetry-histogram-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.telemetry-histogram-tool {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.telemetry-recent-prompts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.telemetry-recent-prompt {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: calc(var(--radius) - 2px);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease-out;
+
+  &:hover { background: var(--bg-hover); }
+}
+
+.telemetry-recent-prompt-ts {
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.telemetry-recent-prompt-model { color: var(--text-secondary); }
+
+.telemetry-recent-prompt-id {
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+// HS-8497 — subscription-mode notice banner. Rendered above the drawer
+// + dashboard chrome whenever the global cost mode is `'subscription'`,
+// clarifying that the dollar amounts shown are API-equivalent rather
+// than what the user actually pays. Dashed accent border + lightly
+// accent-tinted background so it reads as informational, not alarming.
+.telemetry-subscription-notice {
+  padding: 10px 14px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+
+  strong { color: var(--text); }
+}
+
+.telemetry-subscription-notice-link {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+
+  &:hover { text-decoration: underline; }
 }

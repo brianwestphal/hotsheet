@@ -46,6 +46,16 @@ const GlobalConfigSchema = z.object({
   // event-loop heartbeat continue to fire regardless — the gate only
   // suppresses the in-window UI surfaces.
   diagnosticsEnabled: z.boolean().optional(),
+  // HS-8497 — billing model for telemetry cost display. `'api'` (default)
+  // = the OpenTelemetry `claude_code.cost.usage` metric reflects the real
+  // pay-per-token API cost the user is charged. `'subscription'` = the
+  // user is on Claude Pro / Max (flat monthly fee), so the metric value
+  // is an API-equivalent estimate, not an amount the user actually pays.
+  // The cost UI (per-tab chip + drawer + dashboard) hides or annotates
+  // amounts accordingly when this is set to `'subscription'`. Stored
+  // globally because the user's billing relationship with Anthropic is
+  // identity-level, not per-project.
+  telemetryCostMode: z.enum(['api', 'subscription']).optional(),
 }).strict();
 
 export type VisibilityGroupingPersisted = z.infer<typeof VisibilityGroupingSchema>;

@@ -1,6 +1,7 @@
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { getTelemetryCostMode } from './telemetryCostMode.js';
 
 /**
  * HS-8148 — footer drawer Telemetry tab (§67.10.2). Renders the five
@@ -211,6 +212,21 @@ function renderEmptyState(): HTMLElement {
   );
 }
 
+/**
+ * HS-8497 — subscription-mode notice banner. Rendered above the scope
+ * toggle whenever the global cost mode is `'subscription'`, so a Claude
+ * Pro/Max user understands that the dollar amounts shown across the
+ * drawer are API-equivalent estimates rather than what they actually
+ * pay (their bill is the flat subscription fee).
+ */
+function renderSubscriptionNotice(): HTMLElement {
+  return toElement(
+    <div className="telemetry-subscription-notice" role="note">
+      <strong>Subscription mode:</strong> The dollar amounts below are the API-equivalent cost of your Claude Code usage. Your actual bill is your Claude Pro / Max subscription fee. Switch to <em>Pay-per-token</em> in <button type="button" className="telemetry-subscription-notice-link" data-action="open-telemetry-settings">Settings → Telemetry → Billing</button> if you're on an API key.
+    </div>
+  );
+}
+
 function renderScopeToggle(): HTMLElement {
   return toElement(
     <div className="telemetry-scope-toggle">
@@ -237,16 +253,23 @@ function renderScopeToggle(): HTMLElement {
 function renderPayload(payload: DrawerPayload): HTMLElement {
   const hasData = payload.allTime.promptCount > 0 || payload.allTime.cost > 0;
 
+  const subscriptionMode = getTelemetryCostMode() === 'subscription';
+
   if (!hasData) {
-    return toElement(
-      <div className="telemetry-drawer-content">
-        {renderScopeToggle()}
-        {renderEmptyState()}
-      </div>
-    );
+    // NOTE: render helpers return DOM elements (built via `toElement`), so
+    // they cannot be composed as JSX children inside another `toElement`
+    // call — the JSX runtime renders to HTML strings and throws on DOM
+    // nodes. Build the empty shell with `toElement` and `appendChild` the
+    // subtrees, matching the with-data branch below.
+    const emptyRoot = toElement(<div className="telemetry-drawer-content"></div>);
+    if (subscriptionMode) emptyRoot.appendChild(renderSubscriptionNotice());
+    emptyRoot.appendChild(renderScopeToggle());
+    emptyRoot.appendChild(renderEmptyState());
+    return emptyRoot;
   }
 
   const root = toElement(<div className="telemetry-drawer-content"></div>);
+  if (subscriptionMode) root.appendChild(renderSubscriptionNotice());
   root.appendChild(renderScopeToggle());
 
   // Window chips.
@@ -406,6 +429,14 @@ export function initTelemetryDrawer(): void {
   panel.addEventListener('click', (e) => {
     const target = e.target as HTMLElement | null;
     if (target === null) return;
+
+    // HS-8497 — subscription-mode notice link → open Settings dialog.
+    const noticeLink = target.closest<HTMLElement>('.telemetry-subscription-notice-link');
+    if (noticeLink !== null) {
+      const settingsBtn = byIdOrNull('settings-btn');
+      if (settingsBtn !== null) (settingsBtn).click();
+      return;
+    }
 
     // Scope-toggle button → re-fetch with the new scope.
     const scopeBtn = target.closest<HTMLElement>('.telemetry-scope-btn');

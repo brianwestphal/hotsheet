@@ -206,13 +206,25 @@ function rowFactoryFor(variant: BindListVariant): (ticket: Ticket) => HTMLElemen
 }
 
 function ensureBindListMount(container: HTMLElement, variant: BindListVariant): void {
+  // HS-8504 — the bindList's rowsContainer can get detached out from
+  // under us when a non-list view (analytics dashboard, telemetry
+  // dashboard) wipes `#ticket-list`'s contents via `innerHTML = ''`
+  // / `replaceChildren()` without going through `unmountBindList`.
+  // When the user returns to a list view, `mountedVariant` is still
+  // set + `listViewBindListDispose` is non-null, but the rows
+  // container is gone — taking the same-variant early-return path
+  // would leave the visible `#ticket-list` empty until a variant
+  // switch forces a rebuild. Detecting the detached rows container
+  // and falling through to the full remount path fixes the bug
+  // without coupling every non-list entry point to the bindList
+  // lifecycle.
+  const liveRows = container.querySelector<HTMLElement>(':scope > .ticket-list-rows');
   // Same variant + already mounted — only ensure the variant-specific
   // structural elements are in place (default needs a draft row at the
   // top; trash + preview have no extra structure).
-  if (mountedVariant === variant && listViewBindListDispose !== null) {
+  if (mountedVariant === variant && listViewBindListDispose !== null && liveRows !== null) {
     if (variant === 'default' && container.querySelector(':scope > .draft-row') === null) {
-      const rows = container.querySelector<HTMLElement>(':scope > .ticket-list-rows');
-      if (rows !== null) container.insertBefore(createDraftRow(), rows);
+      container.insertBefore(createDraftRow(), liveRows);
     }
     return;
   }

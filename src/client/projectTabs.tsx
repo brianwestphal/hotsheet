@@ -10,6 +10,7 @@ import { computed, effect } from './reactive.js';
 import { bindList } from './reactive-bind.js';
 import type { ProjectInfo } from './state.js';
 import { clearPerProjectSessionState, getActiveProject, setActiveProject } from './state.js';
+import { getTelemetryCostMode } from './telemetryCostMode.js';
 
 /** Callback to reload all app data after switching projects. Set by app.tsx during init. */
 let reloadCallback: (() => Promise<void>) | null = null;
@@ -595,10 +596,18 @@ export function updateProjectBellIndicators(
  * refresh cadence matches the existing bell-state long-poll.
  */
 export function updateProjectCostChips(costs: Record<string, number>): void {
+  lastCostsForChipRefresh = costs;
+  // HS-8497 — when the user is on a Claude Pro/Max subscription, the
+  // dollar amount reported by Claude Code's `cost.usage` metric is an
+  // API-equivalent estimate, NOT what they actually pay. Hide the chip
+  // entirely in subscription mode rather than show a misleading number;
+  // the drawer + dashboard still surface the values for users who want
+  // to see consumption volume, gated behind a clarifying notice.
+  const mode = getTelemetryCostMode();
   for (const chip of document.querySelectorAll<HTMLElement>('.project-tab-cost')) {
     const secret = chip.dataset.secret ?? '';
     const cost = costs[secret] ?? 0;
-    if (cost > 0) {
+    if (cost > 0 && mode === 'api') {
       chip.textContent = cost < 0.01 ? '<$0.01' : `$${cost.toFixed(2)}`;
       chip.style.display = '';
     } else {
@@ -606,6 +615,17 @@ export function updateProjectCostChips(costs: Record<string, number>): void {
       chip.style.display = 'none';
     }
   }
+}
+
+/**
+ * HS-8497 — re-render every cost chip using the most recently observed
+ * `costs` payload. Called by `settingsDialog.tsx` immediately after the
+ * billing-model select changes so the chips appear/disappear without
+ * waiting for the next bell-state tick.
+ */
+let lastCostsForChipRefresh: Record<string, number> = {};
+export function refreshAllCostChips(): void {
+  updateProjectCostChips(lastCostsForChipRefresh);
 }
 
 // --- Scroll active tab into view ---

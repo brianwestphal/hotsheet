@@ -1,10 +1,12 @@
 # 69. Cross-project telemetry dashboard
 
+> **HS-8503 (2026-05-21) — reshape notice.** This doc was originally written for a sidebar-launched cross-project dashboard plus a per-project drawer Telemetry tab. HS-8503 consolidates the cross-project surface to a **new top-level "Cross-project stats" page** opened from a header-bar icon next to `#terminal-dashboard-toggle`, removes the sidebar entry, removes the drawer Telemetry tab entirely, and moves the per-project telemetry rollups into the existing analytics dashboard (`enterDashboardMode`, see §69.10). The §69.2 — §69.5 design below describes the **pre-HS-8503 shape** and is preserved verbatim for historical context. The new design lives in §69.10. Implementation status tags on the §69.8 ticket map call out which tickets shipped (HS-8479…8483 — pre-reshape) vs. which are superseded.
+
 ## 69.1 Goal
 
-Add a new full-window view — accessible from the left sidebar as a sibling to the existing project list / search — that renders **cross-project** rollups of every signal Hot Sheet's OTLP receiver has captured. The per-project drawer Telemetry tab ([67-telemetry.md](67-telemetry.md) §67.10.2) shows one project at a time; this view drops the project filter and answers questions like *"how much did I spend on Claude this month across every project"*, *"which project gets the bulk of my budget"*, *"what time of day do I actually use Claude"*, and *"what were my ten most expensive prompts ever."*
+Add a new full-window view — accessible from a header-bar icon (HS-8503; was: left sidebar) — that renders **cross-project** rollups of every signal Hot Sheet's OTLP receiver has captured. The page answers questions like *"how much did I spend on Claude this month across every project"*, *"which project gets the bulk of my budget"*, *"what time of day do I actually use Claude"*, and *"how does cost split across models over the last 30 days."*
 
-It uses the same data source as the drawer tab: live queries against `otel_metrics` + `otel_events`, no precomputed rollup tables (per §67.6).
+It uses the same data source as the (now-removed) drawer tab: live queries against `otel_metrics` + `otel_events`, no precomputed rollup tables (per §67.6).
 
 ## 69.2 Sidebar entry
 
@@ -188,3 +190,94 @@ Recommended: settings PATCH broadcast — instant feedback when the user enables
 - [68-telemetry-traces.md](68-telemetry-traces.md) — sibling beta-traces doc.
 - `src/db/otelQueries.ts` — existing query module the new queries extend.
 - `src/client/telemetryDrawer.tsx` — drawer-tab counterpart whose code patterns (scope toggle, bundled fetch, JSX render helpers) the dashboard reuses.
+
+---
+
+## 69.10 HS-8503 reshape — Cross-project stats page + analytics-dashboard integration
+
+This section captures the **post-HS-8503 design** that supersedes the launch surface, the drawer tab, and several layout / drilldown decisions above. The data source + most of the existing queries from HS-8480 carry over.
+
+### 69.10.1 Cross-project stats page (NEW, header-icon-launched)
+
+**Entry point.** A new icon-only button in the app header, placed immediately after `#terminal-dashboard-toggle` (the leftmost button in the header chrome — see `src/routes/pages.tsx`). The icon is the Lucide line-chart glyph reused from the drawer Telemetry tab (`<path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/>`). Hover title: *"Cross-project stats."*
+
+**Visibility gate.** Same as the pre-reshape sidebar entry: shown only when `anyProjectHasTelemetryEnabled()` returns `true` (at least one project has its `telemetry_enabled` setting on). The helper, the `GET /api/telemetry/enabled-anywhere` route, and the settings-PATCH-triggered refresh from HS-8479 all carry over unchanged — they just toggle a different DOM element.
+
+**Activation.** Click swaps the main view region for the cross-project stats page (same swap pattern as `enterDashboardMode` / `showTelemetryDashboard`: hide toolbar + batch toolbar + detail panel, swap `#ticket-list` → `#dashboard-container`, render). Clicking any sidebar entry, project tab, or the terminal-dashboard toggle returns to the previous view via the existing `restoreTicketList()` callback path.
+
+**Future scope (out of scope for HS-8503 but accommodated in the page name).** A follow-up ticket will extend this page with general cross-project metrics (ticket throughput across projects, cycle time across projects, etc.). The "Cross-project stats" naming is deliberate so the page name stays right when those non-telemetry sections land later. For HS-8503 the page contains telemetry sections only.
+
+### 69.10.2 Cross-project stats page layout
+
+Top-to-bottom inside the page body:
+
+1. **Header row** — page title "Cross-project stats" + window selector dropdown (today / this week / this month / 90 days / all time).
+2. **Window-total chips** — Today / This week / This month / All time tiles (per §69.3.1, unchanged).
+3. **Cost over time (NEW — see §69.10.4)** — stacked-area / overlay chart driven by the window selector.
+4. **Cost by project** — sortable table (per §69.3.2). Click a row → switches to that project and opens the **analytics dashboard** for that project (the new home of the per-project telemetry sections, see §69.10.5), NOT the drawer tab (which is removed).
+5. **Cost by model** — donut + legend (per §69.3.3, unchanged).
+6. **Hourly activity heatmap** — 7×24 day-of-week × hour grid (per §69.3.4, unchanged).
+
+**REMOVED from the original §69 design:**
+
+- **Sidebar entry** — replaced by the header icon.
+- **Top-10 most expensive prompts list** — removed per HS-8503 feedback (cross-project prompt drilldown isn't useful at this surface; per-project drilldown lives on the analytics dashboard's recent-prompts list instead — see §69.10.5).
+
+### 69.10.3 Pre-HS-8503 ticket-map status
+
+The five pre-reshape implementation tickets and their post-reshape status:
+
+| Pre-reshape ticket | Surface | HS-8503 status |
+|---|---|---|
+| HS-8479 | `anyProjectHasTelemetryEnabled()` + conditional sidebar entry + activation | Helper + endpoint carry over to gate the new header icon. The sidebar-entry render itself is removed by HS-8503's cleanup ticket. |
+| HS-8480 | Backend queries + `GET /api/telemetry/dashboard?window=...` | Queries carry over. Endpoint gains a `costOverTime` field for §69.10.4. |
+| HS-8481 | Dashboard view shell + chips + empty state | Replaced by the new header-icon-launched page; HS-8481 code in `src/client/telemetryDashboard.tsx` is the seed for the new page module. |
+| HS-8482 | Cost-by-project table + cost-by-model donut | Carries over. |
+| HS-8483 | Heatmap + top-10 prompts | Heatmap carries over. **Top-10 prompts list is removed.** |
+
+### 69.10.4 Cost-over-time chart (NEW, shared with §69.10.5)
+
+A new stacked-area chart that's reused on BOTH the cross-project stats page (cross-project variant) and the per-project analytics dashboard (per-project variant). One shared component, two render modes.
+
+**Data shape.** Each data point is a `(date, projectSecret, model, costEstimateUsd)` tuple. The series cardinality is `D × P × M` where D = days in the window, P = project count, M = distinct-model count. At single-user scale this is well under 1000 points for a 90-day window across 10 projects and 4 models.
+
+**Backend.** A new `getCostOverTime(window, sinceTs, projectSecret | null)` query in `src/db/otelQueries.ts`. Aggregates `claude_code.cost.usage` rows by `(DATE_TRUNC('day', ts AT TIME ZONE $tz), project_secret, attributes_json->>'model')`. Densifies missing days to zero client-side. Returns the tuple list above.
+
+**View modes.**
+
+- **Stacked.** Every (project, model) band stacked into a single area chart. Total height = total cross-project cost on that day. The legend groups bands by project, with model rows nested below each project group. *Best read of total spend over time.*
+- **Overlay** (working name — the user asked for a "nicer name than overlay"). Per-project stacked-area sub-charts drawn on the same axes, all starting from y = 0, with translucent fill so overlaps are readable. Each project's bands are still stacked by model internally. *Best read of per-project shape comparison.* Working candidate names: **"Compare projects"**, **"By project"**, **"Layered"**, **"Side-by-side"**. **Decision deferred to the implementing ticket — pick the one that reads best in the UI.**
+
+A toggle button-pair (matching the §35 theme selector's `<button>` chip pattern) above the chart switches between the two modes.
+
+The per-project variant on the analytics dashboard renders the same component scoped to one project (passing `projectSecret` into the backend call), which makes the "Stacked" mode become a simple model-only stacked area and "Overlay" become a single-stack overlay (visually identical to "Stacked" — at the per-project surface the toggle is hidden because there's no second project to compare).
+
+**Cost basis.** Estimated dollar cost (the same per-row cost the rest of the telemetry surfaces use). No separate per-token vs. per-cost view. *(Confirmed in HS-8503 feedback.)*
+
+### 69.10.5 Per-project telemetry sections in the analytics dashboard
+
+The existing analytics dashboard (`src/client/dashboard.tsx` + `dashboardMode.tsx` — opened via the sidebar widget at the top of the sidebar, see §47.X of the docs index) gains new telemetry sections appended below the existing throughput / cycle-time / category-breakdown charts. All sections are scoped to the **active project** (matching the analytics dashboard's existing per-project orientation).
+
+Sections, top-to-bottom under the existing analytics content:
+
+1. **Today / This week / All time chips** — total cost + tokens + prompts. Mirrors the pre-reshape drawer Telemetry tab's window chips.
+2. **Cost over time (per-project)** — the same component as §69.10.4, scoped to the active project.
+3. **Cost by model** — donut + legend (per-project variant, same component used cross-project).
+4. **Per-tool latency histograms** — moved verbatim from the drawer Telemetry tab. Per-tool count + p50 / p90 / p99 + bucketed histogram. *(Cross-project variant explicitly skipped per HS-8503 feedback.)*
+5. **10 most recent prompts** — the prompts list, **sorted by ts DESC** (not by cost). Click any row → opens the existing `openPromptDrilldown(promptId)` modal from HS-8149. *(Replaces the drawer tab's "recent prompts" list and the pre-reshape §69.3.5 "top 10 expensive prompts.")*
+
+### 69.10.6 Per-tab cost-chip click target
+
+The per-project tab-header cost chip (HS-8147) currently opens the drawer Telemetry tab scoped to the project. After HS-8503's drawer-tab removal, clicking the chip opens the **analytics dashboard** scoped to the project (i.e., calls `enterDashboardMode()` after a project switch if needed). Scrolling to the telemetry section is a polish that may or may not land in HS-8503's cleanup ticket — the default is "open the dashboard" without auto-scroll.
+
+### 69.10.7 Implementation plan (HS-8503 sub-tickets)
+
+The reshape decomposes into 5 follow-up tickets, filed under HS-8503:
+
+1. **Backend / queries** — `getCostOverTime` query + dashboard payload extension + new per-project analytics-dashboard telemetry payload route. May rename `/api/telemetry/drawer` → `/api/telemetry/project-rollup` since the consumer changes.
+2. **Shared cost-over-time chart component** — JSX module + stacked / overlay mode toggle + theming. Used by both surfaces.
+3. **Cross-project stats page (NEW)** — header icon + visibility gate rewire + page shell + window selector + integration of existing cross-project section renderers (chips, table, donut, heatmap) + the new chart. Removal of the top-10-prompts list happens here.
+4. **Analytics-dashboard telemetry integration** — new per-project telemetry sections below the existing charts: chips, chart, donut, per-tool histograms, recent-prompts list with drilldown.
+5. **Cleanup** — remove drawer Telemetry tab (`drawer-tab-telemetry` + `drawer-panel-telemetry` in `pages.tsx` + `telemetryDrawer.tsx` module + the `/api/telemetry/drawer` endpoint OR its consumers, depending on Phase 1's rename decision) + remove sidebar Telemetry entry (`#sidebar-section-telemetry` + `telemetrySidebar.tsx` activation listener) + rewire the per-tab cost-chip click target.
+
+Phases 3 and 4 each ship the new home for half the old content; Phase 5 removes the old homes once the new homes are live (so users don't briefly lose access).

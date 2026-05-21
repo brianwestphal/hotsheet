@@ -651,6 +651,26 @@ pageRoutes.get('/', (c) => {
                 <label><input type="checkbox" id="settings-telemetry-traces-enabled" /> Traces <span className="settings-beta-chip" title="Claude Code's enhanced-tracing surface is upstream-beta and may change without notice.">BETA</span></label>
                 <span className="settings-hint">Turn-level + sub-span detail for the Chrome-style waterfall view inside the per-prompt drilldown. Format may shift between Claude Code releases.</span>
               </div>
+              {/* HS-8497 — billing model for cost display. Stored
+                  globally in ~/.hotsheet/config.json under
+                  `telemetryCostMode` because the user's billing
+                  relationship with Anthropic is identity-level, not
+                  per-project. When set to `subscription`, the cost
+                  surfaces (per-tab chip, drawer, dashboard) hide or
+                  annotate dollar amounts so a Claude Pro/Max user
+                  doesn't see misleading "real cost" numbers for
+                  consumption they don't pay per-token for. */}
+              <div className="settings-section-header">
+                <h3>Billing</h3>
+              </div>
+              <div className="settings-field">
+                <label>Billing model <span className="global-setting-badge">Global Setting</span></label>
+                <select id="settings-telemetry-cost-mode" style="width: 320px">
+                  <option value="api">Pay-per-token API key (default)</option>
+                  <option value="subscription">Claude Pro / Max subscription</option>
+                </select>
+                <span className="settings-hint">Claude Code's telemetry reports an "API-equivalent" cost regardless of how you're billed. When you're on a flat-fee subscription, the dollar amounts shown across Hot Sheet's telemetry surfaces don't reflect what you actually pay. Switching to "Subscription" hides the per-tab cost chip and surfaces a clarifying notice on the drawer + dashboard.</span>
+              </div>
               <div className="settings-section-header">
                 <h3>Retention</h3>
               </div>

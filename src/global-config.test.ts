@@ -98,6 +98,29 @@ describe('writeGlobalConfig', () => {
    * even when it had been written successfully. Symptom: hide actions
    * inside a non-Default grouping reverted on relaunch.
    */
+  /**
+   * HS-8497 — telemetry billing mode round-trip. The cost UI gates on
+   * this value to hide / annotate dollar amounts when the user is on a
+   * flat-fee Claude Pro/Max subscription rather than a pay-per-token
+   * API key.
+   */
+  it('round-trips telemetryCostMode = "subscription" (HS-8497)', () => {
+    writeGlobalConfig({ telemetryCostMode: 'subscription' });
+    expect(readGlobalConfig().telemetryCostMode).toBe('subscription');
+  });
+
+  it('round-trips telemetryCostMode = "api" (HS-8497)', () => {
+    writeGlobalConfig({ telemetryCostMode: 'api' });
+    expect(readGlobalConfig().telemetryCostMode).toBe('api');
+  });
+
+  it('rejects an invalid telemetryCostMode value (HS-8497)', () => {
+    mkdirSync(join(tempHome, '.hotsheet'), { recursive: true });
+    writeFileSync(configPath, JSON.stringify({ telemetryCostMode: 'bogus' }));
+    // Schema rejection falls back to {} per the read contract.
+    expect(readGlobalConfig()).toEqual({});
+  });
+
   it('round-trips dashboard.activeVisibilityGroupingIdByScope (HS-8424)', () => {
     writeGlobalConfig({
       dashboard: {
