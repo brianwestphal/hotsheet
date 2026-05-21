@@ -26,6 +26,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { projectsByIdSignal } from './projectsStore.js';
+import { MODEL_DONUT_COLORS } from './telemetryColors.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
 
 interface WindowTotals {
@@ -298,17 +299,6 @@ function renderCostByProjectTable(rows: ProjectCostRow[]): HTMLElement {
 
   return table;
 }
-
-const MODEL_DONUT_COLORS = [
-  '#4f46e5', // indigo
-  '#10b981', // emerald
-  '#f59e0b', // amber
-  '#ef4444', // red
-  '#8b5cf6', // violet
-  '#06b6d4', // cyan
-  '#ec4899', // pink
-  '#84cc16', // lime
-];
 
 function renderCostByModelDonut(rows: ModelRollup[]): HTMLElement {
   const totalCost = rows.reduce((acc, r) => acc + r.cost, 0);

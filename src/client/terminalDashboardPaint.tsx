@@ -35,8 +35,10 @@ import type { ProjectInfo } from './state.js';
 import { getLayoutMode, setLayoutToggleVisible } from './terminalDashboardLayout.js';
 import {
   attachDedicatedBarSearch,
+  buildSectionProjectLookup,
   fillDedicatedLabel,
   flattenSectionsToTiles,
+  resolveTileEntryProject,
 } from './terminalDashboardPaintHelpers.js';
 import {
   computeColumnSnapPoints,
@@ -300,13 +302,22 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
   const flowGrid = toElement(<div className="terminal-dashboard-grid terminal-dashboard-grid-flow"></div>);
   root.appendChild(flowGrid);
 
-  // Build a lookup from terminalId → project so the per-tile callbacks (right-
-  // click, dedicated-bar mount, etc.) can recover the originating project
-  // without a fresh /projects fetch. Flow mode collapses the per-project
-  // handle map down to one global handle, so we need this side table.
-  const tileProject = new Map<string, ProjectInfo>();
-  for (const f of flat) tileProject.set(f.entry.id, f.project);
-  const projectFor = (entry: TileEntry): ProjectInfo | null => tileProject.get(entry.id) ?? null;
+  // Build a lookup from project-secret → project so the per-tile callbacks
+  // (right-click, dedicated-bar mount, project-badge click, etc.) can
+  // recover the originating project from a `TileEntry` without a fresh
+  // /projects fetch. Flow mode collapses the per-project handle map down
+  // to one global handle, so we need this side table.
+  //
+  // HS-8489 — keyed by `secret` (not `entry.id`). Pre-fix the map keyed
+  // on terminal id, which collided whenever two projects had terminals
+  // sharing an id (e.g. the default `default` terminal); whichever
+  // project was inserted last won, and project-badge clicks on the
+  // collision-id tile routed to the wrong project (the "previously
+  // selected" one the user came from). See `buildSectionProjectLookup`
+  // in `terminalDashboardPaintHelpers.tsx` for the full root-cause
+  // history + unit tests.
+  const tileProjectLookup = buildSectionProjectLookup(sections);
+  const projectFor = (entry: TileEntry): ProjectInfo | null => resolveTileEntryProject(entry, tileProjectLookup);
 
   const handle = mountTileGrid({
     container: flowGrid,
