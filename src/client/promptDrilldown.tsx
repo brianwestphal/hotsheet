@@ -43,6 +43,11 @@ interface PromptTimeline {
   model: string | null;
   entries: TimelineEntry[];
   spans: SpanRow[];
+  /** HS-8484 — true when the active project has the beta-traces
+   *  sub-toggle on. The drilldown shows a diagnostic note when this
+   *  is true AND the prompt has no spans (suggesting the prompt
+   *  fired before traces were turned on). */
+  tracesEnabled?: boolean;
 }
 
 function formatTs(ts: string): string {
@@ -400,6 +405,15 @@ function renderTimeline(timeline: PromptTimeline): HTMLElement {
           : null}
       </div>
       <div className="telemetry-drilldown-trace-slot" id="telemetry-drilldown-trace-slot"></div>
+      {/* HS-8484 — diagnostic note when traces are enabled but the
+          prompt has no spans (e.g. prompt fired before traces flipped
+          on). Helps the user understand why the waterfall is missing. */}
+      {timeline.tracesEnabled === true && timeline.spans.length === 0 && timeline.entries.length > 0
+        ? <p className="telemetry-traces-beta-note">
+            <span className="telemetry-traces-beta-note-chip">BETA</span>
+            No spans recorded for this prompt — traces are emitted starting after the next session-start. If your <code>claude</code> session was already running when you enabled traces, restart it to begin capturing spans.
+          </p>
+        : null}
       {timeline.entries.length === 0 && timeline.spans.length === 0
         ? <p className="telemetry-drilldown-empty">No events recorded for this prompt id.</p>
         : timeline.spans.length > 0

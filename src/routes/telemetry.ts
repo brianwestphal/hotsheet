@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { type DashboardWindow, getDashboardPayload, getDrawerPayload, getPerTicketRollup, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
 import { readFileSettings } from '../file-settings.js';
 import { readProjectList } from '../project-list.js';
+import { getProjectBySecret } from '../projects.js';
 import type { AppEnv } from '../types.js';
 
 /**
@@ -96,7 +97,15 @@ telemetryRoutes.get('/telemetry/today-cost-by-project', async (c) => {
 telemetryRoutes.get('/telemetry/prompt/:id', async (c) => {
   const promptId = c.req.param('id');
   const timeline = await getPromptTimeline(promptId);
-  return c.json(timeline);
+  // HS-8484 — include `tracesEnabled` so the drilldown can render the
+  // "no spans recorded for this prompt" diagnostic note when the active
+  // project has traces enabled but the specific prompt has no spans
+  // (e.g. the prompt fired before the user enabled traces).
+  const activeSecret = c.get('projectSecret');
+  const project = getProjectBySecret(activeSecret);
+  const settings = project === undefined ? {} : readFileSettings(project.dataDir);
+  const tracesEnabled = settings['telemetry_traces_enabled'] === true;
+  return c.json({ ...timeline, tracesEnabled });
 });
 
 /**

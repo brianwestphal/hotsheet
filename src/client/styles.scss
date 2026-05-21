@@ -10034,3 +10034,724 @@ label.detail-details-label {
   color: var(--text-muted);
   margin-bottom: 4px;
 }
+
+// =========================================================================
+// HS-8484 — Telemetry CSS sweep (§67 / §68 / §69)
+// =========================================================================
+
+// ----- Settings → Telemetry BETA chip (HS-8477 / §68.5.3) -----
+
+.settings-beta-chip {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  margin-left: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: white;
+  vertical-align: middle;
+  text-transform: uppercase;
+}
+
+// ----- Per-prompt drilldown chrome (HS-8149 + HS-8476 + HS-8477 / §67.10.3 + §68.5) -----
+
+.telemetry-drilldown-overlay {
+  // Reuses `.reader-mode-overlay` for the 90vw / 90vh shell.
+}
+
+.telemetry-drilldown-header-meta {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 12px;
+  row-gap: 4px;
+  font-size: 12px;
+}
+
+.telemetry-drilldown-meta-row {
+  display: contents;
+}
+
+.telemetry-drilldown-meta-label {
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.telemetry-drilldown-meta-value {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.telemetry-drilldown-loading,
+.telemetry-drilldown-empty {
+  padding: 16px;
+  color: var(--text-muted);
+  text-align: center;
+  font-style: italic;
+}
+
+.telemetry-drilldown-error {
+  padding: 16px;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.telemetry-drilldown-error-detail {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.telemetry-drilldown-trace-slot:empty {
+  display: none;
+}
+
+.telemetry-traces-beta-note {
+  margin: 8px 16px;
+  padding: 10px 12px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    background: var(--bg-hover);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+}
+
+.telemetry-traces-beta-note-chip {
+  flex-shrink: 0;
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: white;
+  text-transform: uppercase;
+  margin-top: 1px;
+}
+
+// ----- Drilldown event timeline (HS-8149) -----
+
+.telemetry-timeline-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.telemetry-timeline-row {
+  border-bottom: 1px solid var(--border);
+}
+
+.telemetry-timeline-row:last-child {
+  border-bottom: none;
+}
+
+.telemetry-timeline-toggle {
+  display: grid;
+  grid-template-columns: 160px 60px 1fr;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.telemetry-timeline-ts {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.telemetry-timeline-rel {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.telemetry-timeline-event {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.telemetry-timeline-detail {
+  padding: 8px 16px 12px;
+  background: var(--bg-secondary);
+
+  h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin: 8px 0 4px;
+  }
+}
+
+.telemetry-timeline-json {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+  overflow-x: auto;
+  max-height: 240px;
+  margin: 0;
+}
+
+// Color-coded event badges — left border accent per event type.
+.telemetry-event-prompt > .telemetry-timeline-toggle { border-left: 3px solid var(--accent); }
+.telemetry-event-api > .telemetry-timeline-toggle { border-left: 3px solid #10b981; }
+.telemetry-event-error > .telemetry-timeline-toggle { border-left: 3px solid var(--danger); }
+.telemetry-event-tool > .telemetry-timeline-toggle { border-left: 3px solid #f59e0b; }
+.telemetry-event-decision > .telemetry-timeline-toggle { border-left: 3px solid #8b5cf6; }
+.telemetry-event-other > .telemetry-timeline-toggle { border-left: 3px solid var(--text-muted); }
+
+// ----- Drilldown span tree (HS-8476 / §68.5.1) -----
+
+.telemetry-span-tree-container {
+  padding: 8px 0;
+}
+
+.telemetry-span-tree {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.telemetry-span-row {
+  border-left: 2px solid transparent;
+  transition: background 120ms ease-out;
+}
+
+.telemetry-span-row.span-tree-row-flash {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.telemetry-span-children {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.telemetry-span-toggle {
+  display: grid;
+  grid-template-columns: 140px 56px minmax(140px, 1fr) max-content max-content max-content;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.telemetry-span-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.telemetry-span-duration {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.telemetry-span-model {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
+.telemetry-span-status {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+
+  &.telemetry-span-status-ok    { background: color-mix(in srgb, #10b981 22%, transparent); color: #047857; }
+  &.telemetry-span-status-error { background: color-mix(in srgb, var(--danger) 22%, transparent); color: var(--danger); }
+  &.telemetry-span-status-unset { background: var(--bg-hover); color: var(--text-muted); }
+}
+
+// Event leaves nested inside spans — slightly indented + muted.
+.telemetry-event-leaf {
+  opacity: 0.85;
+  font-style: italic;
+
+  > .telemetry-timeline-toggle {
+    padding-left: 24px;
+  }
+}
+
+// ----- Drilldown trace waterfall (HS-8477 / §68.5.2) -----
+
+.telemetry-trace-waterfall {
+  margin: 12px 16px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.telemetry-trace-waterfall-summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  user-select: none;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+
+  &::marker { color: var(--text-muted); }
+}
+
+.telemetry-trace-waterfall-label {
+  font-weight: 600;
+}
+
+.telemetry-trace-waterfall-beta {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: white;
+  text-transform: uppercase;
+}
+
+.telemetry-trace-waterfall-meta {
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.telemetry-trace-waterfall-body {
+  padding: 8px 12px;
+  background: var(--bg);
+}
+
+.telemetry-trace-waterfall-svg {
+  display: block;
+}
+
+.telemetry-trace-waterfall-bar {
+  cursor: pointer;
+  transition: opacity 120ms ease-out;
+
+  &:hover { opacity: 0.7; }
+
+  &.telemetry-span-status-ok    { fill: #10b981; }
+  &.telemetry-span-status-error { fill: var(--danger); }
+  &.telemetry-span-status-unset { fill: var(--text-muted); }
+}
+
+// ----- Telemetry sidebar entry (HS-8479 / §69.2) -----
+
+// `.sidebar-section-telemetry` reuses the standard `.sidebar-section`
+// chrome; no overrides needed beyond the section-label color match.
+
+// ----- Cross-project dashboard view (HS-8481 / HS-8482 / HS-8483 / §69.3) -----
+
+.telemetry-dashboard {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  font-size: 13px;
+}
+
+.telemetry-dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.telemetry-dashboard-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.telemetry-dashboard-window-selector {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.telemetry-dashboard-window-select {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.telemetry-dashboard-loading,
+.telemetry-dashboard-error {
+  padding: 32px;
+  text-align: center;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.telemetry-dashboard-error { color: var(--danger); font-style: normal; }
+
+.telemetry-dashboard-error-detail {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+// Window-totals chips row.
+.telemetry-dashboard-chips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.telemetry-dashboard-chip {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.telemetry-dashboard-chip-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.telemetry-dashboard-chip-cost {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.telemetry-dashboard-chip-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+// Section containers.
+.telemetry-dashboard-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+}
+
+.telemetry-dashboard-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text);
+  }
+}
+
+.telemetry-dashboard-section[data-section="cost-by-project"],
+.telemetry-dashboard-section[data-section="heatmap"],
+.telemetry-dashboard-section[data-section="top-prompts"] {
+  grid-column: 1 / -1;
+}
+
+.telemetry-dashboard-section-placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+// Empty-state onboarding card.
+.telemetry-dashboard-empty {
+  max-width: 540px;
+  margin: 48px auto;
+  padding: 24px;
+  text-align: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+
+  h3 {
+    font-size: 16px;
+    margin: 0 0 12px;
+  }
+
+  p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    margin: 0 0 16px;
+  }
+}
+
+.telemetry-dashboard-empty-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  align-items: center;
+}
+
+.telemetry-dashboard-empty-settings-btn {
+  padding: 6px 14px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover { background: var(--accent-hover); }
+}
+
+.telemetry-dashboard-empty-doc-link {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+
+  &:hover { text-decoration: underline; }
+}
+
+// ----- Cost-by-project sortable table (HS-8482 / §69.3.2) -----
+
+.telemetry-dashboard-project-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+
+  th {
+    text-align: left;
+    padding: 6px 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+
+    &:hover { color: var(--text); }
+  }
+
+  td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  tr:last-child td { border-bottom: none; }
+}
+
+.telemetry-dashboard-project-row {
+  cursor: pointer;
+
+  &:hover { background: var(--bg-hover); }
+}
+
+.telemetry-dashboard-project-name { font-weight: 500; }
+
+.telemetry-dashboard-project-cost,
+.telemetry-dashboard-project-tokens,
+.telemetry-dashboard-project-prompts {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: right;
+}
+
+.telemetry-dashboard-project-last {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+// ----- Cost-by-model donut (HS-8482 / §69.3.3) -----
+
+.telemetry-dashboard-model-donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.telemetry-dashboard-model-donut {
+  flex: 0 0 auto;
+}
+
+.telemetry-dashboard-model-legend {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  flex: 1 1 220px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.telemetry-dashboard-model-legend-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 50px 70px;
+  align-items: center;
+  gap: 8px;
+}
+
+.telemetry-dashboard-model-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.telemetry-dashboard-model-legend-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.telemetry-dashboard-model-legend-pct {
+  text-align: right;
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.telemetry-dashboard-model-legend-cost {
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.telemetry-dashboard-model-single-caption {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 0;
+}
+
+// ----- 7×24 hourly heatmap (HS-8483 / §69.3.4) -----
+
+.telemetry-dashboard-heatmap-wrap {
+  color: var(--accent); // drives the `currentColor` fill on cells
+  overflow-x: auto;
+}
+
+.telemetry-dashboard-heatmap-svg {
+  display: block;
+}
+
+// ----- Top-10 expensive prompts (HS-8483 / §69.3.5) -----
+
+.telemetry-dashboard-top-prompts {
+  list-style-position: inside;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.telemetry-dashboard-top-prompt-row {
+  display: grid;
+  grid-template-columns: 70px max-content max-content 1fr max-content;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+
+  &:hover { background: var(--bg-hover); }
+}
+
+.telemetry-dashboard-top-prompt-cost {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+}
+
+.telemetry-dashboard-top-prompt-project {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.telemetry-dashboard-top-prompt-model {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-muted);
+}
+
+.telemetry-dashboard-top-prompt-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.telemetry-dashboard-top-prompt-ts {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
