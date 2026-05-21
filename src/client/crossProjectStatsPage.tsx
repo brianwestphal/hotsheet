@@ -43,11 +43,13 @@
 
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
+import { unmountColumnView } from './columnView.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { projectsByIdSignal } from './projectsStore.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
 import { renderCostByModelDonut } from './telemetryModelDonut.js';
+import { unmountBindList } from './ticketList.js';
 
 interface WindowTotals {
   cost: number;
@@ -435,15 +437,15 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
     <div className="telemetry-dashboard cross-project-stats-page">
       <div className="telemetry-dashboard-header">
         <h2 className="telemetry-dashboard-title">Cross-project stats</h2>
-        <div className="telemetry-dashboard-window-selector">
-          <label>Window:&nbsp;</label>
-          <select className="telemetry-dashboard-window-select" id="telemetry-dashboard-window-select">
-            <option value="today">Today</option>
-            <option value="week">This week</option>
-            <option value="month" selected={payload.window === 'month'}>This month</option>
-            <option value="90d">90 days</option>
-            <option value="all">All time</option>
-          </select>
+        {/* HS-8515 — same 7d/30d/90d button group the analytics
+            dashboard uses (`.dashboard-range-bar`). Dropped the
+            today / all-time options the dropdown had; the
+            window-totals chips already cover the "today" /
+            "all-time" rollups regardless of the selected window. */}
+        <div className="dashboard-range-bar" id="telemetry-dashboard-window-buttons">
+          <button type="button" className={`btn btn-sm${payload.window === 'week' ? ' active' : ''}`} data-window="week">7 days</button>
+          <button type="button" className={`btn btn-sm${payload.window === 'month' || payload.window === 'today' || payload.window === 'all' ? ' active' : ''}`} data-window="month">30 days</button>
+          <button type="button" className={`btn btn-sm${payload.window === '90d' ? ' active' : ''}`} data-window="90d">90 days</button>
         </div>
       </div>
       <div className="telemetry-dashboard-chips" id="telemetry-dashboard-chips"></div>
@@ -527,11 +529,18 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
     }
   }
 
-  // Window-selector re-fetch (no live polling — per §69.6).
-  const select = root.querySelector<HTMLSelectElement>('#telemetry-dashboard-window-select');
-  if (select !== null) {
-    select.addEventListener('change', () => {
-      const window = select.value as DashboardWindow;
+  // HS-8515 — Window-selector re-fetch via the button group (was a
+  // `<select>` pre-HS-8515; replaced with the `.dashboard-range-bar`
+  // button group the analytics dashboard uses for visual consistency).
+  // No live polling — per §69.6.
+  const buttons = root.querySelector<HTMLElement>('#telemetry-dashboard-window-buttons');
+  if (buttons !== null) {
+    buttons.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement | null;
+      const btn = target?.closest<HTMLElement>('button[data-window]');
+      if (btn === null || btn === undefined) return;
+      const window = btn.dataset.window as DashboardWindow | undefined;
+      if (window === undefined) return;
       void fetchAndRender(container, window);
     });
   }
@@ -569,8 +578,27 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
  * page.
  */
 export function showCrossProjectStatsPage(): void {
+  // HS-8516 — if we're already on the analytics dashboard (which
+  // renamed `#ticket-list` to `#dashboard-container`), normalize the
+  // id back so `byId('ticket-list')` below doesn't throw. Without
+  // this the call threw silently inside a document-level click
+  // listener and the user saw "nothing happens" on the header-button
+  // click. Symmetric with the parallel fix in `enterDashboardMode`.
+  const existingDashContainer = byIdOrNull('dashboard-container');
+  if (existingDashContainer !== null) {
+    existingDashContainer.id = 'ticket-list';
+    existingDashContainer.replaceChildren();
+    existingDashContainer.classList.remove('ticket-list-columns');
+  }
   hideToolbar();
   const ticketList = byId('ticket-list');
+  // HS-8504 (follow-up) — dispose any live list-view bindList /
+  // column-view disposers before the container wipe, mirroring
+  // `enterDashboardMode`. Without this, exiting back to a list view
+  // hit a stale-mount-key early-return and left the page empty until
+  // the user toggled views.
+  unmountBindList();
+  unmountColumnView();
   ticketList.replaceChildren();
   ticketList.id = 'dashboard-container';
   ticketList.classList.remove('ticket-list-columns');

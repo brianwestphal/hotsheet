@@ -2,16 +2,19 @@
 //
 // HS-8506 — tests for the shared cost-over-time chart component used
 // by the cross-project telemetry page (HS-8507) and the per-project
-// analytics-dashboard telemetry sub-region (HS-8508). Covers:
+// analytics-dashboard telemetry sub-region (HS-8508).
+// HS-8518 — rewrites: byProject mode replaced with lines mode +
+// single "Stacked" toggle button. Covers:
 //
 // - empty-state render
 // - densification → SVG-element-count contract (one band per non-zero
-//   (date, project, model) tuple)
-// - mode toggle visibility (shown when >1 project, hidden when 1)
-// - mode toggle producing different band geometries (the by-project
-//   mode resets the y-stack at each project, the stacked mode keeps
-//   one running total)
-// - tooltip text format
+//   (date, project, model) tuple in stacked mode)
+// - toggle visibility (shown when >1 project, hidden when 1)
+// - toggle button is the single "Stacked" button (not a 2-button mode group)
+// - toggling switches between stacked bars and per-project polylines
+// - lines mode renders one polyline per project + a circle per
+//   non-zero day
+// - tooltip text format for both modes
 // - data-mode attribute reflecting the current mode
 import { describe, expect, it } from 'vitest';
 
@@ -24,7 +27,7 @@ function pt(date: string, projectSecret: string, model: string, cost: number): C
   return { date, projectSecret, model, cost };
 }
 
-describe('renderCostOverTimeChart (HS-8506)', () => {
+describe('renderCostOverTimeChart (HS-8506 / HS-8518)', () => {
   it('renders an empty-state message when no points are supplied', () => {
     const el = renderCostOverTimeChart([]);
     expect(el.querySelector('.telemetry-cost-over-time-empty')?.textContent).toMatch(/no cost data/i);
@@ -52,7 +55,7 @@ describe('renderCostOverTimeChart (HS-8506)', () => {
     expect(el.querySelector('.telemetry-cost-over-time-mode-toggle')).toBeNull();
   });
 
-  it('shows the mode toggle when more than one project is present', () => {
+  it('shows a single "Stacked" toggle button when >1 project is present', () => {
     const points = [
       pt('2026-05-19', 'secretA', 'sonnet', 1.0),
       pt('2026-05-19', 'secretB', 'sonnet', 0.5),
@@ -60,90 +63,80 @@ describe('renderCostOverTimeChart (HS-8506)', () => {
     const el = renderCostOverTimeChart(points);
     const toggle = el.querySelector('.telemetry-cost-over-time-mode-toggle');
     expect(toggle).not.toBeNull();
-    expect(toggle?.querySelectorAll('.telemetry-cost-over-time-mode-btn').length).toBe(2);
+    const btns = toggle?.querySelectorAll('.telemetry-cost-over-time-mode-btn');
+    expect(btns?.length).toBe(1);
+    expect(btns?.[0].textContent).toBe('Stacked');
   });
 
-  it('starts in stacked mode by default and reflects mode in data-mode', () => {
+  it('starts in stacked mode by default; toggle button is is-active', () => {
     const points = [
       pt('2026-05-19', 'secretA', 'sonnet', 1.0),
       pt('2026-05-19', 'secretB', 'sonnet', 0.5),
     ];
     const el = renderCostOverTimeChart(points);
     expect(el.dataset.mode).toBe('stacked');
-    const activeBtn = el.querySelector<HTMLElement>('.telemetry-cost-over-time-mode-btn.is-active');
-    expect(activeBtn?.dataset.mode).toBe('stacked');
+    expect(el.querySelector('.telemetry-cost-over-time-mode-btn')?.classList.contains('is-active')).toBe(true);
+    expect(el.querySelector('.telemetry-cost-over-time-mode-btn')?.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('honors the opts.mode override at initial render', () => {
+  it('honors opts.mode === "lines" at initial render', () => {
     const points = [
       pt('2026-05-19', 'secretA', 'sonnet', 1.0),
       pt('2026-05-19', 'secretB', 'sonnet', 0.5),
     ];
-    const el = renderCostOverTimeChart(points, { mode: 'byProject' });
-    expect(el.dataset.mode).toBe('byProject');
-    expect(el.querySelector<HTMLElement>('.telemetry-cost-over-time-mode-btn.is-active')?.dataset.mode).toBe('byProject');
+    const el = renderCostOverTimeChart(points, { mode: 'lines' });
+    expect(el.dataset.mode).toBe('lines');
+    expect(el.querySelector('.telemetry-cost-over-time-mode-btn')?.classList.contains('is-active')).toBe(false);
+    expect(el.querySelector('.telemetry-cost-over-time-mode-btn')?.getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('switches mode when the toggle is clicked', () => {
+  it('clicking the Stacked button toggles between stacked and lines mode', () => {
     const points = [
       pt('2026-05-19', 'secretA', 'sonnet', 1.0),
       pt('2026-05-19', 'secretB', 'sonnet', 0.5),
     ];
     const el = renderCostOverTimeChart(points);
-    const byProjectBtn = el.querySelector<HTMLElement>('.telemetry-cost-over-time-mode-btn[data-mode="byProject"]');
-    expect(byProjectBtn).not.toBeNull();
-    byProjectBtn?.click();
-    expect(el.dataset.mode).toBe('byProject');
-    expect(el.querySelector<HTMLElement>('.telemetry-cost-over-time-mode-btn.is-active')?.dataset.mode).toBe('byProject');
+    const btn = el.querySelector<HTMLButtonElement>('.telemetry-cost-over-time-mode-btn');
+    expect(btn).not.toBeNull();
+    btn?.click();
+    expect(el.dataset.mode).toBe('lines');
+    expect(btn?.classList.contains('is-active')).toBe(false);
+    btn?.click();
+    expect(el.dataset.mode).toBe('stacked');
+    expect(btn?.classList.contains('is-active')).toBe(true);
   });
 
-  it('renders identical band counts in either mode for a single-project slice', () => {
-    // Per-project analytics dashboard variant: only one project is
-    // in the data. The toggle is hidden and both modes look the
-    // same visually — the band count must match exactly.
-    const points = [
-      pt('2026-05-19', 'onlyOne', 'sonnet', 1.0),
-      pt('2026-05-19', 'onlyOne', 'haiku', 0.5),
-      pt('2026-05-20', 'onlyOne', 'sonnet', 0.7),
-    ];
-    const stacked = renderCostOverTimeChart(points, { mode: 'stacked' });
-    const byProject = renderCostOverTimeChart(points, { mode: 'byProject' });
-    expect(stacked.querySelectorAll('.telemetry-cost-over-time-band').length).toBe(3);
-    expect(byProject.querySelectorAll('.telemetry-cost-over-time-band').length).toBe(3);
-  });
-
-  it('stacks stacked-mode bands on top of each other within a date column', () => {
-    // Two projects, one date, one model each — stacked mode means
-    // the bands sit at different y positions in the same column.
+  it('renders one polyline per project + one circle per non-zero day in lines mode', () => {
+    // Two projects (A, B). A has cost on May 19 + May 20. B has cost only on May 20.
+    // Expected: 2 polylines (one per project), 3 circles (A on 19, A on 20, B on 20).
     const points = [
       pt('2026-05-19', 'secretA', 'sonnet', 1.0),
-      pt('2026-05-19', 'secretB', 'sonnet', 0.5),
+      pt('2026-05-19', 'secretB', 'sonnet', 0.0),
+      pt('2026-05-20', 'secretA', 'sonnet', 0.5),
+      pt('2026-05-20', 'secretB', 'sonnet', 0.7),
     ];
-    const el = renderCostOverTimeChart(points, { mode: 'stacked' });
-    const bands = [...el.querySelectorAll<SVGRectElement>('.telemetry-cost-over-time-band')];
-    expect(bands.length).toBe(2);
-    const ys = bands.map(r => Number(r.getAttribute('y'))).sort((a, b) => a - b);
-    expect(ys[0]).not.toBe(ys[1]);
+    const el = renderCostOverTimeChart(points, { mode: 'lines' });
+    expect(el.querySelectorAll('.telemetry-cost-over-time-line').length).toBe(2);
+    expect(el.querySelectorAll('.telemetry-cost-over-time-line-point').length).toBe(3);
+    expect(el.querySelectorAll('.telemetry-cost-over-time-band').length).toBe(0);
   });
 
-  it('starts each project at y = 0 in by-project mode (overlapping bands)', () => {
-    // Two projects, one date, one model each — by-project mode
-    // means each project's stack starts at y = 0, so both bands
-    // share the SAME bottom-y (the chart baseline).
+  it('sums per-day costs across models in lines mode (one circle per day, not per model)', () => {
+    // Project A has both sonnet + haiku on May 19. Lines mode should
+    // collapse them into a single (A, May 19) point.
     const points = [
       pt('2026-05-19', 'secretA', 'sonnet', 1.0),
-      pt('2026-05-19', 'secretB', 'sonnet', 0.5),
+      pt('2026-05-19', 'secretA', 'haiku', 0.5),
+      pt('2026-05-19', 'secretB', 'sonnet', 0.4),
     ];
-    const el = renderCostOverTimeChart(points, { mode: 'byProject' });
-    const bands = [...el.querySelectorAll<SVGRectElement>('.telemetry-cost-over-time-band')];
-    expect(bands.length).toBe(2);
-    // Each band's bottom = y + height. Both project stacks share
-    // the chart baseline in by-project mode.
-    const bottoms = bands.map(r => Number(r.getAttribute('y')) + Number(r.getAttribute('height')));
-    expect(bottoms[0]).toBeCloseTo(bottoms[1], 1);
+    const el = renderCostOverTimeChart(points, { mode: 'lines' });
+    const aCircles = el.querySelectorAll('.telemetry-cost-over-time-line-point[data-project-secret="secretA"]');
+    expect(aCircles.length).toBe(1);
+    const tooltip = aCircles[0].querySelector('title')?.textContent;
+    expect(tooltip).toBe('2026-05-19 — secretA: $1.50');
   });
 
-  it('renders a tooltip <title> with date, project label, model, and formatted cost', () => {
+  it('renders a tooltip <title> with date, project label, model, and formatted cost on stacked bands', () => {
     const points = [pt('2026-05-19', 'secretA', 'sonnet', 1.23)];
     const el = renderCostOverTimeChart(points, {
       resolveProjectLabel: (s) => s === 'secretA' ? 'Alpha' : s,
@@ -151,6 +144,19 @@ describe('renderCostOverTimeChart (HS-8506)', () => {
     const band = el.querySelector('.telemetry-cost-over-time-band');
     const title = band?.querySelector('title');
     expect(title?.textContent).toBe('2026-05-19 — Alpha / sonnet: $1.23');
+  });
+
+  it('renders tooltip with date, project label, and formatted cost on lines mode circles', () => {
+    const points = [
+      pt('2026-05-19', 'secretA', 'sonnet', 1.23),
+      pt('2026-05-19', 'secretB', 'sonnet', 0.5),
+    ];
+    const el = renderCostOverTimeChart(points, {
+      mode: 'lines',
+      resolveProjectLabel: (s) => s === 'secretA' ? 'Alpha' : 'Beta',
+    });
+    const aCircle = el.querySelector('.telemetry-cost-over-time-line-point[data-project-secret="secretA"]');
+    expect(aCircle?.querySelector('title')?.textContent).toBe('2026-05-19 — Alpha: $1.23');
   });
 
   it('renders a legend block per project with nested model rows', () => {

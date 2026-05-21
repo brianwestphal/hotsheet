@@ -164,18 +164,28 @@ describe('renderBody (HS-8508 analytics-dashboard telemetry section)', () => {
 });
 
 describe('renderAnalyticsTelemetrySection (mount shell)', () => {
-  it('renders the section header with title "Claude usage" and a 5-option window selector', () => {
+  it('renders the section header with the "Claude usage" title and no window selector (HS-8512)', () => {
     const root = renderAnalyticsTelemetrySection();
     const title = root.querySelector('.analytics-telemetry-title');
     expect(title?.textContent).toBe('Claude usage');
-    const select = root.querySelector<HTMLSelectElement>('#analytics-telemetry-window-select');
-    expect(select).not.toBeNull();
-    const options = [...(select?.querySelectorAll('option') ?? [])].map(o => o.value);
-    expect(options).toEqual(['today', 'week', 'month', '90d', 'all']);
+    // HS-8512 — the in-section window selector was removed; the
+    // dashboard's top-level 7/30/90 day range bar drives the
+    // telemetry window now.
+    expect(root.querySelector('#analytics-telemetry-window-select')).toBeNull();
+    expect(root.querySelector('.analytics-telemetry-window-selector')).toBeNull();
   });
 
   it('starts in the "month" window by default', () => {
     renderAnalyticsTelemetrySection();
     expect(_testing.getWindow()).toBe('month');
+  });
+
+  it('maps the supplied dashboard days to the matching telemetry window (HS-8512)', () => {
+    renderAnalyticsTelemetrySection(7);
+    expect(_testing.getWindow()).toBe('week');
+    renderAnalyticsTelemetrySection(30);
+    expect(_testing.getWindow()).toBe('month');
+    renderAnalyticsTelemetrySection(90);
+    expect(_testing.getWindow()).toBe('90d');
   });
 });

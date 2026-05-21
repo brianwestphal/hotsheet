@@ -239,41 +239,45 @@ async function fetchAndPopulate(bodySlot: HTMLElement, w: TelemetryWindow): Prom
  * Caller (the analytics dashboard's `buildDashboard`) appends the
  * returned element below the existing chart grid.
  */
-export function renderAnalyticsTelemetrySection(): HTMLElement {
+export function renderAnalyticsTelemetrySection(days?: number): HTMLElement {
+  // HS-8512 — telemetry window is now driven by the analytics
+  // dashboard's top-level 7/30/90 day range bar, removing the
+  // redundant per-section selector. `days` is the caller-supplied
+  // active value from `dashboard.tsx::currentDays`; we map it to
+  // the matching `TelemetryWindow` so the underlying fetch shape
+  // stays unchanged. Falls back to the module-state default if no
+  // value is passed (test / standalone callers).
+  if (days !== undefined) {
+    const mapped = mapDaysToWindow(days);
+    if (mapped !== null) currentWindow = mapped;
+  }
+
   const root = toElement(
     <div className="analytics-telemetry-section">
       <div className="analytics-telemetry-header">
         <h2 className="analytics-telemetry-title">Claude usage</h2>
-        <div className="analytics-telemetry-window-selector">
-          <label htmlFor="analytics-telemetry-window-select">Window:&nbsp;</label>
-          <select className="analytics-telemetry-window-select" id="analytics-telemetry-window-select">
-            <option value="today" selected={currentWindow === 'today'}>Today</option>
-            <option value="week" selected={currentWindow === 'week'}>This week</option>
-            <option value="month" selected={currentWindow === 'month'}>This month</option>
-            <option value="90d" selected={currentWindow === '90d'}>90 days</option>
-            <option value="all" selected={currentWindow === 'all'}>All time</option>
-          </select>
-        </div>
       </div>
       <div className="analytics-telemetry-body-slot" id="analytics-telemetry-body"></div>
     </div>
   );
 
   const bodySlot = root.querySelector<HTMLElement>('#analytics-telemetry-body');
-  const select = root.querySelector<HTMLSelectElement>('#analytics-telemetry-window-select');
-  if (bodySlot === null || select === null) return root;
-
-  select.addEventListener('change', () => {
-    const next = select.value;
-    if (next === 'today' || next === 'week' || next === 'month' || next === '90d' || next === 'all') {
-      currentWindow = next;
-      void fetchAndPopulate(bodySlot, currentWindow);
-    }
-  });
+  if (bodySlot === null) return root;
 
   void fetchAndPopulate(bodySlot, currentWindow);
 
   return root;
+}
+
+/** HS-8512 — map the analytics-dashboard's `currentDays` (7 / 30 / 90)
+ *  to the matching telemetry `TelemetryWindow` value. Returns null for
+ *  unknown / unsupported values so callers can decide their own
+ *  fallback. */
+function mapDaysToWindow(days: number): TelemetryWindow | null {
+  if (days === 7) return 'week';
+  if (days === 30) return 'month';
+  if (days === 90) return '90d';
+  return null;
 }
 
 /** Test-only escape hatch. */

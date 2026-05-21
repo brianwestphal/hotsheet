@@ -10594,6 +10594,10 @@ label.detail-details-label {
   }
 }
 
+// HS-8517 — `cost-over-time` joined this full-width set so the chart
+// fills the page width instead of being squeezed into a single
+// `minmax(360px, 1fr)` grid cell next to the cost-by-model donut.
+.telemetry-dashboard-section[data-section="cost-over-time"],
 .telemetry-dashboard-section[data-section="cost-by-project"],
 .telemetry-dashboard-section[data-section="heatmap"],
 .telemetry-dashboard-section[data-section="top-prompts"] {
@@ -11137,6 +11141,19 @@ label.detail-details-label {
   &:hover { opacity: 1.0 \!important; filter: brightness(1.05); }
 }
 
+// HS-8518 — lines-mode polyline + per-day point markers.
+.telemetry-cost-over-time-line {
+  transition: stroke-width 120ms ease-out;
+
+  &:hover { stroke-width: 3; }
+}
+
+.telemetry-cost-over-time-line-point {
+  transition: r 120ms ease-out, filter 120ms ease-out;
+
+  &:hover { filter: brightness(1.05); r: 4; }
+}
+
 .telemetry-cost-over-time-empty {
   padding: 24px;
   text-align: center;
@@ -11235,14 +11252,22 @@ label.detail-details-label {
   gap: 20px;
 }
 
+// HS-8513 — give each per-project telemetry section its own card-style
+// container so chart / donut content sits inside breathing room
+// instead of running edge-to-edge of the section wrapper.
 .analytics-telemetry-section-block {
-  padding: 12px 0;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 
   h3 {
-    margin: 0 0 8px 0;
+    margin: 0 0 12px 0;
     font-size: 13px;
     font-weight: 600;
     color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 }
 

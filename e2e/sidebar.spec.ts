@@ -152,5 +152,49 @@ test.describe('Sidebar navigation and custom views', () => {
     // The rows-container element must exist (the regression made it
     // disappear until a variant switch forced a remount).
     await expect(page.locator('#ticket-list > .ticket-list-rows')).toHaveCount(1);
+    // HS-8504 follow-up — the batch (multi-select) toolbar was hidden
+    // by `enterDashboardMode`. The exit path must restore it so the
+    // user doesn't have to restart the app to get it back.
+    await expect(page.locator('#batch-toolbar')).toBeVisible({ timeout: 3000 });
+  });
+
+  // HS-8504 follow-up — column-view variant of the same bug. The
+  // pre-follow-up fix only covered list view; column view hit
+  // `renderColumnView`'s same-mounted-key early-return against a wiped
+  // container and stayed empty.
+  test('exiting the dashboard view returns to column view in one click', async ({ page }) => {
+    await createTicket(page, 'Return-from-dashboard column ticket');
+
+    const widget = page.locator('#sidebar-dashboard-widget');
+    const widgetVisible = await widget.isVisible().catch(() => false);
+    test.skip(!widgetVisible, 'dashboard widget not rendered for this run');
+
+    // Switch to column layout BEFORE entering the dashboard so the exit
+    // path returns to column view.
+    const columnsBtn = page.locator('.layout-btn[data-layout="columns"]');
+    const columnsVisible = await columnsBtn.isVisible().catch(() => false);
+    test.skip(!columnsVisible, 'column layout not available for this view');
+    await columnsBtn.click();
+    await expect(page.locator('#ticket-list')).toHaveClass(/ticket-list-columns/, { timeout: 3000 });
+    // Verify the column-card is rendered before entering the dashboard.
+    await expect(
+      page.locator('.column-card[data-id] .column-card-title:has-text("Return-from-dashboard column ticket")'),
+    ).toBeVisible({ timeout: 3000 });
+
+    // Enter dashboard.
+    await widget.click();
+    await expect(page.locator('#dashboard-container')).toBeVisible({ timeout: 5000 });
+
+    // Single click on "All Tickets" should restore the column view AND
+    // the card in the same pass — no "switch to another view first"
+    // workaround.
+    await page.locator('.sidebar-item[data-view="all"]').click();
+    await expect(page.locator('#ticket-list')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('#ticket-list')).toHaveClass(/ticket-list-columns/, { timeout: 3000 });
+    await expect(
+      page.locator('.column-card[data-id] .column-card-title:has-text("Return-from-dashboard column ticket")'),
+    ).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('#ticket-list > .columns-container')).toHaveCount(1);
+    await expect(page.locator('#batch-toolbar')).toBeVisible({ timeout: 3000 });
   });
 });

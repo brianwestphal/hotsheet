@@ -116,9 +116,11 @@ function buildDashboard(data: DashboardData): HTMLElement {
 
   // HS-8508 / §71 — per-project telemetry sections appended below the
   // existing ticket-charts grid. The section is self-managing: it
-  // kicks off its own `/api/telemetry/project-rollup` fetch on mount
-  // and re-fetches on window-selector change.
-  el.appendChild(renderAnalyticsTelemetrySection());
+  // kicks off its own `/api/telemetry/project-rollup` fetch on mount.
+  // HS-8512 — telemetry window now reads from the dashboard's
+  // top-level 7/30/90 day range bar (passed via `currentDays`); the
+  // section no longer renders its own redundant window selector.
+  el.appendChild(renderAnalyticsTelemetrySection(currentDays));
 
   return el;
 }

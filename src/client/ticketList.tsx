@@ -187,7 +187,7 @@ function computeTargetVariant(): BindListVariant {
   return 'default';
 }
 
-function unmountBindList(): void {
+export function unmountBindList(): void {
   if (listViewBindListDispose !== null) {
     try { listViewBindListDispose(); } catch { /* swallow */ }
     listViewBindListDispose = null;

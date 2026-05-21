@@ -1,6 +1,8 @@
+import { unmountColumnView } from './columnView.js';
 import { renderDashboard, renderSidebarWidget } from './dashboard.js';
 import { byId, byIdOrNull } from './dom.js';
 import { state } from './state.js';
+import { unmountBindList } from './ticketList.js';
 
 const DASHBOARD_HIDDEN_IDS = ['search-input', 'layout-toggle', 'sort-select', 'detail-position-toggle', 'glassbox-btn'];
 
@@ -8,14 +10,38 @@ const DASHBOARD_HIDDEN_IDS = ['search-input', 'layout-toggle', 'sort-select', 'd
 export function restoreTicketList() {
   const dashContainer = byIdOrNull('dashboard-container');
   if (dashContainer) {
+    // HS-8504 (follow-up) — the list-view bindList and column-view
+    // disposers both track DOM nodes that are about to be wiped here.
+    // Tear them down so the next render starts from a clean slate
+    // rather than hitting same-key early-return paths in
+    // `ensureBindListMount` / `renderColumnView` against detached DOM.
+    // Without this, returning to the same view that was active before
+    // entering the dashboard left the rebuilt container empty until
+    // the user clicked a different view.
+    unmountBindList();
+    unmountColumnView();
     dashContainer.id = 'ticket-list';
     dashContainer.innerHTML = '';
+    dashContainer.classList.remove('ticket-list-columns');
     exitDashboardMode();
   }
 }
 
 /** Enter dashboard mode: hide toolbar elements and render the dashboard. */
 export function enterDashboardMode() {
+  // HS-8516 — if we're already on another full-window surface that
+  // renamed `#ticket-list` to `#dashboard-container` (the cross-
+  // project stats page), normalize the id back to `#ticket-list`
+  // first so `byId('ticket-list')` below succeeds. Without this the
+  // call threw silently inside a document-level click listener and
+  // the user saw "nothing happens" on the chip click.
+  const existingDashContainer = byIdOrNull('dashboard-container');
+  if (existingDashContainer !== null) {
+    existingDashContainer.id = 'ticket-list';
+    existingDashContainer.innerHTML = '';
+    existingDashContainer.classList.remove('ticket-list-columns');
+  }
+
   state.view = 'dashboard';
   document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
   // Hide toolbar elements
@@ -35,6 +61,13 @@ export function enterDashboardMode() {
   if (resizeHandle) resizeHandle.style.display = 'none';
 
   const ticketList = byId('ticket-list');
+  // HS-8504 (follow-up) — dispose any live bindList / column-view
+  // disposers before wiping, mirroring the symmetric teardown in
+  // `restoreTicketList`. Pre-fix the disposers kept references to
+  // the wiped DOM and the next exit-back-to-list render saw stale
+  // mount keys.
+  unmountBindList();
+  unmountColumnView();
   ticketList.innerHTML = '';
   ticketList.id = 'dashboard-container';
   ticketList.classList.remove('ticket-list-columns');
@@ -50,7 +83,12 @@ function exitDashboardMode() {
       (container as HTMLElement).style.display = '';
     }
   }
-  restoreTicketList();
+  // HS-8504 (follow-up) — restore batch-toolbar visibility. Pre-fix
+  // `enterDashboardMode` set it to display:none but only the list-view
+  // `renderTicketList` branch restored it; column-view returned with
+  // the toolbar still hidden until the app was restarted.
+  const batchToolbar = byIdOrNull('batch-toolbar');
+  if (batchToolbar) batchToolbar.style.display = '';
   // Detail panel and resize handle are restored by syncDetailPanel on next render
 }
 

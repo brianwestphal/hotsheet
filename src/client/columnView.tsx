@@ -176,7 +176,10 @@ export function renderPreviewColumnView() {
   const container = byId('ticket-list');
   const columns = getColumnsForView();
   const key = computeColumnsKey(columns, true);
-  if (mountedColumnsKey === key) {
+  // HS-8504 (follow-up) — defensive DOM-intact check; see the matching
+  // comment on `renderColumnView` above.
+  const columnsLive = container.querySelector(':scope > .columns-container');
+  if (mountedColumnsKey === key && columnsLive !== null) {
     // Same config — bindLists are still live + reacting to data; no rebuild.
     const toolbar = byIdOrNull('batch-toolbar');
     if (toolbar) toolbar.style.display = 'none';
@@ -296,7 +299,14 @@ export function renderColumnView() {
   const container = byId('ticket-list');
   const columns = getColumnsForView();
   const key = computeColumnsKey(columns, false);
-  if (mountedColumnsKey === key) {
+  // HS-8504 (follow-up) — defensive DOM-intact check mirroring the
+  // `ensureBindListMount` one. `restoreTicketList` already tears down
+  // `mountedColumnsKey` before any container wipe, so this should only
+  // fire if a future code path forgets that contract. Without it, a
+  // wiped container + stale `mountedColumnsKey` would early-return into
+  // an empty UI.
+  const columnsLive = container.querySelector(':scope > .columns-container');
+  if (mountedColumnsKey === key && columnsLive !== null) {
     // Same config — bindLists still live + reacting; no rebuild. The
     // bindList preserves DOM identity by ticket id, so a card created
     // while it was unselected keeps its pre-existing class set when
