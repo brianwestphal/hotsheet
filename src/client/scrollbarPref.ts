@@ -47,3 +47,33 @@ export function applyScrollbarPrefClass(): void {
     document.body.classList.add('scrollbars-always-visible');
   }
 }
+
+/**
+ * **HS-8494 follow-up** — watch `element` for horizontal-overflow state
+ * changes and mirror the result into a `has-overflow` class. The CSS
+ * rules in `styles.scss` flip the strip from `overflow-x: auto` to
+ * `overflow-x: scroll` when the class is present, which forces webkit
+ * to always render the iOS thumb on rapid resize. With `auto` alone
+ * webkit occasionally fails to repaint the scrollbar after the strip
+ * transitions from "fits" → "overflows" mid-resize.
+ *
+ * Returns a `dispose()` to stop the observer + clear the class.
+ */
+export function watchHorizontalOverflow(element: HTMLElement): () => void {
+  const update = (): void => {
+    const overflows = element.scrollWidth > element.clientWidth + 1;
+    element.classList.toggle('has-overflow', overflows);
+  };
+  update();
+  const ro = new ResizeObserver(update);
+  ro.observe(element);
+  // Also re-run after any child mutation (tabs added / removed / renamed)
+  // so the class flips even when no resize event fires.
+  const mo = new MutationObserver(update);
+  mo.observe(element, { childList: true, subtree: true, characterData: true });
+  return () => {
+    ro.disconnect();
+    mo.disconnect();
+    element.classList.remove('has-overflow');
+  };
+}

@@ -626,6 +626,25 @@ function scrollActiveTabIntoView() {
   }
 }
 
+/** **HS-8494 follow-up** — toggle the `.has-overflow` class on the tab
+ *  strip whenever the JS measurement disagrees with the current class
+ *  state. The CSS rule pairs `body.scrollbars-always-visible` with
+ *  `.project-tabs-inner.has-overflow` to flip the strip from
+ *  `overflow-x: auto` to `overflow-x: scroll`, which forces webkit to
+ *  always render the iOS thumb when actual overflow exists. Pre-fix
+ *  the implicit `auto` mode occasionally failed to repaint the
+ *  scrollbar after a rapid resize from "fits" to "overflows".
+ *
+ *  Cheap (one `scrollWidth` + one `clientWidth` read + a `classList`
+ *  no-op on the common no-change path). Called from the ResizeObserver
+ *  + once after every `renderTabs()` mount. */
+function updateProjectTabsOverflow(): void {
+  const container = document.querySelector<HTMLElement>('.project-tabs-inner');
+  if (container === null) return;
+  const overflows = container.scrollWidth > container.clientWidth + 1;
+  container.classList.toggle('has-overflow', overflows);
+}
+
 // Watch for resize to keep active tab visible
 let resizeObserver: ResizeObserver | null = null;
 
@@ -633,7 +652,10 @@ function setupScrollObserver() {
   resizeObserver?.disconnect();
   const container = document.querySelector('.project-tabs-inner');
   if (!container) return;
-  resizeObserver = new ResizeObserver(() => scrollActiveTabIntoView());
+  resizeObserver = new ResizeObserver(() => {
+    scrollActiveTabIntoView();
+    updateProjectTabsOverflow();
+  });
   resizeObserver.observe(container);
 }
 
@@ -765,7 +787,10 @@ function renderTabs() {
   // missing known bells.
   void import('./bellPoll.js').then(m => { updateProjectBellIndicators(m.getBellState()); }).catch(() => {});
   // Scroll active tab into view after DOM settles
-  requestAnimationFrame(scrollActiveTabIntoView);
+  requestAnimationFrame(() => {
+    scrollActiveTabIntoView();
+    updateProjectTabsOverflow();
+  });
   setupScrollObserver();
 }
 

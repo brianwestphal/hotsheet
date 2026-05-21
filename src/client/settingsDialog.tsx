@@ -5,6 +5,7 @@ import { loadBackupList } from './backups.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings } from './experimentalSettings.js';
 import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics.js';
+import { watchHorizontalOverflow } from './scrollbarPref.js';
 import { bindCategorySettings } from './settingsCategories.js';
 import type { NotifyLevel } from './state.js';
 import { state } from './state.js';
@@ -20,6 +21,13 @@ interface FileSettingsForGeneralAndTerminal {
 export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindTabSwitching();
   bindDialogOpenClose();
+  // HS-8494 follow-up — keep the `.has-overflow` class on the settings
+  // tab strip in sync with its actual horizontal-overflow state so the
+  // iOS scrollbar reliably appears under macOS "Always" / Linux /
+  // Windows scrollbar modes. Same root-cause fix as the project-tabs
+  // strip; see `scrollbarPref.ts::watchHorizontalOverflow`.
+  const settingsTabs = byIdOrNull('settings-tabs');
+  if (settingsTabs !== null) watchHorizontalOverflow(settingsTabs);
 
   bindGeneralTab();
   bindBackupsTab();

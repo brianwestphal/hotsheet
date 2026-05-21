@@ -9,7 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { applyScrollbarPrefClass, detectScrollbarsAlwaysVisible } from './scrollbarPref.js';
+import { applyScrollbarPrefClass, detectScrollbarsAlwaysVisible, watchHorizontalOverflow } from './scrollbarPref.js';
 
 describe('scrollbarPref (HS-8494)', () => {
   beforeEach(() => {
@@ -48,5 +48,58 @@ describe('scrollbarPref (HS-8494)', () => {
     // No-throw is the test; classList is a Set-like + dup-adds are
     // no-ops.
     expect(document.body).toBeDefined();
+  });
+
+  describe('watchHorizontalOverflow (HS-8494 follow-up)', () => {
+    function setSize(el: HTMLElement, scroll: number, client: number): void {
+      Object.defineProperty(el, 'scrollWidth', { configurable: true, value: scroll });
+      Object.defineProperty(el, 'clientWidth', { configurable: true, value: client });
+    }
+
+    it('adds has-overflow when scrollWidth > clientWidth on initial call', () => {
+      const el = document.createElement('div');
+      document.body.appendChild(el);
+      setSize(el, 300, 100);
+      const dispose = watchHorizontalOverflow(el);
+      try {
+        expect(el.classList.contains('has-overflow')).toBe(true);
+      } finally {
+        dispose();
+      }
+    });
+
+    it('leaves has-overflow off when content fits', () => {
+      const el = document.createElement('div');
+      document.body.appendChild(el);
+      setSize(el, 100, 100);
+      const dispose = watchHorizontalOverflow(el);
+      try {
+        expect(el.classList.contains('has-overflow')).toBe(false);
+      } finally {
+        dispose();
+      }
+    });
+
+    it('treats a 1 px slack as fitting (avoids flicker on sub-pixel measurements)', () => {
+      const el = document.createElement('div');
+      document.body.appendChild(el);
+      setSize(el, 101, 100);
+      const dispose = watchHorizontalOverflow(el);
+      try {
+        expect(el.classList.contains('has-overflow')).toBe(false);
+      } finally {
+        dispose();
+      }
+    });
+
+    it('dispose() clears the class and stops observing', () => {
+      const el = document.createElement('div');
+      document.body.appendChild(el);
+      setSize(el, 300, 100);
+      const dispose = watchHorizontalOverflow(el);
+      expect(el.classList.contains('has-overflow')).toBe(true);
+      dispose();
+      expect(el.classList.contains('has-overflow')).toBe(false);
+    });
   });
 });
