@@ -14,6 +14,17 @@ pageRoutes.get('/', (c) => {
           <button className="terminal-dashboard-toggle" id="terminal-dashboard-toggle" title="Terminal dashboard" style="display:none">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
           </button>
+          {/* HS-8507 / §70.2 — Cross-project stats header button. Lucide
+              `line-chart` glyph (mirrors the drawer Telemetry tab + the
+              legacy sidebar Telemetry entry icons). Visibility is gated
+              by `refreshTelemetrySidebarVisibility` in
+              `telemetrySidebar.tsx`, which queries
+              `GET /api/telemetry/enabled-anywhere` and toggles
+              `display`. Click handler in the same module routes to
+              `showCrossProjectStatsPage`. */}
+          <button className="cross-project-stats-toggle" id="cross-project-stats-toggle" title="Cross-project stats" style="display:none">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+          </button>
           <div className="app-title" id="app-title-area">
             <h1>Hot Sheet</h1>
           </div>

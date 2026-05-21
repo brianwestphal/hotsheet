@@ -1,8 +1,9 @@
 /**
  * Shared color palettes for the telemetry surfaces (§67 / §68 / §69).
  *
- * Both the cross-project dashboard (`telemetryDashboard.tsx`) and the
- * shared cost-over-time chart (`telemetryCostOverTimeChart.tsx`) read
+ * Both the cross-project stats page (`crossProjectStatsPage.tsx`,
+ * renamed from `telemetryDashboard.tsx` under HS-8507) and the shared
+ * cost-over-time chart (`telemetryCostOverTimeChart.tsx`) read
  * `MODEL_DONUT_COLORS` to color slices / bands by index. Extracted out
  * of `telemetryDashboard.tsx` under HS-8506 so the chart component
  * can reuse the same palette without back-importing the larger module

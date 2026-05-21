@@ -23,9 +23,16 @@ import { api } from './api.js';
 let lastEnabled: boolean | null = null;
 
 function setSectionVisibility(enabled: boolean): void {
+  // Legacy sidebar entry (HS-8479) — removed by HS-8509 Phase 5.
   const section = document.getElementById('sidebar-section-telemetry');
-  if (section === null) return;
-  section.style.display = enabled ? '' : 'none';
+  if (section !== null) section.style.display = enabled ? '' : 'none';
+
+  // HS-8507 / §70.2 — new header-bar button. Toggled alongside the
+  // legacy entry so users have parallel access during the HS-8503
+  // Phase 3 / 4 / 5 migration. Once HS-8509 retires the sidebar
+  // entry, this is the only toggle that remains.
+  const headerBtn = document.getElementById('cross-project-stats-toggle');
+  if (headerBtn !== null) headerBtn.style.display = enabled ? '' : 'none';
 }
 
 /** Fetch + apply the conditional visibility. Idempotent — repeat
@@ -42,26 +49,39 @@ export async function refreshTelemetrySidebarVisibility(): Promise<void> {
   }
 }
 
-/** Wire the click handler on the Telemetry sidebar entry. Idempotent —
- *  the document-level click listener is installed once per page load,
- *  matches via `closest('.sidebar-item[data-view="telemetry-dashboard"]')`. */
+/** Wire the click handlers for the cross-project stats entry points.
+ *  Idempotent — document-level click listeners are installed once per
+ *  page load. Two entry points are wired in parallel during the HS-8503
+ *  Phase 3 / 4 / 5 migration: the legacy sidebar entry (HS-8479) and
+ *  the new header button (HS-8507). HS-8509 will retire the sidebar
+ *  half. Both lazy-import `crossProjectStatsPage` so the module stays
+ *  out of the initial bundle. */
 export function initTelemetrySidebar(): void {
+  function showPage(): void {
+    void import('./crossProjectStatsPage.js').then(({ showCrossProjectStatsPage }) => {
+      showCrossProjectStatsPage();
+    }).catch(() => {
+      // Module not present yet — no-op.
+    });
+  }
+
   document.addEventListener('click', (e) => {
     const target = e.target as Element | null;
     if (target === null) return;
-    const item = target.closest<HTMLElement>('.sidebar-item[data-view="telemetry-dashboard"]');
-    if (item === null) return;
-    // Mark active in the sidebar + fire the show event so
-    // `telemetryDashboard.tsx` (HS-8481) can hydrate. The dashboard
-    // module is lazy-imported by the listener so it doesn't bloat
-    // the initial bundle.
-    document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
-    item.classList.add('active');
-    void import('./telemetryDashboard.js').then(({ showTelemetryDashboard }) => {
-      showTelemetryDashboard();
-    }).catch(() => {
-      // Module not present yet (HS-8481 not shipped) — no-op.
-    });
+    const sidebarItem = target.closest<HTMLElement>('.sidebar-item[data-view="telemetry-dashboard"]');
+    if (sidebarItem !== null) {
+      document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+      sidebarItem.classList.add('active');
+      showPage();
+      return;
+    }
+    // HS-8507 — header-bar button (no `.active` class management; it
+    // doesn't live in the sidebar's active-row system).
+    const headerBtn = target.closest<HTMLElement>('#cross-project-stats-toggle');
+    if (headerBtn !== null) {
+      document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+      showPage();
+    }
   });
 
   void refreshTelemetrySidebarVisibility();

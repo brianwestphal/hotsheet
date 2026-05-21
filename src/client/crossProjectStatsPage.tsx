@@ -1,25 +1,44 @@
 /**
- * HS-8481 / §69.3 — cross-project Telemetry dashboard view. Hidden
- * full-window surface activated from the conditional sidebar entry
- * (HS-8479). When `showTelemetryDashboard` runs it takes over the
- * main view region (mirroring the analytics-dashboard pattern in
- * `src/client/dashboardMode.tsx`): hides the toolbar + detail panel,
- * swaps `#ticket-list` for `#dashboard-container`, and renders the
- * dashboard chrome.
+ * HS-8507 / §70 — Cross-project stats page. Renamed from
+ * `telemetryDashboard.tsx` under the HS-8503 telemetry-surface reshape
+ * (Phase 3). Full-window surface activated either from the new
+ * `#cross-project-stats-toggle` header button (HS-8507) OR — for the
+ * duration of the migration — from the legacy sidebar entry
+ * `#sidebar-section-telemetry` (HS-8479, removed by Phase 5 /
+ * HS-8509). `showCrossProjectStatsPage` takes over the main view
+ * region (mirroring the analytics-dashboard pattern in
+ * `src/client/dashboardMode.tsx`): hides the toolbar + detail panel
+ * + batch toolbar, swaps `#ticket-list` for `#dashboard-container`,
+ * and renders the page chrome.
  *
- * Sections rendered here (HS-8481 owns the shell):
- *   - Three large monospace dollar-amount tiles: Today / This week
- *     / This month — sourced from `payload.windowTotals`.
- *   - Empty-state onboarding card when no usage has been recorded.
- *   - Per-section container divs for HS-8482 (cost-by-project +
- *     model donut) and HS-8483 (heatmap + top-10) to fill.
+ * Sections rendered here, top-to-bottom (per §70.4):
+ *   - Header row: title "Cross-project stats" + window selector.
+ *   - Window-total chips: Today / This week / This month / All time.
+ *   - **Cost over time** (Stacked / By project toggle visible when
+ *     2+ projects, hidden for 1) — shared chart from HS-8506.
+ *   - Cost by project sortable table. Row-click switches to that
+ *     project + opens the drawer Telemetry tab (mid-migration
+ *     fallback; Phase 5 / HS-8509 will rewire this to the per-
+ *     project analytics-dashboard section from HS-8508).
+ *   - Cost by model donut + legend.
+ *   - Hourly activity heatmap (7×24, Monday-first rows).
+ *   - **NO top-10 most-expensive-prompts list** — removed per
+ *     HS-8503 feedback. The server's `topExpensivePrompts` payload
+ *     field is ignored on the client until HS-8509 drops it from
+ *     the response shape.
  *
- * Re-fetch on mount + on the window-selector change (when added in
- * a later ticket). NOT live — the dashboard is a "look at the
- * numbers" surface, not a live monitor.
+ * Re-fetch on mount + on every window-selector change. NOT live —
+ * this is a "look at the numbers" surface, not a live monitor.
  *
  * Sourced from `GET /api/telemetry/dashboard?window=…&tz=…`
- * (HS-8480). Single bundled round-trip per refresh.
+ * (HS-8480 / HS-8505 extended with `costOverTime`). Single bundled
+ * round-trip per refresh.
+ *
+ * Re-export shim: `showTelemetryDashboard` is preserved as an alias
+ * for `showCrossProjectStatsPage` so the legacy sidebar entry in
+ * `telemetrySidebar.tsx` still works during the Phase 3 / 4 / 5
+ * migration without a coordinated rename. HS-8509 deletes the
+ * alias along with the sidebar entry.
  */
 
 import { raw } from '../jsx-runtime.js';
@@ -28,6 +47,7 @@ import { byId, byIdOrNull, toElement } from './dom.js';
 import { projectsByIdSignal } from './projectsStore.js';
 import { MODEL_DONUT_COLORS } from './telemetryColors.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
+import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
 
 interface WindowTotals {
   cost: number;
@@ -57,24 +77,25 @@ interface HourlyActivityCell {
   promptCount: number;
 }
 
-interface TopPromptRow {
-  promptId: string;
-  ts: string;
-  projectSecret: string;
-  cost: number;
-  model: string | null;
-  preview: string | null;
-}
-
 type DashboardWindow = 'today' | 'week' | 'month' | '90d' | 'all';
 
-interface DashboardPayload {
+/**
+ * Cross-project stats page payload. Mirrors the server-side
+ * `DashboardPayload` shape returned by
+ * `GET /api/telemetry/dashboard` (HS-8480 extended by HS-8505
+ * with `costOverTime`). The legacy `topExpensivePrompts` field is
+ * still on the wire response but no longer surfaced — HS-8509
+ * (Phase 5 cleanup) drops it from both the query side and the
+ * payload type. Exported so unit tests can construct fixtures
+ * without re-declaring the shape.
+ */
+export interface DashboardPayload {
   window: DashboardWindow;
   windowTotals: { today: WindowTotals; week: WindowTotals; month: WindowTotals; allTime: WindowTotals };
   costByProject: ProjectCostRow[];
   costByModel: ModelRollup[];
   hourlyActivity: HourlyActivityCell[];
-  topExpensivePrompts: TopPromptRow[];
+  costOverTime: CostOverTimePoint[];
 }
 
 const TOOLBAR_HIDDEN_IDS = ['search-input', 'layout-toggle', 'sort-select', 'detail-position-toggle', 'glassbox-btn'];
@@ -130,7 +151,7 @@ function openSettingsTelemetry(): void {
 function renderEmptyState(): HTMLElement {
   const card = toElement(
     <div className="telemetry-dashboard-empty">
-      <h3>Telemetry dashboard</h3>
+      <h3>Cross-project stats</h3>
       <p>
         No usage recorded yet. To start collecting, open Settings → Telemetry in any project,
         enable the master toggle, then run <code>claude</code> in a Hot Sheet terminal.
@@ -431,50 +452,12 @@ function renderHourlyHeatmap(cells: HourlyActivityCell[]): HTMLElement {
 }
 
 /**
- * HS-8483 / §69.3.5 — top-10 most-expensive-prompts list. Each row
- * is a click target → opens the existing `openPromptDrilldown`
- * modal from HS-8149.
+ * Render the page chrome + every section. Exported for direct
+ * unit-testing of the section layout — the fetch path
+ * (`fetchAndRender`) calls into it after the wire round-trip
+ * resolves. Pure render: no fetching, no global state mutation.
  */
-function renderTopExpensivePromptsList(rows: TopPromptRow[]): HTMLElement {
-  const list = toElement(
-    <ol className="telemetry-dashboard-top-prompts">
-      {rows.map(row => {
-        const projectLabel = resolveProjectName(row.projectSecret);
-        const previewText = row.preview === null || row.preview === ''
-          ? `prompt ${row.promptId.slice(0, 8)}`
-          : row.preview;
-        return (
-          <li className="telemetry-dashboard-top-prompt-row" data-prompt-id={row.promptId}>
-            <span className="telemetry-dashboard-top-prompt-cost">{formatCost(row.cost)}</span>
-            <span className="telemetry-dashboard-top-prompt-project">{projectLabel}</span>
-            {row.model !== null
-              ? <span className="telemetry-dashboard-top-prompt-model">{row.model}</span>
-              : null}
-            <span className="telemetry-dashboard-top-prompt-preview">{previewText}</span>
-            <span className="telemetry-dashboard-top-prompt-ts">{formatRelativeTs(row.ts)}</span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-
-  // Delegated click — open the drilldown.
-  list.addEventListener('click', (e) => {
-    const target = e.target as Element | null;
-    if (target === null) return;
-    const li = target.closest<HTMLElement>('.telemetry-dashboard-top-prompt-row');
-    if (li === null) return;
-    const promptId = li.dataset['promptId'];
-    if (promptId === undefined) return;
-    void import('./promptDrilldown.js').then(({ openPromptDrilldown }) => {
-      openPromptDrilldown(promptId);
-    });
-  });
-
-  return list;
-}
-
-function renderShell(payload: DashboardPayload, container: HTMLElement): void {
+export function renderShell(payload: DashboardPayload, container: HTMLElement): void {
   container.replaceChildren();
   const isEmpty = payload.windowTotals.allTime.promptCount === 0 && payload.windowTotals.allTime.cost === 0;
   if (isEmpty) {
@@ -501,9 +484,9 @@ function renderShell(payload: DashboardPayload, container: HTMLElement): void {
   }
 
   const root = toElement(
-    <div className="telemetry-dashboard">
+    <div className="telemetry-dashboard cross-project-stats-page">
       <div className="telemetry-dashboard-header">
-        <h2 className="telemetry-dashboard-title">Telemetry</h2>
+        <h2 className="telemetry-dashboard-title">Cross-project stats</h2>
         <div className="telemetry-dashboard-window-selector">
           <label>Window:&nbsp;</label>
           <select className="telemetry-dashboard-window-select" id="telemetry-dashboard-window-select">
@@ -517,6 +500,12 @@ function renderShell(payload: DashboardPayload, container: HTMLElement): void {
       </div>
       <div className="telemetry-dashboard-chips" id="telemetry-dashboard-chips"></div>
       <div className="telemetry-dashboard-sections">
+        <section className="telemetry-dashboard-section" data-section="cost-over-time">
+          <h3>Cost over time</h3>
+          <div className="telemetry-dashboard-section-body" id="telemetry-dashboard-cost-over-time">
+            <p className="telemetry-dashboard-section-placeholder">No data for this window.</p>
+          </div>
+        </section>
         <section className="telemetry-dashboard-section" data-section="cost-by-project">
           <h3>Cost by project</h3>
           <div className="telemetry-dashboard-section-body" id="telemetry-dashboard-cost-by-project">
@@ -535,12 +524,6 @@ function renderShell(payload: DashboardPayload, container: HTMLElement): void {
             <p className="telemetry-dashboard-section-placeholder">No data for this window.</p>
           </div>
         </section>
-        <section className="telemetry-dashboard-section" data-section="top-prompts">
-          <h3>Top 10 most expensive prompts</h3>
-          <div className="telemetry-dashboard-section-body" id="telemetry-dashboard-top-prompts">
-            <p className="telemetry-dashboard-section-placeholder">No data for this window.</p>
-          </div>
-        </section>
       </div>
     </div>
   );
@@ -552,6 +535,22 @@ function renderShell(payload: DashboardPayload, container: HTMLElement): void {
     chips.appendChild(renderWindowChip('This week', payload.windowTotals.week));
     chips.appendChild(renderWindowChip('This month', payload.windowTotals.month));
     chips.appendChild(renderWindowChip('All time', payload.windowTotals.allTime));
+  }
+
+  // HS-8506 / §70.4 — cost-over-time chart, slotted in immediately
+  // below the chips row and above cost-by-project. Server is
+  // backwards-compatible: the field exists since HS-8505 (Phase 1
+  // backend), so any reach of this code path will have it. The
+  // `?? []` guards a stale browser cache or a downgraded server.
+  const costOverTimePoints = payload.costOverTime as readonly CostOverTimePoint[] | undefined ?? [];
+  if (costOverTimePoints.length > 0) {
+    const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-over-time');
+    if (target !== null) {
+      target.replaceChildren(renderCostOverTimeChart(costOverTimePoints, {
+        resolveProjectLabel: resolveProjectName,
+        formatCost,
+      }));
+    }
   }
 
   // HS-8482 — cost-by-project + cost-by-model sections.
@@ -568,18 +567,15 @@ function renderShell(payload: DashboardPayload, container: HTMLElement): void {
     }
   }
 
-  // HS-8483 — heatmap + top-10 prompts sections.
+  // HS-8483 — heatmap section. Top-10 most-expensive-prompts list
+  // was removed per HS-8503 feedback (HS-8507 / §70.4). The wire
+  // payload still carries it; we ignore it here until Phase 5
+  // cleanup (HS-8509) drops it from the response shape.
   const heatmapHasData = payload.hourlyActivity.some(c => c.cost > 0 || c.promptCount > 0);
   if (heatmapHasData) {
     const target = root.querySelector<HTMLElement>('#telemetry-dashboard-heatmap');
     if (target !== null) {
       target.replaceChildren(renderHourlyHeatmap(payload.hourlyActivity));
-    }
-  }
-  if (payload.topExpensivePrompts.length > 0) {
-    const target = root.querySelector<HTMLElement>('#telemetry-dashboard-top-prompts');
-    if (target !== null) {
-      target.replaceChildren(renderTopExpensivePromptsList(payload.topExpensivePrompts));
     }
   }
 
@@ -615,14 +611,16 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
 }
 
 /**
- * HS-8479 entry-point. Hides the standard toolbar + detail panel +
- * batch toolbar, swaps `#ticket-list` for `#dashboard-container`
- * (matching the analytics-dashboard convention from
- * `dashboardMode.tsx::enterDashboardMode` so the existing
- * `restoreTicketList()` callback wired into `bindSidebar` handles
- * the reverse path cleanly), then fetches + renders the dashboard.
+ * HS-8507 entry-point — replaces the legacy `showTelemetryDashboard`
+ * under the HS-8503 reshape. Hides the standard toolbar + detail
+ * panel + batch toolbar, swaps `#ticket-list` for
+ * `#dashboard-container` (matching the analytics-dashboard
+ * convention from `dashboardMode.tsx::enterDashboardMode` so the
+ * existing `restoreTicketList()` callback wired into `bindSidebar`
+ * handles the reverse path cleanly), then fetches + renders the
+ * page.
  */
-export function showTelemetryDashboard(): void {
+export function showCrossProjectStatsPage(): void {
   hideToolbar();
   const ticketList = byId('ticket-list');
   ticketList.replaceChildren();
@@ -630,3 +628,11 @@ export function showTelemetryDashboard(): void {
   ticketList.classList.remove('ticket-list-columns');
   void fetchAndRender(ticketList);
 }
+
+/**
+ * Legacy alias preserved so the sidebar entry in
+ * `telemetrySidebar.tsx` keeps working during the HS-8503 Phase 3
+ * / 4 / 5 migration without a coordinated rename. HS-8509 deletes
+ * the sidebar entry + this alias.
+ */
+export const showTelemetryDashboard = showCrossProjectStatsPage;
