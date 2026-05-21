@@ -1,7 +1,8 @@
-import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
+import { renderRecentPromptsList } from './telemetryRecentPromptsList.js';
+import { renderToolHistogramRow } from './telemetryToolHistogram.js';
 
 /**
  * HS-8148 — footer drawer Telemetry tab (§67.10.2). Renders the five
@@ -48,8 +49,6 @@ interface ToolLatencyHistogram {
   p99: number | null;
   buckets: number[];
 }
-
-const HISTOGRAM_BUCKET_LABELS = ['<10ms', '10-50ms', '50-100ms', '100-500ms', '500ms-1s', '1-5s', '5-10s', '10s+'];
 
 interface QuerySourceRollup {
   source: string;
@@ -149,56 +148,6 @@ function renderQuerySourceRow(row: QuerySourceRollup): HTMLElement {
   );
 }
 
-function renderRecentPromptRow(row: RecentPrompt): HTMLElement {
-  return toElement(
-    <li className="telemetry-recent-prompt" data-prompt-id={row.promptId}>
-      <span className="telemetry-recent-prompt-ts">{formatTimestamp(row.ts)}</span>
-      <span className="telemetry-recent-prompt-model">{row.model ?? '(unknown model)'}</span>
-      <span className="telemetry-recent-prompt-id">{row.promptId.slice(0, 12)}…</span>
-    </li>
-  );
-}
-
-/**
- * HS-8150 — inline-SVG histogram for a single tool. No chart-library
- * dependency; just `<rect>` bars sized proportionally to the max
- * bucket count + p50/p90/p99 markers as labels below the bar row.
- * Bar fill defaults to the same accent color as the rest of the
- * Telemetry tab (`currentColor` so the SCSS theme can override).
- */
-function renderHistogramRow(row: ToolLatencyHistogram): HTMLElement {
-  const maxCount = Math.max(1, ...row.buckets);
-  const barWidth = 30;
-  const barGap = 4;
-  const chartHeight = 40;
-  const labelHeight = 12;
-  const width = row.buckets.length * (barWidth + barGap);
-  const height = chartHeight + labelHeight;
-
-  const bars = row.buckets.map((c, i) => {
-    const barHeight = c === 0 ? 0 : Math.max(2, (c / maxCount) * chartHeight);
-    const x = i * (barWidth + barGap);
-    const y = chartHeight - barHeight;
-    return `<rect x="${String(x)}" y="${String(y)}" width="${String(barWidth)}" height="${String(barHeight)}" fill="currentColor" opacity="${c === 0 ? '0.15' : '0.7'}"><title>${HISTOGRAM_BUCKET_LABELS[i]}: ${String(c)}</title></rect>`;
-  }).join('');
-
-  return toElement(
-    <div className="telemetry-histogram-row">
-      <div className="telemetry-histogram-header">
-        <span className="telemetry-histogram-tool">{row.tool}</span>
-        <span className="telemetry-histogram-meta">
-          {String(row.count)} calls · {formatDuration(row.totalMs)} total
-          {row.p50 !== null ? <> · p50 <strong>{formatDuration(row.p50)}</strong></> : null}
-          {row.p90 !== null ? <> · p90 <strong>{formatDuration(row.p90)}</strong></> : null}
-          {row.p99 !== null ? <> · p99 <strong>{formatDuration(row.p99)}</strong></> : null}
-        </span>
-      </div>
-      <svg className="telemetry-histogram-svg" width={String(width)} height={String(height)} viewBox={`0 0 ${String(width)} ${String(height)}`} role="img" aria-label={`${row.tool} latency histogram`}>
-        {raw(bars)}
-      </svg>
-    </div>
-  );
-}
 
 function renderEmptyState(): HTMLElement {
   return toElement(
@@ -328,7 +277,9 @@ function renderPayload(payload: DrawerPayload): HTMLElement {
     root.appendChild(toolSection);
   }
 
-  // HS-8150 — Tool latency histograms section.
+  // HS-8150 — Tool latency histograms section. Render function
+  // extracted to `telemetryToolHistogram.tsx` under HS-8508 so the
+  // analytics-dashboard telemetry section can reuse it.
   if (payload.toolLatencyHistogram.length > 0) {
     const histSection = toElement(
       <section className="telemetry-section">
@@ -339,7 +290,7 @@ function renderPayload(payload: DrawerPayload): HTMLElement {
     const container = histSection.querySelector('#telemetry-histograms');
     if (container !== null) {
       for (const row of payload.toolLatencyHistogram) {
-        container.appendChild(renderHistogramRow(row));
+        container.appendChild(renderToolHistogramRow(row, { formatDuration }));
       }
     }
     root.appendChild(histSection);
@@ -370,18 +321,19 @@ function renderPayload(payload: DrawerPayload): HTMLElement {
     root.appendChild(qsSection);
   }
 
-  // Recent prompts.
+  // Recent prompts. Render extracted to
+  // `telemetryRecentPromptsList.tsx` under HS-8508. Drawer-tab click
+  // routing is handled by the delegated listener inside the helper;
+  // the drawer's own panel-level click listener (HS-8149) is still
+  // present as a safety net but the helper's listener takes
+  // precedence in normal flow.
   if (payload.recentPrompts.length > 0) {
     const promptsSection = toElement(
       <section className="telemetry-section">
         <h3>Recent prompts</h3>
-        <ul className="telemetry-recent-prompts" id="telemetry-recent-list"></ul>
       </section>
     );
-    const list = promptsSection.querySelector('#telemetry-recent-list');
-    if (list !== null) {
-      for (const row of payload.recentPrompts) list.appendChild(renderRecentPromptRow(row));
-    }
+    promptsSection.appendChild(renderRecentPromptsList(payload.recentPrompts, { formatTimestamp }));
     root.appendChild(promptsSection);
   }
 

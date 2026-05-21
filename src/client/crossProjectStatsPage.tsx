@@ -45,9 +45,9 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { projectsByIdSignal } from './projectsStore.js';
-import { MODEL_DONUT_COLORS } from './telemetryColors.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
+import { renderCostByModelDonut } from './telemetryModelDonut.js';
 
 interface WindowTotals {
   cost: number;
@@ -321,61 +321,6 @@ function renderCostByProjectTable(rows: ProjectCostRow[]): HTMLElement {
   return table;
 }
 
-function renderCostByModelDonut(rows: ModelRollup[]): HTMLElement {
-  const totalCost = rows.reduce((acc, r) => acc + r.cost, 0);
-  // Sort by cost DESC so the largest slice goes first; the legend
-  // mirrors the order so the user reads top-down by impact.
-  const sorted = [...rows].sort((a, b) => b.cost - a.cost);
-
-  // SVG donut via `stroke-dasharray` technique — one `<circle>` per
-  // slice, all on the same circle path, with different dash patterns
-  // + offsets layered to produce the ring. No `<path>` arc math.
-  const size = 140;
-  const center = size / 2;
-  const radius = 50;
-  const strokeWidth = 24;
-  const circumference = 2 * Math.PI * radius;
-
-  let accumulated = 0;
-  const slices = sorted.map((row, i) => {
-    const fraction = totalCost === 0 ? 0 : row.cost / totalCost;
-    const sliceLen = fraction * circumference;
-    const dasharray = `${String(sliceLen)} ${String(circumference - sliceLen)}`;
-    const dashoffset = -accumulated;
-    accumulated += sliceLen;
-    const color = MODEL_DONUT_COLORS[i % MODEL_DONUT_COLORS.length];
-    return `<circle cx="${String(center)}" cy="${String(center)}" r="${String(radius)}" fill="none" stroke="${color}" stroke-width="${String(strokeWidth)}" stroke-dasharray="${dasharray}" stroke-dashoffset="${String(dashoffset)}" transform="rotate(-90 ${String(center)} ${String(center)})" />`;
-  }).join('');
-
-  const isSingleSlice = sorted.length === 1;
-  const root = toElement(
-    <div className="telemetry-dashboard-model-donut-wrap">
-      <svg className="telemetry-dashboard-model-donut" width={String(size)} height={String(size)} viewBox={`0 0 ${String(size)} ${String(size)}`} role="img" aria-label="Cost by model donut chart">
-        {raw(slices)}
-      </svg>
-      <ul className="telemetry-dashboard-model-legend">
-        {sorted.map((row, i) => {
-          const fraction = totalCost === 0 ? 0 : row.cost / totalCost;
-          const pct = (fraction * 100).toFixed(1);
-          const color = MODEL_DONUT_COLORS[i % MODEL_DONUT_COLORS.length];
-          return (
-            <li className="telemetry-dashboard-model-legend-row">
-              <span className="telemetry-dashboard-model-legend-swatch" style={`background:${color}`}></span>
-              <span className="telemetry-dashboard-model-legend-name">{row.model}</span>
-              <span className="telemetry-dashboard-model-legend-pct">{pct}%</span>
-              <span className="telemetry-dashboard-model-legend-cost">{formatCost(row.cost)}</span>
-            </li>
-          );
-        })}
-      </ul>
-      {isSingleSlice
-        ? <p className="telemetry-dashboard-model-single-caption">100% — only one model used this window.</p>
-        : null}
-    </div>
-  );
-  return root;
-}
-
 /**
  * HS-8483 / §69.3.4 — 7×24 hourly activity heatmap. PostgreSQL
  * `EXTRACT(DOW)` returns 0=Sunday … 6=Saturday; the spec wants
@@ -563,7 +508,7 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
   if (payload.costByModel.length > 0) {
     const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-by-model');
     if (target !== null) {
-      target.replaceChildren(renderCostByModelDonut(payload.costByModel));
+      target.replaceChildren(renderCostByModelDonut(payload.costByModel, { formatCost }));
     }
   }
 

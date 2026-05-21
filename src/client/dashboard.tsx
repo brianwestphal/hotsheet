@@ -1,4 +1,5 @@
 import { raw } from '../jsx-runtime.js';
+import { renderAnalyticsTelemetrySection } from './analyticsTelemetrySection.js';
 import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getCategoryColor, state } from './state.js';
@@ -112,6 +113,13 @@ function buildDashboard(data: DashboardData): HTMLElement {
     renderScatterChart(data.cycleTime)));
 
   el.appendChild(grid);
+
+  // HS-8508 / §71 — per-project telemetry sections appended below the
+  // existing ticket-charts grid. The section is self-managing: it
+  // kicks off its own `/api/telemetry/project-rollup` fetch on mount
+  // and re-fetches on window-selector change.
+  el.appendChild(renderAnalyticsTelemetrySection());
+
   return el;
 }
 
