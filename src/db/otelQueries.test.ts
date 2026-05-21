@@ -10,10 +10,12 @@ import { getDb } from './connection.js';
 import {
   getCostByModel,
   getCostByProject,
+  getCostOverTime,
   getDashboardPayload,
   getDrawerPayload,
   getHourlyActivityHeatmap,
   getPerTicketRollup,
+  getProjectRollupPayload,
   getPromptTimeline,
   getQuerySourceRollup,
   getRecentPrompts,
@@ -778,6 +780,155 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(payload.costByModel.length).toBeGreaterThan(0);
       expect(payload.hourlyActivity).toHaveLength(168);
       expect(payload.topExpensivePrompts).toEqual([]); // no api_request events seeded
+      expect(payload.costOverTime.length).toBeGreaterThan(0); // HS-8503 — densified series
+    });
+  });
+
+  describe('getCostOverTime (HS-8503 Phase 1 / §69.10.4)', () => {
+    it('returns empty when no cost rows exist', async () => {
+      const points = await getCostOverTime(null, null, 'UTC');
+      expect(points).toEqual([]);
+    });
+
+    it('densifies missing dates to zero across the (project, model) tuples that DO have data', async () => {
+      // Three days, two projects, one model each.
+      const day0 = new Date('2026-05-19T12:00:00Z');
+      const day2 = new Date('2026-05-21T12:00:00Z');
+      await insertCostMetric({ ts: day0, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertCostMetric({ ts: day2, projectSecret: SECRET_B, model: 'opus', cost: 1.0 });
+
+      // sinceTs covers day0 → day2 (3 days).
+      const since = new Date('2026-05-19T00:00:00Z');
+      const now = new Date('2026-05-21T12:00:00Z');
+      const points = await getCostOverTime(since, null, 'UTC', now);
+
+      // 3 days × 2 (project, model) tuples = 6 densified points.
+      expect(points).toHaveLength(6);
+      // Each date appears twice (once per tuple).
+      const dates = new Set(points.map(p => p.date));
+      expect(dates.size).toBe(3);
+      expect(dates.has('2026-05-19')).toBe(true);
+      expect(dates.has('2026-05-20')).toBe(true);
+      expect(dates.has('2026-05-21')).toBe(true);
+
+      // SECRET_A / sonnet — $0.50 on day0, $0 on day1 + day2.
+      const aSonnet = points.filter(p => p.projectSecret === SECRET_A && p.model === 'sonnet');
+      expect(aSonnet).toHaveLength(3);
+      expect(aSonnet.find(p => p.date === '2026-05-19')?.cost).toBeCloseTo(0.5);
+      expect(aSonnet.find(p => p.date === '2026-05-20')?.cost).toBe(0);
+      expect(aSonnet.find(p => p.date === '2026-05-21')?.cost).toBe(0);
+
+      // SECRET_B / opus — $1.00 on day2, $0 on day0 + day1.
+      const bOpus = points.filter(p => p.projectSecret === SECRET_B && p.model === 'opus');
+      expect(bOpus).toHaveLength(3);
+      expect(bOpus.find(p => p.date === '2026-05-21')?.cost).toBeCloseTo(1.0);
+      expect(bOpus.find(p => p.date === '2026-05-19')?.cost).toBe(0);
+    });
+
+    it('per-project scope filters to one project only', async () => {
+      const day = new Date('2026-05-21T12:00:00Z');
+      await insertCostMetric({ ts: day, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertCostMetric({ ts: day, projectSecret: SECRET_B, model: 'opus', cost: 1.0 });
+
+      const since = new Date('2026-05-21T00:00:00Z');
+      const now = new Date('2026-05-21T12:00:00Z');
+      const points = await getCostOverTime(since, SECRET_A, 'UTC', now);
+
+      // 1 day × 1 tuple = 1 point.
+      expect(points).toHaveLength(1);
+      expect(points[0].projectSecret).toBe(SECRET_A);
+      expect(points[0].model).toBe('sonnet');
+      expect(points[0].cost).toBeCloseTo(0.5);
+    });
+
+    it('sums multiple rows in the same (date, project, model) bucket', async () => {
+      const t1 = new Date('2026-05-21T08:00:00Z');
+      const t2 = new Date('2026-05-21T16:00:00Z');
+      await insertCostMetric({ ts: t1, projectSecret: SECRET_A, model: 'sonnet', cost: 0.3 });
+      await insertCostMetric({ ts: t2, projectSecret: SECRET_A, model: 'sonnet', cost: 0.4 });
+
+      const since = new Date('2026-05-21T00:00:00Z');
+      const now = new Date('2026-05-21T20:00:00Z');
+      const points = await getCostOverTime(since, null, 'UTC', now);
+
+      expect(points).toHaveLength(1);
+      expect(points[0].cost).toBeCloseTo(0.7);
+    });
+
+    it('with sinceTs=null uses the earliest data row as the range start', async () => {
+      const day0 = new Date('2026-05-20T12:00:00Z');
+      const day1 = new Date('2026-05-21T12:00:00Z');
+      await insertCostMetric({ ts: day0, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertCostMetric({ ts: day1, projectSecret: SECRET_A, model: 'sonnet', cost: 0.25 });
+
+      const now = new Date('2026-05-21T12:00:00Z');
+      const points = await getCostOverTime(null, null, 'UTC', now);
+
+      // 2 days × 1 tuple = 2 points (range starts at earliest data day).
+      expect(points).toHaveLength(2);
+      expect(points[0].date).toBe('2026-05-20');
+      expect(points[1].date).toBe('2026-05-21');
+    });
+
+    it('excludes (project, model) tuples that have NO data in the window', async () => {
+      // SECRET_A / sonnet has data before the window; should not appear in the result.
+      const beforeWindow = new Date('2026-05-15T12:00:00Z');
+      const inWindow = new Date('2026-05-21T12:00:00Z');
+      await insertCostMetric({ ts: beforeWindow, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertCostMetric({ ts: inWindow, projectSecret: SECRET_B, model: 'opus', cost: 1.0 });
+
+      const since = new Date('2026-05-20T00:00:00Z');
+      const now = new Date('2026-05-21T20:00:00Z');
+      const points = await getCostOverTime(since, null, 'UTC', now);
+
+      // Only the SECRET_B / opus tuple shows up — 2 days × 1 tuple = 2 points.
+      expect(points).toHaveLength(2);
+      expect(points.every(p => p.projectSecret === SECRET_B && p.model === 'opus')).toBe(true);
+    });
+  });
+
+  describe('getProjectRollupPayload (HS-8503 Phase 1 / §69.10.5)', () => {
+    it('returns every section bundled, scoped to one project', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertCostMetric({ ts: now, projectSecret: SECRET_B, model: 'opus', cost: 1.0 });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', model: 'sonnet' });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_B, promptId: 'p2', model: 'opus' });
+
+      const payload = await getProjectRollupPayload(SECRET_A, 'all', 'UTC');
+      expect(payload.window).toBe('all');
+      // Window-totals are project-scoped — SECRET_B's $1.00 isn't in here.
+      expect(payload.windowTotals.allTime.cost).toBeCloseTo(0.5);
+      expect(payload.windowTotals.allTime.promptCount).toBe(1);
+      // Cost by model is project-scoped — only SECRET_A's sonnet.
+      expect(payload.costByModel).toHaveLength(1);
+      expect(payload.costByModel[0].model).toBe('sonnet');
+      expect(payload.costByModel[0].cost).toBeCloseTo(0.5);
+      // Recent prompts — only SECRET_A's p1.
+      expect(payload.recentPrompts).toHaveLength(1);
+      expect(payload.recentPrompts[0].promptId).toBe('p1');
+      // Cost over time — only SECRET_A's data.
+      expect(payload.costOverTime.length).toBeGreaterThan(0);
+      expect(payload.costOverTime.every(p => p.projectSecret === SECRET_A)).toBe(true);
+    });
+
+    it('caps recent prompts at 10 (analytics-dashboard variant — not the drawer\'s 50)', async () => {
+      const now = new Date();
+      // Insert 15 prompts.
+      for (let i = 0; i < 15; i++) {
+        await insertPromptEvent({
+          ts: new Date(now.getTime() - i * 1000),
+          projectSecret: SECRET_A,
+          promptId: `p${i}`,
+          model: 'sonnet',
+        });
+      }
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+
+      const payload = await getProjectRollupPayload(SECRET_A, 'all', 'UTC');
+      expect(payload.recentPrompts).toHaveLength(10);
+      // Newest first — p0 is the newest seed.
+      expect(payload.recentPrompts[0].promptId).toBe('p0');
     });
   });
 });

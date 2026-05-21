@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 
-import { type DashboardWindow, getDashboardPayload, getDrawerPayload, getPerTicketRollup, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
+import { type DashboardWindow, getDashboardPayload, getDrawerPayload, getPerTicketRollup, getProjectRollupPayload, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
 import { readFileSettings } from '../file-settings.js';
 import { readProjectList } from '../project-list.js';
 import { getProjectBySecret } from '../projects.js';
@@ -165,5 +165,36 @@ telemetryRoutes.get('/telemetry/dashboard', async (c) => {
     : 'month';
   const timezone = c.req.query('tz') ?? 'UTC';
   const payload = await getDashboardPayload(window, timezone);
+  return c.json(payload);
+});
+
+/**
+ * HS-8503 Phase 1 / §69.10.5 — per-project analytics-dashboard rollup
+ * payload. Drives the new telemetry sub-region appended below the
+ * existing analytics-dashboard ticket charts.
+ *
+ * Query params:
+ *   - `window`: `today` | `week` | `month` | `90d` | `all`. Default `month`.
+ *     Narrows `costByModel`, `toolLatencyHistogram`, and `costOverTime`.
+ *     `windowTotals` always carries today / week / month / allTime.
+ *   - `tz`: IANA timezone name for the `costOverTime` date bucketing.
+ *     Default `UTC`.
+ *
+ * Project context: scoped to `c.get('projectSecret')` (the same
+ * resolution path the drawer + cost-chip routes use). No `?project=`
+ * query param — the active project is identified by the same
+ * X-Hotsheet-Secret middleware that gates every other `/api/*` route.
+ *
+ * Read-only `GET`. Subject to the existing `/api/*` middleware.
+ */
+telemetryRoutes.get('/telemetry/project-rollup', async (c) => {
+  const windowRaw = c.req.query('window') ?? 'month';
+  const knownWindows: DashboardWindow[] = ['today', 'week', 'month', '90d', 'all'];
+  const window: DashboardWindow = (knownWindows as string[]).includes(windowRaw)
+    ? (windowRaw as DashboardWindow)
+    : 'month';
+  const timezone = c.req.query('tz') ?? 'UTC';
+  const projectSecret = c.get('projectSecret');
+  const payload = await getProjectRollupPayload(projectSecret, window, timezone);
   return c.json(payload);
 });

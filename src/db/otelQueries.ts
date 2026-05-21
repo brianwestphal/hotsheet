@@ -1094,6 +1094,163 @@ export interface DashboardPayload {
   costByModel: ModelRollup[];
   hourlyActivity: HourlyActivityCell[];
   topExpensivePrompts: TopPromptRow[];
+  /** HS-8503 / §69.10.4 — densified daily cost series for the
+   *  Stacked / Overlay cost-over-time chart. One point per
+   *  (date, project, model) tuple in the window. */
+  costOverTime: CostOverTimePoint[];
+}
+
+/**
+ * HS-8503 Phase 1 / §69.10.4 — single point in the cost-over-time
+ * series. Densified per (date, projectSecret, model) so the chart's
+ * stacked-area math has zero gaps to special-case.
+ *
+ * `date` is a `YYYY-MM-DD` string in the requested timezone — the
+ * SQL bucket uses `DATE_TRUNC('day', ts AT TIME ZONE $tz)`. The
+ * string format (not `Date`) keeps the wire shape JSON-safe and
+ * timezone-pinned to the value the client requested.
+ */
+export interface CostOverTimePoint {
+  date: string;
+  projectSecret: string;
+  model: string;
+  cost: number;
+}
+
+/**
+ * Format a Date as `YYYY-MM-DD` in the given IANA timezone. Used
+ * for both the date-range bounds (start / end) AND the densification
+ * keys so the bucket math matches the SQL `DATE_TRUNC … AT TIME ZONE`
+ * output.
+ */
+function formatDateInTimezone(d: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const y = parts.find(p => p.type === 'year')?.value ?? '0000';
+  const m = parts.find(p => p.type === 'month')?.value ?? '01';
+  const day = parts.find(p => p.type === 'day')?.value ?? '01';
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Add `days` to a `YYYY-MM-DD` string. UTC arithmetic — safe because
+ * we're treating each day as a calendar entity (not a wall-clock
+ * interval), so DST transitions don't affect the result.
+ */
+function addDaysToDateString(dateStr: string, days: number): string {
+  const parts = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * HS-8503 Phase 1 / §69.10.4 — cost-over-time daily series.
+ *
+ * Returns one `CostOverTimePoint` per (date, projectSecret, model) in
+ * the window. The (projectSecret, model) tuple set is sourced from
+ * the rows that actually have data in the window — tuples with NO
+ * activity in the window aren't densified (would be all zeros
+ * everywhere, useless to the chart). Within that tuple set, every
+ * day in the date range is filled with the actual cost or zero.
+ *
+ * Date range:
+ *   - `sinceTs !== null`: from the local-tz date of `sinceTs` through
+ *     the local-tz date of `now`.
+ *   - `sinceTs === null` (`all` window): from the earliest data row's
+ *     date through `now`. Empty data → empty result.
+ *
+ * Passing `projectSecret !== null` scopes the query to a single
+ * project (per-project analytics-dashboard variant); `null` is
+ * cross-project (cross-project stats page variant). The shape is
+ * identical so a single chart component handles both surfaces.
+ */
+export async function getCostOverTime(
+  sinceTs: Date | null,
+  projectSecret: string | null,
+  timezone = 'UTC',
+  now: Date = new Date(),
+): Promise<CostOverTimePoint[]> {
+  const db = await getDb();
+
+  const params: Array<string | Date> = [timezone, 'claude_code.cost.usage'];
+  let projectClause = '';
+  let windowClause = '';
+  if (projectSecret !== null) {
+    params.push(projectSecret);
+    projectClause = ` AND project_secret = $${String(params.length)}`;
+  }
+  if (sinceTs !== null) {
+    params.push(sinceTs);
+    windowClause = ` AND ts >= $${String(params.length)}`;
+  }
+
+  const result = await db.query<{ date: string; project_secret: string; model: string; total: string | null }>(
+    `SELECT
+        to_char(DATE_TRUNC('day', ts AT TIME ZONE $1), 'YYYY-MM-DD') AS date,
+        project_secret,
+        COALESCE(attributes_json->>'model', '(unknown)') AS model,
+        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
+     FROM otel_metrics
+     WHERE metric_name = $2${projectClause}${windowClause}
+     GROUP BY 1, 2, 3
+     ORDER BY 1 ASC`,
+    params,
+  );
+
+  if (result.rows.length === 0) return [];
+
+  // Build the (project, model) tuple list + index actual data by composite key.
+  // Tuples kept as a structured list (instead of a Set<string> with a delimiter
+  // that could in theory collide with model-name characters) so the rebuild
+  // step doesn't have to parse anything back out.
+  const tuples: Array<{ projectSecret: string; model: string }> = [];
+  const seenTuples = new Set<string>();
+  const dataByKey = new Map<string, number>();
+  for (const r of result.rows) {
+    // JSON.stringify here only for the set-membership check — never parsed back.
+    const seenKey = JSON.stringify([r.project_secret, r.model]);
+    if (!seenTuples.has(seenKey)) {
+      seenTuples.add(seenKey);
+      tuples.push({ projectSecret: r.project_secret, model: r.model });
+    }
+    dataByKey.set(`${r.date}|${seenKey}`, Number(r.total ?? 0));
+  }
+
+  // Resolve the date range.
+  const endDateStr = formatDateInTimezone(now, timezone);
+  const startDateStr = sinceTs !== null
+    ? formatDateInTimezone(sinceTs, timezone)
+    : result.rows[0].date;
+
+  // Generate every date string from start through end, inclusive.
+  const dateStrs: string[] = [];
+  let cursor = startDateStr;
+  // Safety bound — at single-user scale `all` window is years at most,
+  // but cap at 10000 days (~27 years) just in case `sinceTs` is bogus.
+  for (let i = 0; i < 10000 && cursor <= endDateStr; i++) {
+    dateStrs.push(cursor);
+    cursor = addDaysToDateString(cursor, 1);
+  }
+
+  // Densify: one point per (date × tuple), filled with zero when no row matched.
+  const out: CostOverTimePoint[] = [];
+  for (const date of dateStrs) {
+    for (const tuple of tuples) {
+      const seenKey = JSON.stringify([tuple.projectSecret, tuple.model]);
+      out.push({
+        date,
+        projectSecret: tuple.projectSecret,
+        model: tuple.model,
+        cost: dataByKey.get(`${date}|${seenKey}`) ?? 0,
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -1117,7 +1274,7 @@ export async function getDashboardPayload(
   const monthStart = new Date(midnight.getTime() - 29 * 24 * 60 * 60 * 1000);
   const windowSinceTs = resolveDashboardWindowSinceTs(window, now);
 
-  const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, topExpensivePrompts] = await Promise.all([
+  const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, topExpensivePrompts, costOverTime] = await Promise.all([
     getWindowTotals(null, midnight),
     getWindowTotals(null, weekStart),
     getWindowTotals(null, monthStart),
@@ -1126,14 +1283,77 @@ export async function getDashboardPayload(
     getCostByModel(null, windowSinceTs),
     getHourlyActivityHeatmap(windowSinceTs, timezone),
     getTopExpensivePrompts(windowSinceTs, 10),
+    getCostOverTime(windowSinceTs, null, timezone, now),
   ]);
 
   return {
     window,
-    windowTotals: { today, week: week, month, allTime },
+    windowTotals: { today, week, month, allTime },
     costByProject,
     costByModel,
     hourlyActivity,
     topExpensivePrompts,
+    costOverTime,
+  };
+}
+
+/**
+ * HS-8503 Phase 1 / §69.10.5 — per-project rollup payload for the
+ * analytics dashboard's new telemetry sub-region. Bundles every
+ * section the per-project telemetry view renders into one round-trip:
+ *
+ *   - `windowTotals` chips (today / week / month / all-time —
+ *     fixed regardless of `window`).
+ *   - `costByModel` donut data narrowed by `window`.
+ *   - `toolLatencyHistogram` per-tool inline-SVG bars narrowed by `window`.
+ *   - `recentPrompts` last 10 prompts (newest-first; drilldown entry).
+ *   - `costOverTime` densified daily series for the Stacked / Overlay
+ *     chart, scoped to this project.
+ *
+ * Mirrors `getDashboardPayload`'s shape so the analytics dashboard's
+ * window-selector drives the same set of rollups the cross-project
+ * page does, just with a project filter applied.
+ */
+export interface ProjectRollupPayload {
+  window: DashboardWindow;
+  windowTotals: { today: WindowTotals; week: WindowTotals; month: WindowTotals; allTime: WindowTotals };
+  costByModel: ModelRollup[];
+  toolLatencyHistogram: ToolLatencyHistogram[];
+  recentPrompts: RecentPrompt[];
+  costOverTime: CostOverTimePoint[];
+}
+
+export async function getProjectRollupPayload(
+  projectSecret: string,
+  window: DashboardWindow,
+  timezone = 'UTC',
+  now: Date = new Date(),
+): Promise<ProjectRollupPayload> {
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekStart = new Date(midnight.getTime() - 6 * 24 * 60 * 60 * 1000);
+  const monthStart = new Date(midnight.getTime() - 29 * 24 * 60 * 60 * 1000);
+  const windowSinceTs = resolveDashboardWindowSinceTs(window, now);
+
+  const [today, week, month, allTime, costByModel, toolLatencyHistogram, recentPrompts, costOverTime] = await Promise.all([
+    getWindowTotals(projectSecret, midnight),
+    getWindowTotals(projectSecret, weekStart),
+    getWindowTotals(projectSecret, monthStart),
+    getWindowTotals(projectSecret, null),
+    getCostByModel(projectSecret, windowSinceTs),
+    getToolLatencyHistogram(projectSecret, windowSinceTs),
+    // §69.10.5 point 5 — 10 most recent prompts (not the drawer's 50,
+    // and explicitly NOT top-N-expensive; ts DESC is sorted by
+    // `getRecentPrompts` already).
+    getRecentPrompts(projectSecret, 10),
+    getCostOverTime(windowSinceTs, projectSecret, timezone, now),
+  ]);
+
+  return {
+    window,
+    windowTotals: { today, week, month, allTime },
+    costByModel,
+    toolLatencyHistogram,
+    recentPrompts,
+    costOverTime,
   };
 }
