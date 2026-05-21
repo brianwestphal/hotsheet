@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { confirmDialog } from './confirm.js';
 import {
   addGrouping,
@@ -250,11 +249,11 @@ function showTabContextMenu(
   const menu = toElement(
     <div className="hide-terminal-tab-menu context-menu" style={`top:${e.clientY}px;left:${e.clientX}px;z-index:2800`}>
       <div className="context-menu-item" data-action="rename">
-        <span className="dropdown-icon">{raw(ICON_PENCIL)}</span>
+        <span className="dropdown-icon">{ICON_PENCIL}</span>
         <span className="context-menu-label">Rename…</span>
       </div>
       <div className={`context-menu-item${isDefault ? ' is-disabled' : ' danger'}`} data-action="delete" data-disabled={isDefault ? 'true' : 'false'}>
-        <span className="dropdown-icon">{raw(ICON_TRASH)}</span>
+        <span className="dropdown-icon">{ICON_TRASH}</span>
         <span className="context-menu-label">{isDefault ? 'Delete (Default cannot be deleted)' : 'Delete'}</span>
       </div>
     </div>

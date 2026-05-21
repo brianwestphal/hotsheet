@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { api, showErrorPopup } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { ICON_FOLDER, ICON_FOLDER_OPEN } from './icons.js';
@@ -55,7 +54,7 @@ function renderEntries(result: BrowseResult) {
   for (const entry of result.entries) {
     const row = toElement(
       <div className={`open-folder-entry${entry.hasHotsheet ? ' has-hotsheet' : ''}`}>
-        <span className="open-folder-entry-icon">{raw(ICON_FOLDER)}</span>
+        <span className="open-folder-entry-icon">{ICON_FOLDER}</span>
         <span className="open-folder-entry-name">{entry.name}</span>
         {entry.hasHotsheet ? <span className="open-folder-entry-badge">Hot Sheet</span> : ''}
       </div>
@@ -152,7 +151,7 @@ export function bindOpenFolder() {
 
     const menu = toElement(
       <div className="tab-context-menu" id="toolbar-context-menu">
-        <div className="tab-context-item">{raw(ICON_FOLDER_OPEN)} Open Folder</div>
+        <div className="tab-context-item">{ICON_FOLDER_OPEN} Open Folder</div>
       </div>
     );
       menu.querySelector('.tab-context-item')!.addEventListener('click', () => {

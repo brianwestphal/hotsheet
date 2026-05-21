@@ -149,7 +149,7 @@ export function updateDetailCategory(value: string) {
 export function updateDetailPriority(value: string) {
   const btn = byId<HTMLButtonElement>('detail-priority');
   btn.dataset.value = value;
-  const icon = toElement(<span className="dropdown-icon" style={`color:${getPriorityColor(value)}`}>{raw(getPriorityIcon(value))}</span>);
+  const icon = toElement(<span className="dropdown-icon" style={`color:${getPriorityColor(value)}`}>{getPriorityIcon(value)}</span>);
   btn.textContent = '';
   btn.appendChild(icon);
   btn.append(` ${PRIORITY_LABELS[value] || value}`);
@@ -158,7 +158,7 @@ export function updateDetailPriority(value: string) {
 export function updateDetailStatus(value: string) {
   const btn = byId<HTMLButtonElement>('detail-status');
   btn.dataset.value = value;
-  const icon = toElement(<span className="dropdown-icon">{raw(getStatusIcon(value))}</span>);
+  const icon = toElement(<span className="dropdown-icon">{getStatusIcon(value)}</span>);
   btn.textContent = '';
   btn.appendChild(icon);
   btn.append(` ${STATUS_LABELS[value] || value}`);

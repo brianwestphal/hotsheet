@@ -18,7 +18,7 @@
  *   columns, `loadTickets()` called.
  */
 
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_ARCHIVE, ICON_CALENDAR } from './icons.js';
 import { state } from './state.js';
@@ -67,7 +67,7 @@ function archiveLabel(count: number, active: boolean): string {
 }
 
 interface RowOpts {
-  icon: string;
+  icon: SafeHtml;
   label: string;
   active: boolean;
   onClick: () => void;
@@ -76,7 +76,7 @@ interface RowOpts {
 function buildRow(opts: RowOpts): HTMLElement {
   const row = toElement(
     <div className={`search-extra-row${opts.active ? ' is-active' : ''}`} role="button" tabIndex={0}>
-      <span className="search-extra-row-icon">{raw(opts.icon)}</span>
+      <span className="search-extra-row-icon">{opts.icon}</span>
       <span className="search-extra-row-label">{opts.label}</span>
     </div>
   );

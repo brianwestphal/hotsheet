@@ -1,3 +1,4 @@
+import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
@@ -28,9 +29,12 @@ import { recordTextChange, trackedDelete, trackedPatch, trackedRestore } from '.
  * the document's context, which preserves the SVG xmlns from the
  * source string.
  */
-function replaceWithSvg(el: Element, html: string): void {
-  const frag = document.createRange().createContextualFragment(html);
-  el.replaceChildren(frag);
+function replaceWithSvg(el: Element, content: string | SafeHtml): void {
+  if (typeof content === 'string') {
+    el.textContent = content;
+  } else {
+    el.replaceChildren(toElement(content));
+  }
 }
 
 /**
@@ -282,7 +286,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
       </span>
       <span className="ticket-number">{ticket.ticket_number}</span>
       <button className={`ticket-status-btn${isVerified ? ' verified' : ''}`} title={ticket.status.replace('_', ' ')}>
-        {raw(isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status))}
+        {isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status)}
       </button>
       {ticket.id in syncedTicketMap ? <span className="ticket-sync-icon" title={`Synced via ${syncedTicketMap[ticket.id].pluginId}`}>{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}
       {getIndicatorDotType(ticket) != null ? <span className={`ticket-unread-dot${getIndicatorDotType(ticket) === 'feedback' ? ' feedback' : ''}`} title={getIndicatorDotType(ticket) === 'feedback' ? 'Feedback needed' : 'Unread changes'}></span> : null}
@@ -295,7 +299,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
         </div>
       ) : null}
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`} title={ticket.priority}>
-        {raw(getPriorityIcon(ticket.priority))}
+        {getPriorityIcon(ticket.priority)}
       </span>
       <button className={`ticket-star${ticket.up_next ? ' active' : ''}`} title={ticket.up_next ? 'Remove from Up Next' : 'Add to Up Next'}>
         {ticket.up_next ? '\u2605' : '\u2606'}
@@ -477,11 +481,11 @@ export function createPreviewRow(ticket: Ticket): HTMLElement {
       </span>
       <span className="ticket-number">{ticket.ticket_number}</span>
       <span className={`ticket-status-btn${isVerified ? ' verified' : ''}`} style="cursor:default">
-        {raw(isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status))}
+        {isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status)}
       </span>
       <span className="ticket-title-input" style="cursor:default">{ticket.title}</span>
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)};cursor:default`} title={ticket.priority}>
-        {raw(getPriorityIcon(ticket.priority))}
+        {getPriorityIcon(ticket.priority)}
       </span>
       <span className={`ticket-star${ticket.up_next ? ' active' : ''}`} style="cursor:default">
         {ticket.up_next ? '\u2605' : '\u2606'}

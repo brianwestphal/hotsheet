@@ -20,7 +20,6 @@
  * / `promptRenameTerminal`. Moving it as-is would have pulled those out
  * too. The callback contract here keeps the surface area small.
  */
-import { raw } from '../../jsx-runtime.js';
 import { toElement } from '../dom.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_PENCIL, ICON_X } from '../icons.js';
 
@@ -57,24 +56,24 @@ export function showTabContextMenu(opts: ShowTabContextMenuOptions): HTMLElement
   const menu = toElement(
     <div className="terminal-tab-context-menu command-log-context-menu" style={`left:${opts.event.clientX}px;top:${opts.event.clientY}px`}>
       <div className={`context-menu-item${opts.clickedIsDynamic ? '' : ' disabled'}`} data-action="close">
-        <span className="dropdown-icon">{raw(ICON_X)}</span>
+        <span className="dropdown-icon">{ICON_X}</span>
         <span className="context-menu-label">Close Tab</span>
       </div>
       <div className="context-menu-item" data-action="close-others">
-        <span className="dropdown-icon">{raw(ICON_CLOSE_OTHERS)}</span>
+        <span className="dropdown-icon">{ICON_CLOSE_OTHERS}</span>
         <span className="context-menu-label">Close Other Tabs</span>
       </div>
       <div className="context-menu-item" data-action="close-left">
-        <span className="dropdown-icon">{raw(ICON_CLOSE_LEFT)}</span>
+        <span className="dropdown-icon">{ICON_CLOSE_LEFT}</span>
         <span className="context-menu-label">Close Tabs to the Left</span>
       </div>
       <div className="context-menu-item" data-action="close-right">
-        <span className="dropdown-icon">{raw(ICON_CLOSE_RIGHT)}</span>
+        <span className="dropdown-icon">{ICON_CLOSE_RIGHT}</span>
         <span className="context-menu-label">Close Tabs to the Right</span>
       </div>
       <div className="context-menu-separator"></div>
       <div className="context-menu-item" data-action="rename">
-        <span className="dropdown-icon">{raw(ICON_PENCIL)}</span>
+        <span className="dropdown-icon">{ICON_PENCIL}</span>
         <span className="context-menu-label">Rename...</span>
       </div>
     </div>

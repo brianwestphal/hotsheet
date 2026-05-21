@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { commandLogStore } from './commandLogStore.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_CHECK } from './icons.js';
@@ -68,7 +67,7 @@ export function showFilterDropdown(onFilterChange: () => void) {
     <div className="command-log-filter-dropdown">
       {ALL_FILTER_TYPES.map(t =>
         <div className="filter-option" data-type={t.value}>
-          <span className="filter-check">{getActiveFilterTypes().has(t.value) ? raw(ICON_CHECK) : ''}</span>
+          <span className="filter-check">{getActiveFilterTypes().has(t.value) ? ICON_CHECK : ''}</span>
           <span>{t.label}</span>
         </div>
       )}
@@ -91,10 +90,10 @@ export function showFilterDropdown(onFilterChange: () => void) {
       const next = new Set(cur);
       if (cur.has(type)) {
         next.delete(type);
-        check.innerHTML = '';
+        check.replaceChildren();
       } else {
         next.add(type);
-        check.innerHTML = ICON_CHECK;
+        check.replaceChildren(toElement(ICON_CHECK));
       }
       commandLogStore.actions.setFilterTypes(next);
       // Update toggle label
@@ -116,7 +115,8 @@ export function showFilterDropdown(onFilterChange: () => void) {
     for (const opt of dropdown.querySelectorAll('.filter-option')) {
       const type = (opt as HTMLElement).dataset.type!;
       const check = opt.querySelector('.filter-check') as HTMLElement;
-      check.innerHTML = next.has(type) ? ICON_CHECK : '';
+      if (next.has(type)) check.replaceChildren(toElement(ICON_CHECK));
+      else check.replaceChildren();
     }
     toggleEl.textContent = next.size === ALL_FILTER_TYPES.length ? 'Deselect All' : 'Select All';
     updateFilterButtonLabel();

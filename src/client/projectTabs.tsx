@@ -1,4 +1,4 @@
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -276,7 +276,7 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
 
   // HS-7835 — Lucide icons on every entry (matches the §22 terminal-tab
   // context menu visually).
-  const items: { label: string; action: () => void; disabled?: boolean; icon: string }[] = [
+  const items: { label: string; action: () => void; disabled?: boolean; icon: SafeHtml }[] = [
     { label: 'Close Tab', action: () => void removeProject(project), disabled: !canClose, icon: ICON_X },
     { label: 'Close Other Tabs', action: () => void removeOtherProjects(project), disabled: list.length <= 1, icon: ICON_CLOSE_OTHERS },
     { label: 'Close Tabs to the Left', action: () => void removeProjectsInDirection(project, 'left'), disabled: !hasLeft, icon: ICON_CLOSE_LEFT },
@@ -289,13 +289,13 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
     <div className="tab-context-menu" id="tab-context-menu">
       {items.map(item => (
         <div className={`tab-context-item${item.disabled === true ? ' disabled' : ''}`}>
-          <span className="tab-context-icon">{raw(item.icon)}</span>
+          <span className="tab-context-icon">{item.icon}</span>
           {item.label}
         </div>
       ))}
       <div className="tab-context-separator"></div>
       <div className="tab-context-item" data-action="reveal">
-        <span className="tab-context-icon">{raw(folderIcon)}</span>
+        <span className="tab-context-icon">{folderIcon}</span>
         Show in Finder
       </div>
     </div>

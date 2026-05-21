@@ -1,3 +1,4 @@
+import type { SafeHtml } from '../jsx-runtime.js';
 import { activeProjectSignal, projectsStore } from './projectsStore.js';
 import { ticketsStore } from './ticketsStore.js';
 
@@ -406,14 +407,24 @@ Object.defineProperty(state, 'includeArchiveInSearch', {
   set(value: boolean): void { ticketsStore.actions.patchFilter({ includeArchiveInSearch: value }); },
 });
 
-const LUCIDE_14 = 'xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+const LUCIDE_14 = {
+  xmlns: 'http://www.w3.org/2000/svg',
+  width: '14',
+  height: '14',
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': '2',
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+} as const;
 
-const PRIORITY_ICONS: Record<string, string> = {
-  highest: `<svg ${LUCIDE_14}><path d="m7 11 5-5 5 5"/><path d="m7 17 5-5 5 5"/></svg>`,
-  high: `<svg ${LUCIDE_14}><path d="m18 15-6-6-6 6"/></svg>`,
-  default: `<svg ${LUCIDE_14}><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>`,
-  low: `<svg ${LUCIDE_14}><path d="m6 9 6 6 6-6"/></svg>`,
-  lowest: `<svg ${LUCIDE_14}><path d="m7 7 5 5 5-5"/><path d="m7 13 5 5 5-5"/></svg>`,
+const PRIORITY_ICONS: Record<string, SafeHtml> = {
+  highest: <svg {...LUCIDE_14}><path d="m7 11 5-5 5 5"/><path d="m7 17 5-5 5 5"/></svg>,
+  high: <svg {...LUCIDE_14}><path d="m18 15-6-6-6 6"/></svg>,
+  default: <svg {...LUCIDE_14}><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>,
+  low: <svg {...LUCIDE_14}><path d="m6 9 6 6 6-6"/></svg>,
+  lowest: <svg {...LUCIDE_14}><path d="m7 7 5 5 5-5"/><path d="m7 13 5 5 5-5"/></svg>,
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -424,9 +435,9 @@ const PRIORITY_COLORS: Record<string, string> = {
   lowest: '#94a3b8',
 };
 
-const CHECK_CHECK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>';
+const CHECK_CHECK_SVG: SafeHtml = <svg {...LUCIDE_14}><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>;
 
-const STATUS_ICONS: Record<string, string> = {
+const STATUS_ICONS: Record<string, string | SafeHtml> = {
   not_started: '\u25CB',
   started: '\u25D4',
   completed: '\u2713',
@@ -435,7 +446,7 @@ const STATUS_ICONS: Record<string, string> = {
   archive: '\u25A0',
 };
 
-export const VERIFIED_SVG = CHECK_CHECK_SVG;
+export const VERIFIED_SVG: SafeHtml = CHECK_CHECK_SVG;
 
 export function getCategoryColor(cat: string): string {
   const def = state.categories.find(c => c.id === cat);
@@ -447,16 +458,16 @@ export function getCategoryLabel(cat: string): string {
   return def?.shortLabel ?? cat.slice(0, 3).toUpperCase();
 }
 
-export function getPriorityIcon(pri: string): string {
-  return PRIORITY_ICONS[pri] || '—';
+export function getPriorityIcon(pri: string): string | SafeHtml {
+  return PRIORITY_ICONS[pri] ?? '—';
 }
 
 export function getPriorityColor(pri: string): string {
   return PRIORITY_COLORS[pri] || '#6b7280';
 }
 
-export function getStatusIcon(status: string): string {
-  return STATUS_ICONS[status] || '\u25CB';
+export function getStatusIcon(status: string): string | SafeHtml {
+  return STATUS_ICONS[status] ?? '\u25CB';
 }
 
 /**

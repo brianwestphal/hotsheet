@@ -52,12 +52,13 @@ describe('getCategoryLabel', () => {
 
 describe('getPriorityIcon', () => {
   it('returns correct icons for all priorities', () => {
-    // All priority icons are now Lucide SVG strings
-    expect(getPriorityIcon('highest')).toContain('<svg');
-    expect(getPriorityIcon('high')).toContain('<svg');
-    expect(getPriorityIcon('default')).toContain('<svg');
-    expect(getPriorityIcon('low')).toContain('<svg');
-    expect(getPriorityIcon('lowest')).toContain('<svg');
+    // All priority icons are JSX `SafeHtml` values; `.toString()` to
+    // assert their underlying HTML carries the expected `<svg` tag.
+    expect(String(getPriorityIcon('highest'))).toContain('<svg');
+    expect(String(getPriorityIcon('high'))).toContain('<svg');
+    expect(String(getPriorityIcon('default'))).toContain('<svg');
+    expect(String(getPriorityIcon('low'))).toContain('<svg');
+    expect(String(getPriorityIcon('lowest'))).toContain('<svg');
   });
 
   it('returns default for unknown priority', () => {
@@ -84,7 +85,9 @@ describe('getStatusIcon', () => {
     expect(getStatusIcon('not_started')).toBe('○');
     expect(getStatusIcon('started')).toBe('◔');
     expect(getStatusIcon('completed')).toBe('✓');
-    expect(getStatusIcon('verified')).toContain('<svg');
+    // `verified` returns a JSX `SafeHtml`; `.toString()` to assert
+    // the underlying HTML carries the `<svg` tag.
+    expect(String(getStatusIcon('verified'))).toContain('<svg');
     expect(getStatusIcon('backlog')).toBe('□');
     expect(getStatusIcon('archive')).toBe('■');
   });

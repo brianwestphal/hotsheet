@@ -316,7 +316,7 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
         const menu = toElement(
           <div className="note-context-menu context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}>
             <div className="context-menu-item danger">
-              <span className="dropdown-icon">{raw(ICON_TRASH)}</span>
+              <span className="dropdown-icon">{ICON_TRASH}</span>
               <span className="context-menu-label">Delete Note</span>
             </div>
           </div>
@@ -470,7 +470,7 @@ function buildDraftEntry(ticketId: number, draft: FeedbackDraft, notes: NoteEntr
     const menu = toElement(
       <div className="note-context-menu context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}>
         <div className="context-menu-item danger">
-          <span className="dropdown-icon">{raw(ICON_TRASH)}</span>
+          <span className="dropdown-icon">{ICON_TRASH}</span>
           <span className="context-menu-label">Delete Draft</span>
         </div>
       </div>

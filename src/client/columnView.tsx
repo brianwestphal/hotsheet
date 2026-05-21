@@ -265,7 +265,7 @@ export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
         </span>
         <span className="ticket-number">{ticket.ticket_number}</span>
         <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)};cursor:default`}>
-          {raw(getPriorityIcon(ticket.priority))}
+          {getPriorityIcon(ticket.priority)}
         </span>
         <span className={`ticket-star${ticket.up_next ? ' active' : ''}`} style="cursor:default">
           {ticket.up_next ? '\u2605' : '\u2606'}
@@ -462,7 +462,7 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
         </span>
         <span className="ticket-number">{ticket.ticket_number}</span>
         <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`}>
-          {raw(getPriorityIcon(ticket.priority))}
+          {getPriorityIcon(ticket.priority)}
         </span>
         <button className={`ticket-star${ticket.up_next ? ' active' : ''}`} title={ticket.up_next ? 'Remove from Up Next' : 'Add to Up Next'}>
           {ticket.up_next ? '\u2605' : '\u2606'}
@@ -605,12 +605,19 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
       if (catBadge.textContent !== label) catBadge.textContent = label;
     }
 
-    // Priority indicator — color + icon via createContextualFragment
+    // Priority indicator — color + icon. `getPriorityIcon` may return a
+    // bare glyph string (the fallback) OR a JSX `SafeHtml` SVG; handle
+    // both so the fragment-wrap doesn't trip toElement's "produced no
+    // element" guard on the text-only branch.
     if (priIndicator !== null) {
       const color = getPriorityColor(t.priority);
       if (priIndicator.style.color !== color) priIndicator.style.color = color;
-      const frag = document.createRange().createContextualFragment(getPriorityIcon(t.priority));
-      priIndicator.replaceChildren(frag);
+      const icon = getPriorityIcon(t.priority);
+      if (typeof icon === 'string') {
+        priIndicator.textContent = icon;
+      } else {
+        priIndicator.replaceChildren(toElement(icon));
+      }
     }
 
     // Star button

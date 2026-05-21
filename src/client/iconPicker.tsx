@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import {
   CMD_COLORS,
@@ -95,12 +94,12 @@ export function showIconPicker(anchor: HTMLElement, ref: ItemRef) {
     for (const ic of icons) {
       const btn = toElement(
         <button className={`icon-picker-item${cmd.icon === ic.name ? ' active' : ''}`} title={ic.name}>
-          {raw(renderIconSvg(ic.svg, 18))}
+          {renderIconSvg(ic.svg, 18)}
         </button>
       );
       btn.addEventListener('click', () => {
         updateCommand(ref, c => { c.icon = ic.name; });
-        anchor.innerHTML = renderIconSvg(ic.svg, 16);
+        anchor.replaceChildren(toElement(renderIconSvg(ic.svg, 16)));
         popup.remove();
         void saveCommandItems();
       });

@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { byIdOrNull, toElement } from './dom.js';
 import {
   CMD_COLORS,
@@ -42,7 +41,7 @@ export function showCommandEditorModal(ref: ItemRef) {
         <div className="cmd-editor-dialog-body">
           <div className="settings-command-row-header">
             <button className="command-color-dropdown-btn" title="Choose color" style={`background:${currentColor}`}></button>
-            <button className="command-icon-picker-btn" title="Choose icon">{raw(renderIconSvg(currentIcon.svg, 16))}</button>
+            <button className="command-icon-picker-btn" title="Choose icon">{renderIconSvg(currentIcon.svg, 16)}</button>
             <input type="text" value={cmd.name} placeholder="Button label..." />
           </div>
           <div className="command-target-segmented">
@@ -151,10 +150,10 @@ function renderCommandOutlineRow(ref: ItemRef): HTMLElement {
   const row = toElement(
     <div className={`cmd-outline-row${isChild ? ' cmd-outline-indented' : ''}`} draggable="true" data-ref={JSON.stringify(ref)}>
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
-      <span className="cmd-outline-icon" style={`background:${currentColor};color:${textColor}`}>{raw(renderIconSvg(currentIcon.svg, 12, textColor))}</span>
+      <span className="cmd-outline-icon" style={`background:${currentColor};color:${textColor}`}>{renderIconSvg(currentIcon.svg, 12, textColor)}</span>
       <span className="cmd-outline-name">{cmd.name !== '' ? cmd.name : '(untitled)'}</span>
-      <button className="cmd-outline-edit-btn" title="Edit">{raw(renderIconSvg((CMD_ICONS.find(ic => ic.name === 'pencil') || CMD_ICONS[0]).svg, 13))}</button>
-      <button className="cmd-outline-delete-btn" title="Delete">{raw(renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13))}</button>
+      <button className="cmd-outline-edit-btn" title="Edit">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'pencil') || CMD_ICONS[0]).svg, 13)}</button>
+      <button className="cmd-outline-delete-btn" title="Delete">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
     </div>
   );
 
@@ -184,7 +183,7 @@ function renderGroupOutlineRow(topIndex: number): HTMLElement {
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
       <span className="cmd-outline-group-name" contentEditable="true">{group.name}</span>
       {group.children.length === 0
-        ? <button className="cmd-outline-delete-btn" title="Delete empty group">{raw(renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13))}</button>
+        ? <button className="cmd-outline-delete-btn" title="Delete empty group">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
         : ''
       }
     </div>

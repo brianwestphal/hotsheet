@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { suppressAnimation } from './animate.js';
 import { api } from './api.js';
 import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
@@ -59,7 +58,7 @@ export function renderSidebarViews() {
         data-cv-index={String(i)}
         draggable="true"
       >
-        {view.tag !== undefined && view.tag !== '' ? <span className="sidebar-view-tag-icon">{raw(ICON_TAG)}</span> : null}
+        {view.tag !== undefined && view.tag !== '' ? <span className="sidebar-view-tag-icon">{ICON_TAG}</span> : null}
         {view.name}
       </button>
     );
@@ -307,7 +306,7 @@ function showViewEditor(existing?: CustomView) {
           </div>
           <div className="settings-field cv-tag-field">
             <label>
-              Tag <span className="cv-tag-info" id="cv-tag-info-btn">{raw(ICON_INFO)}</span>
+              Tag <span className="cv-tag-info" id="cv-tag-info-btn">{ICON_INFO}</span>
             </label>
             <div className="cv-tag-help" id="cv-tag-help" style="display:none">
               Associate this view with a tag. The view will show a tag icon in the sidebar and you can drag tickets onto it to add the tag. Tickets with this tag are automatically included in the view.

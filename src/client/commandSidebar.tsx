@@ -145,7 +145,7 @@ function renderButton(cmd: CustomCommand) {
       className={`channel-command-btn${isRunning ? ' is-running' : ''}`}
       style={`background:${color};color:${textColor}`}
       data-command-key={cmdKey}
-    >{raw(renderIconSvg(iconDef.svg, 14, textColor))}<span>{cmd.name}</span></button>
+    >{renderIconSvg(iconDef.svg, 14, textColor)}<span>{cmd.name}</span></button>
   );
   if (isRunning) btn.appendChild(buildSpinnerElement(textColor));
   btn.addEventListener('click', () => {

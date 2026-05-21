@@ -1,3 +1,4 @@
+import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
@@ -237,9 +238,9 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
   const menu = toElement(<div className="context-menu" style={`top:${e.clientY}px;left:${e.clientX}px;z-index:3000`}></div>);
 
   // HS-7835 — Lucide icons on every plugin context-menu entry.
-  const iconRow = (icon: string, label: string, extra: string = ''): HTMLElement => toElement(
+  const iconRow = (icon: SafeHtml, label: string, extra: string = ''): HTMLElement => toElement(
     <div className={`context-menu-item${extra}`}>
-      <span className="dropdown-icon">{raw(icon)}</span>
+      <span className="dropdown-icon">{icon}</span>
       <span className="context-menu-label">{label}</span>
     </div>
   );

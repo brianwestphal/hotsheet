@@ -1,3 +1,4 @@
+import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 
@@ -6,7 +7,12 @@ export interface DropdownItem {
   key: string;
   shortcut?: string;
   color?: string;
-  icon?: string;
+  /** Icon as JSX (`SafeHtml`) or a raw HTML string. The JSX form is
+   *  the preferred path — `{ICON_X}` from `./icons.tsx` plugs in
+   *  directly. The legacy string form is preserved for dynamic
+   *  callsites (plugin-supplied icon SVG strings, status/priority
+   *  helpers that still return strings) until they migrate to JSX. */
+  icon?: string | SafeHtml;
   iconColor?: string;
   active?: boolean;
   separator?: boolean;
@@ -39,7 +45,10 @@ export function createDropdown(_anchor: HTMLElement, items: DropdownItem[]): HTM
           ? <div className="dropdown-separator"></div>
           : <button className={`dropdown-item${item.active === true ? ' active' : ''}`} data-key={item.key}>
               {item.color !== undefined && item.color !== '' ? <span className="dropdown-dot" style={`background-color:${item.color}`}></span> : null}
-              {item.icon !== undefined && item.icon !== '' ? <span className="dropdown-icon" style={item.iconColor !== undefined && item.iconColor !== '' ? `color:${item.iconColor}` : ''}>{raw(item.icon)}</span> : null}
+              {item.icon !== undefined && item.icon !== '' ? <span className="dropdown-icon" style={item.iconColor !== undefined && item.iconColor !== '' ? `color:${item.iconColor}` : ''}>{
+                  // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- legacy string-icon callers (plugin-supplied icons, status/priority helpers) still pass HTML strings; JSX-icon callers pass `SafeHtml` which renders via the standard JSX child path.
+                  typeof item.icon === 'string' ? raw(item.icon) : item.icon
+                }</span> : null}
               <span className="dropdown-label">{item.label}</span>
               {item.shortcut !== undefined && item.shortcut !== '' ? <kbd className="dropdown-kbd">{item.shortcut}</kbd> : null}
             </button>

@@ -9,7 +9,6 @@
  * pattern the rest of the HS-8395 sub-module split should follow.
  */
 
-import { raw } from '../jsx-runtime.js';
 import { apiWithSecret } from './api.js';
 import { DASHBOARD_SCOPE, setTerminalHidden } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
@@ -119,7 +118,7 @@ export function onTileContextMenu(
         data-action="close"
         title={closeDisabled ? 'Configured terminals must be removed from Settings → Terminal' : undefined}
       >
-        <span className="dropdown-icon">{raw(ICON_X)}</span>
+        <span className="dropdown-icon">{ICON_X}</span>
         <span className="context-menu-label">Close Terminal</span>
       </div>
       {/* HS-7661 — hide this terminal from the dashboard. Session-only;
@@ -127,12 +126,12 @@ export function onTileContextMenu(
           subscription rebuilds the dashboard so the tile disappears
           immediately. */}
       <div className="context-menu-item" data-action="hide">
-        <span className="dropdown-icon">{raw(ICON_EYE_OFF)}</span>
+        <span className="dropdown-icon">{ICON_EYE_OFF}</span>
         <span className="context-menu-label">Hide in Dashboard</span>
       </div>
       <div className="context-menu-separator"></div>
       <div className="context-menu-item" data-action="rename">
-        <span className="dropdown-icon">{raw(ICON_PENCIL)}</span>
+        <span className="dropdown-icon">{ICON_PENCIL}</span>
         <span className="context-menu-label">Rename...</span>
       </div>
     </div>

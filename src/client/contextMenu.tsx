@@ -1,3 +1,4 @@
+import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
 import { toElement } from './dom.js';
@@ -14,13 +15,25 @@ import { hasPendingFeedback } from './ticketRow.js';
 import { getTicketSignals } from './ticketsStore.js';
 import { toggleReadState, trackedBatch, trackedDelete, trackedPatch } from './undo/actions.js';
 
-const MEGAPHONE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>';
+const LUCIDE_14 = {
+  xmlns: 'http://www.w3.org/2000/svg',
+  width: '14',
+  height: '14',
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': '2',
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+} as const;
+
+const MEGAPHONE_SVG: SafeHtml = <svg {...LUCIDE_14}><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>;
 
 /** HS-8401 — Lucide `book-open-text` glyph for the Read Latest Note
  *  menu item. Same icon the §49 reader-overlay trigger uses on note
  *  rows + the Details label, so users learn one affordance for the
  *  reader entry-point. */
-const BOOK_OPEN_TEXT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 12h2"/><path d="M6 8h2"/></svg>';
+const BOOK_OPEN_TEXT_SVG: SafeHtml = <svg {...LUCIDE_14}><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 12h2"/><path d="M6 8h2"/></svg>;
 
 /** HS-8401 / HS-8415 — collect every non-empty note in display order plus
  *  the index of the most recent one. The Read Latest Note menu item opens
@@ -388,7 +401,9 @@ async function applyToSelected(action: string, value: unknown) {
 
 interface SubItem {
   label: string;
-  icon?: string;
+  /** Icon as JSX (`SafeHtml`) or legacy HTML string — same union the
+   *  `DropdownItem` carries; the renderer picks the right path. */
+  icon?: string | SafeHtml;
   iconColor?: string;
   active?: boolean;
   action: () => void;
@@ -406,7 +421,10 @@ function addSubmenuItem(menu: HTMLElement, label: string, items: SubItem[]) {
   for (const sub of items) {
     const subItem = toElement(
       <div className={`context-menu-item${sub.active === true ? ' active' : ''}`}>
-        {sub.icon !== undefined && sub.icon !== '' ? <span className="dropdown-icon" style={sub.iconColor !== undefined && sub.iconColor !== '' ? `color:${sub.iconColor}` : ''}>{raw(sub.icon)}</span> : null}
+        {sub.icon !== undefined && sub.icon !== '' ? <span className="dropdown-icon" style={sub.iconColor !== undefined && sub.iconColor !== '' ? `color:${sub.iconColor}` : ''}>{
+          // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- string-icon callers still pass HTML strings here; JSX-icon callers pass `SafeHtml` which renders through the JSX child path.
+          typeof sub.icon === 'string' ? raw(sub.icon) : sub.icon
+        }</span> : null}
         <span className="context-menu-label">{sub.label}</span>
       </div>
     );
@@ -422,11 +440,14 @@ function addSubmenuItem(menu: HTMLElement, label: string, items: SubItem[]) {
   menu.appendChild(item);
 }
 
-function addActionItem(menu: HTMLElement, label: string, action: () => void, options?: { danger?: boolean; icon?: string; disabled?: boolean }) {
+function addActionItem(menu: HTMLElement, label: string, action: () => void, options?: { danger?: boolean; icon?: string | SafeHtml; disabled?: boolean }) {
   const disabled = options?.disabled === true;
   const item = toElement(
     <div className={`context-menu-item${options?.danger === true ? ' danger' : ''}${disabled ? ' disabled' : ''}`}>
-      {options?.icon !== undefined ? <span className="dropdown-icon">{raw(options.icon)}</span> : null}
+      {options?.icon !== undefined ? <span className="dropdown-icon">{
+        // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- string-icon callers still pass HTML strings here; JSX-icon callers pass `SafeHtml` which renders through the JSX child path.
+        typeof options.icon === 'string' ? raw(options.icon) : options.icon
+      }</span> : null}
       <span className="context-menu-label">{label}</span>
     </div>
   );

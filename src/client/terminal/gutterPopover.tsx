@@ -31,7 +31,6 @@
  */
 import type { IDecoration, IMarker, Terminal as XTerm } from '@xterm/xterm';
 
-import { raw } from '../../jsx-runtime.js';
 import { isChannelAlive, triggerChannelAndMarkBusy } from '../channelUI.js';
 import { toElement } from '../dom.js';
 import { buildAskClaudePrompt } from '../terminalOsc133.js';
@@ -82,15 +81,15 @@ function showGutterPopover(
   // alive. Checking at popover open time (not on click) keeps the popover
   // small for users without the channel and matches the gate pattern other
   // channel-dependent affordances use (see channelUI.tsx checkAndTrigger).
-  const askClaudeHtml = isChannelAlive()
-    ? '<button class="terminal-osc133-popover-btn terminal-osc133-popover-ask" data-action="ask-claude">Ask Claude</button>'
-    : '';
+  const askClaudeButton = isChannelAlive()
+    ? <button className="terminal-osc133-popover-btn terminal-osc133-popover-ask" data-action="ask-claude">Ask Claude</button>
+    : null;
   const popover = toElement(
     <div className="terminal-osc133-popover">
       <button className="terminal-osc133-popover-btn" data-action="copy-command">Copy command</button>
       <button className="terminal-osc133-popover-btn" data-action="copy-output">Copy output</button>
       <button className="terminal-osc133-popover-btn" data-action="rerun">Rerun</button>
-      {raw(askClaudeHtml)}
+      {askClaudeButton}
     </div>
   );
   document.body.appendChild(popover);
