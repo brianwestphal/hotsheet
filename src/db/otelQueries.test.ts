@@ -295,6 +295,60 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(timeline.projectSecret).toBeNull();
       expect(timeline.firstTs).toBeNull();
       expect(timeline.model).toBeNull();
+      expect(timeline.spans).toEqual([]);
+    });
+
+    it('HS-8475 — also returns spans tagged with the prompt id, ordered by start_ts ASC', async () => {
+      async function insertSpan(opts: {
+        traceId: string;
+        spanId: string;
+        parentSpanId: string | null;
+        promptId: string;
+        startTs: Date;
+        endTs: Date;
+        spanName: string;
+      }): Promise<void> {
+        const db = await getDb();
+        await db.query(
+          `INSERT INTO otel_spans (trace_id, span_id, parent_span_id, project_secret, session_id, prompt_id, span_name, start_ts, end_ts, attributes_json, status_code)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
+          [opts.traceId, opts.spanId, opts.parentSpanId, SECRET_A, 'session-1', opts.promptId, opts.spanName, opts.startTs, opts.endTs, JSON.stringify({}), 'OK'],
+        );
+      }
+
+      // Seed an event so the timeline has at least one entry.
+      const t1 = new Date('2026-05-21T10:00:00Z');
+      await insertEvent({ ts: t1, projectSecret: SECRET_A, promptId: 'p-spans', eventName: 'claude_code.user_prompt', attrs: { model: 'sonnet' } });
+
+      // Two spans for p-spans (out of order to verify sorting) + one for an
+      // unrelated prompt that must NOT appear in the result.
+      await insertSpan({
+        traceId: 'trace-1', spanId: 's2', parentSpanId: 's1', promptId: 'p-spans',
+        startTs: new Date('2026-05-21T10:00:00.200Z'),
+        endTs: new Date('2026-05-21T10:00:00.400Z'),
+        spanName: 'claude_code.llm_request',
+      });
+      await insertSpan({
+        traceId: 'trace-1', spanId: 's1', parentSpanId: null, promptId: 'p-spans',
+        startTs: new Date('2026-05-21T10:00:00.000Z'),
+        endTs: new Date('2026-05-21T10:00:00.500Z'),
+        spanName: 'claude_code.turn',
+      });
+      await insertSpan({
+        traceId: 'trace-2', spanId: 'other', parentSpanId: null, promptId: 'p-other',
+        startTs: new Date('2026-05-21T10:00:00.000Z'),
+        endTs: new Date('2026-05-21T10:00:00.500Z'),
+        spanName: 'claude_code.turn',
+      });
+
+      const timeline = await getPromptTimeline('p-spans');
+      expect(timeline.spans).toHaveLength(2);
+      expect(timeline.spans[0].spanId).toBe('s1');
+      expect(timeline.spans[1].spanId).toBe('s2');
+      expect(timeline.spans[0].parentSpanId).toBeNull();
+      expect(timeline.spans[1].parentSpanId).toBe('s1');
+      expect(timeline.spans[0].spanName).toBe('claude_code.turn');
+      expect(timeline.spans[1].spanName).toBe('claude_code.llm_request');
     });
   });
 

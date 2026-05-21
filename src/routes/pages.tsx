@@ -644,8 +644,8 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint">User prompts, API requests/errors, tool decisions, tool results. Cadence: every 5 s. Needed for the per-prompt timeline drilldown.</span>
               </div>
               <div className="settings-field settings-field-checkbox">
-                <label><input type="checkbox" id="settings-telemetry-traces-enabled" /> Traces (beta)</label>
-                <span className="settings-hint">Turn-level + sub-span detail for the Chrome-style waterfall view. Marked beta upstream; format may shift.</span>
+                <label><input type="checkbox" id="settings-telemetry-traces-enabled" /> Traces <span className="settings-beta-chip" title="Claude Code's enhanced-tracing surface is upstream-beta and may change without notice.">BETA</span></label>
+                <span className="settings-hint">Turn-level + sub-span detail for the Chrome-style waterfall view inside the per-prompt drilldown. Format may shift between Claude Code releases.</span>
               </div>
               <div className="settings-section-header">
                 <h3>Retention</h3>

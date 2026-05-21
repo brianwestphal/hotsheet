@@ -454,30 +454,83 @@ export interface PromptTimeline {
    *  attributes (when present). */
   model: string | null;
   entries: PromptTimelineEntry[];
+  /** HS-8475 / §68.4 — every `otel_spans` row tagged with this prompt
+   *  id, ordered by `start_ts ASC`. Empty when traces are off or the
+   *  prompt happened to land before traces were enabled. The §68.5.1
+   *  drilldown switches its body to a recursive span tree when this
+   *  array is non-empty. */
+  spans: SpanRow[];
+}
+
+/** HS-8475 / §68.4 — raw `otel_spans` row shape returned by
+ *  `getPromptTimeline`. The client-side `assembleSpanTree` helper
+ *  in `src/client/spanTree.ts` builds the parent-child tree from
+ *  these rows. */
+export interface SpanRow {
+  id: number;
+  traceId: string;
+  spanId: string;
+  parentSpanId: string | null;
+  spanName: string;
+  startTs: string;
+  endTs: string;
+  attributesJson: Record<string, unknown>;
+  statusCode: string | null;
 }
 
 export async function getPromptTimeline(promptId: string): Promise<PromptTimeline> {
   const db = await getDb();
-  const result = await db.query<{
-    id: number;
-    ts: string;
-    project_secret: string;
-    event_name: string;
-    attributes_json: Record<string, unknown> | null;
-    body_json: Record<string, unknown> | null;
-  }>(
-    `SELECT id, ts, project_secret, event_name, attributes_json, body_json
-     FROM otel_events
-     WHERE prompt_id = $1
-     ORDER BY ts ASC, id ASC`,
-    [promptId],
-  );
+  const [eventsResult, spansResult] = await Promise.all([
+    db.query<{
+      id: number;
+      ts: string;
+      project_secret: string;
+      event_name: string;
+      attributes_json: Record<string, unknown> | null;
+      body_json: Record<string, unknown> | null;
+    }>(
+      `SELECT id, ts, project_secret, event_name, attributes_json, body_json
+       FROM otel_events
+       WHERE prompt_id = $1
+       ORDER BY ts ASC, id ASC`,
+      [promptId],
+    ),
+    db.query<{
+      id: number;
+      trace_id: string;
+      span_id: string;
+      parent_span_id: string | null;
+      span_name: string;
+      start_ts: string;
+      end_ts: string;
+      attributes_json: Record<string, unknown> | null;
+      status_code: string | null;
+    }>(
+      `SELECT id, trace_id, span_id, parent_span_id, span_name, start_ts, end_ts, attributes_json, status_code
+       FROM otel_spans
+       WHERE prompt_id = $1
+       ORDER BY start_ts ASC, id ASC`,
+      [promptId],
+    ),
+  ]);
 
-  if (result.rows.length === 0) {
-    return { promptId, projectSecret: null, firstTs: null, lastTs: null, model: null, entries: [] };
+  const spans: SpanRow[] = spansResult.rows.map(r => ({
+    id: r.id,
+    traceId: r.trace_id,
+    spanId: r.span_id,
+    parentSpanId: r.parent_span_id,
+    spanName: r.span_name,
+    startTs: typeof r.start_ts === 'string' ? r.start_ts : new Date(r.start_ts).toISOString(),
+    endTs: typeof r.end_ts === 'string' ? r.end_ts : new Date(r.end_ts).toISOString(),
+    attributesJson: r.attributes_json ?? {},
+    statusCode: r.status_code,
+  }));
+
+  if (eventsResult.rows.length === 0) {
+    return { promptId, projectSecret: null, firstTs: null, lastTs: null, model: null, entries: [], spans };
   }
 
-  const entries: PromptTimelineEntry[] = result.rows.map(r => ({
+  const entries: PromptTimelineEntry[] = eventsResult.rows.map(r => ({
     id: r.id,
     ts: typeof r.ts === 'string' ? r.ts : new Date(r.ts).toISOString(),
     eventName: r.event_name,
@@ -493,11 +546,12 @@ export async function getPromptTimeline(promptId: string): Promise<PromptTimelin
 
   return {
     promptId,
-    projectSecret: result.rows[0].project_secret,
+    projectSecret: eventsResult.rows[0].project_secret,
     firstTs: entries[0].ts,
     lastTs: entries[entries.length - 1].ts,
     model,
     entries,
+    spans,
   };
 }
 
