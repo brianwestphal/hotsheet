@@ -298,8 +298,11 @@ function renderCostByProjectTable(rows: ProjectCostRow[]): HTMLElement {
     });
   }
 
-  // Click a row → switchProject + previewDrawerTab('telemetry') —
-  // delegated on the table so re-renders don't drop the listener.
+  // Click a row → switch to that project + open the analytics
+  // dashboard (which now carries the per-project "Claude usage"
+  // sub-region from HS-8508). Pre-HS-8509 this opened the drawer
+  // Telemetry tab; that tab was removed in Phase 5. Delegated on
+  // the table so re-renders don't drop the listener.
   table.addEventListener('click', (e) => {
     const target = e.target as Element | null;
     if (target === null) return;
@@ -312,9 +315,9 @@ function renderCostByProjectTable(rows: ProjectCostRow[]): HTMLElement {
     if (project === undefined) return;
     void (async () => {
       const { switchProject } = await import('./projectTabs.js');
-      const { previewDrawerTab } = await import('./commandLog.js');
+      const { enterDashboardMode } = await import('./dashboardMode.js');
       await switchProject(project);
-      previewDrawerTab('telemetry');
+      enterDashboardMode();
     })();
   });
 
@@ -573,11 +576,3 @@ export function showCrossProjectStatsPage(): void {
   ticketList.classList.remove('ticket-list-columns');
   void fetchAndRender(ticketList);
 }
-
-/**
- * Legacy alias preserved so the sidebar entry in
- * `telemetrySidebar.tsx` keeps working during the HS-8503 Phase 3
- * / 4 / 5 migration without a coordinated rename. HS-8509 deletes
- * the sidebar entry + this alias.
- */
-export const showTelemetryDashboard = showCrossProjectStatsPage;

@@ -14,8 +14,6 @@ import { describe, expect, it } from 'vitest';
 import {
   type DashboardPayload,
   renderShell,
-  showCrossProjectStatsPage,
-  showTelemetryDashboard,
 } from './crossProjectStatsPage.js';
 
 interface WindowTotals {
@@ -142,8 +140,3 @@ describe('renderShell (HS-8507 cross-project stats page)', () => {
   });
 });
 
-describe('backwards-compat alias (HS-8507)', () => {
-  it('exports showTelemetryDashboard as an alias of showCrossProjectStatsPage', () => {
-    expect(showTelemetryDashboard).toBe(showCrossProjectStatsPage);
-  });
-});

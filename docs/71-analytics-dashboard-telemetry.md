@@ -1,6 +1,6 @@
 # 71. Analytics-dashboard telemetry sections
 
-> **Status (2026-05-21):** Phase 4 of the HS-8503 telemetry-surface reshape. Adds per-project telemetry sections to the analytics dashboard. HS-8509 (Phase 5) finishes the reshape by removing the drawer Telemetry tab and rewiring the per-tab cost chip.
+> **Status (shipped 2026-05-21):** Phase 4 of the HS-8503 telemetry-surface reshape; the full reshape (Phases 3 / 4 / 5) is now landed.
 
 The analytics dashboard (`src/client/dashboard.tsx` — opened by the sidebar widget at the top of the sidebar) now carries a "Claude usage" sub-region beneath the existing ticket charts. All sections are scoped to the **active project** — matching the analytics dashboard's existing per-project orientation.
 
@@ -67,8 +67,9 @@ All three are pure render helpers; their opts accept callable formatters (`forma
 
 ## 71.8 Status
 
-**Shipped:**
+**Shipped (full reshape complete 2026-05-21):**
+- HS-8505 (Phase 1) — `getCostOverTime` + per-project payload backend.
+- HS-8506 (Phase 2) — shared cost-over-time chart.
+- HS-8507 (Phase 3) — cross-project stats page (§70).
 - HS-8508 (Phase 4) — analytics-dashboard telemetry section + the three extracted shared helpers + this doc.
-
-**Pending:**
-- HS-8509 (Phase 5) — drop the legacy sidebar entry (§70.2 transitional), drop the drawer Telemetry tab, rewire the per-tab cost chip (HS-8147) to the analytics dashboard (currently routes to the drawer tab), drop the `showTelemetryDashboard` alias + the `topExpensivePrompts` wire response field + its server query.
+- HS-8509 (Phase 5) — drop the legacy sidebar entry, drop the drawer Telemetry tab, rewire the per-tab cost chip (HS-8147) from drawer-preview to the analytics dashboard, drop the `showTelemetryDashboard` alias + the `topExpensivePrompts` wire response field + its server query.

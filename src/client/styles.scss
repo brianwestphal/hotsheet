@@ -10847,67 +10847,16 @@ label.detail-details-label {
 // the missing rules so the panel matches the dashboard's onboarding-card
 // aesthetic + uses the available drawer whitespace deliberately.
 
-.telemetry-drawer-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 16px 20px;
-  overflow-y: auto;
-  font-size: 13px;
-}
+// HS-8509 — `.telemetry-drawer-*` + `.telemetry-scope-toggle` rules
+// removed alongside the drawer Telemetry tab. The remaining
+// `.telemetry-*` rules below (chip / section / histogram / recent-
+// prompts) are still used by the shared render modules
+// (`telemetryToolHistogram.tsx`, `telemetryRecentPromptsList.tsx`,
+// the analytics-dashboard section, the cross-project stats page).
 
-.telemetry-drawer-loading,
-.telemetry-drawer-error {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 8px;
-  padding: 32px;
-  text-align: center;
-  color: var(--text-muted);
-  font-style: italic;
-}
-
-.telemetry-drawer-error { color: var(--danger); font-style: normal; }
-
-// Scope toggle (project / all-projects) — segmented pill control.
-.telemetry-scope-toggle {
-  display: inline-flex;
-  align-self: flex-start;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
-  padding: 2px;
-  gap: 2px;
-}
-
-.telemetry-scope-btn {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  padding: 4px 12px;
-  border-radius: calc(var(--radius) - 2px);
-  cursor: pointer;
-  transition: background 120ms ease-out, color 120ms ease-out;
-
-  &:hover { color: var(--text); }
-
-  &.active {
-    background: var(--bg);
-    color: var(--text);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-  }
-}
-
-// Empty-state card — vertically + horizontally centered onboarding hint
-// when the project has no telemetry rows yet. Mirrors the dashboard's
-// `.telemetry-dashboard-empty` card but sized for the drawer's smaller
-// viewport.
+// Empty-state card (kept; consumed by other surfaces if it ever
+// appears — currently unreferenced after the drawer removal but
+// cheap to retain).
 .telemetry-empty {
   flex: 1;
   display: flex;

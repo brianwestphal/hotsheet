@@ -1,15 +1,13 @@
 /**
- * HS-8508 — Shared recent-prompts list renderer. Extracted out of
- * `telemetryDrawer.tsx::renderRecentPromptRow` so the new HS-8508
- * analytics-dashboard telemetry section can reuse the same render.
+ * HS-8508 — Shared recent-prompts list renderer (originally extracted
+ * from the HS-8150 drawer Telemetry tab's `renderRecentPromptRow`;
+ * the drawer was retired in HS-8509 and this module is now the
+ * canonical home). Consumed by the analytics-dashboard telemetry
+ * section (HS-8508 / §71).
  *
  * Pure: takes a `RecentPromptRow[]` and returns a `<ul>` element. A
  * delegated click handler on the list fires `openPromptDrilldown`
  * (HS-8149) for the clicked row.
- *
- * Once HS-8509 retires the drawer Telemetry tab, this module is the
- * canonical home for the list render; the drawer was previously the
- * only consumer.
  */
 
 import { toElement } from './dom.js';

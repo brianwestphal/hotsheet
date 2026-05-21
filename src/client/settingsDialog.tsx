@@ -729,14 +729,10 @@ function bindTelemetryTab() {
         void import('./projectTabs.js').then(({ refreshAllCostChips }) => {
           refreshAllCostChips();
         }).catch(() => {});
-        // Re-render the drawer telemetry tab if it's the active drawer
-        // panel, so the notice banner appears/disappears immediately.
-        void import('./telemetryDrawer.js').then(({ loadAndRenderTelemetryDrawer }) => {
-          const panel = byIdOrNull('drawer-panel-telemetry');
-          if (panel !== null && (panel).style.display !== 'none') {
-            void loadAndRenderTelemetryDrawer();
-          }
-        }).catch(() => {});
+        // HS-8509 — the drawer Telemetry tab was removed; the
+        // analytics-dashboard telemetry section + cross-project stats
+        // page both render the subscription-mode notice via their own
+        // boot path on next open, so no re-render hook needed here.
       });
     });
   }

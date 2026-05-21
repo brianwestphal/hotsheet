@@ -226,13 +226,6 @@ export function switchDrawerTab(tab: string) {
     // Entering commands-log: refresh + mark as seen.
     updateBadge(false);
     void loadEntries();
-  } else if (tab === 'telemetry') {
-    // HS-8148 — entering Telemetry: fetch the §67.10.2 rollup payload
-    // and render. Lazy-import keeps the bundle slim for users who
-    // never open the tab.
-    void import('./telemetryDrawer.js').then(({ loadAndRenderTelemetryDrawer }) => {
-      void loadAndRenderTelemetryDrawer();
-    });
   } else if (tab.startsWith('terminal:')) {
     const terminalId = tab.slice('terminal:'.length);
     void import('./terminal.js').then(({ activateTerminal }) => { activateTerminal(terminalId); });

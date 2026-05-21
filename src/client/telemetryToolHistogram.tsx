@@ -1,16 +1,14 @@
 /**
- * HS-8508 — Shared per-tool latency histogram renderer. Extracted out
- * of `telemetryDrawer.tsx::renderHistogramRow` (private) so the new
- * HS-8508 analytics-dashboard telemetry section can reuse the exact
- * same render the drawer Telemetry tab has been using since HS-8150.
+ * HS-8508 — Shared per-tool latency histogram renderer (originally
+ * extracted from the HS-8150 drawer Telemetry tab's
+ * `renderHistogramRow`; the drawer was retired in HS-8509 and this
+ * module is now the canonical home). Consumed by the
+ * analytics-dashboard telemetry section (HS-8508 / §71).
  *
  * Pure: takes one `ToolLatencyHistogramRow` and returns a self-
  * contained `HTMLElement`. Inline `<svg>` bars sized proportionally
  * to the max bucket count + p50 / p90 / p99 markers in the header.
  * `currentColor` so SCSS theme drives the accent.
- *
- * Once HS-8509 retires the drawer Telemetry tab, this module is the
- * canonical home for the histogram render; consumers updated then.
  */
 
 import { raw } from '../jsx-runtime.js';

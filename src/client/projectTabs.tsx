@@ -730,18 +730,19 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
   });
 
   row.addEventListener('click', (e) => {
-    // HS-8147 — clicking the cost chip opens the drawer Telemetry tab
-    // scoped to this project, NOT the project-switch flow below.
+    // HS-8147 — clicking the cost chip switches to this project and
+    // opens the analytics dashboard, which carries the per-project
+    // "Claude usage" sub-region (HS-8508 / §71). Pre-HS-8509 this
+    // opened the drawer Telemetry tab; that tab was removed in
+    // Phase 5 of the HS-8503 telemetry-surface reshape and the
+    // analytics dashboard is the new home for per-project rollups.
     const target = e.target as HTMLElement | null;
     if (target !== null && target.closest('.project-tab-cost') !== null) {
       e.stopPropagation();
       void (async () => {
         if (activeProjectSignal.value?.secret !== p.secret) await switchProject(p);
-        // `previewDrawerTab` opens the panel (if closed) + switches to
-        // the named tab; we don't call the returned disposer because
-        // we WANT the user to stay on Telemetry, not bounce back.
-        const { previewDrawerTab } = await import('./commandLog.js');
-        previewDrawerTab('telemetry');
+        const { enterDashboardMode } = await import('./dashboardMode.js');
+        enterDashboardMode();
       })();
       return;
     }

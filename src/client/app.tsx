@@ -206,16 +206,12 @@ function bindAllUiHandlers(): void {
   // HS-7954 — wire the sidebar git status chip. Initial fetch happens
   // immediately; subsequent refetches driven by `/api/poll` + `window.focus`.
   initGitStatusChip();
-  // HS-8148 — install the §67.10.2 Telemetry drawer-tab scope-toggle
-  // delegated click listener. The actual data fetch is lazy — runs
-  // only when the user activates the tab (via commandLog.tsx::switchDrawerTab).
-  void import('./telemetryDrawer.js').then(({ initTelemetryDrawer }) => { initTelemetryDrawer(); });
   // HS-8147 — wire the per-project tab cost chip refresh loop.
   // Subscribes to the bell-state long-poll so chip refreshes piggyback
   // on the existing cadence (§67.10.1).
   void import('./costPoll.js').then(({ initCostPoll }) => { initCostPoll(); });
-  // HS-8479 — install the conditional Telemetry sidebar entry click
-  // handler + run the visibility check (§69.2). The entry appears only
+  // HS-8507 / §70.2 — install the cross-project stats header button's
+  // click handler + run the visibility gate. The button appears only
   // when at least one project has telemetry_enabled === true; the
   // settings dialog's master toggle also re-fetches after a PATCH.
   void import('./telemetrySidebar.js').then(({ initTelemetrySidebar }) => { initTelemetrySidebar(); });

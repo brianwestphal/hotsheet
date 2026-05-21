@@ -12,7 +12,6 @@ import {
   getCostByProject,
   getCostOverTime,
   getDashboardPayload,
-  getDrawerPayload,
   getHourlyActivityHeatmap,
   getPerTicketRollup,
   getProjectRollupPayload,
@@ -22,7 +21,6 @@ import {
   getTodayCost,
   getToolLatencyHistogram,
   getToolRollup,
-  getTopExpensivePrompts,
   getWindowTotals,
   resolveDashboardWindowSinceTs,
 } from './otelQueries.js';
@@ -604,27 +602,6 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     });
   });
 
-  describe('getDrawerPayload', () => {
-    it('returns every section in one bundle', async () => {
-      const now = new Date();
-      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet-4', source: 'main_agent', cost: 0.5 });
-      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', model: 'sonnet-4' });
-      await insertToolResultEvent({ ts: now, projectSecret: SECRET_A, toolName: 'Edit', durationMs: 100 });
-
-      const payload = await getDrawerPayload(SECRET_A);
-      expect(payload.today.cost).toBe(0.5);
-      expect(payload.allTime.cost).toBe(0.5);
-      expect(payload.costByModel).toHaveLength(1);
-      expect(payload.costByModel[0].model).toBe('sonnet-4');
-      expect(payload.toolRollup).toHaveLength(1);
-      expect(payload.toolRollup[0].tool).toBe('Edit');
-      expect(payload.querySourceRollup).toHaveLength(1);
-      expect(payload.querySourceRollup[0].source).toBe('main_agent');
-      expect(payload.recentPrompts).toHaveLength(1);
-      expect(payload.recentPrompts[0].promptId).toBe('p1');
-    });
-  });
-
   describe('getCostByProject (HS-8480 / §69.3.2)', () => {
     it('returns one row per project that has any cost in the window, sorted by cost DESC', async () => {
       const now = new Date();
@@ -698,49 +675,6 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     });
   });
 
-  describe('getTopExpensivePrompts (HS-8480 / §69.3.5)', () => {
-    async function insertApiRequestEvent(opts: {
-      ts: Date;
-      projectSecret: string;
-      promptId: string;
-      cost: number;
-    }): Promise<void> {
-      const db = await getDb();
-      await db.query(
-        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-        [opts.ts, opts.projectSecret, 'session-1', opts.promptId, 'claude_code.api_request', JSON.stringify({ cost: opts.cost }), JSON.stringify({})],
-      );
-    }
-
-    it('returns top N prompts by cost across every project', async () => {
-      const now = new Date();
-      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', model: 'sonnet' });
-      await insertPromptEvent({ ts: now, projectSecret: SECRET_B, promptId: 'p2', model: 'opus' });
-      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p3', model: 'sonnet' });
-
-      await insertApiRequestEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', cost: 0.5 });
-      await insertApiRequestEvent({ ts: now, projectSecret: SECRET_B, promptId: 'p2', cost: 2.0 });
-      await insertApiRequestEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p3', cost: 1.0 });
-
-      const rows = await getTopExpensivePrompts(null, 10);
-      expect(rows).toHaveLength(3);
-      expect(rows[0].promptId).toBe('p2');
-      expect(rows[0].cost).toBe(2);
-      expect(rows[0].model).toBe('opus');
-      expect(rows[0].projectSecret).toBe(SECRET_B);
-      expect(rows[1].promptId).toBe('p3');
-      expect(rows[1].cost).toBe(1);
-      expect(rows[2].promptId).toBe('p1');
-      expect(rows[2].cost).toBe(0.5);
-    });
-
-    it('returns empty when no api_request events have cost > 0', async () => {
-      const rows = await getTopExpensivePrompts(null, 10);
-      expect(rows).toEqual([]);
-    });
-  });
-
   describe('resolveDashboardWindowSinceTs (HS-8480 / §69.4)', () => {
     it('returns null for the all window', () => {
       expect(resolveDashboardWindowSinceTs('all')).toBeNull();
@@ -779,7 +713,6 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(payload.costByProject[0].projectSecret).toBe(SECRET_B); // higher cost first
       expect(payload.costByModel.length).toBeGreaterThan(0);
       expect(payload.hourlyActivity).toHaveLength(168);
-      expect(payload.topExpensivePrompts).toEqual([]); // no api_request events seeded
       expect(payload.costOverTime.length).toBeGreaterThan(0); // HS-8503 — densified series
     });
   });

@@ -1,6 +1,6 @@
 # 70. Cross-project stats page
 
-> **Status (2026-05-21):** Phase 3 of the HS-8503 telemetry-surface reshape. Replaces the (now-renamed) telemetry dashboard surface from §69. HS-8507 shipped the new header entry + page rename; HS-8508 (per-project analytics-dashboard telemetry section) and HS-8509 (Phase 5 cleanup — drop the legacy sidebar entry + drawer Telemetry tab + rewire the per-tab cost chip) follow.
+> **Status (shipped 2026-05-21):** Phase 3 of the HS-8503 telemetry-surface reshape; the full reshape (Phases 3 / 4 / 5) is now landed. Replaces the (renamed) telemetry dashboard surface from §69.
 
 The Cross-project stats page is a full-window surface that renders cross-project rollups of every signal Hot Sheet's OTLP receiver has captured. It answers questions like *"how much did I spend on Claude this month across every project"*, *"which project gets the bulk of my budget"*, *"how has cost trended over the last 90 days"*, *"what time of day do I actually use Claude"*, and *"how does cost split across models over the last 30 days."*
 
@@ -20,15 +20,13 @@ A new icon button `#cross-project-stats-toggle` sits in the app header immediate
 
 Clicking the button invokes `showCrossProjectStatsPage()` from `src/client/crossProjectStatsPage.tsx`, which takes over the main view region using the same swap pattern as the analytics dashboard (`#ticket-list` → `#dashboard-container`, toolbar / detail panel / batch toolbar hidden). Clicking any project tab, any sidebar entry, or the terminal-dashboard toggle returns to the previous view via the existing `restoreTicketList()` callback path wired into `bindSidebar`.
 
-### Legacy sidebar entry (transitional)
+### Legacy sidebar entry (removed)
 
-The pre-reshape sidebar entry `#sidebar-section-telemetry` (HS-8479) stays alive in parallel for the duration of the HS-8503 Phase 3 / 4 / 5 migration. Both surfaces route to the same `showCrossProjectStatsPage()` entry point. HS-8509 retires the sidebar half.
+The pre-reshape sidebar entry `#sidebar-section-telemetry` (HS-8479) was kept alive during the Phase 3 / 4 migration so users always had access to the surface while the analytics-dashboard per-project section landed. HS-8509 (Phase 5) removed it in full; the header button is now the only entry point.
 
 ## 70.3 Visibility gate
 
-The header button is gated by the same `anyProjectHasTelemetryEnabled(): Promise<boolean>` helper that gated the legacy sidebar entry — implemented server-side and surfaced via `GET /api/telemetry/enabled-anywhere` (`{ enabled: boolean }`). Client polling is event-driven: the visibility is refreshed once at boot and again on every Settings → Telemetry master-toggle PATCH (the dialog calls `refreshTelemetrySidebarVisibility()` after the PATCH).
-
-The same refresh function toggles both the legacy sidebar entry and the new header button so they stay in sync. Once HS-8509 deletes the sidebar entry, the function is renamed for clarity.
+The header button is gated by the same `anyProjectHasTelemetryEnabled(): Promise<boolean>` helper that gated the (now-removed) legacy sidebar entry — implemented server-side and surfaced via `GET /api/telemetry/enabled-anywhere` (`{ enabled: boolean }`). Client polling is event-driven: the visibility is refreshed once at boot and again on every Settings → Telemetry master-toggle PATCH (the dialog calls `refreshTelemetrySidebarVisibility()` after the PATCH — the function name is preserved for the duration of one more session for diff hygiene; a follow-up sweep renames it).
 
 ## 70.4 Page layout
 
@@ -37,11 +35,11 @@ Top-to-bottom inside the page body:
 1. **Header row.** Page title "Cross-project stats" + window selector `<select>` with five options: `today` / `week` / `month` (default) / `90d` / `all`. The window selector narrows every section below it; window selector changes trigger a fresh `GET /api/telemetry/dashboard` round-trip (not live — per the §67.6 "look at the numbers, not a live monitor" policy).
 2. **Window-total chips.** Four monospace dollar-amount tiles: Today / This week / This month / All time. Always rendered (regardless of the window selector); the selector only narrows the sections below.
 3. **Cost over time.** Stacked-area chart rendered by `renderCostOverTimeChart` from §70.5 (shared with the per-project analytics-dashboard section in HS-8508). Stacked / By project mode toggle visible only when 2+ projects are present in the data — both modes render identically for a single-project slice.
-4. **Cost by project.** Sortable table — Project / Cost / Tokens / Prompts / Last activity columns. Sort ascending or descending per column with a `▲` / `▼` indicator on the active sort header. Row click switches to that project + opens the drawer Telemetry tab (transitional fallback; HS-8509 rewires this to the per-project analytics-dashboard section from HS-8508).
+4. **Cost by project.** Sortable table — Project / Cost / Tokens / Prompts / Last activity columns. Sort ascending or descending per column with a `▲` / `▼` indicator on the active sort header. Row click switches to that project and opens the analytics dashboard (which carries the per-project "Claude usage" sub-region from §71).
 5. **Cost by model.** SVG donut + legend. Per-slice color from `MODEL_DONUT_COLORS` (cycled), one row per model with percent + absolute cost. Single-slice case shows a "100% — only one model used this window." caption.
 6. **Hourly activity heatmap.** 7×24 grid, Monday-first rows (PostgreSQL `EXTRACT(DOW)` returns Sunday=0; the renderer rotates by `(dow + 6) % 7`). Five-step logarithmic opacity scale on `currentColor` so SCSS theme drives the accent.
 
-**NOT rendered:** the top-10-most-expensive-prompts list. Removed per HS-8503 user feedback — cross-project prompt drilldown isn't useful at this surface. The legacy `topExpensivePrompts` field is still on the wire response but ignored on the client; HS-8509 drops it from the response shape.
+**NOT rendered:** the top-10-most-expensive-prompts list. Removed per HS-8503 user feedback — cross-project prompt drilldown isn't useful at this surface. The legacy `topExpensivePrompts` field was dropped from both the wire response and the `getTopExpensivePrompts` server query under HS-8509.
 
 ## 70.5 Cost-over-time chart
 
@@ -72,8 +70,6 @@ interface DashboardPayload {
   costByModel: ModelRollup[];
   hourlyActivity: HourlyActivityCell[];
   costOverTime: CostOverTimePoint[];
-  // Legacy — still on the wire, ignored on the client until HS-8509 drops it.
-  topExpensivePrompts: TopPromptRow[];
 }
 ```
 
@@ -85,19 +81,19 @@ The page is a "takeover" view sharing the analytics-dashboard's `#dashboard-cont
 
 ## 70.8 Implementation map
 
-- **`src/client/crossProjectStatsPage.tsx`** — page render + entry point. Renamed from `telemetryDashboard.tsx` under HS-8507. Exports `showCrossProjectStatsPage` and a legacy `showTelemetryDashboard` alias (deleted by HS-8509).
+- **`src/client/crossProjectStatsPage.tsx`** — page render + entry point. Renamed from `telemetryDashboard.tsx` under HS-8507.
 - **`src/client/telemetryCostOverTimeChart.tsx`** — shared chart component (HS-8506).
 - **`src/client/telemetryColors.ts`** — `MODEL_DONUT_COLORS` palette, shared by the page + the chart.
-- **`src/client/telemetrySidebar.tsx`** — visibility gate + click routing for BOTH the legacy sidebar entry and the new header button. Renamed to a generic `telemetryEntryPoints.tsx` by HS-8509 cleanup.
-- **`src/routes/pages.tsx`** — server-rendered HTML carries the new `#cross-project-stats-toggle` button immediately after `#terminal-dashboard-toggle`.
-- **`src/routes/telemetry.ts`** — `GET /api/telemetry/dashboard` + `GET /api/telemetry/enabled-anywhere` routes (unchanged from HS-8480 / HS-8479).
-- **`src/db/otelQueries.ts`** — `getDashboardPayload` extended with `getCostOverTime` under HS-8505. The `topExpensivePrompts` query stays alive until HS-8509 cleanup.
+- **`src/client/telemetrySidebar.tsx`** — visibility gate + click routing for the header button (legacy sidebar listener removed under HS-8509).
+- **`src/routes/pages.tsx`** — server-rendered HTML carries the `#cross-project-stats-toggle` button immediately after `#terminal-dashboard-toggle`.
+- **`src/routes/telemetry.ts`** — `GET /api/telemetry/dashboard` + `GET /api/telemetry/enabled-anywhere` routes.
+- **`src/db/otelQueries.ts`** — `getDashboardPayload` returns the post-HS-8509 shape (cost-over-time densified series, no `topExpensivePrompts`).
 
 ## 70.9 Status
 
-**Shipped:**
+**Shipped (full reshape complete 2026-05-21):**
+- HS-8505 (Phase 1) — `getCostOverTime` backend query + per-project payload.
+- HS-8506 (Phase 2) — shared cost-over-time chart component.
 - HS-8507 (Phase 3) — header button, page rename, top-10 removal, cost-over-time chart integration, this doc.
-
-**Pending:**
-- HS-8508 (Phase 4) — per-project analytics-dashboard telemetry sub-region. Reuses §70.5's shared chart with a single-project slice.
-- HS-8509 (Phase 5) — drop the legacy sidebar entry, drop the drawer Telemetry tab, rewire the per-tab cost chip to the analytics dashboard, drop the alias + the `topExpensivePrompts` wire field.
+- HS-8508 (Phase 4) — per-project analytics-dashboard telemetry sub-region (§71). Reuses §70.5's shared chart with a single-project slice.
+- HS-8509 (Phase 5) — drop the legacy sidebar entry, drop the drawer Telemetry tab, rewire the per-tab cost chip to the analytics dashboard, drop the `showTelemetryDashboard` alias + the `topExpensivePrompts` wire field + its server query.

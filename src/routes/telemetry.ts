@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 
-import { type DashboardWindow, getDashboardPayload, getDrawerPayload, getPerTicketRollup, getProjectRollupPayload, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
+import { type DashboardWindow, getDashboardPayload, getPerTicketRollup, getProjectRollupPayload, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
 import { readFileSettings } from '../file-settings.js';
 import { readProjectList } from '../project-list.js';
 import { getProjectBySecret } from '../projects.js';
@@ -26,30 +26,21 @@ function anyProjectHasTelemetryEnabled(): boolean {
 }
 
 /**
- * HS-8148 — backend API for the footer drawer Telemetry tab (§67.10.2).
+ * Telemetry API surface. Routes here are gated by the same
+ * `/api/*` middleware as the rest of the app (`X-Hotsheet-Secret`
+ * header OR same-origin enforcement). All routes are read-only
+ * `GET` — telemetry data lands via the OTLP receiver routes
+ * (`POST /v1/{metrics,logs,traces}`) and the cleanup sweep is
+ * triggered out-of-band.
  *
- * `GET /api/telemetry/drawer?scope=project|all` returns a single
- * `DrawerPayload` with every section the drawer renders (today / week
- * / all-time totals, by-model + by-tool + by-query-source rollups,
- * recent prompts list). One round-trip per drawer refresh keeps the
- * poll cadence light.
- *
- * `scope=project` (default) — restrict to the active project's
- * `project_secret`. `scope=all` — drop the project filter (the
- * drawer's "all projects" toolbar toggle).
- *
- * Subject to the same `/api/*` middleware as other API routes:
- * `X-Hotsheet-Secret` header validation OR same-origin enforcement.
- * Read-only — `GET` only.
+ * HS-8509 (Phase 5 cleanup) — removed the drawer-tab route
+ * `GET /api/telemetry/drawer` and its `getDrawerPayload` server
+ * helper along with the drawer Telemetry tab UI. The per-project
+ * rollup is now served via `GET /api/telemetry/project-rollup`
+ * (HS-8505) and consumed by the analytics-dashboard telemetry
+ * section (HS-8508 / §71).
  */
 export const telemetryRoutes = new Hono<AppEnv>();
-
-telemetryRoutes.get('/telemetry/drawer', async (c) => {
-  const scope = c.req.query('scope') ?? 'project';
-  const projectSecret = scope === 'all' ? null : c.get('projectSecret');
-  const payload = await getDrawerPayload(projectSecret);
-  return c.json(payload);
-});
 
 /**
  * HS-8147 — single-number "today's cost" for the per-project tab
