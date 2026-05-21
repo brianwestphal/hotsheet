@@ -12,8 +12,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_CATEGORIES } from '../types.js';
 import { toElement } from './dom.js';
-import { syncDraftBadge } from './draftRow.js';
+import { createDraftRow, syncDraftBadge } from './draftRow.js';
 import { state } from './state.js';
+import { draftCategory, registerCallbacks, setDraftCategory } from './ticketListState.js';
 
 describe('syncDraftBadge (HS-8375)', () => {
   beforeEach(() => {
@@ -72,5 +73,73 @@ describe('syncDraftBadge (HS-8375)', () => {
     syncDraftBadge('task');
     expect(badge.textContent).toBe(DEFAULT_CATEGORIES.find(c => c.id === 'task')!.shortLabel);
     expect(badge.style.backgroundColor).not.toBe(firstColor);
+  });
+});
+
+// Keyboard-shortcut path for changing the draft-row category while the
+// user is still typing the title. Reported as: "cant change issue type
+// while doing initial entry, only after submitted" — `ticketRow.tsx`
+// already handled Cmd/Ctrl + <key> for existing rows, but the draft
+// row's keydown listener only knew about Enter / ArrowDown, so the same
+// shortcut silently did nothing pre-fix.
+describe('createDraftRow keyboard shortcut (Cmd/Ctrl + <category-key>)', () => {
+  beforeEach(() => {
+    state.categories = [...DEFAULT_CATEGORIES];
+    state.view = 'all';
+    setDraftCategory(null);
+    // The draft row's badge-click and shortcut paths both call
+    // `callRenderTicketList()` / `callFocusDraftInput()`; register no-op
+    // stubs so the call doesn't crash inside the test.
+    registerCallbacks({
+      renderTicketList: () => {},
+      loadTickets: () => Promise.resolve(),
+      updateSelectionClasses: () => {},
+      updateBatchToolbar: () => {},
+      updateColumnSelectionClasses: () => {},
+      focusDraftInput: () => {},
+    });
+    document.body.replaceChildren(createDraftRow());
+  });
+
+  function pressShortcut(key: string, opts: { meta?: boolean; ctrl?: boolean; alt?: boolean } = { meta: true }): void {
+    const input = document.querySelector<HTMLInputElement>('.draft-input')!;
+    input.dispatchEvent(new KeyboardEvent('keydown', {
+      key, metaKey: opts.meta ?? false, ctrlKey: opts.ctrl ?? false,
+      altKey: opts.alt ?? false, bubbles: true, cancelable: true,
+    }));
+  }
+
+  it('switches the draft category and repaints the badge on Cmd+<key>', () => {
+    const bugKey = DEFAULT_CATEGORIES.find(c => c.id === 'bug')!.shortcutKey;
+    pressShortcut(bugKey, { meta: true });
+    expect(draftCategory).toBe('bug');
+    const badge = document.querySelector<HTMLElement>('.draft-row .ticket-category-badge')!;
+    expect(badge.textContent).toBe(DEFAULT_CATEGORIES.find(c => c.id === 'bug')!.shortLabel);
+  });
+
+  it('also accepts Ctrl+<key> (for non-Mac platforms)', () => {
+    const featureKey = DEFAULT_CATEGORIES.find(c => c.id === 'feature')!.shortcutKey;
+    pressShortcut(featureKey, { ctrl: true });
+    expect(draftCategory).toBe('feature');
+  });
+
+  it('does not change the category when no modifier is held (plain typing still works)', () => {
+    const bugKey = DEFAULT_CATEGORIES.find(c => c.id === 'bug')!.shortcutKey;
+    pressShortcut(bugKey, {});
+    expect(draftCategory).toBeNull();
+  });
+
+  it('does not change the category when Cmd+Alt+<key> is held (avoids stomping other shortcuts)', () => {
+    const bugKey = DEFAULT_CATEGORIES.find(c => c.id === 'bug')!.shortcutKey;
+    pressShortcut(bugKey, { meta: true, alt: true });
+    expect(draftCategory).toBeNull();
+  });
+
+  it('is a no-op in a category view (the badge is locked to match the view)', () => {
+    state.view = 'category:feature';
+    document.body.replaceChildren(createDraftRow());
+    const bugKey = DEFAULT_CATEGORIES.find(c => c.id === 'bug')!.shortcutKey;
+    pressShortcut(bugKey, { meta: true });
+    expect(draftCategory).toBeNull();
   });
 });

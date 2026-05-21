@@ -124,10 +124,31 @@ export async function getWindowTotals(
     ['claude_code.user_prompt', ...eventsClause.params],
   );
 
+  // HS-8514 — Claude Code's bundled exporter doesn't currently flush
+  // `claude_code.user_prompt` log events to a self-hosted OTLP
+  // receiver in every config (observed: long-running session shows
+  // healthy `cost.usage` metrics but zero `user_prompt` events).
+  // Fall back to a session-count proxy derived from the metrics
+  // table when the events query returns 0 — gives the user a
+  // meaningful non-zero activity count even when log events aren't
+  // flowing. `attributes_json->>'session.id'` is the per-data-point
+  // session id Claude Code stamps on every cost.usage point.
+  let promptCount = Number(promptsResult.rows[0]?.c ?? 0);
+  if (promptCount === 0) {
+    const sessionsResult = await db.query<{ c: bigint | number }>(
+      `SELECT COUNT(DISTINCT attributes_json->>'session.id') AS c
+       FROM otel_metrics
+       WHERE metric_name = $1
+         AND attributes_json->>'session.id' IS NOT NULL${metricsClause.clauses}`,
+      ['claude_code.cost.usage', ...metricsClause.params],
+    );
+    promptCount = Number(sessionsResult.rows[0]?.c ?? 0);
+  }
+
   return {
     cost: Number(costResult.rows[0]?.total ?? 0),
     tokens: Number(tokensResult.rows[0]?.total ?? 0),
-    promptCount: Number(promptsResult.rows[0]?.c ?? 0),
+    promptCount,
   };
 }
 
@@ -142,12 +163,18 @@ export async function getCostByModel(
   const db = await getDb();
   const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
 
+  // HS-8514 — `COUNT(DISTINCT session_id)` was returning 0 because
+  // the `session_id` column is sourced from the resource attributes
+  // and Claude Code's exporter stamps `session.id` on the
+  // per-data-point attributes instead. `COALESCE(session_id,
+  // attributes_json->>'session.id')` picks whichever path is
+  // populated.
   const result = await db.query<{ model: string | null; cost: string; tokens: string; prompt_count: string }>(
     `SELECT
         COALESCE(attributes_json->>'model', '(unknown)') AS model,
         SUM(CASE WHEN metric_name = 'claude_code.cost.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS cost,
         SUM(CASE WHEN metric_name = 'claude_code.token.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS tokens,
-        COUNT(DISTINCT session_id) AS prompt_count
+        COUNT(DISTINCT COALESCE(session_id, attributes_json->>'session.id')) AS prompt_count
      FROM otel_metrics
      WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage')${clauses.clauses}
      GROUP BY attributes_json->>'model'
@@ -205,12 +232,14 @@ export async function getQuerySourceRollup(
   const db = await getDb();
   const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
 
+  // HS-8514 — same `session_id` issue as `getCostByModel`; fall back
+  // to `attributes_json->>'session.id'` when the column is null.
   const result = await db.query<{ source: string | null; cost: string; tokens: string; prompt_count: string }>(
     `SELECT
         COALESCE(attributes_json->>'query.source', '(unknown)') AS source,
         SUM(CASE WHEN metric_name = 'claude_code.cost.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS cost,
         SUM(CASE WHEN metric_name = 'claude_code.token.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS tokens,
-        COUNT(DISTINCT session_id) AS prompt_count
+        COUNT(DISTINCT COALESCE(session_id, attributes_json->>'session.id')) AS prompt_count
      FROM otel_metrics
      WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage')${clauses.clauses}
      GROUP BY attributes_json->>'query.source'
@@ -801,7 +830,7 @@ export async function getCostByProject(sinceTs: Date | null): Promise<ProjectCos
   const tsClause = sinceTs === null ? '' : ' AND ts >= $2';
   const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
 
-  const [costResult, tokensResult, promptsResult, lastTsResult] = await Promise.all([
+  const [costResult, tokensResult, promptsResult, sessionsResult, lastTsResult] = await Promise.all([
     db.query<{ project_secret: string; total: string | null }>(
       `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
        FROM otel_metrics
@@ -816,12 +845,27 @@ export async function getCostByProject(sinceTs: Date | null): Promise<ProjectCos
        GROUP BY project_secret`,
       ['claude_code.token.usage', ...tsParams],
     ),
+    // HS-8514 — events-based prompt count falls back to a
+    // session-count proxy when no `user_prompt` events were captured
+    // (Claude Code's exporter sometimes doesn't flush log events to a
+    // self-hosted OTLP receiver even when metrics are flowing fine).
+    // Two queries — primary (events) + fallback (metrics distinct
+    // session.id) — merged per project below so any project with zero
+    // events still surfaces a meaningful activity count.
     db.query<{ project_secret: string; c: bigint | number }>(
       `SELECT project_secret, COUNT(DISTINCT prompt_id) AS c
        FROM otel_events
        WHERE event_name = $1 AND prompt_id IS NOT NULL${tsClause}
        GROUP BY project_secret`,
       ['claude_code.user_prompt', ...tsParams],
+    ),
+    db.query<{ project_secret: string; c: bigint | number }>(
+      `SELECT project_secret, COUNT(DISTINCT attributes_json->>'session.id') AS c
+       FROM otel_metrics
+       WHERE metric_name = $1
+         AND attributes_json->>'session.id' IS NOT NULL${tsClause}
+       GROUP BY project_secret`,
+      ['claude_code.cost.usage', ...tsParams],
     ),
     db.query<{ project_secret: string; last_ts: string }>(
       `SELECT project_secret, MAX(ts) AS last_ts
@@ -852,6 +896,14 @@ export async function getCostByProject(sinceTs: Date | null): Promise<ProjectCos
   for (const r of promptsResult.rows) {
     const row = byProject.get(r.project_secret);
     if (row !== undefined) row.promptCount = Number(r.c);
+  }
+  // HS-8514 — fall back to the session-count proxy for projects with
+  // zero `user_prompt` events. Keeps the events-based count for any
+  // project where it surfaced a value (events are the more precise
+  // signal when they're flowing).
+  for (const r of sessionsResult.rows) {
+    const row = byProject.get(r.project_secret);
+    if (row !== undefined && row.promptCount === 0) row.promptCount = Number(r.c);
   }
   for (const r of lastTsResult.rows) {
     const row = byProject.get(r.project_secret);

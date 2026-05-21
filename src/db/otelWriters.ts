@@ -176,11 +176,18 @@ export async function persistMetricsPayload(
           const ts = unixNanoToDate(point.timeUnixNano);
           if (ts === null) { dropped++; continue; }
           const attrs = flattenAttributes(point.attributes);
+          // HS-8514 — Claude Code's exporter stamps `session.id` on
+          // the per-data-point attributes, NOT the resource. Prefer
+          // the data-point value when the resource didn't carry one
+          // so the `session_id` column gets populated for downstream
+          // session-count proxies.
+          const sessionId = resCtx.sessionId ??
+            (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
           try {
             await db.query(
               `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
-              [ts, resCtx.projectSecret, resCtx.sessionId, metricName, JSON.stringify(attrs), JSON.stringify(point)],
+              [ts, resCtx.projectSecret, sessionId, metricName, JSON.stringify(attrs), JSON.stringify(point)],
             );
             inserted++;
           } catch (err) {

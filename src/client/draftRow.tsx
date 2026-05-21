@@ -57,6 +57,21 @@ export function createDraftRow(): HTMLElement {
     }
   });
   titleInput.addEventListener('keydown', async (e) => {
+    // Cmd/Ctrl + <category-shortcut-key> while typing the title — mirrors the
+    // post-submit shortcut handled in `ticketRow.tsx`, so the user can pick
+    // the type at the moment they're filling in the title without reaching
+    // for the mouse. Skipped in category views (the badge is locked there to
+    // match the click-to-change path above).
+    if ((e.metaKey || e.ctrlKey) && !e.altKey
+        && getCategoryShortcuts().some(s => s.key === e.key)
+        && !state.view.startsWith('category:')) {
+      e.preventDefault();
+      const cat = getCategoryShortcuts().find(s => s.key === e.key)!;
+      setDraftCategory(cat.value);
+      syncDraftBadge(cat.value);
+      callRenderTicketList();
+      return;
+    }
     if (e.key === 'Enter' && titleInput.value.trim()) {
       e.preventDefault();
       const rawTitle = titleInput.value.trim();
