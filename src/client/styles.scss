@@ -6,6 +6,43 @@
   padding: 0;
 }
 
+// HS-8494 — iOS-style thumb-only scrollbar. Applied to scroll
+// containers that need a visible affordance under macOS "Always show
+// scroll bars" (or any OS that reserves space for scrollbars) without
+// the heavy classic-scrollbar look. Transparent track + a slim
+// rounded thumb with a 2 px transparent border so the thumb appears
+// to float a few pixels inside the viewport — the same trick the
+// system uses on iOS / iPadOS overlay scrollbars.
+//
+// Uses `color-mix` against `var(--text)` so the thumb adapts to the
+// light + dark themes without hard-coded color values.
+@mixin ios-thumb-scrollbar($size: 10px, $thumb-opacity: 0.28, $hover-opacity: 0.5) {
+  scrollbar-width: thin; // Firefox
+
+  &::-webkit-scrollbar {
+    display: block; // override callers that defaulted to `display: none`
+    width: $size;
+    height: $size;
+    background: transparent;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--text) #{$thumb-opacity * 100%}, transparent);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: calc(#{$size} / 2);
+    transition: background-color 120ms ease-out;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, var(--text) #{$hover-opacity * 100%}, transparent);
+  }
+  &::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
 :root {
   color-scheme: light;
   --bg: #ffffff;
@@ -70,9 +107,19 @@ input, select, textarea {
   gap: 4px;
   overflow-x: auto;
   position: relative;
+  // HS-8494 — by default hide the scrollbar (clean strip for macOS
+  // "Automatic" + "When scrolling" scrollbar modes). When the OS
+  // reserves space for scrollbars ("Always" on macOS, default on
+  // Linux/Windows), `body.scrollbars-always-visible` is set at boot
+  // by `scrollbarPref.ts` and the iOS-thumb-only override below kicks
+  // in.
   scrollbar-width: none; // Firefox
   -ms-overflow-style: none; // IE/Edge
   &::-webkit-scrollbar { display: none; } // Chrome/Safari
+}
+
+body.scrollbars-always-visible .project-tabs-inner {
+  @include ios-thumb-scrollbar;
 }
 
 .project-tab {
@@ -4306,9 +4353,15 @@ body.terminal-dashboard-active {
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
 
-  &::-webkit-scrollbar {
-    height: 0;
-  }
+  // HS-8494 — hide the scrollbar by default (clean strip under macOS
+  // "Automatic"/"When scrolling" modes). Revealed as an iOS-style
+  // thumb-only when `body.scrollbars-always-visible` is set.
+  scrollbar-width: none;
+  &::-webkit-scrollbar { height: 0; }
+}
+
+body.scrollbars-always-visible .settings-tabs {
+  @include ios-thumb-scrollbar($size: 8px);
 }
 
 .settings-tab {

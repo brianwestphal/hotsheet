@@ -25,6 +25,7 @@ import { showPrintDialog } from './print.js';
 import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
 import { initQuitConfirm } from './quitConfirm.js';
 import { buildCombinedReaderEntries, buildDetailsReaderTitle, openReaderOverlay, syncDetailReaderButton } from './readerOverlay.js';
+import { applyScrollbarPrefClass } from './scrollbarPref.js';
 import { bindSettingsDialog } from './settingsDialog.js';
 import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
 import { initShare } from './share.js';
@@ -330,6 +331,13 @@ async function init() {
     // itself get logged. `[hotsheet longtask]` prefix; in-memory buffer via
     // `window.__hotsheetGetLongTasks()`.
     initLongTaskObserver();
+
+    // HS-8494 — detect whether the OS reserves space for scrollbars
+    // (macOS "Always show scroll bars" + Linux/Windows defaults) and
+    // tag the body so the otherwise-suppressed horizontal tab strips
+    // can reveal a minimal iOS-style thumb. Synchronous, cheap, runs
+    // once per app boot.
+    applyScrollbarPrefClass();
 
     await loadInitialState();
     bindAllUiHandlers();
