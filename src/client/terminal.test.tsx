@@ -342,6 +342,60 @@ describe('loadAndRenderTerminalTabs — drawer bindList identity (HS-8312)', () 
     expect((tabs[0] as HTMLElement).dataset.terminalId).toBe('t1');
   });
 
+  // HS-8562 — the close glyph for dynamic terminals MUST NOT be a real
+  // `<button>` nested inside the outer tab `<button>`. HTML5's parser
+  // treats nested buttons as a parse error and auto-closes the outer
+  // button when it sees the inner one, producing two sibling buttons.
+  // happy-dom (this test's environment) does NOT enforce that rule, so
+  // a parsed-DOM assertion would silently pass even with the bug. We
+  // assert directly on the rendered `outerHTML` string instead — that
+  // matches what the real browser parser actually sees.
+  //
+  // Symptoms before the fix:
+  //  - kerfjs 0.12.0's `toElement` returns a `DocumentFragment` for the
+  //    multi-root parse (kerfjs 0.11.1 silently dropped the trailing
+  //    siblings; the close glyph was missing but the outer button
+  //    survived as an `HTMLElement`).
+  //  - `DocumentFragment` has no `classList` / `style` / `remove`, so
+  //    `activateTerminal`'s `other.tabBtn.classList.toggle('active', …)`
+  //    throws — the new pane never mounts and the user sees "creates a
+  //    new tab but no terminal ever actually shows up".
+  //  - On the next project switch, the bindList tear-down skips the
+  //    fragment-cached entry (its `parentNode` is null), but the actual
+  //    leftover sibling buttons stay in the DOM, so subsequent rebuilds
+  //    interleave fresh + stale tabs and the user's existing terminals
+  //    appear to disappear.
+  it('renders a dynamic tab without nesting a <button> inside the outer <button> (HS-8562)', async () => {
+    apiMock.mockResolvedValue({
+      configured: [],
+      dynamic: [{ id: 'dyn-1', name: 'sh', command: 'sh', dynamic: true }],
+      home: '/Users/test',
+    });
+    await loadAndRenderTerminalTabs();
+    const tab = document.querySelector<HTMLElement>('#drawer-terminal-tabs > [data-terminal-id="dyn-1"]');
+    expect(tab).not.toBeNull();
+    // The outer tab is itself a <button>; the close glyph must be
+    // something else (a span, per the fix) so the rendered HTML has
+    // exactly one `<button` opening tag.
+    const buttonOpenTags = (tab!.outerHTML.match(/<button\b/gi) ?? []).length;
+    expect(buttonOpenTags).toBe(1);
+    // And the close glyph is still findable by class (now a span).
+    expect(tab!.querySelector('.drawer-tab-close')).not.toBeNull();
+  });
+
+  // HS-8562 — surface the bug at the boundary so future maintainers see
+  // a clear callsite-named error instead of a silent classList throw
+  // halfway through a downstream DOM mutation.
+  it('toElement throws when JSX renders multi-root HTML (HS-8562 hardening)', async () => {
+    const { toElement } = await import('./dom.js');
+    const { raw } = await import('../jsx-runtime.js');
+    // Force a multi-root HTML output by handing the runtime two top-
+    // level elements via `raw()` — happy-dom's template parser keeps
+    // both as siblings (unlike the nested-button case, which happy-dom
+    // doesn't split — see test above).
+    expect(() => toElement(raw('<span>one</span><span>two</span>'))).toThrow(/DocumentFragment/);
+  });
+
   it('appends a freshly-added id to the end of the strip without disturbing existing tabs', async () => {
     apiMock.mockResolvedValue({
       configured: [

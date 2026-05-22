@@ -26,7 +26,29 @@ export function toElement(jsx: SafeHtml): HTMLElement {
   // runtime kerf just calls `.toString()` on non-string input — so
   // pre-stringifying gives the identical runtime path while satisfying
   // TS without a structural-cast hack.
-  return kerfToElement(jsx.toString()) as HTMLElement;
+  const html = jsx.toString();
+  const result = kerfToElement(html);
+  // HS-8562: kerfjs 0.12.0 (HS-8529 bump) widened the return type to
+  // `Element | DocumentFragment` — invalid HTML that the browser parses
+  // as multi-root (e.g. `<button><button>...</button></button>`, which
+  // HTML5's parser splits into two sibling buttons) now returns a
+  // `DocumentFragment` instead of silently dropping the trailing
+  // siblings. The 244 existing callsites all type the result as
+  // `HTMLElement` and reach for `.classList` / `.style` / `.remove` —
+  // none of which exist on `DocumentFragment`. Catch the mistake here
+  // with a callsite-visible error rather than letting it surface as a
+  // mysterious `Cannot read properties of undefined` deep in the next
+  // DOM mutation.
+  if (!(result instanceof Element)) {
+    throw new Error(
+      'toElement: produced a DocumentFragment, not an Element. '
+      + 'Most common cause: invalid nested HTML (e.g. <button> inside <button>, '
+      + '<a> inside <a>, <form> inside <form>) that the parser splits into siblings. '
+      + 'Fix the JSX so it has exactly one root element. '
+      + `Input (first 200 chars): ${html.slice(0, 200)}`,
+    );
+  }
+  return result as HTMLElement;
 }
 
 /**

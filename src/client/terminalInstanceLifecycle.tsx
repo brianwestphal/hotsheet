@@ -102,19 +102,33 @@ export function shortCommandName(command: string): string {
 // reparent or hand-construct elements after the fact. This was the original
 // cause of HS-6342 (configured tabs rendered as blank buttons) and HS-6341
 // (dynamic tab + xterm pane both rendered with no header / no label).
+//
+// HS-8562: the close glyph for dynamic tabs is a `<span role="button">`, NOT
+// a nested `<button>`. Per the HTML5 spec a `<button>` inside another
+// `<button>` is a parse error — real browsers auto-close the outer button
+// and reparent the inner one as a sibling. Pre-kerfjs-0.12.0 our local
+// `toElement` wrapper silently returned just the first parsed element (the
+// outer button without the inner glyph); kerfjs 0.12.0 (HS-8529 bump) now
+// returns a `DocumentFragment` for multi-root parses, and `DocumentFragment`
+// has no `classList` / `style` / `remove` — so `activateTerminal`'s
+// `other.tabBtn.classList.toggle('active', ...)` throws and the new pane
+// never mounts. A span avoids the parser-driven split entirely.
 function buildTabBtnEl(config: TerminalTabConfig, tabName: string): HTMLElement {
   return toElement(
     <button className="drawer-tab drawer-terminal-tab" data-drawer-tab={`terminal:${config.id}`} data-terminal-id={config.id} draggable="true">
       <span className="drawer-tab-label">{tabName}</span>
       {config.dynamic === true
-        ? <button className="drawer-tab-close" title="Close terminal">{CLOSE_ICON}</button>
+        ? <span className="drawer-tab-close" role="button" title="Close terminal">{CLOSE_ICON}</span>
         : null}
     </button>
   );
 }
 
 function bindTabBtnHandlers(tabBtn: HTMLElement, config: TerminalTabConfig): void {
-  const closeBtn = tabBtn.querySelector<HTMLButtonElement>('.drawer-tab-close');
+  // HS-8562 — the close glyph is a `<span role="button">` (not a real
+  // `<button>`) so HTML5's no-nested-button parser rule doesn't split the
+  // tab into two siblings. See the rationale on `buildTabBtnEl`.
+  const closeBtn = tabBtn.querySelector<HTMLSpanElement>('.drawer-tab-close');
   tabBtn.addEventListener('click', (e) => {
     if ((e.target as HTMLElement).closest('.drawer-tab-close')) return;
     void requireHooks().selectDrawerTab(`terminal:${config.id}`);
