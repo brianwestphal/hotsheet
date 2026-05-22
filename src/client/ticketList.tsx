@@ -1,3 +1,4 @@
+import { raw } from '../jsx-runtime.js';
 import { captureSnapshot, flipAnimate } from './animate.js';
 import { api } from './api.js';
 import { renderColumnView, renderPreviewColumnView, unmountColumnView, updateColumnSelectionClasses } from './columnView.js';
@@ -735,9 +736,24 @@ export async function loadTickets() {
   }
   updateLoadMoreButton();
   setTicketsAnimated(rows);
-  // Fetch sync map before rendering so icons appear on first render
+  // Fetch sync map before rendering so icons appear on first render.
+  // Server delivers each entry's icon as an HTML string from the plugin
+  // manifest; convert it to `SafeHtml` once here so consumers can render
+  // with `{info.icon}` rather than `{raw(info.icon)}` on every list row.
   try {
-    setSyncedTicketMap(await api<Record<number, SyncedTicketInfo>>('/sync/tickets'));
+    const wire = await api<Record<number, { pluginId: string; icon?: string }>>('/sync/tickets');
+    const mapped: Record<number, SyncedTicketInfo> = {};
+    for (const [idStr, info] of Object.entries(wire)) {
+      const id = Number(idStr);
+      mapped[id] = info.icon != null && info.icon !== ''
+        ? {
+            pluginId: info.pluginId,
+            // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- plugin-supplied SVG string from a registered plugin's manifest (trusted plugin data).
+            icon: raw(info.icon),
+          }
+        : { pluginId: info.pluginId };
+    }
+    setSyncedTicketMap(mapped);
   } catch { /* non-critical */ }
   renderTicketList();
   // HS-7756 — fetch + render the per-bucket search counts. Done after the

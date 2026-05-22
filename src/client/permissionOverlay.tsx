@@ -19,7 +19,7 @@
  * imports (channelStore.ts, channelUI.tsx, the test file) keep working.
  */
 
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { extractPrimaryValue } from '../permissionAllowRules.js';
 import { apiWithSecret } from './api.js';
 import { buildBashPermissionPreview } from './bashPermissionPreview.js';
@@ -83,6 +83,9 @@ import { getProjectDefault, getSessionOverride, resolveAppearance, resolveAppear
 import { checkout, peekEntryDims } from './terminalCheckout.js';
 import { buildWritePermissionPreview } from './writePermissionPreview.js';
 
+const CHECK_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+const X_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
+
 export {
   clearTabPermissionHighlight,
   dismissedRequestIds,
@@ -125,10 +128,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   const tab = document.querySelector<HTMLElement>(`.project-tab[data-secret="${secret}"]`);
   if (tab) tab.classList.add('permission-highlight');
 
-  const checkIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-  const xIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
-
-  // HS-7951 — when the permission is for an Edit / Write tool with parseable
+// HS-7951 — when the permission is for an Edit / Write tool with parseable
   // `old_string` / `new_string`, render a color-coded inline unified diff
   // instead of the flat-JSON dump. Falls back to the existing string preview
   // for every other tool + for malformed Edit/Write payloads.
@@ -239,8 +239,8 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     // HS-8069 — actions slot: Allow / Deny icon buttons.
     actions = toElement(
       <div className="permission-popup-actions">
-        <button className="permission-popup-allow" title="Allow">{raw(checkIcon)}</button>
-        <button className="permission-popup-deny" title="Deny">{raw(xIcon)}</button>
+        <button className="permission-popup-allow" title="Allow">{CHECK_ICON}</button>
+        <button className="permission-popup-deny" title="Deny">{X_ICON}</button>
       </div>
     );
 

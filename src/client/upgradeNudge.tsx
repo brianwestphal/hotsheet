@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 
@@ -175,8 +174,8 @@ function writeLastShown(value: number): void {
   try { localStorage.setItem(LOCAL_STORAGE_KEY, String(value)); } catch { /* private mode etc. */ }
 }
 
-const DOWNLOAD_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>';
-const CLOSE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+const DOWNLOAD_ICON_SVG = <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>;
+const CLOSE_ICON_SVG = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
 
 /** Build + mount the dialog. Exported so tests can drive it without going
  *  through the throttle / Tauri / platform-detection gates. */
@@ -191,7 +190,7 @@ export function showUpgradeNudgeDialog(resolved: PlatformResolved): void {
         <div className="upgrade-nudge-header">
           <span className="upgrade-nudge-title">Get the desktop app</span>
           <button className="upgrade-nudge-close" type="button" title="Close" aria-label="Close">
-            {raw(CLOSE_ICON_SVG)}
+            {CLOSE_ICON_SVG}
           </button>
         </div>
         <div className="upgrade-nudge-body">
@@ -199,7 +198,7 @@ export function showUpgradeNudgeDialog(resolved: PlatformResolved): void {
             Hot Sheet's installable version adds an <strong>embedded terminal</strong> — see your shell, Claude, and any other tool right alongside your tickets. Plus auto-updates, native-OS integration, and a few other features the npm-launched server can't provide.
           </p>
           <button className="upgrade-nudge-cta" type="button">
-            {raw(DOWNLOAD_ICON_SVG)}
+            {DOWNLOAD_ICON_SVG}
             <span>{resolved.label}</span>
           </button>
           <button className="upgrade-nudge-secondary" type="button">View All Releases</button>

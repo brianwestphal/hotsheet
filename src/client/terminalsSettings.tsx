@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -85,8 +84,8 @@ async function loadCommandSuggestions(): Promise<string[]> {
   return commandSuggestionsPromise;
 }
 
-const TRASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
-const PENCIL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+const TRASH_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>;
+const PENCIL_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>;
 
 /** Load terminals from file-settings and render. Exported so the dialog can call on open. */
 export async function loadAndRenderTerminalsSettings(): Promise<void> {
@@ -192,8 +191,8 @@ function renderRow(index: number): HTMLElement {
       <span className="command-drag-handle" title="Drag to reorder">{'☰'}</span>
       <span className="cmd-outline-name">{displayName}</span>
       <span className="settings-terminal-command">{entry.command}</span>
-      <button type="button" className="cmd-outline-edit-btn" title="Edit">{raw(PENCIL_ICON)}</button>
-      <button type="button" className="cmd-outline-delete-btn" title="Delete">{raw(TRASH_ICON)}</button>
+      <button type="button" className="cmd-outline-edit-btn" title="Edit">{PENCIL_ICON}</button>
+      <button type="button" className="cmd-outline-delete-btn" title="Delete">{TRASH_ICON}</button>
     </div>
   );
 
@@ -287,12 +286,12 @@ function openEditor(
     || entry.fontFamily !== undefined
     || entry.fontSize !== undefined;
 
-  const themeOptions = TERMINAL_THEMES
-    .map(t => `<option value="${t.id}"${t.id === initialTheme ? ' selected' : ''}>${escapeHtml(t.name)}</option>`)
-    .join('');
-  const fontOptions = TERMINAL_FONTS
-    .map(f => `<option value="${f.id}"${f.id === initialFontFamily ? ' selected' : ''}>${escapeHtml(f.name)}</option>`)
-    .join('');
+  const themeOptions = TERMINAL_THEMES.map(t => (
+    <option value={t.id} selected={t.id === initialTheme}>{t.name}</option>
+  ));
+  const fontOptions = TERMINAL_FONTS.map(f => (
+    <option value={f.id} selected={f.id === initialFontFamily}>{f.name}</option>
+  ));
 
   // HS-7958 — the dialog field ids previously included the array index, but
   // in add-mode the entry isn't in the array yet. Use the entry's own id so
@@ -354,12 +353,12 @@ function openEditor(
             <summary>Appearance</summary>
             <div className="settings-field">
               <label htmlFor={`term-edit-theme-${fieldIdSuffix}`}>Theme</label>
-              {raw(`<select id="term-edit-theme-${fieldIdSuffix}" class="term-edit-theme">${themeOptions}</select>`)}
+              <select id={`term-edit-theme-${fieldIdSuffix}`} className="term-edit-theme">{themeOptions}</select>
               <span className="settings-hint">Default selected = current project default. Pick a different theme to override for this terminal only.</span>
             </div>
             <div className="settings-field">
               <label htmlFor={`term-edit-font-${fieldIdSuffix}`}>Font</label>
-              {raw(`<select id="term-edit-font-${fieldIdSuffix}" class="term-edit-font">${fontOptions}</select>`)}
+              <select id={`term-edit-font-${fieldIdSuffix}`} className="term-edit-font">{fontOptions}</select>
             </div>
             <div className="settings-field">
               <label htmlFor={`term-edit-font-size-${fieldIdSuffix}`}>Font size</label>
@@ -565,14 +564,6 @@ async function wireCommandCombobox(
       activeIndex = -1;
     }
   });
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 /** Debounced save of the full terminals array. */

@@ -15,7 +15,6 @@
  * mirrors the order top-down by impact.
  */
 
-import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { MODEL_DONUT_COLORS } from './telemetryColors.js';
 
@@ -59,14 +58,16 @@ export function renderCostByModelDonut(
     const dashoffset = -accumulated;
     accumulated += sliceLen;
     const color = MODEL_DONUT_COLORS[i % MODEL_DONUT_COLORS.length];
-    return `<circle cx="${String(center)}" cy="${String(center)}" r="${String(radius)}" fill="none" stroke="${color}" stroke-width="${String(strokeWidth)}" stroke-dasharray="${dasharray}" stroke-dashoffset="${String(dashoffset)}" transform="rotate(-90 ${String(center)} ${String(center)})" />`;
-  }).join('');
+    return (
+      <circle cx={String(center)} cy={String(center)} r={String(radius)} fill="none" stroke={color} stroke-width={String(strokeWidth)} stroke-dasharray={dasharray} stroke-dashoffset={String(dashoffset)} transform={`rotate(-90 ${String(center)} ${String(center)})`} />
+    );
+  });
 
   const isSingleSlice = sorted.length === 1;
   return toElement(
     <div className="telemetry-dashboard-model-donut-wrap">
       <svg className="telemetry-dashboard-model-donut" width={String(size)} height={String(size)} viewBox={`0 0 ${String(size)} ${String(size)}`} role="img" aria-label="Cost by model donut chart">
-        {raw(slices)}
+        {slices}
       </svg>
       <ul className="telemetry-dashboard-model-legend">
         {sorted.map((row, i) => {

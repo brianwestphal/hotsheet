@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
 
@@ -43,7 +42,7 @@ interface GitStatusJson {
   files?: GitStatusFiles;
 }
 
-const CLOSE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+const CLOSE_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
 
 let activePopover: HTMLElement | null = null;
 let activeAnchor: HTMLElement | null = null;
@@ -75,7 +74,7 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
     <div className="git-popover" role="dialog" aria-label="Git status">
       <div className="git-popover-header">
         <span className="git-popover-title">Loading…</span>
-        <button className="git-popover-close" type="button" title="Close">{raw(CLOSE_ICON)}</button>
+        <button className="git-popover-close" type="button" title="Close">{CLOSE_ICON}</button>
       </div>
       <div className="git-popover-body"></div>
     </div>

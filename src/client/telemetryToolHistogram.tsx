@@ -11,7 +11,6 @@
  * `currentColor` so SCSS theme drives the accent.
  */
 
-import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 
 export interface ToolLatencyHistogramRow {
@@ -54,8 +53,12 @@ export function renderToolHistogramRow(
     const barHeight = c === 0 ? 0 : Math.max(2, (c / maxCount) * chartHeight);
     const x = i * (barWidth + barGap);
     const y = chartHeight - barHeight;
-    return `<rect x="${String(x)}" y="${String(y)}" width="${String(barWidth)}" height="${String(barHeight)}" fill="currentColor" opacity="${c === 0 ? '0.15' : '0.7'}"><title>${HISTOGRAM_BUCKET_LABELS[i]}: ${String(c)}</title></rect>`;
-  }).join('');
+    return (
+      <rect x={String(x)} y={String(y)} width={String(barWidth)} height={String(barHeight)} fill="currentColor" opacity={c === 0 ? '0.15' : '0.7'}>
+        <title>{`${HISTOGRAM_BUCKET_LABELS[i]}: ${String(c)}`}</title>
+      </rect>
+    );
+  });
 
   return toElement(
     <div className="telemetry-histogram-row">
@@ -69,7 +72,7 @@ export function renderToolHistogramRow(
         </span>
       </div>
       <svg className="telemetry-histogram-svg" width={String(width)} height={String(height)} viewBox={`0 0 ${String(width)} ${String(height)}`} role="img" aria-label={`${row.tool} latency histogram`}>
-        {raw(bars)}
+        {bars}
       </svg>
     </div>
   );

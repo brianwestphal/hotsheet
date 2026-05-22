@@ -402,7 +402,7 @@ pluginRoutes.post('/plugins/:id/sync/schedule', async (c) => {
  *  and the push-ticket endpoint (required prefs present). */
 pluginRoutes.get('/backends', async (c) => {
   const all = getAllBackends();
-  const result: { id: string; name: string; capabilities: unknown; icon: string | undefined }[] = [];
+  const result: { id: string; name: string; capabilities: unknown }[] = [];
   for (const b of all) {
     if (!await isPluginEnabledForProject(b.id)) continue;
     const plugin = getPluginById(b.id);
@@ -413,7 +413,6 @@ pluginRoutes.get('/backends', async (c) => {
       id: b.id,
       name: b.name,
       capabilities: b.capabilities,
-      icon: plugin.manifest.icon,
     });
   }
   return c.json(result);

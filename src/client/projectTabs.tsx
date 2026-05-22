@@ -550,7 +550,8 @@ export function updateStatusDots() {
 
 // Lucide `bell` glyph. Matches the terminal-drawer Phase 1 indicator so the
 // two bell affordances read as the same concept.
-const PROJECT_TAB_BELL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
+const PROJECT_TAB_BELL_ICON: SafeHtml =
+  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>;
 
 /**
  * Cross-project bell indicator (HS-6603 §24.4.2). Called by bellPoll on every
@@ -577,10 +578,10 @@ export function updateProjectBellIndicators(
     if (shouldShow && !hadBell) {
       // First-time add: inject the icon and let the 350 ms wiggle animation
       // run once. Re-adding .has-bell to a tab that already had it should NOT
-      // replay the animation (innerHTML stays in place).
-      bellSpan.innerHTML = PROJECT_TAB_BELL_ICON;
+      // replay the animation (the existing children stay in place).
+      bellSpan.replaceChildren(toElement(PROJECT_TAB_BELL_ICON));
     } else if (!shouldShow && hadBell) {
-      bellSpan.innerHTML = '';
+      bellSpan.replaceChildren();
     }
   }
 }

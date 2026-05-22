@@ -1,3 +1,4 @@
+import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { api } from './api.js';
@@ -25,7 +26,8 @@ let cachedElements: PluginUIElement[] = [];
 
 const busyPlugins = new Map<string, string>(); // pluginId → display name
 
-const SPINNER_12 = '<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+const SPINNER_12: SafeHtml =
+  <svg className="spin" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>;
 
 function setPluginBusy(pluginId: string, name: string, busy: boolean) {
   if (busy) busyPlugins.set(pluginId, name);
@@ -57,7 +59,7 @@ function updateBusyIndicator() {
   }
 
   indicator.style.display = '';
-  indicator.innerHTML = `${SPINNER_12} ${label}`;
+  indicator.replaceChildren(toElement(<>{SPINNER_12} {label}</>));
 }
 
 function updateToolbarButtonState(_pluginId: string, busy: boolean) {
@@ -157,7 +159,10 @@ function createPluginButton(el: PluginUIElement): HTMLElement | null {
       className={`plugin-toolbar-btn${el.style === 'primary' ? ' primary' : ''}${el.style === 'danger' ? ' danger' : ''}`}
       title={el.title ?? el.label ?? ''}
     >
-      {el.icon != null ? raw(el.icon) : null}
+      {el.icon != null
+        // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `el.icon` is plugin-supplied SVG from a `defineUIElements({...})` manifest entry (trusted plugin data).
+        ? raw(el.icon)
+        : null}
       {el.label != null && (!isToolbar || el.icon == null) ? <span>{el.label}</span> : null}
     </button>
   );
@@ -171,7 +176,10 @@ function createPluginElement(el: PluginUIElement): HTMLElement | null {
   if (el.type === 'link' && el.url != null && el.url !== '') {
     const link = toElement(
       <a className="plugin-ui-link" href={el.url} target="_blank" rel="noopener" title={el.title ?? ''}>
-        {el.icon != null && el.icon !== '' ? raw(el.icon) : null}
+        {el.icon != null && el.icon !== ''
+          // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `el.icon` is plugin-supplied SVG from a `defineUIElements({...})` manifest entry.
+          ? raw(el.icon)
+          : null}
         {el.label ?? el.url}
       </a>
     );

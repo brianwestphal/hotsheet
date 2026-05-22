@@ -1,5 +1,6 @@
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
+import type { SafeHtml } from '../jsx-runtime.js';
 import { apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
 import { openExternalUrl } from './tauriIntegration.js';
@@ -28,6 +29,8 @@ import {
 } from './terminalTileGridRender.js';
 import type { InternalTile, TileGridContext } from './terminalTileGridTypes.js';
 import { CENTER_ANIMATION_MS, SINGLE_CLICK_DELAY_MS, TILE_INITIAL_COLS, TILE_INITIAL_ROWS } from './terminalTileGridTypes.js';
+
+const BACK_ARROW_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>;
 
 /**
  * HS-8404 / HS-8411 (Cycle 3 lift + Cycle 4b split) — click /
@@ -320,7 +323,7 @@ export function enterDedicatedView(ctx: TileGridContext, tile: InternalTile, pri
     <div className={c.dedicatedClass} data-secret={tile.entry.secret} data-terminal-id={tile.entry.id}>
       <div className={c.dedicatedBarClass}>
         <button className={c.dedicatedBackClass} title="Back to grid">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+          {BACK_ARROW_ICON}
           <span>Back</span>
         </button>
         <div className={c.dedicatedLabelClass}>{tile.entry.label}</div>

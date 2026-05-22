@@ -28,6 +28,7 @@
 
 import type { Terminal } from '@xterm/xterm';
 
+import type { SafeHtml } from '../jsx-runtime.js';
 import { DASHBOARD_SCOPE, filterVisible as filterVisibleEntriesScoped } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
 import { switchProject } from './projectTabs.js';
@@ -76,6 +77,8 @@ export interface PaintHooks {
 }
 
 let hooks: PaintHooks | null = null;
+
+const PLUS_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>;
 
 /** Initialize the paint module with its cross-module callbacks. Must be
  *  called once before any paint function fires (the main module wires
@@ -381,7 +384,7 @@ function buildSectionEl(data: ProjectSectionData): HTMLElement {
           aria-label={`Add terminal to ${data.project.name}`}
           data-secret={data.project.secret}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+          {PLUS_ICON}
         </button>
       </div>
       {count === 0 ? (

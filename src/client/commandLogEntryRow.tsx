@@ -18,7 +18,7 @@
  * partial-output effect can reuse them without re-implementing the rules.
  */
 
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { commandLogSelectionStore } from './commandLogSelectionStore.js';
 import {
@@ -38,6 +38,21 @@ import { state } from './state.js';
 type LogEntry = AnnotatedEntry;
 
 const cancelingShellIds = new Set<number>();
+
+/** Lucide `copy` glyph for the context-menu "Copy" action. */
+const COPY_ICON: SafeHtml = (
+  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+  </svg>
+);
+
+/** Filled square — the in-row "Stop running shell process" affordance. */
+const STOP_GLYPH: SafeHtml = (
+  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+    <rect x="4" y="4" width="16" height="16" rx="2"/>
+  </svg>
+);
 
 /** Drop ids from the `cancelingShellIds` set whose process is no longer
  *  in the server-reported running list. Called from the `loadEntries`
@@ -136,7 +151,7 @@ function showContextMenu(x: number, y: number, entries: LogEntry[]) {
   const menu = toElement(
     <div className="command-log-context-menu" style={`left:${x}px;top:${y}px`}>
       <div className="context-menu-item" data-action="copy">
-        <span className="dropdown-icon">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>')}</span>
+        <span className="dropdown-icon">{COPY_ICON}</span>
         <span className="context-menu-label">Copy{entries.length > 1 ? ` (${entries.length} entries)` : ''}</span>
       </div>
     </div>
@@ -210,7 +225,7 @@ function buildLogEntryEl(entry: LogEntry, s: LogEntryRenderState): HTMLElement {
         {isRunningShell && isCanceling
           ? <span className="command-log-canceling">{'Canceling…'}</span>
           : isRunningShell
-          ? <button className="command-log-stop-btn" title="Stop process">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>')}</button>
+          ? <button className="command-log-stop-btn" title="Stop process">{STOP_GLYPH}</button>
           : null}
         <span className="command-log-time">{time}</span>
       </div>

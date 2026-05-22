@@ -1,4 +1,4 @@
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { suppressAnimation } from './animate.js';
 import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
@@ -19,6 +19,18 @@ import { getTicketSignals, ticketsByStatusSignal } from './ticketsStore.js';
 import { trackedBatch } from './undo/actions.js';
 
 // --- Column scroll state ---
+
+/** HS-8520 — render the sync-icon JSX provided by a sync plugin's
+ *  ticket-map entry. The icon is sourced from the plugin manifest
+ *  (set via `setSyncedTicketMap`); the string→JSX conversion happens
+ *  once at fetch time in `ticketList.tsx::loadTickets`, so this
+ *  render path just consumes the `SafeHtml` directly. */
+function renderSyncIcon(ticket: Ticket): SafeHtml | null {
+  if (!(ticket.id in syncedTicketMap)) return null;
+  const info = syncedTicketMap[ticket.id];
+  if (info.icon === undefined) return null;
+  return <span className="ticket-sync-icon">{info.icon}</span>;
+}
 
 export function saveColumnScrollState(container: HTMLElement): { scrollLeft: number; columns: Partial<Record<string, number>> } {
   const result = { scrollLeft: 0, columns: {} as Partial<Record<string, number>> };
@@ -271,7 +283,7 @@ export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
           {ticket.up_next ? '\u2605' : '\u2606'}
         </span>
       </div>
-      <div className="column-card-title">{ticket.id in syncedTicketMap ? <span className="ticket-sync-icon">{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}{getIndicatorDotType(ticket) != null ? <span className={`ticket-unread-dot${getIndicatorDotType(ticket) === 'feedback' ? ' feedback' : ''}`}></span> : null}{ticket.title}</div>
+      <div className="column-card-title">{renderSyncIcon(ticket)}{getIndicatorDotType(ticket) != null ? <span className={`ticket-unread-dot${getIndicatorDotType(ticket) === 'feedback' ? ' feedback' : ''}`}></span> : null}{ticket.title}</div>
       {parseTags(ticket.tags).length > 0 ? (
         <div className="column-card-tags">
           {parseTags(ticket.tags).map(tag => (
@@ -468,7 +480,7 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
           {ticket.up_next ? '\u2605' : '\u2606'}
         </button>
       </div>
-      <div className="column-card-title">{ticket.id in syncedTicketMap ? <span className="ticket-sync-icon">{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}{getIndicatorDotType(ticket) != null ? <span className={`ticket-unread-dot${getIndicatorDotType(ticket) === 'feedback' ? ' feedback' : ''}`}></span> : null}{ticket.title}</div>
+      <div className="column-card-title">{renderSyncIcon(ticket)}{getIndicatorDotType(ticket) != null ? <span className={`ticket-unread-dot${getIndicatorDotType(ticket) === 'feedback' ? ' feedback' : ''}`}></span> : null}{ticket.title}</div>
       {parseTags(ticket.tags).length > 0 ? (
         <div className="column-card-tags">
           {parseTags(ticket.tags).map(tag => (
@@ -671,8 +683,9 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
  *  ordering in `createColumnCard`. */
 function rebuildColumnCardTitleHost(host: HTMLElement, ticket: Ticket): void {
   host.replaceChildren();
-  if (ticket.id in syncedTicketMap) {
-    host.appendChild(toElement(<span className="ticket-sync-icon">{raw(syncedTicketMap[ticket.id].icon ?? '')}</span>));
+  const syncIcon = renderSyncIcon(ticket);
+  if (syncIcon !== null) {
+    host.appendChild(toElement(syncIcon));
   }
   const dotType = getIndicatorDotType(ticket);
   if (dotType !== null) {

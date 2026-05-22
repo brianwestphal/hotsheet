@@ -19,7 +19,9 @@ import { pushNotesUndo } from './undo/actions.js';
  *  for CSP friendliness in Tauri's WKWebView. Inherits `currentColor` so the
  *  hover state lights up alongside the megaphone. See docs/49-reader-mode.md
  *  §49.3 for the path data origin. */
-const BOOK_READER_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 8h2"/><path d="M6 12h2"/></svg>';
+const BOOK_READER_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 8h2"/><path d="M6 12h2"/></svg>;
+const MEGAPHONE_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>;
+const ADD_NOTE_PLUS_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>;
 
 /** HS-7601 — the megaphone button only appears when the channel feature is
  *  enabled. Wraps `isChannelEnabled` so the call site reads clearly. */
@@ -162,21 +164,24 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
                 ? <span className="note-actions">
                     {showReader
                       ? <button className="note-reader-btn" title="Open in reader mode" type="button" data-note-id={note.id ?? ''}>
-                          {raw(BOOK_READER_ICON)}
+                          {BOOK_READER_ICON}
                         </button>
                       : null}
                     {showMegaphone
                       ? <button className="note-megaphone-btn" title="Send this note to Claude via channel" type="button" data-note-id={note.id ?? ''}>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
+                          {MEGAPHONE_ICON}
                         </button>
                       : null}
                   </span>
                 : null}
             </div>
           : null}
-        <div className="note-text note-markdown">
-          {isEmpty ? <span className="note-placeholder">Click to add a note...</span> : raw(renderedText)}
-        </div>
+        <div className="note-text note-markdown">{
+          isEmpty
+            ? <span className="note-placeholder">Click to add a note...</span>
+            // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `renderedText` is sanitized markdown HTML from `marked.parse(...)` + `linkifyWithCachedPrefixes`.
+            : raw(renderedText)
+        }</div>
       </div>
     );
 
@@ -401,7 +406,7 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
   // so the add-note logic stays in one place.
   const addBottomBtn = toElement(
     <button className="detail-add-note-bottom-btn" title="Add note">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+      {ADD_NOTE_PLUS_ICON}
       <span>Add note</span>
     </button>
   );

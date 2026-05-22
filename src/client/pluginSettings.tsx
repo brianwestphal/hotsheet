@@ -9,6 +9,8 @@ import { STATUS_DOT } from './pluginTypes.js';
 import { refreshPluginUI } from './pluginUI.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 
+const CONFIGURE_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>;
+
 export function bindPluginSettings() {
   const settingsBtn = byId('settings-btn');
   settingsBtn.addEventListener('click', () => { void loadPlugins(); });
@@ -81,7 +83,10 @@ function showFindPluginsDialog() {
       const row = toElement(
         <div className="bundled-plugin-row">
           <div className="bundled-plugin-info">
-            {bp.manifest.icon != null && bp.manifest.icon !== '' ? <span className="bundled-plugin-icon">{raw(bp.manifest.icon)}</span> : null}
+            {bp.manifest.icon != null && bp.manifest.icon !== '' ? <span className="bundled-plugin-icon">{
+              // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `bp.manifest.icon` is plugin-manifest SVG (trusted plugin data, bundled with the plugin).
+              raw(bp.manifest.icon)
+            }</span> : null}
             <div>
               <div className="bundled-plugin-name">{bp.manifest.name} <span className="plugin-version">v{bp.manifest.version}</span></div>
               {bp.manifest.description != null && bp.manifest.description !== '' ? <div className="bundled-plugin-desc">{bp.manifest.description}</div> : null}
@@ -202,14 +207,12 @@ function createPluginRow(plugin: PluginInfo): HTMLElement {
     <div className={`plugin-row${plugin.enabled ? ' enabled' : ''}${!plugin.enabled ? ' disabled' : ''}`} data-plugin-id={plugin.id}>
       <div className="plugin-row-header">
         <div className="plugin-row-info">
-          {raw(statusHtml)}
+          {statusHtml}
           <span className="plugin-name">{plugin.name}</span>
           <span className="plugin-version">v{plugin.version}</span>
           {statusLabel ? <span className="plugin-needs-config">{statusLabel}</span> : null}
         </div>
-        <button className="plugin-configure-btn" title="Configure">
-          {raw('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>')}
-        </button>
+        <button className="plugin-configure-btn" title="Configure">{CONFIGURE_ICON}</button>
       </div>
       {plugin.description != null && plugin.description !== '' ? <div className="plugin-description">{plugin.description}</div> : null}
       {plugin.error != null && plugin.error !== '' ? <div className="plugin-error">{plugin.error}</div> : null}

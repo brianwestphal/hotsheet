@@ -1,8 +1,12 @@
+import type { SafeHtml } from '../jsx-runtime.js';
 import { api, apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
 import { resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
 import { checkout,type CheckoutHandle } from './terminalCheckout.js';
+
+const ALERT_TRIANGLE_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>;
+const TERMINAL_ARROW_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>;
 
 /**
  * Quit-confirm prompt (HS-7596 / §37). Shown when the user attempts to quit
@@ -229,9 +233,7 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
         <div className="quit-confirm-dialog quit-confirm-dialog-master-detail">
           <div className="quit-confirm-header">
             <span className="quit-confirm-title">
-              <span className="quit-confirm-icon" aria-hidden="true">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
-              </span>
+              <span className="quit-confirm-icon" aria-hidden="true">{ALERT_TRIANGLE_ICON}</span>
               Quit Hot Sheet?
             </span>
             <button className="quit-confirm-close" type="button" data-action="cancel" title="Cancel">{'×'}</button>
@@ -255,9 +257,7 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
                       data-terminal-id={entry.terminalId}
                       title="Click to preview the terminal's recent output"
                     >
-                      <span className="quit-confirm-row-icon" aria-hidden="true">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
-                      </span>
+                      <span className="quit-confirm-row-icon" aria-hidden="true">{TERMINAL_ARROW_ICON}</span>
                       <span className="quit-confirm-row-label">{entry.label}</span>
                       <span className="quit-confirm-row-cmd">{entry.foregroundCommand}</span>
                     </button>

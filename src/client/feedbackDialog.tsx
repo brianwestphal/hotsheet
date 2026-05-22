@@ -539,9 +539,10 @@ export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTM
                         skipped — passing `undefined` for the current-ticket
                         argument intentionally; if the prompt references its
                         own ticket, the user usually does want to see it. */}
-                    <div className="feedback-prompt-block note-markdown" data-block-index={String(idx)}>
-                      {raw(linkifyWithCachedPrefixes(block.html))}
-                    </div>
+                    <div className="feedback-prompt-block note-markdown" data-block-index={String(idx)}>{
+                      // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `block.html` is sanitized markdown HTML; `linkifyWithCachedPrefixes` is HTML-in / HTML-out and only adds <a> tags around known ticket-prefix tokens.
+                      raw(linkifyWithCachedPrefixes(block.html))
+                    }</div>
                     <div className="feedback-insert-slot" data-after-block={String(idx)}>
                       <button className="feedback-insert-btn" type="button" aria-label="Add response here">
                         <span className="feedback-insert-plus">+</span>

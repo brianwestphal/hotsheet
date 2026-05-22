@@ -1,8 +1,16 @@
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
+
+const DOWNLOAD_ICON: SafeHtml = (
+  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="7 10 12 15 17 10"/>
+    <line x1="12" y1="15" x2="12" y2="3"/>
+  </svg>
+);
 
 /** Rewrite <img> src attributes that point to GitHub domains to go through
  *  the /api/plugins/github-issues/image-proxy endpoint. Includes the project
@@ -50,7 +58,7 @@ export function appendImageDownloadLinks(entry: HTMLElement) {
     }
     const link = toElement(
       <button className="note-image-link" title={`Download ${name}`}>
-        {raw('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>')}
+        {DOWNLOAD_ICON}
         <span>{name}</span>
       </button>
     );

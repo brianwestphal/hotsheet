@@ -23,7 +23,7 @@
 
 import type { IDecoration, IMarker, Terminal as XTerm } from '@xterm/xterm';
 
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { state } from './state.js';
 import type { TerminalInstance } from './terminal.js';
@@ -71,8 +71,15 @@ export function freshShellIntegrationState(): ShellIntegrationState {
 // works at runtime but the cycle becomes fragile if any consumer is
 // promoted to a module-init-time reference). The strings are tiny so
 // the duplication cost is negligible.
-const CHECK_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-const CLIPBOARD_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M16 14h-6"/><path d="M10 18h.01"/></svg>';
+const CHECK_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+const CLIPBOARD_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M16 14h-6"/><path d="M10 18h.01"/></svg>;
+
+// Compact 10×10 gutter glyphs — distinct from the 14×14 toolbar icons
+// above. `_OK` for exit code 0, `_FAIL` for a non-zero exit, `_PENDING`
+// (a filled dot) for a still-running command.
+const GUTTER_GLYPH_OK: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+const GUTTER_GLYPH_PENDING: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>;
+const GUTTER_GLYPH_FAIL: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
 
 /** HS-7269 — read the per-project "Enable shell integration UI" setting.
  *  Default true (setting absent → on). Reads from the shared
@@ -192,7 +199,7 @@ function attachGutterDecoration(inst: TerminalInstance, term: XTerm, record: Com
   record.decoration = deco;
   deco.onRender((el) => {
     el.className = `terminal-osc133-gutter terminal-osc133-gutter-${exitCodeGutterClass(record.exitCode)}`;
-    el.replaceChildren(toElement(<span>{raw(gutterGlyphSvg(record.exitCode))}</span>));
+    el.replaceChildren(toElement(<span>{gutterGlyphSvg(record.exitCode)}</span>));
     el.title = record.exitCode === null
       ? 'Command (no exit code reported)'
       : `Command (exit ${record.exitCode})`;
@@ -239,14 +246,10 @@ export function reapplyShellIntegrationDecorations(inst: TerminalInstance): void
 
 /** Compact inline SVG so the glyph renders at 10×10 in the gutter column.
  *  Lucide check / x / circle minimalized to reduce DOM weight per record. */
-function gutterGlyphSvg(code: number | null): string {
-  if (code === 0) {
-    return '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-  }
-  if (code === null) {
-    return '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>';
-  }
-  return '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+function gutterGlyphSvg(code: number | null): SafeHtml {
+  if (code === 0) return GUTTER_GLYPH_OK;
+  if (code === null) return GUTTER_GLYPH_PENDING;
+  return GUTTER_GLYPH_FAIL;
 }
 
 /** Dispose every shell-integration record + reset state. Called on PTY
@@ -343,10 +346,10 @@ export async function copyLastOutput(inst: TerminalInstance): Promise<void> {
 function flashCopyOutputBtnSuccess(inst: TerminalInstance): void {
   const btn = inst.header.querySelector<HTMLButtonElement>('.terminal-copy-output-btn');
   if (btn === null) return;
-  btn.replaceChildren(toElement(<span>{raw(CHECK_ICON)}</span>));
+  btn.replaceChildren(toElement(<span>{CHECK_ICON}</span>));
   btn.classList.add('copied');
   window.setTimeout(() => {
-    btn.replaceChildren(toElement(<span>{raw(CLIPBOARD_ICON)}</span>));
+    btn.replaceChildren(toElement(<span>{CLIPBOARD_ICON}</span>));
     btn.classList.remove('copied');
   }, COPIED_GLYPH_FLASH_MS);
 }

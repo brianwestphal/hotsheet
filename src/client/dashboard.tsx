@@ -1,4 +1,4 @@
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { renderAnalyticsTelemetrySection } from './analyticsTelemetrySection.js';
 import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -125,17 +125,15 @@ function buildDashboard(data: DashboardData): HTMLElement {
   return el;
 }
 
-function chartCard(title: string, info: string, content: string): HTMLElement {
+function chartCard(title: string, info: string, content: SafeHtml): HTMLElement {
   const card = toElement(
     <div className="dashboard-chart-card">
       <div className="dashboard-chart-header">
         <span className="dashboard-chart-title">{title}</span>
-        <button className="dashboard-info-btn" title="About this chart">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-        </button>
+        <button className="dashboard-info-btn" title="About this chart">{INFO_ICON}</button>
       </div>
       <div className="dashboard-chart-info" style="display:none">{info}</div>
-      <div className="dashboard-chart-body">{raw(content)}</div>
+      <div className="dashboard-chart-body">{content}</div>
     </div>
   );
   const infoBtn = card.querySelector('.dashboard-info-btn')!;
@@ -225,59 +223,63 @@ const CHART_W = 400;
 const CHART_H = 180;
 const PAD = { top: 10, right: 10, bottom: 25, left: 35 };
 
-function renderBarChart(data: { date: string; completed: number }[]): string {
-  if (data.length === 0) return '<div class="chart-empty">No data</div>';
+const INFO_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>;
+
+function renderBarChart(data: { date: string; completed: number }[]): SafeHtml {
+  if (data.length === 0) return <div className="chart-empty">No data</div>;
   const values = data.map(d => d.completed);
   const max = Math.max(...values, 1);
   const w = CHART_W - PAD.left - PAD.right;
   const h = CHART_H - PAD.top - PAD.bottom;
   const barW = Math.max(2, (w / data.length) - 2);
 
-  let bars = '';
-  for (let i = 0; i < data.length; i++) {
+  const bars = data.map((d, i) => {
     const x = PAD.left + (i / data.length) * w;
     const barH = (values[i] / max) * h;
     const y = PAD.top + h - barH;
-    const date = fmtDate(data[i].date);
-    bars += `<rect x="${x}" y="${y}" width="${barW}" height="${barH}" fill="#3b82f6" rx="1" opacity="0.8" class="chart-hover"><title>${date}: ${values[i]} completed</title></rect>`;
-  }
+    return (
+      <rect x={String(x)} y={String(y)} width={String(barW)} height={String(barH)} fill="#3b82f6" rx="1" opacity="0.8" className="chart-hover">
+        <title>{`${fmtDate(d.date)}: ${String(values[i])} completed`}</title>
+      </rect>
+    );
+  });
 
-  return `<svg viewBox="0 0 ${CHART_W} ${CHART_H}" class="dashboard-svg">
-    ${yAxisLines(max, h)}
-    ${bars}
-    ${axisLabels(data.map(d => d.date))}
-  </svg>`;
+  return (
+    <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="dashboard-svg">
+      {yAxisLines(max, h)}
+      {bars}
+      {axisLabels(data.map(d => d.date))}
+    </svg>
+  );
 }
 
-function renderDualLineChart(data: { date: string; completed: number; created: number }[]): string {
-  if (data.length < 2) return '<div class="chart-empty">Not enough data</div>';
+function renderDualLineChart(data: { date: string; completed: number; created: number }[]): SafeHtml {
+  if (data.length < 2) return <div className="chart-empty">Not enough data</div>;
   const max = Math.max(...data.map(d => Math.max(d.completed, d.created)), 1);
   const w = CHART_W - PAD.left - PAD.right;
   const h = CHART_H - PAD.top - PAD.bottom;
 
-  // Legend above chart
-  const legend = `<div class="chart-legend"><span class="chart-legend-item"><span class="chart-legend-dot" style="background:#22c55e"></span>Completed</span><span class="chart-legend-item"><span class="chart-legend-dot" style="background:#f97316"></span>Created</span></div>`;
-
-  const svg = `<svg viewBox="0 0 ${CHART_W} ${CHART_H}" class="dashboard-svg">
-    ${yAxisLines(max, h)}
-    <path d="${linePath(data.map(d => d.created), max, w, h)}" fill="none" stroke="#f97316" stroke-width="2" opacity="0.7"/>
-    <path d="${linePath(data.map(d => d.completed), max, w, h)}" fill="none" stroke="#22c55e" stroke-width="2"/>
-    ${axisLabels(data.map(d => d.date))}
-  </svg>`;
-
-  return legend + svg;
+  return (
+    <>
+      <div className="chart-legend">
+        <span className="chart-legend-item"><span className="chart-legend-dot" style="background:#22c55e"></span>Completed</span>
+        <span className="chart-legend-item"><span className="chart-legend-dot" style="background:#f97316"></span>Created</span>
+      </div>
+      <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="dashboard-svg">
+        {yAxisLines(max, h)}
+        <path d={linePath(data.map(d => d.created), max, w, h)} fill="none" stroke="#f97316" stroke-width="2" opacity="0.7"/>
+        <path d={linePath(data.map(d => d.completed), max, w, h)} fill="none" stroke="#22c55e" stroke-width="2"/>
+        {axisLabels(data.map(d => d.date))}
+      </svg>
+    </>
+  );
 }
 
-function renderCFD(snapshots: { date: string; data: { not_started: number; started: number; completed: number; verified: number } }[]): string {
-  if (snapshots.length < 2) return '<div class="chart-empty">Not enough data</div>';
+function renderCFD(snapshots: { date: string; data: { not_started: number; started: number; completed: number; verified: number } }[]): SafeHtml {
+  if (snapshots.length < 2) return <div className="chart-empty">Not enough data</div>;
   const statuses = ['verified', 'completed', 'started', 'not_started'] as const;
   const colors = { not_started: '#6b7280', started: '#3b82f6', completed: '#22c55e', verified: '#8b5cf6' };
   const labels = { not_started: 'Not Started', started: 'Started', completed: 'Completed', verified: 'Verified' };
-
-  // Legend above chart
-  const legend = `<div class="chart-legend">${statuses.map(s =>
-    `<span class="chart-legend-item"><span class="chart-legend-dot" style="background:${colors[s]}"></span>${labels[s]}</span>`
-  ).join('')}</div>`;
 
   const stacked: number[][] = snapshots.map(s => {
     let cumulative = 0;
@@ -292,33 +294,41 @@ function renderCFD(snapshots: { date: string; data: { not_started: number; start
   const h = CHART_H - PAD.top - PAD.bottom;
   const n = snapshots.length;
 
-  let areas = '';
+  const areas: SafeHtml[] = [];
   for (let si = statuses.length - 1; si >= 0; si--) {
     const topPoints = stacked.map((s, i) => {
       const x = PAD.left + (i / (n - 1)) * w;
       const y = PAD.top + h - (s[si] / max) * h;
-      return `${x},${y}`;
+      return `${String(x)},${String(y)}`;
     });
     const bottomPoints = si > 0
       ? stacked.map((s, i) => {
           const x = PAD.left + (i / (n - 1)) * w;
           const y = PAD.top + h - (s[si - 1] / max) * h;
-          return `${x},${y}`;
+          return `${String(x)},${String(y)}`;
         }).reverse()
-      : [`${PAD.left + w},${PAD.top + h}`, `${PAD.left},${PAD.top + h}`];
-
-    areas += `<polygon points="${topPoints.join(' ')} ${bottomPoints.join(' ')}" fill="${colors[statuses[si]]}" opacity="0.6"/>`;
+      : [`${String(PAD.left + w)},${String(PAD.top + h)}`, `${String(PAD.left)},${String(PAD.top + h)}`];
+    areas.push(
+      <polygon points={`${topPoints.join(' ')} ${bottomPoints.join(' ')}`} fill={colors[statuses[si]]} opacity="0.6"/>
+    );
   }
 
-  const svg = `<svg viewBox="0 0 ${CHART_W} ${CHART_H}" class="dashboard-svg">
-    ${areas}
-    ${axisLabels(snapshots.map(s => s.date))}
-  </svg>`;
-
-  return legend + svg;
+  return (
+    <>
+      <div className="chart-legend">
+        {statuses.map(s =>
+          <span className="chart-legend-item"><span className="chart-legend-dot" style={`background:${colors[s]}`}></span>{labels[s]}</span>
+        )}
+      </div>
+      <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="dashboard-svg">
+        {areas}
+        {axisLabels(snapshots.map(s => s.date))}
+      </svg>
+    </>
+  );
 }
 
-function renderDonutCharts(openData: { category: string; count: number }[], periodData: { category: string; count: number }[]): string {
+function renderDonutCharts(openData: { category: string; count: number }[], periodData: { category: string; count: number }[]): SafeHtml {
   // Merge all categories for legend
   const allCats = new Map<string, { color: string; label: string }>();
   for (const d of [...openData, ...periodData]) {
@@ -328,25 +338,28 @@ function renderDonutCharts(openData: { category: string; count: number }[], peri
     }
   }
 
-  const legend = `<div class="chart-legend">${Array.from(allCats.values()).map(c =>
-    `<span class="chart-legend-item"><span class="chart-legend-dot" style="background:${c.color}"></span>${c.label}</span>`
-  ).join('')}</div>`;
-
-  const openChart = singleDonut(openData, 'Open', 90);
-  const periodChart = singleDonut(periodData, `${currentDays}d active`, 290);
-
-  const svg = `<svg viewBox="0 0 ${CHART_W} ${CHART_H}" class="dashboard-svg">${openChart}${periodChart}</svg>`;
-
-  return legend + svg;
+  return (
+    <>
+      <div className="chart-legend">
+        {Array.from(allCats.values()).map(c =>
+          <span className="chart-legend-item"><span className="chart-legend-dot" style={`background:${c.color}`}></span>{c.label}</span>
+        )}
+      </div>
+      <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="dashboard-svg">
+        {singleDonut(openData, 'Open', 90)}
+        {singleDonut(periodData, `${String(currentDays)}d active`, 290)}
+      </svg>
+    </>
+  );
 }
 
-function singleDonut(data: { category: string; count: number }[], label: string, cx: number): string {
-  if (data.length === 0) return `<text x="${cx}" y="95" text-anchor="middle" fill="#9ca3af" font-size="11">No data</text>`;
+function singleDonut(data: { category: string; count: number }[], label: string, cx: number): SafeHtml {
+  if (data.length === 0) return <text x={String(cx)} y="95" text-anchor="middle" fill="#9ca3af" font-size="11">No data</text>;
   const total = data.reduce((s, d) => s + d.count, 0);
   const cy = 95, r = 60, inner = 38;
   let angle = -Math.PI / 2;
 
-  let paths = '';
+  const paths: SafeHtml[] = [];
   for (const d of data) {
     const slice = (d.count / total) * Math.PI * 2;
     const x1 = cx + r * Math.cos(angle);
@@ -362,14 +375,21 @@ function singleDonut(data: { category: string; count: number }[], label: string,
     const cat = state.categories.find(c => c.id === d.category);
     const catLabel = cat?.label ?? d.category;
 
-    paths += `<path d="M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${ix1} ${iy1} A ${inner} ${inner} 0 ${large} 0 ${ix2} ${iy2} Z" fill="${color}" opacity="0.8" class="chart-hover"><title>${catLabel}: ${d.count}</title></path>`;
+    paths.push(
+      <path d={`M ${String(x1)} ${String(y1)} A ${String(r)} ${String(r)} 0 ${String(large)} 1 ${String(x2)} ${String(y2)} L ${String(ix1)} ${String(iy1)} A ${String(inner)} ${String(inner)} 0 ${String(large)} 0 ${String(ix2)} ${String(iy2)} Z`} fill={color} opacity="0.8" className="chart-hover">
+        <title>{`${catLabel}: ${String(d.count)}`}</title>
+      </path>
+    );
     angle += slice;
   }
 
-  paths += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="currentColor" font-size="16" font-weight="600">${total}</text>`;
-  paths += `<text x="${cx}" y="${cy + 17}" text-anchor="middle" fill="#6b7280" font-size="9">${label}</text>`;
-
-  return paths;
+  return (
+    <>
+      {paths}
+      <text x={String(cx)} y={String(cy + 4)} text-anchor="middle" fill="currentColor" font-size="16" font-weight="600">{String(total)}</text>
+      <text x={String(cx)} y={String(cy + 17)} text-anchor="middle" fill="#6b7280" font-size="9">{label}</text>
+    </>
+  );
 }
 
 /** Format hours as a human-readable duration: "15m", "2.5h", "1.2d", "2w" */
@@ -387,8 +407,8 @@ function logY(hours: number, minLog: number, logRange: number, h: number): numbe
   return PAD.top + h - ((Math.log10(clamped) - minLog) / logRange) * h;
 }
 
-function renderScatterChart(data: { ticket_number: string; title: string; completed_at: string; hours: number }[]): string {
-  if (data.length === 0) return '<div class="chart-empty">No completed tickets</div>';
+function renderScatterChart(data: { ticket_number: string; title: string; completed_at: string; hours: number }[]): SafeHtml {
+  if (data.length === 0) return <div className="chart-empty">No completed tickets</div>;
   const w = CHART_W - PAD.left - PAD.right;
   const h = CHART_H - PAD.top - PAD.bottom;
 
@@ -403,12 +423,15 @@ function renderScatterChart(data: { ticket_number: string; title: string; comple
   const maxDate = Math.max(...dates);
   const dateRange = maxDate - minDate || 1;
 
-  let dots = '';
-  for (const d of data) {
+  const dots = data.map(d => {
     const x = PAD.left + ((new Date(d.completed_at).getTime() - minDate) / dateRange) * w;
     const y = logY(d.hours, minLog, logRange, h);
-    dots += `<circle cx="${x}" cy="${y}" r="4" fill="#3b82f6" opacity="0.5" class="chart-hover"><title>${d.ticket_number}: ${d.title}\n${fmtDuration(d.hours)}</title></circle>`;
-  }
+    return (
+      <circle cx={String(x)} cy={String(y)} r="4" fill="#3b82f6" opacity="0.5" className="chart-hover">
+        <title>{`${d.ticket_number}: ${d.title}\n${fmtDuration(d.hours)}`}</title>
+      </circle>
+    );
+  });
 
   // Percentile lines
   const sorted = data.map(d => d.hours).sort((a, b) => a - b);
@@ -417,31 +440,35 @@ function renderScatterChart(data: { ticket_number: string; title: string; comple
   const p50y = logY(p50, minLog, logRange, h);
   const p85y = logY(p85, minLog, logRange, h);
 
-  const percentiles = `
-    <line x1="${PAD.left}" y1="${p50y}" x2="${PAD.left + w}" y2="${p50y}" stroke="#22c55e" stroke-dasharray="4,4" opacity="0.6"/>
-    <text x="${PAD.left + w + 2}" y="${p50y + 3}" fill="#22c55e" font-size="9">50% (${fmtDuration(p50)})</text>
-    <line x1="${PAD.left}" y1="${p85y}" x2="${PAD.left + w}" y2="${p85y}" stroke="#f97316" stroke-dasharray="4,4" opacity="0.6"/>
-    <text x="${PAD.left + w + 2}" y="${p85y + 3}" fill="#f97316" font-size="9">85% (${fmtDuration(p85)})</text>
-  `;
+  const percentiles = (
+    <>
+      <line x1={String(PAD.left)} y1={String(p50y)} x2={String(PAD.left + w)} y2={String(p50y)} stroke="#22c55e" stroke-dasharray="4,4" opacity="0.6"/>
+      <text x={String(PAD.left + w + 2)} y={String(p50y + 3)} fill="#22c55e" font-size="9">{`50% (${fmtDuration(p50)})`}</text>
+      <line x1={String(PAD.left)} y1={String(p85y)} x2={String(PAD.left + w)} y2={String(p85y)} stroke="#f97316" stroke-dasharray="4,4" opacity="0.6"/>
+      <text x={String(PAD.left + w + 2)} y={String(p85y + 3)} fill="#f97316" font-size="9">{`85% (${fmtDuration(p85)})`}</text>
+    </>
+  );
 
   // Log-scale Y axis: place ticks at powers of 10 and key durations
-  let yLines = '';
+  const yLines: SafeHtml[] = [];
   // Candidate tick values in hours: 1min, 5min, 15min, 1h, 4h, 12h, 1d, 3d, 1w, 2w, 1mo
   const candidates = [1/60, 5/60, 0.25, 1, 4, 12, 24, 72, 168, 336, 720];
   for (const val of candidates) {
     if (val < Math.pow(10, minLog) * 0.5 || val > Math.pow(10, maxLog) * 2) continue;
     const y = logY(val, minLog, logRange, h);
     if (y < PAD.top - 5 || y > PAD.top + h + 5) continue;
-    yLines += `<line x1="${PAD.left}" y1="${y}" x2="${CHART_W - PAD.right}" y2="${y}" stroke="#e5e7eb" stroke-width="0.5"/>`;
-    yLines += `<text x="${PAD.left - 4}" y="${y + 3}" text-anchor="end" fill="#9ca3af" font-size="9">${fmtDuration(val)}</text>`;
+    yLines.push(<line x1={String(PAD.left)} y1={String(y)} x2={String(CHART_W - PAD.right)} y2={String(y)} stroke="#e5e7eb" stroke-width="0.5"/>);
+    yLines.push(<text x={String(PAD.left - 4)} y={String(y + 3)} text-anchor="end" fill="#9ca3af" font-size="9">{fmtDuration(val)}</text>);
   }
 
-  return `<svg viewBox="0 0 ${CHART_W} ${CHART_H}" class="dashboard-svg">
-    ${yLines}
-    ${dots}
-    ${percentiles}
-    ${axisLabels(data.map(d => d.completed_at.slice(0, 10)))}
-  </svg>`;
+  return (
+    <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="dashboard-svg">
+      {yLines}
+      {dots}
+      {percentiles}
+      {axisLabels(data.map(d => d.completed_at.slice(0, 10)))}
+    </svg>
+  );
 }
 
 // --- Helpers ---
@@ -459,32 +486,32 @@ function linePath(values: number[], max: number, w: number, h: number): string {
   }).join(' ');
 }
 
-function yAxisLines(max: number, h: number, suffix = ''): string {
+function yAxisLines(max: number, h: number, suffix = ''): SafeHtml[] {
   const ticks = 4;
-  let lines = '';
+  const out: SafeHtml[] = [];
   for (let i = 0; i <= ticks; i++) {
     const val = Math.round((max / ticks) * i);
     const y = PAD.top + h - (i / ticks) * h;
-    lines += `<line x1="${PAD.left}" y1="${y}" x2="${CHART_W - PAD.right}" y2="${y}" stroke="#e5e7eb" stroke-width="0.5"/>`;
-    lines += `<text x="${PAD.left - 4}" y="${y + 3}" text-anchor="end" fill="#9ca3af" font-size="9">${val}${suffix}</text>`;
+    out.push(<line x1={String(PAD.left)} y1={String(y)} x2={String(CHART_W - PAD.right)} y2={String(y)} stroke="#e5e7eb" stroke-width="0.5"/>);
+    out.push(<text x={String(PAD.left - 4)} y={String(y + 3)} text-anchor="end" fill="#9ca3af" font-size="9">{`${String(val)}${suffix}`}</text>);
   }
-  return lines;
+  return out;
 }
 
-function axisLabels(dates: string[]): string {
-  if (dates.length === 0) return '';
+function axisLabels(dates: string[]): SafeHtml[] {
+  if (dates.length === 0) return [];
   const h = CHART_H;
   const w = CHART_W - PAD.left - PAD.right;
-  let labels = '';
+  const out: SafeHtml[] = [];
   const positions = dates.length <= 7
     ? dates.map((_, i) => i)
     : [0, Math.floor(dates.length / 2), dates.length - 1];
 
   for (const i of positions) {
     const x = PAD.left + (i / Math.max(dates.length - 1, 1)) * w;
-    labels += `<text x="${x}" y="${h - 4}" text-anchor="middle" fill="#9ca3af" font-size="9">${fmtDate(dates[i])}</text>`;
+    out.push(<text x={String(x)} y={String(h - 4)} text-anchor="middle" fill="#9ca3af" font-size="9">{fmtDate(dates[i])}</text>);
   }
-  return labels;
+  return out;
 }
 
 // --- Sidebar Widget ---
@@ -501,14 +528,14 @@ export async function renderSidebarWidget(): Promise<HTMLElement> {
 
     const last7 = data.throughput.slice(-7);
     const max = Math.max(...last7.map(d => d.completed), 1);
-    const barSvg = last7.map((d, i) => {
+    const barRects = last7.map((d, i) => {
       const barH = (d.completed / max) * 20;
-      return `<rect x="${i * 14}" y="${20 - barH}" width="10" height="${barH}" fill="#3b82f6" rx="1" opacity="0.7"/>`;
-    }).join('');
+      return <rect x={String(i * 14)} y={String(20 - barH)} width="10" height={String(barH)} fill="#3b82f6" rx="1" opacity="0.7"/>;
+    });
 
     const content = toElement(
       <div>
-        <div className="sidebar-widget-spark">{raw(`<svg viewBox="0 0 98 20" width="98" height="20">${barSvg}</svg>`)}</div>
+        <div className="sidebar-widget-spark"><svg viewBox="0 0 98 20" width="98" height="20">{barRects}</svg></div>
         <div className="sidebar-widget-stats">
           <span className="sidebar-widget-value">{kpi.completedThisWeek} completed</span>
           {arrow ? <span className={`sidebar-widget-trend ${change > 0 ? 'up' : 'down'}`}>{arrow}{Math.abs(change)}%</span> : null}

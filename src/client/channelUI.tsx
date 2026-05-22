@@ -1,3 +1,4 @@
+import type { SafeHtml } from '../jsx-runtime.js';
 import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { api, apiWithSecret } from './api.js';
 import { channelStore } from './channelStore.js';
@@ -22,8 +23,9 @@ import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
 
 let channelDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
 
-// Spinner SVG shared by channel and shell indicator states (12x12)
-const SPINNER_12 = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+// Spinner SVG shared by channel and shell indicator states (12x12).
+const SPINNER_12: SafeHtml =
+  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>;
 
 /** HS-6702 — `mostRecentSpinnerAtMs` lives in `channelStore` (HS-8320).
  *  Polled every 2s while the channel is reporting busy. The poll only
@@ -89,15 +91,15 @@ function updateStatusIndicator() {
     const degraded = shouldShowDegradedBusy(true, channelStore.state.value.mostRecentSpinnerAtMs, Date.now());
     if (degraded) {
       indicator.className = 'channel-status-indicator busy degraded';
-      indicator.innerHTML = `${SPINNER_12} Claude idle (channel busy)`;
+      indicator.replaceChildren(toElement(<>{SPINNER_12} Claude idle (channel busy)</>));
     } else {
       indicator.className = 'channel-status-indicator busy';
-      indicator.innerHTML = `${SPINNER_12} Claude working`;
+      indicator.replaceChildren(toElement(<>{SPINNER_12} Claude working</>));
     }
   } else if (channelStore.state.value.shellBusy) {
     indicator.style.display = '';
     indicator.className = 'channel-status-indicator busy';
-    indicator.innerHTML = `${SPINNER_12} Shell running`;
+    indicator.replaceChildren(toElement(<>{SPINNER_12} Shell running</>));
   } else {
     // Both idle — hide the indicator
     indicator.style.display = 'none';

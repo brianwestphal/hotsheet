@@ -45,7 +45,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
 
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { trackPersistentSlowEvent } from './serverBusyChip.js';
 import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
@@ -338,12 +338,12 @@ function entryKey(secret: string, terminalId: string): string {
 /** Lucide `terminal-square` SVG path, inlined so the placeholder doesn't
  *  pull in `icons.ts` (which would create an awkward import cycle for the
  *  rare paths that don't need icons). */
-const TERMINAL_SQUARE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>';
+const TERMINAL_SQUARE_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>;
 
 function buildPlaceholder(background?: string): HTMLElement {
   const el = toElement(
     <div className="terminal-checkout-placeholder">
-      <div className="terminal-checkout-placeholder-icon">{raw(TERMINAL_SQUARE_ICON)}</div>
+      <div className="terminal-checkout-placeholder-icon">{TERMINAL_SQUARE_ICON}</div>
       <div className="terminal-checkout-placeholder-text">Terminal in use elsewhere</div>
     </div>,
   );

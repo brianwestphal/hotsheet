@@ -16,7 +16,7 @@
  *   toolbar based on `runtimeCwd`.
  */
 
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import type { TerminalInstance, TerminalTabConfig } from './terminal.js';
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
@@ -24,7 +24,7 @@ import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 // Lucide `bell` glyph — inserted next to the tab label when `inst.hasBell`
 // is true. Defined here rather than imported from `terminal.tsx` to avoid
 // a runtime cycle.
-const BELL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
+const BELL_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>;
 
 export function tabDisplayName(config: TerminalTabConfig): string {
   if (typeof config.name === 'string' && config.name !== '') return config.name;
@@ -64,7 +64,7 @@ export function updateTabLabel(inst: TerminalInstance): void {
   if (inst.hasBell) {
     if (bellEl === null) {
       bellEl = toElement(
-        <span className="drawer-tab-bell" title="Bell" aria-label="Terminal bell">{raw(BELL_ICON)}</span>
+        <span className="drawer-tab-bell" title="Bell" aria-label="Terminal bell">{BELL_ICON}</span>
       );
       // Insert immediately after the label so the order is [label][bell][close?].
       labelEl?.insertAdjacentElement('afterend', bellEl);

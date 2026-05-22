@@ -1,5 +1,4 @@
 import type { SafeHtml } from '../jsx-runtime.js';
-import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
@@ -35,6 +34,17 @@ function replaceWithSvg(el: Element, content: string | SafeHtml): void {
   } else {
     el.replaceChildren(toElement(content));
   }
+}
+
+/** HS-8520 — render the per-ticket sync icon JSX provided by a sync
+ *  plugin (`syncedTicketMap[id].icon` is `SafeHtml` after HS-8520's
+ *  fetch-time conversion in `ticketList.tsx::loadTickets`). Consumed
+ *  directly via the JSX child path — no `raw()` here. */
+function renderTicketRowSyncIcon(ticket: Ticket): SafeHtml | null {
+  if (!(ticket.id in syncedTicketMap)) return null;
+  const info = syncedTicketMap[ticket.id];
+  if (info.icon === undefined) return null;
+  return <span className="ticket-sync-icon" title={`Synced via ${info.pluginId}`}>{info.icon}</span>;
 }
 
 /**
@@ -288,7 +298,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
       <button className={`ticket-status-btn${isVerified ? ' verified' : ''}`} title={ticket.status.replace('_', ' ')}>
         {isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status)}
       </button>
-      {ticket.id in syncedTicketMap ? <span className="ticket-sync-icon" title={`Synced via ${syncedTicketMap[ticket.id].pluginId}`}>{raw(syncedTicketMap[ticket.id].icon ?? '')}</span> : null}
+      {renderTicketRowSyncIcon(ticket)}
       {getIndicatorDotType(ticket) != null ? <span className={`ticket-unread-dot${getIndicatorDotType(ticket) === 'feedback' ? ' feedback' : ''}`} title={getIndicatorDotType(ticket) === 'feedback' ? 'Feedback needed' : 'Unread changes'}></span> : null}
       <input type="text" className="ticket-title-input" value={ticket.title} spellCheck="true" />
       {parseTags(ticket.tags).length > 0 ? (

@@ -1,4 +1,3 @@
-import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -38,8 +37,8 @@ const TOOLS_FOR_RULE: ReadonlyArray<string> = ['Bash', 'Read', 'NotebookRead', '
 
 /** HS-8026 — pencil + trash icons matched to the cmd-outline / terminal
  *  settings rows so the surfaces read as siblings. */
-const PENCIL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
-const TRASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
+const PENCIL_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>;
+const TRASH_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>;
 
 /** Pure: ULID-ish id generator. Not a real ULID — just `ar_<base36 ts>_<random>`
  *  which is sortable + unique enough for per-project allow rules. Exported
@@ -149,8 +148,8 @@ function renderRow(rule: AllowRule): HTMLElement {
     <div className="cmd-outline-row permission-allow-rule-row" data-rule-id={rule.id} role="button" tabIndex={0}>
       <span className="permission-allow-rule-tool">{rule.tool}</span>
       <code className="permission-allow-rule-pattern" title={rule.pattern}>{rule.pattern}</code>
-      <button type="button" className="cmd-outline-edit-btn permission-allow-edit" title="Edit">{raw(PENCIL_ICON)}</button>
-      <button type="button" className="cmd-outline-delete-btn permission-allow-delete" title="Delete">{raw(TRASH_ICON)}</button>
+      <button type="button" className="cmd-outline-edit-btn permission-allow-edit" title="Edit">{PENCIL_ICON}</button>
+      <button type="button" className="cmd-outline-delete-btn permission-allow-delete" title="Delete">{TRASH_ICON}</button>
     </div>
   );
 
@@ -225,9 +224,9 @@ export function openRuleEditor(options: EditorOptions): HTMLElement {
   const headerText = isEdit ? 'Edit allow rule' : 'Add allow rule';
   const saveLabel = isEdit ? 'Save' : 'Add rule';
 
-  const toolOptions = TOOLS_FOR_RULE
-    .map(t => `<option value="${t}"${t === initialTool ? ' selected' : ''}>${t}</option>`)
-    .join('');
+  const toolOptions = TOOLS_FOR_RULE.map(t => (
+    <option value={t} selected={t === initialTool}>{t}</option>
+  ));
 
   const overlay = toElement(
     <div className="cmd-editor-overlay permission-allow-editor">
@@ -239,7 +238,7 @@ export function openRuleEditor(options: EditorOptions): HTMLElement {
         <div className="cmd-editor-dialog-body">
           <div className="settings-field">
             <label>Tool</label>
-            {raw(`<select class="permission-allow-edit-tool">${toolOptions}</select>`)}
+            <select className="permission-allow-edit-tool">{toolOptions}</select>
           </div>
           <div className="settings-field">
             <label>Pattern</label>

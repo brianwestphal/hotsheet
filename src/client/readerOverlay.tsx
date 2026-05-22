@@ -71,11 +71,23 @@ export interface OpenReaderOverlayOptions extends ReaderEntry {
   navigation?: ReaderNavigationOptions;
 }
 
-const CLOSE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+const LUCIDE_14 = {
+  xmlns: 'http://www.w3.org/2000/svg',
+  width: '14',
+  height: '14',
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': '2',
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+} as const;
+
+const CLOSE_ICON_SVG = <svg {...LUCIDE_14}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
 /** HS-8233 — Lucide `chevron-up` glyph for the previous-entry button. */
-const CHEVRON_UP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+const CHEVRON_UP_SVG = <svg {...LUCIDE_14}><path d="m18 15-6-6-6 6"/></svg>;
 /** HS-8233 — Lucide `chevron-down` glyph for the next-entry button. */
-const CHEVRON_DOWN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+const CHEVRON_DOWN_SVG = <svg {...LUCIDE_14}><path d="m6 9 6 6 6-6"/></svg>;
 
 /** Render a single entry's markdown body to safe HTML, applying the same
  *  `linkifyWithCachedPrefixes` post-process the noteRenderer applies inline.
@@ -120,21 +132,22 @@ export function openReaderOverlay(options: OpenReaderOverlayOptions): void {
             {navigation !== null
               ? <>
                   <button className="reader-mode-prev" type="button" title="Previous (Up)" aria-label="Previous note">
-                    {raw(CHEVRON_UP_SVG)}
+                    {CHEVRON_UP_SVG}
                   </button>
                   <button className="reader-mode-next" type="button" title="Next (Down)" aria-label="Next note">
-                    {raw(CHEVRON_DOWN_SVG)}
+                    {CHEVRON_DOWN_SVG}
                   </button>
                 </>
               : null}
             <button className="reader-mode-close" type="button" title="Close" aria-label="Close reader">
-              {raw(CLOSE_ICON_SVG)}
+              {CLOSE_ICON_SVG}
             </button>
           </div>
         </div>
-        <div className="reader-mode-body note-markdown">
-          {raw(renderReaderBodyHtml(initial.markdown))}
-        </div>
+        <div className="reader-mode-body note-markdown">{
+          // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `renderReaderBodyHtml` runs sanitized `marked.parse(...)` over an empty-fallback-checked input and linkifies known ticket-prefix matches.
+          raw(renderReaderBodyHtml(initial.markdown))
+        }</div>
       </div>
     </div>
   );

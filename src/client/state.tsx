@@ -159,7 +159,13 @@ export interface SyncInfo {
 
 export interface SyncedTicketInfo {
   pluginId: string;
-  icon?: string;
+  /** Per-ticket sync icon as JSX (`SafeHtml`). The server delivers
+   *  plugin-manifest SVG as a string on the wire; the client
+   *  converts it to `SafeHtml` once at fetch time (see
+   *  `ticketList.tsx::loadTickets`) so list-view consumers can
+   *  render it via the standard JSX child path with `{info.icon}` —
+   *  no `raw()` indirection at each render site. */
+  icon?: SafeHtml;
 }
 
 /** Map of ticket ID → sync info for synced tickets (for list indicators) */

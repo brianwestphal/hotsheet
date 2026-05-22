@@ -24,20 +24,33 @@
 import type { SearchAddon } from '@xterm/addon-search';
 import type { Terminal as XTerm } from '@xterm/xterm';
 
-import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { navigateHistory, pushHistory } from './terminalSearchHistory.js';
 
-const SEARCH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
-const CHEVRON_UP = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>';
-const CHEVRON_DOWN = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
-const CLOSE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+const LUCIDE_14 = {
+  xmlns: 'http://www.w3.org/2000/svg',
+  width: '14',
+  height: '14',
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': '2',
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+  'aria-hidden': 'true',
+} as const;
+const LUCIDE_12 = { ...LUCIDE_14, width: '12', height: '12' } as const;
+
+const SEARCH_ICON = <svg {...LUCIDE_14}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>;
+const CHEVRON_UP = <svg {...LUCIDE_12}><path d="m18 15-6-6-6 6"/></svg>;
+const CHEVRON_DOWN = <svg {...LUCIDE_12}><path d="m6 9 6 6 6-6"/></svg>;
+const CLOSE_ICON = <svg {...LUCIDE_12}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
 // HS-7426 — three Lucide icons for the toggle row, paths drawn from
 // `lucide-icons.json` so they stay in sync with the rest of the app's
 // iconography. Rendered at 12px to fit the existing toolbar button budget.
-const CASE_SENSITIVE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16"/><path d="M22 9v7"/><path d="M3.304 13h6.392"/><circle cx="18.5" cy="12.5" r="3.5"/></svg>';
-const WHOLE_WORD_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="12" r="3"/><path d="M10 9v6"/><circle cx="17" cy="12" r="3"/><path d="M14 7v8"/><path d="M22 17v1c0 .5-.5 1-1 1H3c-.5 0-1-.5-1-1v-1"/></svg>';
-const REGEX_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3v10"/><path d="m12.67 5.5 8.66 5"/><path d="m12.67 10.5 8.66-5"/><path d="M9 17a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2z"/></svg>';
+const CASE_SENSITIVE_ICON = <svg {...LUCIDE_12}><path d="m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16"/><path d="M22 9v7"/><path d="M3.304 13h6.392"/><circle cx="18.5" cy="12.5" r="3.5"/></svg>;
+const WHOLE_WORD_ICON = <svg {...LUCIDE_12}><circle cx="7" cy="12" r="3"/><path d="M10 9v6"/><circle cx="17" cy="12" r="3"/><path d="M14 7v8"/><path d="M22 17v1c0 .5-.5 1-1 1H3c-.5 0-1-.5-1-1v-1"/></svg>;
+const REGEX_ICON = <svg {...LUCIDE_12}><path d="M17 3v10"/><path d="m12.67 5.5 8.66 5"/><path d="m12.67 10.5 8.66-5"/><path d="M9 17a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2z"/></svg>;
 
 export interface TerminalSearchHandle {
   root: HTMLElement;
@@ -74,7 +87,7 @@ export function mountTerminalSearch(
   const root = toElement(
     <div className="terminal-search-box" role="search">
       <button type="button" className="terminal-search-toggle" title="Search (Cmd/Ctrl+F)" aria-label="Open search">
-        {raw(SEARCH_ICON)}
+        {SEARCH_ICON}
       </button>
       <input
         type="text"
@@ -86,24 +99,24 @@ export function mountTerminalSearch(
       />
       <span className="terminal-search-toggles" role="group" aria-label="Search options">
         <button type="button" className="terminal-search-btn terminal-search-toggle-btn" data-toggle="case" title="Match case" aria-label="Match case" aria-pressed="false">
-          {raw(CASE_SENSITIVE_ICON)}
+          {CASE_SENSITIVE_ICON}
         </button>
         <button type="button" className="terminal-search-btn terminal-search-toggle-btn" data-toggle="word" title="Whole word" aria-label="Whole word" aria-pressed="false">
-          {raw(WHOLE_WORD_ICON)}
+          {WHOLE_WORD_ICON}
         </button>
         <button type="button" className="terminal-search-btn terminal-search-toggle-btn" data-toggle="regex" title="Regular expression" aria-label="Regular expression" aria-pressed="false">
-          {raw(REGEX_ICON)}
+          {REGEX_ICON}
         </button>
       </span>
       <span className="terminal-search-count" aria-live="polite"></span>
       <button type="button" className="terminal-search-btn terminal-search-prev" title="Previous match (Shift+Enter)" aria-label="Previous match">
-        {raw(CHEVRON_UP)}
+        {CHEVRON_UP}
       </button>
       <button type="button" className="terminal-search-btn terminal-search-next" title="Next match (Enter)" aria-label="Next match">
-        {raw(CHEVRON_DOWN)}
+        {CHEVRON_DOWN}
       </button>
       <button type="button" className="terminal-search-btn terminal-search-close" title="Close search" aria-label="Close search">
-        {raw(CLOSE_ICON)}
+        {CLOSE_ICON}
       </button>
     </div>,
   );

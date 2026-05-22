@@ -1,5 +1,7 @@
 /** Shared types for plugin settings UI modules. */
 
+import type { SafeHtml } from '../jsx-runtime.js';
+
 export type ConfigLabelColor = 'default' | 'success' | 'error' | 'warning' | 'transient';
 
 export interface ConfigLayoutItem {
@@ -54,11 +56,11 @@ export interface SyncConflict {
   conflict_data: string | null;
 }
 
-export const STATUS_DOT = {
-  connected: '<span class="plugin-status-dot connected" title="Connected"></span>',
-  disconnected: '<span class="plugin-status-dot disconnected" title="Disconnected"></span>',
-  error: '<span class="plugin-status-dot error" title="Error"></span>',
-  needsConfig: '<span class="plugin-status-dot needs-config" title="Needs Configuration"></span>',
+export const STATUS_DOT: Record<'connected' | 'disconnected' | 'error' | 'needsConfig', SafeHtml> = {
+  connected: <span className="plugin-status-dot connected" title="Connected"></span>,
+  disconnected: <span className="plugin-status-dot disconnected" title="Disconnected"></span>,
+  error: <span className="plugin-status-dot error" title="Error"></span>,
+  needsConfig: <span className="plugin-status-dot needs-config" title="Needs Configuration"></span>,
 };
 
 export function labelColorClass(color: string | undefined): string {

@@ -3,7 +3,7 @@ import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
 import { toElement } from './dom.js';
 import { getTicketFeedbackState, showFeedbackDialog, suppressNextAutoShowFeedback } from './feedbackDialog.js';
-import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH } from './icons.js';
+import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
 import { buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
@@ -173,7 +173,7 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
 
     const notWorkingItem = toElement(
       <div className={`context-menu-item${state.selectedIds.size > 1 ? ' disabled' : ''}`}>
-        <span className="dropdown-icon">{raw('<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>')}</span>
+        <span className="dropdown-icon">{ICON_X_CIRCLE}</span>
         <span className="context-menu-label">Not Working</span>
       </div>
     );
@@ -253,7 +253,7 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
 
   // Push to remote backend (only for unsynced single-ticket selection)
   if (state.selectedIds.size === 1 && !(ticket.id in syncedTicketMap)) {
-    void api<{ id: string; name: string; icon?: string }[]>('/backends').then(backends => {
+    void api<{ id: string; name: string }[]>('/backends').then(backends => {
       if (backends.length === 0) return;
       // Insert before the backlog separator. Anchored on the
       // `.context-menu-separator-backlog` marker (HS-8414) rather than a
@@ -266,9 +266,16 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
       if (insertBefore) menu.insertBefore(pushSep, insertBefore);
       else menu.appendChild(pushSep);
       for (const b of backends) {
+        // Use a fixed external-link glyph for every "Push to {backend}"
+        // item rather than the plugin-provided manifest icon. Pre-fix
+        // the row used `raw(b.icon)` against a string from the plugin
+        // manifest — even though plugins are user-installed, splicing
+        // arbitrary plugin HTML into the menu DOM is an unnecessary
+        // injection surface for what's already a uniform "open external"
+        // action.
         const item = toElement(
           <div className="context-menu-item">
-            {b.icon != null && b.icon !== '' ? <span className="dropdown-icon">{raw(b.icon)}</span> : null}
+            <span className="dropdown-icon">{ICON_EXTERNAL_LINK}</span>
             <span className="context-menu-label">Push to {b.name}</span>
           </div>
         );

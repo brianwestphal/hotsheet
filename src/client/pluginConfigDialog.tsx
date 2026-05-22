@@ -1,9 +1,13 @@
+import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { TIMERS } from './constants/timers.js';
 import { byIdOrNull, toElement } from './dom.js';
 import type { ConfigLayoutItem, PluginPreference } from './pluginTypes.js';
 import { labelColorClass } from './pluginTypes.js';
+
+const CHEVRON_RIGHT: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>;
+const CHEVRON_DOWN: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>;
 
 export function renderConfigLayout(container: HTMLElement, items: ConfigLayoutItem[], pluginId: string, prefsMap: Map<string, PluginPreference>) {
   for (const item of items) {
@@ -27,7 +31,10 @@ export function renderConfigLayout(container: HTMLElement, items: ConfigLayoutIt
       case 'button': {
         const btn = toElement(
           <button className={`btn btn-sm${item.style === 'primary' ? ' btn-primary' : ''}`}>
-            {item.icon != null && item.icon !== '' ? raw(item.icon) : null}
+            {item.icon != null && item.icon !== ''
+              // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `item.icon` is plugin-supplied SVG from a config-button manifest entry (trusted plugin data).
+              ? raw(item.icon)
+              : null}
             {item.label ?? 'Action'}
           </button>
         );
@@ -56,13 +63,11 @@ export function renderConfigLayout(container: HTMLElement, items: ConfigLayoutIt
       }
       case 'group': {
         const collapsed = item.collapsed === true;
-        const chevronRight = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
-        const chevronDown = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
         const group = toElement(
           <div className={`config-group${collapsed ? ' collapsed' : ''}`}>
             <div className="config-group-header">
               <span className="config-group-title">{item.title ?? 'Group'}</span>
-              <span className="config-group-chevron">{raw(collapsed ? chevronRight : chevronDown)}</span>
+              <span className="config-group-chevron">{collapsed ? CHEVRON_RIGHT : CHEVRON_DOWN}</span>
             </div>
             <div className="config-group-body" style={collapsed ? 'display:none' : ''}></div>
           </div>
@@ -72,7 +77,7 @@ export function renderConfigLayout(container: HTMLElement, items: ConfigLayoutIt
           const chevron = group.querySelector('.config-group-chevron') as HTMLElement;
           const isCollapsed = bodyEl.style.display === 'none';
           bodyEl.style.display = isCollapsed ? '' : 'none';
-          chevron.innerHTML = isCollapsed ? chevronDown : chevronRight;
+          chevron.replaceChildren(toElement(isCollapsed ? CHEVRON_DOWN : CHEVRON_RIGHT));
           group.classList.toggle('collapsed', !isCollapsed);
         });
         if (item.items) {

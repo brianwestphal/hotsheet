@@ -1,5 +1,4 @@
 import type { SpanRow } from '../db/otelQueries.js';
-import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { toElement } from './dom.js';
 import { assembleSpanTree, findEnclosingSpanId, type SpanTreeNode } from './spanTree.js';
@@ -268,11 +267,7 @@ function renderWaterfallPanel(timeline: PromptTimeline): HTMLElement | null {
   const barHeight = 20;
   const vbHeight = (maxDepth + 1) * rowHeight;
 
-  function escapeAttr(s: string): string {
-    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
-  const barsHtml = flat.map(node => {
+  const bars = flat.map(node => {
     const start = new Date(node.row.startTs).getTime();
     const end = new Date(node.row.endTs).getTime();
     const x = ((start - minStart) / totalMs) * width;
@@ -284,8 +279,12 @@ function renderWaterfallPanel(timeline: PromptTimeline): HTMLElement | null {
       : '';
     const label = `${node.row.spanName} — ${formatDurationMs(durationMs)}${model}`;
     const statusClass = spanStatusBadgeClass(node.row.statusCode);
-    return `<rect x="${String(x)}" y="${String(y)}" width="${String(w)}" height="${String(barHeight)}" class="telemetry-trace-waterfall-bar ${statusClass}" data-span-id="${escapeAttr(node.row.spanId)}"><title>${escapeAttr(label)}</title></rect>`;
-  }).join('');
+    return (
+      <rect x={String(x)} y={String(y)} width={String(w)} height={String(barHeight)} className={`telemetry-trace-waterfall-bar ${statusClass}`} data-span-id={node.row.spanId}>
+        <title>{label}</title>
+      </rect>
+    );
+  });
 
   const panel = toElement(
     <details className="telemetry-trace-waterfall">
@@ -296,7 +295,7 @@ function renderWaterfallPanel(timeline: PromptTimeline): HTMLElement | null {
       </summary>
       <div className="telemetry-trace-waterfall-body" style={`max-height: ${String(Math.min(vbHeight, 240))}px; overflow-y: auto`}>
         <svg className="telemetry-trace-waterfall-svg" viewBox={`0 0 ${String(width)} ${String(vbHeight)}`} preserveAspectRatio="none" width="100%" height={String(vbHeight)} role="img" aria-label="Trace waterfall">
-          {raw(barsHtml)}
+          {bars}
         </svg>
       </div>
     </details>

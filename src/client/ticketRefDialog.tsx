@@ -37,8 +37,8 @@ interface DialogEntry {
 
 const stack: DialogEntry[] = [];
 
-const X_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
-const OPEN_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
+const X_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
+const OPEN_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>;
 
 /**
  * Open a ticket-reference dialog for the supplied `ticketNumber` (e.g.
@@ -99,10 +99,10 @@ function pushDialog(ticket: Ticket): void {
           <span className="ticket-ref-dialog-number">{ticket.ticket_number}</span>
           <span className="ticket-ref-dialog-title">{ticket.title}</span>
           <button className="ticket-ref-dialog-open" type="button" title="Open in detail panel" aria-label="Open in detail panel">
-            {raw(OPEN_ICON)}
+            {OPEN_ICON}
           </button>
           <button className="ticket-ref-dialog-close" type="button" title="Close (Esc)" aria-label="Close">
-            {raw(X_ICON)}
+            {X_ICON}
           </button>
         </div>
         <div className="ticket-ref-dialog-meta">
@@ -113,11 +113,17 @@ function pushDialog(ticket: Ticket): void {
         <div className="ticket-ref-dialog-body">
           <div className="ticket-ref-dialog-section">
             <div className="ticket-ref-dialog-section-label">Details</div>
-            <div className="ticket-ref-dialog-section-body note-markdown">{raw(detailsHtml)}</div>
+            <div className="ticket-ref-dialog-section-body note-markdown">{
+              // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- detailsHtml is sanitized markdown HTML from `marked.parse(...)` + per-prefix linkify; the body strips raw `<script>` / event-handler attrs via marked's built-in escape.
+              raw(detailsHtml)
+            }</div>
           </div>
           <div className="ticket-ref-dialog-section">
             <div className="ticket-ref-dialog-section-label">Notes</div>
-            <div className="ticket-ref-dialog-section-body">{raw(notesHtml)}</div>
+            <div className="ticket-ref-dialog-section-body">{
+              // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- notesHtml is sanitized markdown HTML (`marked.parse(...)` per note + per-prefix linkify).
+              raw(notesHtml)
+            }</div>
           </div>
         </div>
       </div>

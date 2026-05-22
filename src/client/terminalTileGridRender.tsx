@@ -1,3 +1,4 @@
+import type { SafeHtml } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { effect, signal } from './reactive.js';
 import {
@@ -20,6 +21,8 @@ import { markTileMounted, mountTileViaCheckout, softDisposeTile } from './termin
 import type { InternalTile, TileGridContext } from './terminalTileGridTypes.js';
 import { TILE_INITIAL_COLS, TILE_INITIAL_ROWS } from './terminalTileGridTypes.js';
 import { initialTileState } from './terminalTileVirtualization.js';
+
+const PLAY_GLYPH: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>;
 
 /**
  * HS-8412 / HS-8411 (Cycle 4a lift + Cycle 4b split) — tile DOM
@@ -66,7 +69,7 @@ export function renderPreviewContent(ctx: TileGridContext, state: TileSessionSta
     : 'Not yet started';
   return toElement(
     <div className={`${c.placeholderClass} ${c.placeholderColdClass}`}>
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+      {PLAY_GLYPH}
       <span className={c.placeholderStatusClass}>{status}</span>
     </div>
   );

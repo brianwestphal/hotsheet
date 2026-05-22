@@ -1,4 +1,4 @@
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { refreshLogBadge } from './commandLog.js';
@@ -112,7 +112,14 @@ export function runningKey(secret: string, cmd: CustomCommand): string {
  *  back (the second flag clobbered the first). */
 const autoShowLogById = new Map<number, boolean>();
 
-const STOP_GLYPH = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="5" y="5" rx="1"/></svg>';
+const STOP_GLYPH: SafeHtml = (
+  <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect width="14" height="14" x="5" y="5" rx="1"/>
+  </svg>
+);
+
+const CHEVRON_RIGHT: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>;
+const CHEVRON_DOWN: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>;
 
 function buildSpinnerElement(textColor: string): HTMLElement {
   // 14×14 spinner ring + an 8×8 stop glyph centered inside. Both inherit
@@ -122,7 +129,7 @@ function buildSpinnerElement(textColor: string): HTMLElement {
   return toElement(
     <span className="channel-command-btn-spinner" style={`color:${textColor}`} aria-hidden="true">
       <span className="channel-command-btn-spinner-ring"></span>
-      <span className="channel-command-btn-spinner-stop">{raw(STOP_GLYPH)}</span>
+      <span className="channel-command-btn-spinner-stop">{STOP_GLYPH}</span>
     </span>
   );
 }
@@ -209,12 +216,10 @@ export function renderChannelCommands() {
       if (!hasVisibleCmd) continue;
 
       const isCollapsed = item.collapsed === true;
-      const chevronRight = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
-      const chevronDown = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
       const header = toElement(
         <div className="cmd-group-header">
           <span className="cmd-group-name">{item.name}</span>
-          <span className="cmd-group-chevron">{raw(isCollapsed ? chevronRight : chevronDown)}</span>
+          <span className="cmd-group-chevron">{isCollapsed ? CHEVRON_RIGHT : CHEVRON_DOWN}</span>
         </div>
       );
       const body = toElement(<div className="cmd-group-body" style={isCollapsed ? 'display:none' : ''}></div>);
@@ -223,7 +228,8 @@ export function renderChannelCommands() {
       header.addEventListener('click', () => {
         const nowCollapsed = !(groupRef.collapsed ?? false);
         groupRef.collapsed = nowCollapsed ? true : undefined;
-        (header.querySelector('.cmd-group-chevron') as HTMLElement).innerHTML = nowCollapsed ? chevronRight : chevronDown;
+        const chevronHost = header.querySelector('.cmd-group-chevron')!;
+        chevronHost.replaceChildren(toElement(nowCollapsed ? CHEVRON_RIGHT : CHEVRON_DOWN));
         body.style.display = nowCollapsed ? 'none' : '';
         // Persist collapse state
         void saveCommandItemsExternal(commandItems);

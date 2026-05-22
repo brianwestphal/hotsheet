@@ -41,7 +41,6 @@
  * alias along with the sidebar entry.
  */
 
-import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { unmountColumnView } from './columnView.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
@@ -366,36 +365,42 @@ function renderHourlyHeatmap(cells: HourlyActivityCell[]): HTMLElement {
   let maxCost = 0;
   for (const c of cells) if (c.cost > maxCost) maxCost = c.cost;
 
-  // Build cell rects.
-  const rectsHtml = cells.map(cell => {
+  // Build cell rects as JSX.
+  const rectEls = cells.map(cell => {
     // Sunday=0 in PG; we want Monday=row0.
     const row = (cell.dow + 6) % 7;
     const x = leftAxisWidth + cell.hour * (cellSize + cellGap);
     const y = topAxisHeight + row * (cellSize + cellGap);
     const opacity = heatmapIntensity(cell.cost, maxCost).toFixed(2);
     const tooltip = `${DAY_LABELS_MON_FIRST[row]} ${String(cell.hour).padStart(2, '0')}:00 — ${formatCost(cell.cost)}, ${String(cell.promptCount)} prompts`;
-    return `<rect x="${String(x)}" y="${String(y)}" width="${String(cellSize)}" height="${String(cellSize)}" rx="2" ry="2" fill="currentColor" opacity="${opacity}"><title>${tooltip.replace(/[<>&"]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[ch] ?? ch))}</title></rect>`;
-  }).join('');
+    return (
+      <rect x={String(x)} y={String(y)} width={String(cellSize)} height={String(cellSize)} rx="2" ry="2" fill="currentColor" opacity={opacity}>
+        <title>{tooltip}</title>
+      </rect>
+    );
+  });
 
   // Top hour labels every 3 hours.
-  const hourLabels: string[] = [];
+  const hourLabels = [];
   for (let h = 0; h < 24; h += 3) {
     const x = leftAxisWidth + h * (cellSize + cellGap);
-    hourLabels.push(`<text x="${String(x)}" y="${String(topAxisHeight - 4)}" font-size="10" fill="currentColor" opacity="0.7">${String(h).padStart(2, '0')}</text>`);
+    hourLabels.push(
+      <text x={String(x)} y={String(topAxisHeight - 4)} font-size="10" fill="currentColor" opacity="0.7">{String(h).padStart(2, '0')}</text>
+    );
   }
 
   // Left day labels.
   const dayLabels = DAY_LABELS_MON_FIRST.map((label, row) => {
     const y = topAxisHeight + row * (cellSize + cellGap) + cellSize - 4;
-    return `<text x="0" y="${String(y)}" font-size="10" fill="currentColor" opacity="0.7">${label}</text>`;
-  }).join('');
+    return <text x="0" y={String(y)} font-size="10" fill="currentColor" opacity="0.7">{label}</text>;
+  });
 
   return toElement(
     <div className="telemetry-dashboard-heatmap-wrap">
       <svg className="telemetry-dashboard-heatmap-svg" width={String(width)} height={String(height)} viewBox={`0 0 ${String(width)} ${String(height)}`} role="img" aria-label="Hourly activity heatmap">
-        {raw(dayLabels)}
-        {raw(hourLabels.join(''))}
-        {raw(rectsHtml)}
+        {dayLabels}
+        {hourLabels}
+        {rectEls}
       </svg>
     </div>
   );

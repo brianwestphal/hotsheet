@@ -27,7 +27,7 @@
  * back through `terminal.tsx`'s re-exports).
  */
 
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
@@ -56,13 +56,25 @@ import { orderedTabIds, showTabContextMenu } from './terminalTabContextMenu.js';
 import { attachTabDragHandlers } from './terminalTabDragDrop.js';
 import { pickNearestTerminalTabId } from './terminalTabSelection.js';
 
-const POWER_ICON_STOP = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="5" y="5" width="14" height="14" rx="1"/></svg>';
-const POWER_ICON_START = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
-const TRASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
-const CLOSE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
-const FOLDER_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
-const CLIPBOARD_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M16 14h-6"/><path d="M10 18h.01"/></svg>';
-const SETTINGS_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>';
+const LUCIDE_14 = {
+  xmlns: 'http://www.w3.org/2000/svg',
+  width: '14',
+  height: '14',
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': '2',
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+} as const;
+
+const POWER_ICON_STOP: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="5" y="5" width="14" height="14" rx="1"/></svg>;
+const POWER_ICON_START: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>;
+const TRASH_ICON = <svg {...LUCIDE_14}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>;
+const CLOSE_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
+const FOLDER_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>;
+const CLIPBOARD_ICON = <svg {...LUCIDE_14}><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M16 14h-6"/><path d="M10 18h.01"/></svg>;
+const SETTINGS_ICON = <svg {...LUCIDE_14}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>;
 
 interface InstanceLifecycleHooks {
   /** Switch the active drawer tab — implemented in `commandLog.tsx`,
@@ -95,7 +107,7 @@ function buildTabBtnEl(config: TerminalTabConfig, tabName: string): HTMLElement 
     <button className="drawer-tab drawer-terminal-tab" data-drawer-tab={`terminal:${config.id}`} data-terminal-id={config.id} draggable="true">
       <span className="drawer-tab-label">{tabName}</span>
       {config.dynamic === true
-        ? raw(`<button class="drawer-tab-close" title="Close terminal">${CLOSE_ICON}</button>`)
+        ? <button className="drawer-tab-close" title="Close terminal">{CLOSE_ICON}</button>
         : null}
     </button>
   );
@@ -133,7 +145,7 @@ function buildPaneEl(config: TerminalTabConfig, tabName: string): HTMLElement {
         {/* HS-7262 — CWD chip; hidden until OSC 7 push. Click opens the
             folder in the OS file manager via /api/terminal/open-cwd. */}
         <button className="terminal-cwd-chip" title="Open folder" style="display:none">
-          {raw(FOLDER_ICON)}
+          {FOLDER_ICON}
           <span className="terminal-cwd-label"></span>
         </button>
         <span className="terminal-header-spacer"></span>
@@ -145,17 +157,17 @@ function buildPaneEl(config: TerminalTabConfig, tabName: string): HTMLElement {
             watcher in `terminalCheckout.tsx::createEntry`. */}
         {/* HS-7268 — copy-last-output, hidden until first OSC 133 escape. */}
         <button className="terminal-header-btn terminal-copy-output-btn" title="Copy last command output" style="display:none">
-          {raw(CLIPBOARD_ICON)}
+          {CLIPBOARD_ICON}
         </button>
         <button className="terminal-header-btn terminal-power-btn" title="Stop terminal">
-          <span className="terminal-power-icon">{raw(POWER_ICON_STOP)}</span>
+          <span className="terminal-power-icon">{POWER_ICON_STOP}</span>
         </button>
         <button className="terminal-header-btn terminal-clear-btn" title="Clear screen (keeps process running)">
-          {raw(TRASH_ICON)}
+          {TRASH_ICON}
         </button>
         {/* HS-6307 — per-terminal appearance (theme / font / size). */}
         <button className="terminal-header-btn terminal-appearance-btn" title="Appearance (theme, font)">
-          {raw(SETTINGS_ICON)}
+          {SETTINGS_ICON}
         </button>
       </div>
       {/* HS-7959 — `.terminal-body` keeps padding/focus-ring; xterm mounts
@@ -283,7 +295,7 @@ export function updatePowerButton(inst: TerminalInstance): void {
   const icon = btn?.querySelector<HTMLElement>('.terminal-power-icon');
   if (!btn || !icon) return;
   const showStop = inst.status === 'alive' || inst.status === 'connecting';
-  icon.replaceChildren(toElement(<span>{raw(showStop ? POWER_ICON_STOP : POWER_ICON_START)}</span>));
+  icon.replaceChildren(toElement(<span>{showStop ? POWER_ICON_STOP : POWER_ICON_START}</span>));
   btn.setAttribute('title', showStop
     ? (inst.stopRequested ? 'Stop again to force quit' : 'Stop terminal')
     : 'Start terminal');
