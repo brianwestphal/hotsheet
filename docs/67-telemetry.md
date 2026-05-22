@@ -59,7 +59,10 @@ OTEL_LOGS_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:<port>
 OTEL_RESOURCE_ATTRIBUTES=hotsheet_project=<secret>,working_dir=<dataDir>
+OTEL_LOG_USER_PROMPTS=1
 ```
+
+`OTEL_LOG_USER_PROMPTS=1` (HS-8537) is required so Claude Code emits the prompt body inside the `claude_code.user_prompt` event. Without it, the body is omitted (only `prompt_length` and other metadata are emitted) and the `<!-- hotsheet:ticket=HS-NNNN -->` marker that the per-ticket cost rollup depends on (§67.10.7 / HS-8152) has nowhere to land. The data stays local in PGLite, so logging the prompt content carries the same privacy posture as everything else the receiver persists — the user already opted in by enabling telemetry.
 
 When the per-project `telemetry_traces_enabled` setting is `true` AND `telemetry_enabled` is also `true`:
 

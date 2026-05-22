@@ -59,6 +59,24 @@ describe('buildOtelEnv (HS-8145 / §67.3)', () => {
     expect(env.CLAUDE_CODE_ENHANCED_TELEMETRY_BETA).toBeUndefined();
   });
 
+  // HS-8537 — without `OTEL_LOG_USER_PROMPTS=1` Claude Code redacts the
+  // user_prompt body, which strips the `<!-- hotsheet:ticket=HS-NNNN -->`
+  // marker the per-ticket cost rollup depends on (§67.10.7 / HS-8152).
+  it('sets OTEL_LOG_USER_PROMPTS=1 whenever telemetry is enabled (so the per-ticket marker survives)', () => {
+    const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: true });
+    expect(buildOtelEnv(d).OTEL_LOG_USER_PROMPTS).toBe('1');
+  });
+
+  it('still sets OTEL_LOG_USER_PROMPTS=1 when only metrics is enabled (logs/traces off)', () => {
+    const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: true, telemetry_logs_enabled: false });
+    expect(buildOtelEnv(d).OTEL_LOG_USER_PROMPTS).toBe('1');
+  });
+
+  it('omits OTEL_LOG_USER_PROMPTS when telemetry is disabled', () => {
+    const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: false });
+    expect(buildOtelEnv(d).OTEL_LOG_USER_PROMPTS).toBeUndefined();
+  });
+
   it('omits OTEL_METRICS_EXPORTER when telemetry_metrics_enabled is false', () => {
     const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: true, telemetry_metrics_enabled: false });
     const env = buildOtelEnv(d);

@@ -117,6 +117,59 @@ describe('renderShell (HS-8507 cross-project stats page)', () => {
     expect(container.querySelector('#telemetry-dashboard-cost-over-time')).toBeNull();
   });
 
+  // HS-8533 — pre-fix, the empty-state gate was `allTime.promptCount === 0
+  // && allTime.cost === 0`, which falsely tripped whenever a transient
+  // query glitch zeroed the all-time totals while every other section
+  // of the payload still carried rows. Post-fix, every signal must
+  // agree before we show the empty card.
+  it('does NOT show the empty card when costByProject has rows even if windowTotals look zero', () => {
+    const container = document.createElement('div');
+    renderShell(makePayload({
+      windowTotals: {
+        today: emptyTotals(),
+        week: emptyTotals(),
+        month: emptyTotals(),
+        allTime: emptyTotals(),
+      },
+      costByProject: [
+        { projectSecret: 's1', cost: 12.34, tokens: 1000, promptCount: 3, lastActivityTs: '2026-05-21T00:00:00Z' },
+      ],
+    }), container);
+    expect(container.querySelector('.telemetry-dashboard-empty')).toBeNull();
+    expect(container.querySelector('.telemetry-dashboard-chips')).not.toBeNull();
+  });
+
+  it('does NOT show the empty card when only the week window has data (HS-8533 cross-window check)', () => {
+    const container = document.createElement('div');
+    renderShell(makePayload({
+      windowTotals: {
+        today: emptyTotals(),
+        week: nonEmptyTotals(5),
+        month: emptyTotals(),
+        allTime: emptyTotals(),
+      },
+    }), container);
+    expect(container.querySelector('.telemetry-dashboard-empty')).toBeNull();
+    expect(container.querySelector('.telemetry-dashboard-chips')).not.toBeNull();
+  });
+
+  it('still shows the empty card when EVERY signal is zero (windowTotals + section arrays)', () => {
+    const container = document.createElement('div');
+    renderShell(makePayload({
+      windowTotals: {
+        today: emptyTotals(),
+        week: emptyTotals(),
+        month: emptyTotals(),
+        allTime: emptyTotals(),
+      },
+      costByProject: [],
+      costByModel: [],
+      hourlyActivity: [],
+      costOverTime: [],
+    }), container);
+    expect(container.querySelector('.telemetry-dashboard-empty')).not.toBeNull();
+  });
+
   it('fills the cost-over-time container when payload.costOverTime has data', () => {
     const container = document.createElement('div');
     renderShell(makePayload({
@@ -137,6 +190,34 @@ describe('renderShell (HS-8507 cross-project stats page)', () => {
     const target = container.querySelector('#telemetry-dashboard-cost-over-time');
     expect(target?.querySelector('.telemetry-cost-over-time-chart')).toBeNull();
     expect(target?.querySelector('.telemetry-dashboard-section-placeholder')).not.toBeNull();
+  });
+
+  // HS-8535 — header alignment must match data alignment. Cost / Tokens
+  // / Prompts cells in the body are right-aligned (.telemetry-dashboard-
+  // project-cost / -tokens / -prompts each carry `text-align: right` in
+  // the SCSS); the matching <th>s carry `.align-right` so the header
+  // sits above the column instead of drifting leftward.
+  it('right-aligns the Cost / Tokens / Prompts <th> cells in the cost-by-project table (HS-8535)', () => {
+    const container = document.createElement('div');
+    renderShell(makePayload({
+      costByProject: [
+        { projectSecret: 's1', cost: 12.34, tokens: 1000, promptCount: 3, lastActivityTs: '2026-05-21T00:00:00Z' },
+      ],
+    }), container);
+    const table = container.querySelector('.telemetry-dashboard-project-table');
+    expect(table).not.toBeNull();
+    const headersByKey: Record<string, HTMLElement | null> = {};
+    table?.querySelectorAll<HTMLElement>('th[data-sort-key]').forEach(th => {
+      const k = th.dataset['sortKey'];
+      if (k !== undefined) headersByKey[k] = th;
+    });
+    expect(headersByKey['cost']?.classList.contains('align-right')).toBe(true);
+    expect(headersByKey['tokens']?.classList.contains('align-right')).toBe(true);
+    expect(headersByKey['promptCount']?.classList.contains('align-right')).toBe(true);
+    // Project + Last activity headers stay left-aligned (their column
+    // data is left-aligned).
+    expect(headersByKey['project']?.classList.contains('align-right')).toBe(false);
+    expect(headersByKey['lastActivityTs']?.classList.contains('align-right')).toBe(false);
   });
 });
 

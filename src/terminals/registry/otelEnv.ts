@@ -18,9 +18,21 @@ import { readFileSettings } from '../../file-settings.js';
  *   OTEL_LOGS_EXPORTER=otlp                   (if telemetry_logs_enabled !== false)
  *   OTEL_TRACES_EXPORTER=otlp                 (if telemetry_traces_enabled === true)
  *   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1     (if telemetry_traces_enabled === true)
+ *   OTEL_LOG_USER_PROMPTS=1                   (always, when telemetry_enabled === true — HS-8537)
  *   OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf (Claude Code default; matches §67.3)
  *   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:<port>
  *   OTEL_RESOURCE_ATTRIBUTES=hotsheet_project=<secret>,working_dir=<dataDir>
+ *
+ * HS-8537 — `OTEL_LOG_USER_PROMPTS=1` is required for the per-ticket
+ * cost rollup (§67.10.7 / HS-8152) to work. Without it, Claude Code
+ * emits `claude_code.user_prompt` events with only metadata
+ * (`prompt_length`, etc.); the prompt body is redacted. The HS-8151
+ * marker `<!-- hotsheet:ticket=HS-NNNN -->` rides inside the prompt
+ * body, so without the body the marker has nowhere to land + the
+ * `getPerTicketRollup` LIKE query always matches zero rows. The
+ * telemetry data stays local in PGLite, so logging the prompt content
+ * is no worse than logging any other local telemetry — the user
+ * already opted in by enabling telemetry.
  *
  * Pure: takes only `dataDir`, reads settings via `readFileSettings`,
  * returns the env block. The lifecycle code in `lifecycle.ts::buildEnv`
@@ -63,6 +75,7 @@ export function buildOtelEnv(dataDir: string): Record<string, string> {
     OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
     OTEL_EXPORTER_OTLP_ENDPOINT: `http://localhost:${String(port)}`,
     OTEL_RESOURCE_ATTRIBUTES: `hotsheet_project=${secret},working_dir=${dataDir}`,
+    OTEL_LOG_USER_PROMPTS: '1',
   };
 
   if (metricsEnabled) env.OTEL_METRICS_EXPORTER = 'otlp';

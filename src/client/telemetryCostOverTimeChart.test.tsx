@@ -188,4 +188,35 @@ describe('renderCostOverTimeChart (HS-8506 / HS-8518)', () => {
     const tick = el.querySelector('.telemetry-cost-over-time-ytick');
     expect(tick?.textContent).toMatch(/¢/);
   });
+
+  // HS-8534 — the chart wires a vertical cursor line + tooltip overlay
+  // on top of the SVG body so the hover experience matches the
+  // analytics-dashboard `addChartHover` (instead of relying solely on
+  // the native `<title>` long-hover tooltips).
+  it('attaches a hover overlay (cursor line + capture rect + tooltip) on every render', () => {
+    const points = [
+      pt('2026-05-19', 'secretA', 'sonnet', 1.0),
+      pt('2026-05-20', 'secretA', 'sonnet', 0.5),
+    ];
+    const el = renderCostOverTimeChart(points);
+    expect(el.querySelector('.telemetry-cost-over-time-cursor')).not.toBeNull();
+    expect(el.querySelector('.telemetry-cost-over-time-hover-capture')).not.toBeNull();
+    expect(el.querySelector('.telemetry-cost-over-time-tooltip')).not.toBeNull();
+  });
+
+  it('hides the cursor + tooltip by default (no hover yet)', () => {
+    const points = [pt('2026-05-19', 'secretA', 'sonnet', 1.0)];
+    const el = renderCostOverTimeChart(points);
+    const cursor = el.querySelector<SVGElement>('.telemetry-cost-over-time-cursor');
+    const tooltip = el.querySelector<HTMLElement>('.telemetry-cost-over-time-tooltip');
+    expect(cursor?.style.display).toBe('none');
+    expect(tooltip?.style.display).toBe('none');
+  });
+
+  it('does NOT attach a hover overlay when there are zero data points (empty-state branch)', () => {
+    const el = renderCostOverTimeChart([]);
+    expect(el.querySelector('.telemetry-cost-over-time-cursor')).toBeNull();
+    expect(el.querySelector('.telemetry-cost-over-time-hover-capture')).toBeNull();
+    expect(el.querySelector('.telemetry-cost-over-time-tooltip')).toBeNull();
+  });
 });

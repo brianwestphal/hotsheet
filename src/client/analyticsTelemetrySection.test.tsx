@@ -66,12 +66,15 @@ describe('renderBody (HS-8508 analytics-dashboard telemetry section)', () => {
     expect(body.textContent).toMatch(/Enable telemetry in Settings/i);
   });
 
-  it('renders 3 chips (Today / This week / All time) — NOT 4', () => {
+  // HS-8536 — single-project chips were widened to mirror the
+  // cross-project page's 4-chip layout (today / week / month / all time)
+  // and stretched to fill the dashboard width via a 4-col CSS grid.
+  it('renders 4 chips (Today / This week / This month / All time) — mirrors the cross-project layout', () => {
     const body = _testing.renderBody(makePayload(), 'secretA');
     const chips = body.querySelectorAll('.telemetry-chip');
-    expect(chips.length).toBe(3);
+    expect(chips.length).toBe(4);
     const labels = [...chips].map(c => c.querySelector('.telemetry-chip-label')?.textContent);
-    expect(labels).toEqual(['Today', 'This week', 'All time']);
+    expect(labels).toEqual(['Today', 'This week', 'This month', 'All time']);
   });
 
   it('renders the cost-over-time section when payload.costOverTime has data', () => {

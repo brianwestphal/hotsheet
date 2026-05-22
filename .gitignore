@@ -3,6 +3,7 @@ dist/
 .release-state.json
 .glassbox/
 .hotsheet/
+.cursor/
 *.map
 .DS_Store
 coverage/

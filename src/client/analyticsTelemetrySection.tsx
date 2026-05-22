@@ -148,10 +148,12 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
 
   const body = toElement(<div className="analytics-telemetry-body"></div>);
 
-  // Window chips (always today / week / all time regardless of selector).
+  // Window chips (always today / week / month / all time, mirroring
+  // the cross-project page §70 layout per HS-8536).
   const chips = toElement(<div className="telemetry-window-chips analytics-telemetry-chips"></div>);
   chips.appendChild(renderWindowChip('Today', payload.windowTotals.today));
   chips.appendChild(renderWindowChip('This week', payload.windowTotals.week));
+  chips.appendChild(renderWindowChip('This month', payload.windowTotals.month));
   chips.appendChild(renderWindowChip('All time', payload.windowTotals.allTime));
   body.appendChild(chips);
 

@@ -332,17 +332,23 @@ export function setChannelBusy(busy: boolean) {
  * HTML-comment shape so the marker is invisible to Claude's logic but
  * preserved as raw bytes through every prompt rewrite.
  *
- * Returns the original message unchanged when there's no active
- * ticket or no current message — both are valid (channel-only ping
- * without a ticket context).
+ * HS-8537 — even when the caller didn't pass a message (the common
+ * play-button flow), inject the marker as a standalone string when
+ * there's an active ticket. The channel server appends its default
+ * "Process the Hot Sheet worklist..." instructions, so the marker
+ * still lands at the head of the prompt body Claude receives.
+ *
+ * Returns `undefined` only when both the caller's message is empty
+ * AND there's no active ticket — the trigger is genuinely contextless.
  */
 function tagMessageWithActiveTicket(message: string | undefined): string | undefined {
-  if (message === undefined || message === '') return message;
   const activeId = state.activeTicketId;
-  if (activeId === null) return message;
-  const ticket = state.tickets.find(t => t.id === activeId);
-  if (ticket === undefined) return message;
-  return `<!-- hotsheet:ticket=${ticket.ticket_number} -->\n\n${message}`;
+  const ticket = activeId === null ? undefined : state.tickets.find(t => t.id === activeId);
+  const marker = ticket === undefined ? null : `<!-- hotsheet:ticket=${ticket.ticket_number} -->`;
+  if (message === undefined || message === '') {
+    return marker === null ? message : marker;
+  }
+  return marker === null ? message : `${marker}\n\n${message}`;
 }
 
 function triggerChannelAndMarkBusy(message?: string) {
@@ -363,6 +369,9 @@ function triggerChannelAndMarkBusy(message?: string) {
 
 // Exported so experimentalSettings can call it for custom command buttons
 export { triggerChannelAndMarkBusy };
+
+/** HS-8537 — exported for tests of the per-ticket marker injection. */
+export const _testing = { tagMessageWithActiveTicket };
 
 async function checkAndTrigger(btn: HTMLElement) {
   // Check if Claude is connected before triggering

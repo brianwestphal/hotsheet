@@ -267,14 +267,17 @@ function renderCostByProjectTable(rows: ProjectCostRow[]): HTMLElement {
     });
   }
 
+  // HS-8535 — headers carry `.align-right` for columns whose data is
+  // right-aligned (Cost / Tokens / Prompts) so the header label sits
+  // above the data column instead of floating leftward.
   const table = toElement(
     <table className="telemetry-dashboard-project-table">
       <thead>
         <tr>
           <th data-sort-key="project" data-label="Project">Project</th>
-          <th data-sort-key="cost" data-label="Cost">Cost ▼</th>
-          <th data-sort-key="tokens" data-label="Tokens">Tokens</th>
-          <th data-sort-key="promptCount" data-label="Prompts">Prompts</th>
+          <th className="align-right" data-sort-key="cost" data-label="Cost">Cost ▼</th>
+          <th className="align-right" data-sort-key="tokens" data-label="Tokens">Tokens</th>
+          <th className="align-right" data-sort-key="promptCount" data-label="Prompts">Prompts</th>
           <th data-sort-key="lastActivityTs" data-label="Last activity">Last activity</th>
         </tr>
       </thead>
@@ -416,7 +419,27 @@ function renderHourlyHeatmap(cells: HourlyActivityCell[]): HTMLElement {
  */
 export function renderShell(payload: DashboardPayload, container: HTMLElement): void {
   container.replaceChildren();
-  const isEmpty = payload.windowTotals.allTime.promptCount === 0 && payload.windowTotals.allTime.cost === 0;
+  // HS-8533 — empty detection: the page is empty only when every
+  // signal we have agrees there's no data. Pre-fix the gate was
+  // `allTime.promptCount === 0 && allTime.cost === 0`, which falsely
+  // tripped when a transient query glitch zeroed the all-time
+  // totals while every other section of the payload still carried
+  // rows. Cross-check the today / week / month windows AND the
+  // section-level arrays (`costByProject`, `costByModel`,
+  // `hourlyActivity`, `costOverTime`) — any non-zero signal means
+  // data exists, so render the chrome.
+  const { today, week, month, allTime } = payload.windowTotals;
+  const anyWindowHasData =
+    today.cost > 0 || today.promptCount > 0
+    || week.cost > 0 || week.promptCount > 0
+    || month.cost > 0 || month.promptCount > 0
+    || allTime.cost > 0 || allTime.promptCount > 0;
+  const anySectionHasData =
+    payload.costByProject.length > 0
+    || payload.costByModel.length > 0
+    || payload.hourlyActivity.length > 0
+    || payload.costOverTime.length > 0;
+  const isEmpty = !anyWindowHasData && !anySectionHasData;
   if (isEmpty) {
     container.appendChild(renderEmptyState());
     return;
@@ -555,15 +578,26 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
   container.appendChild(root);
 }
 
+// HS-8533 — generation counter shared across every `fetchAndRender`
+// call. Each invocation captures its own `gen` and only mutates the
+// container if no newer fetch has started in the meantime. Pre-fix,
+// rapid 7/30/90-day clicks could race so a slower earlier response
+// landed AFTER a faster later one, leaving the page in a stale (and
+// sometimes empty-looking) state.
+let fetchGeneration = 0;
+
 async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 'month'): Promise<void> {
+  const gen = ++fetchGeneration;
   container.replaceChildren(toElement(<p className="telemetry-dashboard-loading">Loading dashboard…</p>));
   try {
     const tz = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat !== 'undefined'
       ? Intl.DateTimeFormat().resolvedOptions().timeZone
       : 'UTC';
     const payload = await api<DashboardPayload>(`/telemetry/dashboard?window=${encodeURIComponent(window)}&tz=${encodeURIComponent(tz)}`);
+    if (gen !== fetchGeneration) return; // a newer fetch superseded us; let it win.
     renderShell(payload, container);
   } catch (err) {
+    if (gen !== fetchGeneration) return;
     const message = err instanceof Error ? err.message : String(err);
     container.replaceChildren(toElement(
       <div className="telemetry-dashboard-error">
@@ -650,6 +684,16 @@ export function showCrossProjectStatsPage(): void {
   // inside whatever project's content area"). The root + body class
   // pattern mirrors the terminal dashboard exactly.
   document.body.classList.add('cross-project-stats-active');
+  // HS-8532 — light the header-button active tint so users can see
+  // which surface is currently rendering, matching the terminal-
+  // dashboard toggle's active-state convention.
+  byIdOrNull('cross-project-stats-toggle')?.classList.add('active');
+  // Also drop the terminal-dashboard toggle's active class if it's
+  // still set — `showCrossProjectStatsPage` takes over the terminal
+  // dashboard via the lazy `exitDashboard()` import above, but the
+  // active class on its toggle is only cleared by `exitDashboard`'s
+  // own teardown path.
+  byIdOrNull('terminal-dashboard-toggle')?.classList.remove('active');
   const root = byIdOrNull('cross-project-stats-root');
   if (root === null) return;
   root.style.display = '';
@@ -685,6 +729,10 @@ export function teardownCrossProjectStatsPage(): void {
   if (!isCrossProjectStatsPageActive()) return;
   markCrossProjectStatsActive(false);
   document.body.classList.remove('cross-project-stats-active');
+  // HS-8532 — drop the active-state tint on the header button to
+  // match the cross-project page disappearing. Mirrors the terminal-
+  // dashboard toggle's active-class lifecycle.
+  byIdOrNull('cross-project-stats-toggle')?.classList.remove('active');
   const root = byIdOrNull('cross-project-stats-root');
   if (root !== null) {
     root.style.display = 'none';
@@ -700,6 +748,8 @@ export function hideCrossProjectStatsPage(): void {
   if (!isCrossProjectStatsPageActive()) return;
   markCrossProjectStatsActive(false);
   document.body.classList.remove('cross-project-stats-active');
+  // HS-8532 — symmetric drop of the active-state tint on hide.
+  byIdOrNull('cross-project-stats-toggle')?.classList.remove('active');
   const root = byIdOrNull('cross-project-stats-root');
   if (root !== null) {
     root.style.display = 'none';

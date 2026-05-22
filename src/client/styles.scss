@@ -268,7 +268,13 @@ body.scrollbars-always-visible .project-tabs-inner.has-overflow {
 // HS-6832: foundation — toolbar toggle button + body-class gate that hides the
 // rest of the chrome. Tile grid, zoom overlay, dedicated view are added by
 // HS-6833 through HS-6838.
-.terminal-dashboard-toggle {
+// HS-8532 — `.cross-project-stats-toggle` shares the same visual
+// language as `.terminal-dashboard-toggle`. Selector union keeps the
+// two buttons in lockstep (active-state tint, hover, sizing) — they
+// sit next to each other in the header row and one without an
+// active-state indicator reads as a bug, as the user reported.
+.terminal-dashboard-toggle,
+.cross-project-stats-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -10743,6 +10749,11 @@ label.detail-details-label {
     white-space: nowrap;
 
     &:hover { color: var(--text); }
+
+    // HS-8535 — headers above right-aligned data columns
+    // (Cost / Tokens / Prompts) carry `.align-right` so the label
+    // sits above the numbers instead of drifting leftward.
+    &.align-right { text-align: right; }
   }
 
   td {
@@ -11177,12 +11188,99 @@ label.detail-details-label {
 
 .telemetry-cost-over-time-svg-wrap {
   width: 100%;
+  // HS-8534 — the hover tooltip is appended as a child of this wrap
+  // and positioned absolutely; the wrap needs an explicit positioning
+  // context.
+  position: relative;
 }
 
 .telemetry-cost-over-time-svg {
   width: 100%;
   height: auto;
   display: block;
+}
+
+// HS-8534 — vertical cursor line shown while the user hovers over
+// the chart. Sits inside the SVG so it shares the viewBox scaling.
+.telemetry-cost-over-time-cursor {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+// HS-8534 — transparent capture rect that catches mousemove/mouseleave
+// for the chart's plot area.
+.telemetry-cost-over-time-hover-capture {
+  cursor: crosshair;
+}
+
+// HS-8534 — chart hover tooltip. Mirrors the analytics-dashboard
+// `.chart-tooltip` shape (background card, monospace cost numbers).
+.telemetry-cost-over-time-tooltip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  min-width: 160px;
+  max-width: 320px;
+  white-space: nowrap;
+}
+
+.telemetry-cost-over-time-tooltip-date {
+  font-weight: 600;
+  margin-bottom: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.telemetry-cost-over-time-tooltip-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 1px 0;
+}
+
+.telemetry-cost-over-time-tooltip-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.telemetry-cost-over-time-tooltip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.telemetry-cost-over-time-tooltip-cost {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  text-align: right;
+}
+
+.telemetry-cost-over-time-tooltip-total {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding-top: 4px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.telemetry-cost-over-time-tooltip-empty {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .telemetry-cost-over-time-gridline {
@@ -11336,9 +11434,13 @@ label.detail-details-label {
 }
 
 .analytics-telemetry-chips {
-  display: flex;
+  // HS-8536 — mirror the cross-project page's chip grid (§70 +
+  // `.telemetry-dashboard-chips`) so the single-project Claude-usage
+  // chips stretch evenly across the dashboard width instead of
+  // bunching at the left edge.
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
-  flex-wrap: wrap;
 }
 
 .analytics-telemetry-empty {

@@ -198,22 +198,40 @@ export async function refreshDashboardWidget() {
 
 // --- HS-8527 — sidebar cost element ----------------------------------
 
-/** Most recently observed `today-cost-by-project` map. Cached so the
- *  widget repopulates immediately after re-render without waiting for
- *  the next bell-state tick. */
-let lastCostsForSidebar: Record<string, number> = {};
+/** Sticky per-project cost cache. HS-8531 — switched from a "latest
+ *  fetch snapshot" map to a "best known value per project" cache so a
+ *  freshly-mounted sidebar widget (project-tab switch) renders the
+ *  previously-displayed cost immediately, instead of flashing blank
+ *  while the next bell-poll round-trip resolves.
+ *
+ *  Semantics: every entry in an incoming fetch updates the cache (so
+ *  the cost can move up + down during the day). Entries the server
+ *  omits — which means "zero cost today for that project" per the
+ *  `/api/telemetry/today-cost-by-project` server contract — do NOT
+ *  blank the cache; the user already saw a value and we keep showing
+ *  it until the next confirmed update for that secret arrives. The
+ *  trade-off (a stale value across midnight rollover) is acceptable
+ *  per the user's stated preference: caching takes priority over
+ *  zero-correctness on the day boundary; the first nonzero point of
+ *  the new day will correct it on the next fetch. */
+const stickyCostCache = new Map<string, number>();
 
 /** Update the active project's cost in the sidebar widget. `costs` is
  *  the bulk `/api/telemetry/today-cost-by-project` response keyed by
- *  project secret. A secret missing from the map (or zero) hides the
- *  cost span; subscription billing-mode also hides it (the dollar
- *  amount is an API-equivalent estimate, not what the user pays). */
+ *  project secret. Subscription billing-mode hides the cost (the
+ *  dollar amount is an API-equivalent estimate, not what the user
+ *  pays). HS-8531 — projects missing from `costs` keep their cached
+ *  value rather than disappearing. */
 export function updateSidebarWidgetCost(costs: Record<string, number>): void {
-  lastCostsForSidebar = costs;
+  // HS-8531 — merge into the sticky cache rather than replacing it.
+  // Only entries the server actually returns update the cache.
+  for (const [secret, cost] of Object.entries(costs)) {
+    stickyCostCache.set(secret, cost);
+  }
   const el = document.querySelector<HTMLElement>('.sidebar-widget-cost');
   if (el === null) return;
   const secret = getActiveProject()?.secret ?? '';
-  const cost = costs[secret] ?? 0;
+  const cost = stickyCostCache.get(secret) ?? 0;
   const mode = getTelemetryCostMode();
   if (cost > 0 && mode === 'api') {
     el.textContent = cost < 0.01 ? '<$0.01' : `$${cost.toFixed(2)}`;
@@ -224,9 +242,20 @@ export function updateSidebarWidgetCost(costs: Record<string, number>): void {
   }
 }
 
-/** Re-render the sidebar cost using the cached map. Called after the
- *  widget is re-mounted (project switch) and from the Settings dialog
- *  immediately after a billing-mode change. */
+/** Re-render the sidebar cost using the cached values. Called after
+ *  the widget is re-mounted (project switch) and from the Settings
+ *  dialog immediately after a billing-mode change. HS-8531 — passes
+ *  an empty record so the cache is read-only this call (no merge),
+ *  but the active project still gets its sticky-cached value rendered.
+ */
 export function refreshSidebarWidgetCost(): void {
-  updateSidebarWidgetCost(lastCostsForSidebar);
+  updateSidebarWidgetCost({});
 }
+
+/** Test-only escape hatch — exposed so unit tests can reset the
+ *  module-private sticky cache between cases. HS-8531. */
+export const _testingSidebarCost = {
+  resetCache(): void { stickyCostCache.clear(); },
+  cacheSize(): number { return stickyCostCache.size; },
+  getCached(secret: string): number | undefined { return stickyCostCache.get(secret); },
+};

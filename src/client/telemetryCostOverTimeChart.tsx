@@ -662,6 +662,25 @@ export function renderCostOverTimeChart(
     );
     svg.appendChild(body);
     svgWrap.appendChild(svg);
+
+    // HS-8534 — rich hover feedback (vertical cursor line + tooltip
+    // listing every project's per-day cost) layered on top of the
+    // chart body so the reading experience matches the analytics
+    // dashboard's `addChartHover`. Native `<title>` tooltips stay as
+    // a screen-reader fallback; the overlay catches `mousemove` first
+    // because it's the last child of the SVG.
+    attachCostOverTimeHover({
+      svgWrap,
+      svg,
+      dates,
+      projectSecrets,
+      tuples,
+      costLookup,
+      viewBoxWidth,
+      height,
+      formatCost,
+      resolveProjectLabel,
+    });
   }
   rerenderBody();
 
@@ -675,4 +694,166 @@ export function renderCostOverTimeChart(
   }));
 
   return root;
+}
+
+/**
+ * HS-8534 — wire a vertical-cursor + per-column tooltip on top of the
+ * chart's SVG. Mirrors the analytics-dashboard `addChartHover` pattern
+ * from `dashboard.tsx`: the cursor follows the closest date column, the
+ * tooltip lists every project's per-day cost (summed across models) at
+ * that date, and the tooltip's grand-total reads the day's stacked
+ * height.
+ *
+ * The overlay (transparent capture rect + cursor line + tooltip div)
+ * is appended LAST so it catches `mousemove` ahead of the per-band
+ * `<title>` elements. The native `<title>` tooltips stay in the tree
+ * as a screen-reader fallback — they only fire on long stationary
+ * hovers in browsers, so the overlap is invisible to mouse users.
+ */
+function attachCostOverTimeHover(args: {
+  svgWrap: HTMLElement;
+  svg: HTMLElement;
+  dates: readonly string[];
+  projectSecrets: readonly string[];
+  tuples: readonly { projectSecret: string; model: string }[];
+  costLookup: Map<string, number>;
+  viewBoxWidth: number;
+  height: number;
+  formatCost: (n: number) => string;
+  resolveProjectLabel: (secret: string) => string;
+}): void {
+  const { svgWrap, svg, dates, projectSecrets, tuples, costLookup, viewBoxWidth, height, formatCost, resolveProjectLabel } = args;
+  if (dates.length === 0) return;
+
+  const chartLeft = MARGIN_LEFT;
+  const chartTop = MARGIN_TOP;
+  const chartWidth = Math.max(0, viewBoxWidth - MARGIN_LEFT - MARGIN_RIGHT);
+  const chartHeight = Math.max(0, height - MARGIN_TOP - MARGIN_BOTTOM);
+  if (chartWidth === 0 || chartHeight === 0) return;
+  const colWidth = chartWidth / dates.length;
+
+  // Vertical cursor line (sits inside the SVG so it shares the same
+  // coordinate space as the bands/lines).
+  const cursor = toElement(
+    <line
+      x1={String(chartLeft)} x2={String(chartLeft)}
+      y1={String(chartTop)} y2={String(chartTop + chartHeight)}
+      className="telemetry-cost-over-time-cursor"
+      style="display:none"
+    ></line>
+  );
+  svg.appendChild(cursor);
+
+  // Transparent overlay rect that captures pointer events for the
+  // whole chart area — drawn last so it sits above every band / dot.
+  const overlay = toElement(
+    <rect
+      x={String(chartLeft)} y={String(chartTop)}
+      width={String(chartWidth)} height={String(chartHeight)}
+      fill="transparent"
+      className="telemetry-cost-over-time-hover-capture"
+    ></rect>
+  );
+  svg.appendChild(overlay);
+
+  // Tooltip lives in the HTML layer so we can use flow layout +
+  // dynamic width. Anchored relative to `svgWrap` (which is
+  // position:relative via the SCSS rule below).
+  const tooltip = toElement(
+    <div className="telemetry-cost-over-time-tooltip" style="display:none"></div>
+  );
+  svgWrap.appendChild(tooltip);
+
+  function hide(): void {
+    cursor.style.display = 'none';
+    tooltip.style.display = 'none';
+  }
+
+  function update(e: MouseEvent): void {
+    const rect = svg.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const mouseVbX = (e.clientX - rect.left) * (viewBoxWidth / rect.width);
+    const relX = mouseVbX - chartLeft;
+    let idx = Math.floor(relX / colWidth);
+    if (idx < 0) idx = 0;
+    if (idx >= dates.length) idx = dates.length - 1;
+
+    const date = dates[idx];
+    const columnCenterVbX = chartLeft + idx * colWidth + colWidth / 2;
+    cursor.setAttribute('x1', String(columnCenterVbX));
+    cursor.setAttribute('x2', String(columnCenterVbX));
+    cursor.style.display = '';
+
+    // Per-project total at this date (sum across models). Filter to
+    // non-zero entries so days where a project has zero cost don't
+    // clutter the tooltip — but always show the grand total.
+    const perProject: Array<{ secret: string; label: string; cost: number }> = [];
+    let grand = 0;
+    for (const secret of projectSecrets) {
+      let sum = 0;
+      for (const t of tuples) {
+        if (t.projectSecret !== secret) continue;
+        const cost = costLookup.get(`${date} ${secret} ${t.model}`) ?? 0;
+        sum += cost;
+      }
+      grand += sum;
+      if (sum > 0) {
+        perProject.push({ secret, label: resolveProjectLabel(secret), cost: sum });
+      }
+    }
+    perProject.sort((a, b) => b.cost - a.cost);
+
+    const rows: HTMLElement[] = [];
+    rows.push(toElement(
+      <div className="telemetry-cost-over-time-tooltip-date">{date}</div>
+    ));
+    for (const row of perProject) {
+      const projectIdx = projectSecrets.indexOf(row.secret);
+      const color = MODEL_DONUT_COLORS[projectIdx % MODEL_DONUT_COLORS.length];
+      rows.push(toElement(
+        <div className="telemetry-cost-over-time-tooltip-row">
+          <span
+            className="telemetry-cost-over-time-tooltip-swatch"
+            style={`background-color: ${color};`}
+          ></span>
+          <span className="telemetry-cost-over-time-tooltip-label">{row.label}</span>
+          <span className="telemetry-cost-over-time-tooltip-cost">{formatCost(row.cost)}</span>
+        </div>
+      ));
+    }
+    if (perProject.length > 1) {
+      rows.push(toElement(
+        <div className="telemetry-cost-over-time-tooltip-total">
+          <span className="telemetry-cost-over-time-tooltip-label">Total</span>
+          <span className="telemetry-cost-over-time-tooltip-cost">{formatCost(grand)}</span>
+        </div>
+      ));
+    } else if (perProject.length === 0) {
+      rows.push(toElement(
+        <div className="telemetry-cost-over-time-tooltip-row telemetry-cost-over-time-tooltip-empty">
+          <span className="telemetry-cost-over-time-tooltip-label">No cost</span>
+        </div>
+      ));
+    }
+    tooltip.replaceChildren(...rows);
+    tooltip.style.display = '';
+
+    // Position the tooltip near the cursor in HTML-pixel space.
+    // `svgWrap` is position:relative so its bounding-rect is the
+    // anchor. Clamp so the tooltip stays inside the wrap.
+    const wrapRect = svgWrap.getBoundingClientRect();
+    const cursorPxX = (columnCenterVbX / viewBoxWidth) * rect.width + (rect.left - wrapRect.left);
+    const ttRect = tooltip.getBoundingClientRect();
+    let left = cursorPxX + 10;
+    if (left + ttRect.width > wrapRect.width) {
+      left = cursorPxX - ttRect.width - 10;
+    }
+    if (left < 0) left = 0;
+    const top = Math.max(0, e.clientY - wrapRect.top - ttRect.height - 8);
+    tooltip.style.left = `${String(Math.round(left))}px`;
+    tooltip.style.top = `${String(Math.round(top))}px`;
+  }
+
+  overlay.addEventListener('mousemove', update as EventListener);
+  overlay.addEventListener('mouseleave', hide);
 }
