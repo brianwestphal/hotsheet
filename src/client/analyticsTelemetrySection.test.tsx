@@ -77,6 +77,27 @@ describe('renderBody (HS-8508 analytics-dashboard telemetry section)', () => {
     expect(labels).toEqual(['Today', 'This week', 'This month', 'All time']);
   });
 
+  // HS-8543 — every populated body (i.e. anywhere chips render) leads
+  // with the always-visible subscription-cost disclaimer above the
+  // chips. Empty-state branch correctly skips it.
+  it('renders the subscription-cost disclaimer above the chips when data is present (HS-8543)', () => {
+    const body = _testing.renderBody(makePayload(), 'secretA');
+    const disclaimer = body.querySelector('.telemetry-subscription-disclaimer');
+    expect(disclaimer).not.toBeNull();
+    expect(disclaimer?.textContent ?? '').toMatch(/subscription/i);
+    const chips = body.querySelector('.telemetry-window-chips');
+    expect(disclaimer?.compareDocumentPosition(chips as Node) ?? 0)
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it('does NOT render the disclaimer on the empty-state branch', () => {
+    const body = _testing.renderBody(
+      makePayload({ windowTotalsAllTime: emptyTotals() }),
+      'secretA',
+    );
+    expect(body.querySelector('.telemetry-subscription-disclaimer')).toBeNull();
+  });
+
   it('renders the cost-over-time section when payload.costOverTime has data', () => {
     const body = _testing.renderBody(
       makePayload({

@@ -29,6 +29,7 @@ This document lists features that require manual verification before each releas
 ### Project Tabs
 - [ ] Drag a tab to reorder — drop indicator shows insertion point
 - [ ] Release — tab order persists across reload
+- [ ] HS-8542: Click the sidebar dashboard widget to open the per-project analytics dashboard; then click the active project's own tab → dashboard dismisses, regular ticket view returns (the previously-active view's items are visible, sidebar item gets the `.active` class)
 
 ### Command Groups (Settings)
 - [ ] Drag a command to reorder within a group

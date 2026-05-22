@@ -696,6 +696,23 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
       // ticket view, NOT a still-visible cross-project page.
       const { isCrossProjectStatsPageActive, teardownCrossProjectStatsPage } = await import('./crossProjectStatsPage.js');
       if (isCrossProjectStatsPageActive()) teardownCrossProjectStatsPage();
+      // HS-8542 — clicking the *active* project's own tab while the
+      // per-project analytics dashboard is showing should dismiss the
+      // dashboard and restore the regular ticket view. `switchProject`
+      // is a no-op when the project is already active (early-return on
+      // matching secret), so without this branch the click had no
+      // effect. Clicking a *different* project's tab continues to
+      // route through `switchProject` below, which re-renders the
+      // dashboard with the new project's data.
+      const isSameProject = getActiveProject()?.secret === p.secret;
+      if (isSameProject) {
+        const { isAnalyticsDashboardActive, toggleDashboardMode } = await import('./dashboardMode.js');
+        if (isAnalyticsDashboardActive()) {
+          toggleDashboardMode();
+          reopenMinimizedForSecret(p.secret);
+          return;
+        }
+      }
       await switchProject(p);
       // HS-6637: if this tab has a minimized permission popup, bring it back.
       reopenMinimizedForSecret(p.secret);

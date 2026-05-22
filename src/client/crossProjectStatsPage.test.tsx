@@ -153,6 +153,25 @@ describe('renderShell (HS-8507 cross-project stats page)', () => {
     expect(container.querySelector('.telemetry-dashboard-chips')).not.toBeNull();
   });
 
+  // HS-8543 — every chrome render carries the always-visible
+  // subscription-cost disclaimer above the chips. Distinct from the
+  // HS-8497 `.telemetry-subscription-notice` which only fires when
+  // `cost_mode === 'subscription'`.
+  it('renders the subscription-cost disclaimer above the window-totals chips (HS-8543)', () => {
+    const container = document.createElement('div');
+    renderShell(makePayload(), container);
+    const disclaimer = container.querySelector('.telemetry-subscription-disclaimer');
+    expect(disclaimer).not.toBeNull();
+    expect(disclaimer?.textContent ?? '').toMatch(/subscription/i);
+    expect(disclaimer?.textContent ?? '').toMatch(/estimate/i);
+    // Order: disclaimer must precede the chips row.
+    const root = container.querySelector('.cross-project-stats-page');
+    expect(root).not.toBeNull();
+    const chips = root?.querySelector('.telemetry-dashboard-chips');
+    expect(disclaimer?.compareDocumentPosition(chips as Node) ?? 0)
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
   it('still shows the empty card when EVERY signal is zero (windowTotals + section arrays)', () => {
     const container = document.createElement('div');
     renderShell(makePayload({

@@ -234,10 +234,24 @@ export function updateSidebarWidgetCost(costs: Record<string, number>): void {
   const cost = stickyCostCache.get(secret) ?? 0;
   const mode = getTelemetryCostMode();
   if (cost > 0 && mode === 'api') {
-    el.textContent = cost < 0.01 ? '<$0.01' : `$${cost.toFixed(2)}`;
+    // HS-8543 — append a `*` superscript so users on a Pro/Max
+    // subscription understand the dollar amount is the API-equivalent
+    // cost rather than what they actually pay. The full disclaimer
+    // lives in the stats pages' header notices; the superscript here
+    // is the breadcrumb that points there. Title attribute carries
+    // a tooltip so hovering reveals the short explanation inline.
+    const label = cost < 0.01 ? '<$0.01' : `$${cost.toFixed(2)}`;
+    el.replaceChildren(
+      document.createTextNode(label),
+      Object.assign(document.createElement('sup'), {
+        className: 'sidebar-widget-cost-asterisk',
+        textContent: '*',
+        title: 'Estimate only for Claude Pro / Max / other-subscription users. See cost overview pages for details.',
+      }),
+    );
     el.style.display = '';
   } else {
-    el.textContent = '';
+    el.replaceChildren();
     el.style.display = 'none';
   }
 }

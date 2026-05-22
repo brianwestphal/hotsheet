@@ -48,6 +48,7 @@ import { getActiveProject } from './state.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
 import { renderCostByModelDonut } from './telemetryModelDonut.js';
 import { type RecentPromptRow, renderRecentPromptsList } from './telemetryRecentPromptsList.js';
+import { renderSubscriptionDisclaimer } from './telemetrySubscriptionDisclaimer.js';
 import { renderToolHistogramRow,type ToolLatencyHistogramRow } from './telemetryToolHistogram.js';
 
 type TelemetryWindow = 'today' | 'week' | 'month' | '90d' | 'all';
@@ -147,6 +148,13 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
   }
 
   const body = toElement(<div className="analytics-telemetry-body"></div>);
+
+  // HS-8543 — always-visible subscription-cost disclaimer above the
+  // chips, matching the cross-project page §70 placement. Users on
+  // Claude Pro / Max get billed via their subscription regardless of
+  // the cost-mode toggle, so the dollar amount needs a permanent
+  // "estimate only" reminder.
+  body.appendChild(renderSubscriptionDisclaimer());
 
   // Window chips (always today / week / month / all time, mirroring
   // the cross-project page §70 layout per HS-8536).

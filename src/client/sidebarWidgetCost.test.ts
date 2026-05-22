@@ -51,12 +51,21 @@ afterEach(() => {
   _testingSidebarCost.resetCache();
 });
 
+// HS-8543 — every visible-cost branch now appends a `*` superscript
+// (`.sidebar-widget-cost-asterisk`) pointing at the subscription-cost
+// disclaimer notice. The helper below isolates the numeric portion so
+// existing assertions don't need per-test rewrites.
+function costAmount(span: HTMLElement): string {
+  return (span.firstChild?.textContent ?? '');
+}
+
 describe('updateSidebarWidgetCost', () => {
   it('renders the active project\'s cost as $N.NN', () => {
     const span = mountWidget();
     _setProjectsForTesting([A, B], A.secret);
     updateSidebarWidgetCost({ 'sec-a': 1.234, 'sec-b': 9.99 });
-    expect(span.textContent).toBe('$1.23');
+    expect(costAmount(span)).toBe('$1.23');
+    expect(span.querySelector('.sidebar-widget-cost-asterisk')?.textContent).toBe('*');
     expect(span.style.display).toBe('');
   });
 
@@ -72,7 +81,7 @@ describe('updateSidebarWidgetCost', () => {
     const span = mountWidget();
     _setProjectsForTesting([A], A.secret);
     updateSidebarWidgetCost({ 'sec-a': 0.004 });
-    expect(span.textContent).toBe('<$0.01');
+    expect(costAmount(span)).toBe('<$0.01');
     expect(span.style.display).toBe('');
   });
 
@@ -89,7 +98,7 @@ describe('updateSidebarWidgetCost', () => {
     const span = mountWidget();
     _setProjectsForTesting([A, B], A.secret);
     updateSidebarWidgetCost({ 'sec-a': 1.0, 'sec-b': 2.5 });
-    expect(span.textContent).toBe('$1.00');
+    expect(costAmount(span)).toBe('$1.00');
 
     _setProjectsForTesting([A, B], B.secret);
     // Re-render scenario: a fresh widget is mounted (replaceWith), and
@@ -98,7 +107,7 @@ describe('updateSidebarWidgetCost', () => {
     document.body.innerHTML = '';
     const span2 = mountWidget();
     refreshSidebarWidgetCost();
-    expect(span2.textContent).toBe('$2.50');
+    expect(costAmount(span2)).toBe('$2.50');
   });
 
   it('is a no-op when no widget is mounted', () => {
@@ -118,13 +127,13 @@ describe('updateSidebarWidgetCost', () => {
 
     // First fetch: A = $5, B = $2.
     updateSidebarWidgetCost({ 'sec-a': 5.0, 'sec-b': 2.0 });
-    expect(span.textContent).toBe('$5.00');
+    expect(costAmount(span)).toBe('$5.00');
 
     // Second fetch: A is omitted (server only includes nonzero today).
     // Pre-HS-8531 this would hide the span; post-fix it stays at $5.00
     // until a fresh value for sec-a arrives.
     updateSidebarWidgetCost({ 'sec-b': 3.5 });
-    expect(span.textContent).toBe('$5.00');
+    expect(costAmount(span)).toBe('$5.00');
     expect(span.style.display).toBe('');
   });
 
@@ -132,16 +141,16 @@ describe('updateSidebarWidgetCost', () => {
     const span = mountWidget();
     _setProjectsForTesting([A], A.secret);
     updateSidebarWidgetCost({ 'sec-a': 1.0 });
-    expect(span.textContent).toBe('$1.00');
+    expect(costAmount(span)).toBe('$1.00');
     updateSidebarWidgetCost({ 'sec-a': 7.5 });
-    expect(span.textContent).toBe('$7.50');
+    expect(costAmount(span)).toBe('$7.50');
   });
 
   it('does NOT carry a cached value forward to a never-observed project', () => {
     const span = mountWidget();
     _setProjectsForTesting([A, B], A.secret);
     updateSidebarWidgetCost({ 'sec-a': 5.0 });
-    expect(span.textContent).toBe('$5.00');
+    expect(costAmount(span)).toBe('$5.00');
 
     // Switch to B (which has no observed cost yet) and re-render the
     // widget — the cost should be hidden, not "inherit" sec-a's value.
@@ -157,7 +166,7 @@ describe('updateSidebarWidgetCost', () => {
     const span = mountWidget();
     _setProjectsForTesting([A], A.secret);
     updateSidebarWidgetCost({ 'sec-a': 4.2 });
-    expect(span.textContent).toBe('$4.20');
+    expect(costAmount(span)).toBe('$4.20');
 
     // Simulate a project-switch re-mount: blow away the DOM, mount a
     // fresh widget, call refreshSidebarWidgetCost — the cached value
@@ -165,6 +174,32 @@ describe('updateSidebarWidgetCost', () => {
     document.body.innerHTML = '';
     const span2 = mountWidget();
     refreshSidebarWidgetCost();
-    expect(span2.textContent).toBe('$4.20');
+    expect(costAmount(span2)).toBe('$4.20');
+  });
+
+  // HS-8543 — direct regression coverage for the asterisk-superscript
+  // disclaimer breadcrumb. Pinning placement (after the cost text) +
+  // class (so CSS keeps targeting it) + the title-attribute hover
+  // hint that points users at the stats-page disclaimer.
+  it('appends a `*` superscript with class `.sidebar-widget-cost-asterisk` after the cost (HS-8543)', () => {
+    const span = mountWidget();
+    _setProjectsForTesting([A], A.secret);
+    updateSidebarWidgetCost({ 'sec-a': 3.5 });
+    const sup = span.querySelector<HTMLElement>('.sidebar-widget-cost-asterisk');
+    expect(sup).not.toBeNull();
+    expect(sup?.tagName).toBe('SUP');
+    expect(sup?.textContent).toBe('*');
+    expect((sup?.title ?? '').toLowerCase()).toMatch(/estimate|subscription/);
+    // Order matters: text first, asterisk second.
+    expect(span.firstChild?.nodeType).toBe(3 /* TEXT_NODE */);
+    expect(span.lastElementChild).toBe(sup);
+  });
+
+  it('does NOT append the asterisk when the cost is hidden (subscription mode / zero / missing)', () => {
+    const span = mountWidget();
+    _setProjectsForTesting([A], A.secret);
+    _setTelemetryCostModeForTesting('subscription');
+    updateSidebarWidgetCost({ 'sec-a': 4.2 });
+    expect(span.querySelector('.sidebar-widget-cost-asterisk')).toBeNull();
   });
 });

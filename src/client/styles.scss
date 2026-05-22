@@ -5307,6 +5307,17 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   color: var(--text);
 }
 
+// HS-8543 — subscription-cost-estimate marker. Sits as a small
+// superscript right after the dollar amount; muted color so it
+// reads as a footnote, not a callout. Cursor + title attribute
+// hint at the full disclaimer that lives on the stats pages.
+.sidebar-widget-cost-asterisk {
+  margin-left: 1px;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: help;
+}
+
 // --- Footer ---
 
 .app-footer {
@@ -11144,6 +11155,36 @@ label.detail-details-label {
   font: inherit;
 
   &:hover { text-decoration: underline; }
+}
+
+// HS-8543 — always-visible subscription-cost disclaimer. Distinct
+// from the HS-8497 `.telemetry-subscription-notice` above (which is
+// an aggressive accent-tinted banner shown only in
+// `cost_mode === 'subscription'`); this one is a permanent muted
+// reminder that the cost numbers are API-equivalent estimates,
+// always shown regardless of cost-mode state. Gray rounded card +
+// lucide asterisk icon at the left, single sentence of copy.
+.telemetry-subscription-disclaimer {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.telemetry-subscription-disclaimer-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.telemetry-subscription-disclaimer-text {
+  flex: 1;
 }
 
 // -----------------------------------------------------------------------------

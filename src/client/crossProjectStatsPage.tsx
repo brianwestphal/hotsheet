@@ -56,6 +56,7 @@ import { state } from './state.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
 import { renderCostByModelDonut } from './telemetryModelDonut.js';
+import { renderSubscriptionDisclaimer } from './telemetrySubscriptionDisclaimer.js';
 import { unmountBindList } from './ticketList.js';
 
 export { isCrossProjectStatsPageActive, markCrossProjectStatsSupplanted } from './mainSurfaceState.js';
@@ -478,6 +479,13 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
           <button type="button" className={`btn btn-sm${payload.window === '90d' ? ' active' : ''}`} data-window="90d">90 days</button>
         </div>
       </div>
+      {/* HS-8543 — always-visible subscription-cost disclaimer above
+          the chips. Distinct from the HS-8497 notice above (which
+          only fires in `cost_mode === 'subscription'`); this one is
+          a permanent reminder for users on Claude Pro / Max who may
+          have telemetry in `'api'` mode but still get billed via
+          their subscription. */}
+      <div className="telemetry-subscription-disclaimer-slot" id="telemetry-dashboard-disclaimer-slot"></div>
       <div className="telemetry-dashboard-chips" id="telemetry-dashboard-chips"></div>
       <div className="telemetry-dashboard-sections">
         <section className="telemetry-dashboard-section" data-section="cost-over-time">
@@ -507,6 +515,13 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
       </div>
     </div>
   );
+
+  // HS-8543 — populate the always-visible subscription-cost
+  // disclaimer slot.
+  const disclaimerSlot = root.querySelector<HTMLElement>('#telemetry-dashboard-disclaimer-slot');
+  if (disclaimerSlot !== null) {
+    disclaimerSlot.appendChild(renderSubscriptionDisclaimer());
+  }
 
   // Populate the chips row.
   const chips = root.querySelector<HTMLElement>('#telemetry-dashboard-chips');
