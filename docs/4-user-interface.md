@@ -43,6 +43,7 @@ The interface is divided into:
 
 ### 4.4 Column View (Kanban)
 
+- **Default layout for new installs as of HS-8490 (2026-05-22)** — pre-fix the initial value of `state.layout` was `'list'`; post-fix it's `'columns'`. Existing users with a persisted `layout` setting (`'list'` or `'columns'`) are NOT affected — `loadSettings` overrides the initial value with the saved one. Only users with no persisted choice (genuinely new installs OR new projects on existing installs that never touched the layout toggle) hit the new default. The `canUseColumnView` gate (§4.4 last two bullets — completed / verified / trash / backlog / archive) still falls back to list view for the views that don't support columns, so users opening one of those views first still see a list.
 - Tickets displayed in status-based columns (Not Started, Started, Completed, Verified).
 - Drag-and-drop cards between columns to change status.
 - Column headers show ticket count. Clicking a column header selects all tickets in that column (or deselects all if every ticket is already selected).

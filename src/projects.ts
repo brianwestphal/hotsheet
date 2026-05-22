@@ -4,10 +4,11 @@ import { resolve } from 'path';
 import { getBackupTimers, initBackupScheduler } from './backup.js';
 import { getDbForDir, runWithDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
-import { ensureSecret, readFileSettings } from './file-settings.js';
+import { ensureSecret, readFileSettings, writeFileSettings } from './file-settings.js';
 import { acquireLock } from './lock.js';
-import { ensureSkills, initSkills, setSkillCategories } from './skills.js';
+import { ensureSkillsForDir, initSkills, setSkillCategories } from './skills.js';
 import { getSyncState, initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
+import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 
 export interface ProjectContext {
   dataDir: string;
@@ -55,10 +56,22 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   initMarkdownSync(absDataDir, port);
   scheduleAllSync(absDataDir);
 
-  // Initialize and sync AI tool skills — run in this project's DB context
+  // Initialize and sync AI tool skills — run in this project's DB context.
+  // HS-8486 (2026-05-22) — was `ensureSkills()` which used
+  // `process.cwd()`; that worked for a single-project CLI launch
+  // (where CWD === project root) but was wrong for the multi-project
+  // Tauri path (where CWD is the Hot Sheet binary's start dir, not
+  // the project being opened). Switched to `ensureSkillsForDir`
+  // against the registered project's root so skills land in the
+  // right project on Open Folder.
   initSkills(port);
   setSkillCategories(await runWithDataDir(absDataDir, () => getCategories()));
-  ensureSkills();
+  const projectRoot = absDataDir.replace(/\/.hotsheet\/?$/, '');
+  ensureSkillsForDir(projectRoot);
+
+  // HS-8491 (2026-05-22) — auto-seed a Claude configured terminal on
+  // first run. See `seedClaudeTerminalIfNew` below.
+  seedClaudeTerminalIfNew(absDataDir);
 
   // Initialize backup scheduler
   initBackupScheduler(absDataDir);
@@ -84,6 +97,35 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   dataDirToSecret.set(absDataDir, secret);
 
   return ctx;
+}
+
+/**
+ * HS-8491 (2026-05-22) — auto-seed a `claude` configured terminal in
+ * a project's `.hotsheet/settings.json` when:
+ *
+ *   (a) the project's `terminals` setting has never been set
+ *       (`readFileSettings(...).terminals === undefined`), AND
+ *   (b) `claude` is installed on `PATH`.
+ *
+ * Existing projects with any `terminals` value (including an empty
+ * `[]` because the user explicitly cleared their list) keep the
+ * user's choice — only genuinely first-run projects hit the seed.
+ * `lazy: true` so the PTY doesn't spawn until the user clicks the
+ * tab; the spawn is just a click away once the project loads.
+ * Idempotent — repeat calls hit the `settings.terminals !== undefined` branch and skip.
+ *
+ * Exported so a unit test can exercise the branches without
+ * spinning up the full `registerProject` lifecycle (PGLite +
+ * markdown sync + backup scheduler + skills).
+ */
+export function seedClaudeTerminalIfNew(absDataDir: string): void {
+  if (readFileSettings(absDataDir).terminals !== undefined) return;
+  if (!isExecutableOnPath('claude')) return;
+  writeFileSettings(absDataDir, {
+    terminals: [
+      { id: 'claude', name: 'Claude', command: '{{claudeCommand}}', lazy: true },
+    ],
+  });
 }
 
 /**

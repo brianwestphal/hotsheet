@@ -173,12 +173,14 @@ pageRoutes.get('/', (c) => {
             </div>
             <div id="channel-commands-container"></div>
             {PLUGINS_ENABLED ? <div id="plugin-sidebar-top" className="plugin-sidebar-actions"></div> : null}
-            <div className="sidebar-copy-prompt" id="copy-prompt-section" style="display:none">
-              <button className="copy-prompt-btn" id="copy-prompt-btn" title="Copy worklist prompt to clipboard">
-                <span className="copy-prompt-icon" id="copy-prompt-icon"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
-                <span id="copy-prompt-label">Copy AI prompt</span>
-              </button>
-            </div>
+            {/* HS-8528 — "Copy AI prompt" sidebar button removed.
+                AI tools consume the worklist via the `hotsheet_*` MCP
+                tools / `.hotsheet/worklist.md` directly, so the
+                one-shot copy-to-clipboard surface is no longer
+                necessary. The skill-creation banner trigger that
+                previously rode on the same endpoint fetch was
+                preserved — moved to `initSkillsBanner` in
+                `clipboardUtil.tsx`. */}
             <div className="sidebar-section">
               <div className="sidebar-label">Views <button className="sidebar-add-view-btn" id="add-custom-view-btn" title="New custom view"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 12h8"/><path d="M12 8v8"/></svg></button></div>
               <button className="sidebar-item active" data-view="all"><span className="sidebar-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h18"/><path d="M3 6h18"/><path d="M3 18h18"/></svg></span> All Tickets</button>
@@ -427,6 +429,16 @@ pageRoutes.get('/', (c) => {
 
         <footer className="app-footer">
           <div className="footer-left">
+            {/* HS-8530 — Sponsor link, lucide `heart` icon. Opens
+                https://github.com/sponsors/brianwestphal in a new tab
+                via `openExternalUrl` (Tauri-safe; see CLAUDE.md
+                "Tauri-unsafe browser APIs" — `window.open` no-ops in
+                WKWebView). Sits to the left of the Share link with a
+                comfortable gap between them. */}
+            <a href="https://github.com/sponsors/brianwestphal" target="_blank" rel="noopener noreferrer" id="sponsor-link" className="sponsor-link" title="Support Hot Sheet">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+              <span>Sponsor</span>
+            </a>
             <a href="#" id="share-link" className="share-link">Know someone who'd love this? Share Hot Sheet</a>
           </div>
           <div className="status-bar-right">

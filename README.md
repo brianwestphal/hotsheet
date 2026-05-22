@@ -458,6 +458,14 @@ The E2E suite carries an error-capture fixture (HS-8435 / HS-8436, `e2e/coverage
 
 ---
 
+## Sponsor
+
+Hot Sheet is free and open source. If it saves you time, consider [sponsoring development on GitHub](https://github.com/sponsors/brianwestphal) — every sponsorship goes directly toward more features and bug fixes.
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-brianwestphal-ea4aaa?logo=github-sponsors&logoColor=white)](https://github.com/sponsors/brianwestphal)
+
+---
+
 ## License
 
 MIT

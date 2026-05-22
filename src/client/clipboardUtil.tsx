@@ -1,15 +1,6 @@
 import { api } from './api.js';
-import { byId, toElement } from './dom.js';
-import { renderIconSvg } from './icons.js';
 import type { Ticket } from './state.js';
 import { showSkillsBanner } from './tauriIntegration.js';
-
-const ICON_CHECK_13 = renderIconSvg('<path d="M20 6L9 17l-5-5"/>', 13);
-const ICON_COPY_13 = renderIconSvg('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', 13);
-
-function setIcon(host: HTMLElement, icon: ReturnType<typeof renderIconSvg>): void {
-  host.replaceChildren(toElement(icon));
-}
 
 function parseNotes(raw: string): { text: string; created_at: string }[] {
   if (raw === '') return [];
@@ -41,30 +32,20 @@ export function formatTicketForClipboard(ticket: Ticket): string {
   return lines.join('\n');
 }
 
-export function bindCopyPrompt() {
-  const section = byId('copy-prompt-section');
-  const btn = byId('copy-prompt-btn');
-  const label = byId('copy-prompt-label');
-  const icon = byId('copy-prompt-icon');
-  let prompt = '';
-
+/** HS-8528 — was `bindCopyPrompt` (sidebar button + skill-creation
+ *  banner trigger). The button itself is gone — AI tools consume the
+ *  worklist via the `hotsheet_*` MCP tools / the `.hotsheet/worklist.md`
+ *  file directly, so the user no longer needs to copy a one-shot
+ *  prompt to the clipboard. What's still load-bearing is the
+ *  skill-creation banner: when `/api/worklist-info`'s `skillCreated`
+ *  flag is `true` (meaning the AI-tool skill files were just
+ *  generated on this app boot, per `consumeSkillsCreatedFlag` in
+ *  `src/routes/dashboard.ts`), surface the banner so the user knows
+ *  to restart their AI tool. The endpoint's `prompt` field is
+ *  ignored here — kept on the wire because the prior client
+ *  consumed it; future cleanup could drop it from the response. */
+export function initSkillsBanner(): void {
   void api<{ prompt: string; skillCreated: boolean }>('/worklist-info').then((info) => {
-    prompt = info.prompt;
-    section.style.display = '';
-    if (info.skillCreated) {
-      showSkillsBanner();
-    }
-  });
-
-  btn.addEventListener('click', () => {
-    if (prompt === '') return;
-    void navigator.clipboard.writeText(prompt).then(() => {
-      label.textContent = 'Copied!';
-      setIcon(icon, ICON_CHECK_13);
-      setTimeout(() => {
-        label.textContent = 'Copy AI prompt';
-        setIcon(icon, ICON_COPY_13);
-      }, 1500);
-    });
+    if (info.skillCreated) showSkillsBanner();
   });
 }

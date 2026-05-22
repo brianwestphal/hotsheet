@@ -244,15 +244,32 @@ async function restorePreviousProjects(dataDir: string, actualPort: number): Pro
   }
 }
 
-/** One-time migration: read channelEnabled from first project's DB if not set globally. */
-async function migrateGlobalConfig(): Promise<void> {
+/** One-time migration: read channelEnabled from first project's DB if not set globally.
+ *
+ * **HS-8492 (2026-05-22) — new-install default flipped to `true`.** Pre-fix the
+ * fallback when neither the global config nor the legacy per-project DB had
+ * an explicit value was `false` (channel disabled by default for new
+ * installs). Post-fix the fallback is `true` — for genuinely first-run users
+ * (no legacy `channel_enabled` value in the DB at all) the channel is on by
+ * default. Existing users who had previously booted with the pre-HS-8492
+ * migration ARE NOT AFFECTED: they already have a value persisted in their
+ * global `~/.hotsheet/config.json` (the migration ran once at first boot
+ * with the old code), so the `if (channelEnabled === undefined)` guard
+ * above skips them. Only genuinely first-run installs hit this new
+ * default. Existing users with `channel_enabled = 'false'` in the legacy
+ * DB still have that value preserved through the migration. */
+export async function migrateGlobalConfig(): Promise<void> {
   const { readGlobalConfig, writeGlobalConfig } = await import('./global-config.js');
   const globalConfig = readGlobalConfig();
   if (globalConfig.channelEnabled === undefined) {
     const { getSettings } = await import('./db/queries.js');
     const settings = await getSettings();
-    const legacy = settings.channel_enabled === 'true';
-    writeGlobalConfig({ channelEnabled: legacy });
+    const legacy = settings.channel_enabled;
+    let channelEnabled: boolean;
+    if (legacy === 'true') channelEnabled = true;
+    else if (legacy === 'false') channelEnabled = false;
+    else channelEnabled = true; // HS-8492 — new install default (no legacy value at all)
+    writeGlobalConfig({ channelEnabled });
   }
 }
 

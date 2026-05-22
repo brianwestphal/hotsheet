@@ -4,6 +4,7 @@ import { join, relative } from 'path';
 import { readFileSettings } from './file-settings.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
+import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 
 // HS-8022 bump — main /hotsheet skill body lost the conditional `/clear` prefix.
 // HS-8348 — bumped 9 → 10 for the Phase 3 two-form skill rewrite. The
@@ -270,7 +271,14 @@ function ensureClaudePermissions(cwd: string): boolean {
   if (port === undefined) return false;
   if (port < 4170 || port > 4199) return false;
 
-  const settingsPath = join(cwd, '.claude', 'settings.json');
+  const claudeDir = join(cwd, '.claude');
+  // HS-8486 (2026-05-22) — pre-fix the `.claude` folder was assumed
+  // to exist (the legacy `ensureSkillsForDir` gate required it).
+  // Post-fix the gate is "claude is on PATH" which may fire before
+  // the user ever creates the folder, so ensure it exists before
+  // writing.
+  mkdirSync(claudeDir, { recursive: true });
+  const settingsPath = join(claudeDir, 'settings.json');
 
   let settings: { permissions?: { allow?: string[] }; [key: string]: unknown } = {};
   if (existsSync(settingsPath)) {
@@ -453,20 +461,32 @@ function ensureWindsurfRules(cwd: string): boolean {
 
 // --- Public API ---
 
-/** Ensure skills for a specific project root directory. */
+/** Ensure skills for a specific project root directory.
+ *
+ *  **HS-8486 (2026-05-22)** — detection switched from "AI tool's
+ *  project folder exists" to "AI tool's CLI is installed on PATH"
+ *  (with the project-folder check kept as a fallback so projects
+ *  that already had the folder still get covered). The change
+ *  ensures skill files are installed BEFORE the user's first
+ *  launch of the AI tool — pre-fix the user had to start the AI
+ *  tool at least once for the folder to exist + Hot Sheet to
+ *  install skills, which meant the first AI invocation in a new
+ *  project ran without the Hot Sheet skill in scope. Copilot keeps
+ *  the folder-only gate because there's no reliable executable
+ *  name to probe for (it lives inside VS Code as an extension). */
 export function ensureSkillsForDir(projectRoot: string): string[] {
   const platforms: string[] = [];
 
-  if (existsSync(join(projectRoot, '.claude'))) {
+  if (isExecutableOnPath('claude') || existsSync(join(projectRoot, '.claude'))) {
     if (ensureClaudeSkills(projectRoot)) platforms.push('Claude Code');
   }
-  if (existsSync(join(projectRoot, '.cursor'))) {
+  if (isExecutableOnPath('cursor') || existsSync(join(projectRoot, '.cursor'))) {
     if (ensureCursorRules(projectRoot)) platforms.push('Cursor');
   }
   if (existsSync(join(projectRoot, '.github', 'prompts')) || existsSync(join(projectRoot, '.github', 'copilot-instructions.md'))) {
     if (ensureCopilotPrompts(projectRoot)) platforms.push('GitHub Copilot');
   }
-  if (existsSync(join(projectRoot, '.windsurf'))) {
+  if (isExecutableOnPath('windsurf') || existsSync(join(projectRoot, '.windsurf'))) {
     if (ensureWindsurfRules(projectRoot)) platforms.push('Windsurf');
   }
 

@@ -42,7 +42,7 @@ Instructions tell Claude: when a hotsheet channel event arrives, run `/hotsheet`
 
 The Claude Channel and custom commands are configured in the **Experimental** settings tab (Lucide Flask icon). This tab is always visible in Settings.
 
-- **Claude Channel**: Enable/disable toggle. Disabled by default.
+- **Claude Channel**: Enable/disable toggle. **Enabled by default for new installs (HS-8492, 2026-05-22)** — prior to HS-8492 the default was `false`. The flip happens inside the one-time `migrateGlobalConfig` boot step in `src/cli.ts`: when neither the global config (`~/.hotsheet/config.json`) nor the legacy per-project DB (`channel_enabled` row in `settings`) has an explicit value, the migration writes `channelEnabled: true`. Users with a persisted value — either branch — are NOT affected; only genuinely first-run installs hit the new default.
 - The toggle is always visible, but disabled when the `claude` CLI is not detected on the system (`GET /api/channel/claude-check`).
 - If Claude Code is installed but below v2.1.80, the toggle is disabled with a message to upgrade.
 - When enabled: registers the channel server in `.mcp.json` (merging with existing entries) and shows launch instructions with a copyable command.

@@ -7,6 +7,7 @@ import {
   _resetSkillsStateForTesting,
   consumeSkillsCreatedFlag,
   ensureSkills,
+  ensureSkillsForDir,
   initSkills,
   parseVersionHeader,
   regenerateMainSkill,
@@ -183,8 +184,18 @@ describe('ensureClaudeSkills', () => {
 
   it('returns empty array when no platform directories exist', () => {
     rmSync(join(tempDir, '.claude'), { recursive: true, force: true });
-    const platforms = ensureSkills();
-    expect(platforms).toHaveLength(0);
+    // HS-8486 — `ensureSkillsForDir` also triggers on PATH-installed
+    // AI tools (e.g. dev machines with `claude` on PATH). Override
+    // PATH to empty so this test exercises the pure no-platform
+    // branch.
+    const savedPath = process.env.PATH;
+    process.env.PATH = '';
+    try {
+      const platforms = ensureSkills();
+      expect(platforms).toHaveLength(0);
+    } finally {
+      process.env.PATH = savedPath;
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -447,8 +458,16 @@ describe('consumeSkillsCreatedFlag', () => {
     consumeSkillsCreatedFlag();
     // Remove platform directories
     rmSync(join(tempDir, '.claude'), { recursive: true, force: true });
-    ensureSkills();
-    expect(consumeSkillsCreatedFlag()).toBe(false);
+    // HS-8486 — override PATH to empty so executable detection
+    // doesn't trigger the now-PATH-based Claude install branch.
+    const savedPath = process.env.PATH;
+    process.env.PATH = '';
+    try {
+      ensureSkills();
+      expect(consumeSkillsCreatedFlag()).toBe(false);
+    } finally {
+      process.env.PATH = savedPath;
+    }
   });
 });
 
@@ -615,5 +634,89 @@ describe('multi-platform skill creation', () => {
     expect(platforms).toContain('Cursor');
     expect(platforms).toContain('Windsurf');
     expect(platforms).toHaveLength(3);
+  });
+});
+
+/**
+ * HS-8486 (2026-05-22) — `ensureSkillsForDir` should install AI-tool
+ * skill files when the corresponding CLI is on `PATH`, even if the
+ * project doesn't yet have the tool's dotfolder. The pre-fix
+ * "dotfolder must exist" gate meant the user's first launch of the
+ * AI tool ran without the Hot Sheet skill in scope; post-fix the
+ * skill is already there.
+ */
+describe('ensureSkillsForDir — PATH-based detection (HS-8486)', () => {
+  let tempDir: string;
+  let fakeBinDir: string;
+  let savedPath: string | undefined;
+
+  beforeEach(() => {
+    tempDir = join(tmpdir(), `hs-skills-path-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    fakeBinDir = join(tempDir, 'fake-bin');
+    mkdirSync(join(tempDir, '.hotsheet'), { recursive: true });
+    writeFileSync(join(tempDir, '.hotsheet', 'settings.json'), JSON.stringify({}));
+    mkdirSync(fakeBinDir, { recursive: true });
+    initSkills(4174);
+    setSkillCategories(DEFAULT_CATEGORIES);
+    savedPath = process.env.PATH;
+    process.env.PATH = fakeBinDir;
+  });
+
+  afterEach(() => {
+    if (savedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPath;
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function writeFakeExecutable(name: string): void {
+    // Empty file is enough — `isExecutableOnPath` uses `existsSync`,
+    // not a chmod / shebang check.
+    writeFileSync(join(fakeBinDir, name), '');
+  }
+
+  it('installs Claude skill when `claude` is on PATH even with no .claude folder', () => {
+    writeFakeExecutable('claude');
+    // No `.claude` folder created — pre-HS-8486 this branch would skip.
+    const platforms = ensureSkillsForDir(tempDir);
+    expect(platforms).toContain('Claude Code');
+    expect(existsSync(join(tempDir, '.claude', 'skills', 'hotsheet', 'SKILL.md'))).toBe(true);
+  });
+
+  it('installs Cursor skill when `cursor` is on PATH even with no .cursor folder', () => {
+    writeFakeExecutable('cursor');
+    const platforms = ensureSkillsForDir(tempDir);
+    expect(platforms).toContain('Cursor');
+    expect(existsSync(join(tempDir, '.cursor', 'rules', 'hotsheet.mdc'))).toBe(true);
+  });
+
+  it('installs Windsurf skill when `windsurf` is on PATH even with no .windsurf folder', () => {
+    writeFakeExecutable('windsurf');
+    const platforms = ensureSkillsForDir(tempDir);
+    expect(platforms).toContain('Windsurf');
+    expect(existsSync(join(tempDir, '.windsurf', 'rules', 'hotsheet.md'))).toBe(true);
+  });
+
+  it('still installs Claude skill via the legacy folder-presence fallback when `claude` is NOT on PATH', () => {
+    // Empty PATH (no claude binary), but the `.claude` folder exists
+    // from a prior session. The folder check is preserved as a
+    // fallback so projects in this state stay covered.
+    mkdirSync(join(tempDir, '.claude'), { recursive: true });
+    const platforms = ensureSkillsForDir(tempDir);
+    expect(platforms).toContain('Claude Code');
+  });
+
+  it('does NOT install Claude skill when neither PATH nor folder are present', () => {
+    const platforms = ensureSkillsForDir(tempDir);
+    expect(platforms).not.toContain('Claude Code');
+    expect(existsSync(join(tempDir, '.claude'))).toBe(false);
+  });
+
+  it('Copilot detection stays folder-only (no executable probe — Copilot lives inside VS Code)', () => {
+    // Writing a fake `gh-copilot` to PATH must NOT trigger the
+    // Copilot path — there's no reliable executable name for the
+    // VS Code Copilot extension, so the gate stays folder-only.
+    writeFakeExecutable('gh-copilot');
+    const platforms = ensureSkillsForDir(tempDir);
+    expect(platforms).not.toContain('GitHub Copilot');
   });
 });

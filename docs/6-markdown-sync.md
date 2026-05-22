@@ -42,37 +42,42 @@ Both markdown files are regenerated on:
 - Attachments added or removed
 - Batch operations
 
-### 6.5 Copy AI Prompt
+### 6.5 Copy AI Prompt (REMOVED in HS-8528)
 
-- The sidebar includes a "Copy AI prompt" button that copies a short prompt (e.g., "Read .hotsheet/worklist.md for current work items.") to the clipboard.
-- Intended for pasting into AI tools that don't support skills/rules natively.
+> **HS-8528 (2026-05-22) — removed.** The sidebar "Copy AI prompt" button (`.sidebar-copy-prompt` + `#copy-prompt-btn`) is gone. AI tools now consume the worklist via the `hotsheet_*` MCP tools (Phase 1/2 — HS-8346 / HS-8347) or by reading `.hotsheet/worklist.md` directly. The one-shot copy-to-clipboard surface is no longer necessary. The `GET /api/worklist-info` endpoint that backed it is still alive on the wire — its `skillCreated` flag drives the §6.6 skills-banner trigger via `initSkillsBanner` (formerly `bindCopyPrompt`) — but its `prompt` field is no longer consumed by any client surface and could be dropped in a future cleanup.
 
 ### 6.6 AI Tool Skill Generation
 
 The application detects installed AI tools and generates skill/rule files that allow those tools to interact with Hot Sheet. Files are only regenerated when the skill version changes.
 
+**HS-8486 (2026-05-22) — detection gate changed from "AI tool's project folder exists" to "AI tool's CLI is installed on PATH."** Pre-fix the user's first launch of the AI tool ran without the Hot Sheet skill in scope: the dotfolder (`.claude` / `.cursor` / `.windsurf`) only existed AFTER the first launch, but Hot Sheet only installed skills when the dotfolder existed → race lost on first run. Post-fix `ensureSkillsForDir` probes `PATH` for the matching executable (`claude`, `cursor`, `windsurf`) and installs the skill if the binary is found, AS WELL AS the legacy folder-presence check (preserved as a fallback so projects in the old state stay covered). The Claude path also `mkdirSync`s `.claude` before writing settings — pre-fix `ensureClaudePermissions` assumed the folder existed because the legacy gate required it. **Copilot retains the folder-only gate** (no reliable executable name — GitHub Copilot lives as a VS Code extension, not a stand-alone CLI). **Also fixed in HS-8486:** `src/projects.ts::registerProject` was calling `ensureSkills()` (which uses `process.cwd()`) instead of `ensureSkillsForDir(projectRoot)` — wrong project root in the multi-project Tauri path where CWD is the binary's start dir, not the project being opened.
+
 Skill installation is checked proactively at multiple points:
 - **App launch**: Initial check during server startup.
+- **Project registration**: When a new project is registered via `Open Folder` (HS-8486 — fixed to use the registered project's root rather than `process.cwd()`), so skills are installed as soon as the folder is selected.
 - **Project tab switch**: When switching to a different project tab, skills are ensured for that project.
 - **Channel enable**: When toggling Claude Channel integration on, skills are checked before the channel can be used.
 - **Play button / action buttons**: Before triggering Claude or running shell commands, skills are verified.
 - **`POST /api/ensure-skills`**: Dedicated endpoint that checks and updates skills, returning `{ updated: boolean }`.
 
 #### Claude Code (`.claude/`)
+- Gate (HS-8486): `claude` is on PATH OR `.claude/` already exists in the project root.
 - Creates skill files in `.claude/skills/`: a main `hotsheet` skill (read worklist and work through items) and per-category ticket creation skills (hs-bug, hs-feature, hs-task, hs-issue, hs-investigation, hs-requirement-change).
 - Configures permissions in `.claude/settings.json` with curl access patterns covering ports 4170-4199.
 - Each skill has YAML frontmatter (name, description, allowed-tools).
 
 #### Cursor (`.cursor/`)
+- Gate (HS-8486): `cursor` is on PATH OR `.cursor/` already exists in the project root.
 - Creates rule files in `.cursor/rules/`: `hotsheet.mdc` (main) and per-category `.mdc` files.
 - Uses Cursor's `.mdc` format with YAML frontmatter (description, alwaysApply: false).
 
 #### GitHub Copilot (`.github/`)
+- Gate: `.github/prompts/` OR `.github/copilot-instructions.md` exists. **Folder-only** — Copilot has no reliable CLI to probe for (it lives as a VS Code extension), so the HS-8486 PATH-based detection doesn't apply here.
 - Creates prompt files in `.github/prompts/`: `hotsheet.prompt.md` (main) and per-category `.prompt.md` files.
-- Only generated if `.github/prompts/` or `.github/copilot-instructions.md` already exists.
 - Uses YAML frontmatter (description).
 
 #### Windsurf (`.windsurf/`)
+- Gate (HS-8486): `windsurf` is on PATH OR `.windsurf/` already exists in the project root.
 - Creates rule files in `.windsurf/rules/`: `hotsheet.md` (main) and per-category `.md` files.
 - Uses YAML frontmatter (trigger: manual, description).
 

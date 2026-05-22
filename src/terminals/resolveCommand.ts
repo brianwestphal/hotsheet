@@ -1,9 +1,9 @@
-import { existsSync } from 'fs';
-import { delimiter, dirname, isAbsolute, join, resolve as resolvePath } from 'path';
+import { dirname, isAbsolute, resolve as resolvePath } from 'path';
 
 import { slugifyDataDir } from '../channel-config.js';
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
+import { isExecutableOnPath } from '../utils/isExecutableOnPath.js';
 import { DEFAULT_TERMINAL_ID, findTerminalConfig, type TerminalConfig } from './config.js';
 
 export interface ResolvedCommand {
@@ -112,17 +112,11 @@ function defaultClaudeDetector(): boolean {
   return isExecutableOnPath('claude');
 }
 
-function isExecutableOnPath(name: string): boolean {
-  const pathEnv = process.env.PATH ?? '';
-  const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
-  for (const dir of pathEnv.split(delimiter)) {
-    if (dir === '') continue;
-    for (const ext of exts) {
-      if (existsSync(join(dir, name + ext))) return true;
-    }
-  }
-  return false;
-}
+// HS-8491 — `isExecutableOnPath` moved to `src/utils/isExecutableOnPath.ts`
+// so `src/skills.ts` and `src/projects.ts` can reuse it without pulling
+// in this module's terminal-launch surface. Re-exported here so callers
+// that imported the private helper indirectly through path-traversal
+// imports keep compiling.
 
 function defaultShell(): string {
   if (process.platform === 'win32') return process.env.COMSPEC ?? 'cmd.exe';

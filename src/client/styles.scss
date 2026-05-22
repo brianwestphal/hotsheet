@@ -2720,36 +2720,8 @@ body.cross-project-stats-active {
   }
 }
 
-.sidebar-copy-prompt {
-  padding: 8px 10px 4px;
-}
-
-.copy-prompt-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 6px 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: all 0.15s;
-
-  &:hover {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: var(--bg-selected);
-  }
-}
-
-.copy-prompt-icon {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
+// HS-8528 — `.sidebar-copy-prompt` / `.copy-prompt-btn` /
+// `.copy-prompt-icon` styles removed along with the sidebar button.
 
 .sidebar-section {
   margin-bottom: 8px;
@@ -5346,6 +5318,10 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 .footer-left {
   display: flex;
   align-items: center;
+  // HS-8530 — comfortable gap between the Sponsor link and the
+  // Share Hot Sheet link so they read as two distinct CTAs rather
+  // than one run-together blob of footer text.
+  gap: 18px;
 }
 
 .share-link {
@@ -5357,6 +5333,35 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   &:hover {
     text-decoration: underline;
     color: var(--accent-hover);
+  }
+}
+
+// HS-8530 — Sponsor link in the footer pointing at GitHub Sponsors.
+// Lucide `heart` icon + "Sponsor" label, rose/pink tinted to keep it
+// visually distinct from the accent-colored Share link. Inline-flex so
+// the icon + label baseline align cleanly with the Share link sibling.
+.sponsor-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #e11d48;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+
+  svg {
+    color: #e11d48;
+  }
+
+  &:hover {
+    text-decoration: underline;
+    color: #be123c;
+
+    svg {
+      color: #be123c;
+      fill: currentColor;
+    }
   }
 }
 

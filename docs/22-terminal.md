@@ -164,7 +164,7 @@ Keys on `.hotsheet/settings.json`:
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `terminals` | `TerminalConfig[]` | `[]` (HS-6337 — no implicit default terminal per project) | One row per configured tab (HS-6271). See §22.17 for the schema. |
+| `terminals` | `TerminalConfig[]` | `[]` (HS-6337 — no implicit default terminal per project) — **except HS-8491 (2026-05-22) auto-seeds a single `{ id: 'claude', name: 'Claude', command: '{{claudeCommand}}', lazy: true }` row when the project's `terminals` is `undefined` AND `claude` is installed on `PATH`. Existing projects that already have a `terminals` value (even an empty `[]`) are NOT affected.** | One row per configured tab (HS-6271). See §22.17 for the schema. |
 | `terminal_scrollback_bytes` | number | `1048576` | Ring buffer size (shared across terminals) |
 | `drawer_open` | bool (as `"true"`/`"false"`) | `false` | Drawer visibility for this project; restored on project switch (HS-6309). |
 | `drawer_active_tab` | string | `"commands-log"` | Active drawer tab id for this project: `"commands-log"` or `"terminal:<id>"`. Restored on project switch (HS-6309). |

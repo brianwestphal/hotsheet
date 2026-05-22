@@ -5,7 +5,7 @@ import { bindBackupsUI } from './backups.js';
 import { bindBatchToolbar } from './batch.js';
 import { startBellPolling } from './bellPoll.js';
 import { channelAutoTrigger, initChannel } from './channelUI.js';
-import { bindCopyPrompt } from './clipboardUtil.js';
+import { initSkillsBanner } from './clipboardUtil.js';
 import { applyPerProjectDrawerState, initCommandLog, refreshCommandLog } from './commandLog.js';
 import { TIMERS } from './constants/timers.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
@@ -201,7 +201,7 @@ function bindAllUiHandlers(): void {
   // HS-7899: surface the launch-time DB-recovery banner once the backups UI
   // is wired (the banner's "Restore from backup" opens Settings → Backups).
   void initDbRecoveryBanner();
-  bindCopyPrompt();
+  initSkillsBanner();
   bindOpenFolder();
   // HS-7954 — wire the sidebar git status chip. Initial fetch happens
   // immediately; subsequent refetches driven by `/api/poll` + `window.focus`.
