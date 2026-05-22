@@ -725,9 +725,11 @@ function bindTelemetryTab() {
     costModeEl.addEventListener('change', () => {
       const v = costModeEl.value === 'subscription' ? 'subscription' : 'api';
       void setTelemetryCostMode(v).then(() => {
-        // Refresh the per-tab cost chip visibility (lives in projectTabs).
-        void import('./projectTabs.js').then(({ refreshAllCostChips }) => {
-          refreshAllCostChips();
+        // HS-8527 — the cost surface is now the sidebar dashboard
+        // widget (not the per-tab chip); refresh it so subscription
+        // mode hides the value without waiting for the next bell tick.
+        void import('./dashboardMode.js').then(({ refreshSidebarWidgetCost }) => {
+          refreshSidebarWidgetCost();
         }).catch(() => {});
         // HS-8509 — the drawer Telemetry tab was removed; the
         // analytics-dashboard telemetry section + cross-project stats

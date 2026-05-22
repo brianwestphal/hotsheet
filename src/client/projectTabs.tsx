@@ -10,7 +10,6 @@ import { computed, effect } from './reactive.js';
 import { bindList } from './reactive-bind.js';
 import type { ProjectInfo } from './state.js';
 import { clearPerProjectSessionState, getActiveProject, setActiveProject } from './state.js';
-import { getTelemetryCostMode } from './telemetryCostMode.js';
 
 /** Callback to reload all app data after switching projects. Set by app.tsx during init. */
 let reloadCallback: (() => Promise<void>) | null = null;
@@ -586,49 +585,6 @@ export function updateProjectBellIndicators(
   }
 }
 
-/**
- * HS-8147 — update the per-project "today's cost" chip on every tab.
- * `costs` is the bulk-query response keyed by project secret; a secret
- * not in the map has zero cost today (the chip stays hidden).
- *
- * Renders cost as `$N.NN` (or sub-cent indicator for very small values); shows
- * nothing when cost is zero per §67.10.1 (chip only rendered when
- * today's value is non-zero). Polled from `bellPoll.subscribers` so the
- * refresh cadence matches the existing bell-state long-poll.
- */
-export function updateProjectCostChips(costs: Record<string, number>): void {
-  lastCostsForChipRefresh = costs;
-  // HS-8497 — when the user is on a Claude Pro/Max subscription, the
-  // dollar amount reported by Claude Code's `cost.usage` metric is an
-  // API-equivalent estimate, NOT what they actually pay. Hide the chip
-  // entirely in subscription mode rather than show a misleading number;
-  // the drawer + dashboard still surface the values for users who want
-  // to see consumption volume, gated behind a clarifying notice.
-  const mode = getTelemetryCostMode();
-  for (const chip of document.querySelectorAll<HTMLElement>('.project-tab-cost')) {
-    const secret = chip.dataset.secret ?? '';
-    const cost = costs[secret] ?? 0;
-    if (cost > 0 && mode === 'api') {
-      chip.textContent = cost < 0.01 ? '<$0.01' : `$${cost.toFixed(2)}`;
-      chip.style.display = '';
-    } else {
-      chip.textContent = '';
-      chip.style.display = 'none';
-    }
-  }
-}
-
-/**
- * HS-8497 — re-render every cost chip using the most recently observed
- * `costs` payload. Called by `settingsDialog.tsx` immediately after the
- * billing-model select changes so the chips appear/disappear without
- * waiting for the next bell-state tick.
- */
-let lastCostsForChipRefresh: Record<string, number> = {};
-export function refreshAllCostChips(): void {
-  updateProjectCostChips(lastCostsForChipRefresh);
-}
-
 // --- Scroll active tab into view ---
 
 function scrollActiveTabIntoView() {
@@ -711,11 +667,6 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
     <div className="project-tab" data-secret={p.secret} draggable="true">
       <span className="project-tab-dot"></span>
       <span className="project-tab-name">{p.name}</span>
-      {/* HS-8147 — per-project "today's cost" chip (§67.10.1). Hidden
-          by default; `updateProjectCostChips` populates + reveals when
-          today's cost > 0. Click → opens the drawer Telemetry tab
-          scoped to this project. */}
-      <span className="project-tab-cost" data-secret={p.secret} style="display:none" title="Claude usage today (resets at local midnight)"></span>
       <span className="project-tab-bell"></span>
     </div>,
   );
@@ -730,29 +681,21 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
     else row.classList.remove('active');
   });
 
-  row.addEventListener('click', (e) => {
-    // HS-8147 — clicking the cost chip switches to this project and
-    // opens the analytics dashboard, which carries the per-project
-    // "Claude usage" sub-region (HS-8508 / §71). Pre-HS-8509 this
-    // opened the drawer Telemetry tab; that tab was removed in
-    // Phase 5 of the HS-8503 telemetry-surface reshape and the
-    // analytics dashboard is the new home for per-project rollups.
-    const target = e.target as HTMLElement | null;
-    if (target !== null && target.closest('.project-tab-cost') !== null) {
-      e.stopPropagation();
-      void (async () => {
-        if (activeProjectSignal.value?.secret !== p.secret) await switchProject(p);
-        const { enterDashboardMode } = await import('./dashboardMode.js');
-        enterDashboardMode();
-      })();
-      return;
-    }
+  row.addEventListener('click', () => {
     void (async () => {
       // HS-6832: clicking a project tab while the terminal dashboard is
       // active exits the dashboard first and then navigates to the clicked
       // project's normal ticket view (docs/25-terminal-dashboard.md §25.3).
       const { exitDashboard } = await import('./terminalDashboard.js');
       exitDashboard();
+      // HS-8524: same for the cross-project stats page. The page is
+      // now a full-window surface (its own root + body class) post-
+      // HS-8524 refactor, so the project tab click needs an
+      // explicit teardown step — switching projects from cross-
+      // project stats should land on the clicked project's normal
+      // ticket view, NOT a still-visible cross-project page.
+      const { isCrossProjectStatsPageActive, teardownCrossProjectStatsPage } = await import('./crossProjectStatsPage.js');
+      if (isCrossProjectStatsPageActive()) teardownCrossProjectStatsPage();
       await switchProject(p);
       // HS-6637: if this tab has a minimized permission popup, bring it back.
       reopenMinimizedForSecret(p.secret);

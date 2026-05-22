@@ -43,12 +43,22 @@
 
 import { api } from './api.js';
 import { unmountColumnView } from './columnView.js';
-import { byId, byIdOrNull, toElement } from './dom.js';
+import { enterDashboardMode } from './dashboardMode.js';
+import { byIdOrNull, toElement } from './dom.js';
+import {
+  isAnalyticsDashboardActive,
+  isCrossProjectStatsPageActive,
+  markAnalyticsDashboardSupplanted,
+  markCrossProjectStatsActive,
+} from './mainSurfaceState.js';
 import { projectsByIdSignal } from './projectsStore.js';
+import { state } from './state.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
 import { renderCostByModelDonut } from './telemetryModelDonut.js';
 import { unmountBindList } from './ticketList.js';
+
+export { isCrossProjectStatsPageActive, markCrossProjectStatsSupplanted } from './mainSurfaceState.js';
 
 interface WindowTotals {
   cost: number;
@@ -99,22 +109,14 @@ export interface DashboardPayload {
   costOverTime: CostOverTimePoint[];
 }
 
-const TOOLBAR_HIDDEN_IDS = ['search-input', 'layout-toggle', 'sort-select', 'detail-position-toggle', 'glassbox-btn'];
-
-function hideToolbar(): void {
-  for (const id of TOOLBAR_HIDDEN_IDS) {
-    const el = byIdOrNull(id);
-    if (el === null) continue;
-    const container = el.closest('.search-box, .layout-toggle, .sort-controls') ?? el;
-    (container as HTMLElement).style.display = 'none';
-  }
-  const batchToolbar = byIdOrNull('batch-toolbar');
-  if (batchToolbar !== null) batchToolbar.style.display = 'none';
-  const detailPanel = byIdOrNull('detail-panel');
-  if (detailPanel !== null) detailPanel.style.display = 'none';
-  const resizeHandle = byIdOrNull('detail-resize-handle');
-  if (resizeHandle !== null) resizeHandle.style.display = 'none';
-}
+// HS-8524 — `hideToolbar` + `TOOLBAR_HIDDEN_IDS` removed. The page is
+// now a full-window surface (via `#cross-project-stats-root` + the
+// `body.cross-project-stats-active` body class in `styles.scss`)
+// rather than a subview that took over `#ticket-list` /
+// `#dashboard-container`. The body class hides every ticket-view
+// control (search box, layout toggle, sort, detail panel, batch
+// toolbar, etc.) via a single CSS rule — no need to imperatively
+// poke their `style.display` per-element.
 
 function formatCost(n: number): string {
   if (n === 0) return '$0.00';
@@ -582,30 +584,156 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
  * handles the reverse path cleanly), then fetches + renders the
  * page.
  */
+/** HS-8526 — captured previous surface for the second-click toggle.
+ *  Recorded when the user first opens cross-project stats so
+ *  toggle-off can route back to either the analytics dashboard or
+ *  the ticket-list view at the previous `state.view`. The active
+ *  flag itself lives in `mainSurfaceState.ts` so `dashboardMode.tsx`
+ *  can read it without a circular import. */
+let surfaceBeforeStats: SurfaceBeforeStats = 'tickets';
+
+/** HS-8526 — captured `surfaceBeforeStats` extended for HS-8524 to
+ *  include `'terminalDashboard'` so the second-click toggle can route
+ *  back to the terminal dashboard when the user opened cross-project
+ *  stats from there. */
+type SurfaceBeforeStats = 'analyticsDashboard' | 'terminalDashboard' | 'tickets';
+
+/** HS-8524 — synchronous surface capture. The terminal dashboard's
+ *  body class (`terminal-dashboard-active`, set on `enterDashboard` +
+ *  cleared on `exitDashboard`) is the source of truth, which lets us
+ *  read it directly without importing the dashboard module — the
+ *  import cycle that import would otherwise create
+ *  (`crossProjectStatsPage` ↔ `terminalDashboard`) is avoided. */
+function captureCurrentSurface(): SurfaceBeforeStats {
+  if (isAnalyticsDashboardActive()) return 'analyticsDashboard';
+  if (document.body.classList.contains('terminal-dashboard-active')) return 'terminalDashboard';
+  return 'tickets';
+}
+
 export function showCrossProjectStatsPage(): void {
-  // HS-8516 — if we're already on the analytics dashboard (which
-  // renamed `#ticket-list` to `#dashboard-container`), normalize the
-  // id back so `byId('ticket-list')` below doesn't throw. Without
-  // this the call threw silently inside a document-level click
-  // listener and the user saw "nothing happens" on the header-button
-  // click. Symmetric with the parallel fix in `enterDashboardMode`.
+  // HS-8526 — capture the surface that was visible before we take
+  // over, so toggle-off (second click on the header button) can
+  // restore it. Skip when re-entering (we don't want to overwrite
+  // `surfaceBeforeStats` with our own `'tickets'` placeholder).
+  if (!isCrossProjectStatsPageActive()) {
+    surfaceBeforeStats = captureCurrentSurface();
+  }
+  markCrossProjectStatsActive(true);
+
+  // HS-8524 — exit the analytics dashboard if it was active. Same
+  // teardown the prior `enterDashboardMode`-rename trick performed
+  // (rename `#dashboard-container` back to `#ticket-list`, clear it),
+  // but now we ALSO restore the toolbar that `enterDashboardMode`
+  // had hidden so the cross-project page's full-window body-class
+  // doesn't compound on top of the dashboard's `display: none`
+  // toolbar state — that left a stuck-hidden toolbar visible after
+  // exit. The `exitDashboardModeIfActive` helper handles both.
+  exitDashboardModeIfActive();
+  // HS-8524 — exit the terminal dashboard if it was active. Same
+  // shape as `exitDashboard` from `terminalDashboard.tsx`. Lazy
+  // import to keep the cross-project page's initial bundle thin.
+  if (document.body.classList.contains('terminal-dashboard-active')) {
+    void import('./terminalDashboard.js').then(({ exitDashboard }) => exitDashboard()).catch(() => { /* module not present */ });
+  }
+
+  // HS-8526 — the analytics dashboard (if active) just lost its
+  // surface; clear its active flag so the sidebar widget's next
+  // click is treated as "open from scratch" rather than "second
+  // click while active." (Redundant with `exitDashboardModeIfActive`
+  // above which clears the flag as part of teardown, but kept for
+  // belt-and-suspenders correctness against future refactors.)
+  markAnalyticsDashboardSupplanted();
+
+  // HS-8524 — full-window takeover via dedicated root + body class.
+  // No more swap on `#ticket-list` / `#dashboard-container` (the
+  // pre-HS-8524 subview pattern that made the page read as "stuck
+  // inside whatever project's content area"). The root + body class
+  // pattern mirrors the terminal dashboard exactly.
+  document.body.classList.add('cross-project-stats-active');
+  const root = byIdOrNull('cross-project-stats-root');
+  if (root === null) return;
+  root.style.display = '';
+  unmountBindList();
+  unmountColumnView();
+  root.replaceChildren();
+  void fetchAndRender(root);
+}
+
+/** HS-8524 — clean teardown of the analytics dashboard for the
+ *  cross-project-page takeover. Hand-rolled (instead of importing
+ *  `restoreTicketList` from `dashboardMode.tsx`) because we don't
+ *  want to also reload tickets / move the ticket list back into view
+ *  — the cross-project page is about to render on top via its own
+ *  root + body class. */
+function exitDashboardModeIfActive(): void {
   const existingDashContainer = byIdOrNull('dashboard-container');
   if (existingDashContainer !== null) {
     existingDashContainer.id = 'ticket-list';
     existingDashContainer.replaceChildren();
     existingDashContainer.classList.remove('ticket-list-columns');
   }
-  hideToolbar();
-  const ticketList = byId('ticket-list');
-  // HS-8504 (follow-up) — dispose any live list-view bindList /
-  // column-view disposers before the container wipe, mirroring
-  // `enterDashboardMode`. Without this, exiting back to a list view
-  // hit a stale-mount-key early-return and left the page empty until
-  // the user toggled views.
-  unmountBindList();
-  unmountColumnView();
-  ticketList.replaceChildren();
-  ticketList.id = 'dashboard-container';
-  ticketList.classList.remove('ticket-list-columns');
-  void fetchAndRender(ticketList);
+  markAnalyticsDashboardSupplanted();
 }
+
+/** HS-8524 — silent teardown of the cross-project stats page for
+ *  callers (terminal-dashboard enter, dashboard-mode enter, project-
+ *  tab click) that take over the surface from cross-project stats.
+ *  Differs from `hideCrossProjectStatsPage` in NOT re-routing to a
+ *  previous surface; the caller is responsible for rendering its own
+ *  surface immediately after. */
+export function teardownCrossProjectStatsPage(): void {
+  if (!isCrossProjectStatsPageActive()) return;
+  markCrossProjectStatsActive(false);
+  document.body.classList.remove('cross-project-stats-active');
+  const root = byIdOrNull('cross-project-stats-root');
+  if (root !== null) {
+    root.style.display = 'none';
+    root.replaceChildren();
+  }
+}
+
+/** HS-8526 — second click on the cross-project header button hides
+ *  the page and restores the surface that was visible when the page
+ *  was first opened: terminal dashboard / analytics dashboard / or
+ *  the ticket-list view at the previously-active `state.view`. */
+export function hideCrossProjectStatsPage(): void {
+  if (!isCrossProjectStatsPageActive()) return;
+  markCrossProjectStatsActive(false);
+  document.body.classList.remove('cross-project-stats-active');
+  const root = byIdOrNull('cross-project-stats-root');
+  if (root !== null) {
+    root.style.display = 'none';
+    root.replaceChildren();
+  }
+
+  const prev = surfaceBeforeStats;
+
+  if (prev === 'terminalDashboard') {
+    // HS-8524 — re-enter the terminal dashboard by clicking its
+    // toggle button. The toggle button's click handler does the
+    // full enter sequence (set body class, render dashboard root,
+    // toggle button.active class, etc.); `terminalDashboard.tsx`
+    // doesn't export the enter helper directly so this is the
+    // cleanest cross-module entry path.
+    const btn = byIdOrNull<HTMLButtonElement>('terminal-dashboard-toggle');
+    if (btn !== null) btn.click();
+    return;
+  }
+
+  if (prev === 'analyticsDashboard') {
+    enterDashboardMode();
+    return;
+  }
+
+  // Restore the ticket-list view at the previous `state.view`.
+  // Programmatic sidebar-item click routes through `bindSidebar`'s
+  // handler so the active class + toolbar + `loadTickets()` all run
+  // exactly like a user-driven view switch. Falls back to "All"
+  // when the saved view's sidebar item isn't present (unreachable in
+  // practice — the All item is hard-coded into `pages.tsx`).
+  const view = state.view;
+  const item = document.querySelector<HTMLElement>(`.sidebar-item[data-view="${view}"]`)
+    ?? document.querySelector<HTMLElement>('.sidebar-item[data-view="all"]');
+  if (item !== null) item.click();
+}
+

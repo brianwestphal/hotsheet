@@ -1647,6 +1647,52 @@ body.terminal-dashboard-active {
   }
 }
 
+// HS-8524 — full-window mode for the cross-project stats page. Mirrors
+// the terminal-dashboard takeover pattern (above) so the page reads as
+// its own surface instead of a subview riding inside the active
+// project's content area. Header / project tabs stay visible (the user
+// can still switch between cross-project stats and a per-project view
+// by clicking a tab); the ticket-view controls (search, layout toggle,
+// sort, detail-position toggle, settings) are hidden via
+// `.header-controls`.
+body.cross-project-stats-active {
+  .header-controls,
+  .sidebar,
+  .content-area,
+  .app-body,
+  #batch-toolbar,
+  #detail-panel,
+  #detail-resize-handle,
+  #command-log-panel,
+  #backup-preview-banner,
+  #skills-banner,
+  #update-banner,
+  #share-banner,
+  .app-footer {
+    display: none !important;
+  }
+  .cross-project-stats-root {
+    display: flex !important;
+  }
+  // Match terminal-dashboard convention: no project tab reads as
+  // "selected" while a global surface is open.
+  .project-tab.active {
+    background: transparent;
+    color: var(--text-secondary);
+    border-color: transparent;
+    font-weight: 500;
+  }
+}
+
+.cross-project-stats-root {
+  flex: 1;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: var(--bg);
+  min-height: 0;
+}
+
 // Tab context menu
 .tab-context-menu {
   position: fixed;
@@ -5265,9 +5311,22 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 }
 
 .sidebar-widget-wip {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 2px;
+}
+
+// HS-8527 — today's cost for the active project, right-aligned in the
+// WIP row of the sidebar dashboard widget. Replaces the per-tab chip
+// that lived in `.project-tab-cost` pre-HS-8527. Hidden when cost is
+// zero or the user is on subscription billing.
+.sidebar-widget-cost {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
 }
 
 // --- Footer ---

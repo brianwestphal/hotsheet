@@ -20,6 +20,8 @@ A new icon button `#cross-project-stats-toggle` sits in the app header immediate
 
 Clicking the button invokes `showCrossProjectStatsPage()` from `src/client/crossProjectStatsPage.tsx`, which takes over the main view region using the same swap pattern as the analytics dashboard (`#ticket-list` → `#dashboard-container`, toolbar / detail panel / batch toolbar hidden). Clicking any project tab, any sidebar entry, or the terminal-dashboard toggle returns to the previous view via the existing `restoreTicketList()` callback path wired into `bindSidebar`.
 
+**HS-8526 (2026-05-22) — second-click toggle.** Clicking the header button a second time (while cross-project stats is the active surface) hides the page and restores the surface that was visible when the page was first opened: either the per-project analytics dashboard (when the user came from the sidebar widget) OR the ticket-list view at the previously-active `state.view`. Mirrors the second-click-restores behavior of `#terminal-dashboard-toggle`. Surface coordination lives in `src/client/mainSurfaceState.ts` — a shared module both `crossProjectStatsPage.tsx` and `dashboardMode.tsx` read/write to avoid a circular import, with `markAnalyticsDashboardSupplanted` + `markCrossProjectStatsSupplanted` helpers each surface calls when it takes over from the other.
+
 ### Legacy sidebar entry (removed)
 
 The pre-reshape sidebar entry `#sidebar-section-telemetry` (HS-8479) was kept alive during the Phase 3 / 4 migration so users always had access to the surface while the analytics-dashboard per-project section landed. HS-8509 (Phase 5) removed it in full; the header button is now the only entry point.
@@ -77,7 +79,19 @@ Re-fetch triggers: page mount + every window-selector change. NOT live — no po
 
 ## 70.7 Return path
 
-The page is a "takeover" view sharing the analytics-dashboard's `#dashboard-container` slot. The existing `restoreTicketList()` callback wired into `bindSidebar` handles the reverse path: clicking any sidebar entry, project tab, or the terminal-dashboard toggle restores `#ticket-list` and tears down the page chrome.
+**HS-8524 (2026-05-22) — full-window mode.** Pre-HS-8524 the page was a subview rendering into the analytics-dashboard's `#dashboard-container` slot (a swap on `#ticket-list`). Three problems with that pattern:
+
+1. **Behaved like a subview of whatever project was open.** The page bled together with the active project's ticket-view toolbar + sidebar instead of reading as its own surface.
+2. **Unreachable from the terminal dashboard.** The terminal dashboard hides `.app-body` (via `body.terminal-dashboard-active`), and the cross-project page rendered inside `.app-body` → clicking the header button while in the terminal dashboard appeared to do nothing.
+3. **No clean "previous surface" semantics.** HS-8526's second-click toggle had to choose between "tickets" and "analytics dashboard"; there was no way to route back to the terminal dashboard.
+
+Post-fix: the page renders into a dedicated `#cross-project-stats-root` element controlled by a new `body.cross-project-stats-active` body class — the same takeover pattern the terminal dashboard uses. The body class hides `.header-controls` + `.sidebar` + `.content-area` + `.app-body` + the various banners + the app footer; project tabs stay visible (clicking a tab tears the page down and switches to that project's normal ticket view). The page's own internal toolbar (window selector, cost-over-time mode toggle) lives inside the root.
+
+**`teardownCrossProjectStatsPage()`** is the silent-teardown export other surfaces call when they take over: `terminalDashboard.tsx::enterDashboard` calls it on entry, `dashboardMode.tsx::enterDashboardMode` calls it on entry, and `projectTabs.tsx`'s per-tab click handler calls it before `switchProject`. The teardown clears the body class, hides the root, and drops the active flag without re-routing to a previous surface (the caller is responsible for rendering its own surface immediately after).
+
+**`hideCrossProjectStatsPage()`** is the HS-8526 second-click toggle path. It still clears the body class + root + flag but THEN restores the captured surface from before the page was opened — extended under HS-8524 to include `'terminalDashboard'` so the second click routes back to the terminal dashboard when the user opened cross-project stats from there. The terminal-dashboard re-entry path uses a programmatic `#terminal-dashboard-toggle.click()` since `terminalDashboard.tsx` doesn't export an `enterDashboard` helper directly.
+
+The pre-HS-8524 `restoreTicketList`-via-`bindSidebar` reverse path is GONE — the sidebar is hidden by the body class while cross-project is active, so the user can't click any sidebar entry from inside cross-project stats. The two exits are: the header button (second click → previous surface) or a project tab click (switch to that project's view).
 
 ## 70.8 Implementation map
 

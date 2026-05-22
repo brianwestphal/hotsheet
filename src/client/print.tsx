@@ -102,11 +102,75 @@ function printDashboard() {
   const dashboard = byIdOrNull('dashboard-container');
   if (!dashboard) return;
   printHTML(`<style>${printStyles()}
+    ${dashboardPrintStyles()}
+  </style>${dashboard.innerHTML}`);
+}
+
+/** HS-8525 — dashboard-specific print styles. Extracted from
+ *  `printDashboard` so unit tests can assert that every analytics-
+ *  telemetry-* class that ships into the dashboard markup has a
+ *  matching print rule. Pre-fix the Claude-usage section (rendered
+ *  via `analyticsTelemetrySection.tsx`) was un-styled in print —
+ *  full-width SVGs + tiny stacked labels — because the print
+ *  stylesheet only knew about the ticket-charts grid classes. */
+export function dashboardPrintStyles(): string {
+  return `
     .dashboard-grid { grid-template-columns: 1fr 1fr; }
     .dashboard-kpi-row { grid-template-columns: repeat(4, 1fr); }
     .dashboard-chart-body svg { max-width: 100%; }
     .chart-cursor, .chart-tooltip, .dashboard-info-btn, .dashboard-range-bar, .dashboard-chart-info { display: none !important; }
-  </style>${dashboard.innerHTML}`);
+    /* HS-8525 — Claude usage / analytics-telemetry section rules so
+       the per-project telemetry block in the dashboard prints with
+       the same boxed card aesthetic as the ticket charts above
+       (KPI tiles + throughput + cycle time + category breakdown).
+       Pre-fix the section dumped raw unstyled HTML with full-width
+       SVGs + tiny stacked labels because the printStyles function
+       didn't know about any of the analytics-telemetry-* classes. */
+    .analytics-telemetry-section { margin-top: 24px; padding-top: 16px; border-top: 1px solid #ddd; display: flex; flex-direction: column; gap: 12px; }
+    .analytics-telemetry-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .analytics-telemetry-title { font-size: 16px; font-weight: 600; margin: 0; }
+    .analytics-telemetry-window-selector { display: none !important; }
+    .analytics-telemetry-body { display: flex; flex-direction: column; gap: 12px; }
+    .analytics-telemetry-section-block { border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; }
+    .analytics-telemetry-section-block h3 { font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 8px 0; }
+    .analytics-telemetry-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+    .telemetry-chip, .telemetry-dashboard-chip { flex: 1 1 0; min-width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; text-align: center; }
+    .telemetry-chip-label, .telemetry-dashboard-chip-label { font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+    .telemetry-chip-cost, .telemetry-dashboard-chip-cost { font-size: 18px; font-weight: 700; color: #111; }
+    .telemetry-chip-meta, .telemetry-dashboard-chip-meta { font-size: 10px; color: #666; }
+    /* Cost-over-time + cost-by-model: constrain chart width and
+       fix the donut at a printable size so it doesn't render as a
+       pixel-wide ring (which is what the unstyled output produced). */
+    .telemetry-cost-over-time-chart { width: 100%; }
+    .telemetry-cost-over-time-svg-wrap { width: 100%; }
+    .telemetry-cost-over-time-svg { width: 100%; height: auto; max-height: 220px; display: block; }
+    .telemetry-cost-over-time-mode-toggle { display: none !important; }
+    .telemetry-cost-over-time-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; padding-top: 6px; font-size: 10px; }
+    .telemetry-dashboard-model-donut-wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .telemetry-dashboard-model-donut { width: 120px; height: 120px; flex-shrink: 0; }
+    .telemetry-dashboard-model-legend { font-size: 11px; display: flex; flex-direction: column; gap: 4px; list-style: none; padding: 0; margin: 0; }
+    .telemetry-dashboard-model-legend-row { display: flex; align-items: center; gap: 8px; }
+    .telemetry-dashboard-model-legend-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+    .telemetry-dashboard-model-legend-name { flex: 1; }
+    .telemetry-dashboard-model-legend-pct { color: #666; font-variant-numeric: tabular-nums; }
+    .telemetry-dashboard-model-legend-cost { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .telemetry-dashboard-model-single-caption { font-size: 10px; color: #666; margin-top: 4px; }
+    /* Tool latency histograms — render rows in a compact one-per-line
+       block so they don't overlap with the donut above. */
+    .telemetry-histogram-row { padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+    .telemetry-histogram-row:last-child { border-bottom: none; }
+    .telemetry-histogram-header { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; margin-bottom: 2px; }
+    .telemetry-histogram-tool { font-weight: 600; }
+    .telemetry-histogram-meta { color: #666; font-variant-numeric: tabular-nums; }
+    .telemetry-histogram-svg { width: 100%; max-width: 320px; height: 24px; display: block; }
+    /* Recent prompts list — table-like rows. */
+    .telemetry-recent-prompts { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+    .telemetry-recent-prompt { display: flex; gap: 10px; padding: 3px 0; border-bottom: 1px solid #f0f0f0; }
+    .telemetry-recent-prompt:last-child { border-bottom: none; }
+    .telemetry-recent-prompt-ts { color: #666; font-variant-numeric: tabular-nums; }
+    .telemetry-recent-prompt-model { font-weight: 600; }
+    .telemetry-recent-prompt-id { color: #888; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  `;
 }
 
 function printTickets(tickets: Ticket[], format: PrintFormat) {

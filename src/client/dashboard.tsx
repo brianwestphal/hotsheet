@@ -540,7 +540,14 @@ export async function renderSidebarWidget(): Promise<HTMLElement> {
           <span className="sidebar-widget-value">{kpi.completedThisWeek} completed</span>
           {arrow ? <span className={`sidebar-widget-trend ${change > 0 ? 'up' : 'down'}`}>{arrow}{Math.abs(change)}%</span> : null}
         </div>
-        <div className="sidebar-widget-wip">{kpi.wipCount} in progress</div>
+        {/* HS-8527 — `.sidebar-widget-cost` shows the active project's
+            today-cost (replaces the per-tab cost chip that lived in the
+            project tab strip). Populated by `costPoll.tsx` via
+            `updateSidebarWidgetCost` in `dashboardMode.tsx`. */}
+        <div className="sidebar-widget-wip">
+          <span>{kpi.wipCount} in progress</span>
+          <span className="sidebar-widget-cost" title="Claude usage today (resets at local midnight)"></span>
+        </div>
       </div>
     );
     widget.innerHTML = '';

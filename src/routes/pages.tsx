@@ -338,6 +338,18 @@ pageRoutes.get('/', (c) => {
 
         <div id="terminal-dashboard-root" className="terminal-dashboard" style="display:none"></div>
 
+        {/* HS-8524 — dedicated root for the cross-project stats page so
+            it renders as a full-window surface (matching the terminal
+            dashboard's takeover pattern) rather than as a subview that
+            took over `#ticket-list` → `#dashboard-container`. Ticket-
+            view controls + sidebar + content-area get hidden via
+            `body.cross-project-stats-active`; the page's own internal
+            toolbar (window selector, cost-over-time mode toggle) lives
+            inside this root. Hidden via inline `display:none` at
+            server-render time; `crossProjectStatsPage.tsx` reveals it
+            on entry. */}
+        <div id="cross-project-stats-root" className="cross-project-stats-root" style="display:none"></div>
+
         <div id="command-log-panel" className="command-log-panel" style="display:none">
           <div className="command-log-resize-handle" id="command-log-resize"></div>
           <div className="drawer-tabs">

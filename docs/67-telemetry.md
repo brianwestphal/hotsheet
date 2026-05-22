@@ -240,15 +240,17 @@ The Settings UI panel mirrors the §52 terminal-prompts settings shell — subsc
 
 Five separate user-facing surfaces, each its own ticket:
 
-### 67.10.1 Per-project tab-header cost chip (HS-8147)
+### 67.10.1 Sidebar dashboard widget cost (HS-8147 — relocated by HS-8527)
 
-Small monospace dollar-amount pill in the project tab header. Rendered only when `telemetry_enabled === true` AND today's cumulative cost > $0. Refreshes on the same poll cadence as the existing tab-bell-state poll. Click → opens the **analytics dashboard** scoped to that project (post-HS-8503 — pre-reshape it opened the drawer Telemetry tab, which is removed). Tooltip: "Claude usage today (resets at local midnight)."
+> **HS-8527 (2026-05-22) — relocation.** Pre-HS-8527 this surface was a small monospace dollar-amount pill (`.project-tab-cost`) inside every project tab header. That chip is gone. The same dollar-amount value now lives in the **sidebar dashboard widget** (the one that opens the analytics dashboard on click), right-aligned on the same line as "N in progress." The widget itself was also moved up the sidebar — it now sits directly under the git-status chip (`#sidebar-git-chip`) rather than at the bottom (after `#stats-bar`), so the cost stays visible without scrolling on short viewports. Tab headers themselves now carry only the project name + status dot + bell glyph.
 
-Source query: `SUM((value_json->>'value')::numeric) FROM otel_metrics WHERE project_secret = ? AND metric_name = 'claude_code.cost.usage' AND ts >= midnight_local`. Single sum, indexed scan, ~1 ms.
+Today's-cost element in the sidebar dashboard widget (`.sidebar-widget-cost`). Populated only when `telemetry_enabled === true` AND today's cumulative cost > $0 for the active project AND the user's billing model is `'api'` (subscription mode hides the value because the metric is an API-equivalent estimate, not what the user pays — see HS-8497 / §67.13). Refreshes on the same poll cadence as the existing tab-bell-state poll. The widget itself remains the analytics-dashboard launcher on click. Tooltip: "Claude usage today (resets at local midnight)."
+
+Source query: `SUM((value_json->>'value')::numeric) FROM otel_metrics WHERE project_secret = ? AND metric_name = 'claude_code.cost.usage' AND ts >= midnight_local`. Single sum, indexed scan, ~1 ms. The bulk `/api/telemetry/today-cost-by-project` endpoint stays in use — it returns the full map and the client filters down to the active secret. Keeping the bulk shape (instead of switching to the single-project `/api/telemetry/today-cost`) means re-introducing a multi-secret cost surface later (e.g. a project-picker list) doesn't need any route plumbing.
 
 ### 67.10.2 Footer drawer "Telemetry" tab (HS-8148 — REMOVED in HS-8503)
 
-> **HS-8503 (2026-05-21) — supersession.** The drawer Telemetry tab is removed. Per-project rollups move to the **analytics dashboard** (see §69.10.5 in [69-telemetry-dashboard.md](69-telemetry-dashboard.md)); cross-project rollups move to the new **Cross-project stats page** (header icon, see §69.10.1). The per-project tab cost chip (§67.10.1) now opens the analytics dashboard instead.
+> **HS-8503 (2026-05-21) — supersession.** The drawer Telemetry tab is removed. Per-project rollups move to the **analytics dashboard** (see §69.10.5 in [69-telemetry-dashboard.md](69-telemetry-dashboard.md)); cross-project rollups move to the new **Cross-project stats page** (header icon, see §69.10.1). The per-project tab cost chip (§67.10.1) opens the analytics dashboard instead. (HS-8527 follow-up: the chip itself was retired in favor of an inline cost element in the sidebar dashboard widget; the widget remains the analytics-dashboard launcher.)
 
 Original pre-reshape spec (preserved for historical context):
 
@@ -360,7 +362,7 @@ The full feature decomposed into 14 tickets:
 | HS-8143 | Foundation | OTLP receiver routes |
 | HS-8145 | Foundation | Spawn-env injection |
 | HS-8146 | Foundation | Settings → Telemetry UI |
-| HS-8147 | UI | Per-project tab cost chip |
+| HS-8147 | UI | Per-project today-cost surface (HS-8527: relocated from tab chip → sidebar widget) |
 | HS-8148 | UI | Footer drawer Telemetry tab |
 | HS-8149 | UI | Per-prompt drilldown modal |
 | HS-8150 | UI | Per-tool latency histograms |

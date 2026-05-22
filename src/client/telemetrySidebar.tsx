@@ -48,15 +48,26 @@ export async function refreshTelemetrySidebarVisibility(): Promise<void> {
 /** Wire the click handler for the cross-project stats header button.
  *  Idempotent — the document-level click listener is installed once
  *  per page load. Lazy-imports `crossProjectStatsPage` so the module
- *  stays out of the initial bundle for users who never click. */
+ *  stays out of the initial bundle for users who never click.
+ *
+ *  HS-8526 — clicking the button a second time (while cross-project
+ *  stats is the active surface) hides the page and restores the
+ *  surface that was visible when the page was first opened (the
+ *  per-project analytics dashboard OR the ticket-list view at the
+ *  previous `state.view`). Mirrors the second-click-restores
+ *  behavior of the `#terminal-dashboard-toggle` button. */
 export function initTelemetrySidebar(): void {
   document.addEventListener('click', (e) => {
     const target = e.target as Element | null;
     if (target === null) return;
     const headerBtn = target.closest<HTMLElement>('#cross-project-stats-toggle');
     if (headerBtn === null) return;
-    document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
-    void import('./crossProjectStatsPage.js').then(({ showCrossProjectStatsPage }) => {
+    void import('./crossProjectStatsPage.js').then(({ hideCrossProjectStatsPage, isCrossProjectStatsPageActive, showCrossProjectStatsPage }) => {
+      if (isCrossProjectStatsPageActive()) {
+        hideCrossProjectStatsPage();
+        return;
+      }
+      document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
       showCrossProjectStatsPage();
     }).catch(() => {
       // Module not present — no-op.

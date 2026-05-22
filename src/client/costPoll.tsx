@@ -1,16 +1,22 @@
 import { api } from './api.js';
 import { subscribeToBellState } from './bellPoll.js';
-import { updateProjectCostChips } from './projectTabs.js';
+import { updateSidebarWidgetCost } from './dashboardMode.js';
 
 /**
- * HS-8147 — per-project "today's cost" chip refresh loop. Subscribes
- * to the bell-state long-poll so chip refreshes piggyback on the
- * cadence the §67.10.1 ticket prescribed ("same as the existing
- * tab-bell-state poll").
+ * HS-8147 — per-project "today's cost" refresh loop. Subscribes to
+ * the bell-state long-poll so cost refreshes piggyback on the cadence
+ * the §67.10.1 ticket prescribed ("same as the existing tab-bell-state
+ * poll").
  *
- * We don't introduce a new timer or new long-poll endpoint — every
- * bell-state tick fires an independent `GET /api/telemetry/today-cost-by-project`
- * fetch and pipes the response into `updateProjectCostChips`. The
+ * HS-8527 — the original surface was a small chip in every project
+ * tab header; that chip is gone and the cost now lives in the sidebar
+ * dashboard widget instead (right-aligned next to "N in progress").
+ * We still fetch the bulk by-project map (same endpoint, same cost,
+ * cheap to keep so the receiver can switch back to a per-tab surface
+ * in the future without re-plumbing the route).
+ *
+ * Every bell-state tick fires an independent `GET /api/telemetry/today-cost-by-project`
+ * fetch and pipes the response into `updateSidebarWidgetCost`. The
  * cost query is a single indexed SUM (one row per project with
  * non-zero cost today) so it's cheap to run alongside the bell poll.
  *
@@ -28,9 +34,9 @@ interface TodayCostByProjectResponse {
 async function refreshCostChips(): Promise<void> {
   try {
     const data = await api<TodayCostByProjectResponse>('/telemetry/today-cost-by-project');
-    updateProjectCostChips(data.costs);
+    updateSidebarWidgetCost(data.costs);
   } catch {
-    // Network hiccup / telemetry table absent → leave chips as-is.
+    // Network hiccup / telemetry table absent → leave the value as-is.
     // The next tick will retry.
   }
 }

@@ -316,6 +316,14 @@ function teardownAllHandles(): void {
 function enterDashboard(): void {
   if (dashboardState.active) return;
   restoreTicketList();
+  // HS-8524 — tear down the cross-project stats page if it was the
+  // surface currently visible. The page is rendered into its own
+  // root + body class (post-HS-8524 refactor), neither of which
+  // `restoreTicketList` cleans up. Lazy import to keep the cross-
+  // project page out of the terminal-dashboard initial bundle.
+  void import('./crossProjectStatsPage.js').then(({ isCrossProjectStatsPageActive, teardownCrossProjectStatsPage }) => {
+    if (isCrossProjectStatsPageActive()) teardownCrossProjectStatsPage();
+  }).catch(() => { /* module not present */ });
   closeDetail();
   dashboardState.active = true;
   // HS-8451 — the terminal dashboard is a cross-project view; while it's
