@@ -59,7 +59,7 @@ function updateBusyIndicator() {
   }
 
   indicator.style.display = '';
-  indicator.replaceChildren(toElement(<>{SPINNER_12} {label}</>));
+  indicator.replaceChildren(toElement(SPINNER_12), ' ' + label);
 }
 
 function updateToolbarButtonState(_pluginId: string, busy: boolean) {

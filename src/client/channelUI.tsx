@@ -91,15 +91,15 @@ function updateStatusIndicator() {
     const degraded = shouldShowDegradedBusy(true, channelStore.state.value.mostRecentSpinnerAtMs, Date.now());
     if (degraded) {
       indicator.className = 'channel-status-indicator busy degraded';
-      indicator.replaceChildren(toElement(<>{SPINNER_12} Claude idle (channel busy)</>));
+      indicator.replaceChildren(toElement(SPINNER_12), ' Claude idle (channel busy)');
     } else {
       indicator.className = 'channel-status-indicator busy';
-      indicator.replaceChildren(toElement(<>{SPINNER_12} Claude working</>));
+      indicator.replaceChildren(toElement(SPINNER_12), ' Claude working');
     }
   } else if (channelStore.state.value.shellBusy) {
     indicator.style.display = '';
     indicator.className = 'channel-status-indicator busy';
-    indicator.replaceChildren(toElement(<>{SPINNER_12} Shell running</>));
+    indicator.replaceChildren(toElement(SPINNER_12), ' Shell running');
   } else {
     // Both idle — hide the indicator
     indicator.style.display = 'none';
