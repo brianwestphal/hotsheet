@@ -76,7 +76,11 @@ interface DashboardPayload {
 }
 ```
 
-Re-fetch triggers: page mount + every window-selector change. NOT live — no polling, no subscription. The user reloads or reopens the page to refresh.
+Re-fetch triggers: page mount + every window-selector change + a 30 s background poll while the page is on-screen (HS-8572). The poll is gated on `isCrossProjectStatsPageActive()` so it self-stops if a stale interval is left behind, and it's explicitly stopped by both teardown paths (`hideCrossProjectStatsPage` + `teardownCrossProjectStatsPage`).
+
+**HS-8572 — payload cache.** Each successfully-fetched payload is cached in-memory keyed by `DashboardWindow`. On re-entry (header-button click on a previously-opened window) or a window-selector click against an already-fetched window, the cached payload is painted immediately instead of the "Loading dashboard…" placeholder. Background fetch refreshes in place. Two optimizations sit on top: (1) `lastPaintedFor: WeakMap<HTMLElement, string>` tracks the JSON-serialized payload currently painted into each container so a poll tick on unchanged data does NOT trigger a `renderShell` rebuild — preserves the user's sort selection on the cost-by-project table, scroll position, hover state, etc. (2) When a background fetch errors and cached data exists, we keep showing the cached page rather than overwriting with the error block — only the first-ever fetch failure renders the error UI.
+
+30 s cadence chosen per the §70 design's "30-60 s is plenty" guidance — the writers (otel receiver) also hit PGLite and we don't want the poll to compete with telemetry ingestion. The existing PGLite queries run in well under 10 ms each, so the poll's actual database cost is negligible; the cadence is set for user-perceived freshness rather than load.
 
 ## 70.7 Return path
 

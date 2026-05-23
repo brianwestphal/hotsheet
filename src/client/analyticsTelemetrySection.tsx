@@ -78,6 +78,31 @@ interface ProjectRollupPayload {
 
 let currentWindow: TelemetryWindow = 'month';
 
+// HS-8572 — per-(projectSecret, window) payload cache. Re-entering
+// the analytics dashboard (closing + re-opening the project's
+// analytics widget) paints the cached payload immediately instead of
+// the "Loading Claude usage…" placeholder. Background fetch refreshes
+// in place. Keyed by `<secret>|<window>` so switching projects or
+// windows picks the right slice.
+const cachedAnalyticsPayloads = new Map<string, ProjectRollupPayload>();
+
+// HS-8572 — track which payload (serialized) is currently painted
+// into each bodySlot so a poll tick on unchanged data does NOT wipe
+// interactive state (recent-prompts drilldown hover, histogram
+// scroll, etc.).
+const lastPaintedAnalyticsFor = new WeakMap<HTMLElement, string>();
+
+// HS-8572 — live-refresh interval id while the section is mounted.
+// Tied to the bodySlot's presence in the document (no explicit hide
+// hook to wire — the analytics dashboard tears down by removing the
+// surrounding DOM). 30 s cadence matches the cross-project page.
+let analyticsPollIntervalId: ReturnType<typeof setInterval> | null = null;
+const ANALYTICS_POLL_INTERVAL_MS = 30_000;
+
+function cacheKey(projectSecret: string, w: TelemetryWindow): string {
+  return `${projectSecret}|${w}`;
+}
+
 // HS-8566 — see `telemetryFormat.ts`. `formatCost` now hides cents for
 // values >= $1000 with half-up rounding + thousands separators.
 
@@ -260,25 +285,79 @@ function clearDashboardSlots(): void {
 }
 
 async function fetchAndPopulate(bodySlot: HTMLElement, w: TelemetryWindow): Promise<void> {
-  bodySlot.replaceChildren(renderLoadingPlaceholder());
   const active = getActiveProject();
   if (active === null) {
     clearDashboardSlots();
     bodySlot.replaceChildren(renderEmptyPlaceholder());
     return;
   }
+
+  // HS-8572 — cache hit: paint the cached payload immediately so the
+  // user doesn't see the "Loading Claude usage…" placeholder on every
+  // re-entry. Skip the paint when the cached payload is already on
+  // screen (poll tick on unchanged data) — see `lastPaintedAnalyticsFor`.
+  const key = cacheKey(active.secret, w);
+  const cached = cachedAnalyticsPayloads.get(key);
+  if (cached !== undefined) {
+    const cachedSerialized = JSON.stringify(cached);
+    if (lastPaintedAnalyticsFor.get(bodySlot) !== cachedSerialized) {
+      const cachedHasData = cached.windowTotals.allTime.promptCount > 0 || cached.windowTotals.allTime.cost > 0;
+      if (!cachedHasData) clearDashboardSlots();
+      bodySlot.replaceChildren(renderBody(cached, active.secret));
+      lastPaintedAnalyticsFor.set(bodySlot, cachedSerialized);
+    }
+  } else {
+    bodySlot.replaceChildren(renderLoadingPlaceholder());
+    lastPaintedAnalyticsFor.delete(bodySlot);
+  }
+
   try {
     const tz = resolveTimezone();
     const payload = await api<ProjectRollupPayload>(
       `/telemetry/project-rollup?window=${encodeURIComponent(w)}&tz=${encodeURIComponent(tz)}`,
     );
+
+    // HS-8572 — skip the re-render when the fresh payload matches what
+    // is currently painted into the slot. Avoids 30 s tick re-builds
+    // wiping scroll / hover / drilldown state when nothing's changed.
+    const fresh = JSON.stringify(payload);
+    cachedAnalyticsPayloads.set(key, payload);
+    if (lastPaintedAnalyticsFor.get(bodySlot) === fresh) return;
+
     const hasData = payload.windowTotals.allTime.promptCount > 0 || payload.windowTotals.allTime.cost > 0;
     if (!hasData) clearDashboardSlots();
     bodySlot.replaceChildren(renderBody(payload, active.secret));
+    lastPaintedAnalyticsFor.set(bodySlot, fresh);
   } catch (err) {
+    // HS-8572 — keep showing cached data when a poll-tick fetch fails
+    // (server restart, transient blip). Only paint the error state
+    // when we have nothing to fall back on.
+    if (cached !== undefined) return;
     clearDashboardSlots();
     const message = err instanceof Error ? err.message : String(err);
     bodySlot.replaceChildren(renderErrorBlock(message));
+  }
+}
+
+/** HS-8572 — start the live-refresh poll. Each tick re-fetches the
+ *  currently-active project + window silently. Stops itself when the
+ *  bodySlot is no longer in the document (the analytics dashboard's
+ *  teardown removes the surrounding subtree) or when the active
+ *  project has changed (different surface now). */
+function startAnalyticsPolling(bodySlot: HTMLElement, getWindow: () => TelemetryWindow, projectSecret: string): void {
+  stopAnalyticsPolling();
+  analyticsPollIntervalId = setInterval(() => {
+    if (!document.body.contains(bodySlot)) { stopAnalyticsPolling(); return; }
+    const active = getActiveProject();
+    if (active === null || active.secret !== projectSecret) { stopAnalyticsPolling(); return; }
+    void fetchAndPopulate(bodySlot, getWindow());
+  }, ANALYTICS_POLL_INTERVAL_MS);
+}
+
+function stopAnalyticsPolling(): void {
+  if (analyticsPollIntervalId !== null) {
+    clearInterval(analyticsPollIntervalId);
+    analyticsPollIntervalId = null;
   }
 }
 
@@ -317,6 +396,16 @@ export function renderAnalyticsTelemetrySection(days?: number): HTMLElement {
 
   void fetchAndPopulate(bodySlot, currentWindow);
 
+  // HS-8572 — start the live-refresh poll so a `claude` run in the
+  // currently-active project shows up on the analytics section without
+  // the user closing + re-opening the dashboard. Poll tied to bodySlot
+  // presence + active project secret so it self-stops on teardown /
+  // project switch.
+  const active = getActiveProject();
+  if (active !== null) {
+    startAnalyticsPolling(bodySlot, () => currentWindow, active.secret);
+  }
+
   return root;
 }
 
@@ -337,4 +426,19 @@ export const _testing = {
   renderEmptyPlaceholder,
   setWindow(w: TelemetryWindow): void { currentWindow = w; },
   getWindow(): TelemetryWindow { return currentWindow; },
+  // HS-8572 — cache + poll lifecycle accessors. Tests should call
+  // `resetHS8572()` in `beforeEach`/`afterEach` so a stale cache or a
+  // still-running interval from one test can't leak into the next.
+  resetHS8572(): void {
+    cachedAnalyticsPayloads.clear();
+    stopAnalyticsPolling();
+  },
+  fetchAndPopulate,
+  startAnalyticsPolling,
+  stopAnalyticsPolling,
+  getCacheSizeHS8572(): number { return cachedAnalyticsPayloads.size; },
+  hasCachedHS8572(projectSecret: string, w: TelemetryWindow): boolean {
+    return cachedAnalyticsPayloads.has(cacheKey(projectSecret, w));
+  },
+  isPollingHS8572(): boolean { return analyticsPollIntervalId !== null; },
 };

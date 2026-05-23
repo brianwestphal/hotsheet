@@ -58,7 +58,9 @@ interface ProjectRollupPayload {
 }
 ```
 
-Re-fetch triggers: section mount + every window-selector change. NOT live — no polling, no subscription. The user reloads or reopens the analytics dashboard to refresh.
+Re-fetch triggers: section mount + every window-selector change + a 30 s background poll while the section is mounted (HS-8572). The poll self-stops when (a) the `bodySlot` element leaves the document (analytics dashboard teardown removes the surrounding subtree), (b) the active project changes to a different secret, or (c) `getActiveProject()` returns null.
+
+**HS-8572 — payload cache.** Each successfully-fetched payload is cached in-memory keyed by `${projectSecret}|${window}` so re-entering the dashboard for a previously-opened project paints the cached payload immediately instead of the "Loading Claude usage…" placeholder. Background fetch refreshes in place; same `lastPaintedAnalyticsFor` WeakMap + cached-on-error fallback as the cross-project page (§70.6).
 
 ## 71.6 Shared helpers extracted under HS-8508
 

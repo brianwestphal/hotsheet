@@ -600,9 +600,49 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
 // sometimes empty-looking) state.
 let fetchGeneration = 0;
 
+// HS-8572 — per-window payload cache. Re-entering the page (header
+// button click) or a window-selector click against an already-fetched
+// window shows the cached payload immediately while a background
+// fetch refreshes it. Keyed by `DashboardWindow` so switching back to
+// the same window picks the right cached slice.
+const cachedPayloads = new Map<DashboardWindow, DashboardPayload>();
+
+// HS-8572 — track which payload (serialized) is currently painted into
+// each container so we can skip a redundant `renderShell` call on a
+// poll tick when the cached payload is already on-screen. Pre-fix the
+// cache-hit branch re-painted on every re-entry, wiping interactive
+// state (sort selection, hover, scroll) every 30 s even when nothing
+// changed.
+const lastPaintedFor = new WeakMap<HTMLElement, string>();
+
+// HS-8572 — live-refresh interval id while the page is on-screen.
+// 30 s cadence (per the §70.x design + the HS-8572 ticket's "30-60 s
+// poll is plenty" guidance — the writers also hit PGLite and we don't
+// want to compete with telemetry ingestion). Cleared on the two
+// teardown paths (`hideCrossProjectStatsPage` + `teardownCrossProjectStatsPage`).
+let pollIntervalId: ReturnType<typeof setInterval> | null = null;
+const POLL_INTERVAL_MS = 30_000;
+
 async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 'month'): Promise<void> {
   const gen = ++fetchGeneration;
-  container.replaceChildren(toElement(<p className="telemetry-dashboard-loading">Loading dashboard…</p>));
+  currentDashboardWindow = window;
+
+  // HS-8572 — cache hit: paint the cached payload immediately so the
+  // user doesn't see the "Loading dashboard…" placeholder on every
+  // re-entry. Skip the paint when the cached payload is already on
+  // screen (poll tick on an unchanged window) — see `lastPaintedFor`.
+  const cached = cachedPayloads.get(window);
+  if (cached !== undefined) {
+    const cachedSerialized = JSON.stringify(cached);
+    if (lastPaintedFor.get(container) !== cachedSerialized) {
+      renderShell(cached, container);
+      lastPaintedFor.set(container, cachedSerialized);
+    }
+  } else {
+    container.replaceChildren(toElement(<p className="telemetry-dashboard-loading">Loading dashboard…</p>));
+    lastPaintedFor.delete(container);
+  }
+
   try {
     const tz = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat !== 'undefined'
       ? Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -616,9 +656,25 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
     // auto-append. See `buildUrl` in `src/client/api.tsx`.
     const payload = await api<DashboardPayload>(`/telemetry/dashboard?window=${encodeURIComponent(window)}&tz=${encodeURIComponent(tz)}`, { skipProjectScope: true });
     if (gen !== fetchGeneration) return; // a newer fetch superseded us; let it win.
+
+    // HS-8572 — skip the re-render when the fresh payload matches what
+    // is currently painted into the container. Avoids 30 s tick
+    // re-builds wiping sort / scroll / hover state when nothing has
+    // changed (compared against `lastPaintedFor` — the actual on-
+    // screen content — rather than the in-memory cache, which is the
+    // same reference here but might diverge if a future caller paints
+    // into the container without going through this function).
+    const fresh = JSON.stringify(payload);
+    cachedPayloads.set(window, payload);
+    if (lastPaintedFor.get(container) === fresh) return;
     renderShell(payload, container);
+    lastPaintedFor.set(container, fresh);
   } catch (err) {
     if (gen !== fetchGeneration) return;
+    // HS-8572 — keep showing cached data when a poll-tick fetch fails
+    // (server restart, transient network blip). Only paint the error
+    // state when we have nothing to fall back on.
+    if (cached !== undefined) return;
     const message = err instanceof Error ? err.message : String(err);
     container.replaceChildren(toElement(
       <div className="telemetry-dashboard-error">
@@ -628,6 +684,33 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
     ));
   }
 }
+
+/** HS-8572 — start the live-refresh poll. Each tick re-fetches the
+ *  currently-active window silently (cached payload stays visible if
+ *  the fetch is slow; identical payloads no-op). Stops itself if the
+ *  page is no longer active when a tick fires (belt-and-suspenders;
+ *  the explicit `stopPolling` callsites in the two teardown paths are
+ *  the primary stop signal). */
+function startPolling(container: HTMLElement, getWindow: () => DashboardWindow): void {
+  stopPolling();
+  pollIntervalId = setInterval(() => {
+    if (!isCrossProjectStatsPageActive()) { stopPolling(); return; }
+    void fetchAndRender(container, getWindow());
+  }, POLL_INTERVAL_MS);
+}
+
+function stopPolling(): void {
+  if (pollIntervalId !== null) {
+    clearInterval(pollIntervalId);
+    pollIntervalId = null;
+  }
+}
+
+// HS-8572 — the currently-rendered window. Tracked separately from
+// the cache map (which keeps every window we've fetched) so the poll
+// knows which slice to refresh. Updated in `fetchAndRender` after a
+// successful render.
+let currentDashboardWindow: DashboardWindow = 'month';
 
 /**
  * HS-8507 entry-point — replaces the legacy `showTelemetryDashboard`
@@ -722,6 +805,10 @@ export function showCrossProjectStatsPage(): void {
   unmountColumnView();
   root.replaceChildren();
   void fetchAndRender(root);
+  // HS-8572 — kick off the live-refresh poll so a `claude` run in any
+  // other project surfaces on this page without the user clicking away
+  // and back. Stopped on both teardown paths.
+  startPolling(root, () => currentDashboardWindow);
 }
 
 /** HS-8524 — clean teardown of the analytics dashboard for the
@@ -748,6 +835,7 @@ function exitDashboardModeIfActive(): void {
  *  surface immediately after. */
 export function teardownCrossProjectStatsPage(): void {
   if (!isCrossProjectStatsPageActive()) return;
+  stopPolling(); // HS-8572 — stop the live-refresh poll
   markCrossProjectStatsActive(false);
   document.body.classList.remove('cross-project-stats-active');
   // HS-8532 — drop the active-state tint on the header button to
@@ -767,6 +855,7 @@ export function teardownCrossProjectStatsPage(): void {
  *  the ticket-list view at the previously-active `state.view`. */
 export function hideCrossProjectStatsPage(): void {
   if (!isCrossProjectStatsPageActive()) return;
+  stopPolling(); // HS-8572 — stop the live-refresh poll
   markCrossProjectStatsActive(false);
   document.body.classList.remove('cross-project-stats-active');
   // HS-8532 — symmetric drop of the active-state tint on hide.
@@ -807,4 +896,25 @@ export function hideCrossProjectStatsPage(): void {
     ?? document.querySelector<HTMLElement>('.sidebar-item[data-view="all"]');
   if (item !== null) item.click();
 }
+
+/** HS-8572 — test-only escape hatches for the cache + poll lifecycle.
+ *  Tests should call `reset()` in `beforeEach`/`afterEach` so a stale
+ *  cache or a still-running interval from one test can't leak into
+ *  the next. Not exported to production callers. */
+export const _testingHS8572 = {
+  reset(): void {
+    cachedPayloads.clear();
+    stopPolling();
+    currentDashboardWindow = 'month';
+    fetchGeneration = 0;
+  },
+  fetchAndRender,
+  startPolling,
+  stopPolling,
+  getCacheSize(): number { return cachedPayloads.size; },
+  hasCached(w: DashboardWindow): boolean { return cachedPayloads.has(w); },
+  getCached(w: DashboardWindow): DashboardPayload | undefined { return cachedPayloads.get(w); },
+  isPolling(): boolean { return pollIntervalId !== null; },
+  getCurrentWindow(): DashboardWindow { return currentDashboardWindow; },
+};
 
