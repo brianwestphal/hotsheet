@@ -36,7 +36,8 @@
  *
  * Re-export shim: `showTelemetryDashboard` is preserved as an alias
  * for `showCrossProjectStatsPage` so the legacy sidebar entry in
- * `telemetrySidebar.tsx` still works during the Phase 3 / 4 / 5
+ * `crossProjectStatsButton.tsx` (HS-8544 rename, was
+ * `telemetrySidebar.tsx`) still works during the Phase 3 / 4 / 5
  * migration without a coordinated rename. HS-8509 deletes the
  * alias along with the sidebar entry.
  */

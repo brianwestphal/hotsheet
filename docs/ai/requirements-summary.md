@@ -791,7 +791,7 @@ Foundations + opt-in stack shipped 2026-05-20 (7 of 15 tickets, including the HS
 
 **Remaining UI/analysis tickets in `not_started`:** HS-8155 + HS-8153 are now design-only with their implementation follow-ups (HS-8475–HS-8478 traces; HS-8479–HS-8483 cross-project) all shipped. HS-8503's 5 reshape sub-tickets are the active telemetry work.
 
-**Status:** Foundations + opt-in stack shipped. The next user-visible milestone is Phase 2b (protobuf decode) + HS-8148 (drawer Telemetry tab) — at that point the opt-in stack starts showing actual cost/token rollups from a Claude Code run. Cross-refs: §41 (`SCHEMA_VERSION` convention), §45 (cleanup sweep + graceful-shutdown the receiver inherits), §2 (cleanup sweep wired for the retention GC), §49 (reader-overlay shell the per-prompt drilldown will mirror), §52 (settings-store pattern this Telemetry UI mirrors).
+**Status:** Foundations + opt-in stack + 5 UI surfaces shipped. The cross-project page (§70) + per-project analytics-dashboard "Claude usage" sub-region (§71) — both born from the HS-8503 reshape — are the current homes for the rollup UI; the legacy drawer Telemetry tab + sidebar entry described in earlier paragraphs of this entry are gone (HS-8509). Cross-refs: §41 (`SCHEMA_VERSION` convention), §45 (cleanup sweep + graceful-shutdown the receiver inherits), §2 (cleanup sweep wired for the retention GC), §49 (reader-overlay shell the per-prompt drilldown mirrors), §52 (settings-store pattern this Telemetry UI mirrors), §70 (cross-project page), §71 (per-project section).
 
 ## 66. Move to Open context-menu item (`66-move-to-open-menu.md`)
 
@@ -1096,4 +1096,4 @@ Keep each section **4–6 sentences**. This doc exists to *replace* reading 20+ 
 
 - **Code map:** `docs/ai/code-summary.md` (sibling file — read together).
 - **Project-level conventions:** `/CLAUDE.md`.
-- **Source docs:** `docs/1-overview.md` … `docs/21-feedback.md`, `docs/plugin-development-guide.md`, `docs/tauri-architecture.md`, `docs/tauri-setup.md`, `docs/manual-test-plan.md`, `docs/testing/*`.
+- **Source docs:** `docs/1-overview.md` … `docs/71-analytics-dashboard-telemetry.md` (gaps + supersedes — see `CLAUDE.md` reading-order block for the canonical list), `docs/plugin-development-guide.md`, `docs/tauri-architecture.md`, `docs/tauri-setup.md`, `docs/manual-test-plan.md`, `docs/testing/*`.

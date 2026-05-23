@@ -29,8 +29,12 @@ export async function cleanupAttachments(): Promise<void> {
     let deleted = 0;
     for (const ticket of tickets) {
       if (ticket.status === 'verified') {
-        // Auto-archive verified tickets (not delete)
-        await updateTicket(ticket.id, { status: 'archive' as never });
+        // Auto-archive verified tickets (not delete).
+        // HS-8548 — the cast used to read `as never` because
+        // `TicketStatus` predated the addition of `'archive'`; both
+        // `TicketStatus` and the `updateTicket` signature now include
+        // `'archive'` directly so no cast is needed.
+        await updateTicket(ticket.id, { status: 'archive' });
         archived++;
       } else {
         // Hard-delete trashed tickets and their attachment files

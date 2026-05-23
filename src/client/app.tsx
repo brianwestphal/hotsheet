@@ -214,7 +214,7 @@ function bindAllUiHandlers(): void {
   // click handler + run the visibility gate. The button appears only
   // when at least one project has telemetry_enabled === true; the
   // settings dialog's master toggle also re-fetches after a PATCH.
-  void import('./telemetrySidebar.js').then(({ initTelemetrySidebar }) => { initTelemetrySidebar(); });
+  void import('./crossProjectStatsButton.js').then(({ initTelemetrySidebar }) => { initTelemetrySidebar(); });
   // HS-8036 — load the project's known ticket-number prefixes; HS-8062 —
   // refresh detail after resolution so pre-cache markdown re-linkifies.
   void loadTicketPrefixes().then(() => refreshDetail()).catch(() => { /* swallow */ });

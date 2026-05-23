@@ -1,6 +1,14 @@
-# 69. Cross-project telemetry dashboard
+# 69. Cross-project telemetry dashboard — SUPERSEDED
 
-> **HS-8503 reshape — shipped 2026-05-21.** All 5 sub-phases are now landed (HS-8505 / HS-8506 / HS-8507 / HS-8508 / HS-8509). The cross-project surface lives on the new **Cross-project stats page** opened from a header-bar icon next to `#terminal-dashboard-toggle` (see `docs/70-cross-project-stats.md`); per-project telemetry rollups live on the **analytics dashboard's "Claude usage" sub-region** (see `docs/71-analytics-dashboard-telemetry.md`). The legacy sidebar Telemetry entry + the drawer Telemetry tab + the cross-project top-10-expensive-prompts list are all gone. The §69.2 — §69.5 design below describes the **pre-HS-8503 shape** and is preserved verbatim for historical context. §69.10 documents the reshape decisions; the new homes for each section are in §70 / §71.
+> # ⚠️ SUPERSEDED — DO NOT USE AS A LIVE SPEC
+>
+> **This document describes the pre-HS-8503 cross-project telemetry shape and is preserved for historical context only.** The HS-8503 reshape (all 5 sub-phases shipped 2026-05-21 — HS-8505 / HS-8506 / HS-8507 / HS-8508 / HS-8509) replaced this surface in full.
+>
+> **For the current cross-project stats page** — header-bar icon next to `#terminal-dashboard-toggle`, full-window takeover, no top-10 expensive prompts list — see **[`70-cross-project-stats.md`](70-cross-project-stats.md)**.
+>
+> **For the per-project telemetry rollups** that used to live in the drawer Telemetry tab — now appearing as the analytics dashboard's "Claude usage" sub-region — see **[`71-analytics-dashboard-telemetry.md`](71-analytics-dashboard-telemetry.md)**.
+>
+> The legacy sidebar Telemetry entry, the drawer Telemetry tab, and the cross-project top-10-expensive-prompts list are all gone. §69.2 — §69.5 below describe the pre-HS-8503 design verbatim; §69.10 documents the reshape decisions and points at the new homes for each section in §70 / §71.
 
 ## 69.1 Goal
 

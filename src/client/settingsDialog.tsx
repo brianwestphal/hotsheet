@@ -698,7 +698,7 @@ function bindTelemetryTab() {
     void api('/file-settings', { method: 'PATCH', body: { telemetry_enabled: masterEl.checked } }).then(() => {
       // HS-8479 — refresh the conditional Telemetry sidebar entry so
       // it appears / disappears instantly on toggle.
-      void import('./telemetrySidebar.js').then(({ refreshTelemetrySidebarVisibility }) => {
+      void import('./crossProjectStatsButton.js').then(({ refreshTelemetrySidebarVisibility }) => {
         void refreshTelemetrySidebarVisibility();
       });
     });
