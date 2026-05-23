@@ -357,94 +357,169 @@ function updateLoadMoreButton(): void {
   btn.style.display = showable ? '' : 'none';
 }
 
-export function renderTicketList() {
-  const snapshot = captureSnapshot();
-  const isPreview = state.backupPreview?.active === true;
+/**
+ * HS-8552 — snapshot of the in-progress draft / title-edit state that
+ * `renderTicketList` captures BEFORE any DOM teardown (HS-2148) so the
+ * post-render path can re-focus the right input + restore its cursor.
+ * `editingValue` is the input's `.value` at capture time — needed
+ * because the bindList rebuild can race with a `state.tickets` update
+ * that overwrites the title with the server's older value.
+ */
+interface EditFocusSnapshot {
+  focusedId: number | 'draft' | null;
+  editingValue: string | null;
+  editingSelStart: number | null;
+  editingSelEnd: number | null;
+  /** Draft-row cursor positions captured separately because the column-
+   *  view branch needs them too but doesn't capture the full
+   *  `editingValue` (the title-input restore logic only runs in the
+   *  list-view branch). */
+  draftSelStart: number | null;
+  draftSelEnd: number | null;
+}
 
-  // Capture draft focus state before any path destroys the DOM (HS-2148)
-  const focusedId = isPreview ? null : getFocusedTicketId();
-  let draftSelStart: number | null = null;
-  let draftSelEnd: number | null = null;
-  if (focusedId === 'draft') {
+/**
+ * HS-8552 — extracted from `renderTicketList`. Capture which input is
+ * focused + the in-progress edit value + the cursor position so we can
+ * restore them after the bindList / column-view rebuild. Returns a
+ * snapshot with all fields nulled out when the user isn't editing
+ * anything (the common case).
+ */
+function captureEditFocusSnapshot(isPreview: boolean): EditFocusSnapshot {
+  const snapshot: EditFocusSnapshot = {
+    focusedId: isPreview ? null : getFocusedTicketId(),
+    editingValue: null,
+    editingSelStart: null,
+    editingSelEnd: null,
+    draftSelStart: null,
+    draftSelEnd: null,
+  };
+  if (snapshot.focusedId === 'draft') {
     const input = document.querySelector<HTMLInputElement>('.draft-row .draft-input');
     if (input) {
       setDraftTitle(input.value);
-      draftSelStart = input.selectionStart;
-      draftSelEnd = input.selectionEnd;
+      snapshot.draftSelStart = input.selectionStart;
+      snapshot.draftSelEnd = input.selectionEnd;
     }
   }
+  // Preserve in-progress title edits and cursor position (HS-199, HS-1454, HS-2113)
+  if (snapshot.focusedId != null) {
+    const selector = snapshot.focusedId === 'draft'
+      ? '.draft-row .draft-input'
+      : `.ticket-row[data-id="${String(snapshot.focusedId)}"] .ticket-title-input`;
+    const input = document.querySelector<HTMLInputElement>(selector);
+    if (input) {
+      snapshot.editingValue = input.value;
+      snapshot.editingSelStart = input.selectionStart;
+      snapshot.editingSelEnd = input.selectionEnd;
+      // Keep draftTitle in sync so the recreated draft row has the latest value
+      if (snapshot.focusedId === 'draft') setDraftTitle(input.value);
+    }
+  }
+  return snapshot;
+}
+
+/**
+ * HS-8552 — extracted from `renderTicketList`'s list-view branch. After
+ * the bindList rebuild, restore the focused input's `.value` (if it
+ * was overwritten mid-render by a `state.tickets` update with a stale
+ * server value) + re-focus it + restore the cursor position.
+ */
+function restoreEditFocus(snapshot: EditFocusSnapshot): void {
+  if (snapshot.focusedId != null && snapshot.editingValue != null) {
+    const selector = snapshot.focusedId === 'draft'
+      ? '.draft-row .draft-input'
+      : `.ticket-row[data-id="${String(snapshot.focusedId)}"] .ticket-title-input`;
+    const input = document.querySelector<HTMLInputElement>(selector);
+    if (input && input.value !== snapshot.editingValue) {
+      input.value = snapshot.editingValue;
+    }
+    restoreFocus(snapshot.focusedId);
+    // Restore cursor position after focus is set.
+    if (input && snapshot.editingSelStart != null) {
+      input.selectionStart = snapshot.editingSelStart;
+      input.selectionEnd = snapshot.editingSelEnd;
+    }
+  } else {
+    restoreFocus(snapshot.focusedId);
+  }
+}
+
+/**
+ * HS-8552 — extracted from `renderTicketList`'s column-view branch. The
+ * column-view path tears down the list-view bindList (the column-
+ * view's own mount manager from HS-8332 is idempotent), dispatches to
+ * the preview / live column renderer, then restores draft-row focus
+ * (only the draft path; the title-input edits inside individual cards
+ * are handled by columnView's own renderer).
+ */
+function renderColumnVariant(snapshot: ReturnType<typeof captureSnapshot>, isPreview: boolean, editFocus: EditFocusSnapshot): void {
+  // Column view path — tear down the list-view bindList if it was
+  // mounted from a prior list-view render. The column-view's own
+  // mount manager (HS-8332) is idempotent: `renderColumnView` /
+  // `renderPreviewColumnView` no-op on same-config re-renders and
+  // rebuild on view / preview / hide_verified_column changes.
+  unmountBindList();
+  if (isPreview) { renderPreviewColumnView(); flipAnimate(snapshot); return; }
+  renderColumnView();
+  // Restore draft focus after column view rebuild
+  if (editFocus.focusedId === 'draft') {
+    restoreFocus('draft');
+    const input = document.querySelector<HTMLInputElement>('.draft-row .draft-input');
+    if (input && editFocus.draftSelStart != null) {
+      input.selectionStart = editFocus.draftSelStart;
+      input.selectionEnd = editFocus.draftSelEnd;
+    }
+  }
+  flipAnimate(snapshot);
+}
+
+/**
+ * HS-8552 — extracted from `renderTicketList`'s scroll-management
+ * block. Detects cross-`(project, view, preview-mode)` transitions
+ * (HS-8374) and persists / restores the scrollTop per-pair. Same-pair
+ * re-renders fall through with the current in-call scrollTop (the
+ * pre-HS-8374 in-call save+restore semantics). The save fires BEFORE
+ * `ensureBindListMount` because the post-mount `scrollHeight` for the
+ * NEW pair may differ (different ticket count under virtualization)
+ * and we want the OLD pair's captured scrollTop unmodified.
+ */
+function resolveScrollTopForRender(container: HTMLElement): number {
+  const keyInfo = computeScrollKey();
+  const inCallScrollTop = container.scrollTop;
+  if (keyInfo === null || keyInfo.key === lastScrollKey) return inCallScrollTop;
+  if (lastScrollKey !== '') {
+    // Save the OLD pair's scrollTop. We can't reverse-parse the key
+    // back to secret/view because the OLD project might have been
+    // removed; instead the lastScrollKey already holds the full
+    // composite, so a direct Map.set bypasses the helper. Keep public
+    // state.tsx setter signature focused on setting-from-current-pair;
+    // this is the previous-pair store.
+    const parts = lastScrollKey.split('::');
+    if (parts.length === 3) {
+      const [prevSecret, prevView, prevMode] = parts;
+      setProjectViewScrollTop(prevSecret, prevView, prevMode === 'preview', inCallScrollTop);
+    }
+  }
+  // Restore the NEW pair's scrollTop (or 0 — natural top-of-list
+  // default for a project/view the user hasn't scrolled before).
+  const restoreScrollTop = getProjectViewScrollTop(keyInfo.secret, keyInfo.view, keyInfo.preview);
+  lastScrollKey = keyInfo.key;
+  return restoreScrollTop;
+}
+
+export function renderTicketList() {
+  const snapshot = captureSnapshot();
+  const isPreview = state.backupPreview?.active === true;
+  const editFocus = captureEditFocusSnapshot(isPreview);
 
   if (state.layout === 'columns' && canUseColumnView()) {
-    // Column view path — tear down the list-view bindList if it was
-    // mounted from a prior list-view render. The column-view's own
-    // mount manager (HS-8332) is idempotent: `renderColumnView` /
-    // `renderPreviewColumnView` no-op on same-config re-renders and
-    // rebuild on view / preview / hide_verified_column changes.
-    unmountBindList();
-    if (isPreview) { renderPreviewColumnView(); flipAnimate(snapshot); return; }
-    renderColumnView();
-    // Restore draft focus after column view rebuild
-    if (focusedId === 'draft') {
-      restoreFocus('draft');
-      const input = document.querySelector<HTMLInputElement>('.draft-row .draft-input');
-      if (input && draftSelStart != null) {
-        input.selectionStart = draftSelStart;
-        input.selectionEnd = draftSelEnd;
-      }
-    }
-    flipAnimate(snapshot);
+    renderColumnVariant(snapshot, isPreview, editFocus);
     return;
   }
 
-  // Preserve in-progress title edits and cursor position (HS-199, HS-1454, HS-2113)
-  let editingValue: string | null = null;
-  let editingSelStart: number | null = null;
-  let editingSelEnd: number | null = null;
-  if (focusedId != null) {
-    const selector = focusedId === 'draft'
-      ? '.draft-row .draft-input'
-      : `.ticket-row[data-id="${focusedId}"] .ticket-title-input`;
-    const input = document.querySelector<HTMLInputElement>(selector);
-    if (input) {
-      editingValue = input.value;
-      editingSelStart = input.selectionStart;
-      editingSelEnd = input.selectionEnd;
-      // Keep draftTitle in sync so the recreated draft row has the latest value
-      if (focusedId === 'draft') setDraftTitle(input.value);
-    }
-  }
-
   const container = byId('ticket-list');
-  // HS-8374 — detect cross-`(project, view, preview-mode)` transitions
-  // and persist / restore the scrollTop per-pair. Same-pair re-renders
-  // (e.g. a single-row update) fall through the `keyInfo.key === lastScrollKey`
-  // branch and keep the existing in-call save+restore-via-local-var
-  // pattern from pre-HS-8374. The save fires BEFORE `ensureBindListMount`
-  // because the post-mount `scrollHeight` for the NEW pair may differ
-  // (different ticket count under virtualization) and we want the OLD
-  // pair's captured scrollTop unmodified.
-  const keyInfo = computeScrollKey();
-  const inCallScrollTop = container.scrollTop;
-  let restoreScrollTop = inCallScrollTop;
-  if (keyInfo !== null && keyInfo.key !== lastScrollKey) {
-    if (lastScrollKey !== '') {
-      // Save the OLD pair's scrollTop. We can't reverse-parse the key
-      // back to secret/view because the OLD project might have been
-      // removed; instead the lastScrollKey already holds the full
-      // composite, so a direct Map.set bypasses the helper. Keep
-      // public state.tsx setter signature focused on
-      // setting-from-current-pair; this is the previous-pair store.
-      const parts = lastScrollKey.split('::');
-      if (parts.length === 3) {
-        const [prevSecret, prevView, prevMode] = parts;
-        setProjectViewScrollTop(prevSecret, prevView, prevMode === 'preview', inCallScrollTop);
-      }
-    }
-    // Restore the NEW pair's scrollTop (or 0 — natural top-of-list
-    // default for a project/view the user hasn't scrolled before).
-    restoreScrollTop = getProjectViewScrollTop(keyInfo.secret, keyInfo.view, keyInfo.preview);
-    lastScrollKey = keyInfo.key;
-  }
+  const restoreScrollTop = resolveScrollTopForRender(container);
 
   // HS-8331 (default) / HS-8333 (trash + preview) / HS-8334 (signal
   // switched to `filteredTickets`) — all three list-view variants are
@@ -453,7 +528,7 @@ export function renderTicketList() {
   // variant gets its correct row factory + empty-state message.
   // HS-8332 (2026-05-11) — also tear down any column-view bindLists
   // left over from a prior column-view render. Symmetric with the
-  // column branch's `unmountBindList()` above.
+  // column branch's `unmountBindList()` in `renderColumnVariant`.
   unmountColumnView();
   ensureBindListMount(container, computeTargetVariant());
 
@@ -475,24 +550,7 @@ export function renderTicketList() {
   } else {
     const toolbar = byIdOrNull('batch-toolbar');
     if (toolbar) toolbar.style.display = '';
-    // Restore in-progress title edit and cursor position (HS-199, HS-1454, HS-2113)
-    if (focusedId != null && editingValue != null) {
-      const selector = focusedId === 'draft'
-        ? '.draft-row .draft-input'
-        : `.ticket-row[data-id="${focusedId}"] .ticket-title-input`;
-      const input = document.querySelector<HTMLInputElement>(selector);
-      if (input && input.value !== editingValue) {
-        input.value = editingValue;
-      }
-      restoreFocus(focusedId);
-      // Restore cursor position after focus is set
-      if (input && editingSelStart != null) {
-        input.selectionStart = editingSelStart;
-        input.selectionEnd = editingSelEnd;
-      }
-    } else {
-      restoreFocus(focusedId);
-    }
+    restoreEditFocus(editFocus);
     // Symmetric with the preview branch above. Pre-HS-8331 the
     // non-preview path re-created rows on every render so `.selected`
     // came back through the JSX literal's `isSelected ? ' selected' : ''`
