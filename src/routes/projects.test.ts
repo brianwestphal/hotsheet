@@ -97,6 +97,20 @@ vi.mock('../terminals/config.js', () => ({
     }
     return [];
   }),
+  // HS-8550 — `parseTerminalDefault` was extracted out of the route
+  // handler's inline IIFE into `src/terminals/config.ts`. The mock must
+  // expose it so the route can import it. Mirrors the real
+  // implementation: returns the typed appearance subset (or undefined
+  // when the raw block is missing / empty / non-object).
+  parseTerminalDefault: vi.fn((rawDefault: unknown) => {
+    if (rawDefault === null || typeof rawDefault !== 'object' || Array.isArray(rawDefault)) return undefined;
+    const obj = rawDefault as { theme?: unknown; fontFamily?: unknown; fontSize?: unknown };
+    const out: { theme?: string; fontFamily?: string; fontSize?: number } = {};
+    if (typeof obj.theme === 'string') out.theme = obj.theme;
+    if (typeof obj.fontFamily === 'string') out.fontFamily = obj.fontFamily;
+    if (typeof obj.fontSize === 'number' && Number.isFinite(obj.fontSize)) out.fontSize = obj.fontSize;
+    return Object.keys(out).length > 0 ? out : undefined;
+  }),
 }));
 
 vi.mock('./terminal.js', () => ({

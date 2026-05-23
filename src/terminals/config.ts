@@ -76,6 +76,28 @@ export function listTerminalConfigs(dataDir: string): TerminalConfig[] {
   return [];
 }
 
+/**
+ * HS-8550 — narrow the project-level `terminal_default` block from
+ * settings.json into the typed appearance subset the quit-confirm
+ * preview (§37) needs. Returns `undefined` when the block is missing
+ * OR carries no usable fields; the appearance-resolve chain on the
+ * client treats `undefined` as "no project-default layer," so a
+ * malformed settings entry doesn't break the chain — it just falls
+ * back to per-terminal overrides + the app-wide default.
+ *
+ * Pure (no I/O, no DB). Exported for the `/api/projects/quit-summary`
+ * route + any future caller that needs the same narrow.
+ */
+export function parseTerminalDefault(rawDefault: unknown): { theme?: string; fontFamily?: string; fontSize?: number } | undefined {
+  if (rawDefault === null || typeof rawDefault !== 'object' || Array.isArray(rawDefault)) return undefined;
+  const obj = rawDefault as { theme?: unknown; fontFamily?: unknown; fontSize?: unknown };
+  const out: { theme?: string; fontFamily?: string; fontSize?: number } = {};
+  if (typeof obj.theme === 'string') out.theme = obj.theme;
+  if (typeof obj.fontFamily === 'string') out.fontFamily = obj.fontFamily;
+  if (typeof obj.fontSize === 'number' && Number.isFinite(obj.fontSize)) out.fontSize = obj.fontSize;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /** Look up a single terminal config by id, or null if not found. */
 export function findTerminalConfig(dataDir: string, terminalId: string): TerminalConfig | null {
   for (const entry of listTerminalConfigs(dataDir)) {

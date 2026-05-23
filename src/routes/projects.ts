@@ -7,6 +7,9 @@ import { openInFileManager } from '../open-in-file-manager.js';
 import { addToProjectList, readProjectList, removeFromProjectList, reorderProjectList } from '../project-list.js';
 import { getAllProjects, getProjectBySecret, registerProject, reorderProjects, unregisterProject } from '../projects.js';
 import { type PendingPermissionEntrySchema, PendingPermissionSchema } from '../schemas.js';
+import type { TerminalConfig } from '../terminals/config.js';
+import type { inspectForegroundProcess } from '../terminals/processInspect.js';
+import type { listAliveTerminalsAcrossProjects } from '../terminals/registry.js';
 import type { AppEnv } from '../types.js';
 import { notifyChange } from './notify.js';
 import { parseBody, RegisterProjectSchema, ReorderProjectsSchema } from './validation.js';
@@ -310,9 +313,123 @@ projectRoutes.post('/reorder', async (c) => {
  * Stale-instance cleanup intentionally bypasses this endpoint — that path
  * is programmatic and the user is already quitting through a new window.
  */
+// HS-8550 — types + helpers extracted from the `/quit-summary` handler
+// below so the route body is just orchestration. Each helper has its own
+// purpose comment.
+
+type SummaryEntry = {
+  terminalId: string;
+  label: string;
+  foregroundCommand: string;
+  isShell: boolean;
+  isExempt: boolean;
+  /** HS-8059 follow-up — per-terminal appearance override. Layered with
+   *  the project-level `terminalDefault` on the client so the quit-
+   *  confirm preview pane can paint its gutter to match the terminal's
+   *  theme bg WITHOUT depending on `term.options.theme` being set
+   *  asynchronously by another consumer. Identical shape to
+   *  `TerminalConfig`'s appearance fields. */
+  theme?: string;
+  fontFamily?: string;
+  fontSize?: number;
+};
+
+type ProjectSummary = {
+  secret: string;
+  name: string;
+  confirmMode: 'always' | 'never' | 'with-non-exempt-processes';
+  entries: SummaryEntry[];
+  /** HS-8059 follow-up — project's `terminal_default` block from
+   *  settings.json. The client layers this UNDER per-entry overrides
+   *  to resolve the final appearance for the preview-pane gutter. */
+  terminalDefault?: { theme?: string; fontFamily?: string; fontSize?: number };
+};
+
+/**
+ * Group every alive PTY across every registered project by
+ * `project.secret`. Returns a Map keyed by secret so the per-project loop
+ * can `aliveByProject.get(secret) ?? []` without re-scanning.
+ *
+ * Pure (modulo the registry read which is itself pure — module-level
+ * state of `src/terminals/registry.ts`). Exported for testability.
+ */
+function groupAliveTerminalsBySecret(
+  aliveList: ReturnType<typeof listAliveTerminalsAcrossProjects>,
+): Map<string, Array<{ terminalId: string; rootPid: number }>> {
+  const out = new Map<string, Array<{ terminalId: string; rootPid: number }>>();
+  for (const t of aliveList) {
+    const list = out.get(t.secret);
+    if (list === undefined) out.set(t.secret, [{ terminalId: t.terminalId, rootPid: t.rootPid }]);
+    else list.push({ terminalId: t.terminalId, rootPid: t.rootPid });
+  }
+  return out;
+}
+
+/**
+ * Build the two lookup Maps that the per-PTY assembly step needs:
+ *   - `labelByTid` — terminal id → user-visible tab name (resolved via
+ *     the configured `name`, falling back to the command's executable
+ *     basename, falling back to the id). Matches how the drawer +
+ *     dashboard label their tabs.
+ *   - `appearanceByTid` — terminal id → `theme` / `fontFamily` /
+ *     `fontSize` overrides (HS-8059 follow-up) so the client can
+ *     resolve appearance synchronously without waiting on another
+ *     consumer to apply it via `applyAppearanceToTerm`.
+ *
+ * Pure helper over the merged (configured + dynamic) config list.
+ */
+function buildLabelAndAppearanceMaps(
+  configs: ReadonlyArray<TerminalConfig>,
+): { labelByTid: Map<string, string>; appearanceByTid: Map<string, { theme?: string; fontFamily?: string; fontSize?: number }> } {
+  const labelByTid = new Map<string, string>();
+  const appearanceByTid = new Map<string, { theme?: string; fontFamily?: string; fontSize?: number }>();
+  for (const cfg of configs) {
+    const fallback = cfg.command.trim().split(/\s+/)[0]?.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '') ?? cfg.id;
+    const label = (cfg.name !== undefined && cfg.name !== '')
+      ? cfg.name
+      : (fallback !== '' ? fallback : cfg.id);
+    labelByTid.set(cfg.id, label);
+    const appearance: { theme?: string; fontFamily?: string; fontSize?: number } = {};
+    if (cfg.theme !== undefined) appearance.theme = cfg.theme;
+    if (cfg.fontFamily !== undefined) appearance.fontFamily = cfg.fontFamily;
+    if (cfg.fontSize !== undefined) appearance.fontSize = cfg.fontSize;
+    if (Object.keys(appearance).length > 0) appearanceByTid.set(cfg.id, appearance);
+  }
+  return { labelByTid, appearanceByTid };
+}
+
+/**
+ * Assemble one `SummaryEntry` from a live PTY's id + inspected foreground
+ * process + the project's label / appearance lookup maps. Splits the
+ * per-PTY work out of the route's inner loop so the loop body reads as
+ * "for each alive PTY, await inspect + appendEntry(...)".
+ */
+function assembleSummaryEntry(
+  terminalId: string,
+  info: Awaited<ReturnType<typeof inspectForegroundProcess>>,
+  labelByTid: ReadonlyMap<string, string>,
+  appearanceByTid: ReadonlyMap<string, { theme?: string; fontFamily?: string; fontSize?: number }>,
+  defaultTerminalId: string,
+): SummaryEntry {
+  const entry: SummaryEntry = {
+    terminalId,
+    label: labelByTid.get(terminalId) ?? (terminalId === defaultTerminalId ? 'Default' : terminalId),
+    foregroundCommand: info.command,
+    isShell: info.isShell,
+    isExempt: info.isExempt,
+  };
+  const ov = appearanceByTid.get(terminalId);
+  if (ov !== undefined) {
+    if (ov.theme !== undefined) entry.theme = ov.theme;
+    if (ov.fontFamily !== undefined) entry.fontFamily = ov.fontFamily;
+    if (ov.fontSize !== undefined) entry.fontSize = ov.fontSize;
+  }
+  return entry;
+}
+
 projectRoutes.get('/quit-summary', async (c) => {
   const { listAliveTerminalsAcrossProjects } = await import('../terminals/registry.js');
-  const { listTerminalConfigs, DEFAULT_TERMINAL_ID } = await import('../terminals/config.js');
+  const { listTerminalConfigs, DEFAULT_TERMINAL_ID, parseTerminalDefault } = await import('../terminals/config.js');
   const { listDynamicTerminalConfigs } = await import('./terminal.js');
   const { readFileSettings } = await import('../file-settings.js');
   const {
@@ -320,39 +437,7 @@ projectRoutes.get('/quit-summary', async (c) => {
     inspectForegroundProcess,
   } = await import('../terminals/processInspect.js');
 
-  type SummaryEntry = {
-    terminalId: string;
-    label: string;
-    foregroundCommand: string;
-    isShell: boolean;
-    isExempt: boolean;
-    /** HS-8059 follow-up — per-terminal appearance override. Layered with
-     *  the project-level `terminalDefault` on the client so the quit-
-     *  confirm preview pane can paint its gutter to match the terminal's
-     *  theme bg WITHOUT depending on `term.options.theme` being set
-     *  asynchronously by another consumer. Identical shape to
-     *  `TerminalConfig`'s appearance fields. */
-    theme?: string;
-    fontFamily?: string;
-    fontSize?: number;
-  };
-  type ProjectSummary = {
-    secret: string;
-    name: string;
-    confirmMode: 'always' | 'never' | 'with-non-exempt-processes';
-    entries: SummaryEntry[];
-    /** HS-8059 follow-up — project's `terminal_default` block from
-     *  settings.json. The client layers this UNDER per-entry overrides
-     *  to resolve the final appearance for the preview-pane gutter. */
-    terminalDefault?: { theme?: string; fontFamily?: string; fontSize?: number };
-  };
-
-  const aliveByProject = new Map<string, Array<{ terminalId: string; rootPid: number }>>();
-  for (const t of listAliveTerminalsAcrossProjects()) {
-    const list = aliveByProject.get(t.secret);
-    if (list === undefined) aliveByProject.set(t.secret, [{ terminalId: t.terminalId, rootPid: t.rootPid }]);
-    else list.push({ terminalId: t.terminalId, rootPid: t.rootPid });
-  }
+  const aliveByProject = groupAliveTerminalsBySecret(listAliveTerminalsAcrossProjects());
 
   const projects = getAllProjects();
   const result: ProjectSummary[] = [];
@@ -368,63 +453,24 @@ projectRoutes.get('/quit-summary', async (c) => {
 
     // Resolve labels via the configured-terminal list AND the in-memory
     // dynamic-terminal registry (HS-7789) so each entry shows the user's
-    // chosen tab name (or the friendly fallback assigned at /create time) —
-    // matches how the drawer / dashboard label tabs.
-    const configured = listTerminalConfigs(project.dataDir);
-    const dynamicConfigs = listDynamicTerminalConfigs(project.secret);
-    const labelByTid = new Map<string, string>();
-    // HS-8059 follow-up — also build a (terminalId → appearance-overrides)
-    // map keyed off the same configured + dynamic lists. Per-entry
-    // overrides ride along on the response so the client can resolve
-    // appearance synchronously without waiting on another consumer to
-    // apply it via `applyAppearanceToTerm`.
-    const appearanceByTid = new Map<string, { theme?: string; fontFamily?: string; fontSize?: number }>();
-    for (const cfg of [...configured, ...dynamicConfigs]) {
-      const fallback = cfg.command.trim().split(/\s+/)[0]?.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '') ?? cfg.id;
-      const label = (cfg.name !== undefined && cfg.name !== '')
-        ? cfg.name
-        : (fallback !== '' ? fallback : cfg.id);
-      labelByTid.set(cfg.id, label);
-      const appearance: { theme?: string; fontFamily?: string; fontSize?: number } = {};
-      if (cfg.theme !== undefined) appearance.theme = cfg.theme;
-      if (cfg.fontFamily !== undefined) appearance.fontFamily = cfg.fontFamily;
-      if (cfg.fontSize !== undefined) appearance.fontSize = cfg.fontSize;
-      if (Object.keys(appearance).length > 0) appearanceByTid.set(cfg.id, appearance);
-    }
+    // chosen tab name — matches how the drawer / dashboard label tabs.
+    const { labelByTid, appearanceByTid } = buildLabelAndAppearanceMaps([
+      ...listTerminalConfigs(project.dataDir),
+      ...listDynamicTerminalConfigs(project.secret),
+    ]);
 
     const alive = aliveByProject.get(project.secret) ?? [];
     const entries: SummaryEntry[] = [];
     for (const t of alive) {
       const info = await inspectForegroundProcess(t.rootPid, exempt);
-      const entry: SummaryEntry = {
-        terminalId: t.terminalId,
-        label: labelByTid.get(t.terminalId) ?? (t.terminalId === DEFAULT_TERMINAL_ID ? 'Default' : t.terminalId),
-        foregroundCommand: info.command,
-        isShell: info.isShell,
-        isExempt: info.isExempt,
-      };
-      const ov = appearanceByTid.get(t.terminalId);
-      if (ov !== undefined) {
-        if (ov.theme !== undefined) entry.theme = ov.theme;
-        if (ov.fontFamily !== undefined) entry.fontFamily = ov.fontFamily;
-        if (ov.fontSize !== undefined) entry.fontSize = ov.fontSize;
-      }
-      entries.push(entry);
+      entries.push(assembleSummaryEntry(t.terminalId, info, labelByTid, appearanceByTid, DEFAULT_TERMINAL_ID));
     }
+
     // HS-8059 follow-up — extract `terminal_default` so the client has the
-    // project-default layer for resolveAppearance.
-    const rawDefault = settings.terminal_default;
-    const terminalDefault: { theme?: string; fontFamily?: string; fontSize?: number } | undefined =
-      (rawDefault !== null && typeof rawDefault === 'object' && !Array.isArray(rawDefault))
-        ? (() => {
-            const obj = rawDefault as { theme?: unknown; fontFamily?: unknown; fontSize?: unknown };
-            const out: { theme?: string; fontFamily?: string; fontSize?: number } = {};
-            if (typeof obj.theme === 'string') out.theme = obj.theme;
-            if (typeof obj.fontFamily === 'string') out.fontFamily = obj.fontFamily;
-            if (typeof obj.fontSize === 'number' && Number.isFinite(obj.fontSize)) out.fontSize = obj.fontSize;
-            return Object.keys(out).length > 0 ? out : undefined;
-          })()
-        : undefined;
+    // project-default layer for resolveAppearance. The IIFE that used to
+    // live inline here is now `parseTerminalDefault` in
+    // `src/terminals/config.ts` (HS-8550 extraction).
+    const terminalDefault = parseTerminalDefault(settings.terminal_default);
     const projectSummary: ProjectSummary = { secret: project.secret, name: project.name, confirmMode, entries };
     if (terminalDefault !== undefined) projectSummary.terminalDefault = terminalDefault;
     result.push(projectSummary);
