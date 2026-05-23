@@ -7,6 +7,9 @@ import {
   saveCategories,
   updateSetting,
 } from '../db/queries.js';
+import { readFileSettings, writeFileSettings } from '../file-settings.js';
+import { getProjectByDataDir } from '../projects.js';
+import { eagerSpawnTerminals } from '../terminals/eagerSpawn.js';
 import type { AppEnv } from '../types.js';
 import { CATEGORY_PRESETS } from '../types.js';
 import { notifyChange, notifyMutation } from './notify.js';
@@ -62,8 +65,7 @@ settingsRoutes.patch('/settings', async (c) => {
 
 // --- File-based settings (settings.json) ---
 
-settingsRoutes.get('/file-settings', async (c) => {
-  const { readFileSettings } = await import('../file-settings.js');
+settingsRoutes.get('/file-settings', (c) => {
   const dataDir = c.get('dataDir');
   const settings = readFileSettings(dataDir);
   // Exclude sensitive fields before sending to client
@@ -75,8 +77,6 @@ settingsRoutes.get('/file-settings', async (c) => {
 });
 
 settingsRoutes.patch('/file-settings', async (c) => {
-  const { writeFileSettings } = await import('../file-settings.js');
-  const { getProjectByDataDir } = await import('../projects.js');
   const dataDir = c.get('dataDir');
   const secret = c.get('projectSecret');
   const raw: unknown = await c.req.json();
@@ -102,7 +102,6 @@ settingsRoutes.patch('/file-settings', async (c) => {
   // not yet running (HS-6310). Fires after the write so the new config is read
   // by listTerminalConfigs.
   if ('terminals' in parsed.data) {
-    const { eagerSpawnTerminals } = await import('../terminals/eagerSpawn.js');
     eagerSpawnTerminals(secret, dataDir);
     // HS-8290 — visibility groupings + hidden_terminals moved to global
     // config (~/.hotsheet/config.json under `dashboard`). Per-project

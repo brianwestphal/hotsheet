@@ -6,10 +6,14 @@ import { basename, join } from 'path';
 import { getDb, runWithDataDir } from '../db/connection.js';
 import { getConflicts, getSyncRecordsForPlugin, upsertSyncRecord  } from '../db/sync.js';
 import { getTicket } from '../db/tickets.js';
+import { keychainGet, keychainSet } from '../keychain.js';
+import { openInFileManager } from '../open-in-file-manager.js';
 import {
-  disablePlugin, enablePlugin, getAllBackends,
-  getGlobalPluginSetting, getLoadedPlugins,
-  getPluginById, reactivatePlugin, setGlobalPluginSetting,
+  disablePlugin, dismissBundledPlugin, enablePlugin, getAllBackends,
+  getConfigLabelOverride, getGlobalPluginSetting, getLoadedPlugins,
+  getPluginById, getPluginUIElements, installBundledPlugin,
+  listBundledPlugins, loadAllPlugins, reactivatePlugin,
+  setGlobalPluginSetting, undismissBundledPlugin, unregisterPlugin,
 } from '../plugins/loader.js';
 import {
   resolveConflict, runSync, startScheduledSync, stopScheduledSync, syncSingleTicketContent,
@@ -101,7 +105,6 @@ pluginRoutes.get('/plugins', async (c) => {
 
 /** Get all registered UI elements from enabled plugins. */
 pluginRoutes.get('/plugins/ui', async (c) => {
-  const { getPluginUIElements } = await import('../plugins/loader.js');
   const registrations = getPluginUIElements();
   const filtered = [];
   for (const reg of registrations) {
@@ -165,14 +168,12 @@ pluginRoutes.post('/plugins/validate/:id', async (c) => {
 pluginRoutes.post('/plugins/reveal/:id', async (c) => {
   const plugin = getPluginById(c.req.param('id'));
   if (plugin?.path == null || plugin.path === '') return c.json({ error: 'Plugin not found' }, 404);
-  const { openInFileManager } = await import('../open-in-file-manager.js');
   await openInFileManager(plugin.path);
   return c.json({ ok: true });
 });
 
 /** Get dynamic config label overrides for a plugin. */
-pluginRoutes.get('/plugins/config-labels/:id', async (c) => {
-  const { getConfigLabelOverride } = await import('../plugins/loader.js');
+pluginRoutes.get('/plugins/config-labels/:id', (c) => {
   const pluginId = c.req.param('id');
   const plugin = getPluginById(pluginId);
   if (!plugin) return c.json({});
@@ -192,15 +193,13 @@ pluginRoutes.get('/plugins/config-labels/:id', async (c) => {
 });
 
 /** List bundled (official) plugins with install status. */
-pluginRoutes.get('/plugins/bundled', async (c) => {
-  const { listBundledPlugins } = await import('../plugins/loader.js');
+pluginRoutes.get('/plugins/bundled', (c) => {
   return c.json(listBundledPlugins());
 });
 
 /** Install a specific bundled plugin by ID. */
 pluginRoutes.post('/plugins/bundled/:id/install', async (c) => {
   const pluginId = c.req.param('id');
-  const { installBundledPlugin, loadAllPlugins } = await import('../plugins/loader.js');
   const ok = installBundledPlugin(pluginId);
   if (!ok) return c.json({ error: 'Failed to install bundled plugin' }, 400);
   await loadAllPlugins();
@@ -500,7 +499,6 @@ pluginRoutes.post('/plugins/install', async (c) => {
   }
 
   // Clear dismiss flag if re-installing a previously dismissed plugin
-  const { undismissBundledPlugin } = await import('../plugins/loader.js');
   undismissBundledPlugin(linkName);
 
   return c.json({ ok: true, installed: linkPath });
@@ -535,7 +533,6 @@ pluginRoutes.post('/plugins/:id/uninstall', async (c) => {
   }
 
   // Remove from in-memory registry and dismiss bundled plugins
-  const { unregisterPlugin, dismissBundledPlugin } = await import('../plugins/loader.js');
   unregisterPlugin(pluginId);
   dismissBundledPlugin(pluginId);
 
@@ -554,7 +551,6 @@ pluginRoutes.get('/plugins/:id/global-config/:key', async (c) => {
   const plugin = getPluginById(pluginId);
   const isSecret = plugin?.manifest.preferences?.find(p => p.key === key)?.secret === true;
   if (isSecret) {
-    const { keychainGet } = await import('../keychain.js');
     const keychainValue = await keychainGet(pluginId, key);
     if (keychainValue !== null) return c.json({ value: keychainValue });
   }
@@ -572,7 +568,6 @@ pluginRoutes.post('/plugins/:id/global-config', async (c) => {
   const plugin = getPluginById(pluginId);
   const isSecret = plugin?.manifest.preferences?.find(p => p.key === body.key)?.secret === true;
   if (isSecret) {
-    const { keychainSet } = await import('../keychain.js');
     await keychainSet(pluginId, body.key, body.value);
   }
   setGlobalPluginSetting(pluginId, body.key, body.value);

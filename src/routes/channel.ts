@@ -1,11 +1,20 @@
+import { execFileSync } from 'child_process';
 import { Hono } from 'hono';
 
+import { checkChannelVersion, getChannelPort, isChannelAlive, registerChannel, registerChannelForAll, shutdownChannel, slugifyDataDir, triggerChannel, unregisterChannel, unregisterChannelForAll } from '../channel-config.js';
 import { appendMainServerEvent } from '../channelLog.js';
+import { listAliveEntries } from '../channelRegistry.js';
+import { installHeartbeatHook, removeHeartbeatHook } from '../claude-hooks.js';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
+import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
+import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { extractPrimaryValue, findMatchingAllowRule, parseAllowRules } from '../permissionAllowRules.js';
+import { getAllProjects } from '../projects.js';
 import { PendingPermissionSchema } from '../schemas.js';
+import { ensureSkillsForDir } from '../skills.js';
+import { flushPendingSyncs } from '../sync/markdown.js';
 import type { AppEnv } from '../types.js';
 import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js';
 import { ChannelHeartbeatSchema, ChannelTriggerSchema, parseBody, PermissionRespondSchema } from './validation.js';
@@ -47,8 +56,7 @@ const channelDoneFlags = new Map<string, boolean>();
 // Track which permission request_ids we've already logged to avoid duplicates
 const loggedPermissionRequests = new Map<string, number>(); // request_id -> log entry id
 
-channelRoutes.get('/channel/claude-check', async (c) => {
-  const { execFileSync } = await import('child_process');
+channelRoutes.get('/channel/claude-check', (c) => {
   try {
     const version = execFileSync('claude', ['--version'], { timeout: 5000, encoding: 'utf-8' }).trim();
     // Version string like "Claude Code v2.1.85" or just "2.1.85"
@@ -66,8 +74,6 @@ channelRoutes.get('/channel/claude-check', async (c) => {
 });
 
 channelRoutes.get('/channel/status', async (c) => {
-  const { isChannelAlive, getChannelPort, checkChannelVersion, slugifyDataDir } = await import('../channel-config.js');
-  const { readGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
   // Channel enabled is a global setting; fall back to legacy per-project DB (read-only)
   const globalConfig = readGlobalConfig();
@@ -112,15 +118,12 @@ channelRoutes.get('/channel/status', async (c) => {
   // is disabled.
   let aliveCount = 0;
   if (alive) {
-    const { listAliveEntries } = await import('../channelRegistry.js');
     aliveCount = listAliveEntries(dataDir).length;
   }
   return c.json({ enabled, alive, port, done, versionMismatch, serverName, aliveCount });
 });
 
 channelRoutes.post('/channel/trigger', async (c) => {
-  const { triggerChannel } = await import('../channel-config.js');
-  const { instrumentAsync } = await import('../diagnostics/freezeLogger.js');
   const dataDir = c.get('dataDir');
   const serverPort = parseInt(new URL(c.req.url).port || '4174', 10);
   const raw: unknown = await c.req.json().catch(() => ({}));
@@ -137,7 +140,6 @@ channelRoutes.post('/channel/trigger', async (c) => {
   // stalls in a way the per-phase instrumentation didn't expect.
   const ok = await instrumentAsync(dataDir, 'channel.trigger', async () => {
     // Flush pending markdown syncs so worklist/open-tickets are up to date before Claude reads them
-    const { flushPendingSyncs } = await import('../sync/markdown.js');
     await flushPendingSyncs(dataDir);
     return triggerChannel(dataDir, serverPort, parsed.data.message);
   });
@@ -150,7 +152,6 @@ type PermissionResult = { pending: { request_id?: string; tool_name?: string; de
 
 /** Fetch permission from the channel server and log new requests. */
 async function fetchPermission(dataDir: string): Promise<PermissionResult> {
-  const { getChannelPort } = await import('../channel-config.js');
   const port = getChannelPort(dataDir);
   if (port === null) return { pending: null };
   try {
@@ -241,7 +242,6 @@ channelRoutes.get('/channel/permission', async (c) => {
 });
 
 channelRoutes.post('/channel/permission/respond', async (c) => {
-  const { getChannelPort } = await import('../channel-config.js');
   const dataDir = c.get('dataDir');
   const port = getChannelPort(dataDir);
   if (port === null) return c.json({ error: 'Channel not available' }, 503);
@@ -284,7 +284,6 @@ channelRoutes.post('/channel/permission/respond', async (c) => {
 });
 
 channelRoutes.post('/channel/permission/dismiss', async (c) => {
-  const { getChannelPort } = await import('../channel-config.js');
   const dataDir = c.get('dataDir');
   const port = getChannelPort(dataDir);
   if (port === null) return c.json({ ok: true });
@@ -302,16 +301,12 @@ channelRoutes.post('/channel/done', (_c) => {
   return _c.json({ ok: true });
 });
 
-channelRoutes.post('/channel/enable', async (c) => {
-  const { registerChannel, registerChannelForAll } = await import('../channel-config.js');
-  const { writeGlobalConfig } = await import('../global-config.js');
+channelRoutes.post('/channel/enable', (c) => {
   const dataDir = c.get('dataDir');
   writeGlobalConfig({ channelEnabled: true });
   // Register .mcp.json and ensure skills for ALL projects
   const serverPort = parseInt(new URL(c.req.url).port || '4174', 10);
   try {
-    const { getAllProjects } = await import('../projects.js');
-    const { ensureSkillsForDir } = await import('../skills.js');
     const projects = getAllProjects();
     registerChannelForAll(projects.map(p => p.dataDir));
     for (const p of projects) {
@@ -321,19 +316,15 @@ channelRoutes.post('/channel/enable', async (c) => {
     registerChannel(dataDir);
   }
   // Install Claude Code hook for busy state detection
-  const { installHeartbeatHook } = await import('../claude-hooks.js');
   installHeartbeatHook(serverPort);
   notifyChange();
   return c.json({ ok: true });
 });
 
 channelRoutes.post('/channel/disable', async (c) => {
-  const { unregisterChannel, unregisterChannelForAll, shutdownChannel } = await import('../channel-config.js');
-  const { writeGlobalConfig } = await import('../global-config.js');
   const dataDir = c.get('dataDir');
   writeGlobalConfig({ channelEnabled: false });
   try {
-    const { getAllProjects } = await import('../projects.js');
     const projects = getAllProjects();
     unregisterChannelForAll(projects.map(p => p.dataDir));
     for (const p of projects) {
@@ -344,7 +335,6 @@ channelRoutes.post('/channel/disable', async (c) => {
     await shutdownChannel(dataDir);
   }
   // Remove Claude Code heartbeat hook
-  const { removeHeartbeatHook } = await import('../claude-hooks.js');
   removeHeartbeatHook();
   notifyChange();
   return c.json({ ok: true });
@@ -353,7 +343,6 @@ channelRoutes.post('/channel/disable', async (c) => {
 /** Heartbeat from Claude Code hooks — reports busy/idle/heartbeat state for a project.
  *  state: 'busy' (UserPromptSubmit), 'idle' (Stop), 'heartbeat' (PostToolUse) */
 channelRoutes.post('/channel/heartbeat', async (c) => {
-  const { getAllProjects } = await import('../projects.js');
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(ChannelHeartbeatSchema, raw);
   if (!parsed.success) return c.json({ ok: false });

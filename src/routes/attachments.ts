@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
 import { basename, extname, join, resolve } from 'path';
 
+import { promoteDraftAttachments } from '../db/attachments.js';
 import {
   addAttachment,
   addDraftAttachment,
@@ -41,7 +42,6 @@ attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
 
   // Write the file
   const buffer = Buffer.from(await file.arrayBuffer());
-  const { writeFileSync } = await import('fs');
   writeFileSync(storedPath, buffer);
 
   const attachment = await addAttachment(id, originalName, storedPath);
@@ -90,7 +90,6 @@ attachmentRoutes.post('/tickets/:id/feedback-drafts/:draftId/attachments', async
   const storedPath = join(attachDir, storedName);
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  const { writeFileSync } = await import('fs');
   writeFileSync(storedPath, buffer);
 
   const attachment = await addDraftAttachment(id, draftId, originalName, storedPath);
@@ -115,7 +114,6 @@ attachmentRoutes.post('/tickets/:id/feedback-drafts/:draftId/promote-attachments
   const ticket = await getTicket(id);
   if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
 
-  const { promoteDraftAttachments } = await import('../db/attachments.js');
   const promoted = await promoteDraftAttachments(draftId);
   notifyMutation(c.get('dataDir'));
   return c.json({ promoted: promoted.length, attachments: promoted });
@@ -147,7 +145,7 @@ attachmentRoutes.post('/attachments/:id/reveal', async (c) => {
 });
 
 // Serve attachment files
-attachmentRoutes.get('/attachments/file/*', async (c) => {
+attachmentRoutes.get('/attachments/file/*', (c) => {
   const filePath = c.req.path.replace('/api/attachments/file/', '');
   const dataDir = c.get('dataDir');
   const attachDir = resolve(join(dataDir, 'attachments'));
@@ -162,7 +160,6 @@ attachmentRoutes.get('/attachments/file/*', async (c) => {
     return c.json({ error: 'File not found' }, 404);
   }
 
-  const { readFileSync } = await import('fs');
   const content = readFileSync(fullPath);
   const ext = extname(fullPath).toLowerCase();
   const contentType = getMimeType(ext);

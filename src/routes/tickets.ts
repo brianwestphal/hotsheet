@@ -4,7 +4,9 @@
 import { Hono } from 'hono';
 
 // HS-8555 — centralized attachment-blob delete helper.
-import { deleteAttachmentFile } from '../db/attachments.js';
+import { deleteAttachmentFile, deleteDraftAttachments, getDraftAttachments } from '../db/attachments.js';
+import { getDb } from '../db/connection.js';
+import { createFeedbackDraft, deleteFeedbackDraft, listFeedbackDrafts, updateFeedbackDraft } from '../db/feedbackDrafts.js';
 import {
   batchDeleteTickets,
   batchRestoreTickets,
@@ -26,6 +28,8 @@ import {
   toggleUpNext,
   updateTicket,
 } from '../db/queries.js';
+import { countSearchMatchesInExcludedStatuses, listKnownTicketPrefixes } from '../db/tickets.js';
+import { readFileSettings } from '../file-settings.js';
 import { TICKETS_LIST_MAX_LIMIT } from '../limits.js';
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
@@ -130,7 +134,6 @@ ticketRoutes.get('/tickets', async (c) => {
  */
 ticketRoutes.get('/tickets/search-counts', async (c) => {
   const search = c.req.query('search') ?? '';
-  const { countSearchMatchesInExcludedStatuses } = await import('../db/tickets.js');
   const counts = await countSearchMatchesInExcludedStatuses(search);
   return c.json(counts);
 });
@@ -148,8 +151,6 @@ ticketRoutes.get('/tickets/search-counts', async (c) => {
  * resolve when their ticket numbers appear in notes.
  */
 ticketRoutes.get('/tickets/prefixes', async (c) => {
-  const { listKnownTicketPrefixes } = await import('../db/tickets.js');
-  const { readFileSettings } = await import('../file-settings.js');
   const fileSettings = readFileSettings(c.get('dataDir'));
   const seenInDb = await listKnownTicketPrefixes();
   const prefixes = new Set<string>(seenInDb);
@@ -188,7 +189,6 @@ ticketRoutes.post('/tickets', async (c) => {
   }
 
   // Read custom ticket prefix from project settings
-  const { readFileSettings } = await import('../file-settings.js');
   const fileSettings = readFileSettings(c.get('dataDir'));
   const prefix = fileSettings.ticketPrefix !== undefined && fileSettings.ticketPrefix !== '' ? fileSettings.ticketPrefix : undefined;
 
@@ -220,7 +220,6 @@ ticketRoutes.post('/tickets', async (c) => {
  */
 ticketRoutes.get('/tickets/by-number/:number', async (c) => {
   const number = c.req.param('number');
-  const { getDb } = await import('../db/connection.js');
   const db = await getDb();
   const result = await db.query<Ticket>(
     'SELECT * FROM tickets WHERE ticket_number = $1 LIMIT 1', [number],
@@ -238,8 +237,7 @@ ticketRoutes.get('/tickets/:id', async (c) => {
   const notes = parseNotes(ticket.notes);
 
   // Include sync info if this ticket is synced
-  const { getDb: getSyncDb } = await import('../db/connection.js');
-  const db = await getSyncDb();
+  const db = await getDb();
   const syncResult = await db.query<{ plugin_id: string; remote_id: string; sync_status: string }>(
     'SELECT plugin_id, remote_id, sync_status FROM ticket_sync WHERE ticket_id = $1', [id],
   );
@@ -301,8 +299,7 @@ ticketRoutes.put('/tickets/:id/notes-bulk', async (c) => {
   const raw: unknown = await c.req.json();
   const parsed = parseBody(NotesBulkSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  const connModule = await import('../db/connection.js');
-  const db = await connModule.getDb();
+  const db = await getDb();
   const result = await db.query(
     `UPDATE tickets SET notes = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
     [parsed.data.notes, id]
@@ -346,14 +343,12 @@ ticketRoutes.delete('/tickets/:id/notes/:noteId', async (c) => {
 ticketRoutes.get('/tickets/:id/feedback-drafts', async (c) => {
   const id = parseIntParam(c);
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
-  const { listFeedbackDrafts } = await import('../db/feedbackDrafts.js');
   const drafts = await listFeedbackDrafts(id);
   // HS-8428 — hydrate each draft with its draft-scoped attachments so a
   // reopen surfaces the previously-uploaded files alongside the text
   // partitions. One small SELECT per draft (the typical ticket has ≤ a
   // few drafts open at a time); could be batched with a single JOIN if
   // a perf problem ever surfaces.
-  const { getDraftAttachments } = await import('../db/attachments.js');
   const hydrated = await Promise.all(drafts.map(async d => ({
     ...d,
     attachments: await getDraftAttachments(d.id),
@@ -367,7 +362,6 @@ ticketRoutes.post('/tickets/:id/feedback-drafts', async (c) => {
   const raw: unknown = await c.req.json();
   const parsed = parseBody(FeedbackDraftCreateSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  const { createFeedbackDraft } = await import('../db/feedbackDrafts.js');
   const draft = await createFeedbackDraft({
     id: parsed.data.id,
     ticketId: id,
@@ -386,7 +380,6 @@ ticketRoutes.patch('/tickets/:id/feedback-drafts/:draftId', async (c) => {
   const raw: unknown = await c.req.json();
   const parsed = parseBody(FeedbackDraftUpdateSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  const { updateFeedbackDraft } = await import('../db/feedbackDrafts.js');
   const draft = await updateFeedbackDraft(draftId, parsed.data.partitions);
   if (draft === null) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
@@ -397,7 +390,6 @@ ticketRoutes.delete('/tickets/:id/feedback-drafts/:draftId', async (c) => {
   const id = parseIntParam(c);
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const draftId = c.req.param('draftId');
-  const { deleteFeedbackDraft } = await import('../db/feedbackDrafts.js');
   // HS-8428 — drop any draft-scoped attachments BEFORE the draft row
   // itself so the cleanup sweep doesn't have to mop them up. Attachments
   // are deleted by `draft_id`, not by FK cascade (we intentionally don't
@@ -406,7 +398,6 @@ ticketRoutes.delete('/tickets/:id/feedback-drafts/:draftId', async (c) => {
   // case where the DB delete succeeds but the rmSync throws (the
   // physical file leaks but `getAttachments` already excludes the row
   // by the draft_id filter, so no inconsistency surfaces).
-  const { deleteDraftAttachments } = await import('../db/attachments.js');
   const droppedAttachments = await deleteDraftAttachments(draftId);
   for (const att of droppedAttachments) deleteAttachmentFile(att);
   const deleted = await deleteFeedbackDraft(draftId);

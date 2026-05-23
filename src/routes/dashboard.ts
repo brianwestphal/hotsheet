@@ -4,6 +4,9 @@ import { homedir, tmpdir } from 'os';
 import { join, relative, resolve } from 'path';
 
 import { getTicketStats } from '../db/queries.js';
+import { getDashboardStats, getSnapshots } from '../db/stats.js';
+import { ensureGitignore, isGitRepo, isHotsheetGitignored } from '../gitignore.js';
+import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { openInFileManager } from '../open-in-file-manager.js';
 import { getAllProjects } from '../projects.js';
 import { consumeSkillsCreatedFlag, ensureSkillsForDir } from '../skills.js';
@@ -37,7 +40,6 @@ dashboardRoutes.get('/stats', async (c) => {
 });
 
 dashboardRoutes.get('/dashboard', async (c) => {
-  const { getDashboardStats, getSnapshots } = await import('../db/stats.js');
   const days = Math.max(1, Math.min(365, parseInt(c.req.query('days') ?? '30', 10) || 30));
   const [stats, snapshots] = await Promise.all([
     getDashboardStats(days),
@@ -97,8 +99,7 @@ dashboardRoutes.get('/browse', (c) => {
 
 // --- Global config ---
 
-dashboardRoutes.get('/global-config', async (c) => {
-  const { readGlobalConfig } = await import('../global-config.js');
+dashboardRoutes.get('/global-config', (c) => {
   return c.json(readGlobalConfig());
 });
 
@@ -106,7 +107,6 @@ dashboardRoutes.patch('/global-config', async (c) => {
   const raw: unknown = await c.req.json();
   const parsed = parseBody(GlobalConfigSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  const { writeGlobalConfig } = await import('../global-config.js');
   const merged = writeGlobalConfig(parsed.data);
   return c.json(merged);
 });
@@ -157,15 +157,13 @@ dashboardRoutes.post('/glassbox/launch', async (c) => {
 
 // --- Gitignore ---
 
-dashboardRoutes.get('/gitignore/status', async (c) => {
-  const { isGitRepo, isHotsheetGitignored } = await import('../gitignore.js');
+dashboardRoutes.get('/gitignore/status', (c) => {
   const cwd = process.cwd();
   if (!isGitRepo(cwd)) return c.json({ inGitRepo: false, ignored: false });
   return c.json({ inGitRepo: true, ignored: isHotsheetGitignored(cwd) });
 });
 
-dashboardRoutes.post('/gitignore/add', async (c) => {
-  const { ensureGitignore } = await import('../gitignore.js');
+dashboardRoutes.post('/gitignore/add', (c) => {
   ensureGitignore(process.cwd());
   return c.json({ ok: true });
 });

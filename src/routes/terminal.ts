@@ -1,9 +1,10 @@
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { homedir } from 'os';
 
 import { readFileSettings } from '../file-settings.js';
+import { openInFileManager } from '../open-in-file-manager.js';
 import { DEFAULT_TERMINAL_ID, listTerminalConfigs, type TerminalConfig } from '../terminals/config.js';
 import {
   DEFAULT_EXEMPT_PROCESSES,
@@ -173,14 +174,12 @@ terminalRoutes.post('/open-cwd', async (c) => {
   if (typeof path !== 'string' || path === '') {
     return c.json({ error: 'missing path' }, 400);
   }
-  const { existsSync, statSync } = await import('fs');
   if (!existsSync(path)) return c.json({ error: 'path not found on disk' }, 404);
   try {
     if (!statSync(path).isDirectory()) return c.json({ error: 'path is not a directory' }, 400);
   } catch {
     return c.json({ error: 'path unreadable' }, 404);
   }
-  const { openInFileManager } = await import('../open-in-file-manager.js');
   await openInFileManager(path);
   return c.json({ ok: true });
 });

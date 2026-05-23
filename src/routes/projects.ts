@@ -3,15 +3,20 @@ import { Hono } from 'hono';
 import { resolve } from 'path';
 import type { z } from 'zod';
 
+import { getChannelPort, isChannelAlive, registerChannel } from '../channel-config.js';
+import { projectHasPendingFeedback } from '../feedback-state.js';
+import { readFileSettings } from '../file-settings.js';
+import { readGlobalConfig } from '../global-config.js';
 import { openInFileManager } from '../open-in-file-manager.js';
 import { addToProjectList, readProjectList, removeFromProjectList, reorderProjectList } from '../project-list.js';
 import { getAllProjects, getProjectBySecret, registerProject, reorderProjects, unregisterProject } from '../projects.js';
 import { type PendingPermissionEntrySchema, PendingPermissionSchema } from '../schemas.js';
-import type { TerminalConfig } from '../terminals/config.js';
-import type { inspectForegroundProcess } from '../terminals/processInspect.js';
-import type { listAliveTerminalsAcrossProjects } from '../terminals/registry.js';
+import { DEFAULT_TERMINAL_ID, listTerminalConfigs, parseTerminalDefault, type TerminalConfig } from '../terminals/config.js';
+import { DEFAULT_EXEMPT_PROCESSES, inspectForegroundProcess } from '../terminals/processInspect.js';
+import { listAliveTerminalsAcrossProjects, listBellPendingForProject } from '../terminals/registry.js';
 import type { AppEnv } from '../types.js';
-import { notifyChange } from './notify.js';
+import { addBellWaiter, addPermissionWaiter, getBellVersion, getPermissionVersion, notifyChange  } from './notify.js';
+import { listDynamicTerminalConfigs } from './terminal.js';
 import { parseBody, RegisterProjectSchema, ReorderProjectsSchema } from './validation.js';
 
 export const projectRoutes = new Hono<AppEnv>();
@@ -66,7 +71,6 @@ projectRoutes.post('/register', async (c) => {
     let port = 4174;
     if (existing.length > 0) {
       // All projects share the same server port
-      const { readFileSettings } = await import('../file-settings.js');
       const settings = readFileSettings(existing[0].dataDir);
       port = settings.port ?? 4174;
     }
@@ -74,9 +78,7 @@ projectRoutes.post('/register', async (c) => {
     const ctx = await registerProject(parsed.data.dataDir, port);
     addToProjectList(ctx.dataDir);
     // If channel is globally enabled, write .mcp.json for the new project
-    const { readGlobalConfig } = await import('../global-config.js');
     if (readGlobalConfig().channelEnabled === true) {
-      const { registerChannel } = await import('../channel-config.js');
       registerChannel(ctx.dataDir);
     }
     notifyChange(); // Wake long-poll so UI detects the new project
@@ -113,8 +115,6 @@ projectRoutes.delete('/:secret', (c) => {
 
 /** GET /api/projects/channel-status — alive status for all projects (for tab dots) */
 projectRoutes.get('/channel-status', async (c) => {
-  const { isChannelAlive } = await import('../channel-config.js');
-  const { readGlobalConfig } = await import('../global-config.js');
   const globalConfig = readGlobalConfig();
   const enabled = globalConfig.channelEnabled === true;
   if (!enabled) return c.json({ enabled: false, projects: {} });
@@ -135,7 +135,6 @@ projectRoutes.get('/channel-status', async (c) => {
  *  `state.tickets` (active project only), so a feedback-needed ticket in any
  *  other project was invisible on its tab until the user switched into it. */
 projectRoutes.get('/feedback-state', async (c) => {
-  const { projectHasPendingFeedback } = await import('../feedback-state.js');
   const projects = getAllProjects();
   const result: Record<string, boolean> = {};
   await Promise.all(projects.map(async (p) => {
@@ -146,9 +145,6 @@ projectRoutes.get('/feedback-state', async (c) => {
 
 /** GET /api/projects/permissions — check for pending permissions across all projects (long-poll, 3s timeout) */
 projectRoutes.get('/permissions', async (c) => {
-  const { getChannelPort } = await import('../channel-config.js');
-  const { readGlobalConfig } = await import('../global-config.js');
-  const { addPermissionWaiter, getPermissionVersion } = await import('./notify.js');
   const globalConfig = readGlobalConfig();
   if (globalConfig.channelEnabled !== true) return c.json({ permissions: {}, v: 0 });
 
@@ -215,8 +211,6 @@ projectRoutes.get('/permissions', async (c) => {
 // bellPending flag across every registered project (HS-6603 §24.3.3). Mirrors
 // /api/projects/permissions. Response shape is `{ bells: { [secret]: { anyTerminalPending, terminalIds } }, v }`.
 projectRoutes.get('/bell-state', async (c) => {
-  const { addBellWaiter, getBellVersion } = await import('./notify.js');
-  const { listBellPendingForProject } = await import('../terminals/registry.js');
 
   const clientVersion = parseInt(c.req.query('v') ?? '0', 10) || 0;
 
@@ -428,15 +422,6 @@ function assembleSummaryEntry(
 }
 
 projectRoutes.get('/quit-summary', async (c) => {
-  const { listAliveTerminalsAcrossProjects } = await import('../terminals/registry.js');
-  const { listTerminalConfigs, DEFAULT_TERMINAL_ID, parseTerminalDefault } = await import('../terminals/config.js');
-  const { listDynamicTerminalConfigs } = await import('./terminal.js');
-  const { readFileSettings } = await import('../file-settings.js');
-  const {
-    DEFAULT_EXEMPT_PROCESSES,
-    inspectForegroundProcess,
-  } = await import('../terminals/processInspect.js');
-
   const aliveByProject = groupAliveTerminalsBySecret(listAliveTerminalsAcrossProjects());
 
   const projects = getAllProjects();
