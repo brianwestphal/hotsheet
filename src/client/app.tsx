@@ -7,85 +7,44 @@ import { startBellPolling } from './bellPoll.js';
 import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { initSkillsBanner } from './clipboardUtil.js';
 import { applyPerProjectDrawerState, initCommandLog, refreshCommandLog } from './commandLog.js';
-import { TIMERS } from './constants/timers.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
 import { initDbRecoveryBanner } from './dbRecoveryBanner.js';
-import { applyDetailPosition, applyDetailSize, bindDetailDetailsRenderToggle, closeDetail, initResize, openDetail, openDetailAndFocusNote, refreshDetail, renderDetailsMarkdown, updateDetailCategory, updateDetailPriority, updateDetailStatus } from './detail.js';
+import { closeDetail, initResize, refreshDetail } from './detail.js';
+// HS-8553 — `bindDetailPanel` + the position-toggle pair moved to
+// `./detailBindings/` so app.tsx isn't carrying 16 sibling top-level
+// functions.
+import { bindDetailPanel } from './detailBindings/panel.js';
+import { bindDetailPositionToggle, updateDetailPositionToggle } from './detailBindings/positionToggle.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
-import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
 import { loadGlobalDiagnostics } from './globalDiagnostics.js';
-import { parseJsonArrayOr } from './json.js';
 import { initLongTaskObserver } from './longTaskObserver.js';
 import { bindOpenFolder } from './openFolder.js';
 import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
 import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
 import { initQuitConfirm } from './quitConfirm.js';
-import { buildCombinedReaderEntries, buildDetailsReaderTitle, openReaderOverlay, syncDetailReaderButton } from './readerOverlay.js';
 import { applyScrollbarPrefClass } from './scrollbarPref.js';
 import { bindSettingsDialog } from './settingsDialog.js';
 import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
 import { initShare } from './share.js';
-import { bindKeyboardShortcuts, getDetailSaveTimeout, setDetailSaveTimeout } from './shortcuts.js';
+import { bindKeyboardShortcuts } from './shortcuts.js';
 import { bindSearchInput, bindSidebar, bindSortControls, syncSearchInputFromState, syncSidebarActiveState } from './sidebar.js';
-import type { AppSettings, Ticket } from './state.js';
-import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, shouldResetStatusOnUpNext, state, STATUS_ITEMS } from './state.js';
-import { bindDetailTagInput } from './tagAutocomplete.js'; // .tsx file, JSX enabled
+import { state } from './state.js';
 import { showTagsDialog } from './tagsDialog.js';
-import { bindExternalLinkHandler, checkForUpdate, getTauriInvoke, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
+import { bindExternalLinkHandler, checkForUpdate, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
 import { loadTelemetryCostMode } from './telemetryCostMode.js';
 import { initTerminal } from './terminal.js';
 import { initTerminalDashboard } from './terminalDashboard.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
 import { loadTicketPrefixes, reloadTicketPrefixes } from './ticketRefs.js';
-import { pushNotesUndo, recordTextChange, trackedPatch } from './undo/actions.js';
 import { maybeShowUpgradeNudge } from './upgradeNudge.js';
 
 // Wire up the restoreTicketList callback used by settingsLoader's category buttons
 setRestoreTicketListCallback(restoreTicketList);
-
-/** Preview an attachment — Quicklook on macOS (Tauri), inline overlay in browser. */
-async function previewAttachment(item: HTMLElement) {
-  const filename = item.dataset.filename ?? '';
-  const attId = item.dataset.attId ?? '';
-  if (attId === '') return;
-
-  // Tauri: use qlmanage for macOS Quicklook
-  const invoke = getTauriInvoke();
-  // eslint-disable-next-line @typescript-eslint/no-deprecated -- no universal replacement for platform detection
-  if (invoke && navigator.platform.includes('Mac')) {
-    const storedPath = item.dataset.storedPath ?? '';
-    if (storedPath !== '') {
-      try { await invoke('quicklook', { path: storedPath }); } catch { /* fallback below */ }
-      return;
-    }
-  }
-
-  // Browser fallback: show inline preview overlay for images
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-  const imageExts = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp']);
-  const pdfExts = new Set(['pdf']);
-
-  if (imageExts.has(ext) || pdfExts.has(ext)) {
-    const overlay = toElement(
-      <div className="quicklook-overlay" style="position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;cursor:pointer">
-        {imageExts.has(ext)
-          ? <img src={`/api/attachments/file/${encodeURIComponent(filename)}`} style="max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4)" alt={filename} />
-          : <iframe src={`/api/attachments/file/${encodeURIComponent(filename)}`} style="width:80vw;height:85vh;border:none;border-radius:8px" title={filename}></iframe>
-        }
-      </div>
-    );
-    overlay.addEventListener('click', () => overlay.remove());
-    document.addEventListener('keydown', function esc(e) {
-      if (e.key === 'Escape' || e.key === ' ') { e.preventDefault(); overlay.remove(); document.removeEventListener('keydown', esc); }
-    });
-    document.body.appendChild(overlay);
-  }
-}
 
 /** Reload all app state — used after project switch and during init. */
 async function reloadPluginToolbar() {
@@ -426,376 +385,5 @@ function bindLayoutToggle() {
   updateLayoutToggle();
 }
 
-// --- Detail position toggle ---
-
-function updateDetailPositionToggle() {
-  const toggle = byId('detail-position-toggle');
-  toggle.querySelectorAll('.layout-btn').forEach(btn => {
-    btn.classList.toggle('active', (btn as HTMLElement).dataset.position === state.settings.detail_position);
-  });
-}
-
-function bindDetailPositionToggle() {
-  const toggle = byId('detail-position-toggle');
-  toggle.querySelectorAll('.layout-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const position = (btn as HTMLElement).dataset.position as AppSettings['detail_position'];
-      // If clicking the already-active position, toggle the detail panel off
-      if (position === state.settings.detail_position && state.settings.detail_visible) {
-        state.settings.detail_visible = false;
-        const panel = byIdOrNull('detail-panel');
-        const handle = byIdOrNull('detail-resize-handle');
-        if (panel) panel.style.display = 'none';
-        if (handle) handle.style.display = 'none';
-        toggle.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
-        void api('/settings', { method: 'PATCH', body: { detail_visible: 'false' } });
-        return;
-      }
-      // Switching position or re-enabling
-      state.settings.detail_visible = true;
-      state.settings.detail_position = position;
-      const panel = byIdOrNull('detail-panel');
-      const handle = byIdOrNull('detail-resize-handle');
-      if (panel) panel.style.display = '';
-      if (handle) handle.style.display = '';
-      applyDetailPosition(position);
-      applyDetailSize();
-      updateDetailPositionToggle();
-      void api('/settings', { method: 'PATCH', body: { detail_position: position, detail_visible: 'true' } });
-    });
-  });
-  updateDetailPositionToggle();
-}
-
-// --- Detail panel ---
-
-/** Auto-save debounce for title and details fields. */
-function bindDetailAutoSave() {
-  const fields = ['detail-title', 'detail-details'];
-  for (const fieldId of fields) {
-    const el = byId<HTMLInputElement | HTMLTextAreaElement>(fieldId);
-    el.addEventListener('input', () => {
-      // Record text change for undo (coalesces rapid edits)
-      const ticket = state.tickets.find(t => t.id === state.activeTicketId);
-      if (ticket) {
-        const key = fieldId.replace('detail-', '');
-        recordTextChange(ticket, key, el.value);
-      }
-      // HS-7957 — keep the Details reader-mode button disabled when the
-      // textarea is empty (nothing to read). Re-evaluated on every input
-      // event AND on detail-panel load (see syncDetailReaderButton call in
-      // detail.tsx). The button itself is wired in `bindDetailReaderButton`.
-      // HS-8020 — re-render the markdown sibling on every keystroke so a
-      // user who closes the details panel without blurring the textarea
-      // (e.g. via Esc, sidebar nav, project switch) returns to a current
-      // rendered view rather than a stale snapshot.
-      if (fieldId === 'detail-details') {
-        syncDetailReaderButton();
-        renderDetailsMarkdown(el.value);
-      }
-      const currentTimeout = getDetailSaveTimeout();
-      if (currentTimeout) clearTimeout(currentTimeout);
-      const newTimeout = setTimeout(() => {
-        if (state.activeTicketId == null) return;
-        const key = fieldId.replace('detail-', '');
-        void api(`/tickets/${state.activeTicketId}`, {
-          method: 'PATCH',
-          body: { [key]: el.value },
-        }).then(() => void loadTickets());
-      }, TIMERS.DETAIL_SAVE_MS);
-      setDetailSaveTimeout(newTimeout);
-    });
-  }
-}
-
-/** HS-7957 — wire the Details reader-mode book button. Click opens the
- *  reader overlay with the *current* textarea value (snapshot at click time,
- *  per docs/49-reader-mode.md §49.5) so a mid-edit reader shows the working
- *  state. The button's `disabled` state is kept in sync by
- *  `syncDetailReaderButton`, called from `bindDetailAutoSave`'s input
- *  handler and `detail.tsx`'s load paths. */
-function bindDetailReaderButton() {
-  const btn = byIdOrNull<HTMLButtonElement>('detail-reader-btn');
-  if (btn === null) return;
-  btn.addEventListener('click', async () => {
-    if (btn.disabled) return;
-    const detailsArea = byId<HTMLTextAreaElement>('detail-details');
-    const ticket = state.tickets.find(t => t.id === state.activeTicketId) ?? null;
-    const detailsMarkdown = detailsArea.value;
-    // HS-8429 — build the unified [Details, ...non-empty notes] navigation
-    // list so the user can step from Details through every note via the
-    // chevron buttons + ArrowUp/Down. Lazy-import noteRenderer to dodge a
-    // circular dep (noteRenderer imports `state` which app.tsx initialises).
-    const { parseNotesJson } = await import('./noteRenderer.js');
-    const notes = ticket !== null ? parseNotesJson(ticket.notes) : [];
-    const entries = buildCombinedReaderEntries({
-      ticketNumber: ticket?.ticket_number,
-      ticketTitle: ticket?.title,
-      detailsMarkdown,
-      notes,
-    });
-    // Initial index = the Details entry's position in the combined list.
-    // When Details is non-empty (the typical case — the button is
-    // disabled when the textarea is empty) it's at index 0; when Details
-    // is empty buildCombinedReaderEntries omits it entirely and we land
-    // on the first note (defensive — shouldn't fire in practice).
-    const detailsIdx = entries.findIndex(e => e.id === 'details');
-    const initialIndex = detailsIdx === -1 ? 0 : detailsIdx;
-    openReaderOverlay({
-      title: buildDetailsReaderTitle(ticket?.ticket_number, ticket?.title),
-      markdown: detailsMarkdown,
-      navigation: entries.length > 1
-        ? { entries: entries.map(({ title, markdown }) => ({ title, markdown })), initialIndex }
-        : undefined,
-    });
-  });
-  // Sync on initial bind so a fresh page load with no ticket selected leaves
-  // the button correctly disabled.
-  syncDetailReaderButton();
-}
-
-
-/** Category, priority, and status dropdown binding. */
-function bindDetailDropdowns() {
-  async function applyDetailChange(key: string, value: string) {
-    if (state.activeTicketId == null) return;
-    const ticket = state.tickets.find(t => t.id === state.activeTicketId);
-    if (ticket) {
-      await trackedPatch(ticket, { [key]: value }, `Change ${key}`);
-    } else {
-      await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { [key]: value } });
-    }
-    void loadTickets();
-    openDetail(state.activeTicketId);
-  }
-
-  function bindDropdown(elementId: string, getItems: (current: string) => Parameters<typeof createDropdown>[1]) {
-    byId(elementId).addEventListener('click', (e) => {
-      e.stopPropagation();
-      const btn = e.currentTarget as HTMLButtonElement;
-      if (btn.disabled) return;
-      closeAllMenus();
-      const current = btn.dataset.value ?? '';
-      const menu = createDropdown(btn, getItems(current));
-      document.body.appendChild(menu);
-      positionDropdown(menu, btn);
-      menu.style.visibility = '';
-    });
-  }
-
-  bindDropdown('detail-category', (current) => state.categories.map(c => ({
-    label: c.label, key: c.shortcutKey, color: c.color, active: c.id === current,
-    action: () => { updateDetailCategory(c.id); void applyDetailChange('category', c.id); },
-  })));
-
-  bindDropdown('detail-priority', (current) => PRIORITY_ITEMS.map(p => ({
-    label: p.label, key: p.key, icon: getPriorityIcon(p.value), iconColor: getPriorityColor(p.value),
-    active: p.value === current,
-    action: () => { updateDetailPriority(p.value); void applyDetailChange('priority', p.value); },
-  })));
-
-  bindDropdown('detail-status', (current) => STATUS_ITEMS.map(s => ({
-    label: s.label, key: s.key, icon: getStatusIcon(s.value), active: s.value === current,
-    action: () => { updateDetailStatus(s.value); void applyDetailChange('status', s.value); },
-  })));
-}
-
-/** Up-next star toggle. */
-function bindDetailUpNext() {
-  byId('detail-upnext').addEventListener('click', async () => {
-    if (state.activeTicketId == null) return;
-    const ticket = state.tickets.find(t => t.id === state.activeTicketId);
-    if (ticket) {
-      // HS-7998 — see `shouldResetStatusOnUpNext` for the canonical
-      // status set; backlog / archive items now reset to `not_started`
-      // alongside completed / verified ones.
-      if (!ticket.up_next && shouldResetStatusOnUpNext(ticket.status)) {
-        await trackedPatch(ticket, { status: 'not_started', up_next: true }, 'Toggle up next');
-      } else {
-        await trackedPatch(ticket, { up_next: !ticket.up_next }, 'Toggle up next');
-      }
-    } else {
-      await api(`/tickets/${state.activeTicketId}/up-next`, { method: 'POST' });
-    }
-    void loadTickets();
-    channelAutoTrigger();
-    openDetail(state.activeTicketId);
-  });
-}
-
-/** Add note functionality. */
-function bindDetailNotes() {
-  byIdOrNull('detail-add-note-btn')?.addEventListener('click', async () => {
-    if (state.activeTicketId == null) return;
-    const ticket = state.tickets.find(t => t.id === state.activeTicketId);
-    if (!ticket) return;
-
-    // Build the new notes array client-side and PUT in bulk so we can:
-    //   1. control the new note's id (so we can find its element after re-render)
-    //   2. start it empty (no default text)
-    const beforeNotes = ticket.notes;
-    type NoteEntry = { id: string; text: string; created_at: string };
-    // HS-8090 — `parseJsonArrayOr` collapses the try/catch + Array.isArray
-    // dance. Per-element shape stays this caller's responsibility, but
-    // the surrounding code only ever pushes new entries onto the array
-    // (never reads existing entries here) so element validation isn't
-    // needed at this point.
-    const parsed = parseJsonArrayOr(beforeNotes, []) as NoteEntry[];
-    const newNoteId = `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-    const newNotes: NoteEntry[] = [...parsed, { id: newNoteId, text: '', created_at: new Date().toISOString() }];
-    const newNotesJson = JSON.stringify(newNotes);
-    await api(`/tickets/${state.activeTicketId}/notes-bulk`, {
-      method: 'PUT',
-      body: { notes: newNotesJson },
-    });
-    pushNotesUndo({ ...ticket, notes: beforeNotes } as Ticket, 'Add note', newNotesJson);
-    ticket.notes = newNotesJson;
-    openDetailAndFocusNote(state.activeTicketId, newNoteId);
-  });
-}
-
-/** File upload button + drag-and-drop upload. */
-function bindDetailFileUpload() {
-  // File upload (supports multiple files)
-  byId('detail-file-input').addEventListener('change', async (e) => {
-    const input = e.target as HTMLInputElement;
-    const files = input.files;
-    if (!files || files.length === 0 || state.activeTicketId == null) return;
-    for (const file of Array.from(files)) {
-      await apiUpload(`/tickets/${state.activeTicketId}/attachments`, file);
-    }
-    input.value = '';
-    openDetail(state.activeTicketId);
-    void loadTickets();
-  });
-
-  // Drag-and-drop file upload onto detail panel
-  const detailBody = byId('detail-body');
-  let dragCounter = 0; // Track nested enter/leave to avoid flicker
-
-  detailBody.addEventListener('dragenter', (e) => {
-    e.preventDefault();
-    if (e.dataTransfer?.types.includes('Files') !== true) return;
-    dragCounter++;
-    if (dragCounter === 1) detailBody.classList.add('drop-active');
-  });
-
-  detailBody.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-  });
-
-  detailBody.addEventListener('dragleave', () => {
-    dragCounter--;
-    if (dragCounter === 0) detailBody.classList.remove('drop-active');
-  });
-
-  detailBody.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    dragCounter = 0;
-    detailBody.classList.remove('drop-active');
-    const files = e.dataTransfer?.files;
-    if (!files || files.length === 0 || state.activeTicketId == null) return;
-    for (const file of Array.from(files)) {
-      await apiUpload(`/tickets/${state.activeTicketId}/attachments`, file);
-    }
-    openDetail(state.activeTicketId);
-    void loadTickets();
-  });
-}
-
-/** Attachment reveal/delete click handlers. */
-function bindDetailAttachmentActions() {
-  const attEl = byId('detail-attachments');
-  attEl.addEventListener('click', async (e) => {
-    const target = e.target as HTMLElement;
-
-    // Reveal in file manager
-    const revealBtn: HTMLElement | null = target.closest('.attachment-reveal');
-    if (revealBtn) {
-      const attId = revealBtn.dataset['attId'];
-      if (attId !== undefined && attId !== '') void api(`/attachments/${attId}/reveal`, { method: 'POST' });
-      return;
-    }
-
-    // Delete
-    const deleteBtn: HTMLElement | null = target.closest('.attachment-delete');
-    if (deleteBtn !== null) {
-      const attId = deleteBtn.dataset['attId'];
-      if (attId === undefined || attId === '') return;
-      await api(`/attachments/${attId}`, { method: 'DELETE' });
-      if (state.activeTicketId != null) {
-        openDetail(state.activeTicketId);
-      }
-      return;
-    }
-
-    // Select attachment item (click on the row itself)
-    const item: HTMLElement | null = target.closest('.attachment-item');
-    if (item) {
-      attEl.querySelectorAll('.attachment-item.selected').forEach(el => el.classList.remove('selected'));
-      item.classList.add('selected');
-      item.focus();
-    }
-  });
-
-  // Double-click to preview
-  attEl.addEventListener('dblclick', (e) => {
-    const item = (e.target as HTMLElement).closest<HTMLElement>('.attachment-item');
-    if (item != null) void previewAttachment(item);
-  });
-
-  // Keyboard navigation and Space to preview
-  attEl.addEventListener('keydown', (e) => {
-    const active = document.activeElement as HTMLElement | null;
-    if (active == null || !active.classList.contains('attachment-item')) return;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      const items = Array.from(attEl.querySelectorAll<HTMLElement>('.attachment-item'));
-      const idx = items.indexOf(active);
-      const nextIdx = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
-      if (nextIdx >= 0 && nextIdx < items.length) {
-        const next = items[nextIdx];
-        items.forEach(el => el.classList.remove('selected'));
-        next.classList.add('selected');
-        next.focus();
-      }
-    } else if (e.key === ' ') {
-      e.preventDefault();
-      void previewAttachment(active);
-    }
-  });
-}
-
-/** Tag input with autocomplete. */
-// Tag autocomplete extracted to tagAutocomplete.ts
-
-function bindDetailPanel() {
-  byId('detail-close').addEventListener('click', closeDetail);
-
-  // Click ticket number to copy to clipboard
-  const ticketNumEl = byId('detail-ticket-number');
-  ticketNumEl.style.cursor = 'pointer';
-  ticketNumEl.title = 'Click to copy';
-  ticketNumEl.addEventListener('click', () => {
-    const num = ticketNumEl.textContent;
-    if (num !== '') {
-      void navigator.clipboard.writeText(num);
-      const original = ticketNumEl.textContent;
-      ticketNumEl.textContent = 'Copied!';
-      setTimeout(() => { ticketNumEl.textContent = original; }, 1000);
-    }
-  });
-
-  bindDetailAutoSave();
-  bindDetailReaderButton();
-  bindDetailDetailsRenderToggle();
-  bindDetailDropdowns();
-  bindDetailUpNext();
-  bindDetailNotes();
-  bindDetailFileUpload();
-  bindDetailAttachmentActions();
-  bindDetailTagInput();
-}
 
 void init();
