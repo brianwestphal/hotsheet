@@ -274,7 +274,12 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
   const isReadTrackingOnly = Object.keys(parsed.data).length === 1 && parsed.data.last_read_at !== undefined;
   if (!isReadTrackingOnly) {
     notifyMutation(c.get('dataDir'));
-    void onTicketChanged(id, parsed.data as Record<string, unknown>).catch(() => {});
+    // HS-8556 — `parsed.data` is already a typed `UpdateTicket` shape
+    // from zod; the previous `as Record<string, unknown>` cast widened
+    // to match `onTicketChanged`'s signature without going through any
+    // runtime check. Spread into a plain object so the structural
+    // assignability handles the conversion without a cast.
+    void onTicketChanged(id, { ...parsed.data }).catch(() => {});
   }
   return c.json(ticket);
 });
@@ -441,10 +446,16 @@ ticketRoutes.post('/tickets/batch', async (c) => {
     case 'restore':
       await batchRestoreTickets(ids);
       break;
-    case 'category':
-      await batchUpdateTickets(ids, { category: value as string }, { keepRead });
-      for (const id of ids) void onTicketChanged(id, { category: value as string }).catch(() => {});
+    case 'category': {
+      // HS-8556 — `BatchActionSchema.value` is `z.union([z.string(),
+      // z.boolean()]).optional()`; the previous `as string` cast was
+      // a runtime gap (a client mis-sending `true` would have flowed
+      // through unchecked). Runtime-narrow + 400-on-mismatch.
+      if (typeof value !== 'string' || value === '') return c.json({ error: 'category requires a non-empty string value' }, 400);
+      await batchUpdateTickets(ids, { category: value }, { keepRead });
+      for (const id of ids) void onTicketChanged(id, { category: value }).catch(() => {});
       break;
+    }
     case 'priority': {
       const p = TicketPrioritySchema.safeParse(value);
       if (!p.success) return c.json({ error: `Invalid priority "${value}"` }, 400);
@@ -459,10 +470,15 @@ ticketRoutes.post('/tickets/batch', async (c) => {
       for (const id of ids) void onTicketChanged(id, { status: s.data }).catch(() => {});
       break;
     }
-    case 'up_next':
-      await batchUpdateTickets(ids, { up_next: value as boolean }, { keepRead });
-      for (const id of ids) void onTicketChanged(id, { up_next: value as boolean }).catch(() => {});
+    case 'up_next': {
+      // HS-8556 — runtime-narrow the union-typed `value` instead of
+      // casting it via `as boolean`. Same rationale as the `category`
+      // case above.
+      if (typeof value !== 'boolean') return c.json({ error: 'up_next requires a boolean value' }, 400);
+      await batchUpdateTickets(ids, { up_next: value }, { keepRead });
+      for (const id of ids) void onTicketChanged(id, { up_next: value }).catch(() => {});
       break;
+    }
     case 'mark_read':
       await batchUpdateTickets(ids, { last_read_at: new Date().toISOString() });
       break;
