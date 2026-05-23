@@ -1,7 +1,10 @@
+import { StringDecoder } from 'node:string_decoder';
+
 import type { ChildProcess } from 'child_process';
 import { Hono } from 'hono';
 
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
+import { PARTIAL_OUTPUT_CAP_BYTES } from '../limits.js';
 import type { AppEnv } from '../types.js';
 import { parseBody, ShellExecSchema, ShellKillSchema } from './validation.js';
 
@@ -26,7 +29,7 @@ const killedProcesses = new Set<number>();
  * sequence the user would see it in a real terminal. Cleared on
  * `child.on('close')` / `child.on('error')`.
  *
- * Capped at `PARTIAL_OUTPUT_CAP` bytes per command — when a chatty command
+ * Capped at `PARTIAL_OUTPUT_CAP_BYTES` bytes per command — when a chatty command
  * exceeds the cap we drop the HEAD (oldest) bytes and prepend a one-line
  * `[output truncated]\n` marker so the most recent output is always
  * readable. Without the cap a single `yes` invocation could OOM the
@@ -35,16 +38,29 @@ const killedProcesses = new Set<number>();
  * See `docs/53-streaming-shell-output.md` §53.5 Phase 1.
  */
 const partialOutputs = new Map<number, string>();
-const PARTIAL_OUTPUT_CAP = 4 * 1024 * 1024;
+// HS-8558 — `PARTIAL_OUTPUT_CAP_BYTES` lives in `src/limits.ts`.
 const PARTIAL_TRUNCATION_MARKER = '[output truncated]\n';
 
 /** Pure helper — append a chunk to the existing partial, applying the
- *  head-truncation cap. Exported for testability. */
+ *  head-truncation cap. Exported for testability.
+ *  HS-8557 — the head-trunc slice runs at code-unit (UTF-16 code unit)
+ *  boundaries; if the cut lands inside a surrogate pair (only matters for
+ *  characters above U+FFFF, e.g. an emoji at exactly the wrong offset),
+ *  the result would carry a lone low-surrogate code unit at the start.
+ *  After slicing, shift by one if the first code unit IS a low surrogate
+ *  so the kept portion never starts mid-pair. */
 export function appendPartialOutput(prev: string, chunk: string): string {
   const next = prev + chunk;
-  if (next.length <= PARTIAL_OUTPUT_CAP) return next;
-  const keep = PARTIAL_OUTPUT_CAP - PARTIAL_TRUNCATION_MARKER.length;
-  return PARTIAL_TRUNCATION_MARKER + next.slice(next.length - keep);
+  if (next.length <= PARTIAL_OUTPUT_CAP_BYTES) return next;
+  const keep = PARTIAL_OUTPUT_CAP_BYTES - PARTIAL_TRUNCATION_MARKER.length;
+  let kept = next.slice(next.length - keep);
+  // Low surrogate range: 0xDC00 - 0xDFFF. A code unit in this range is
+  // only valid as the SECOND half of a surrogate pair; alone it's
+  // malformed. Drop it so the displayed output never starts with a
+  // broken codepoint.
+  const firstCode = kept.charCodeAt(0);
+  if (firstCode >= 0xDC00 && firstCode <= 0xDFFF) kept = kept.slice(1);
+  return PARTIAL_TRUNCATION_MARKER + kept;
 }
 
 function recordPartialChunk(id: number, chunk: string): void {
@@ -74,9 +90,20 @@ shellRoutes.post('/shell/exec', async (c) => {
 
   let stdout = '';
   let stderr = '';
+  // HS-8557 — `StringDecoder` buffers incomplete multi-byte UTF-8
+  // sequences across chunk boundaries. Pre-fix the handler did
+  // `data.toString()` (defaults to 'utf8'), which on a chunk ending
+  // mid-multi-byte-character emits a `�` replacement char + drops
+  // the trailing bytes; the next chunk's leading bytes (which would
+  // have completed the codepoint) are interpreted as a fresh sequence
+  // and replaced too. Result: every multi-byte character that lands on
+  // a chunk boundary turns into `��`. One decoder per stream
+  // (stdout / stderr) since each has its own byte boundary state.
+  const stdoutDecoder = new StringDecoder('utf8');
+  const stderrDecoder = new StringDecoder('utf8');
 
   child.stdout.on('data', (data: Buffer) => {
-    const chunk = data.toString();
+    const chunk = stdoutDecoder.write(data);
     stdout += chunk;
     // HS-7982 — keep the partial buffer in sync with the per-stream
     // accumulator so polling clients see chunks as they arrive.
@@ -84,7 +111,7 @@ shellRoutes.post('/shell/exec', async (c) => {
   });
 
   child.stderr.on('data', (data: Buffer) => {
-    const chunk = data.toString();
+    const chunk = stderrDecoder.write(data);
     stderr += chunk;
     recordPartialChunk(logId, chunk);
   });
@@ -93,6 +120,21 @@ shellRoutes.post('/shell/exec', async (c) => {
     runningProcesses.delete(logId);
     const wasCanceled = killedProcesses.has(logId);
     killedProcesses.delete(logId);
+    // HS-8557 — flush both decoders so any trailing buffered bytes
+    // (typically incomplete UTF-8 sequences interrupted by the process
+    // closing mid-character) get emitted as a single replacement char
+    // rather than silently dropped. `.end()` returns the flushed string
+    // (empty string when nothing was buffered).
+    const stdoutFlush = stdoutDecoder.end();
+    const stderrFlush = stderrDecoder.end();
+    if (stdoutFlush.length > 0) {
+      stdout += stdoutFlush;
+      recordPartialChunk(logId, stdoutFlush);
+    }
+    if (stderrFlush.length > 0) {
+      stderr += stderrFlush;
+      recordPartialChunk(logId, stderrFlush);
+    }
     // HS-7982 — final detail is written to the log entry below; drop the
     // streaming buffer so a long-finished command doesn't keep memory.
     partialOutputs.delete(logId);

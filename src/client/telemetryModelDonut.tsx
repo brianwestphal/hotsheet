@@ -17,6 +17,8 @@
 
 import { toElement } from './dom.js';
 import { MODEL_DONUT_COLORS } from './telemetryColors.js';
+// HS-8566 — shared formatter (hides cents for >= $1000, half-up rounding).
+import { formatCost as defaultFormatCost } from './telemetryFormat.js';
 
 export interface ModelRollupRow {
   readonly model: string;
@@ -28,12 +30,6 @@ export interface ModelRollupRow {
 export interface RenderCostByModelDonutOpts {
   /** Format a cost number for legend entries. Default `$N.NN`. */
   readonly formatCost?: (n: number) => string;
-}
-
-function defaultFormatCost(n: number): string {
-  if (n === 0) return '$0.00';
-  if (n < 0.01) return '<$0.01';
-  return `$${n.toFixed(2)}`;
 }
 
 export function renderCostByModelDonut(

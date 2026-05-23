@@ -53,6 +53,9 @@
 
 import { toElement } from './dom.js';
 import { MODEL_DONUT_COLORS } from './telemetryColors.js';
+// HS-8566 — default delegates to the shared formatter so the Y-axis ticks
+// + tooltips inherit the >= $1000 no-cents rule.
+import { formatCost as defaultFormatCost } from './telemetryFormat.js';
 
 /**
  * Densified daily cost point. Matches the server-side
@@ -96,9 +99,6 @@ const LINE_STROKE_WIDTH = 2;
 const LINE_POINT_RADIUS = 3;
 const EMPTY_MESSAGE = 'No cost data in this window.';
 
-function defaultFormatCost(n: number): string {
-  return `$${n.toFixed(2)}`;
-}
 
 function defaultResolveProjectLabel(secret: string): string {
   return secret.length > 8 ? secret.slice(0, 8) : secret;

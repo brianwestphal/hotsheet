@@ -314,6 +314,50 @@ describe('appendPartialOutput (HS-7982)', () => {
     expect(result.startsWith('[output truncated]\n')).toBe(true);
     expect(result.endsWith('C')).toBe(true);
   });
+
+  // HS-8557 — surrogate-pair safety. JavaScript strings are UTF-16; a
+  // single Unicode codepoint above U+FFFF (e.g. most emoji) occupies TWO
+  // 16-bit code units. The head-truncation slice runs at code-unit
+  // boundaries, so a cut at exactly the wrong offset would leave the
+  // kept portion starting with a lone low surrogate (0xDC00-0xDFFF), which
+  // displays as the replacement char `�`. The fix drops the lone low
+  // surrogate when present so the kept portion never starts mid-pair.
+  it('drops a lone low surrogate from the head if the truncation cut lands inside a surrogate pair (HS-8557)', async () => {
+    const { appendPartialOutput } = await import('./shell.js');
+    const CAP = 4 * 1024 * 1024;
+    const MARKER_LEN = '[output truncated]\n'.length;
+    const KEEP = CAP - MARKER_LEN;
+    // Build a string whose total length, after concatenation, sits the
+    // head cut RIGHT inside an emoji's surrogate pair. The cut offset
+    // is `total - KEEP`; we want `prev[cut]` to be a low surrogate.
+    // The simplest reproducer: build `prev` such that `prev.length - 1 +
+    // chunk.length === KEEP - 1` and the codepoint at that boundary is
+    // an emoji.
+    const padBefore = 'a'.repeat(CAP - 2); // leaves room for one surrogate pair (2 code units) + the kept marker math
+    // Emoji '😀' is U+1F600 = surrogate pair [0xD83D, 0xDE00] (2 code units).
+    const emoji = '😀';
+    const tail = 'z'.repeat(KEEP - 1); // after the cut, KEEP code units remain
+    const prev = padBefore + emoji + tail.slice(0, 1); // total = (CAP - 2) + 2 + 1 = CAP + 1 → over cap by 1
+    const result = appendPartialOutput(prev, '');
+    expect(result.startsWith('[output truncated]\n')).toBe(true);
+    // The first code unit after the marker must NOT be a low surrogate.
+    const firstAfterMarker = result.charCodeAt(MARKER_LEN);
+    expect(firstAfterMarker >= 0xDC00 && firstAfterMarker <= 0xDFFF).toBe(false);
+  });
+
+  it('leaves the head unchanged when the truncation cut lands on a clean ASCII boundary (HS-8557 regression guard)', async () => {
+    const { appendPartialOutput } = await import('./shell.js');
+    // All-ASCII input — the surrogate-shift code path should be a no-op
+    // and the result should be exactly cap-sized.
+    const big = 'A'.repeat(3 * 1024 * 1024);
+    const more = 'B'.repeat(2 * 1024 * 1024);
+    const result = appendPartialOutput(big, more);
+    expect(result.length).toBe(4 * 1024 * 1024);
+    // First code unit after the marker is a normal ASCII char, not a
+    // surrogate.
+    const MARKER_LEN = '[output truncated]\n'.length;
+    expect(result.charCodeAt(MARKER_LEN)).toBeLessThan(0xD800);
+  });
 });
 
 // HS-8040 — graceful-shutdown path needs to terminate every running shell-

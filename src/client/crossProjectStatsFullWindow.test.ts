@@ -96,4 +96,39 @@ describe('teardownCrossProjectStatsPage — full-window takeover handoff (HS-852
     expect(document.body.classList.contains('terminal-dashboard-active')).toBe(true);
     expect(root.style.display).toBe('none');
   });
+
+  // HS-8564 — pin the documented contract: teardown clears `#cross-project-
+  // stats-root` and the body class but does NOT touch / repopulate `#ticket-
+  // list`. Callers that want a populated ticket area MUST call `loadTickets()`
+  // (or trigger the project-switch reload path) themselves. The pre-fix bug
+  // was the project-tab row-click handler in `src/client/projectTabs.tsx`
+  // assuming `switchProject(p)` would always run the reload pipeline, but
+  // `switchProject` early-returns on a matching secret, so a same-project tab
+  // click while on cross-project stats torn down the page WITHOUT repopulating
+  // `#ticket-list` — the user saw an empty project area until they switched
+  // views. The fix calls `loadTickets()` directly in that branch; this test
+  // pins the underlying invariant so the fix can't silently regress if
+  // teardown is later refactored to repopulate the ticket list itself.
+  it('does NOT touch the #ticket-list contents — caller is responsible for repopulating (HS-8564)', () => {
+    const root = mountCrossProjectRoot();
+    markCrossProjectStatsActive(true);
+    document.body.classList.add('cross-project-stats-active');
+
+    // Mount an empty ticket-list element. The pre-show flow's
+    // `unmountBindList()` would have left it in exactly this state
+    // (no children, but the element exists in the DOM).
+    const tl = document.createElement('div');
+    tl.id = 'ticket-list';
+    document.body.appendChild(tl);
+    expect(tl.children.length).toBe(0);
+
+    teardownCrossProjectStatsPage();
+
+    // Teardown should NOT have populated `#ticket-list` — that's the
+    // caller's responsibility.
+    expect(tl.children.length).toBe(0);
+    // And the cross-project root should be hidden + cleared as before.
+    expect(root.style.display).toBe('none');
+    expect(root.innerHTML).toBe('');
+  });
 });

@@ -55,6 +55,7 @@ import { projectsByIdSignal } from './projectsStore.js';
 import { state } from './state.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
+import { formatCost } from './telemetryFormat.js';
 import { renderCostByModelDonut } from './telemetryModelDonut.js';
 import { renderSubscriptionDisclaimer } from './telemetrySubscriptionDisclaimer.js';
 import { unmountBindList } from './ticketList.js';
@@ -119,11 +120,8 @@ export interface DashboardPayload {
 // toolbar, etc.) via a single CSS rule — no need to imperatively
 // poke their `style.display` per-element.
 
-function formatCost(n: number): string {
-  if (n === 0) return '$0.00';
-  if (n < 0.01) return '<$0.01';
-  return `$${n.toFixed(2)}`;
-}
+// HS-8566 — see `telemetryFormat.ts`. `formatCost` now hides cents for
+// values >= $1000 with half-up rounding + thousands separators.
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -608,7 +606,14 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
     const tz = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat !== 'undefined'
       ? Intl.DateTimeFormat().resolvedOptions().timeZone
       : 'UTC';
-    const payload = await api<DashboardPayload>(`/telemetry/dashboard?window=${encodeURIComponent(window)}&tz=${encodeURIComponent(tz)}`);
+    // HS-8563 — cross-project read MUST hit the launched-with default DB
+    // (where the otel receiver writes all telemetry rows, tagged by
+    // `project_secret`). The auto-appended `?project=<active-secret>`
+    // would otherwise re-scope the middleware to the active project's
+    // DB, which contains no otel data unless the user happens to be on
+    // the launched-with project. `skipProjectScope` opts out of the
+    // auto-append. See `buildUrl` in `src/client/api.tsx`.
+    const payload = await api<DashboardPayload>(`/telemetry/dashboard?window=${encodeURIComponent(window)}&tz=${encodeURIComponent(tz)}`, { skipProjectScope: true });
     if (gen !== fetchGeneration) return; // a newer fetch superseded us; let it win.
     renderShell(payload, container);
   } catch (err) {

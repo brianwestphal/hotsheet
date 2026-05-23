@@ -47,8 +47,36 @@ export async function refreshProjectFeedbackState(): Promise<void> {
     for (const [secret, hasFeedback] of Object.entries(data.projects)) {
       if (hasFeedback) feedbackSecrets.add(secret);
     }
-  } catch { /* network blip — leave the previous snapshot in place */ }
+    // HS-8559 — successful poll resets the throttle so the next failure
+    // surfaces immediately (without waiting for the re-surface timer).
+    feedbackFetchWarnedAt = null;
+  } catch (err) {
+    // HS-8559 — surface the failure mode in the console so a sustained
+    // outage (vs. a single transient blip) is visible during debugging.
+    // The previous snapshot is intentionally preserved — purple dots
+    // stay on whichever state was last fetched rather than dropping
+    // off mid-poll. The single-line `console.warn` is throttled to
+    // keep an unreachable server from flooding the console: the next
+    // successful poll re-arms the warning.
+    warnFeedbackStateFetchFailure(err);
+  }
   updateStatusDots();
+}
+
+// HS-8559 — module-level throttle state for `warnFeedbackStateFetchFailure`.
+// We don't want a hard-down server to flood the console with one warn per
+// poll tick; once we've warned, we stay silent until either (a) a
+// successful poll resets the flag OR (b) 60 s elapses (so a long outage
+// re-surfaces in the console at a calm cadence).
+let feedbackFetchWarnedAt: number | null = null;
+const FEEDBACK_FETCH_WARN_RE_SURFACE_MS = 60_000;
+
+function warnFeedbackStateFetchFailure(err: unknown): void {
+  const now = Date.now();
+  if (feedbackFetchWarnedAt !== null && now - feedbackFetchWarnedAt < FEEDBACK_FETCH_WARN_RE_SURFACE_MS) return;
+  feedbackFetchWarnedAt = now;
+  const message = err instanceof Error ? err.message : String(err);
+  console.warn(`[refreshProjectFeedbackState] /projects/feedback-state fetch failed; previous snapshot preserved — ${message}`);
 }
 
 /** Test-only — expose `feedbackSecrets` membership so unit tests can
@@ -695,6 +723,16 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
       // project stats should land on the clicked project's normal
       // ticket view, NOT a still-visible cross-project page.
       const { isCrossProjectStatsPageActive, teardownCrossProjectStatsPage } = await import('./crossProjectStatsPage.js');
+      // HS-8564 — capture whether we're tearing down cross-project stats AS PART OF a same-project
+      // tab click. `showCrossProjectStatsPage` calls `unmountBindList()` when it takes over the
+      // surface (so the empty `#ticket-list` doesn't render under the cross-project page's full-
+      // window body class), but the teardown path doesn't re-mount because the EXPECTED next step
+      // is `switchProject(p)` which calls `reloadAppState` → `loadTickets`. When the user clicks
+      // their CURRENTLY-active project's tab, `switchProject` early-returns on the matching secret
+      // and nothing repopulates `#ticket-list`, leaving the project area empty until the user
+      // switches views (which calls `loadTickets`). The reload-tickets escape hatch below covers
+      // exactly that case.
+      const teardownNeedsTicketReload = isCrossProjectStatsPageActive() && getActiveProject()?.secret === p.secret;
       if (isCrossProjectStatsPageActive()) teardownCrossProjectStatsPage();
       // HS-8542 — clicking the *active* project's own tab while the
       // per-project analytics dashboard is showing should dismiss the
@@ -712,8 +750,33 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
           reopenMinimizedForSecret(p.secret);
           return;
         }
+        // HS-8571 — clicking the *active* project's own tab while the
+        // footer drawer is expanded to full height should collapse it
+        // back to the normal two-pane layout. Mirrors the HS-8542 pattern
+        // above (dismiss-to-tickets-view for the analytics dashboard) so
+        // a second click on the active tab consistently means "return to
+        // the normal view". `setDrawerExpanded(false)` also flips the
+        // expand button's icon + title text via the same module; the
+        // saveDrawerState helper persists the new collapsed state so it
+        // survives reload. See §22 / docs/22-terminal.md HS-6312 for the
+        // expand button's full lifecycle.
+        const { isDrawerExpanded, setDrawerExpanded, saveDrawerState } = await import('./commandLog.js');
+        if (isDrawerExpanded()) {
+          setDrawerExpanded(false);
+          void saveDrawerState();
+          reopenMinimizedForSecret(p.secret);
+          return;
+        }
       }
       await switchProject(p);
+      // HS-8564 — see the comment on `teardownNeedsTicketReload` above. The
+      // teardown plus a no-op `switchProject` (same-project early-return)
+      // leaves `#ticket-list` empty; `loadTickets()` repopulates it. Lazy
+      // import keeps the project-tabs initial bundle thin.
+      if (teardownNeedsTicketReload) {
+        const { loadTickets } = await import('./ticketList.js');
+        await loadTickets();
+      }
       // HS-6637: if this tab has a minimized permission popup, bring it back.
       reopenMinimizedForSecret(p.secret);
     })();

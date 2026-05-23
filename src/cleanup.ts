@@ -1,5 +1,5 @@
-import { rmSync } from 'fs';
-
+// HS-8555 — `rmSync`-and-swallow extracted into `deleteAttachmentFile`.
+import { deleteAttachmentFile } from './db/attachments.js';
 import { getDb } from './db/connection.js';
 import {
   deleteAttachment,
@@ -11,16 +11,11 @@ import {
   updateTicket,
 } from './db/queries.js';
 import { readFileSettings } from './file-settings.js';
+import { ORPHAN_DRAFT_ATTACHMENT_HORIZON_MS } from './limits.js';
 
-/** HS-8428 — orphan-cleanup horizon for draft attachments. Attachments
- *  uploaded with a `draft_id` that no longer matches any
- *  `feedback_drafts` row get GC'd after this window. The client tries to
- *  clean up on dialog close-without-save, but a crashed / killed tab
- *  leaks the rows here. 7 days is long enough that even a user who
- *  occasionally takes a long break between draft sessions doesn't lose
- *  in-flight work; an unsaved draft over a week old is almost certainly
- *  abandoned. */
-const ORPHAN_DRAFT_ATTACHMENT_HORIZON_MS = 7 * 24 * 60 * 60 * 1000;
+// HS-8558 — the orphan-attachment horizon moved to `src/limits.ts` for
+// cross-file consolidation. See the rationale comment block on the
+// exported constant.
 
 export async function cleanupAttachments(): Promise<void> {
   try {
@@ -40,11 +35,7 @@ export async function cleanupAttachments(): Promise<void> {
       } else {
         // Hard-delete trashed tickets and their attachment files
         const attachments = await getAttachments(ticket.id);
-        for (const att of attachments) {
-          try {
-            rmSync(att.stored_path, { force: true });
-          } catch { /* file may already be gone */ }
-        }
+        for (const att of attachments) deleteAttachmentFile(att);
         await hardDeleteTicket(ticket.id);
         deleted++;
       }
@@ -59,7 +50,7 @@ export async function cleanupAttachments(): Promise<void> {
     let orphans = 0;
     const orphanList = await listOrphanDraftAttachments(ORPHAN_DRAFT_ATTACHMENT_HORIZON_MS);
     for (const att of orphanList) {
-      try { rmSync(att.stored_path, { force: true }); } catch { /* file may already be gone */ }
+      deleteAttachmentFile(att);
       await deleteAttachment(att.id);
       orphans++;
     }

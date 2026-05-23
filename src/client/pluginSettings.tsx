@@ -87,10 +87,11 @@ function showFindPluginsDialog() {
   const officialPanel = overlay.querySelector('#find-plugins-official')!;
   void api<BundledPluginInfo[]>('/plugins/bundled').then(bundled => {
     if (bundled.length === 0) {
-      officialPanel.innerHTML = '<div style="padding:16px 0;color:var(--text-muted);text-align:center;font-size:13px">No official plugins available.</div>';
+      // HS-8554 — `.plugin-empty-message` carries the previous inline styles.
+      officialPanel.replaceChildren(toElement(<div className="plugin-empty-message plugin-empty-message-centered">No official plugins available.</div>));
       return;
     }
-    officialPanel.innerHTML = '';
+    officialPanel.replaceChildren();
     for (const bp of bundled) {
       const row = toElement(
         <div className="bundled-plugin-row">
@@ -185,16 +186,21 @@ async function loadPlugins() {
   try {
     plugins = await api<PluginInfo[]>('/plugins');
   } catch {
-    list.innerHTML = '<div style="padding:12px 0;color:var(--text-muted);font-size:13px">Failed to load plugins.</div>';
+    // HS-8554 — `.plugin-empty-message` carries the previous inline styles.
+    list.replaceChildren(toElement(<div className="plugin-empty-message">Failed to load plugins.</div>));
     return;
   }
 
   if (plugins.length === 0) {
-    list.innerHTML = '<div style="padding:12px 0;color:var(--text-muted);font-size:13px">No plugins installed. Place plugins in <code>~/.hotsheet/plugins/</code> and restart.</div>';
+    list.replaceChildren(toElement(
+      <div className="plugin-empty-message">
+        No plugins installed. Place plugins in <code>~/.hotsheet/plugins/</code> and restart.
+      </div>
+    ));
     return;
   }
 
-  list.innerHTML = '';
+  list.replaceChildren();
   for (const plugin of plugins) {
     list.appendChild(createPluginRow(plugin));
   }
@@ -318,7 +324,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
   uninstallItem.addEventListener('click', (ev) => {
     ev.stopPropagation();
     // Replace the menu content with a confirmation prompt
-    menu.innerHTML = '';
+    menu.replaceChildren();
     const confirmEl = toElement(
       <div style="padding:8px;min-width:200px">
         <div style="font-size:13px;margin-bottom:8px">Uninstall "{plugin.name}"?</div>
@@ -437,7 +443,7 @@ async function loadConflicts() {
     tab.appendChild(toElement(<span className="plugin-tab-badge">{String(conflicts.length)}</span>));
   }
 
-  list.innerHTML = '';
+  list.replaceChildren();
   for (const conflict of conflicts) {
     list.appendChild(createConflictRow(conflict));
   }

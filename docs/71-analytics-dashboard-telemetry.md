@@ -16,15 +16,26 @@ No new entry point. The analytics dashboard's existing sidebar-widget click hand
 
 ## 71.3 Section layout
 
-Top-to-bottom inside `.analytics-telemetry-section` (appended below the existing chart grid):
+**HS-8565 (2026-05-23) — Claude usage overview repositioned.** Pre-fix the disclaimer + 4 cost chips lived inline at the top of the `.analytics-telemetry-section` body, separated from the ticket-stats KPI row by the entire chart grid. The user reshape moves them out of the section into two dashboard-owned slots so the "overview" rows read as a single block:
 
-1. **Section header.** Title "Claude usage" + window selector (today / week / month / 90d / all). The selector is **independent** of the analytics dashboard's existing 7d / 30d / 90d ticket-range buttons — ticket data and telemetry data answer different questions and the user picks each window separately.
-2. **Subscription-cost disclaimer (HS-8543).** Always-visible gray rounded notice with a lucide asterisk icon, single sentence reading "For users with Claude Pro / Max / other subscriptions, the costs shown are estimates only, based on API-equivalent usage." Sits above the chips and is rendered via the shared `renderSubscriptionDisclaimer` helper in `src/client/telemetrySubscriptionDisclaimer.tsx`. The same helper is reused on the cross-project page §70. Distinct from the HS-8497 `.telemetry-subscription-notice` accent banner (which only fires when `cost_mode === 'subscription'`).
-3. **Window-total chips.** Four monospace dollar-amount tiles: Today / This week / This month / All time, laid out as a 4-column CSS grid that fills the dashboard width (mirrors §70's cross-project page layout — HS-8536). Always rendered regardless of the window selector — the selector only narrows the sections below.
-4. **Cost over time.** Per-project variant of the shared chart from §70.5 / HS-8506. The chart's **Stacked / By project** mode toggle is hidden automatically because the slice carries only one project (the active one). The chart accepts a `resolveProjectLabel` opt; this surface passes a label resolver that returns `"This project"` for the active project's secret so the tooltip reads naturally.
-5. **Cost by model.** Donut + legend via the shared `renderCostByModelDonut` from `src/client/telemetryModelDonut.tsx` (extracted from `crossProjectStatsPage.tsx` under HS-8508 — both surfaces share the same render).
-6. **Per-tool latency histograms.** Per-tool count + p50 / p90 / p99 + bucketed `<svg>` bars via the shared `renderToolHistogramRow` from `src/client/telemetryToolHistogram.tsx` (extracted from `telemetryDrawer.tsx` under HS-8508).
-7. **10 most recent prompts.** Sorted by `ts DESC` (NOT by cost — that's the cross-project surface's behavior, removed). Each row click opens the existing `openPromptDrilldown(promptId)` modal from HS-8149. Rendered via the shared `renderRecentPromptsList` from `src/client/telemetryRecentPromptsList.tsx` (also extracted from `telemetryDrawer.tsx`).
+- **`#dashboard-claude-disclaimer-slot`** — sits above BOTH the ticket-stats KPI row and the Claude-usage chips so the "estimate only for Pro / Max subscribers" caveat covers every dollar on the page.
+- **`#dashboard-claude-chips-slot`** — sits directly below the ticket-stats KPI row.
+
+Slots live in `src/client/dashboard.tsx::buildDashboard`. `src/client/analyticsTelemetrySection.tsx::populateDashboardSlots` writes into them from the same `/api/telemetry/project-rollup` fetch that drives the rest of the section; `clearDashboardSlots` empties them when the section enters its empty / error states. The slots have a `:has(*)` SCSS rule so an empty slot collapses to zero height (no stray gap for projects without telemetry). The fallback path (insert into the section body when the slots are missing) keeps standalone callers + unit tests rendering an end-to-end body.
+
+Top-to-bottom in the analytics dashboard:
+
+1. **Range bar** — existing 7d / 30d / 90d ticket-range buttons.
+2. **Subscription-cost disclaimer (HS-8543).** `#dashboard-claude-disclaimer-slot`. Always-visible gray rounded notice with a lucide asterisk icon, single sentence: "For users with Claude Pro / Max / other subscriptions, the costs shown are estimates only, based on API-equivalent usage." Rendered via the shared `renderSubscriptionDisclaimer` helper in `src/client/telemetrySubscriptionDisclaimer.tsx`. The same helper is reused on the cross-project page §70.
+3. **Ticket-stats KPI row.** Four cards: Completed this week / Median cycle time / In progress / Completed / created.
+4. **Claude usage overview chips.** `#dashboard-claude-chips-slot`. Four monospace dollar-amount tiles: Today / This week / This month / All time, laid out as a 4-column CSS grid that fills the dashboard width (mirrors §70's cross-project page layout — HS-8536). Always rendered regardless of the window selector — the selector only narrows the sections below.
+5. **Ticket charts grid** (Throughput / Created vs Completed / Cumulative Flow / Category Breakdown / Cycle Time).
+6. **`.analytics-telemetry-section` body** — appended below the chart grid. Contains:
+   - Section header (title "Claude usage" — the window selector was removed under HS-8512 in favor of the dashboard's top-level range bar).
+   - **Cost over time.** Per-project variant of the shared chart from §70.5 / HS-8506. The chart's **Stacked / By project** mode toggle is hidden automatically because the slice carries only one project (the active one). The chart accepts a `resolveProjectLabel` opt; this surface passes a label resolver that returns `"This project"` for the active project's secret so the tooltip reads naturally.
+   - **Cost by model.** Donut + legend via the shared `renderCostByModelDonut` from `src/client/telemetryModelDonut.tsx` (extracted from `crossProjectStatsPage.tsx` under HS-8508 — both surfaces share the same render).
+   - **Per-tool latency histograms.** Per-tool count + p50 / p90 / p99 + bucketed `<svg>` bars via the shared `renderToolHistogramRow` from `src/client/telemetryToolHistogram.tsx` (extracted from `telemetryDrawer.tsx` under HS-8508).
+   - **10 most recent prompts.** Sorted by `ts DESC` (NOT by cost — that's the cross-project surface's behavior, removed). Each row click opens the existing `openPromptDrilldown(promptId)` modal from HS-8149. Rendered via the shared `renderRecentPromptsList` from `src/client/telemetryRecentPromptsList.tsx` (also extracted from `telemetryDrawer.tsx`).
 
 ## 71.4 Empty state
 

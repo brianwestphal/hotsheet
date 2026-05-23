@@ -9,6 +9,7 @@ import {
 } from './mainSurfaceState.js';
 import { getActiveProject, state } from './state.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
+import { formatCost } from './telemetryFormat.js';
 import { unmountBindList } from './ticketList.js';
 
 export { isAnalyticsDashboardActive, markAnalyticsDashboardSupplanted } from './mainSurfaceState.js';
@@ -240,7 +241,9 @@ export function updateSidebarWidgetCost(costs: Record<string, number>): void {
     // lives in the stats pages' header notices; the superscript here
     // is the breadcrumb that points there. Title attribute carries
     // a tooltip so hovering reveals the short explanation inline.
-    const label = cost < 0.01 ? '<$0.01' : `$${cost.toFixed(2)}`;
+    // HS-8566 — use the shared formatter so the dashboard widget
+    // matches the cross-project page + per-ticket stats display.
+    const label = formatCost(cost);
     el.replaceChildren(
       document.createTextNode(label),
       Object.assign(document.createElement('sup'), {

@@ -43,9 +43,10 @@
  */
 
 import { api } from './api.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
+import { formatCost } from './telemetryFormat.js';
 import { renderCostByModelDonut } from './telemetryModelDonut.js';
 import { type RecentPromptRow, renderRecentPromptsList } from './telemetryRecentPromptsList.js';
 import { renderSubscriptionDisclaimer } from './telemetrySubscriptionDisclaimer.js';
@@ -77,11 +78,8 @@ interface ProjectRollupPayload {
 
 let currentWindow: TelemetryWindow = 'month';
 
-function formatCost(n: number): string {
-  if (n === 0) return '$0.00';
-  if (n < 0.01) return '<$0.01';
-  return `$${n.toFixed(2)}`;
-}
+// HS-8566 — see `telemetryFormat.ts`. `formatCost` now hides cents for
+// values >= $1000 with half-up rounding + thousands separators.
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -149,21 +147,19 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
 
   const body = toElement(<div className="analytics-telemetry-body"></div>);
 
-  // HS-8543 — always-visible subscription-cost disclaimer above the
-  // chips, matching the cross-project page §70 placement. Users on
-  // Claude Pro / Max get billed via their subscription regardless of
-  // the cost-mode toggle, so the dollar amount needs a permanent
-  // "estimate only" reminder.
-  body.appendChild(renderSubscriptionDisclaimer());
-
-  // Window chips (always today / week / month / all time, mirroring
-  // the cross-project page §70 layout per HS-8536).
-  const chips = toElement(<div className="telemetry-window-chips analytics-telemetry-chips"></div>);
-  chips.appendChild(renderWindowChip('Today', payload.windowTotals.today));
-  chips.appendChild(renderWindowChip('This week', payload.windowTotals.week));
-  chips.appendChild(renderWindowChip('This month', payload.windowTotals.month));
-  chips.appendChild(renderWindowChip('All time', payload.windowTotals.allTime));
-  body.appendChild(chips);
+  // HS-8565 — the always-visible subscription-cost disclaimer + the
+  // 4-chip "Claude usage overview" boxes used to live inline at the
+  // top of this body. The user reshape moves them out of the section:
+  // the disclaimer renders above BOTH the ticket-stats KPI row and
+  // the Claude-usage chips (so it covers every cost on the page),
+  // and the chips render directly below the KPI row so the two
+  // overview rows read as a single block. Both are populated into
+  // dashboard-owned slots (`#dashboard-claude-disclaimer-slot` +
+  // `#dashboard-claude-chips-slot`) by `populateDashboardSlots`
+  // below — see also `src/client/dashboard.tsx::buildDashboard`. The
+  // slot fallback (insert into `body` when the slot is missing) keeps
+  // standalone callers + unit tests rendering an end-to-end body.
+  populateDashboardSlots(payload, body);
 
   // Cost over time (per-project — the chart's mode toggle is hidden
   // automatically because the slice carries only one project).
@@ -222,10 +218,52 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
   return body;
 }
 
+/**
+ * HS-8565 — write the disclaimer + Claude usage chips into the dashboard-
+ * owned slots (`#dashboard-claude-disclaimer-slot` +
+ * `#dashboard-claude-chips-slot` from `dashboard.tsx::buildDashboard`).
+ * Falls back to appending into the supplied `bodyFallback` element when
+ * either slot is missing (standalone callers, unit tests).
+ */
+function populateDashboardSlots(payload: ProjectRollupPayload, bodyFallback: HTMLElement): void {
+  const disclaimerSlot = byIdOrNull('dashboard-claude-disclaimer-slot');
+  const chipsSlot = byIdOrNull('dashboard-claude-chips-slot');
+
+  const disclaimerEl = renderSubscriptionDisclaimer();
+  const chipsEl = toElement(<div className="telemetry-window-chips analytics-telemetry-chips"></div>);
+  chipsEl.appendChild(renderWindowChip('Today', payload.windowTotals.today));
+  chipsEl.appendChild(renderWindowChip('This week', payload.windowTotals.week));
+  chipsEl.appendChild(renderWindowChip('This month', payload.windowTotals.month));
+  chipsEl.appendChild(renderWindowChip('All time', payload.windowTotals.allTime));
+
+  if (disclaimerSlot !== null) {
+    disclaimerSlot.replaceChildren(disclaimerEl);
+  } else {
+    bodyFallback.appendChild(disclaimerEl);
+  }
+  if (chipsSlot !== null) {
+    chipsSlot.replaceChildren(chipsEl);
+  } else {
+    bodyFallback.appendChild(chipsEl);
+  }
+}
+
+/**
+ * HS-8565 — clear the dashboard-owned slots so they don't keep showing
+ * stale chips / a stale disclaimer when the section enters its empty
+ * placeholder or error states. Idempotent — does nothing if the slots
+ * aren't present (standalone callers, unit tests).
+ */
+function clearDashboardSlots(): void {
+  byIdOrNull('dashboard-claude-disclaimer-slot')?.replaceChildren();
+  byIdOrNull('dashboard-claude-chips-slot')?.replaceChildren();
+}
+
 async function fetchAndPopulate(bodySlot: HTMLElement, w: TelemetryWindow): Promise<void> {
   bodySlot.replaceChildren(renderLoadingPlaceholder());
   const active = getActiveProject();
   if (active === null) {
+    clearDashboardSlots();
     bodySlot.replaceChildren(renderEmptyPlaceholder());
     return;
   }
@@ -234,8 +272,11 @@ async function fetchAndPopulate(bodySlot: HTMLElement, w: TelemetryWindow): Prom
     const payload = await api<ProjectRollupPayload>(
       `/telemetry/project-rollup?window=${encodeURIComponent(w)}&tz=${encodeURIComponent(tz)}`,
     );
+    const hasData = payload.windowTotals.allTime.promptCount > 0 || payload.windowTotals.allTime.cost > 0;
+    if (!hasData) clearDashboardSlots();
     bodySlot.replaceChildren(renderBody(payload, active.secret));
   } catch (err) {
+    clearDashboardSlots();
     const message = err instanceof Error ? err.message : String(err);
     bodySlot.replaceChildren(renderErrorBlock(message));
   }

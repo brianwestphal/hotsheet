@@ -126,7 +126,10 @@ export default tseslint.config(
     files: [
       // Production client files with existing innerHTML usage.
       "src/client/backups.tsx",
-      "src/client/channelUI.tsx",
+      // HS-8554 — `src/client/channelUI.tsx` migrated (two `innerHTML =
+      // '✓ …'` swapped to `textContent`). Removed from allowlist so
+      // new innerHTML assignments in this file get caught by the lint
+      // rule.
       "src/client/clipboardUtil.tsx",
       // HS-8365 — `src/client/columnView.tsx` migrated, removed from allowlist.
       "src/client/commandEditor.tsx",
@@ -146,7 +149,12 @@ export default tseslint.config(
       "src/client/openFolder.tsx",
       "src/client/permissionDialogShell.tsx",
       "src/client/pluginConfigDialog.tsx",
-      "src/client/pluginSettings.tsx",
+      // HS-8554 — `src/client/pluginSettings.tsx` migrated (three
+      // empty-state `innerHTML =` blocks swapped to
+      // `replaceChildren(toElement(<div className="plugin-empty-message">
+      // …</div>))` + the new `.plugin-empty-message` SCSS class).
+      // Removed from allowlist so new innerHTML assignments in this
+      // file get caught by the lint rule.
       "src/client/pluginUI.tsx",
       "src/client/projectTabs.tsx",
       // HS-8365 — `src/client/readerOverlay.tsx` migrated, removed from allowlist.

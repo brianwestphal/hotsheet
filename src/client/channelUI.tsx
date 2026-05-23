@@ -118,7 +118,8 @@ export function setShellBusy(busy: boolean) {
     if (!isChannelBusy()) {
       indicator.style.display = '';
       indicator.className = 'channel-status-indicator';
-      indicator.innerHTML = '\u2713 Shell done';
+      // HS-8554 \u2014 `textContent` is safer + faster + unambiguously not HTML.
+      indicator.textContent = '\u2713 Shell done';
       setTimeout(() => {
         if (!channelStore.state.value.shellBusy && !isChannelBusy()) indicator.style.display = 'none';
       }, TIMERS.CHANNEL_IDLE_INDICATOR_MS);
@@ -303,7 +304,8 @@ export function setChannelBusy(busy: boolean) {
     if (!channelStore.state.value.shellBusy) {
       indicator.style.display = '';
       indicator.className = 'channel-status-indicator';
-      indicator.innerHTML = '\u2713 Claude idle';
+      // HS-8554 \u2014 see the parallel `textContent` swap above.
+      indicator.textContent = '\u2713 Claude idle';
       // Auto-hide after 5 seconds
       setTimeout(() => {
         if (!isChannelBusy() && !channelStore.state.value.shellBusy) indicator.style.display = 'none';

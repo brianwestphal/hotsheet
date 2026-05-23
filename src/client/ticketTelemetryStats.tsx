@@ -1,5 +1,7 @@
 import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
+// HS-8566 — shared cost formatter (the $1000-cutoff + half-up rule).
+import { formatCost } from './telemetryFormat.js';
 
 /**
  * HS-8152 — per-ticket Claude usage stats block (§67.10.7). Renders
@@ -21,12 +23,6 @@ interface TicketRollup {
   totalCost: number;
   totalTokens: number;
   totalDurationSeconds: number;
-}
-
-function formatCost(n: number): string {
-  if (n === 0) return '$0.00';
-  if (n < 0.01) return '<$0.01';
-  return `$${n.toFixed(2)}`;
 }
 
 function formatTokens(n: number): string {

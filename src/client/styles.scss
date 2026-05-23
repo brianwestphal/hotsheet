@@ -6178,6 +6178,22 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   &.active { display: block; }
 }
 
+// HS-8554 — plugin-list / plugin-tab empty-state message. Replaces the
+// previous inline-style `<div style="padding:12px 0;color:var(--text-muted);
+// font-size:13px">` shape so the markup can go through `toElement` instead
+// of an `innerHTML =` literal. `.plugin-empty-message-centered` is the
+// official-tab variant (centered + larger top/bottom padding).
+.plugin-empty-message {
+  padding: 12px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+
+  &.plugin-empty-message-centered {
+    padding: 16px 0;
+    text-align: center;
+  }
+}
+
 .bundled-plugin-row {
   display: flex;
   align-items: center;
@@ -11482,6 +11498,21 @@ label.detail-details-label {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
+}
+
+// HS-8565 — dashboard-owned slots for the disclaimer + Claude-usage
+// chips. The slots sit above and below the ticket-stats KPI row in
+// `dashboard.tsx::buildDashboard`; `analyticsTelemetrySection.tsx`
+// populates them asynchronously when the project has telemetry data.
+// `:has()` keeps the slot completely flush (zero margin / height) until
+// it has children, so projects without Claude usage don't get a stray
+// gap.
+.dashboard-claude-disclaimer-slot:has(*) {
+  margin-bottom: 12px;
+}
+
+.dashboard-claude-chips-slot:has(*) {
+  margin-bottom: 20px;
 }
 
 .analytics-telemetry-empty {

@@ -1,7 +1,26 @@
+import { rmSync } from 'fs';
+
 import type { Attachment } from '../types.js';
 import { getDb } from './connection.js';
 
 // --- Attachments ---
+
+/**
+ * HS-8555 — centralized "delete the on-disk blob for an attachment row,
+ * tolerating the file already being gone" helper. Replaces five
+ * identical `rmSync` + swallow-ENOENT blocks scattered across
+ * `src/routes/tickets.ts` + `src/cleanup.ts`. The swallow policy is
+ * intentional: the row is about to be deleted (or already was) and
+ * ENOENT means the cleanup raced ahead of us — neither is an error
+ * worth surfacing.
+ *
+ * Centralizing the helper also makes a future audit-log addition
+ * (e.g. record every blob deletion) trivial — one site to extend.
+ */
+export function deleteAttachmentFile(att: Pick<Attachment, 'stored_path'>): void {
+  try { rmSync(att.stored_path, { force: true }); }
+  catch { /* file may already be gone — ENOENT swallow per HS-8555 */ }
+}
 
 /**
  * Insert a real (ticket-scoped) attachment row. `draft_id` is `NULL`,

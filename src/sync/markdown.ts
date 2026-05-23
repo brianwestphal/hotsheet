@@ -5,6 +5,9 @@ import { runWithDataDir } from '../db/connection.js';
 import { getAttachments, getCategories, getSettings, getTickets } from '../db/queries.js';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
+// HS-8558 — debounce intervals live in `src/limits.ts`. Aliased here
+// to keep the local call sites readable.
+import { OPEN_TICKETS_SYNC_DEBOUNCE_MS as OPEN_TICKETS_DEBOUNCE, WORKLIST_SYNC_DEBOUNCE_MS as WORKLIST_DEBOUNCE } from '../limits.js';
 import type { Ticket } from '../types.js';
 
 interface AutoContextEntry {
@@ -25,9 +28,6 @@ const syncStates = new Map<string, SyncState>();
 
 // The first registered dataDir, used as default for backward compatibility
 let defaultDataDir: string | null = null;
-
-const WORKLIST_DEBOUNCE = 500;
-const OPEN_TICKETS_DEBOUNCE = 5000;
 
 export function initMarkdownSync(dir: string, serverPort: number) {
   if (defaultDataDir === null) {

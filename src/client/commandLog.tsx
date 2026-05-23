@@ -289,7 +289,12 @@ export function refreshCommandLog() {
 /** True while applyPerProjectDrawerState is restoring state — prevents feedback loops. */
 let suspendSave = false;
 
-async function saveDrawerState(): Promise<void> {
+// HS-8571 — exported so the project-tab same-click handler can persist
+// the collapse after calling `setDrawerExpanded(false)`. Pre-fix the
+// helper was internal-only (called from `toggleDrawerExpanded` and the
+// drawer-grid module's own paths); the symmetric collapse-from-elsewhere
+// flow now needs the same persistence.
+export async function saveDrawerState(): Promise<void> {
   if (suspendSave) return;
   try {
     await api('/file-settings', {

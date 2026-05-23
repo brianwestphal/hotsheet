@@ -67,3 +67,51 @@ describe('api / apiWithSecret / apiUpload — path-shape guard (HS-8141)', () =>
     expect(calledUrl).toBe('/api/terminal/list');
   });
 });
+
+/**
+ * HS-8563 — `skipProjectScope` option on `api()` opts a request out of
+ * the auto-appended `?project=<active-secret>` query param. The
+ * cross-project stats endpoint needs this because the otel receiver
+ * writes ALL telemetry rows into the launched-with default `dataDir`
+ * (the server middleware uses that default whenever no
+ * X-Hotsheet-Secret header and no project= query are present — and Claude
+ * Code's exporter sends neither). If the read carries `?project=`, the
+ * middleware re-scopes to that project's DB which contains no otel
+ * rows → empty cross-project page. The pre-fix bug was the user
+ * landing on cross-project stats from a non-launched-with project and
+ * seeing "no data" despite having lots; switching projects (which
+ * happened to be the launched-with one) made the data appear.
+ */
+describe('api() — skipProjectScope option (HS-8563)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('omits `?project=` from the URL when `skipProjectScope: true` is set', async () => {
+    // Simulate an active project so the default path WOULD have appended
+    // the project param.
+    const { setActiveProject } = await import('./state.js');
+    setActiveProject({ name: 'TestProject', secret: 'deadbeefcafebabedeadbeefcafebabe', dataDir: '/tmp/test' });
+
+    await api('/telemetry/dashboard?window=month&tz=UTC', { skipProjectScope: true });
+
+    const calledUrl = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(calledUrl).toBe('/api/telemetry/dashboard?window=month&tz=UTC');
+    expect(calledUrl).not.toContain('project=');
+  });
+
+  it('appends `?project=` by default (regression guard for the auto-append behavior)', async () => {
+    const { setActiveProject } = await import('./state.js');
+    setActiveProject({ name: 'TestProject', secret: 'deadbeefcafebabedeadbeefcafebabe', dataDir: '/tmp/test' });
+
+    await api('/telemetry/dashboard?window=month&tz=UTC');
+
+    const calledUrl = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    // The default path appends `&project=` because the URL already has a `?`.
+    expect(calledUrl).toContain('project=deadbeefcafebabedeadbeefcafebabe');
+  });
+});

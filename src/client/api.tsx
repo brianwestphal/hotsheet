@@ -57,10 +57,18 @@ export function showErrorPopup(message: string) {
   document.body.appendChild(popup);
 }
 
-/** Build the full URL for an API call, adding project query param for GET requests. */
-function buildUrl(path: string, method?: string): string {
+/** Build the full URL for an API call, adding project query param for GET requests.
+ *  HS-8563 — `skipProjectScope` opts a request out of the auto-appended
+ *  `?project=<active-secret>` query param so the server middleware falls
+ *  back to the launched-with default `dataDir` (the single DB that holds
+ *  cross-project data — the otel receiver routes all POSTs through it
+ *  regardless of which project the data is for, because Claude Code's
+ *  exporter doesn't pass our secret header). Used by the cross-project
+ *  stats page so the read query lands in the same DB the writes did. */
+function buildUrl(path: string, method?: string, skipProjectScope?: boolean): string {
   assertApiPathShape(path);
   let url = '/api' + path;
+  if (skipProjectScope === true) return url;
   const ap = getActiveProject();
   if (ap !== null && (method === undefined || method === 'GET')) {
     const sep = url.includes('?') ? '&' : '?';
@@ -104,10 +112,10 @@ function buildHeaders(opts: { body?: unknown; method?: string }): Record<string,
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; schema?: z.ZodType<T> } = {}): Promise<T> {
+export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; schema?: z.ZodType<T>; skipProjectScope?: boolean } = {}): Promise<T> {
   // HS-8175 — track every non-long-poll fetch so the global server-busy
   // chip can light up if a request crosses the threshold (3 s).
-  const url = buildUrl(path, opts.method);
+  const url = buildUrl(path, opts.method, opts.skipProjectScope);
   const done = trackServerRequest(url);
   try {
     const res = await fetch(url, {

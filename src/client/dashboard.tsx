@@ -51,6 +51,14 @@ function buildDashboard(data: DashboardData): HTMLElement {
   });
   el.appendChild(rangeBar);
 
+  // HS-8565 — disclaimer slot sits above BOTH the ticket-stats KPI row
+  // and the Claude-usage chips so the "estimate only for Pro / Max
+  // subscribers" caveat is understood to apply to every cost the page
+  // displays. The slot starts empty; `analyticsTelemetrySection.tsx`
+  // populates it from the same fetch that drives the chips below the
+  // KPI row. Stays empty when the project has no Claude usage yet.
+  el.appendChild(toElement(<div id="dashboard-claude-disclaimer-slot" className="dashboard-claude-disclaimer-slot"></div>));
+
   // KPI cards
   const kpi = data.kpi;
   const throughputChange = kpi.completedLastWeek > 0
@@ -80,6 +88,13 @@ function buildDashboard(data: DashboardData): HTMLElement {
       </div>
     </div>
   ));
+
+  // HS-8565 — Claude usage chips slot sits directly below the ticket-
+  // stats KPI row so the two overview rows read as a single block. The
+  // chips are populated asynchronously by `analyticsTelemetrySection`'s
+  // fetch flow; this slot stays empty until that fetch returns + only
+  // gets populated when the project has telemetry data.
+  el.appendChild(toElement(<div id="dashboard-claude-chips-slot" className="dashboard-claude-chips-slot"></div>));
 
   // Charts in a grid
   const grid = toElement(<div className="dashboard-grid"></div>);

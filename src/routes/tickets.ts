@@ -1,6 +1,10 @@
-import { rmSync } from 'fs';
+// HS-8555 — `rmSync`-and-swallow extracted into `deleteAttachmentFile`
+// in `src/db/attachments.ts`; this file no longer needs a direct `fs`
+// import (the route handlers all routed through that helper).
 import { Hono } from 'hono';
 
+// HS-8555 — centralized attachment-blob delete helper.
+import { deleteAttachmentFile } from '../db/attachments.js';
 import {
   batchDeleteTickets,
   batchRestoreTickets,
@@ -22,6 +26,7 @@ import {
   toggleUpNext,
   updateTicket,
 } from '../db/queries.js';
+import { TICKETS_LIST_MAX_LIMIT } from '../limits.js';
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
 import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
@@ -101,7 +106,7 @@ ticketRoutes.get('/tickets', async (c) => {
   const rawLimit = c.req.query('limit');
   if (rawLimit !== undefined && rawLimit !== '') {
     const n = Number.parseInt(rawLimit, 10);
-    if (!Number.isFinite(n) || n <= 0 || n > 10000) return c.json({ error: `Invalid limit "${rawLimit}"` }, 400);
+    if (!Number.isFinite(n) || n <= 0 || n > TICKETS_LIST_MAX_LIMIT) return c.json({ error: `Invalid limit "${rawLimit}"` }, 400);
     filters.limit = n;
   }
   const rawOffset = c.req.query('offset');
@@ -398,9 +403,7 @@ ticketRoutes.delete('/tickets/:id/feedback-drafts/:draftId', async (c) => {
   // by the draft_id filter, so no inconsistency surfaces).
   const { deleteDraftAttachments } = await import('../db/attachments.js');
   const droppedAttachments = await deleteDraftAttachments(draftId);
-  for (const att of droppedAttachments) {
-    try { rmSync(att.stored_path, { force: true }); } catch { /* file may already be gone */ }
-  }
+  for (const att of droppedAttachments) deleteAttachmentFile(att);
   const deleted = await deleteFeedbackDraft(draftId);
   // HS-8428 — if the draft row was already gone but the client uploaded
   // attachments (orphan-cleanup path the client fires on dialog close-
@@ -415,9 +418,7 @@ ticketRoutes.delete('/tickets/:id/hard', async (c) => {
   const id = parseIntParam(c);
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const attachments = await getAttachments(id);
-  for (const att of attachments) {
-    try { rmSync(att.stored_path, { force: true }); } catch { /* ignore */ }
-  }
+  for (const att of attachments) deleteAttachmentFile(att);
   await hardDeleteTicket(id);
   notifyMutation(c.get('dataDir'));
   return c.json({ ok: true });
@@ -503,9 +504,7 @@ ticketRoutes.post('/trash/empty', async (c) => {
   const deleted = await getTickets({ status: 'deleted' as TicketStatus });
   for (const ticket of deleted) {
     const attachments = await getAttachments(ticket.id);
-    for (const att of attachments) {
-      try { rmSync(att.stored_path, { force: true }); } catch { /* ignore */ }
-    }
+    for (const att of attachments) deleteAttachmentFile(att);
   }
   await emptyTrash();
   notifyMutation(c.get('dataDir'));
