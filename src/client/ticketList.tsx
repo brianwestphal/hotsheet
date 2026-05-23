@@ -857,3 +857,16 @@ registerCallbacks({
   updateColumnSelectionClasses,
   focusDraftInput: _focusDraftInput,
 });
+
+/** HS-8574 — test-only escape hatch exposing pure-logic helpers that
+ *  would otherwise be module-private. Not exported to production
+ *  callers — these don't appear in any non-test import. */
+export const _testing = {
+  computeTargetVariant,
+  computeScrollKey,
+  buildScopeKey,
+  rowFactoryFor,
+  getMountedVariant(): BindListVariant | null { return mountedVariant; },
+  resetScopeKeyForTests(): void { lastScopeKey = null; },
+  resetScrollKeyForTests(): void { lastScrollKey = ''; },
+};
