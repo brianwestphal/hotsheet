@@ -20,6 +20,7 @@ import { cleanupStaleInstance, isInstanceRunning, readInstanceFile, removeInstan
 import { acquireLock } from './lock.js';
 import { addToProjectList, readProjectList } from './project-list.js';
 import { registerExistingProject, registerProject } from './projects.js';
+import { ErrorBodySchema, ProjectNameOnlySchema } from './schemas.js';
 import { startServer } from './server.js';
 import { ensureSkills, initSkills, setSkillCategories } from './skills.js';
 import { initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
@@ -458,11 +459,16 @@ async function handleExistingInstance(
       body: JSON.stringify({ dataDir: absDataDir }),
     });
     if (res.ok) {
-      const project = await res.json() as { name: string };
-      console.log(`  Registered project "${project.name}" with running instance on port ${instance.port}`);
+      // HS-8567 — validate at the wire boundary.
+      const rawJson: unknown = await res.json();
+      const parsed = ProjectNameOnlySchema.safeParse(rawJson);
+      const name = parsed.success ? parsed.data.name : 'unknown';
+      console.log(`  Registered project "${name}" with running instance on port ${instance.port}`);
     } else {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      console.error(`  Failed to register with running instance: ${body.error ?? 'Unknown error'}`);
+      const rawErr: unknown = await res.json().catch(() => ({}));
+      const errParsed = ErrorBodySchema.safeParse(rawErr);
+      const errMsg = errParsed.success ? errParsed.data.error : undefined;
+      console.error(`  Failed to register with running instance: ${errMsg ?? 'Unknown error'}`);
       process.exit(1);
     }
   }

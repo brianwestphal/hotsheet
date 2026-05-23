@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import { parseNotes } from '../db/notes.js';
 import {
   addToOutbox, deleteNoteSyncRecord, deleteSyncRecord, getNoteSyncRecords,
@@ -6,6 +8,7 @@ import {
   updateSyncStatus, upsertNoteSyncRecord, upsertSyncRecord,
 } from '../db/sync.js';
 import { createTicket, getTicket, updateTicket } from '../db/tickets.js';
+import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import type { Ticket } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { getAllBackends, getBackendForPlugin, reactivatePlugin } from './loader.js';
@@ -245,6 +248,10 @@ async function applyFieldsToTicket(ticketId: number, fields: Partial<RemoteTicke
 }
 
 function extractTicketFields(ticket: Ticket): Partial<RemoteTicketFields> {
+  // HS-8567 — zod-validate the tags column rather than blind-casting.
+  // Malformed JSON / wrong shape → empty array (defensive since this
+  // value gets pushed to GitHub Issues as the label set).
+  const parsedTags = parseJsonOrNull(TagsArraySchema, ticket.tags || '[]');
   return {
     title: ticket.title,
     details: ticket.details,
@@ -252,7 +259,7 @@ function extractTicketFields(ticket: Ticket): Partial<RemoteTicketFields> {
     priority: ticket.priority,
     status: ticket.status,
     up_next: ticket.up_next,
-    tags: JSON.parse(ticket.tags || '[]') as string[],
+    tags: parsedTags ?? [],
   };
 }
 
@@ -709,10 +716,26 @@ export async function resolveConflict(
   const syncRecord = records.find(r => r.ticket_id === ticketId);
   if (!syncRecord || syncRecord.sync_status !== 'conflict') return;
 
-  const conflictData = (syncRecord.conflict_data != null && syncRecord.conflict_data !== '') ? JSON.parse(syncRecord.conflict_data) as {
-    local: Partial<RemoteTicketFields>;
-    remote: Partial<RemoteTicketFields>;
-  } : null;
+  // HS-8567 — zod-validate the conflict_data column at the parse boundary.
+  // Local + remote shapes mirror `Partial<RemoteTicketFields>`; each field
+  // is optional because a conflict snapshot only captures the fields that
+  // actually differ.
+  const RemoteFieldsSchema = z.object({
+    title: z.string().optional(),
+    details: z.string().optional(),
+    category: z.string().optional(),
+    priority: z.string().optional(),
+    status: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    up_next: z.boolean().optional(),
+  }).loose();
+  const ConflictDataSchema = z.object({
+    local: RemoteFieldsSchema.optional(),
+    remote: RemoteFieldsSchema.optional(),
+  }).loose();
+  const conflictData = (syncRecord.conflict_data != null && syncRecord.conflict_data !== '')
+    ? parseJsonOrNull(ConflictDataSchema, syncRecord.conflict_data)
+    : null;
 
   if (!conflictData) {
     await updateSyncStatus(ticketId, pluginId, 'synced');
@@ -734,7 +757,7 @@ export async function resolveConflict(
     // push's direct-compare loop would see ticket.updated_at > local_updated_at
     // and pointlessly PATCH GitHub with the same values we just pulled in
     // (churn on every sync after a keep_remote resolution).
-    await applyFieldsToTicket(ticketId, conflictData.remote);
+    await applyFieldsToTicket(ticketId, conflictData.remote ?? {});
     await upsertSyncRecord(
       ticketId,
       pluginId,

@@ -107,6 +107,15 @@ export function requireChild<T extends Element = HTMLElement>(root: ParentNode, 
 export function byId<T extends Element = HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (el === null) throw new Error(`byId: no element with id "${id}"`);
+  // HS-8567 — `as unknown as T` is the unavoidable escape hatch for a
+  // generic typed lookup. There's no runtime way to verify T (it's a
+  // type-only parameter; happy-dom can't be asked "is this an
+  // HTMLButtonElement?" without a constructor reference per call). The
+  // safer alternative — `instanceof` check at every callsite — pushes
+  // the burden onto 244+ callers. Caller is responsible for passing T
+  // that matches the real element type; mismatch surfaces as a
+  // descriptive runtime error on the very next access (e.g.
+  // `.classList`, `.disabled`).
   return el as unknown as T;
 }
 
@@ -118,5 +127,7 @@ export function byId<T extends Element = HTMLElement>(id: string): T {
  */
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- same rationale as `byId`.
 export function byIdOrNull<T extends Element = HTMLElement>(id: string): T | null {
+  // HS-8567 — see the rationale on `byId` above. Same trade-off applies:
+  // T is a type-only parameter that the runtime cannot validate.
   return document.getElementById(id) as unknown as T | null;
 }

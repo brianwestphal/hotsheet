@@ -118,7 +118,12 @@ function readManifest(pluginPath: string): PluginManifest | null {
   const pkgPath = join(pluginPath, 'package.json');
   if (existsSync(pkgPath)) {
     try {
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>;
+      // HS-8567 — `validateManifest` (downstream) is the trust boundary
+      // that runs through a zod schema; here we just narrow shape enough
+      // to read fields off `pkg.hotsheet`.
+      const raw: unknown = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      if (typeof raw !== 'object' || raw === null) return null;
+      const pkg = raw as Record<string, unknown>;
       const hotsheet = pkg.hotsheet as Record<string, unknown> | undefined;
       if (hotsheet != null) {
         const author = pkg.author as Record<string, unknown> | string | null | undefined;

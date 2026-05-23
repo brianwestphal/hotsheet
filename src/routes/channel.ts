@@ -5,6 +5,7 @@ import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
 import { readFileSettings } from '../file-settings.js';
 import { extractPrimaryValue, findMatchingAllowRule, parseAllowRules } from '../permissionAllowRules.js';
+import { PendingPermissionSchema } from '../schemas.js';
 import type { AppEnv } from '../types.js';
 import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js';
 import { ChannelHeartbeatSchema, ChannelTriggerSchema, parseBody, PermissionRespondSchema } from './validation.js';
@@ -154,7 +155,11 @@ async function fetchPermission(dataDir: string): Promise<PermissionResult> {
   if (port === null) return { pending: null };
   try {
     const res = await fetch(`http://127.0.0.1:${port}/permission`);
-    const data = await res.json() as PermissionResult;
+    // HS-8567 — validate at the wire boundary.
+    const rawJson: unknown = await res.json();
+    const parsed = PendingPermissionSchema.safeParse(rawJson);
+    if (!parsed.success) return { pending: null };
+    const data: PermissionResult = { pending: parsed.data.pending };
     if (data.pending !== null) {
       const reqId = data.pending.request_id ?? '';
       const toolName = data.pending.tool_name ?? 'unknown tool';

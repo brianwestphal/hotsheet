@@ -8,6 +8,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { z } from 'zod';
 
 const HOOK_MARKER = 'hotsheet-heartbeat';
 
@@ -15,28 +16,31 @@ function getClaudeSettingsPath(): string {
   return join(homedir(), '.claude', 'settings.json');
 }
 
-interface HookEntry {
-  '//'?: string;
-  type: string;
-  command: string;
-  timeout?: number;
-}
-
-interface HookGroup {
-  matcher?: string;
-  hooks: HookEntry[];
-}
-
-interface ClaudeSettings {
-  hooks?: Record<string, HookGroup[]>;
-  [key: string]: unknown;
-}
+// HS-8567 — zod-validated settings shape. `.loose()` so unknown keys pass
+// through (this file mutates a small subset and rewrites the whole file;
+// preserving unrelated user keys is essential).
+const HookEntrySchema = z.object({
+  '//': z.string().optional(),
+  type: z.string(),
+  command: z.string(),
+  timeout: z.number().optional(),
+}).loose();
+const HookGroupSchema = z.object({
+  matcher: z.string().optional(),
+  hooks: z.array(HookEntrySchema),
+}).loose();
+const ClaudeSettingsSchema = z.object({
+  hooks: z.record(z.string(), z.array(HookGroupSchema)).optional(),
+}).loose();
+type ClaudeSettings = z.infer<typeof ClaudeSettingsSchema>;
 
 function readClaudeSettings(): ClaudeSettings {
   const path = getClaudeSettingsPath();
   if (!existsSync(path)) return {};
   try {
-    return JSON.parse(readFileSync(path, 'utf-8')) as ClaudeSettings;
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+    const result = ClaudeSettingsSchema.safeParse(raw);
+    return result.success ? result.data : {};
   } catch {
     return {};
   }

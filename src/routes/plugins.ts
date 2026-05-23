@@ -16,6 +16,7 @@ import {
 } from '../plugins/syncEngine.js';
 import type { LoadedPlugin } from '../plugins/types.js';
 import { getAllProjects } from '../projects.js';
+import { GithubCommentsArraySchema } from '../schemas.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { parseIntParam } from './helpers.js';
@@ -470,8 +471,11 @@ pluginRoutes.post('/plugins/install', async (c) => {
     const pkgPath = join(sourcePath, 'package.json');
     if (!existsSync(pkgPath)) return false;
     try {
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { hotsheet?: unknown };
-      return pkg.hotsheet !== undefined;
+      // HS-8567 — only need to know whether the file has a `hotsheet`
+      // key; narrow shape locally without a full zod schema.
+      const raw: unknown = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      if (typeof raw !== 'object' || raw === null) return false;
+      return 'hotsheet' in raw && (raw as Record<string, unknown>).hotsheet !== undefined;
     } catch { return false; }
   })();
 
@@ -686,7 +690,11 @@ async function resolveUserAttachmentUrl(pluginId: string, token: string, uuid: s
     },
   });
   if (!res.ok) return null;
-  const comments = await res.json() as { body_html?: string }[];
+  // HS-8567 — validate the GitHub response shape at the wire boundary.
+  const rawComments: unknown = await res.json();
+  const commentsResult = GithubCommentsArraySchema.safeParse(rawComments);
+  if (!commentsResult.success) return null;
+  const comments = commentsResult.data;
 
   for (const comment of comments) {
     if (comment.body_html == null || comment.body_html === '' || !comment.body_html.includes(uuid)) continue;

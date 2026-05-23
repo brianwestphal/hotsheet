@@ -79,6 +79,31 @@ export default tseslint.config(
           selector: "AssignmentExpression[operator='='] > MemberExpression.left[property.name='innerHTML'][computed=false]",
           message: "Direct `innerHTML = ` assignments bypass the kerf-routed `toElement` parser path (HS-8241 / §62) and lose the SVG-namespace + entity-handling fixes. Use `el.replaceChildren(toElement(<jsx />))` instead, or `el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))` for raw-HTML escape hatches. (HS-8243 / §62.6 Phase 3.)",
         },
+        // HS-8567 — `JSON.parse(...) as X` silently asserts the parsed
+        // shape without checking it (the exact failure mode that hid
+        // HS-8562 — `kerfToElement(...) as HTMLElement` from the kerfjs
+        // 0.12.0 return-type widening). Use the zod helpers in
+        // `src/schemas.ts` instead: `parseJsonOrNull(MySchema, raw)`
+        // for tolerant parsing, `parseJson(MySchema, raw, 'context')`
+        // for throw-on-failure. Exception: `as unknown` (intentional
+        // erasure prior to a follow-up shape check) is still allowed.
+        {
+          selector: "TSAsExpression[expression.type='CallExpression'][expression.callee.object.name='JSON'][expression.callee.property.name='parse']:not([typeAnnotation.type='TSUnknownKeyword'])",
+          message: "`JSON.parse(x) as Y` skips runtime validation. Use `parseJson(YSchema, x)` / `parseJsonOrNull(YSchema, x)` from `src/schemas.ts` instead, or assign to `const raw: unknown = JSON.parse(x)` then narrow with a zod `safeParse`. (HS-8567.)",
+        },
+        // HS-8567 — `await res.json() as X` silently asserts the wire
+        // response shape. Use the `schema` parameter on the
+        // `src/client/api.tsx` helpers (`api<T>(path, { schema })`) or
+        // for raw fetch calls, do `const raw: unknown = await
+        // res.json()` then `MySchema.safeParse(raw)`.
+        {
+          selector: "TSAsExpression[expression.type='CallExpression'][expression.callee.property.name='json']:not([typeAnnotation.type='TSUnknownKeyword'])",
+          message: "`res.json() as Y` skips wire-boundary validation. Use the zod `schema` parameter on the `src/client/api.tsx` helpers, or `const raw: unknown = await res.json()` + `MySchema.safeParse(raw)`. (HS-8567.)",
+        },
+        {
+          selector: "TSAsExpression[expression.type='AwaitExpression'][expression.argument.type='CallExpression'][expression.argument.callee.property.name='json']:not([typeAnnotation.type='TSUnknownKeyword'])",
+          message: "`await res.json() as Y` skips wire-boundary validation. Use the zod `schema` parameter on the `src/client/api.tsx` helpers, or `const raw: unknown = await res.json()` + `MySchema.safeParse(raw)`. (HS-8567.)",
+        },
       ],
     },
   },
@@ -150,6 +175,25 @@ export default tseslint.config(
       "**/*.test.ts",
       "**/*.test.tsx",
     ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ExpressionStatement > CallExpression[callee.name=/^bind(Text|Attr|List)$/]",
+          message: "bindText/bindAttr/bindList return a disposer; capture it (or use `void` to mark intentional leak).",
+        },
+      ],
+    },
+  },
+  // HS-8567 — test files are exempt from the wire-/file-boundary
+  // rules. Tests legitimately construct fixture-shaped values via
+  // `JSON.parse(x) as TestFixture` to assert against a known shape;
+  // adding zod scaffolding around every assertion would be noise. The
+  // rules above stay in force everywhere else. (innerHTML allowlist
+  // already covers tests via the `**/*.test.{ts,tsx}` glob; this block
+  // is parallel.)
+  {
+    files: ["**/*.test.ts", "**/*.test.tsx"],
     rules: {
       "no-restricted-syntax": [
         "error",

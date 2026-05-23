@@ -180,8 +180,10 @@ export async function reloadCustomCommands(): Promise<void> {
     if (commandItemsMutationEpoch !== epochBeforeFetch) return;
     if (settings.custom_commands !== '') {
       try {
-        const parsed = JSON.parse(settings.custom_commands) as unknown[];
-        commandItems = migrateOldFormat(parsed);
+        // HS-8567 — defer per-item validation to `migrateOldFormat`; just
+        // narrow the outer shape to "array of unknown" here.
+        const raw: unknown = JSON.parse(settings.custom_commands);
+        commandItems = Array.isArray(raw) ? migrateOldFormat(raw) : [];
       } catch { commandItems = []; }
     } else {
       commandItems = [];

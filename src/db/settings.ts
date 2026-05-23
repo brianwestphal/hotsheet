@@ -1,4 +1,5 @@
 import { readProjectSettings, writeProjectSettings } from '../file-settings.js';
+import { CategoryDefArraySchema, parseJsonOrNull } from '../schemas.js';
 import type { CategoryDef } from '../types.js';
 import { DEFAULT_CATEGORIES } from '../types.js';
 import { getDataDir, getDb } from './connection.js';
@@ -44,10 +45,9 @@ export async function updateSetting(key: string, value: string): Promise<void> {
 export async function getCategories(): Promise<CategoryDef[]> {
   const settings = await getSettings();
   if (settings.categories) {
-    try {
-      const parsed: unknown = JSON.parse(settings.categories);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed as CategoryDef[];
-    } catch { /* invalid JSON, use defaults */ }
+    // HS-8567 — zod-validate the categories JSON column.
+    const parsed = parseJsonOrNull(CategoryDefArraySchema, settings.categories);
+    if (parsed !== null && parsed.length > 0) return parsed;
   }
   return DEFAULT_CATEGORIES;
 }

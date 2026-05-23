@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { appendMainServerEvent } from './channelLog.js';
 import { readChannelInfo } from './channelPortFile.js';
 import { syncClaudeAllowRule, unsyncClaudeAllowRule } from './claude-allow-rule.js';
+import { ChannelOkBodySchema } from './schemas.js';
 
 const McpConfigSchema = z.object({
   mcpServers: z.record(z.string(), z.unknown()).optional(),
@@ -230,14 +231,18 @@ const EXPECTED_CHANNEL_VERSION = 9;
 /** HS-8454 — shape of the `/health` response body the channel server
  *  returns. `pid` / `slug` / `startedAt` are present only on v8+; on a v7
  *  channel server probing across the upgrade window, they're `undefined`
- *  and the consumer falls back to a port-only liveness check. */
-interface ChannelHealthBody {
-  ok?: boolean;
-  version?: number;
-  pid?: number;
-  slug?: string;
-  startedAt?: string;
-}
+ *  and the consumer falls back to a port-only liveness check.
+ *
+ *  HS-8567 — zod-schema-typed via inference so the wire boundary parse uses
+ *  the same shape declared once here. */
+const ChannelHealthBodySchema = z.object({
+  ok: z.boolean().optional(),
+  version: z.number().optional(),
+  pid: z.number().optional(),
+  slug: z.string().optional(),
+  startedAt: z.string().optional(),
+}).loose();
+type ChannelHealthBody = z.infer<typeof ChannelHealthBodySchema>;
 
 /** Check if the running channel server's version matches the expected version.
  *  Returns null if no channel, true if matching, false if mismatched. */
@@ -246,8 +251,11 @@ export async function checkChannelVersion(dataDir: string): Promise<{ match: boo
   if (port === null) return null;
   try {
     const res = await fetch(`http://127.0.0.1:${port}/health`);
-    const data = await res.json() as { ok: boolean; version?: number };
-    const running = data.version ?? 0;
+    // HS-8567 — validate the response shape at the wire boundary.
+    const rawJson: unknown = await res.json();
+    const parsed = ChannelOkBodySchema.safeParse(rawJson);
+    if (!parsed.success) return null;
+    const running = parsed.data.version ?? 0;
     return { match: running === EXPECTED_CHANNEL_VERSION, running, expected: EXPECTED_CHANNEL_VERSION };
   } catch {
     return null;
@@ -288,7 +296,11 @@ export async function isChannelAlive(dataDir: string): Promise<boolean> {
   try {
     const res = await fetch(`http://127.0.0.1:${info.port}/health`);
     if (!res.ok) return false;
-    const data = await res.json() as ChannelHealthBody;
+    // HS-8567 — validate the response shape at the wire boundary.
+    const rawJson: unknown = await res.json();
+    const dataResult = ChannelHealthBodySchema.safeParse(rawJson);
+    if (!dataResult.success) return false;
+    const data: ChannelHealthBody = dataResult.data;
     if (data.ok !== true) return false;
     // HS-8454 — identity verification when both sides carry pid / slug.
     // Legacy port files (pid === null) fall back to "any OK /health is

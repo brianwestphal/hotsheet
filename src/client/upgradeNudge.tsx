@@ -1,3 +1,4 @@
+import { GithubReleaseSchema } from '../schemas.js';
 import { toElement } from './dom.js';
 import { getTauriInvoke, openExternalUrl } from './tauriIntegration.js';
 
@@ -113,8 +114,12 @@ async function resolveDownload(platform: DetectedPlatform): Promise<PlatformReso
   try {
     const res = await fetch(GITHUB_API_LATEST, { headers: { Accept: 'application/vnd.github+json' } });
     if (res.ok) {
-      const json = await res.json() as { assets?: Array<{ name: string; browser_download_url: string }> };
-      const assets = Array.isArray(json.assets) ? json.assets : [];
+      // HS-8567 — validate at the wire boundary (the catch swallows
+      // every failure mode, including shape mismatch, so the fallback
+      // /releases/latest URL stays the safe default).
+      const raw: unknown = await res.json();
+      const parsed = GithubReleaseSchema.safeParse(raw);
+      const assets = parsed.success && parsed.data.assets !== undefined ? parsed.data.assets : [];
       const picked = pickPlatformAsset(assets, platform);
       if (picked !== null) downloadUrl = picked;
     }

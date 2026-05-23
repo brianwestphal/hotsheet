@@ -1,5 +1,8 @@
+import { z } from 'zod';
+
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
+import { parseJsonOrNull } from '../schemas.js';
 import { api } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { ICON_FOLDER_OPEN, ICON_GLOBE, ICON_POWER, ICON_SETTINGS, ICON_UNINSTALL } from './icons.js';
@@ -8,6 +11,15 @@ import type { PluginInfo, SyncConflict } from './pluginTypes.js';
 import { STATUS_DOT } from './pluginTypes.js';
 import { refreshPluginUI } from './pluginUI.js';
 import { getTauriInvoke } from './tauriIntegration.js';
+
+// HS-8567 — schema for the `sync_records.conflict_data` JSON column as
+// consumed by the conflict-row UI. Each field's value is one of the four
+// scalar JSON primitives we emit on the server.
+const ConflictPrimitiveSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const ConflictRowDataSchema = z.object({
+  local: z.record(z.string(), ConflictPrimitiveSchema),
+  remote: z.record(z.string(), ConflictPrimitiveSchema),
+}).loose();
 
 const CONFIGURE_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>;
 
@@ -432,10 +444,10 @@ async function loadConflicts() {
 }
 
 function createConflictRow(conflict: SyncConflict): HTMLElement {
-  const data = conflict.conflict_data != null && conflict.conflict_data !== '' ? JSON.parse(conflict.conflict_data) as {
-    local: Record<string, string | number | boolean | null>;
-    remote: Record<string, string | number | boolean | null>;
-  } : null;
+  // HS-8567 — zod-validate the conflict_data shape at the parse boundary.
+  const data = (conflict.conflict_data != null && conflict.conflict_data !== '')
+    ? parseJsonOrNull(ConflictRowDataSchema, conflict.conflict_data)
+    : null;
 
   const conflictFields = data
     ? Object.keys(data.local).filter(k => JSON.stringify(data.local[k]) !== JSON.stringify(data.remote[k]))

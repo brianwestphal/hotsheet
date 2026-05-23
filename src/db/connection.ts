@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { PGlite } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { z } from 'zod';
 
 /** HS-7893: schema version stamp written into JSON-format backup files.
  *  Bump this manually whenever `initSchema` adds/removes/renames a column,
@@ -91,16 +92,20 @@ export function readRecoveryMarker(dataDir: string): DbRecoveryMarker | null {
   const path = recoveryMarkerPath(dataDir);
   if (!existsSync(path)) return null;
   try {
+    // HS-8567 — zod-validate the marker file at the parse boundary.
     const raw = readFileSync(path, 'utf8');
     const parsed: unknown = JSON.parse(raw);
-    if (parsed === null || typeof parsed !== 'object') return null;
-    const obj = parsed as Partial<DbRecoveryMarker>;
-    if (typeof obj.corruptPath !== 'string') return null;
-    if (typeof obj.recoveredAt !== 'string') return null;
+    const RecoveryMarkerSchema = z.object({
+      corruptPath: z.string(),
+      recoveredAt: z.string(),
+      errorMessage: z.string().optional(),
+    }).loose();
+    const result = RecoveryMarkerSchema.safeParse(parsed);
+    if (!result.success) return null;
     return {
-      corruptPath: obj.corruptPath,
-      recoveredAt: obj.recoveredAt,
-      errorMessage: typeof obj.errorMessage === 'string' ? obj.errorMessage : '',
+      corruptPath: result.data.corruptPath,
+      recoveredAt: result.data.recoveredAt,
+      errorMessage: result.data.errorMessage ?? '',
     };
   } catch {
     return null;

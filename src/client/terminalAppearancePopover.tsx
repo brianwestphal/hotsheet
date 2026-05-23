@@ -325,11 +325,17 @@ async function clearConfiguredOverride(terminalId: string): Promise<void> {
   } catch { /* ignore */ }
 }
 
-/** Tolerate both native arrays and the pre-HS-6370 stringified form. */
+/** Tolerate both native arrays and the pre-HS-6370 stringified form.
+ *  HS-8567 — keep the outer shape narrow (array of unknown records) and
+ *  rely on per-row checks in the consumer; we don't have a tight schema
+ *  for the heterogeneous terminal-appearance row shape. */
 function parseTerminalsArray(raw: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(raw)) return raw as Array<Record<string, unknown>>;
   if (typeof raw === 'string') {
-    try { return JSON.parse(raw) as Array<Record<string, unknown>>; }
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed as Array<Record<string, unknown>> : [];
+    }
     catch { return []; }
   }
   return [];

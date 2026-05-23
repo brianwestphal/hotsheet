@@ -1,8 +1,18 @@
+import { z } from 'zod';
+
 import { getDb } from './connection.js';
 
 // --- Notes parsing ---
 
 export interface NoteEntry { id: string; text: string; created_at: string }
+
+// HS-8567 — zod-validated note row. `id` is optional because legacy rows
+// (pre-id-generation) lack it; `parseNotes` falls back to generating one.
+const NoteRowSchema = z.object({
+  id: z.string().optional(),
+  text: z.string(),
+  created_at: z.string(),
+}).loose();
 
 let noteCounter = 0;
 export function generateNoteId(): string {
@@ -14,12 +24,19 @@ export function parseNotes(raw: string | null): NoteEntry[] {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      // Auto-assign IDs to legacy notes that don't have one
-      return parsed.map((n: { id?: string; text: string; created_at: string }) => ({
-        id: n.id !== undefined && n.id !== '' ? n.id : generateNoteId(),
-        text: n.text,
-        created_at: n.created_at,
-      }));
+      // HS-8567 — zod-validate each row instead of unchecked param typing.
+      // Auto-assign IDs to legacy notes that don't have one.
+      const out: NoteEntry[] = [];
+      for (const entry of parsed) {
+        const row = NoteRowSchema.safeParse(entry);
+        if (!row.success) continue;
+        out.push({
+          id: row.data.id !== undefined && row.data.id !== '' ? row.data.id : generateNoteId(),
+          text: row.data.text,
+          created_at: row.data.created_at,
+        });
+      }
+      return out;
     }
   } catch { /* not JSON yet */ }
   // Legacy: plain text notes — wrap as a single entry

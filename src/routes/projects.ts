@@ -1,10 +1,12 @@
 import { existsSync } from 'fs';
 import { Hono } from 'hono';
 import { resolve } from 'path';
+import type { z } from 'zod';
 
 import { openInFileManager } from '../open-in-file-manager.js';
 import { addToProjectList, readProjectList, removeFromProjectList, reorderProjectList } from '../project-list.js';
 import { getAllProjects, getProjectBySecret, registerProject, reorderProjects, unregisterProject } from '../projects.js';
+import { type PendingPermissionEntrySchema, PendingPermissionSchema } from '../schemas.js';
 import type { AppEnv } from '../types.js';
 import { notifyChange } from './notify.js';
 import { parseBody, RegisterProjectSchema, ReorderProjectsSchema } from './validation.js';
@@ -149,9 +151,10 @@ projectRoutes.get('/permissions', async (c) => {
 
   const clientVersion = parseInt(c.req.query('v') ?? '0', 10) || 0;
 
-  async function checkAll(): Promise<Record<string, { request_id: string; tool_name: string; description: string; input_preview?: string } | null>> {
+  type PendingEntry = z.infer<typeof PendingPermissionEntrySchema>;
+  async function checkAll(): Promise<Record<string, PendingEntry | null>> {
     const projects = getAllProjects();
-    const result: Record<string, { request_id: string; tool_name: string; description: string; input_preview?: string } | null> = {};
+    const result: Record<string, PendingEntry | null> = {};
     await Promise.all(projects.map(async (p) => {
       const port = getChannelPort(p.dataDir);
       // No channel-port file → channel server has never been connected for
@@ -159,8 +162,11 @@ projectRoutes.get('/permissions', async (c) => {
       if (port === null) { result[p.secret] = null; return; }
       try {
         const res = await fetch(`http://127.0.0.1:${port}/permission`);
-        const data = await res.json() as { pending: { request_id: string; tool_name: string; description: string; input_preview?: string } | null };
-        result[p.secret] = data.pending;
+        // HS-8567 — validate at the wire boundary.
+        const rawJson: unknown = await res.json();
+        const parsed = PendingPermissionSchema.safeParse(rawJson);
+        if (!parsed.success) return; // shape mismatch → omit (channel server unreachable behavior)
+        result[p.secret] = parsed.data.pending;
       } catch {
         // HS-8207 — channel-server unreachable transiently (restart, network
         // blip, slow response getting cancelled). OMIT this project from the

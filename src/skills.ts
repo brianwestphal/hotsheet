@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, relative } from 'path';
+import { z } from 'zod';
 
 import { readFileSettings } from './file-settings.js';
 import type { CategoryDef } from './types.js';
@@ -280,10 +281,20 @@ function ensureClaudePermissions(cwd: string): boolean {
   mkdirSync(claudeDir, { recursive: true });
   const settingsPath = join(claudeDir, 'settings.json');
 
-  let settings: { permissions?: { allow?: string[] }; [key: string]: unknown } = {};
+  // HS-8567 — `.loose()` so unrelated user keys round-trip through the
+  // overwrite. We only validate the shape we mutate (`permissions.allow`).
+  const ClaudeProjectSettingsSchema = z.object({
+    permissions: z.object({
+      allow: z.array(z.string()).optional(),
+    }).loose().optional(),
+  }).loose();
+  type ClaudeProjectSettings = z.infer<typeof ClaudeProjectSettingsSchema>;
+  let settings: ClaudeProjectSettings = {};
   if (existsSync(settingsPath)) {
     try {
-      settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as typeof settings;
+      const raw: unknown = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      const parsed = ClaudeProjectSettingsSchema.safeParse(raw);
+      if (parsed.success) settings = parsed.data;
     } catch { /* corrupt file, overwrite */ }
   }
 

@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
@@ -12,6 +14,12 @@ import { morph } from './reactive.js';
 import { loadTickets } from './ticketList.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
+
+// HS-8567 — wire-boundary schema for the draft-attachment upload response.
+const AttachmentResponseSchema = z.object({
+  id: z.number().int(),
+  original_filename: z.string(),
+}).loose();
 
 const FEEDBACK_PREFIX = 'FEEDBACK NEEDED:';
 const IMMEDIATE_PREFIX = 'IMMEDIATE FEEDBACK NEEDED:';
@@ -271,8 +279,11 @@ export function showFeedbackDialog(
     try {
       const res = await fetch(url, { method: 'POST', body: form, headers });
       if (!res.ok) return;
-      const att = await res.json() as { id: number; original_filename: string };
-      pendingAttachments.push({ id: att.id, original_filename: att.original_filename });
+      // HS-8567 — validate at the wire boundary.
+      const raw: unknown = await res.json();
+      const parsed = AttachmentResponseSchema.safeParse(raw);
+      if (!parsed.success) return;
+      pendingAttachments.push({ id: parsed.data.id, original_filename: parsed.data.original_filename });
       // Uploading a new file resets the "committed" flag — until the
       // next Save Draft / Submit, this attachment is unsaved.
       attachmentsCommitted = false;

@@ -4,6 +4,8 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
+import { PackageVersionSchema, parseJsonOrNull } from './schemas.js';
+
 const DATA_DIR = join(homedir(), '.hotsheet');
 const CHECK_FILE = join(DATA_DIR, 'last-update-check');
 const PACKAGE_NAME = 'hotsheet';
@@ -12,8 +14,9 @@ function getCurrentVersion(): string {
   try {
     // Works both in dev (src/) and built (dist/) — package.json is always one dir up
     const dir = dirname(fileURLToPath(import.meta.url));
-    const pkg = JSON.parse(readFileSync(join(dir, '..', 'package.json'), 'utf-8')) as { version: string };
-    return pkg.version;
+    // HS-8567 — zod-validate the package.json read at the parse boundary.
+    const pkg = parseJsonOrNull(PackageVersionSchema, readFileSync(join(dir, '..', 'package.json'), 'utf-8'));
+    return pkg !== null ? pkg.version : '0.0.0';
   } catch {
     return '0.0.0';
   }
@@ -50,11 +53,9 @@ function fetchLatestVersion(): Promise<string | null> {
       let data = '';
       res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
       res.on('end', () => {
-        try {
-          resolve((JSON.parse(data) as { version: string }).version);
-        } catch {
-          resolve(null);
-        }
+        // HS-8567 — zod-validate the npm registry response.
+        const parsed = parseJsonOrNull(PackageVersionSchema, data);
+        resolve(parsed !== null ? parsed.version : null);
       });
     });
     req.on('error', () => { resolve(null); });

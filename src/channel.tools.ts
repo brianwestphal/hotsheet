@@ -47,17 +47,23 @@ interface ChannelSettings {
   secret: string;
 }
 
+// HS-8567 — strict zod schema for `<dataDir>/settings.json`. Both fields
+// must be present + non-empty for a successful parse; otherwise the caller
+// gets `null` and surfaces a user-readable error.
+const ChannelSettingsSchema = z.object({
+  port: z.number().int().positive(),
+  secret: z.string().min(1),
+}).loose();
+
 /** Read + parse `<dataDir>/settings.json`. Returns null on any error
  *  (missing file, invalid JSON, missing port). The caller surfaces a
  *  user-readable error message via `errorResult`. Pure (modulo fs read)
  *  for testability — the test passes a tmpdir-rooted path. */
 export function loadChannelSettings(dataDir: string): ChannelSettings | null {
   try {
-    const raw = readFileSync(join(dataDir, 'settings.json'), 'utf-8');
-    const parsed = JSON.parse(raw) as { port?: number; secret?: string };
-    if (typeof parsed.port !== 'number' || parsed.port <= 0) return null;
-    if (typeof parsed.secret !== 'string' || parsed.secret === '') return null;
-    return { port: parsed.port, secret: parsed.secret };
+    const raw: unknown = JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf-8'));
+    const result = ChannelSettingsSchema.safeParse(raw);
+    return result.success ? { port: result.data.port, secret: result.data.secret } : null;
   } catch {
     return null;
   }
@@ -510,6 +516,12 @@ export async function callTool(
   name: string,
   args: unknown,
   dataDir: string,
+  // HS-8567 — `globalThis.fetch` returns the standard `Promise<Response>`;
+  // `FetchLike` is our narrowed signature for test-injection. The two are
+  // structurally compatible at every call shape we use; the `as unknown
+  // as` skips a structural-compatibility check that TS can't perform on a
+  // function default. Production callers never pass `fetchFn` so the
+  // narrower signature only matters in tests where the seam is honored.
   fetchFn: FetchLike = globalThis.fetch as unknown as FetchLike,
 ): Promise<ToolCallResult> {
   const tool = TOOLS.find(t => t.name === name);

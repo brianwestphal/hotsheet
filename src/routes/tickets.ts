@@ -24,6 +24,7 @@ import {
 } from '../db/queries.js';
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
+import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import type { AppEnv, Ticket, TicketFilters, TicketStatus } from '../types.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
@@ -170,7 +171,10 @@ ticketRoutes.post('/tickets', async (c) => {
     title = cleanTitle || title;
     let existingTags: string[] = [];
     if (defaults.tags !== undefined) {
-      try { existingTags = JSON.parse(defaults.tags) as string[]; } catch { /* ignore */ }
+      // HS-8567 — zod-validate the parsed JSON; defensive fallback to []
+      // preserves the pre-fix swallow-on-error behavior.
+      const parsedTags = parseJsonOrNull(TagsArraySchema, defaults.tags);
+      if (parsedTags !== null) existingTags = parsedTags;
     }
     for (const tag of bracketTags) {
       if (!existingTags.some(t => t.toLowerCase() === tag.toLowerCase())) existingTags.push(tag);

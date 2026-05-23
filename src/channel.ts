@@ -34,6 +34,7 @@ import {
   unregisterSelf,
 } from './channelRegistry.js';
 import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
+import { HotsheetSettingsSchema } from './schemas.js';
 
 // HS-8346 — bumped from 4 → 5 for the new MCP tool surface (tools/list +
 // tools/call handlers exposing hotsheet_update_ticket / hotsheet_create_ticket /
@@ -192,6 +193,15 @@ const PermissionRespondBodySchema = z.object({
   behavior: z.enum(['allow', 'deny']),
 });
 
+// HS-8567 — schema for `POST /permission/inject`. Mirrors the hand-rolled
+// type checks the route previously performed after a raw `as` cast.
+const PermissionInjectBodySchema = z.object({
+  request_id: z.string().optional(),
+  tool_name: z.string().min(1),
+  description: z.string(),
+  input_preview: z.string(),
+}).loose();
+
 mcp.setNotificationHandler(PermissionRequestSchema, ({ params }) => {
   const t0 = Date.now();
   enqueuePermission({
@@ -306,21 +316,19 @@ const httpServer = createServer(async (req, res) => {
       body += String(chunk);
     }
     try {
-      const payload = JSON.parse(body) as {
-        request_id?: string;
-        tool_name: string;
-        description: string;
-        input_preview: string;
-      };
-      if (typeof payload.tool_name !== 'string' || payload.tool_name === ''
-          || typeof payload.description !== 'string'
-          || typeof payload.input_preview !== 'string') {
+      // HS-8567 — replace `JSON.parse(...) as { … }` + hand-rolled type
+      // checks with a zod parse. The resulting `payload` is fully typed
+      // and impossible to construct when validation fails.
+      const rawPayload: unknown = JSON.parse(body);
+      const payloadResult = PermissionInjectBodySchema.safeParse(rawPayload);
+      if (!payloadResult.success) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'tool_name, description, input_preview required' }));
         return;
       }
+      const payload = payloadResult.data;
       const t0 = Date.now();
-      const requestId = (typeof payload.request_id === 'string' && payload.request_id !== '')
+      const requestId = (payload.request_id !== undefined && payload.request_id !== '')
         ? payload.request_id
         : `sim_${t0.toString(36)}_${Math.random().toString(16).slice(2, 8)}`;
       enqueuePermission({
@@ -385,7 +393,14 @@ const httpServer = createServer(async (req, res) => {
 function notifyMainServer(abortSignal?: AbortSignal): Promise<void> {
   try {
     const settingsPath = join(dataDir, 'settings.json');
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as { port?: number; secret?: string };
+    // HS-8567 — zod-validate the settings file at the parse boundary.
+    const rawSettings: unknown = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    const settingsResult = HotsheetSettingsSchema.safeParse(rawSettings);
+    if (!settingsResult.success) {
+      process.stderr.write(`[notify] settings.json shape invalid\n`);
+      return Promise.resolve();
+    }
+    const settings = settingsResult.data;
     if (settings.port === undefined || settings.port === 0) {
       process.stderr.write(`[notify] no port in settings.json\n`);
       return Promise.resolve();

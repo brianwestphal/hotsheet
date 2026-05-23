@@ -31,6 +31,7 @@ import type { FileHandle } from 'fs/promises';
 import { join } from 'path';
 import { pipeline } from 'stream/promises';
 import { gunzipSync } from 'zlib';
+import { z } from 'zod';
 
 /**
  * Manifest schema version. Incremented when the manifest's shape changes
@@ -476,46 +477,52 @@ function jsonCosaveFilename(tarballFilename: string): string {
   return tarballFilename.replace(/\.tar\.gz$/, '.json.gz');
 }
 
-interface JsonCosaveAttachmentRow {
-  id: number;
-  ticket_id: number;
-  original_filename: string;
-  stored_path: string;
-}
+// HS-8567 — zod-validated cosave shape. The row schema is `.loose()` so
+// extra columns the JSON happens to carry don't break the parse — only the
+// four fields the rebuild actually needs are enforced.
+const JsonCosaveAttachmentRowSchema = z.object({
+  id: z.number(),
+  ticket_id: z.number(),
+  original_filename: z.string(),
+  stored_path: z.string(),
+}).loose();
+type JsonCosaveAttachmentRow = z.infer<typeof JsonCosaveAttachmentRowSchema>;
 
-interface JsonCosave {
-  schemaVersion?: number;
-  exportedAt?: string;
-  // HS-8093 — typed as `unknown[]` (not `JsonCosaveAttachmentRow[]`)
-  // because the JSON co-save is parsed from disk and could be
-  // malformed (truncated write, hand-edited, version drift). The
-  // per-row predicate in `readJsonCosaveAttachmentRows` is the trust
-  // boundary that narrows individual entries to the structured shape.
-  tables?: { attachments?: unknown[] };
-}
+const JsonCosaveSchema = z.object({
+  schemaVersion: z.number().optional(),
+  exportedAt: z.string().optional(),
+  tables: z.object({
+    attachments: z.array(z.unknown()).optional(),
+  }).loose().optional(),
+}).loose();
 
 /**
  * Read + ungzip + parse a `.json.gz` co-save's `attachments` rows. Returns
  * `null` on any failure (missing file, malformed gzip / JSON, missing
  * tables key) — callers treat that as "rebuild not possible from this
  * cosave".
+ *
+ * HS-8567 — replaces the `JSON.parse(...) as JsonCosave` + hand-rolled
+ * per-row predicate with a zod parse. The row-level filter still drops
+ * malformed entries individually so a single bad row doesn't kill the
+ * whole rebuild.
  */
 function readJsonCosaveAttachmentRows(jsonCosavePath: string): JsonCosaveAttachmentRow[] | null {
   if (!existsSync(jsonCosavePath)) return null;
   try {
     const buf = readFileSync(jsonCosavePath);
     const json = gunzipSync(buf).toString('utf-8');
-    const raw = JSON.parse(json) as JsonCosave;
-    const rows = raw.tables?.attachments;
+    const rawJson: unknown = JSON.parse(json);
+    const cosaveResult = JsonCosaveSchema.safeParse(rawJson);
+    if (!cosaveResult.success) return null;
+    const rows = cosaveResult.data.tables?.attachments;
     if (!Array.isArray(rows)) return null;
-    return rows.filter((r): r is JsonCosaveAttachmentRow => {
-      if (typeof r !== 'object' || r === null) return false;
-      const o = r as Record<string, unknown>;
-      return typeof o.id === 'number'
-        && typeof o.ticket_id === 'number'
-        && typeof o.original_filename === 'string'
-        && typeof o.stored_path === 'string';
-    });
+    const out: JsonCosaveAttachmentRow[] = [];
+    for (const r of rows) {
+      const rowResult = JsonCosaveAttachmentRowSchema.safeParse(r);
+      if (rowResult.success) out.push(rowResult.data);
+    }
+    return out;
   } catch {
     return null;
   }

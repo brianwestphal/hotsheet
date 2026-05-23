@@ -1,3 +1,4 @@
+import { NotesArraySchema, parseJsonOrNull } from '../schemas.js';
 import { api } from './api.js';
 import { parseTags } from './detail.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -198,9 +199,9 @@ function printTickets(tickets: Ticket[], format: PrintFormat) {
     body = tickets.map(t => {
       const cat = state.categories.find(c => c.id === t.category);
       const tags = parseTags(t.tags);
-      let notes: { text: string; created_at: string }[] = [];
-      try { notes = JSON.parse(t.notes) as typeof notes; } catch { /* empty */ }
-      if (!Array.isArray(notes)) notes = [];
+      // HS-8567 — zod-validate the notes JSON column.
+      const parsedNotes = parseJsonOrNull(NotesArraySchema, t.notes);
+      const notes: { text: string; created_at: string }[] = parsedNotes ?? [];
 
       return `<div class="print-ticket">
         <div class="print-ticket-header">

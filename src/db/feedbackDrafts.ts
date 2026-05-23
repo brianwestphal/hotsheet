@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import { getDb } from './connection.js';
 
 /**
@@ -51,15 +53,28 @@ export interface SavedPartitions {
 }
 
 function fromRow(row: FeedbackDraftRow): FeedbackDraft {
+  // HS-8567 — zod-validated partitions schema. `.loose()` because we
+  // tolerate forward-compat additions.
+  const PartitionsSchema = z.object({
+    blocks: z.array(z.object({
+      markdown: z.string(),
+      html: z.string(),
+    }).loose()).optional(),
+    inlineResponses: z.array(z.object({
+      blockIndex: z.number(),
+      text: z.string(),
+    }).loose()).optional(),
+    catchAll: z.string().optional(),
+  }).loose();
   let partitions: SavedPartitions = { blocks: [], inlineResponses: [], catchAll: '' };
   try {
-    const parsed = JSON.parse(row.partitions_json) as unknown;
-    if (parsed !== null && typeof parsed === 'object') {
-      const p = parsed as Partial<SavedPartitions>;
+    const raw: unknown = JSON.parse(row.partitions_json);
+    const parsed = PartitionsSchema.safeParse(raw);
+    if (parsed.success) {
       partitions = {
-        blocks: Array.isArray(p.blocks) ? p.blocks : [],
-        inlineResponses: Array.isArray(p.inlineResponses) ? p.inlineResponses : [],
-        catchAll: typeof p.catchAll === 'string' ? p.catchAll : '',
+        blocks: parsed.data.blocks ?? [],
+        inlineResponses: parsed.data.inlineResponses ?? [],
+        catchAll: parsed.data.catchAll ?? '',
       };
     }
   } catch { /* malformed → fall back to empty partitions */ }

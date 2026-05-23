@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { join } from 'path';
+import { z } from 'zod';
 
 import { readFileSettings } from '../file-settings.js';
 import { getGitStatusFiles, runGitFetch } from '../git/status.js';
@@ -7,6 +8,12 @@ import { dropGitStatusCache, ensureGitWatcher, getCachedGitStatus } from '../git
 import { getGitRoot } from '../gitignore.js';
 import { openInFileManager } from '../open-in-file-manager.js';
 import type { AppEnv } from '../types.js';
+
+// HS-8567 — body schema for `POST /api/git/reveal`. Path is optional so the
+// downstream "Invalid path" branch still fires when it's missing.
+const GitRevealBodySchema = z.object({
+  path: z.string().optional(),
+}).loose();
 
 /**
  * HS-7954 — Phase 1 git status route. `GET /api/git/status` returns
@@ -90,8 +97,10 @@ gitRoutes.post('/git/reveal', async (c) => {
   const dataDir = c.get('dataDir');
   const projectRoot = projectRootFromDataDir(dataDir);
   const gitRoot = getGitRoot(projectRoot) ?? projectRoot;
-  const body = await c.req.json().catch(() => null) as { path?: unknown } | null;
-  const rel = body !== null && typeof body.path === 'string' ? body.path : '';
+  // HS-8567 — validate the request body shape at the wire boundary.
+  const rawBody: unknown = await c.req.json().catch(() => null);
+  const bodyResult = GitRevealBodySchema.safeParse(rawBody);
+  const rel = bodyResult.success && bodyResult.data.path !== undefined ? bodyResult.data.path : '';
   if (rel === '' || rel.includes('..') || rel.startsWith('/')) {
     return c.json({ ok: false, error: 'Invalid path' }, 400);
   }

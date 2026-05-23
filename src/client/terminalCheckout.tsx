@@ -44,11 +44,26 @@
  */
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
+import { z } from 'zod';
 
 import type { SafeHtml } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { trackPersistentSlowEvent } from './serverBusyChip.js';
 import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
+
+// HS-8567 — schema for the JSON control message the server-side
+// terminal WebSocket sends ('history' frame, 'exit' frame, future kinds).
+// `.loose()` lets the server add fields without breaking older clients.
+const ControlMessageSchema = z.object({
+  type: z.string().optional(),
+  bytes: z.string().optional(),
+  cols: z.number().optional(),
+  rows: z.number().optional(),
+  noSession: z.boolean().optional(),
+  alive: z.boolean().optional(),
+  exitCode: z.number().optional(),
+  command: z.string().optional(),
+}).loose();
 
 /** Anchor element where the live xterm parks while no consumer is mounting
  *  it. xterm.js requires `term.open(container)` once at construction; we
@@ -77,6 +92,12 @@ type Hs8287Event = { t: number; key: string; ev: string; data: Record<string, un
 const HS8287_RING_MAX = 500;
 function hs8287Push(key: string, ev: string, data: Record<string, unknown> = {}): void {
   if (typeof window === 'undefined') return;
+  // HS-8567 — debug-only window globals (DevTools dump + log ring). Every
+  // field is optional and every read is `?.`-guarded, so a missing /
+  // wrong-typed property degrades to "no debug log" rather than a crash.
+  // Replacing with `instanceof` is moot — there's no constructor for an
+  // object-with-arbitrary-keys; the cast is the only way to extend Window
+  // without polluting the global type for production callers.
   const w = window as unknown as { __hs8287_debug?: boolean; __hs8287_log?: Hs8287Event[] };
   if (w.__hs8287_debug === false) return;
   const log: Hs8287Event[] = w.__hs8287_log ?? (w.__hs8287_log = []);
@@ -91,6 +112,7 @@ function hs8287BufferLineCount(term: XTerm | null): number {
   } catch { return -2; }
 }
 if (typeof window !== 'undefined') {
+  // HS-8567 — debug-only window globals. See rationale on `hs8287Push`.
   const w = window as unknown as {
     __hs8287_dump?: () => Hs8287Event[];
     __hs8287_log?: Hs8287Event[];
@@ -559,7 +581,13 @@ function attachWebSocketToEntry(entry: StackEntry): void {
     }
     if (typeof data === 'string') {
       try {
-        const msg = JSON.parse(data) as { type?: string; bytes?: string; cols?: number; rows?: number; noSession?: boolean };
+        // HS-8567 — zod-validate the WebSocket control message at the parse
+        // boundary. Unknown fields are tolerated (`.loose()`) so the server
+        // can extend the protocol without breaking older clients.
+        const rawJson: unknown = JSON.parse(data);
+        const parsed = ControlMessageSchema.safeParse(rawJson);
+        if (!parsed.success) return;
+        const msg = parsed.data;
         // HS-8044 — fan out the parsed control message to every stack
         // consumer's `onControlMessage` callback BEFORE the module's
         // own history-bytes replay runs. Consumers that need the

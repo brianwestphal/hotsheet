@@ -1,4 +1,7 @@
+import { z } from 'zod';
+
 import { PLUGINS_ENABLED } from '../feature-flags.js';
+import { parseJsonOrNull } from '../schemas.js';
 import { api } from './api.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
@@ -434,11 +437,14 @@ function bindTerminalTab() {
 
 // --- Auto-context settings ---
 
-interface AutoContextEntry {
-  type: 'category' | 'tag';
-  key: string;
-  text: string;
-}
+// HS-8567 — zod schema for the per-project `auto_context` settings JSON.
+const AutoContextEntrySchema = z.object({
+  type: z.enum(['category', 'tag']),
+  key: z.string(),
+  text: z.string(),
+}).loose();
+const AutoContextEntryArraySchema = z.array(AutoContextEntrySchema);
+type AutoContextEntry = z.infer<typeof AutoContextEntrySchema>;
 
 let autoContextEntries: AutoContextEntry[] = [];
 
@@ -450,7 +456,9 @@ function bindAutoContextSettings() {
     try {
       const settings = await api<Record<string, string>>('/settings');
       if (settings.auto_context !== '') {
-        autoContextEntries = JSON.parse(settings.auto_context) as AutoContextEntry[];
+        // HS-8567 — zod-validate the persisted JSON column.
+        const parsed = parseJsonOrNull(AutoContextEntryArraySchema, settings.auto_context);
+        autoContextEntries = parsed ?? [];
       }
     } catch { /* ignore */ }
     renderEntries();

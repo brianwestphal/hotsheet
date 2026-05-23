@@ -1,6 +1,20 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { z } from 'zod';
 
 import { getDb } from './connection.js';
+
+// HS-8567 — zod-validated snapshot shape. Each status counter is optional
+// because legacy snapshots written before a new status was introduced
+// (`backlog` and `archive` were added later) omit the new key. The fromRow
+// helper falls back to 0 for any missing key.
+const SnapshotRowSchema = z.object({
+  not_started: z.number().optional(),
+  started: z.number().optional(),
+  completed: z.number().optional(),
+  verified: z.number().optional(),
+  backlog: z.number().optional(),
+  archive: z.number().optional(),
+}).loose();
 
 interface SnapshotData {
   not_started: number;
@@ -9,6 +23,21 @@ interface SnapshotData {
   verified: number;
   backlog: number;
   archive: number;
+}
+
+function snapshotFromRow(json: string): SnapshotData {
+  let raw: unknown;
+  try { raw = JSON.parse(json); } catch { raw = {}; }
+  const parsed = SnapshotRowSchema.safeParse(raw);
+  const r = parsed.success ? parsed.data : {};
+  return {
+    not_started: r.not_started ?? 0,
+    started: r.started ?? 0,
+    completed: r.completed ?? 0,
+    verified: r.verified ?? 0,
+    backlog: r.backlog ?? 0,
+    archive: r.archive ?? 0,
+  };
 }
 
 /** Record today's ticket counts by status. Runs on server start and can be called periodically. */
@@ -107,7 +136,8 @@ export async function getSnapshots(days: number): Promise<{ date: string; data: 
 
   return result.rows.map(r => ({
     date: r.date,
-    data: JSON.parse(r.data) as SnapshotData,
+    // HS-8567 — zod-validate the snapshot JSON column.
+    data: snapshotFromRow(r.data),
   }));
 }
 

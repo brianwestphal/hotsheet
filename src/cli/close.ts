@@ -9,8 +9,10 @@
  */
 import { execFile } from 'child_process';
 import { resolve } from 'path';
+import { z } from 'zod';
 
 import { isInstanceRunning, readInstanceFile } from '../instance.js';
+import { ErrorBodySchema, ProjectListItemSchema, ProjectRegistrationSchema } from '../schemas.js';
 
 /**
  * Shut down any running Hot Sheet instance and wait for its port to become
@@ -85,8 +87,11 @@ export async function handleClose(dataDir: string, force: boolean): Promise<void
   if (res.ok) {
     console.log(`  Project unregistered from running instance.`);
   } else {
-    const body = await res.json() as { error?: string };
-    console.error(`  Failed to unregister: ${body.error ?? 'Unknown error'}`);
+    // HS-8567 — validate at the wire boundary.
+    const rawErr: unknown = await res.json();
+    const errParsed = ErrorBodySchema.safeParse(rawErr);
+    const errMsg = errParsed.success ? errParsed.data.error : undefined;
+    console.error(`  Failed to unregister: ${errMsg ?? 'Unknown error'}`);
     process.exit(1);
   }
 }
@@ -101,15 +106,30 @@ export async function handleClose(dataDir: string, force: boolean): Promise<void
  * --close to start failing for users on older servers.
  */
 async function confirmCloseAgainstQuitSummary(port: number, secret: string): Promise<boolean> {
-  let summary: { projects: Array<{
-    secret: string; name: string;
-    confirmMode: 'always' | 'never' | 'with-non-exempt-processes';
-    entries: Array<{ terminalId: string; label: string; foregroundCommand: string; isShell: boolean; isExempt: boolean }>;
-  }> };
+  // HS-8567 — explicit zod schema for the wire response.
+  const QuitSummarySchema = z.object({
+    projects: z.array(z.object({
+      secret: z.string(),
+      name: z.string(),
+      confirmMode: z.enum(['always', 'never', 'with-non-exempt-processes']),
+      entries: z.array(z.object({
+        terminalId: z.string(),
+        label: z.string(),
+        foregroundCommand: z.string(),
+        isShell: z.boolean(),
+        isExempt: z.boolean(),
+      }).loose()),
+    }).loose()),
+  }).loose();
+  type QuitSummary = z.infer<typeof QuitSummarySchema>;
+  let summary: QuitSummary;
   try {
     const res = await fetch(`http://localhost:${port}/api/projects/quit-summary`);
     if (!res.ok) return true;
-    summary = await res.json() as typeof summary;
+    const rawJson: unknown = await res.json();
+    const parsed = QuitSummarySchema.safeParse(rawJson);
+    if (!parsed.success) return true;
+    summary = parsed.data;
   } catch {
     return true;
   }
@@ -164,7 +184,14 @@ export async function handleList(port: number): Promise<void> {
     process.exit(1);
   }
 
-  const projects = await res.json() as Array<{ name: string; dataDir: string; ticketCount: number }>;
+  // HS-8567 — validate at the wire boundary.
+  const rawJson: unknown = await res.json();
+  const parsed = z.array(ProjectListItemSchema).safeParse(rawJson);
+  if (!parsed.success) {
+    console.error('Project list response was malformed.');
+    process.exit(1);
+  }
+  const projects = parsed.data;
   if (projects.length === 0) {
     console.log('  No projects registered.');
     return;
@@ -189,12 +216,22 @@ export async function joinRunningInstance(port: number, dataDir: string): Promis
   });
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    console.error(`  Failed to register with running instance: ${body.error ?? 'Unknown error'}`);
+    // HS-8567 — validate at the wire boundary.
+    const rawErr: unknown = await res.json().catch(() => ({}));
+    const errParsed = ErrorBodySchema.safeParse(rawErr);
+    const errMsg = errParsed.success ? errParsed.data.error : undefined;
+    console.error(`  Failed to register with running instance: ${errMsg ?? 'Unknown error'}`);
     process.exit(1);
   }
 
-  const project = await res.json() as { name: string; secret: string };
+  // HS-8567 — validate at the wire boundary.
+  const rawProject: unknown = await res.json();
+  const projectParsed = ProjectRegistrationSchema.safeParse(rawProject);
+  if (!projectParsed.success) {
+    console.error('  Registration response was malformed.');
+    process.exit(1);
+  }
+  const project = projectParsed.data;
   const url = `http://localhost:${port}?project=${project.secret}`;
   console.log(`\n  Joined running Hot Sheet instance on port ${port}`);
   console.log(`  Project: ${project.name}`);

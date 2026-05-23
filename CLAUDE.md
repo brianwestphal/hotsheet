@@ -208,6 +208,34 @@ The app ships in Tauri's WKWebView, which silently no-ops several standard brows
 
 **When writing e2e tests for any prompt flow**, click the in-app overlay's buttons. Do **not** rely on Playwright's `page.on('dialog')` handler — that masks the exact Tauri-silent-no-op regression class this rule exists to catch. If an e2e test finds itself registering a native dialog handler for client code, that client code is the bug.
 
+### Type assertions (`as`) and runtime validation
+
+HS-8567 — the `as` operator is an unchecked assertion. The TypeScript compiler takes our word that the value matches the asserted type, then forgets to check at runtime. When the upstream API changes shape (HS-8562: kerfjs 0.12.0 widened `toElement`'s return type from `HTMLElement` to `Element | DocumentFragment`), every `as HTMLElement` callsite kept compiling and shipped a runtime crash.
+
+**Default to NOT writing `as`.** Reach for it only when none of the safer alternatives fit:
+
+1. **Narrow with a type predicate or `instanceof`** when checking element / class identity. `if (el instanceof HTMLButtonElement)` is both safer and more readable than `(el as HTMLButtonElement)`.
+2. **Validate with zod** when the value crosses a trust boundary (wire, file, DB JSON column). Schemas live in `src/schemas.ts` (cross-cutting) or `src/routes/validation.ts` (server-only HTTP bodies). Use `parseJson(Schema, raw)` / `parseJsonOrNull(Schema, raw)` from `src/schemas.ts` to replace `JSON.parse(x) as Foo`.
+3. **Pass the `schema` parameter** to `api<T>(path, { schema: MySchema })` / `apiWithSecret<T>` / `apiUpload<T>` for response validation. The legacy unvalidated path (no `schema`) still works for not-yet-migrated callers but new code SHOULD pass a schema.
+4. **For raw `fetch(...)` calls**, do `const raw: unknown = await res.json()` then `MySchema.safeParse(raw)`.
+
+When you genuinely need `as`, the rule is: **adjacent runtime check or adjacent comment justifying why the type is provably correct**. The reader of the code should be able to verify the invariant without leaving the screen.
+
+**The ESLint rule (`no-restricted-syntax` in `eslint.config.mjs`) catches the three highest-risk patterns automatically**:
+
+- `JSON.parse(x) as Y` — file/DB read without validation
+- `res.json() as Y` and `await res.json() as Y` — wire boundary without validation
+- Exception: `as unknown` is allowed (intentional erasure prior to a downstream shape check)
+
+**Patterns NOT flagged by the lint rule** (because they have valid use cases) but still subject to the "no bare `as`" preference:
+
+- `as HTMLXxxElement` after `closest()` / `querySelector()` — 183 existing callsites; opportunistic migration to `instanceof` checks is welcome but not required by any single change
+- `as Record<string, unknown>` for local object-key narrowing — 58 existing callsites; same story
+- `as const` — pure type-level narrowing, no runtime concern
+- `as keyof X` / `as Foo[key]` — compiler key-of-type narrowing
+
+**DB JSON column reads** — every `JSON.parse(row.someJsonColumn)` should go through a zod schema. The existing schemas: `NotesArraySchema` (`tickets.notes`), `TagsArraySchema` (`tickets.tags`), `CategoryDefArraySchema` (`settings.categories`), `SnapshotDataSchema` (`daily_stats.data`), `PluginConflictDataSchema` (`sync_records.conflict_data`). Add new ones to `src/schemas.ts` when adding new JSON columns.
+
 ### Requirements Documentation
 
 The `docs/` folder contains numbered requirements documents that describe the application's features and behavior. These are the source of truth for what the app does and should do.

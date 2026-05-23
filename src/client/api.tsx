@@ -1,6 +1,46 @@
+import type { z } from 'zod';
+
+import { ErrorBodySchema } from '../schemas.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { trackServerRequest } from './serverBusyChip.js';
 import { getActiveProject } from './state.js';
+
+/**
+ * HS-8567 — extract the error message from a non-OK response body without
+ * an `as` cast. Tolerates malformed JSON / missing `error` key by falling
+ * back to a generic status-coded message. Centralized so the three
+ * api / apiWithSecret / apiUpload helpers share one parse path.
+ */
+async function extractErrorMessage(res: Response): Promise<string> {
+  let parsed: unknown;
+  try { parsed = await res.json(); } catch { parsed = null; }
+  const result = ErrorBodySchema.safeParse(parsed);
+  const msg = result.success ? result.data.error : undefined;
+  return msg !== undefined && msg !== '' ? msg : `Server returned ${res.status}`;
+}
+
+/**
+ * HS-8567 — parse a response body. If a schema is provided, validate
+ * through it at runtime (throws with a descriptive error on shape
+ * mismatch). If no schema is provided, return the raw decoded JSON as
+ * `T` — that is the LEGACY UNVALIDATED PATH retained for callers that
+ * have not yet been migrated; new code SHOULD pass a schema.
+ */
+async function parseResponseBody<T>(res: Response, schema: z.ZodType<T> | undefined, path: string): Promise<T> {
+  const raw: unknown = await res.json();
+  if (schema === undefined) {
+    // Legacy unvalidated path. HS-8567 follow-ups should migrate every
+    // caller to pass a schema; once all callsites are converted the
+    // schema param becomes required and this branch can be removed.
+    return raw as T;
+  }
+  const result = schema.safeParse(raw);
+  if (!result.success) {
+    const issues = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+    throw new Error(`api(${path}): response shape mismatch — ${issues}`);
+  }
+  return result.data;
+}
 
 export function showErrorPopup(message: string) {
   byIdOrNull('network-error-popup')?.remove();
@@ -64,7 +104,7 @@ function buildHeaders(opts: { body?: unknown; method?: string }): Record<string,
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; schema?: z.ZodType<T> } = {}): Promise<T> {
   // HS-8175 — track every non-long-poll fetch so the global server-busy
   // chip can light up if a request crosses the threshold (3 s).
   const url = buildUrl(path, opts.method);
@@ -76,12 +116,11 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => null) as { error?: string } | null;
-      const message = body?.error ?? `Server returned ${res.status}`;
+      const message = await extractErrorMessage(res);
       if (res.status >= 500) showErrorPopup(message);
       throw new Error(message);
     }
-    return await (res.json() as Promise<T>);
+    return await parseResponseBody<T>(res, opts.schema, path);
   } catch (err) {
     if (err instanceof TypeError) {
       showErrorPopup('Unable to reach the server. It may have been stopped.');
@@ -94,7 +133,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
 
 /** Like `api()`, but uses a specific project secret instead of the active project. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function apiWithSecret<T = any>(path: string, secret: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function apiWithSecret<T = any>(path: string, secret: string, opts: { method?: string; body?: unknown; schema?: z.ZodType<T> } = {}): Promise<T> {
   const url = '/api' + path;
   const done = trackServerRequest(url);
   try {
@@ -108,12 +147,11 @@ export async function apiWithSecret<T = any>(path: string, secret: string, opts:
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => null) as { error?: string } | null;
-      const message = body?.error ?? `Server returned ${res.status}`;
+      const message = await extractErrorMessage(res);
       if (res.status >= 500) showErrorPopup(message);
       throw new Error(message);
     }
-    return await (res.json() as Promise<T>);
+    return await parseResponseBody<T>(res, opts.schema, path);
   } catch (err) {
     if (err instanceof TypeError) {
       showErrorPopup('Unable to reach the server. It may have been stopped.');
@@ -124,7 +162,7 @@ export async function apiWithSecret<T = any>(path: string, secret: string, opts:
   }
 }
 
-export async function apiUpload<T>(path: string, file: File): Promise<T> {
+export async function apiUpload<T>(path: string, file: File, opts: { schema?: z.ZodType<T> } = {}): Promise<T> {
   const url = buildUrl(path, 'POST');
   const done = trackServerRequest(url);
   try {
@@ -137,12 +175,11 @@ export async function apiUpload<T>(path: string, file: File): Promise<T> {
     }
     const res = await fetch(url, { method: 'POST', body: form, headers });
     if (!res.ok) {
-      const body = await res.json().catch(() => null) as { error?: string } | null;
-      const message = body?.error ?? `Server returned ${res.status}`;
+      const message = await extractErrorMessage(res);
       if (res.status >= 500) showErrorPopup(message);
       throw new Error(message);
     }
-    return await (res.json() as Promise<T>);
+    return await parseResponseBody<T>(res, opts.schema, path);
   } catch (err) {
     if (err instanceof TypeError) {
       showErrorPopup('Unable to reach the server. It may have been stopped.');
