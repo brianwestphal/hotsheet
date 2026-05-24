@@ -207,9 +207,19 @@ first snapshot both are null and the line says so rather than rendering a bogus
   snapshot, and a marker + (mocked) toast fire.
 - **Fallback chain (integration).** No `snapshot.tar.gz` → restores from the newest §7
   tier; no tiers either → today's empty-recreate + banner.
-- **Crash-recovery e2e (the HS-8578 SIGKILL harness, reused).** Write rows, SIGKILL,
-  relaunch → assert auto-restore + that loss ≤ the debounce/safety bound. Multi-project
-  + slow-`backupDir` variants.
+- **Crash-recovery e2e (HS-8588).** **Shipped** in `src/db/snapshotCrashRecovery.e2e.test.ts`
+  on the shared `src/spawnTestServer.ts` child-process harness (spawn `tsx src/cli.ts`,
+  drive the real HTTP API, SIGKILL, relaunch). Three cases: (1) **bounded loss** — durable
+  writes captured by the last debounced snapshot survive a SIGKILL + corrupt-cluster
+  relaunch; writes made after that snapshot are the only loss (loss ≤ the un-snapshotted-
+  writes bound); (2) **snapshot freshness wins** — with both a canonical snapshot AND a §7
+  backup tarball present, restore prefers the fresher local snapshot (the slow-`backupDir`
+  intent, tested as the precedence invariant); (3) **multi-project isolation** — two
+  projects in one server each restore their OWN data with no cross-talk. SIGKILL is
+  uncatchable, so `gracefulShutdown`'s final snapshot never runs (the genuine crash shape);
+  the stale `hotsheet.lock` a SIGKILL leaves is cleared in-test (lock stale-detection is
+  orthogonal + unit-covered in `lock.test.ts`). `describe.skipIf(!canSpawnTsxChild)` skips
+  cleanly in tsx-IPC-restricted sandboxes (HS-8202).
 
 ## 73.10 Implementation follow-ups (phased)
 
@@ -230,9 +240,12 @@ first snapshot both are null and the line says so rather than rendering a bogus
   status line), `GET /api/db/snapshot-status` route, `formatSnapshotStatusLine` unit
   tests + a route round-trip test + a Playwright toggle-persistence e2e
   (`e2e/snapshot-protection.spec.ts`, in-app checkbox — no native dialog).
-- **Phase 3 — crash-recovery e2e + hardening** (HS-8588). SIGKILL relaunch harness
-  (shared with HS-8578 if that lands first), multi-project + slow-`backupDir`
-  verification, bounded-loss assertion, doc + AI-summary sync.
+- **Phase 3 — crash-recovery e2e + hardening** (HS-8588). **Shipped.** SIGKILL relaunch
+  harness extracted into the shared `src/spawnTestServer.ts` (also now backing the HS-7934
+  graceful-shutdown e2e), `src/db/snapshotCrashRecovery.e2e.test.ts` with the three cases
+  in §73.9 (bounded loss, snapshot-beats-backup precedence, multi-project isolation),
+  bounded-loss assertion, doc + AI-summary sync. With Phase 3 done, Option D / Snapshot
+  Protection is fully implemented.
 
 ## 73.11 Cross-references
 

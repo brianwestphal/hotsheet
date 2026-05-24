@@ -33,6 +33,7 @@ export default defineConfig({
       exclude: [
         'src/**/*.test.{ts,tsx}',
         'src/test-helpers.ts',
+        'src/spawnTestServer.ts',
         'src/types.ts',
       ],
     },

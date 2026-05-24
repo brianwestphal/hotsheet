@@ -12,40 +12,30 @@
  *   2. SIGINT awaitability — assert the child exits within ~3s.
  *   3. Double-SIGINT escalation — assert exit code 1 on second signal.
  *   4. Concurrent SIGINT + /api/shutdown — assert idempotent single exit.
+ *
+ * The spawn / ready / secret / exit plumbing lives in `src/spawnTestServer.ts`
+ * (shared with the HS-8588 snapshot crash-recovery suite).
  */
-import { type ChildProcess,execFileSync,spawn } from 'child_process';
-import { mkdtempSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { rmSync } from 'fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-const REPO_ROOT = join(import.meta.dirname, '..');
-const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
-
-/** HS-8202 — see `cli.test.ts` for rationale. Restricted sandboxes block
- *  tsx's IPC mkfifo, so all four cases below would EPERM and time out
- *  (4 × 30 s = 120 s of red per full run). Probe once and skip the
- *  describe cleanly when the env can't fork tsx. */
-function probeCanSpawnTsxChild(): boolean {
-  try {
-    execFileSync('npx', ['tsx', '--help'], { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
-    return true;
-  } catch { return false; }
-}
-const canSpawnTsxChild = probeCanSpawnTsxChild();
-
-interface SpawnedHotSheet {
-  proc: ChildProcess;
-  port: number;
-  dataDir: string;
-  homeDir: string;
-  /** Resolves when GET / returns 200, or rejects after `timeoutMs`. */
-  ready: Promise<void>;
-  /** Resolves once `marker` appears in the child's combined stdout/stderr. */
-  waitForOutput: (marker: string, timeoutMs: number) => Promise<void>;
-}
+import {
+  canSpawnTsxChild,
+  postJson,
+  readSecret,
+  type SpawnedHotSheet,
+  spawnHotSheet,
+  waitForExit,
+} from './spawnTestServer.js';
 
 let activeChildren: SpawnedHotSheet[] = [];
+
+/** Spawn + track for afterEach cleanup. */
+function spawnTracked(opts?: Parameters<typeof spawnHotSheet>[0]): SpawnedHotSheet {
+  const child = spawnHotSheet(opts);
+  activeChildren.push(child);
+  return child;
+}
 
 beforeEach(() => {
   activeChildren = [];
@@ -65,130 +55,11 @@ afterEach(() => {
   activeChildren = [];
 });
 
-function pickRandomPort(): number {
-  // Pick from an ephemeral range outside the 4174 / 4190 numbers used by
-  // the dev server + the e2e webServer harness, so a stale instance can't
-  // collide.
-  return 4500 + Math.floor(Math.random() * 1000);
-}
-
-function spawnHotSheet(): SpawnedHotSheet {
-  const port = pickRandomPort();
-  const dataDir = mkdtempSync(join(tmpdir(), 'hs-e2e-lifecycle-'));
-  // Isolate HOME so the child writes its instance.json + projects.json
-  // outside the developer's real ~/.hotsheet/ — multiple concurrent tests
-  // would otherwise stomp the same global file.
-  const homeDir = mkdtempSync(join(tmpdir(), 'hs-e2e-home-'));
-  // Spawn the local node_modules tsx binary directly — `npx` introduces
-  // an extra parent process that proxies signals, which makes
-  // back-to-back SIGINTs unreliable for the double-signal escalation
-  // test. Calling tsx directly puts our cli.ts at PID = child.proc.pid.
-  const tsxBin = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
-  const proc = spawn(tsxBin, [CLI_ENTRY, '--data-dir', dataDir, '--no-open', '--port', String(port)], {
-    cwd: REPO_ROOT,
-    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, PLUGINS_ENABLED: 'false' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  // Buffer stdout/stderr so individual tests can synchronize on log lines
-  // (HS-7939 — the double-SIGINT test waits for `gracefulShutdown(...) — starting`
-  // before firing the second signal, replacing the timing-window guess with a
-  // deterministic stdout-driven handoff).
-  let buffered = '';
-  const waiters: Array<{ marker: string; resolve: () => void }> = [];
-  const onChunk = (c: Buffer | string): void => {
-    const text = typeof c === 'string' ? c : c.toString('utf-8');
-    buffered += text;
-    for (let i = waiters.length - 1; i >= 0; i--) {
-      const w = waiters[i] as { marker: string; resolve: () => void };
-      if (buffered.includes(w.marker)) {
-        w.resolve();
-        waiters.splice(i, 1);
-      }
-    }
-    if (process.env.HS_E2E_DEBUG !== undefined) process.stderr.write(`[child:${port}] ${text}`);
-  };
-  proc.stdout.on('data', onChunk);
-  proc.stderr.on('data', onChunk);
-  proc.on('error', (err) => { console.error(`[child:${port}] spawn error:`, err); });
-  const waitForOutput = (marker: string, timeoutMs: number): Promise<void> => {
-    if (buffered.includes(marker)) return Promise.resolve();
-    return new Promise<void>((resolve, reject) => {
-      const entry = { marker, resolve: () => resolve() };
-      waiters.push(entry);
-      const t = setTimeout(() => {
-        const idx = waiters.indexOf(entry);
-        if (idx >= 0) waiters.splice(idx, 1);
-        reject(new Error(`Timed out after ${timeoutMs}ms waiting for child output to contain: ${marker}`));
-      }, timeoutMs);
-      const wrapped = entry.resolve;
-      entry.resolve = (): void => { clearTimeout(t); wrapped(); };
-    });
-  };
-  const ready = waitForServerReady(port, 30_000);
-  const out: SpawnedHotSheet = { proc, port, dataDir, homeDir, ready, waitForOutput };
-  activeChildren.push(out);
-  return out;
-}
-
-async function waitForServerReady(port: number, timeoutMs: number): Promise<void> {
-  // Use `/api/stats` rather than `/api/poll` — `/api/poll` is a long-poll
-  // endpoint that blocks for up to 30s waiting for a change, which would
-  // hang the readiness probe forever on a fresh database.
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 1000);
-      try {
-        const res = await fetch(`http://localhost:${port}/api/stats`, { signal: ctrl.signal });
-        if (res.ok) return;
-      } finally { clearTimeout(t); }
-    } catch {
-      // Connection refused while the server is starting up.
-    }
-    await new Promise(r => setTimeout(r, 200));
-  }
-  throw new Error(`Hot Sheet child on port ${port} did not become ready within ${timeoutMs}ms`);
-}
-
-function waitForExit(proc: ChildProcess, timeoutMs: number): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  return new Promise((resolve, reject) => {
-    if (proc.exitCode !== null) {
-      resolve({ code: proc.exitCode, signal: proc.signalCode });
-      return;
-    }
-    const t = setTimeout(() => {
-      reject(new Error(`Process did not exit within ${timeoutMs}ms`));
-    }, timeoutMs);
-    proc.once('exit', (code, signal) => {
-      clearTimeout(t);
-      resolve({ code, signal });
-    });
-  });
-}
-
-async function readSecret(dataDir: string): Promise<string> {
-  // The server has already written settings.json by the time `ready`
-  // resolves. We need the secret to send mutation requests.
-  const { readFileSync } = await import('fs');
-  const settings = JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf-8')) as { secret?: string };
-  if (typeof settings.secret !== 'string' || settings.secret === '') {
-    throw new Error('settings.json missing secret');
-  }
-  return settings.secret;
-}
-
-async function postJson(url: string, body: unknown, secret?: string): Promise<Response> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (secret !== undefined) headers['X-Hotsheet-Secret'] = secret;
-  return fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-}
-
 describe.skipIf(!canSpawnTsxChild)('graceful shutdown e2e (HS-7934) (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
   it('round-trip: writes rows, POST /api/shutdown, child exits 0, rows survive into the next spawn', async () => {
-    const child = spawnHotSheet();
+    const child = spawnTracked();
     await child.ready;
-    const secret = await readSecret(child.dataDir);
+    const secret = readSecret(child.dataDir);
 
     // Create three tickets via the API.
     for (const title of ['One', 'Two', 'Three']) {
@@ -214,37 +85,22 @@ describe.skipIf(!canSpawnTsxChild)('graceful shutdown e2e (HS-7934) (skipped: ts
     // rows we just wrote. If `db.close()` had been skipped (pre-HS-7931
     // behavior), the WAL might not have been flushed and freshly-written
     // rows could PANIC the open or be rolled back.
-    const reSpawnDataDir = child.dataDir;
-    const reSpawnPort = pickRandomPort();
-    const reSpawnHome = mkdtempSync(join(tmpdir(), 'hs-e2e-home-'));
-    const reSpawnProc = spawn('npx', ['tsx', CLI_ENTRY, '--data-dir', reSpawnDataDir, '--no-open', '--port', String(reSpawnPort)], {
-      cwd: REPO_ROOT,
-      env: { ...process.env, HOME: reSpawnHome, USERPROFILE: reSpawnHome, PLUGINS_ENABLED: 'false' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    activeChildren.push({
-      proc: reSpawnProc,
-      port: reSpawnPort,
-      dataDir: reSpawnDataDir,
-      homeDir: reSpawnHome,
-      ready: Promise.resolve(),
-      waitForOutput: () => Promise.resolve(),
-    });
+    const reChild = spawnTracked({ dataDir: child.dataDir });
     try {
-      await waitForServerReady(reSpawnPort, 20_000);
-      const res = await fetch(`http://localhost:${reSpawnPort}/api/tickets?status=not_started`);
+      await reChild.ready;
+      const res = await fetch(`http://localhost:${reChild.port}/api/tickets?status=not_started`);
       expect(res.status).toBe(200);
       const body = await res.json() as Array<{ title: string }>;
       const titles = body.map(t => t.title);
       expect(titles).toEqual(expect.arrayContaining(['One', 'Two', 'Three']));
     } finally {
-      reSpawnProc.kill('SIGTERM');
-      await waitForExit(reSpawnProc, 10_000).catch(() => undefined);
+      reChild.proc.kill('SIGTERM');
+      await waitForExit(reChild.proc, 10_000).catch(() => undefined);
     }
   }, 60_000);
 
   it('SIGINT triggers gracefulShutdown and the child exits cleanly with code 0', async () => {
-    const child = spawnHotSheet();
+    const child = spawnTracked();
     await child.ready;
 
     const t0 = Date.now();
@@ -275,7 +131,7 @@ describe.skipIf(!canSpawnTsxChild)('graceful shutdown e2e (HS-7934) (skipped: ts
   // `src/cli.signalEscalation.test.ts`; this test pins the OS-level signal
   // delivery + tsx-envelope path that the unit test cannot reach.
   it('a second SIGINT during graceful shutdown forces exit code 1', async () => {
-    const child = spawnHotSheet();
+    const child = spawnTracked();
     await child.ready;
 
     // Open a long-poll request and DO NOT await it. The server will hold the
@@ -310,9 +166,9 @@ describe.skipIf(!canSpawnTsxChild)('graceful shutdown e2e (HS-7934) (skipped: ts
   }, 30_000);
 
   it('concurrent /api/shutdown + SIGINT collapse to a single shutdown (idempotence)', async () => {
-    const child = spawnHotSheet();
+    const child = spawnTracked();
     await child.ready;
-    const secret = await readSecret(child.dataDir);
+    const secret = readSecret(child.dataDir);
 
     // Race them. The shared `gracefulShutdown` promise means both routes
     // should reach the same single pipeline run.
