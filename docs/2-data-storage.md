@@ -51,8 +51,9 @@
 ### 2.5 Lock File
 
 - A `hotsheet.lock` file prevents multiple instances from using the same database simultaneously.
-- Contains JSON with `pid` and `startedAt`.
+- Contains JSON with `pid`, `startedAt`, and `pidStartTime` (HS-8596 — the lock-writer's process start time from `ps -o lstart`).
 - On startup, checks if the lock holder PID is still alive (signal 0). Stale locks from dead processes are automatically removed.
+- **Recycled-PID guard (HS-8596).** After a hard crash (SIGKILL / power loss) the lock is left behind with the dead instance's PID; if the OS later reassigns that PID to an unrelated live process, the bare signal-0 check would falsely report "another instance is running" and refuse to launch. So when the recorded PID *is* alive, `acquireLock()` also compares its current start time against the lock's recorded `pidStartTime` — a mismatch proves the PID was recycled, so the lock is treated as stale and removed. The check degrades to the conservative PID-alive behavior when start time is unavailable (Windows, or no `ps`) or when reading an older lock that has no `pidStartTime`. The disposition logic is the pure, unit-tested `classifyExistingLock()`.
 - If the lock file belongs to the current process (same PID), `acquireLock()` returns immediately instead of terminating. This allows a project to be re-registered after being removed from a tab without the server killing itself.
 - Lock is cleaned up on process exit.
 

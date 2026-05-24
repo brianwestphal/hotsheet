@@ -101,6 +101,7 @@ npm run test:watch    # Unit tests in watch mode
 npm run test:e2e      # E2E browser tests (Playwright)
 npm run test:fast     # Unit tests + fast E2E (skips GitHub plugin / live integration tests)
 npm run test:e2e:fast # E2E only, skipping GitHub plugin / live integration tests
+npm run test:e2e:docker # E2E in the CI Linux/Chromium container (reproduces CI faithfully; needs Docker). Forwards args: npm run test:e2e:docker -- e2e/foo.spec.ts
 npm run test:all      # Unified coverage: unit + E2E server + E2E browser, merged report
 npm run test:all-including-plugins  # Same as test:all but includes plugin tests in coverage
 ```
