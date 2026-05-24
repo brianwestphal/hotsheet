@@ -11,6 +11,7 @@ import { parseArgs, type ParsedArgs, printUsage } from './cli/args.js';
 import { handleClose, handleList, joinRunningInstance, shutdownRunningInstance } from './cli/close.js';
 import { getDb, setDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
+import { initSnapshotScheduler } from './db/snapshot.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
 import { enrichProcessPath } from './enrich-path.js';
 import { PLUGINS_ENABLED } from './feature-flags.js';
@@ -185,6 +186,7 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
 
   if (demo === null) {
     initBackupScheduler(dataDir);
+    initSnapshotScheduler(dataDir);
     addToProjectList(dataDir);
     console.error(`[post-startup ${elapsed()}] restoring previous projects...`);
     await restorePreviousProjects(dataDir, actualPort);

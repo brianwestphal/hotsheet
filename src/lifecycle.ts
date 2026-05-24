@@ -84,6 +84,7 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   await killShellCommands();
   await destroyTerminals();
   await disposeGitWatchers();
+  await snapshotDatabases();
   await closeDatabases();
   stopFreezeHeartbeat();
   releaseProjectLocks();
@@ -170,6 +171,22 @@ async function destroyTerminals(): Promise<void> {
   } catch (err) {
     // Registry may already be torn down or absent (test environment).
     console.error('[lifecycle] destroyAllTerminals error:', err);
+  }
+}
+
+/** HS-8586 — Snapshot Protection (§73): write a final canonical snapshot for
+ *  every dirty project BEFORE the DBs close, so a clean exit loses nothing.
+ *  Runs after `destroyTerminals` / `disposeGitWatchers` (no new writes can
+ *  arrive) and before `closeDatabases` (the DBs must still be open to dump).
+ *  `snapshotAllForShutdown` also clears the per-project snapshot timers so
+ *  nothing reopens a DB after `closeAllDatabases`. Lazy-imported so unit
+ *  tests of this module don't pull the snapshot module's deps. */
+async function snapshotDatabases(): Promise<void> {
+  try {
+    const { snapshotAllForShutdown } = await import('./db/snapshot.js');
+    await snapshotAllForShutdown();
+  } catch (err) {
+    console.error('[lifecycle] snapshotAllForShutdown error:', err);
   }
 }
 

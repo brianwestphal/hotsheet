@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { type DbRecoveryMarker, formatRecoveryBannerLabel } from './dbRecoveryBanner.js';
+import { type DbRecoveryMarker, formatRecoveryBannerLabel, formatRecoveryToastLabel } from './dbRecoveryBanner.js';
 
 /**
  * HS-7899: the DB-recovery banner is the user's only signal that the
@@ -69,6 +69,45 @@ describe('formatRecoveryBannerLabel (HS-7899)', () => {
     // truncate(text, 120) → at most 120 chars including the ellipsis
     expect(out.length).toBeLessThan(500);
     expect(out).toMatch(/X+…/);
+  });
+});
+
+/** HS-8587 — the auto-restore toast (§73 D2). When the server recovered the
+ *  data on its own (marker carries `restoredFrom`), the client shows this
+ *  success toast instead of the blocking "reset to empty" banner. */
+describe('formatRecoveryToastLabel (HS-8587)', () => {
+  function marker(overrides: Partial<DbRecoveryMarker> = {}): DbRecoveryMarker {
+    return {
+      corruptPath: '/some/path/db-corrupt-1234',
+      recoveredAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+      errorMessage: 'Aborted().',
+      restoredFrom: 'snapshot',
+      restoredTicketCount: 42,
+      ...overrides,
+    };
+  }
+
+  it('names the snapshot source, the relative time, and the ticket count', () => {
+    const out = formatRecoveryToastLabel(marker());
+    expect(out).toMatch(/repaired/i);
+    expect(out).toMatch(/30 minutes ago/);
+    expect(out).toMatch(/snapshot/);
+    expect(out).toMatch(/42 tickets restored/);
+  });
+
+  it('describes a backup-tier source as "backup"', () => {
+    const out = formatRecoveryToastLabel(marker({ restoredFrom: 'backup:5min:2026-05-01T00:00:00Z' }));
+    expect(out).toMatch(/from the latest backup/);
+  });
+
+  it('uses singular "1 ticket restored"', () => {
+    expect(formatRecoveryToastLabel(marker({ restoredTicketCount: 1 }))).toMatch(/1 ticket restored/);
+  });
+
+  it('omits the ticket count when it is absent', () => {
+    const out = formatRecoveryToastLabel(marker({ restoredTicketCount: undefined }));
+    expect(out).not.toMatch(/restored/);
+    expect(out).toMatch(/from the latest snapshot\./);
   });
 });
 

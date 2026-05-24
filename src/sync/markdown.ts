@@ -3,6 +3,7 @@ import { join } from 'path';
 
 import { runWithDataDir } from '../db/connection.js';
 import { getAttachments, getCategories, getSettings, getTickets } from '../db/queries.js';
+import { scheduleSnapshot } from '../db/snapshot.js';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
 // HS-8558 — debounce intervals live in `src/limits.ts`. Aliased here
@@ -77,6 +78,10 @@ export function scheduleOpenTicketsSync(dir?: string) {
 export function scheduleAllSync(dir?: string) {
   scheduleWorklistSync(dir);
   scheduleOpenTicketsSync(dir);
+  // HS-8586 — every ticket mutation that schedules a markdown sync also
+  // schedules a debounced DB snapshot (Snapshot Protection, §73). No-op
+  // when `db_snapshot_protection` is off for the project.
+  scheduleSnapshot(dir);
 }
 
 /** Flush any pending debounced syncs immediately. Call before triggering Claude

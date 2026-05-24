@@ -76,6 +76,14 @@ export interface DbRecoveryMarker {
   recoveredAt: string;
   /** Underlying error message that triggered the recovery, for the UI. */
   errorMessage: string;
+  /** HS-8587 — when the recovery auto-restored from a Snapshot Protection
+   *  source (§73), the source label (`snapshot` / `backup:<tier>:<ts>`).
+   *  Absent means no good source existed and we fell back to an empty
+   *  fresh cluster — the client shows the blocking restore banner in that
+   *  case, but a friendly "recovered from snapshot" toast when present. */
+  restoredFrom?: string;
+  /** HS-8587 — ticket count in the restored cluster, for the toast. */
+  restoredTicketCount?: number;
 }
 
 const RECOVERY_MARKER_FILENAME = '.db-recovery-marker.json';
@@ -99,6 +107,8 @@ export function readRecoveryMarker(dataDir: string): DbRecoveryMarker | null {
       corruptPath: z.string(),
       recoveredAt: z.string(),
       errorMessage: z.string().optional(),
+      restoredFrom: z.string().optional(),
+      restoredTicketCount: z.number().optional(),
     }).loose();
     const result = RecoveryMarkerSchema.safeParse(parsed);
     if (!result.success) return null;
@@ -106,6 +116,8 @@ export function readRecoveryMarker(dataDir: string): DbRecoveryMarker | null {
       corruptPath: result.data.corruptPath,
       recoveredAt: result.data.recoveredAt,
       errorMessage: result.data.errorMessage ?? '',
+      restoredFrom: result.data.restoredFrom,
+      restoredTicketCount: result.data.restoredTicketCount,
     };
   } catch {
     return null;
@@ -258,26 +270,93 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
   const existing = databases.get(dbPath);
   if (existing) return existing;
 
+  let db: PGlite;
   try {
-    return await openAndCacheDb(dbPath);
+    db = await openAndCacheDb(dbPath);
   } catch (err: unknown) {
-    return await recoverFromOpenFailure(dbPath, err);
+    return await recoverFromOpenFailure(dbPath, err, false);
+  }
+  // HS-8587 — integrity probe (§73.5). Catches SILENT corruption: the
+  // cluster opened + `initSchema` applied, but the catalog / `tickets`
+  // table is bad. A failure here forces the recovery path even though
+  // `isRecoverableOpenError` wouldn't match (the open didn't throw).
+  try {
+    await probeIntegrity(db);
+    return db;
+  } catch (probeErr: unknown) {
+    const m = probeErr instanceof Error ? probeErr.message : String(probeErr);
+    console.error('[db] integrity probe failed after open:', m);
+    databases.delete(dbPath);
+    try { await db.close(); } catch { /* already broken */ }
+    return await recoverFromOpenFailure(dbPath, probeErr, true);
   }
 }
 
-async function openAndCacheDb(dbPath: string): Promise<PGlite> {
-  const db = new PGlite(dbPath);
+async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlite> {
+  const db = loadDataDir !== undefined ? new PGlite(dbPath, { loadDataDir }) : new PGlite(dbPath);
   await db.waitReady;
   await initSchema(db);
   databases.set(dbPath, db);
   return db;
 }
 
-async function recoverFromOpenFailure(dbPath: string, err: unknown): Promise<PGlite> {
+/**
+ * HS-8587 — cheap read-only health check run once at open. `SELECT 1`
+ * smoke-tests the connection; `SELECT count(*) FROM tickets` exercises the
+ * catalog + the one table whose loss is unacceptable. Throws on any failure
+ * (PG catalog-corruption errors surface here). Returns the ticket count for
+ * the recovery marker / toast. Deliberately NOT a full `amcheck` — the goal
+ * is to catch the corruption class we actually see, not every theoretical one.
+ */
+async function probeIntegrity(db: PGlite): Promise<number> {
+  await db.query('SELECT 1');
+  const res = await db.query<{ c: number }>("SELECT count(*)::int AS c FROM tickets");
+  return res.rows[0]?.c ?? 0;
+}
+
+/**
+ * HS-8587 — walk the Snapshot Protection restore sources (canonical snapshot
+ * first, then §7 backup tiers newest-first) and `loadDataDir` the first one
+ * that loads + passes the integrity probe into a fresh `db/`. Returns the
+ * live db + the source label + ticket count, or null if no source works.
+ * `restore.js` is imported lazily so the `connection → backup → connection`
+ * static cycle never forms.
+ */
+async function tryRestoreFromSources(dbPath: string, dataDir: string): Promise<{ db: PGlite; label: string; ticketCount: number } | null> {
+  let sources: { path: string; label: string }[];
+  try {
+    const { listRestoreSources } = await import('./restore.js');
+    sources = listRestoreSources(dataDir);
+  } catch (e) {
+    console.error('[db] could not enumerate restore sources:', e);
+    return null;
+  }
+  for (const src of sources) {
+    try {
+      const buffer = readFileSync(src.path);
+      const db = await openAndCacheDb(dbPath, new Blob([buffer]));
+      const ticketCount = await probeIntegrity(db);
+      console.error(`[db] auto-restored from ${src.label} (${ticketCount} tickets)`);
+      return { db, label: src.label, ticketCount };
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      console.error(`[db] restore source ${src.label} did not load: ${m}`);
+      // Un-cache + wipe the partial dir before trying the next source.
+      const bad = databases.get(dbPath);
+      if (bad) { databases.delete(dbPath); try { await bad.close(); } catch { /* ignore */ } }
+      try { rmSync(dbPath, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }
+  return null;
+}
+
+async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover: boolean): Promise<PGlite> {
   const message = err instanceof Error ? err.message : String(err);
   const stack = err instanceof Error ? err.stack : undefined;
 
-  if (!isRecoverableOpenError(err)) throw err;
+  // `forceRecover` is set by the integrity-probe failure path (the cluster
+  // opened, so `isRecoverableOpenError` won't match, but it IS corrupt).
+  if (!forceRecover && !isRecoverableOpenError(err)) throw err;
 
   // HS-7889: surface the underlying error. The previous "appears corrupt"
   // log hid both `err.message` (e.g. "Aborted(). Build with -sASSERTIONS
@@ -289,23 +368,30 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown): Promise<PGl
   // HS-7888 mitigation: a stale postmaster.pid from an unclean shutdown
   // alone can block open even when the data files are healthy. Try
   // removing it and reopening before giving up. Safe because a live
-  // instance is already gated by .hotsheet/.lock at the CLI layer.
-  if (tryRemoveStalePostmasterPid(dbPath)) {
+  // instance is already gated by .hotsheet/.lock at the CLI layer. Only
+  // meaningful for a true OPEN failure — a probe failure means the cluster
+  // already opened, so there's no stale-pid block to clear. HS-8587 also
+  // probes the reopened cluster so the pid-retry can't return a corrupt-
+  // but-openable DB.
+  if (!forceRecover && tryRemoveStalePostmasterPid(dbPath)) {
     try {
-      return await openAndCacheDb(dbPath);
+      const db = await openAndCacheDb(dbPath);
+      await probeIntegrity(db);
+      return db;
     } catch (retryErr: unknown) {
       const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
       console.error('Retry after stale postmaster.pid removal also failed:', retryMessage);
+      const bad = databases.get(dbPath);
+      if (bad) { databases.delete(dbPath); try { await bad.close(); } catch { /* ignore */ } }
     }
   }
 
-  // Last resort. Preserve the original directory so the user can recover
-  // it manually via the disaster-recovery runbook (docs/7-backup-restore.md
-  // §7.8: pg_resetwal + loadDataDir). Never auto-delete — the data may be
-  // 100% recoverable with out-of-band tools, as proven by the 2026-04-27
-  // incident which restored 639/639 tickets.
+  // Preserve the original directory so the user can recover it manually via
+  // the disaster-recovery runbook (docs/7-backup-restore.md §7.8). Never
+  // auto-delete — the data may be 100% recoverable with out-of-band tools,
+  // as proven by the 2026-04-27 incident which restored 639/639 tickets.
   const corruptPath = `${dbPath}-corrupt-${Date.now()}`;
-  console.error(`Database appears to be corrupt. Preserving as ${corruptPath} and recreating...`);
+  console.error(`Database appears to be corrupt. Preserving as ${corruptPath} ...`);
   try {
     renameSync(dbPath, corruptPath);
   } catch (renameErr: unknown) {
@@ -316,11 +402,30 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown): Promise<PGl
     console.error(`Could not preserve corrupt database directory: ${renameMessage}. Aborting auto-recreate to avoid data loss.`);
     throw err;
   }
-  // HS-7899: drop a marker the client polls on launch so the user gets
-  // prompted to restore from backup instead of seeing a silently empty
-  // Hot Sheet. dbPath is `<dataDir>/db`; the marker lives next to other
-  // .hotsheet/ state alongside it.
   const dataDir = dbPath.replace(/[\\/]db$/, '');
+
+  // HS-8587 — Snapshot Protection (§73): before falling back to an empty
+  // cluster, auto-restore from the canonical snapshot, then the §7 backup
+  // tiers. First source that loads + passes the integrity probe wins.
+  const restored = await tryRestoreFromSources(dbPath, dataDir);
+  if (restored !== null) {
+    // Marker carries `restoredFrom` so the client shows a friendly toast
+    // ("Recovered from snapshot — N tickets") instead of the blocking banner.
+    writeRecoveryMarker(dataDir, {
+      corruptPath,
+      recoveredAt: new Date().toISOString(),
+      errorMessage: message,
+      restoredFrom: restored.label,
+      restoredTicketCount: restored.ticketCount,
+    });
+    return restored.db;
+  }
+
+  // No snapshot or backup could be restored — fall back to a fresh empty
+  // cluster + the HS-7899 blocking restore banner (marker without
+  // `restoredFrom`). dbPath is `<dataDir>/db`; the marker lives next to the
+  // other .hotsheet/ state.
+  console.error('No snapshot or backup could be restored; creating a fresh empty database.');
   writeRecoveryMarker(dataDir, {
     corruptPath,
     recoveredAt: new Date().toISOString(),

@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { byIdOrNull } from './dom.js';
+import { showToast } from './toast.js';
 
 /** HS-7899: launch-time banner that appears when the server fell back
  *  to renaming the live `db/` aside as `db-corrupt-<ts>` and creating
@@ -12,6 +13,12 @@ export interface DbRecoveryMarker {
   corruptPath: string;
   recoveredAt: string;
   errorMessage: string;
+  /** HS-8587 — set when the server auto-restored from a Snapshot Protection
+   *  source (§73). Present ⇒ show a friendly toast instead of the blocking
+   *  banner (there's nothing for the user to do). Absent ⇒ empty-recreate
+   *  fallback, show the banner. */
+  restoredFrom?: string;
+  restoredTicketCount?: number;
 }
 
 interface RecoveryStatusResponse {
@@ -44,6 +51,16 @@ function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
+/** HS-8587 — pure formatter for the auto-restore success toast (the case
+ *  where the server recovered the data on its own). Extracted for unit tests. */
+export function formatRecoveryToastLabel(marker: DbRecoveryMarker): string {
+  const when = formatRelativeTime(marker.recoveredAt);
+  const source = marker.restoredFrom === 'snapshot' ? 'snapshot' : 'backup';
+  const count = marker.restoredTicketCount;
+  const ticketPart = typeof count === 'number' ? ` — ${count} ticket${count === 1 ? '' : 's'} restored` : '';
+  return `Database was repaired ${when} from the latest ${source}${ticketPart}.`;
+}
+
 /** Fetch the recovery marker once at boot. If present, show the banner
  *  and wire its two action buttons. Idempotent — calling twice is
  *  harmless because re-fetching with no marker just hides the banner. */
@@ -69,6 +86,20 @@ export async function initDbRecoveryBanner(): Promise<void> {
 
   if (marker === null) {
     banner.style.display = 'none';
+    return;
+  }
+
+  // HS-8587 — auto-restore case (§73): the server already recovered the data
+  // from a snapshot / backup, so there's nothing for the user to act on.
+  // Surface a non-blocking success toast, clear the marker so it doesn't
+  // re-toast on the next boot, and leave the banner hidden. The blocking
+  // banner below is reserved for the no-good-source empty-recreate case.
+  if (marker.restoredFrom !== undefined && marker.restoredFrom !== '') {
+    banner.style.display = 'none';
+    showToast(formatRecoveryToastLabel(marker), { variant: 'success', durationMs: 8000 });
+    void api('/db/dismiss-recovery', { method: 'POST' }).catch((err: unknown) => {
+      console.warn('Could not clear DB recovery marker after auto-restore toast:', err);
+    });
     return;
   }
 

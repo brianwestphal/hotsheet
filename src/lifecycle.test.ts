@@ -44,6 +44,14 @@ vi.mock('./routes/shell.js', () => ({
   killAllRunningShellCommands: () => killAllRunningShellCommandsMock(),
 }));
 
+// HS-8586 — Snapshot Protection adds a final-snapshot step to the pipeline,
+// dynamically imported between terminal/git-watcher teardown and DB close.
+// Mocked so the test default is a no-op + so the ordering test can observe it.
+const snapshotAllForShutdownMock = vi.fn((): Promise<void> => Promise.resolve());
+vi.mock('./db/snapshot.js', () => ({
+  snapshotAllForShutdown: () => snapshotAllForShutdownMock(),
+}));
+
 beforeEach(() => {
   _resetLifecycleForTests();
   removeInstanceMock.mockReset();
@@ -52,6 +60,8 @@ beforeEach(() => {
   destroyAllTerminalsMock.mockReset();
   killAllRunningShellCommandsMock.mockReset();
   killAllRunningShellCommandsMock.mockImplementation(() => Promise.resolve({ killed: 0 }));
+  snapshotAllForShutdownMock.mockReset();
+  snapshotAllForShutdownMock.mockImplementation(() => Promise.resolve());
 });
 
 afterEach(() => {
@@ -76,7 +86,7 @@ function makeFakeServer(closeBehavior: 'immediate' | 'delayed' | 'error' = 'imme
 }
 
 describe('gracefulShutdown (HS-7931)', () => {
-  it('runs every cleanup step in order: http close → shells → terminals → databases → lockfile (HS-8040)', async () => {
+  it('runs every cleanup step in order: http close → shells → terminals → snapshot → databases → lockfile (HS-8040, HS-8586)', async () => {
     const order: string[] = [];
     const server = {
       close: vi.fn((cb?: (err?: Error) => void) => { order.push('http'); cb?.(); }),
@@ -87,6 +97,7 @@ describe('gracefulShutdown (HS-7931)', () => {
       return Promise.resolve({ killed: 0 });
     });
     destroyAllTerminalsMock.mockImplementation(() => { order.push('terminals'); });
+    snapshotAllForShutdownMock.mockImplementation(() => { order.push('snapshot'); return Promise.resolve(); });
     closeAllDatabasesMock.mockImplementation(() => { order.push('databases'); return Promise.resolve(); });
     removeInstanceMock.mockImplementation(() => { order.push('lockfile'); });
 
@@ -97,7 +108,10 @@ describe('gracefulShutdown (HS-7931)', () => {
     // requests can arrive while we're killing) and BEFORE terminals
     // (we kill button-launched processes; terminals are PTY-backed and
     // a separate shutdown path).
-    expect(order).toEqual(['http', 'shells', 'terminals', 'databases', 'lockfile']);
+    // HS-8586 — the final snapshot must come AFTER terminals teardown (no new
+    // writes can arrive) and BEFORE databases close (the DBs must still be
+    // open to dump).
+    expect(order).toEqual(['http', 'shells', 'terminals', 'snapshot', 'databases', 'lockfile']);
   });
 
   // HS-8040 — pipeline doesn't wedge if the shell-kill step throws.

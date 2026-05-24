@@ -4,6 +4,7 @@ import { resolve } from 'path';
 import { getBackupTimers, initBackupScheduler } from './backup.js';
 import { getDbForDir, runWithDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
+import { initSnapshotScheduler } from './db/snapshot.js';
 import { ensureSecret, readFileSettings, writeFileSettings } from './file-settings.js';
 import { acquireLock } from './lock.js';
 import { ensureSkillsForDir, initSkills, setSkillCategories } from './skills.js';
@@ -75,6 +76,8 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
 
   // Initialize backup scheduler
   initBackupScheduler(absDataDir);
+  // HS-8586 — start the Snapshot Protection safety-floor timer (§73).
+  initSnapshotScheduler(absDataDir);
 
   // Use appName from settings if set, otherwise derive from directory name
   const fileSettings = readFileSettings(absDataDir);
