@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { bindDbRepairUI, refreshDbRepairStatus } from './dbRepairUI.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
+import { bindSnapshotProtectionUI, refreshSnapshotProtectionStatus } from './snapshotProtectionUI.js';
 import type { Ticket } from './state.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
@@ -52,6 +53,8 @@ export async function loadBackupList(): Promise<void> {
   // HS-7897: Settings → Backups also hosts the Database Repair panel; refresh
   // its status pill whenever the backup list reloads (i.e. each Settings open).
   void refreshDbRepairStatus();
+  // HS-8594: same tab hosts the Snapshot Protection toggle + status line.
+  void refreshSnapshotProtectionStatus();
   const container = byIdOrNull('backup-list');
   if (!container) return;
 
@@ -185,6 +188,9 @@ export function bindBackupsUI(): void {
   // HS-7897: Database Repair panel lives in the same Settings → Backups
   // tab; bind its buttons here so the wiring runs once at app init.
   bindDbRepairUI();
+  // HS-8594: Snapshot Protection toggle lives in the same tab — bind its
+  // change handler once here too.
+  bindSnapshotProtectionUI();
 
   // HS-8468 — delegated click handler for backup rows. Single listener
   // on the container survives every `loadBackupList()` rebuild (rows

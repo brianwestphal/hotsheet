@@ -108,7 +108,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `plugins.ts` | `GET /api/plugins`, `/ui`, `:id/{action,validate,config,test}`, `/sync/manual`, conflicts, schedules, `global-config`, `image-proxy`, bundled install |
 | `shell.ts` | `POST /api/shell/exec`, `/shell/kill`, `GET /api/shell/running`. HS-8040 added the `killAllRunningShellCommands({gracePeriodMs?})` non-route export consumed by `lifecycle.ts::killShellCommands()` — SIGTERMs every entry in the module-private `runningProcesses` map, waits the grace period (default 1000 ms), SIGKILLs anything still alive. Returns `{killed: number}`. Adds each id to `killedProcesses` so the close-handler logs read "Canceled" not "Killed by SIGTERM". `_runningShellCommandCountForTesting()` exposes the map size to tests without leaking the map itself. |
 | `backups.ts` | `GET /api/backups`, `POST /api/backups/restore/:id`, preview flow |
-| `db.ts` | HS-7899 `GET /api/db/recovery-status` + `POST /api/db/dismiss-recovery` for the launch-time recovery banner; HS-7897 `POST /api/db/repair/find-working-backup` + `GET /api/db/repair/pg-resetwal-availability` + `POST /api/db/repair/run-pg-resetwal` for the Database Repair panel |
+| `db.ts` | HS-7899 `GET /api/db/recovery-status` + `POST /api/db/dismiss-recovery` for the launch-time recovery banner; HS-7897 `POST /api/db/repair/find-working-backup` + `GET /api/db/repair/pg-resetwal-availability` + `POST /api/db/repair/run-pg-resetwal` for the Database Repair panel; **HS-8594 `GET /api/db/snapshot-status`** (returns `getSnapshotStatus(dataDir)` `{ lastSnapshotAt, lastSizeBytes }`) for the §73.6 Snapshot Protection status line |
 | `projects.ts` | `/api/projects` register/list/unregister, reorder, per-project channel-status, `/api/projects/permissions` long-poll, `/api/projects/bell-state` long-poll (HS-6638 §24.3.3 — aggregates per-project `bellPending`). HS-8378 — new `/api/projects/feedback-state` aggregator: per-project boolean indicating whether any non-deleted ticket has a FEEDBACK NEEDED / IMMEDIATE FEEDBACK NEEDED prompt as its most recent note. Implementation in `src/feedback-state.ts::projectHasPendingFeedback(db)` (SQL `LIKE` pre-filter + per-row `notesEndWithFeedback` JSON parse). Drives cross-project tab purple dot. |
 | `terminal.ts` | `GET /api/terminal/list` (includes `bellPending`), `/status`, `/restart`, `/kill`, `/create`, `/destroy`, `/clear-bell` (HS-6638 §24.3.2), `/foreground-process` (HS-7596), `/command-suggestions` (HS-7791), `/prompt-respond`, `/prompt-dismiss`, `/prompt-resume` (HS-8034 server-side prompt scanner) |
 | `git.ts` | HS-7954-7956 git status tracker — `GET /api/git/status` (branch + working-tree dirty + ahead/behind), `POST /api/git/fetch` (manual fetch), `POST /api/git/auto-fetch` (timer endpoint). 500 ms cache + chokidar watcher on `.git/index` + `.git/HEAD` |
@@ -167,6 +167,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `dashboardMode.tsx` | Layout toggle for §25 dashboard (sectioned vs flow) |
 | `dbRecoveryBanner.tsx` | HS-7899 launch-time recovery banner |
 | `dbRepairUI.tsx` | Settings → Database Repair (HS-7897) |
+| `snapshotProtectionUI.tsx` | Settings → Backups "Snapshot protection" subsection (HS-8594 / §73.6) — toggle bound to `db_snapshot_protection` + status line from `GET /api/db/snapshot-status`; `formatSnapshotStatusLine` pure formatter. Wired from `backups.tsx` |
 | `detail.tsx` | Detail panel — title / details / notes / megaphone / resize / stats |
 | `dom.ts` | `toElement(<jsx/>)` helper — single source of JSX → DOM conversion. **HS-8241 (2026-05-09)** — routed through `kerfjs::toElement` so SVG roots / fragments get correct XML-namespace parsing via `DOMParser('image/svg+xml')` (the §62 bug class — pre-fix orphan SVG fragments through `<template>.innerHTML` silently produced `HTMLUnknownElement` and never painted). For HTML JSX (the dominant case), kerf falls back to the same `<template>.innerHTML` path Hot Sheet's local pre-fix implementation used — byte-for-byte equivalent. Return type kept as `HTMLElement` for backwards-compat with the 244 existing call-sites. Plus typed `byId` / `byIdOrNull` / `requireChild` helpers (HS-8083 / HS-8092). 16 cases in `dom.test.tsx` (renamed from `.ts` to allow the new SVG-bug-class tests to use JSX). |
 | `draftRow.tsx` | New-ticket inline-create row at the top of the list. HS-8375 — `syncDraftBadge(category)` repaints the badge in place after a type-dropdown selection (the post-HS-833x bindList draft-row mount-once means `renderTicketList` no longer rebuilds the draft row). |
@@ -358,7 +359,7 @@ When `IntersectionObserver` is undefined (some test envs without a polyfill), th
 
 **Tagging / notes / print / clipboard:** `tags.tsx`, `tagsDialog.tsx`, `tagAutocomplete.tsx`, `noteRenderer.tsx`, `print.tsx`, `clipboard.ts`, `clipboardUtil.tsx`, `imageProxy.tsx`.
 
-**Settings / backups / icons:** `settingsDialog.tsx`, `settingsLoader.tsx`, `settingsCategories.tsx`, `experimentalSettings.tsx`, `iconPicker.tsx`, `backups.tsx`, `dbRecoveryBanner.tsx` (HS-7899 launch-time prompt), `dbRepairUI.tsx` (HS-7897 Settings → Database Repair panel), `openFolder.tsx`.
+**Settings / backups / icons:** `settingsDialog.tsx`, `settingsLoader.tsx`, `settingsCategories.tsx`, `experimentalSettings.tsx`, `iconPicker.tsx`, `backups.tsx`, `dbRecoveryBanner.tsx` (HS-7899 launch-time prompt), `dbRepairUI.tsx` (HS-7897 Settings → Database Repair panel), `snapshotProtectionUI.tsx` (HS-8594 Settings → Backups Snapshot Protection toggle + status line), `openFolder.tsx`.
 
 **Dialogs / overlays:** `confirm.tsx` — `confirmDialog({message, title?, confirmLabel?, cancelLabel?, danger?}) → Promise<boolean>` in-app replacement for `window.confirm`, which is a silent no-op in Tauri WKWebView (always returns false without showing a dialog). Use this for every yes/no prompt.
 
@@ -449,7 +450,7 @@ All API calls require header `X-Hotsheet-Secret: <settings.secret>` for non-loca
 
 **Git (HS-7598):** `GET /api/git/status` (optional `?files=true` for the popover bucket lists), `POST /api/git/fetch`, `POST /api/git/reveal` (opens a path under the git root in the OS file manager).
 
-**Database (HS-7897 / HS-7899):** `GET /api/db/recovery-status`, `POST /api/db/dismiss-recovery`, `POST /api/db/repair/find-working-backup`, `GET /api/db/repair/pg-resetwal-availability`, `POST /api/db/repair/run-pg-resetwal`.
+**Database (HS-7897 / HS-7899 / HS-8594):** `GET /api/db/recovery-status`, `POST /api/db/dismiss-recovery`, `POST /api/db/repair/find-working-backup`, `GET /api/db/repair/pg-resetwal-availability`, `POST /api/db/repair/run-pg-resetwal`, `GET /api/db/snapshot-status` (§73.6 Snapshot Protection status line).
 
 **Diagnostics (HS-8054 v3):** `POST /api/diagnostics/freeze` (client posts long-task / heartbeat events; server appends to `<dataDir>/freeze.log`).
 

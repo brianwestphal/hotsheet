@@ -4,6 +4,7 @@ import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { clearRecoveryMarker, readRecoveryMarker } from '../db/connection.js';
+import { _resetSnapshotStateForTests, writeSnapshotNow } from '../db/snapshot.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
 import { dbRoutes } from './db.js';
@@ -123,5 +124,36 @@ describe('dbRoutes — Repair (HS-7897)', () => {
     // Backup field always present so the client doesn't have to handle a
     // missing key separately from an explicit null.
     expect('backup' in data).toBe(true);
+  });
+});
+
+/** HS-8594: GET /api/db/snapshot-status backs the Settings → Backups
+ *  "Snapshot protection" status line (docs/73-snapshot-protection.md §73.6).
+ *  It's a thin pass-through to `getSnapshotStatus`; these tests pin that it
+ *  returns the `{ lastSnapshotAt, lastSizeBytes }` shape (both null before
+ *  the first snapshot) and reflects real metadata after a snapshot lands. */
+describe('dbRoutes — snapshot-status (HS-8594)', () => {
+  interface SnapshotStatusResponse { lastSnapshotAt: number | null; lastSizeBytes: number | null }
+
+  it('returns nulls before any snapshot has been written', async () => {
+    _resetSnapshotStateForTests();
+    const res = await app.request('/api/db/snapshot-status');
+    expect(res.status).toBe(200);
+    const data = await res.json() as SnapshotStatusResponse;
+    expect(data.lastSnapshotAt).toBeNull();
+    expect(data.lastSizeBytes).toBeNull();
+  });
+
+  it('reflects the real metadata after a snapshot is written', async () => {
+    _resetSnapshotStateForTests();
+    const result = await writeSnapshotNow(tempDir);
+    expect(result).not.toBeNull();
+
+    const res = await app.request('/api/db/snapshot-status');
+    expect(res.status).toBe(200);
+    const data = await res.json() as SnapshotStatusResponse;
+    expect(typeof data.lastSnapshotAt).toBe('number');
+    expect(data.lastSizeBytes).toBe(result?.sizeBytes);
+    expect((data.lastSizeBytes ?? 0)).toBeGreaterThan(0);
   });
 });

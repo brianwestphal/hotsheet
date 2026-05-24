@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 
 import { clearRecoveryMarker, readRecoveryMarker } from '../db/connection.js';
 import { findWorkingBackup, getResetwalAvailability, runResetwalAndDump } from '../db/repair.js';
+import { getSnapshotStatus } from '../db/snapshot.js';
 import type { AppEnv } from '../types.js';
 
 /** HS-7899: routes for the launch-time DB-recovery banner. The marker
@@ -24,6 +25,18 @@ dbRoutes.post('/dismiss-recovery', (c) => {
   const dataDir = c.get('dataDir');
   clearRecoveryMarker(dataDir);
   return c.json({ ok: true });
+});
+
+// HS-8594: Snapshot Protection status for the Settings → Backups toggle —
+// see docs/73-snapshot-protection.md §73.6.
+
+/** Last-snapshot metadata for the "Snapshot protection" status line.
+ *  `getSnapshotStatus` reads the in-memory writer state populated by the
+ *  HS-8586 snapshot writer; both fields are null until the first snapshot
+ *  of the current session lands. */
+dbRoutes.get('/snapshot-status', (c) => {
+  const dataDir = c.get('dataDir');
+  return c.json(getSnapshotStatus(dataDir));
 });
 
 // HS-7897: Repair Database routes — see docs/42-repair-database.md.

@@ -158,7 +158,14 @@ to catch the corruption class we actually see, not to run a full `amcheck`.
 
 Settings → Backups gains a "Snapshot protection" subsection (sits naturally beside the
 §42 Database Repair subsection): the toggle + a status line ("Last snapshot: HH:MM ·
-N KB").
+N KB"). **Shipped (HS-8594).** The checkbox (`#settings-snapshot-protection`) is bound to
+`db_snapshot_protection` and PATCHes `/api/file-settings` on change (default-on hydration
+reads the same key back, treating only an explicit stored `false` as off). The status line
+(`#settings-snapshot-status`) is fed by `GET /api/db/snapshot-status`, which returns
+`getSnapshotStatus(dataDir)` (`{ lastSnapshotAt, lastSizeBytes }`); before the session's
+first snapshot both are null and the line says so rather than rendering a bogus
+"00:00 · 0 B". Client lives in `src/client/snapshotProtectionUI.tsx` (sibling of
+`dbRepairUI.tsx`), wired from `bindBackupsUI` / `loadBackupList` in `backups.tsx`.
 
 ## 73.7 Relationship to the existing stack
 
@@ -218,6 +225,11 @@ N KB").
   integration tests + 4 toast-formatter tests. **The Settings → Backups subsection (toggle
   + status line + `GET /api/db/snapshot-status`) was split to HS-8594** — it's client UI
   needing browser/Tauri verification, kept separate from the safety-critical server path.
+- **Settings → Backups subsection** (HS-8594, split from Phase 2). **Shipped.**
+  `src/client/snapshotProtectionUI.tsx` (toggle bound to `db_snapshot_protection` +
+  status line), `GET /api/db/snapshot-status` route, `formatSnapshotStatusLine` unit
+  tests + a route round-trip test + a Playwright toggle-persistence e2e
+  (`e2e/snapshot-protection.spec.ts`, in-app checkbox — no native dialog).
 - **Phase 3 — crash-recovery e2e + hardening** (HS-8588). SIGKILL relaunch harness
   (shared with HS-8578 if that lands first), multi-project + slow-`backupDir`
   verification, bounded-loss assertion, doc + AI-summary sync.

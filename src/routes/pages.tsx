@@ -595,6 +595,17 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint" id="settings-backup-dir-hint">Leave empty to use the default location inside the data directory.</span>
               </div>
               <div id="backup-list" className="backup-list">Loading backups...</div>
+              {/* HS-8594 — Snapshot Protection subsection (docs/73-snapshot-protection.md §73.6).
+                  Toggle is bound to the `db_snapshot_protection` file-setting (default on);
+                  the status line is fed by GET /api/db/snapshot-status. */}
+              <div className="settings-section-header" style="margin-top:24px">
+                <h3>Snapshot protection</h3>
+              </div>
+              <p className="settings-hint">Keeps one atomically-written snapshot of this project's database and auto-restores it on startup if the live database is found corrupt. The snapshot is refreshed shortly after each change, on a periodic safety timer, and on a clean shutdown.</p>
+              <div className="settings-field settings-field-checkbox">
+                <label><input type="checkbox" id="settings-snapshot-protection" /> Protect this project's database with snapshots</label>
+                <span className="settings-hint" id="settings-snapshot-status">Checking snapshot status…</span>
+              </div>
               <div className="settings-section-header" style="margin-top:24px">
                 <h3>Database Repair</h3>
               </div>
