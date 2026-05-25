@@ -356,6 +356,17 @@ interface StackEntry {
    *  inside the history-frame handler — non-noSpawn entries never see
    *  `noSession: true` and shouldn't pay attention to the field. */
   noSpawn: boolean;
+  /** HS-8610 — true while `applyHistoryReplay` is writing the server's
+   *  scrollback into xterm. The replayed bytes can contain device-status
+   *  QUERIES the foreground program emitted before the disconnect
+   *  (`\x1b[?6n` DECXCPR, `\x1b[6n` CPR, `\x1b[c` DA, `\x1b]11;?` OSC color,
+   *  …); xterm parses them and auto-emits the REPLY via `term.onData`,
+   *  which the keystroke pipe below would send to the PTY — landing as
+   *  garbage like `?49;86R` / `3R3R` in the foreground program's input on
+   *  every tab switch. While this flag is set, `term.onData` drops the
+   *  data (the user isn't typing during a programmatic replay, so nothing
+   *  real is lost). */
+  replaying: boolean;
   /** HS-8175 — `Date.now()` at the most recent keystroke send (`term.onData`).
    *  0 means no keystroke has been sent on this entry. */
   lastTypeTs: number;
@@ -437,6 +448,7 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
     lastAppliedRows: rows,
     stack: [],
     intentionallyClosing: false,
+    replaying: false,
     noSpawn,
     lastTypeTs: 0,
     lastEchoTs: 0,
@@ -451,6 +463,14 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
   // doesn't capture the original WS reference.
   const encoder = new TextEncoder();
   term.onData((data) => {
+    // HS-8610 — drop xterm's automatic replies to device-status queries
+    // (CPR / DECXCPR / DA / OSC color, …) that the foreground program
+    // emitted before a disconnect and that ride back in the replayed
+    // scrollback. During `applyHistoryReplay` these would otherwise be
+    // piped to the PTY as if typed, surfacing as `?49;86R` / `3R3R`
+    // garbage in the input line on tab switches. The user can't be typing
+    // during a synchronous programmatic replay, so nothing real is lost.
+    if (entry.replaying) return;
     const ws = entry.ws;
     let sent = false;
     if (ws !== null && ws.readyState === WebSocket.OPEN) {
@@ -776,7 +796,15 @@ export function applyHistoryReplay(
     const binary = atob(msg.bytes);
     const buf = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
-    entry.term.write(buf);
+    // HS-8610 — gate the keystroke pipe across the write. xterm emits its
+    // auto-replies to any device-status queries in `buf` via `term.onData`
+    // DURING the write's parse pass (synchronously, before the write
+    // callback), so holding `replaying` true from just before the write
+    // until the write callback reliably suppresses every reply regardless
+    // of how many chunks xterm splits the buffer into. (The preceding
+    // `reset()` / `clear()` / `resize()` calls don't generate `onData`.)
+    entry.replaying = true;
+    entry.term.write(buf, () => { entry.replaying = false; });
     hs8287Push(dbgKey, 'history.written', {
       writtenBytes: buf.length,
       bufLinesAfterWrite: hs8287BufferLineCount(entry.term),

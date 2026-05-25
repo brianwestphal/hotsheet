@@ -1455,3 +1455,82 @@ describe('history-frame replay through the WS message handler (HS-8597)', () => 
     h.release();
   });
 });
+
+/**
+ * HS-8610 — switching tabs surfaced garbage like `?49;86R` / `3R3R` in the
+ * foreground program's input. Root cause: the replayed scrollback contains
+ * device-status QUERIES the program emitted before the disconnect (e.g.
+ * `\x1b[?6n` DECXCPR); xterm parses them on replay and auto-emits the REPLY
+ * via `term.onData`, which the keystroke pipe sent to the PTY as input. The
+ * fix gates `term.onData` behind `entry.replaying`, set around the replay
+ * write.
+ */
+describe('device-status reply suppression during replay (HS-8610)', () => {
+  /** A fake OPEN socket so the `term.onData` keystroke pipe is observable
+   *  (happy-dom's real WebSocket stays CONNECTING and never reports OPEN). */
+  function fakeOpenWs(): { readyState: number; send: ReturnType<typeof vi.fn> } {
+    return { readyState: WebSocket.OPEN, send: vi.fn() };
+  }
+
+  it('drops term.onData while entry.replaying is true, and pipes it otherwise', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 'dyn-x', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 'dyn-x')!;
+    const ws = fakeOpenWs();
+    entry.ws = ws as unknown as WebSocket;
+
+    // Not replaying → a typed byte reaches the socket.
+    entry.replaying = false;
+    h.term.input('x');
+    expect(ws.send).toHaveBeenCalledTimes(1);
+
+    // Replaying → onData (e.g. an auto-reply to a device-status query in the
+    // replayed bytes) is dropped, NOT sent to the PTY.
+    ws.send.mockClear();
+    entry.replaying = true;
+    h.term.input('\x1b[?49;86R'); // shaped like the DECXCPR reply from the bug
+    expect(ws.send).not.toHaveBeenCalled();
+
+    entry.replaying = false;
+    h.release();
+  });
+
+  it('applyHistoryReplay holds replaying across the write and clears it after', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 'dyn-y', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 'dyn-y')!;
+
+    let replayingDuringWrite: boolean | null = null;
+    const writeSpy = vi.spyOn(entry.term, 'write').mockImplementation(((data: string | Uint8Array, cb?: () => void) => {
+      replayingDuringWrite = entry.replaying;
+      if (typeof cb === 'function') cb();
+      return true;
+    }) as typeof entry.term.write);
+
+    applyHistoryReplay(entry, { bytes: btoa('\x1b[?6n'), cols: 80, rows: 24 });
+
+    expect(writeSpy).toHaveBeenCalled();
+    expect(replayingDuringWrite).toBe(true);   // flag set while the bytes are parsed
+    expect(entry.replaying).toBe(false);       // cleared by the write callback
+
+    writeSpy.mockRestore();
+    h.release();
+  });
+
+  it('does not pipe any data to the PTY when replaying scrollback that contains a device-status query', async () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 'dyn-z', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 'dyn-z')!;
+    const ws = fakeOpenWs();
+    entry.ws = ws as unknown as WebSocket;
+
+    // Replay a buffer whose tail is a cursor-position query. Any reply xterm
+    // generates fires while `replaying` is true → must be suppressed.
+    applyHistoryReplay(entry, { bytes: btoa('done\r\n\x1b[6n'), cols: 80, rows: 24 });
+    // Let the async write flush + the (suppressed) reply fire.
+    await new Promise<void>(res => setTimeout(res, 0));
+
+    expect(ws.send).not.toHaveBeenCalled();
+    h.release();
+  });
+});
