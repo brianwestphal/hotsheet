@@ -37,6 +37,16 @@ export interface GroupingSelectOptions {
    *  HS-8406 there was a single global active id so no scope was
    *  threaded; this resolver replaces that. */
   getScopeKey: () => string;
+  /** HS-8589 — is the OWNING surface (terminal dashboard / drawer-grid)
+   *  currently active? `refreshGroupingSelect` is driven by the
+   *  hidden-change subscription, which fires on EVERY visibility mutation
+   *  regardless of which view is on screen. The dashboard's `<select>`
+   *  lives in the always-present top toolbar, so without this gate a
+   *  visibility toggle (or the boot-time hydration) while the user is in
+   *  the tickets view would set `display: ''` and leak the dropdown into
+   *  the ticket toolbar (the reported bug). Visibility now requires the
+   *  surface to be active AND more than one grouping to exist. */
+  isActive: () => boolean;
 }
 
 /** Re-render a grouping select against the current global state. Returns
@@ -44,7 +54,11 @@ export interface GroupingSelectOptions {
  *  grouping (per the §39 dropdown-only-with-multiple rule). */
 export function refreshGroupingSelect(opts: GroupingSelectOptions): { count: number } {
   const groupings = getGroupings();
-  if (groupings.length <= 1) {
+  // HS-8589 — hide whenever the owning surface is inactive (the select would
+  // otherwise leak into the tickets view, since it lives in the always-present
+  // toolbar and this runs from the global hidden-change subscription) OR when
+  // there's only the Default grouping.
+  if (!opts.isActive() || groupings.length <= 1) {
     opts.selectEl.style.display = 'none';
     opts.selectEl.replaceChildren();
     return { count: groupings.length };

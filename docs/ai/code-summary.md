@@ -246,7 +246,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `uiTimings.ts` | HS-8191 named timing constants — `TOAST_AUTOHIDE_MS`, `BUTTON_BUSY_MS`, `POPOVER_CLOSE_DELAY_MS`, `SHAKE_DURATION_MS`, `COPIED_GLYPH_FLASH_MS`, `BLUR_DEBOUNCE_MS` |
 | `undo/` | Undo-action types + handlers (notes / status / category) |
 | `upgradeNudge.tsx` | §50 npm → Tauri upgrade nudge overlay |
-| `visibilityGroupings.ts` / `visibilityGroupingSelect.tsx` | §39 visibility-grouping pure state helpers + `<select>` wiring |
+| `visibilityGroupings.ts` / `visibilityGroupingSelect.tsx` | §39 visibility-grouping pure state helpers + `<select>` wiring. **HS-8589 (2026-05-25):** `GroupingSelectOptions` gained an `isActive: () => boolean` predicate; `refreshGroupingSelect` shows the select only when `isActive() && groupings.length > 1`. Pre-fix the dashboard's `<select>` (in the always-present top toolbar) leaked into the tickets view because the global hidden-change subscription set `display: ''` on any visibility mutation regardless of which view was active. Callers pass `() => dashboardState.active` (dashboard) / `() => drawerGridState.gridHandle !== null` (drawer-grid). 4 unit tests in `visibilityGroupingSelect.test.ts`. |
 | `xtermTheme.ts` | `readXtermTheme()` builds an xterm `ITheme` from CSS vars + `withAlpha` |
 
 ### Notable feature notes

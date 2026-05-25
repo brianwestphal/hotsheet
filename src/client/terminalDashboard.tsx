@@ -96,7 +96,7 @@ export { attachDedicatedBarSearch };
 function refreshDashboardGroupingSelect(): void {
   if (dashboardState.groupingSelect === null) return;
   void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
-    refreshGroupingSelect({ selectEl: dashboardState.groupingSelect!, getScopeKey: () => DASHBOARD_SCOPE });
+    refreshGroupingSelect({ selectEl: dashboardState.groupingSelect!, getScopeKey: () => DASHBOARD_SCOPE, isActive: () => dashboardState.active });
   });
 }
 
@@ -106,7 +106,7 @@ function bindGroupingSelect(): void {
   // the `DASHBOARD_SCOPE` so flipping the dashboard's pick is
   // independent of every project's drawer-grid pick.
   void import('./visibilityGroupingSelect.js').then(({ wireGroupingSelectChange }) => {
-    wireGroupingSelectChange({ selectEl: dashboardState.groupingSelect!, getScopeKey: () => DASHBOARD_SCOPE });
+    wireGroupingSelectChange({ selectEl: dashboardState.groupingSelect!, getScopeKey: () => DASHBOARD_SCOPE, isActive: () => dashboardState.active });
   });
 }
 

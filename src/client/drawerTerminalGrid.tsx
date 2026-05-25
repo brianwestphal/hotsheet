@@ -152,6 +152,8 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
       wireGroupingSelectChange({
         selectEl: drawerGridState.groupingSelect!,
         getScopeKey: () => projectScope(getActiveProject()?.secret ?? ''),
+        // HS-8589 — only show while drawer-grid mode is active (gridHandle set).
+        isActive: () => drawerGridState.gridHandle !== null,
       });
     });
   }
@@ -325,7 +327,7 @@ function refreshDrawerGroupingSelect(): void {
   const selectEl = drawerGridState.groupingSelect;
   if (selectEl === null) return;
   void import('./visibilityGroupingSelect.js').then(({ refreshGroupingSelect }) => {
-    refreshGroupingSelect({ selectEl, getScopeKey: () => projectScope(getActiveProject()?.secret ?? '') });
+    refreshGroupingSelect({ selectEl, getScopeKey: () => projectScope(getActiveProject()?.secret ?? ''), isActive: () => drawerGridState.gridHandle !== null });
   });
 }
 

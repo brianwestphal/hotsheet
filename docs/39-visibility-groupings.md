@@ -82,6 +82,8 @@ When the global state has more than one grouping, a `<select>` appears next to t
 
 Both dropdowns are populated by `src/client/visibilityGroupingSelect.tsx` (`refreshGroupingSelect` + `wireGroupingSelectChange`). Hidden when `groupings.length === 1` (only Default exists). Picking a different grouping fires `setActiveGrouping(id)`, which triggers the same change subscription that re-renders the dashboard / drawer-grid filter and persists via the global PATCH.
 
+**HS-8589 — visibility is also gated on the OWNING surface being active.** `refreshGroupingSelect` is driven by the global hidden-change subscription, which fires on *every* visibility mutation (including the boot-time hydration) regardless of which view is on screen. The dashboard's `<select>` lives in the always-present top toolbar, so without an active-surface gate a visibility toggle while the user is in the **tickets** view set `display: ''` and leaked the dropdown into the ticket toolbar. `GroupingSelectOptions` now carries an `isActive: () => boolean` predicate (dashboard → `dashboardState.active`; drawer-grid → `drawerGridState.gridHandle !== null`); the select is shown only when `isActive() && groupings.length > 1`, hidden otherwise. The dashboard/drawer-grid exit paths already hide the select directly; the gate stops the subscription from re-showing it while inactive.
+
 ## 39.6 Implementation
 
 - **Pure helpers** (`src/client/visibilityGroupings.ts`): `initialGlobalState`, `generateGroupingId`, `getActiveGrouping`, `getHiddenIdsForProject`, `addGrouping`, `renameGrouping`, `deleteGrouping`, `reorderGroupings`, `setActiveGroupingId`, `toggleHiddenInGrouping`, `updateGroupingById`, `parsePersistedState`, `pruneStaleIdsInGroupings`.
