@@ -24,19 +24,20 @@ const mockTodayCost = vi.fn<(secret: string) => Promise<number>>();
 const mockTodayCostByProject = vi.fn<() => Promise<Record<string, number>>>();
 const mockPromptTimeline = vi.fn<(id: string) => Promise<unknown>>();
 const mockPerTicketRollup = vi.fn<(num: string) => Promise<unknown>>();
-const mockDashboardPayload = vi.fn<(window: string, tz: string) => Promise<unknown>>();
+const mockDashboardPayload = vi.fn<(window: string, tz: string, allowedSecrets: readonly string[] | null) => Promise<unknown>>();
 const mockProjectRollup = vi.fn<(secret: string, window: string, tz: string) => Promise<unknown>>();
 const mockClearProjectTelemetry = vi.fn<(secret: string) => Promise<{ deleted: number }>>();
 const mockReadProjectList = vi.fn<() => string[]>();
 const mockReadFileSettings = vi.fn<(dir: string) => Record<string, unknown>>();
 const mockGetProjectBySecret = vi.fn<(s: string) => { dataDir: string; name: string; secret: string } | undefined>();
+const mockGetAllProjects = vi.fn<() => Array<{ secret: string; dataDir: string; name: string }>>();
 
 vi.mock('../db/otelQueries.js', () => ({
   getTodayCost: (secret: string): Promise<number> => mockTodayCost(secret),
   getTodayCostByProject: (): Promise<Record<string, number>> => mockTodayCostByProject(),
   getPromptTimeline: (id: string): Promise<unknown> => mockPromptTimeline(id),
   getPerTicketRollup: (num: string): Promise<unknown> => mockPerTicketRollup(num),
-  getDashboardPayload: (window: string, tz: string): Promise<unknown> => mockDashboardPayload(window, tz),
+  getDashboardPayload: (window: string, tz: string, allowedSecrets: readonly string[] | null): Promise<unknown> => mockDashboardPayload(window, tz, allowedSecrets),
   getProjectRollupPayload: (secret: string, window: string, tz: string): Promise<unknown> => mockProjectRollup(secret, window, tz),
   clearProjectTelemetry: (secret: string): Promise<{ deleted: number }> => mockClearProjectTelemetry(secret),
 }));
@@ -51,6 +52,7 @@ vi.mock('../file-settings.js', () => ({
 
 vi.mock('../projects.js', () => ({
   getProjectBySecret: (s: string): { dataDir: string; name: string; secret: string } | undefined => mockGetProjectBySecret(s),
+  getAllProjects: (): Array<{ secret: string; dataDir: string; name: string }> => mockGetAllProjects(),
 }));
 
 const { telemetryRoutes } = await import('./telemetry.js');
@@ -77,6 +79,7 @@ beforeEach(() => {
   mockReadProjectList.mockReset().mockReturnValue([]);
   mockReadFileSettings.mockReset().mockReturnValue({});
   mockGetProjectBySecret.mockReset().mockReturnValue(undefined);
+  mockGetAllProjects.mockReset().mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -204,19 +207,31 @@ describe('GET /telemetry/dashboard', () => {
   it('passes window=month and tz=UTC as defaults when no query params are given', async () => {
     mockDashboardPayload.mockResolvedValue({ window: 'month', windowTotals: {}, costByProject: [], costByModel: [], hourlyActivity: [], costOverTime: [] });
     await buildApp().request('/api/telemetry/dashboard');
-    expect(mockDashboardPayload).toHaveBeenCalledWith('month', 'UTC');
+    expect(mockDashboardPayload).toHaveBeenCalledWith('month', 'UTC', expect.any(Array));
   });
 
   it('honors known window values', async () => {
     mockDashboardPayload.mockResolvedValue({});
     await buildApp().request('/api/telemetry/dashboard?window=week&tz=America/Los_Angeles');
-    expect(mockDashboardPayload).toHaveBeenCalledWith('week', 'America/Los_Angeles');
+    expect(mockDashboardPayload).toHaveBeenCalledWith('week', 'America/Los_Angeles', expect.any(Array));
   });
 
   it('coerces unknown window values back to month (defensive default)', async () => {
     mockDashboardPayload.mockResolvedValue({});
     await buildApp().request('/api/telemetry/dashboard?window=garbage');
-    expect(mockDashboardPayload).toHaveBeenCalledWith('month', 'UTC');
+    expect(mockDashboardPayload).toHaveBeenCalledWith('month', 'UTC', expect.any(Array));
+  });
+
+  // HS-8625 — the route scopes the cross-project payload to currently-loaded
+  // project tabs by passing `getAllProjects()` secrets as allowedSecrets.
+  it('passes the registered projects\' secrets as allowedSecrets (HS-8625)', async () => {
+    mockGetAllProjects.mockReturnValue([
+      { secret: 'sec-loaded-1', dataDir: '/a', name: 'A' },
+      { secret: 'sec-loaded-2', dataDir: '/b', name: 'B' },
+    ]);
+    mockDashboardPayload.mockResolvedValue({});
+    await buildApp().request('/api/telemetry/dashboard?window=all');
+    expect(mockDashboardPayload).toHaveBeenCalledWith('all', 'UTC', ['sec-loaded-1', 'sec-loaded-2']);
   });
 
   it('accepts all five known windows', async () => {

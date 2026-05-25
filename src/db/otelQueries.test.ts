@@ -719,6 +719,67 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     });
   });
 
+  // HS-8625 — the cross-project page should only ever show currently-loaded
+  // project data. Telemetry rows outlive their project, so the dashboard route
+  // passes the registered project secrets and every aggregate filters to them.
+  describe('cross-project loaded-projects filter (HS-8625)', () => {
+    it('getDashboardPayload restricts every aggregate to allowedSecrets', async () => {
+      const now = new Date();
+      // SECRET_A is "loaded"; SECRET_C is a closed project's lingering data.
+      const SECRET_C = 'secret-closed-project';
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, tokens: 1000 });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'pa', model: 'sonnet' });
+      await insertCostMetric({ ts: now, projectSecret: SECRET_C, model: 'opus', cost: 99 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_C, tokens: 500000 });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_C, promptId: 'pc', model: 'opus' });
+
+      const payload = await getDashboardPayload('all', 'UTC', [SECRET_A]);
+      // Only the loaded project surfaces — the closed project's big $99 row is gone.
+      expect(payload.costByProject).toHaveLength(1);
+      expect(payload.costByProject[0].projectSecret).toBe(SECRET_A);
+      // Window totals exclude the closed project (would be 99.5 without the filter).
+      expect(payload.windowTotals.allTime.cost).toBeCloseTo(0.5);
+      // Cost-by-model only sees the loaded project's model.
+      expect(payload.costByModel.map(m => m.model)).toContain('sonnet');
+      expect(payload.costByModel.map(m => m.model)).not.toContain('opus');
+      // Cost-over-time only carries the loaded project's secret.
+      expect(payload.costOverTime.every(p => p.projectSecret === SECRET_A)).toBe(true);
+    });
+
+    it('getDashboardPayload with an empty allowedSecrets shows nothing (no project loaded)', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 1.0 });
+      const payload = await getDashboardPayload('all', 'UTC', []);
+      expect(payload.costByProject).toEqual([]);
+      expect(payload.windowTotals.allTime.cost).toBe(0);
+      expect(payload.costOverTime).toEqual([]);
+    });
+
+    it('getDashboardPayload with null allowedSecrets keeps the pre-HS-8625 every-project behavior', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.5 });
+      await insertCostMetric({ ts: now, projectSecret: SECRET_B, cost: 1.0 });
+      const payload = await getDashboardPayload('all', 'UTC', null);
+      expect(payload.costByProject).toHaveLength(2);
+      expect(payload.windowTotals.allTime.cost).toBeCloseTo(1.5);
+    });
+
+    it('getCostByProject + getHourlyActivityHeatmap honor allowedSecrets directly', async () => {
+      const t = new Date('2026-05-18T10:30:00Z'); // Monday 10:00 UTC
+      await insertCostMetric({ ts: t, projectSecret: SECRET_A, cost: 0.5 });
+      await insertCostMetric({ ts: t, projectSecret: SECRET_B, cost: 2.0 });
+
+      const rows = await getCostByProject(null, [SECRET_A]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].projectSecret).toBe(SECRET_A);
+
+      const cells = await getHourlyActivityHeatmap(null, 'UTC', [SECRET_A]);
+      // Monday DOW 1, hour 10 → index 34. Only SECRET_A's $0.50 counted.
+      expect(cells[34].cost).toBeCloseTo(0.5);
+    });
+  });
+
   describe('getCostOverTime (HS-8503 Phase 1 / §69.10.4)', () => {
     it('returns empty when no cost rows exist', async () => {
       const points = await getCostOverTime(null, null, 'UTC');

@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { clearProjectTelemetry, type DashboardWindow, getDashboardPayload, getPerTicketRollup, getProjectRollupPayload, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
 import { readFileSettings } from '../file-settings.js';
 import { readProjectList } from '../project-list.js';
-import { getProjectBySecret } from '../projects.js';
+import { getAllProjects, getProjectBySecret } from '../projects.js';
 import type { AppEnv } from '../types.js';
 
 /**
@@ -155,7 +155,13 @@ telemetryRoutes.get('/telemetry/dashboard', async (c) => {
     ? (windowRaw as DashboardWindow)
     : 'month';
   const timezone = c.req.query('tz') ?? 'UTC';
-  const payload = await getDashboardPayload(window, timezone);
+  // HS-8625 — the cross-project page should only ever show currently-loaded
+  // project data: restrict every aggregate to the registered project tabs'
+  // secrets. Telemetry rows outlive the project that produced them (the §67.6
+  // shared store), so without this filter a closed project's stale data lingers
+  // in the totals / cost-by-project table (the HS-8622 "Unknown project" row).
+  const allowedSecrets = getAllProjects().map(p => p.secret);
+  const payload = await getDashboardPayload(window, timezone, allowedSecrets);
   return c.json(payload);
 });
 

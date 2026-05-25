@@ -47,4 +47,4 @@ On confirm:
 
 ### Known gaps
 
-- **Closed/unregistered projects can't be cleared (HS-8625).** Because the delete is scoped to the *active* project's secret, telemetry rows from a project that's no longer open linger in the shared store with no UI path to clear them — they surface in the §70 cross-project "Cost by project" table (labeled "Unknown project (…)" per the HS-8622 name fallback). Tracked as a follow-up.
+- **Closed/unregistered projects can't be *cleared* (resolved by hiding — HS-8625).** Because the delete is scoped to the *active* project's secret, telemetry rows from a project that's no longer open still linger in the shared store with no UI path to delete them. Rather than add a clear path, **HS-8625 stops *showing* them**: the §70 cross-project stats page now scopes every aggregate to the currently-loaded project tabs' secrets, so a closed project's rows simply drop out of the cross-project view (see [70-cross-project-stats.md](70-cross-project-stats.md) §70.6). The lingering rows are eventually reaped by the §67.6 age-based retention sweep. (Per-project clearing via this button is unchanged.)

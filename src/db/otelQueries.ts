@@ -71,11 +71,32 @@ export interface RecentPrompt {
  * literals); pass `1` when the caller passes a single `metric_name`
  * (or event_name) param as `$1`.
  */
+/**
+ * HS-8625 — build a `project_secret IN (...)` clause restricting a
+ * cross-project rollup to the set of **currently-loaded** project secrets
+ * (the registered project tabs, per `getAllProjects()`). Returns the BARE
+ * clause (no leading ` AND `) + its params, with placeholder indices starting
+ * at `baseParamCount + 1`. `null` ⇒ no restriction (every project, the
+ * pre-HS-8625 behavior + the per-project-rollup callers that already scope by
+ * a single `project_secret`). Empty array ⇒ the literal `FALSE` (no project is
+ * loaded ⇒ nothing to show), avoiding the invalid `IN ()` SQL.
+ */
+function buildSecretsInClause(
+  allowedSecrets: readonly string[] | null,
+  baseParamCount: number,
+): { clause: string; params: string[] } {
+  if (allowedSecrets === null) return { clause: '', params: [] };
+  if (allowedSecrets.length === 0) return { clause: 'FALSE', params: [] };
+  const placeholders = allowedSecrets.map((_, i) => `$${String(baseParamCount + i + 1)}`);
+  return { clause: `project_secret IN (${placeholders.join(', ')})`, params: [...allowedSecrets] };
+}
+
 function buildProjectAndWindowClauses(
   projectSecret: string | null,
   sinceTs: Date | null,
   tsColumn: string,
   baseParamCount: number,
+  allowedSecrets: readonly string[] | null = null,
 ): { clauses: string; params: Array<string | Date> } {
   const clauses: string[] = [];
   const params: Array<string | Date> = [];
@@ -86,6 +107,13 @@ function buildProjectAndWindowClauses(
   if (sinceTs !== null) {
     params.push(sinceTs);
     clauses.push(`${tsColumn} >= $${String(baseParamCount + params.length)}`);
+  }
+  // HS-8625 — cross-project rollups (projectSecret === null) restrict to the
+  // currently-loaded project secrets when `allowedSecrets` is supplied.
+  const secrets = buildSecretsInClause(allowedSecrets, baseParamCount + params.length);
+  if (secrets.clause !== '') {
+    clauses.push(secrets.clause);
+    params.push(...secrets.params);
   }
   return { clauses: clauses.length === 0 ? '' : ' AND ' + clauses.join(' AND '), params };
 }
@@ -99,9 +127,10 @@ function buildProjectAndWindowClauses(
 export async function getWindowTotals(
   projectSecret: string | null,
   sinceTs: Date | null,
+  allowedSecrets: readonly string[] | null = null,
 ): Promise<WindowTotals> {
   const db = await getTelemetryDb();
-  const metricsClause = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 1);
+  const metricsClause = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 1, allowedSecrets);
 
   const costResult = await db.query<{ total: string | null }>(
     `SELECT SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
@@ -116,7 +145,7 @@ export async function getWindowTotals(
     ['claude_code.token.usage', ...metricsClause.params],
   );
 
-  const eventsClause = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 1);
+  const eventsClause = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 1, allowedSecrets);
   const promptsResult = await db.query<{ c: bigint | number }>(
     `SELECT COUNT(DISTINCT prompt_id) AS c
      FROM otel_events
@@ -159,9 +188,10 @@ export async function getWindowTotals(
 export async function getCostByModel(
   projectSecret: string | null,
   sinceTs: Date | null,
+  allowedSecrets: readonly string[] | null = null,
 ): Promise<ModelRollup[]> {
   const db = await getTelemetryDb();
-  const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
+  const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0, allowedSecrets);
 
   // HS-8514 — `COUNT(DISTINCT session_id)` was returning 0 because
   // the `session_id` column is sourced from the resource attributes
@@ -864,25 +894,33 @@ export interface ProjectCostRow {
  * three indexed scans each return in well under 10 ms per §67.6's
  * "no precomputed rollup tables" decision.
  */
-export async function getCostByProject(sinceTs: Date | null): Promise<ProjectCostRow[]> {
+export async function getCostByProject(
+  sinceTs: Date | null,
+  allowedSecrets: readonly string[] | null = null,
+): Promise<ProjectCostRow[]> {
   const db = await getTelemetryDb();
   const tsClause = sinceTs === null ? '' : ' AND ts >= $2';
   const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
+  // HS-8625 — restrict to currently-loaded projects. All five queries below
+  // share the same `[metric/event, ...tsParams]` param layout, so the secrets
+  // placeholders start at the same base for each.
+  const secrets = buildSecretsInClause(allowedSecrets, 1 + tsParams.length);
+  const secretsClause = secrets.clause === '' ? '' : ` AND ${secrets.clause}`;
 
   const [costResult, tokensResult, promptsResult, sessionsResult, lastTsResult] = await Promise.all([
     db.query<{ project_secret: string; total: string | null }>(
       `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
        FROM otel_metrics
-       WHERE metric_name = $1${tsClause}
+       WHERE metric_name = $1${tsClause}${secretsClause}
        GROUP BY project_secret`,
-      ['claude_code.cost.usage', ...tsParams],
+      ['claude_code.cost.usage', ...tsParams, ...secrets.params],
     ),
     db.query<{ project_secret: string; total: string | null }>(
       `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
        FROM otel_metrics
-       WHERE metric_name = $1${tsClause}
+       WHERE metric_name = $1${tsClause}${secretsClause}
        GROUP BY project_secret`,
-      ['claude_code.token.usage', ...tsParams],
+      ['claude_code.token.usage', ...tsParams, ...secrets.params],
     ),
     // HS-8514 — events-based prompt count falls back to a
     // session-count proxy when no `user_prompt` events were captured
@@ -894,24 +932,24 @@ export async function getCostByProject(sinceTs: Date | null): Promise<ProjectCos
     db.query<{ project_secret: string; c: bigint | number }>(
       `SELECT project_secret, COUNT(DISTINCT prompt_id) AS c
        FROM otel_events
-       WHERE event_name = $1 AND prompt_id IS NOT NULL${tsClause}
+       WHERE event_name = $1 AND prompt_id IS NOT NULL${tsClause}${secretsClause}
        GROUP BY project_secret`,
-      ['claude_code.user_prompt', ...tsParams],
+      ['claude_code.user_prompt', ...tsParams, ...secrets.params],
     ),
     db.query<{ project_secret: string; c: bigint | number }>(
       `SELECT project_secret, COUNT(DISTINCT attributes_json->>'session.id') AS c
        FROM otel_metrics
        WHERE metric_name = $1
-         AND attributes_json->>'session.id' IS NOT NULL${tsClause}
+         AND attributes_json->>'session.id' IS NOT NULL${tsClause}${secretsClause}
        GROUP BY project_secret`,
-      ['claude_code.cost.usage', ...tsParams],
+      ['claude_code.cost.usage', ...tsParams, ...secrets.params],
     ),
     db.query<{ project_secret: string; last_ts: string }>(
       `SELECT project_secret, MAX(ts) AS last_ts
        FROM otel_metrics
-       WHERE metric_name = $1${tsClause}
+       WHERE metric_name = $1${tsClause}${secretsClause}
        GROUP BY project_secret`,
-      ['claude_code.cost.usage', ...tsParams],
+      ['claude_code.cost.usage', ...tsParams, ...secrets.params],
     ),
   ]);
 
@@ -979,10 +1017,16 @@ export interface HourlyActivityCell {
 export async function getHourlyActivityHeatmap(
   sinceTs: Date | null,
   timezone = 'UTC',
+  allowedSecrets: readonly string[] | null = null,
 ): Promise<HourlyActivityCell[]> {
   const db = await getTelemetryDb();
   const tsClause = sinceTs === null ? '' : ' AND ts >= $3';
   const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
+  // HS-8625 — restrict to currently-loaded projects. Both queries share the
+  // `[metric/event, timezone, ...tsParams]` layout (timezone is $2), so the
+  // secrets placeholders start at 2 + tsParams.length for both.
+  const secrets = buildSecretsInClause(allowedSecrets, 2 + tsParams.length);
+  const secretsClause = secrets.clause === '' ? '' : ` AND ${secrets.clause}`;
 
   // Cost per (dow, hour) bucket.
   const costResult = await db.query<{ dow: string | number; hour: string | number; total: string | null }>(
@@ -991,9 +1035,9 @@ export async function getHourlyActivityHeatmap(
         EXTRACT(HOUR FROM ts AT TIME ZONE $2)::int AS hour,
         SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
      FROM otel_metrics
-     WHERE metric_name = $1${tsClause}
+     WHERE metric_name = $1${tsClause}${secretsClause}
      GROUP BY dow, hour`,
-    ['claude_code.cost.usage', timezone, ...tsParams],
+    ['claude_code.cost.usage', timezone, ...tsParams, ...secrets.params],
   );
 
   // Distinct-prompt count per (dow, hour) bucket.
@@ -1004,9 +1048,9 @@ export async function getHourlyActivityHeatmap(
         EXTRACT(HOUR FROM ts AT TIME ZONE $2)::int AS hour,
         COUNT(DISTINCT prompt_id) AS c
      FROM otel_events
-     WHERE event_name = $1 AND prompt_id IS NOT NULL${promptsClause}
+     WHERE event_name = $1 AND prompt_id IS NOT NULL${promptsClause}${secretsClause}
      GROUP BY dow, hour`,
-    ['claude_code.user_prompt', timezone, ...tsParams],
+    ['claude_code.user_prompt', timezone, ...tsParams, ...secrets.params],
   );
 
   // Densify to 168 entries — every (dow, hour) combination.
@@ -1137,6 +1181,7 @@ export async function getCostOverTime(
   projectSecret: string | null,
   timezone = 'UTC',
   now: Date = new Date(),
+  allowedSecrets: readonly string[] | null = null,
 ): Promise<CostOverTimePoint[]> {
   const db = await getTelemetryDb();
 
@@ -1151,6 +1196,12 @@ export async function getCostOverTime(
     params.push(sinceTs);
     windowClause = ` AND ts >= $${String(params.length)}`;
   }
+  // HS-8625 — restrict to currently-loaded projects (cross-project use;
+  // ignored when a single projectSecret already scopes the query). Appended
+  // last, so placeholders follow whatever params were pushed above.
+  const secrets = buildSecretsInClause(allowedSecrets, params.length);
+  const secretsClause = secrets.clause === '' ? '' : ` AND ${secrets.clause}`;
+  params.push(...secrets.params);
 
   const result = await db.query<{ date: string; project_secret: string; model: string; total: string | null }>(
     `SELECT
@@ -1159,7 +1210,7 @@ export async function getCostOverTime(
         COALESCE(attributes_json->>'model', '(unknown)') AS model,
         SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
      FROM otel_metrics
-     WHERE metric_name = $2${projectClause}${windowClause}
+     WHERE metric_name = $2${projectClause}${windowClause}${secretsClause}
      GROUP BY 1, 2, 3
      ORDER BY 1 ASC`,
     params,
@@ -1230,6 +1281,7 @@ export async function getCostOverTime(
 export async function getDashboardPayload(
   window: DashboardWindow,
   timezone = 'UTC',
+  allowedSecrets: readonly string[] | null = null,
   now: Date = new Date(),
 ): Promise<DashboardPayload> {
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -1237,15 +1289,20 @@ export async function getDashboardPayload(
   const monthStart = new Date(midnight.getTime() - 29 * 24 * 60 * 60 * 1000);
   const windowSinceTs = resolveDashboardWindowSinceTs(window, now);
 
+  // HS-8625 — `allowedSecrets` restricts every cross-project aggregate to the
+  // currently-loaded project tabs (passed from the route as
+  // `getAllProjects().map(p => p.secret)`); null means "every project"
+  // (back-compat / tests). Threaded into all eight sub-queries so totals,
+  // cost-by-project, donut, heatmap, and cost-over-time agree.
   const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime] = await Promise.all([
-    getWindowTotals(null, midnight),
-    getWindowTotals(null, weekStart),
-    getWindowTotals(null, monthStart),
-    getWindowTotals(null, null),
-    getCostByProject(windowSinceTs),
-    getCostByModel(null, windowSinceTs),
-    getHourlyActivityHeatmap(windowSinceTs, timezone),
-    getCostOverTime(windowSinceTs, null, timezone, now),
+    getWindowTotals(null, midnight, allowedSecrets),
+    getWindowTotals(null, weekStart, allowedSecrets),
+    getWindowTotals(null, monthStart, allowedSecrets),
+    getWindowTotals(null, null, allowedSecrets),
+    getCostByProject(windowSinceTs, allowedSecrets),
+    getCostByModel(null, windowSinceTs, allowedSecrets),
+    getHourlyActivityHeatmap(windowSinceTs, timezone, allowedSecrets),
+    getCostOverTime(windowSinceTs, null, timezone, now, allowedSecrets),
   ]);
 
   return {
