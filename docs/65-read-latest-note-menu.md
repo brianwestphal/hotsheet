@@ -66,23 +66,29 @@ signal the menu item uses to apply the `disabled` class.
 
 ## §65.4 Implementation pointer
 
-- Pure helper: `collectNonEmptyNotes(notesJson: string)` in
-  `src/client/contextMenu.tsx`. Returns `{ entries, latestIndex } | null`
-  — a single pass through `parseNotesJson` yields the full non-empty
-  list plus the index of the latest entry, so the menu can pass a
-  §59 `navigation` slot to the reader without re-walking the array
-  (HS-8415 renamed the helper from `findLatestNonEmptyNote` for this).
+- Latest-note pick: `parseNotesJson(ticket.notes)` then the last entry
+  whose `text` is non-empty. The standalone `collectNonEmptyNotes`
+  helper was removed in HS-8598 — the menu now reuses the same
+  `buildCombinedReaderEntries` path the per-note book-icon trigger uses
+  (see below), so a second bespoke note-list helper is no longer needed.
 - Menu wiring: inside `showTicketContextMenu` after the Provide
   Feedback block — single-call to `addActionItem(menu, 'Read Latest
   Note', open, { icon, disabled })` with the existing
   `addActionItem` helper widened to support a `disabled?: boolean`
   option (which adds the CSS class and skips the click listener
-  attachment). The click handler builds `navEntries` from
-  `collectNonEmptyNotes` and passes
-  `navigation: { entries, initialIndex }` to `openReaderOverlay` when
-  more than one non-empty note exists — chevron + ArrowUp / ArrowDown
-  step back through earlier notes (HS-8415; matches the per-note
-  book-icon trigger in `noteRenderer.tsx`).
+  attachment). **HS-8598** — the click handler builds the §59
+  `navigation` slot from `buildCombinedReaderEntries({ ticketNumber,
+  ticketTitle, detailsMarkdown, notes })` — the unified
+  `[Details, ...non-empty notes]` list — and anchors `initialIndex` on
+  the latest note's id within that list. This is full parity with the
+  per-note book-icon trigger in `noteRenderer.tsx`: chevron + ArrowUp /
+  ArrowDown step back through earlier notes AND up into the ticket
+  Details. Chevrons render whenever the combined list has more than one
+  entry, so a single-note ticket that also has Details still gets them
+  (combined length 2). Pre-HS-8598 the nav list was built from notes
+  only and gated on `> 1` note (HS-8415), so a single-note ticket opened
+  with no chevrons and the Details were unreachable from this entry
+  point — that was the bug HS-8598 fixed.
 - Separator: `addSeparator(menu)` immediately after the Read Latest
   Note `addActionItem` call, gated on `state.selectedIds.size === 1`
   (HS-8414). The Push-to-backend insertion point further down the

@@ -273,11 +273,12 @@ describe('showTicketContextMenu — Read Latest Note (HS-8401)', () => {
     expect(overlay!.textContent).toContain('Third');
   });
 
-  it('skips chevron nav buttons when only one non-empty note exists (HS-8415)', () => {
-    // Single-entry shape matches the `navEntries.length > 1` guard in
-    // `noteRenderer.tsx`. With one note there's nowhere to navigate, so
-    // the chevrons would be permanently disabled — omit them entirely.
-    const t = makeTicket(109, { notes: notesWith('## Only one') });
+  it('skips chevron nav buttons when only one non-empty note exists AND no details (HS-8415)', () => {
+    // Single-entry shape: one note, empty details → combined list has one
+    // entry → nowhere to navigate, so the chevrons are omitted entirely.
+    // (When the ticket HAS details, even a single note gets chevrons — see
+    // the HS-8598 test below.)
+    const t = makeTicket(109, { notes: notesWith('## Only one'), details: '' });
     ticketsStore.actions.setTickets([t]);
     state.selectedIds.add(109);
     state.tickets = [t];
@@ -292,6 +293,41 @@ describe('showTicketContextMenu — Read Latest Note (HS-8401)', () => {
     expect(overlay).not.toBeNull();
     expect(overlay!.querySelector('.reader-mode-prev')).toBeNull();
     expect(overlay!.querySelector('.reader-mode-next')).toBeNull();
+  });
+
+  it('includes Details in the reader navigation so a single note still gets chevrons + reaches Details (HS-8598)', () => {
+    // Pre-fix "Read Latest Note" built navigation from notes ONLY and
+    // gated on >1 note, so a single-note ticket opened with no chevrons and
+    // the user could never reach the ticket Details from the reader. Now the
+    // nav list is the unified [Details, ...notes] (buildCombinedReaderEntries),
+    // so even one note yields a 2-entry list: chevron-up walks to Details.
+    const t = makeTicket(111, { notes: notesWith('## The only note'), details: '## Ticket details body' });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(111);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    const items = document.querySelectorAll<HTMLElement>('.context-menu .context-menu-item');
+    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Latest Note');
+    expect(readItem).toBeDefined();
+    readItem!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const overlay = document.querySelector('.reader-mode-overlay');
+    expect(overlay).not.toBeNull();
+    // Opens anchored on the latest note...
+    expect(overlay!.textContent).toContain('The only note');
+    // ...with chevrons present (combined list = [Details, note]).
+    const prev = overlay!.querySelector<HTMLButtonElement>('.reader-mode-prev');
+    const next = overlay!.querySelector<HTMLButtonElement>('.reader-mode-next');
+    expect(prev).not.toBeNull();
+    expect(next).not.toBeNull();
+    // The note is the last entry: next disabled, prev (→ Details) enabled.
+    expect(next!.disabled).toBe(true);
+    expect(prev!.disabled).toBe(false);
+    // Chevron-up reaches the Details body.
+    prev!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(overlay!.textContent).toContain('Ticket details body');
   });
 
   it('navigation entries skip empty notes so chevron walk stays on real content (HS-8415)', () => {

@@ -205,6 +205,45 @@ describe('WebSocket roundtrip (real http.Server)', () => {
     ws.close();
   });
 
+  // HS-8597 — scrollback must survive a detach → re-attach cycle. This is the
+  // server-side half of the "switch project tab and the terminal comes back
+  // blank, prior output unscrollable" report. Closing the WS only detaches the
+  // subscriber; the session + its scrollback ring buffer persist, so the next
+  // connection's history frame must still carry the earlier output. Locks in
+  // the verified-correct server behavior — a future regression that empties
+  // scrollback on detach/re-attach is caught here instead of only surfacing as
+  // a blank terminal in the live app.
+  async function nextHistory(conn: ReturnType<typeof openWs>): Promise<string> {
+    const frame = await conn.next((d, isBinary) => {
+      if (isBinary) return false;
+      const t = d instanceof Buffer ? d.toString('utf8') : String(d);
+      try { return (JSON.parse(t) as { type?: string }).type === 'history'; } catch { return false; }
+    });
+    const text = frame.data instanceof Buffer ? frame.data.toString('utf8') : String(frame.data);
+    const parsed = JSON.parse(text) as { type: string; bytes: string };
+    return Buffer.from(parsed.bytes, 'base64').toString('utf8');
+  }
+
+  it('preserves scrollback across a detach → re-attach cycle (HS-8597)', async () => {
+    const q = `?project=${FAKE_SECRET}&cols=80&rows=24`;
+
+    // First attach + emit output that lands in the scrollback ring buffer.
+    const first = openWs(q);
+    await nextHistory(first);
+    FakePty.last!.emit('echo hello world\r\nhello world\r\n');
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+    // Detach (the project-tab-switch-away half).
+    first.ws.close();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+    // Re-attach (the switch-back half) — history frame must still carry it.
+    const second = openWs(q);
+    const replayed = await nextHistory(second);
+    expect(replayed).toContain('hello world');
+    second.ws.close();
+  });
+
   it('resize control message propagates to the PTY', async () => {
     const { ws, next } = openWs();
     await next((_d, isBinary) => !isBinary);

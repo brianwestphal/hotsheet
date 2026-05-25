@@ -6,7 +6,7 @@ import { getTicketFeedbackState, showFeedbackDialog, suppressNextAutoShowFeedbac
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
-import { buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
+import { buildCombinedReaderEntries, buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS, syncedTicketMap, VERIFIED_SVG } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
@@ -44,18 +44,6 @@ const BOOK_OPEN_TEXT_SVG: SafeHtml = <svg {...LUCIDE_14}><path d="M12 7v14"/><pa
  *  Empty / whitespace-only notes are skipped so the reader can't surface
  *  the §49 "(empty)" placeholder. Returns `null` when no non-empty note
  *  exists. */
-function collectNonEmptyNotes(
-  notesJson: string,
-): { entries: { text: string; created_at: string }[]; latestIndex: number } | null {
-  const notes = parseNotesJson(notesJson);
-  const entries: { text: string; created_at: string }[] = [];
-  for (const n of notes) {
-    if (n.text.trim() === '') continue;
-    entries.push({ text: n.text, created_at: n.created_at });
-  }
-  if (entries.length === 0) return null;
-  return { entries, latestIndex: entries.length - 1 };
-}
 
 export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   e.preventDefault();
@@ -121,29 +109,38 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   // overlay anchored on the most recent non-empty note's text +
   // created_at; the overlay's own dismiss / Esc / backdrop-click
   // behavior is unchanged.
-  // HS-8415 — also pass a `navigation` slot built from every non-empty
-  // note so the user can chevron / ArrowUp back through earlier notes
-  // from the same reader (parity with the per-note book-icon trigger
-  // in `noteRenderer.tsx`). When only one non-empty note exists, the
-  // chevrons are omitted (single-entry shape) — matches the
-  // `navEntries.length > 1` guard in `noteRenderer.tsx`.
+  // HS-8415 / HS-8598 — pass a `navigation` slot built from the unified
+  // [Details, ...non-empty notes] list (via `buildCombinedReaderEntries`)
+  // so the reader's chevrons / ArrowUp+Down can step from the latest note
+  // back through earlier notes AND into the ticket Details — full parity
+  // with the per-note book-icon trigger in `noteRenderer.tsx`. Pre-fix
+  // (HS-8415) the nav list was built from notes ONLY and gated on `> 1`
+  // note, so a ticket with a single note opened with no chevrons and the
+  // Details were unreachable from "Read Latest Note" (HS-8598). Including
+  // Details means a single-note ticket that has Details now also gets
+  // chevrons (combined length is 2). The item stays disabled when there is
+  // no non-empty note (it's "Read Latest *Note*").
   if (state.selectedIds.size === 1) {
-    const nonEmpty = collectNonEmptyNotes(ticket.notes);
+    const parsedNotes = parseNotesJson(ticket.notes);
+    const nonEmptyNotes = parsedNotes.filter((n) => n.text.trim() !== '');
+    const latestNote = nonEmptyNotes.length > 0 ? nonEmptyNotes[nonEmptyNotes.length - 1] : null;
     addActionItem(menu, 'Read Latest Note', () => {
-      if (nonEmpty === null) return;
-      const latest = nonEmpty.entries[nonEmpty.latestIndex];
-      const navEntries = nonEmpty.entries.map((n) => ({
-        title: buildNoteReaderTitle(n.created_at),
-        markdown: n.text,
-      }));
+      if (latestNote === null) return;
+      const combined = buildCombinedReaderEntries({
+        ticketNumber: ticket.ticket_number,
+        ticketTitle: ticket.title,
+        detailsMarkdown: ticket.details,
+        notes: parsedNotes,
+      });
+      const initialIndex = Math.max(0, combined.findIndex((e) => e.id === latestNote.id));
       openReaderOverlay({
-        title: buildNoteReaderTitle(latest.created_at),
-        markdown: latest.text,
-        navigation: navEntries.length > 1
-          ? { entries: navEntries, initialIndex: nonEmpty.latestIndex }
+        title: buildNoteReaderTitle(latestNote.created_at),
+        markdown: latestNote.text,
+        navigation: combined.length > 1
+          ? { entries: combined.map((e) => ({ title: e.title, markdown: e.markdown })), initialIndex }
           : undefined,
       });
-    }, { icon: BOOK_OPEN_TEXT_SVG, disabled: nonEmpty === null });
+    }, { icon: BOOK_OPEN_TEXT_SVG, disabled: latestNote === null });
   }
 
   // HS-8414 — separator under the read / feedback inspection block when

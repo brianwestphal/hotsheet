@@ -188,6 +188,15 @@ CREATE INDEX IF NOT EXISTS idx_otel_spans_trace ON otel_spans (trace_id);
 
 Bump `SCHEMA_VERSION` in `src/db/connection.ts` (2 → 3) per the §41 / §45 convention so the JSON co-save format is invalidated correctly across the upgrade.
 
+### Single shared store — NOT per-project tables (HS-8581)
+
+Hot Sheet opens one PGLite cluster per project `dataDir`, but the telemetry tables are **not** per-project — they are a single shared store keyed by the `project_secret` column, living in the **default (primary) project's** DB (the `dataDir` the server was started with). This follows directly from the routing model:
+
+- **Writes** arrive at the OTLP receiver (`POST /v1/{metrics,logs,traces}`) from Claude Code's bundled exporter, which sends **no `X-Hotsheet-Secret` header** (and POSTs carry no `?project=` query param). The server's project-resolution middleware therefore resolves the request to the default `dataDir`, so every payload — from every project tab — lands in the primary DB. Each row still carries the correct per-project `project_secret` (from the `hotsheet_project` resource attribute), so the cross-project dashboard (§70) and the per-project rollups (§71) both filter by it.
+- **Reads** must hit that same store regardless of which project tab is active. Both the writers (`src/db/otelWriters.ts`) and the rollup queries (`src/db/otelQueries.ts`) call `getTelemetryDb()` (`src/db/connection.ts`) — which always returns the default DB — instead of the per-request `getDb()`.
+
+The original HS-8581 bug: the rollup queries went through the per-request `getDb()`, so opening a **secondary** project tab's analytics dashboard (§71) read that project's own DB — which has zero telemetry rows — and rendered the "No telemetry recorded for this project yet" placeholder even though the data was sitting in the primary DB. The cross-project page (§70) appeared to work only because the user was usually on the primary project when viewing it. Regression coverage: `src/db/otelQueries.test.ts` "HS-8581 — rollups read the shared telemetry DB" asserts a rollup returns the project's data while a *different* project's `dataDir` is bound as the active request context.
+
 ### Why JSONB columns for `attributes_json` / `value_json` / `body_json`
 
 OTel attributes are arbitrary key-value bags whose shape varies per metric / event / span. Pinning them into rigid columns would force a hand-maintained mapping that drifts every time Claude Code adds a new metric. JSONB keeps the receiver flexible (write any payload as-is) and lets rollup queries use PG's JSON operators when they need a specific value (`(value_json->>'count')::bigint`).

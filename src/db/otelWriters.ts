@@ -1,4 +1,4 @@
-import { getDb } from './connection.js';
+import { getTelemetryDb } from './connection.js';
 
 /**
  * HS-8470 — OTLP persistence layer. Phase 2 of HS-8143's receiver work.
@@ -29,6 +29,14 @@ import { getDb } from './connection.js';
  * add protobuf decoding (either via `@opentelemetry/otlp-transformer`
  * or a hand-rolled decoder) and pass the decoded JSON-shaped object
  * straight into these writers — no writer changes needed.
+ *
+ * **Shared store (HS-8581).** Every writer targets the single shared
+ * telemetry DB via `getTelemetryDb()` (the default/primary project's
+ * DB) rather than the per-request `getDb()`. Rows carry the per-project
+ * `project_secret` (from the `hotsheet_project` resource attr) so the
+ * rollup queries — which also read `getTelemetryDb()` — can filter by
+ * project. This keeps writes + reads single-sourced no matter which
+ * project tab is active; see `connection.ts::getTelemetryDb`.
  *
  * See docs/67-telemetry.md §67.5 + §67.6 for the full design.
  */
@@ -134,7 +142,7 @@ export async function persistMetricsPayload(
   parsed: unknown,
   isKnownProject: (s: string) => boolean,
 ): Promise<PersistResult> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   let inserted = 0;
   let dropped = 0;
 
@@ -248,7 +256,7 @@ export async function persistLogsPayload(
   parsed: unknown,
   isKnownProject: (s: string) => boolean,
 ): Promise<PersistResult> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   let inserted = 0;
   let dropped = 0;
 
@@ -323,7 +331,7 @@ export async function persistTracesPayload(
   parsed: unknown,
   isKnownProject: (s: string) => boolean,
 ): Promise<PersistResult> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   let inserted = 0;
   let dropped = 0;
 

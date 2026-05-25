@@ -1,4 +1,4 @@
-import { getDb } from './connection.js';
+import { getTelemetryDb } from './connection.js';
 
 /**
  * HS-8148 — rollup queries for the footer drawer Telemetry tab (§67.10.2).
@@ -100,7 +100,7 @@ export async function getWindowTotals(
   projectSecret: string | null,
   sinceTs: Date | null,
 ): Promise<WindowTotals> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const metricsClause = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 1);
 
   const costResult = await db.query<{ total: string | null }>(
@@ -160,7 +160,7 @@ export async function getCostByModel(
   projectSecret: string | null,
   sinceTs: Date | null,
 ): Promise<ModelRollup[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
 
   // HS-8514 — `COUNT(DISTINCT session_id)` was returning 0 because
@@ -199,7 +199,7 @@ export async function getToolRollup(
   projectSecret: string | null,
   sinceTs: Date | null,
 ): Promise<ToolRollup[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
 
   const result = await db.query<{ tool: string | null; c: bigint | number; avg_ms: string | null }>(
@@ -229,7 +229,7 @@ export async function getQuerySourceRollup(
   projectSecret: string | null,
   sinceTs: Date | null,
 ): Promise<QuerySourceRollup[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
 
   // HS-8514 — same `session_id` issue as `getCostByModel`; fall back
@@ -264,7 +264,7 @@ export async function getRecentPrompts(
   projectSecret: string | null,
   limit: number,
 ): Promise<RecentPrompt[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const clauses = buildProjectAndWindowClauses(projectSecret, null, 'ts', 1);
   // Clamp limit to a sane bound — caller validates but defense-in-depth.
   const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
@@ -297,7 +297,7 @@ export async function getRecentPrompts(
  * indexed SUM over `(project_secret, ts DESC)`.
  */
 export async function getTodayCost(projectSecret: string): Promise<number> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const now = new Date();
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const result = await db.query<{ total: string | null }>(
@@ -344,7 +344,7 @@ export async function getToolLatencyHistogram(
   projectSecret: string | null,
   sinceTs: Date | null,
 ): Promise<ToolLatencyHistogram[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
 
   // HS-8478 — prefer `otel_spans` when traces are enabled. Probe for
   // at least one `claude_code.tool.*` span in the project + window; if
@@ -371,7 +371,7 @@ async function getToolLatencyHistogramFromEvents(
   projectSecret: string | null,
   sinceTs: Date | null,
 ): Promise<ToolLatencyHistogram[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
 
   // First query: count + total + p50/p90/p99 per tool. PostgreSQL's
@@ -462,7 +462,7 @@ async function getToolLatencyHistogramFromSpans(
   projectSecret: string | null,
   sinceTs: Date | null,
 ): Promise<ToolLatencyHistogram[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'start_ts', 0);
 
   const stats = await db.query<{
@@ -547,7 +547,7 @@ export const TOOL_LATENCY_BUCKET_UPPER_MS = HISTOGRAM_BUCKET_UPPER_MS;
  * `cost > 0`).
  */
 export async function getTodayCostByProject(): Promise<Record<string, number>> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const now = new Date();
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const result = await db.query<{ project_secret: string; total: string | null }>(
@@ -617,7 +617,7 @@ export interface SpanRow {
 }
 
 export async function getPromptTimeline(promptId: string): Promise<PromptTimeline> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const [eventsResult, spansResult] = await Promise.all([
     db.query<{
       id: number;
@@ -727,7 +727,7 @@ export interface TicketRollup {
 }
 
 export async function getPerTicketRollup(ticketNumber: string): Promise<TicketRollup> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
 
   // The marker substring we LIKE for. Same format the client
   // injects in `channelUI.tsx::tagMessageWithActiveTicket`.
@@ -826,7 +826,7 @@ export interface ProjectCostRow {
  * "no precomputed rollup tables" decision.
  */
 export async function getCostByProject(sinceTs: Date | null): Promise<ProjectCostRow[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const tsClause = sinceTs === null ? '' : ' AND ts >= $2';
   const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
 
@@ -941,7 +941,7 @@ export async function getHourlyActivityHeatmap(
   sinceTs: Date | null,
   timezone = 'UTC',
 ): Promise<HourlyActivityCell[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const tsClause = sinceTs === null ? '' : ' AND ts >= $3';
   const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
 
@@ -1099,7 +1099,7 @@ export async function getCostOverTime(
   timezone = 'UTC',
   now: Date = new Date(),
 ): Promise<CostOverTimePoint[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
 
   const params: Array<string | Date> = [timezone, 'claude_code.cost.usage'];
   let projectClause = '';

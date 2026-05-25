@@ -54,6 +54,16 @@ import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
 // HS-8567 — schema for the JSON control message the server-side
 // terminal WebSocket sends ('history' frame, 'exit' frame, future kinds).
 // `.loose()` lets the server add fields without breaking older clients.
+//
+// HS-8597 — `exitCode` MUST be `.nullable()`. The server sends
+// `exitCode: result.exitCode` (src/terminals/registry/attach.ts), which is
+// `null` for every ALIVE terminal — i.e. every normal history frame. A bare
+// `z.number().optional()` accepts `number | undefined` but NOT `null`, so the
+// schema rejected the history frame for every live session; `safeParse`
+// failed, the handler's `if (!parsed.success) return` silently dropped the
+// frame, and `applyHistoryReplay` never ran. The visible symptom was lost
+// scrollback whenever the client xterm was recreated on a project-tab
+// switch-back (the replay is the only thing that repaints a fresh xterm).
 const ControlMessageSchema = z.object({
   type: z.string().optional(),
   bytes: z.string().optional(),
@@ -61,9 +71,24 @@ const ControlMessageSchema = z.object({
   rows: z.number().optional(),
   noSession: z.boolean().optional(),
   alive: z.boolean().optional(),
-  exitCode: z.number().optional(),
+  exitCode: z.number().nullable().optional(),
   command: z.string().optional(),
 }).loose();
+
+/** Parsed control-message shape after schema validation. */
+export type ControlMessage = z.infer<typeof ControlMessageSchema>;
+
+/**
+ * Validate a decoded JSON control frame against {@link ControlMessageSchema}.
+ * Returns the parsed message, or `null` when the payload doesn't match (the
+ * caller drops malformed frames). Exported so the HS-8597 regression test can
+ * assert the exact server-emitted `history` frame — including `exitCode: null`
+ * for an alive terminal — parses without going through a live WebSocket.
+ */
+export function parseControlMessage(raw: unknown): ControlMessage | null {
+  const parsed = ControlMessageSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
 
 /** Anchor element where the live xterm parks while no consumer is mounting
  *  it. xterm.js requires `term.open(container)` once at construction; we
@@ -585,9 +610,8 @@ function attachWebSocketToEntry(entry: StackEntry): void {
         // boundary. Unknown fields are tolerated (`.loose()`) so the server
         // can extend the protocol without breaking older clients.
         const rawJson: unknown = JSON.parse(data);
-        const parsed = ControlMessageSchema.safeParse(rawJson);
-        if (!parsed.success) return;
-        const msg = parsed.data;
+        const msg = parseControlMessage(rawJson);
+        if (msg === null) return;
         // HS-8044 — fan out the parsed control message to every stack
         // consumer's `onControlMessage` callback BEFORE the module's
         // own history-bytes replay runs. Consumers that need the

@@ -3,10 +3,11 @@
  * rows for a known project, then assert each rollup function returns
  * the expected shape.
  */
+import { rmSync } from 'fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import { getDb } from './connection.js';
+import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
+import { closeDbForDir, getDb, getDbForDir, runWithDataDir } from './connection.js';
 import {
   getCostByModel,
   getCostByProject,
@@ -862,6 +863,62 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(payload.recentPrompts).toHaveLength(10);
       // Newest first — p0 is the newest seed.
       expect(payload.recentPrompts[0].promptId).toBe('p0');
+    });
+  });
+
+  // HS-8581 — telemetry is a single shared store keyed by `project_secret`,
+  // NOT a per-project table set. All OTLP writes land in the default
+  // (primary) project's DB; the rollups must read that same DB regardless
+  // of which project tab is active. The original bug: rollups went through
+  // the per-request `getDb()`, so a *secondary* project's analytics
+  // dashboard read its own (telemetry-empty) DB and showed "No telemetry
+  // recorded" even though the data was in the primary DB. These tests pin
+  // that the rollups ignore the per-request dataDir context.
+  describe('HS-8581 — rollups read the shared telemetry DB, not the request-context DB', () => {
+    let secondaryDir: string;
+
+    beforeEach(async () => {
+      // A second project's data directory + its own (empty) DB, standing in
+      // for a secondary project tab whose request context is active when
+      // the user opens its analytics dashboard.
+      secondaryDir = createTempDir();
+      await getDbForDir(secondaryDir);
+    });
+
+    afterEach(async () => {
+      await closeDbForDir(secondaryDir);
+      try { rmSync(secondaryDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    });
+
+    it('getProjectRollupPayload finds the project\'s data while a different project is the active request context', async () => {
+      const now = new Date();
+      // Seed telemetry in the DEFAULT DB (where the OTLP receiver writes).
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', model: 'sonnet' });
+
+      // Run the rollup as if the SECONDARY project tab is active — its own
+      // DB has zero telemetry rows. Pre-fix this returned the empty state.
+      const payload = await runWithDataDir(secondaryDir, () =>
+        getProjectRollupPayload(SECRET_A, 'all', 'UTC'),
+      );
+
+      expect(payload.windowTotals.allTime.cost).toBeCloseTo(0.5);
+      expect(payload.windowTotals.allTime.promptCount).toBe(1);
+      expect(payload.recentPrompts).toHaveLength(1);
+      expect(payload.recentPrompts[0].promptId).toBe('p1');
+    });
+
+    it('getWindowTotals (the empty-state input) is non-zero under a foreign request context', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 1.25 });
+
+      // The analytics empty-state hinges on allTime cost/promptCount being
+      // zero. Confirm the shared-DB read keeps it non-zero even when the
+      // active context is a different project's (empty) DB.
+      const totals = await runWithDataDir(secondaryDir, () =>
+        getWindowTotals(SECRET_A, null),
+      );
+      expect(totals.cost).toBeCloseTo(1.25);
     });
   });
 });

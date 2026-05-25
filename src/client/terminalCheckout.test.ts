@@ -25,6 +25,7 @@ import {
   applyHistoryReplay,
   checkout,
   entryCount,
+  parseControlMessage,
 } from './terminalCheckout.js';
 
 beforeEach(() => {
@@ -1346,6 +1347,110 @@ describe('per-entry global stall watcher (HS-8286)', () => {
     expect(entry.globalStallToken).toBeNull();
     expect(_inspectServerBusyForTesting().inFlightCount).toBe(0);
     expect(_inspectServerBusyForTesting().chipVisible).toBe(false);
+
+    h.release();
+  });
+});
+
+/**
+ * HS-8597 — the client dropped the server's `history` control frame for every
+ * ALIVE terminal, so scrollback was never replayed and switching project tabs
+ * lost the prior output on any terminal whose xterm got recreated. Root cause:
+ * the server sends `exitCode: result.exitCode`, which is `null` for an alive
+ * session, but the client's `ControlMessageSchema` declared
+ * `exitCode: z.number().optional()` — accepting `number | undefined` but NOT
+ * `null`. `safeParse` failed → the message handler's `if (msg === null) return`
+ * silently swallowed the frame → `applyHistoryReplay` never ran.
+ *
+ * These guard the parse contract directly (the seam the live message handler
+ * uses). The existing `applyHistoryReplay` tests above sit BELOW this gate, so
+ * they never exercised it — which is exactly why the regression slipped in.
+ */
+describe('parseControlMessage — server frame contract (HS-8597)', () => {
+  it('accepts the history frame for an ALIVE terminal (exitCode: null)', () => {
+    // Mirrors src/terminals/websocket.ts handleConnection's first frame for a
+    // live session: alive true, exitCode null.
+    const frame = {
+      type: 'history',
+      bytes: btoa('hello world\r\n'),
+      alive: true,
+      exitCode: null,
+      cols: 80,
+      rows: 24,
+      command: 'zsh',
+    };
+    const msg = parseControlMessage(frame);
+    expect(msg).not.toBeNull();
+    expect(msg?.type).toBe('history');
+    expect(msg?.bytes).toBe(frame.bytes);
+    // exitCode null must survive parsing (not be the reason the frame drops).
+    expect(msg?.exitCode).toBeNull();
+  });
+
+  it('still accepts the history frame for an EXITED terminal (numeric exitCode)', () => {
+    const msg = parseControlMessage({
+      type: 'history', bytes: btoa('done\r\n'), alive: false, exitCode: 0, cols: 80, rows: 24, command: 'zsh',
+    });
+    expect(msg).not.toBeNull();
+    expect(msg?.exitCode).toBe(0);
+  });
+
+  it('accepts the noSession frame the §47 popup relies on', () => {
+    const msg = parseControlMessage({
+      type: 'history', bytes: '', alive: false, exitCode: null, cols: 80, rows: 24, noSession: true,
+    });
+    expect(msg).not.toBeNull();
+    expect(msg?.noSession).toBe(true);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(parseControlMessage('not an object')).toBeNull();
+    expect(parseControlMessage(null)).toBeNull();
+    expect(parseControlMessage(42)).toBeNull();
+  });
+
+  it('tolerates unknown forward-compat fields (.loose)', () => {
+    const msg = parseControlMessage({
+      type: 'history', bytes: '', exitCode: null, futureField: { nested: true },
+    });
+    expect(msg).not.toBeNull();
+    expect(msg?.type).toBe('history');
+  });
+});
+
+/**
+ * HS-8597 end-to-end through the live WS message handler: a history frame
+ * carrying `exitCode: null` must actually drive `applyHistoryReplay` (i.e.
+ * call `term.reset()` and write the bytes). Pre-fix this frame was dropped at
+ * the schema gate so reset never fired. happy-dom's WebSocket lets us dispatch
+ * a real `message` event through the listener `attachWebSocketToEntry` wires.
+ */
+describe('history-frame replay through the WS message handler (HS-8597)', () => {
+  it('replays scrollback when the alive-terminal history frame (exitCode: null) arrives', () => {
+    const m = makeMount('m1');
+    const h = checkout({ projectSecret: 's', terminalId: 'dyn-x', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('s', 'dyn-x');
+    expect(entry).not.toBeNull();
+    expect(entry!.ws).not.toBeNull();
+
+    const resetSpy = vi.spyOn(h.term, 'reset');
+    const writeSpy = vi.spyOn(h.term, 'write');
+
+    entry!.ws!.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        type: 'history',
+        bytes: btoa('echo hello world\r\nhello world\r\n'),
+        alive: true,
+        exitCode: null,
+        cols: 80,
+        rows: 24,
+        command: 'zsh',
+      }),
+    }));
+
+    // The frame passed the schema → applyHistoryReplay ran → reset + write.
+    expect(resetSpy).toHaveBeenCalled();
+    expect(writeSpy).toHaveBeenCalled();
 
     h.release();
   });

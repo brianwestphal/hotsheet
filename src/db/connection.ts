@@ -263,6 +263,31 @@ export async function getDb(): Promise<PGlite> {
   return getDbByPath(defaultDbPath);
 }
 
+/**
+ * HS-8581 — get the SHARED telemetry database, independent of the
+ * per-request project context.
+ *
+ * The OTLP tables (`otel_metrics` / `otel_events` / `otel_spans`) are a
+ * single shared store keyed by the `project_secret` column, NOT a
+ * per-project table set. Every OTLP payload lands here: Claude Code's
+ * bundled exporter POSTs to `/v1/{metrics,logs,traces}` with no
+ * `X-Hotsheet-Secret` header, so the server middleware resolves those
+ * writes to the default (primary) project's dataDir. The cross-project
+ * dashboard then aggregates by `project_secret`.
+ *
+ * Reads MUST resolve to the same default DB regardless of which project
+ * tab is active. Routing telemetry rollups through the per-request
+ * `getDb()` made a *secondary* project's analytics dashboard query its
+ * own (telemetry-empty) DB and render the "No telemetry recorded"
+ * placeholder even though the data was sitting in the primary project's
+ * DB — the symptom reported in HS-8581. Both the writers and the rollup
+ * queries call this helper so the store stays single-sourced.
+ */
+export async function getTelemetryDb(): Promise<PGlite> {
+  if (defaultDbPath === null) throw new Error('Data directory not set. Call setDataDir() first.');
+  return getDbByPath(defaultDbPath);
+}
+
 /** Get or create a database for a specific dataDir. */
 export async function getDbForDir(dataDir: string): Promise<PGlite> {
   const dbDir = join(dataDir, 'db');
