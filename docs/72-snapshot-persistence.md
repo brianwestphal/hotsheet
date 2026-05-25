@@ -259,7 +259,69 @@ decide in favor of, pending Phase 1's numbers.)
    `nodefs` for telemetry — which is corruption-proof for user data *and* RAM-bounded,
    neutralizing the user's concern. Phases 1/3 of §72 feed this decision.
 
-## 72.7 Cross-references
+## 72.7 Phase 1 benchmark results (HS-8577, 2026-05-25)
+
+Measured with `scripts/bench-memory-primary.ts` (PGLite 0.4.5 / PG 17.5, macOS). Each
+row is a **fresh process** (no cross-run WASM-memory accumulation), built via the real
+`createPglite` helper + the real §67 telemetry DDL. `RSS` = total resident growth over
+an empty-process baseline (Node + WASM + data); `External` = WASM linear memory +
+ArrayBuffers (the "PGDATA-in-RAM" signal). 200k events ≈ one month of heavy use
+(events every ~5 s) + proportional metrics + spans.
+
+| mode | events | projects | RSS (MB) | External (MB) | dump (ms) | snapshot (MB) |
+|---|---|---|---|---|---|---|
+| file | 0 | 1 | 840 | 247 | 376 | 4.1 |
+| memory | 0 | 1 | 843 | 324 | 336 | 4.1 |
+| file | 50k | 1 | 1065 | 627 | 1961 | 22.0 |
+| memory | 50k | 1 | 1306 | 1003 | 1802 | 22.0 |
+| file | 200k | 1 | 1962 | 958 | 6188 | 76.2 |
+| memory | 200k | 1 | **2877** | **3085** | 6087 | 76.2 |
+| file | 50k | 3 | 1473 | 1020 | — | — |
+| memory | 50k | 3 | 2046 | 2141 | — | — |
+| file | 50k | 5 | 1813 | 1412 | — | — |
+| memory | 50k | 5 | **2813** | **3080** | — | — |
+
+**Findings.**
+
+1. **The WASM Postgres baseline is large and mode-independent (~840 MB RSS for one
+   empty instance).** This is the compiled-Postgres WASM image + reserved memory, paid
+   once per open instance in BOTH modes — so multi-project is already RAM-heavy today,
+   before any memory-primary change.
+2. **Telemetry volume is what makes memory-primary expensive.** With no telemetry the
+   two modes are within noise (durable set is ~4 MB). At 200k events single-project,
+   memory-primary costs **+915 MB RSS / +2.1 GB WASM memory** over file-backed — that is
+   the entire telemetry set held resident in WASM memory instead of paged to disk by
+   `nodefs`. Across 5 projects (50k each) the gap is ~+1 GB RSS / +1.7 GB WASM.
+3. **Snapshot (dump) latency + write-amplification scale brutally with telemetry, and
+   are mode-independent** (`dumpDataDir` serializes the whole cluster regardless of
+   backend): 376 ms empty → ~1.9 s @ 50k → **~6.2 s @ 200k**, rewriting a **76 MB**
+   tarball each time. Telemetry ingestion is continuous, so snapshotting the whole
+   cluster on every debounce would thrash — exactly the §72.3 #3/#4 concern, now
+   quantified.
+4. **The durable set alone is trivially viable** for memory-primary: ~4 MB snapshot,
+   ~336 ms dump, negligible RAM delta vs file.
+
+**Verdict → confirms Option B′ (the §72.6 telemetry split), and shapes the remaining
+phases.** Naive *whole-cluster* memory-primary (a global `db_persistence_mode:
+'snapshot'`) is **not viable** with telemetry on: the RAM cost and the 6 s / 76 MB
+write-amplification are prohibitive. The viable shape is **memory-primary for the small
+durable set only (tickets / attachments / settings / sync state), telemetry stays
+`nodefs`** — RAM-bounded AND corruption-proof where it matters. So:
+
+- **Phase 3 (HS-8579) telemetry-split decision: GO.** These numbers are the evidence.
+- **The production open-path + setting (originally scoped into Phase 1) was deliberately
+  NOT built** — the benchmark's job was to decide the shape, and it shows the naive
+  global mode is the wrong shape. Phase 2 (HS-8578) should wire the snapshot triggers for
+  the *durable-set* store, and Phase 4 (HS-8580) the migration/cutover, both in the
+  Option B′ shape rather than the original whole-cluster shape.
+- **Urgency is low.** §73 (Option D) shipped and already makes corruption non-fatal +
+  self-healing at zero extra RAM. Option B′ upgrades the *durable set* from
+  corruption-resilient to corruption-proof — a worthwhile but non-urgent enhancement
+  on top of §73.
+
+Re-run anytime: `node --import tsx --expose-gc scripts/bench-memory-primary.ts [eventCounts...]`.
+
+## 72.8 Cross-references
 
 - §7 — backup / restore (the dump/load path this proposal promotes to primary).
 - §41 — JSON co-save escape hatch (kept as-is).
