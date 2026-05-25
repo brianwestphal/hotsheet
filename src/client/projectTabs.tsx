@@ -6,6 +6,7 @@ import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_FOLDER, ICON
 import { recordInteraction } from './longTaskObserver.js';
 import { getMinimizedPermissionSecrets, reopenMinimizedForSecret } from './permissionOverlay.js';
 import { activeProjectSignal, projectsStore } from './projectsStore.js';
+import { confirmCloseProjects } from './quitConfirm.js';
 import { computed, effect } from './reactive.js';
 import { bindList } from './reactive-bind.js';
 import type { ProjectInfo } from './state.js';
@@ -244,6 +245,10 @@ export function closeActiveTab(): void {
 
 async function removeProject(project: ProjectInfo): Promise<void> {
   if (projectsStore.state.value.projects.length <= 1) return;
+  // HS-8604 — §37-style confirmation when the tab has running / non-exempt
+  // terminals (gated by the per-project `confirm_quit_with_running_terminals`
+  // setting). Aborts the close if the user cancels.
+  if (!(await confirmCloseProjects([project.secret]))) return;
   try {
     // HS-8085 — DELETE auths via the URL `:secret` param, not the
     // `X-Hotsheet-Secret` header (see `src/routes/projects.ts:90`); the
@@ -263,6 +268,10 @@ async function removeProject(project: ProjectInfo): Promise<void> {
 
 async function removeOtherProjects(keepProject: ProjectInfo): Promise<void> {
   const toRemove = projectsStore.state.value.projects.filter(p => p.secret !== keepProject.secret);
+  if (toRemove.length === 0) return;
+  // HS-8604 — confirm once for the whole batch when any closing tab has
+  // running / non-exempt terminals.
+  if (!(await confirmCloseProjects(toRemove.map(p => p.secret)))) return;
   for (const p of toRemove) {
     await api(`/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
     clearPerProjectSessionState(p.secret);
@@ -278,6 +287,10 @@ async function removeProjectsInDirection(project: ProjectInfo, direction: 'left'
   const idx = list.findIndex(p => p.secret === project.secret);
   if (idx === -1) return;
   const toRemove = direction === 'left' ? list.slice(0, idx) : list.slice(idx + 1);
+  if (toRemove.length === 0) return;
+  // HS-8604 — confirm once for the whole batch when any closing tab has
+  // running / non-exempt terminals.
+  if (!(await confirmCloseProjects(toRemove.map(p => p.secret)))) return;
   for (const p of toRemove) {
     await api(`/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
     clearPerProjectSessionState(p.secret);

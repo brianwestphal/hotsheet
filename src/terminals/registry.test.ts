@@ -7,6 +7,7 @@ import {
   attach,
   clearBellPending,
   destroyAllTerminals,
+  destroyProjectTerminals,
   destroyTerminal,
   detach,
   ensureSpawned,
@@ -14,6 +15,7 @@ import {
   getTerminalStatus,
   killTerminal,
   listBellPendingForProject,
+  listProjectTerminalIds,
   type PtyFactory,
   type PtyLike,
   resizeTerminal,
@@ -278,6 +280,37 @@ describe('TerminalRegistry', () => {
     attach('secret-1', dir, sub2);
     expect(FakePty.lastSpawned).not.toBe(firstPty);
     expect(firstPty!.killed).toBe(true);
+  });
+
+  it('destroyProjectTerminals kills every PTY for the project + removes the sessions, leaving other projects intact (HS-8604)', () => {
+    const dir = tmpDataDir();
+    const otherDir = tmpDataDir();
+    const { sub: a } = makeSub();
+    const { sub: b } = makeSub();
+    const { sub: c } = makeSub();
+
+    // Two terminals under one project, plus one under a different project.
+    attach('secret-proj', dir, a, { configOverride: { id: 'alpha', command: '/bin/sh' } }, 'alpha');
+    const ptyAlpha = FakePty.lastSpawned!;
+    attach('secret-proj', dir, b, { configOverride: { id: 'beta', command: '/bin/sh' } }, 'beta');
+    const ptyBeta = FakePty.lastSpawned!;
+    attach('secret-other', otherDir, c);
+    const ptyOther = FakePty.lastSpawned!;
+
+    expect(listProjectTerminalIds('secret-proj').sort()).toEqual(['alpha', 'beta']);
+
+    destroyProjectTerminals('secret-proj');
+
+    // Both of the project's PTYs are torn down AND their sessions removed —
+    // the pre-HS-8604 version deleted the map entries WITHOUT killing the
+    // PTYs, orphaning the processes.
+    expect(ptyAlpha.killed).toBe(true);
+    expect(ptyBeta.killed).toBe(true);
+    expect(listProjectTerminalIds('secret-proj')).toEqual([]);
+
+    // The other project's PTY is untouched.
+    expect(ptyOther.killed).toBe(false);
+    expect(listProjectTerminalIds('secret-other')).toEqual(['default']);
   });
 
   it('scrollback ring buffer honors terminal_scrollback_bytes setting (clamped to min)', () => {

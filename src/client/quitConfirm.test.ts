@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { evaluateQuitDecision, type QuitSummary, showQuitConfirmDialog } from './quitConfirm.js';
+import { buildCloseConfirmMessage, evaluateQuitDecision, type QuitSummary, showQuitConfirmDialog } from './quitConfirm.js';
 import { _getTermForTesting, _inspectStackForTesting, _resetForTesting, entryCount } from './terminalCheckout.js';
 
 function project(
@@ -35,6 +35,50 @@ function project(
   if (opts?.terminalDefault !== undefined) proj.terminalDefault = opts.terminalDefault;
   return proj;
 }
+
+describe('buildCloseConfirmMessage (HS-8604)', () => {
+  it('uses the singular and names the single project', () => {
+    const msg = buildCloseConfirmMessage([project('Alpha', 'with-non-exempt-processes', [
+      { label: 'Claude', cmd: 'claude', isExempt: false },
+    ])]);
+    expect(msg).toContain('a terminal running an active process');
+    expect(msg).toContain('“Alpha”');
+    expect(msg).toContain('claude');
+    expect(msg).toContain('stops it');
+  });
+
+  it('uses the plural + count when multiple processes are running', () => {
+    const msg = buildCloseConfirmMessage([project('Alpha', 'with-non-exempt-processes', [
+      { label: 'A', cmd: 'claude', isExempt: false },
+      { label: 'B', cmd: 'npm run dev', isExempt: false },
+    ])]);
+    expect(msg).toContain('2 terminals running active processes');
+    expect(msg).toContain('stops them');
+  });
+
+  it('caps the preview list at 4 with an "and N more" tail', () => {
+    const entries = Array.from({ length: 6 }, (_, i) => ({ label: `t${String(i)}`, cmd: `cmd${String(i)}`, isExempt: false }));
+    const msg = buildCloseConfirmMessage([project('Alpha', 'with-non-exempt-processes', entries)]);
+    expect(msg).toContain('and 2 more');
+    expect(msg).toContain('6 terminals');
+  });
+
+  it('omits the project name when more than one project is involved', () => {
+    const msg = buildCloseConfirmMessage([
+      project('Alpha', 'with-non-exempt-processes', [{ label: 'A', cmd: 'claude', isExempt: false }]),
+      project('Beta', 'with-non-exempt-processes', [{ label: 'B', cmd: 'node', isExempt: false }]),
+    ]);
+    expect(msg).not.toContain('“Alpha”');
+    expect(msg).toContain('2 terminals running active processes');
+  });
+
+  it('falls back to the tab label when the foreground command is empty', () => {
+    const msg = buildCloseConfirmMessage([project('Alpha', 'with-non-exempt-processes', [
+      { label: 'MyTab', cmd: '', isExempt: false },
+    ])]);
+    expect(msg).toContain('MyTab');
+  });
+});
 
 describe('evaluateQuitDecision (HS-7596 / §37.5)', () => {
   it('returns shouldPrompt:false when there are no projects', () => {

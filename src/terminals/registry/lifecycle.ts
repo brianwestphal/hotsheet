@@ -291,13 +291,22 @@ export function destroyTerminal(
   sessions.delete(key);
 }
 
-/** Destroy every terminal for a project (e.g. on project unregister). */
+/** Destroy every terminal for a project (e.g. on project unregister, when its
+ *  tab is closed). HS-8604 — this MUST `teardownPty` each session before
+ *  dropping the map entry; the pre-fix version only deleted the entry, which
+ *  orphaned every live PTY (a running `claude`, dev server, etc.) — the
+ *  process kept running, unreachable from any UI, until the whole app exited.
+ *  Mirrors `destroyTerminal` / `destroyAllTerminals`. */
 export function destroyProjectTerminals(secret: string): void {
   const prefix = `${secret}::`;
   for (const key of [...sessions.keys()]) {
-    if (key.startsWith(prefix)) {
-      sessions.delete(key);
+    if (!key.startsWith(prefix)) continue;
+    const session = sessions.get(key);
+    if (session) {
+      teardownPty(session);
+      session.subscribers.clear();
     }
+    sessions.delete(key);
   }
 }
 

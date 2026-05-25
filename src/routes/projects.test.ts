@@ -82,9 +82,12 @@ vi.mock('./notify.js', () => ({
 
 const mockBellPending = new Map<string, Array<{ terminalId: string; message: string | null }>>();
 const mockAliveTerminals: Array<{ secret: string; terminalId: string; rootPid: number }> = [];
+const mockDestroyProjectTerminals = vi.fn<(secret: string) => void>();
 vi.mock('../terminals/registry.js', () => ({
   listBellPendingForProject: vi.fn((secret: string) => mockBellPending.get(secret) ?? []),
   listAliveTerminalsAcrossProjects: vi.fn(() => mockAliveTerminals),
+  // HS-8604 — the DELETE route now kills the project's PTYs before unregister.
+  destroyProjectTerminals: (secret: string): void => mockDestroyProjectTerminals(secret),
 }));
 
 const mockConfiguredTerminals = new Map<string, Array<{ id: string; name?: string; command: string; theme?: string; fontFamily?: string; fontSize?: number }>>();
@@ -247,6 +250,20 @@ describe('DELETE /projects/:secret', () => {
     const { unregisterProject } = await import('../projects.js');
     expect(removeFromProjectList).toHaveBeenCalledWith(mockProject.dataDir);
     expect(unregisterProject).toHaveBeenCalledWith('test-secret-123');
+  });
+
+  it('kills the project\'s PTYs before unregistering (HS-8604 — no orphaned terminals)', async () => {
+    mockDestroyProjectTerminals.mockClear();
+    const res = await app.request('/api/projects/test-secret-123', { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(mockDestroyProjectTerminals).toHaveBeenCalledWith('test-secret-123');
+  });
+
+  it('does NOT kill PTYs for an unknown project (404 before teardown)', async () => {
+    mockDestroyProjectTerminals.mockClear();
+    const res = await app.request('/api/projects/nonexistent', { method: 'DELETE' });
+    expect(res.status).toBe(404);
+    expect(mockDestroyProjectTerminals).not.toHaveBeenCalled();
   });
 
   it('returns 404 for unknown project', async () => {

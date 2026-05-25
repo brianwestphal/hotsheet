@@ -237,6 +237,14 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] **Non-shell base command** — terminal command is `claude` directly (not `zsh -c claude`). PTY root is claude. ⌘Q. Prompt fires listing `claude (claude)`.
 - [ ] **Stale-instance cleanup bypasses** — start Hot Sheet, then start a SECOND Hot Sheet with `--replace`. The first one is killed by the stale-instance flow. NO prompt is shown (the user is already quitting through the new window).
 
+#### Closing a project tab (HS-8604, §37.10)
+- [ ] **PTY actually dies (no orphan)** — open a project, start `claude` (or a long-running `node`/dev server) in a drawer terminal, note its PID (`ps`). Close the project's tab (X / right-click → Close Tab). After confirming, the process is GONE (`ps` shows it killed). Pre-fix it kept running, unreachable, until the whole app quit.
+- [ ] **Tab-close confirm fires for a running non-exempt process** — with `claude` running and the project's Quit-confirmation set to its default ("only with non-exempt processes"), closing the tab shows the lightweight confirm dialog listing `claude`. Cancel: tab stays open, claude continues. Close tab: claude is killed and the tab closes.
+- [ ] **Idle tab closes without a prompt** — a tab whose only terminal is an idle login shell closes immediately with no confirm (nothing to stop). Same even with the setting on "Always".
+- [ ] **Exempt-only tab closes without a prompt** — only `htop`/`tmux`/etc. (exempt) running → no confirm under the default mode; the tab closes and the exempt process is killed.
+- [ ] **Setting = Never** — with the project set to "Never", closing a tab with `claude` running shows NO confirm (still kills it).
+- [ ] **Bulk close** — right-click → "Close Other Tabs" / "Close Tabs to the Left/Right" with a running non-exempt terminal in one of the closing tabs fires a single batch confirm before closing them all.
+
 #### Quit-confirm preview pane = real xterm (HS-8041, §54.6)
 - [ ] **Live xterm preview** — start `claude` (or `htop`, `vim` — anything with rich TUI rendering) in a drawer terminal. ⌘Q with the prompt firing. Click any row in the dialog list. The preview pane on the right shows the **actual rendered xterm canvas** for that terminal (alignment / color / box drawing all match the live drawer view). HS-7969 originally complained that the previous ANSI-spans preview "doesn't really match what the real terminals look like fully" — that gap is gone.
 - [ ] **Cross-project preview** — open two projects, one with `claude` running. ⌘Q from either project. Click the row for the other project's `claude` terminal. The preview shows that terminal's live xterm even though it's never been mounted in this page session.

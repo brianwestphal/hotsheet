@@ -1,5 +1,6 @@
 import type { SafeHtml } from '../jsx-runtime.js';
 import { api, apiWithSecret } from './api.js';
+import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
 import { resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
@@ -178,6 +179,62 @@ export async function runQuitConfirmFlow(): Promise<'proceed' | 'cancel'> {
     }));
   }
   return choice.outcome;
+}
+
+/**
+ * HS-8604 — pure builder for the per-tab close-confirm message. Lists the
+ * running foreground processes (falling back to the tab label) that closing
+ * the tab(s) would kill, capped at 4 with an "and N more" tail. Names the
+ * project only when exactly one is being closed. Exported for unit testing.
+ */
+export function buildCloseConfirmMessage(contributing: QuitSummaryProject[]): string {
+  const labels = contributing.flatMap(p =>
+    p.entries.map(e => (e.foregroundCommand !== '' ? e.foregroundCommand : e.label)),
+  );
+  const total = labels.length;
+  const preview = labels.slice(0, 4).join(', ');
+  const more = total > 4 ? `, and ${String(total - 4)} more` : '';
+  const subject = total === 1 ? 'a terminal running an active process' : `${String(total)} terminals running active processes`;
+  const where = contributing.length === 1 ? ` in “${contributing[0].name}”` : '';
+  const verb = total === 1 ? 'it' : 'them';
+  return `This will stop ${subject}${where} (${preview}${more}). Closing the tab stops ${verb} — this cannot be undone.`;
+}
+
+/**
+ * HS-8604 — confirm before closing project tab(s) that have running terminals.
+ * Reuses the §37 per-project `confirm_quit_with_running_terminals` setting +
+ * exempt-process inspection (via `/quit-summary` + the pure
+ * `evaluateQuitDecision`), but shows the lightweight `confirmDialog` rather
+ * than the full "Quit Hot Sheet?" master-detail dialog — closing one tab is a
+ * smaller action than quitting the whole app.
+ *
+ * Returns `true` to proceed with the close, `false` to abort. Only prompts
+ * when there's actually a running process to stop (closing an idle tab is
+ * harmless even under the `'always'` setting). On a quit-summary fetch
+ * failure it proceeds: the server tears the PTYs down cleanly regardless
+ * (HS-8604 server fix), and blocking an explicit close-tab gesture on a
+ * transient fetch blip is worse than the lost confirmation.
+ */
+export async function confirmCloseProjects(secrets: string[]): Promise<boolean> {
+  let summary: QuitSummary;
+  try {
+    summary = await api<QuitSummary>('/projects/quit-summary');
+  } catch {
+    return true;
+  }
+  const scoped: QuitSummary = { projects: summary.projects.filter(p => secrets.includes(p.secret)) };
+  const decision = evaluateQuitDecision(scoped);
+  const total = decision.contributing.reduce((acc, p) => acc + p.entries.length, 0);
+  if (!decision.shouldPrompt || total === 0) return true;
+
+  const multi = secrets.length > 1;
+  return confirmDialog({
+    title: multi ? 'Close tabs?' : 'Close tab?',
+    message: buildCloseConfirmMessage(decision.contributing),
+    confirmLabel: multi ? 'Close tabs' : 'Close tab',
+    cancelLabel: 'Cancel',
+    danger: true,
+  });
 }
 
 // HS-8045 — `ScrollbackPreviewResponse` interface, `fetchScrollbackPreview`,

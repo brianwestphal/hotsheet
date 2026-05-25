@@ -13,7 +13,7 @@ import { getAllProjects, getProjectBySecret, registerProject, reorderProjects, u
 import { type PendingPermissionEntrySchema, PendingPermissionSchema } from '../schemas.js';
 import { DEFAULT_TERMINAL_ID, listTerminalConfigs, parseTerminalDefault, type TerminalConfig } from '../terminals/config.js';
 import { DEFAULT_EXEMPT_PROCESSES, inspectForegroundProcess } from '../terminals/processInspect.js';
-import { listAliveTerminalsAcrossProjects, listBellPendingForProject } from '../terminals/registry.js';
+import { destroyProjectTerminals, listAliveTerminalsAcrossProjects, listBellPendingForProject } from '../terminals/registry.js';
 import type { AppEnv } from '../types.js';
 import { addBellWaiter, addPermissionWaiter, getBellVersion, getPermissionVersion, notifyChange  } from './notify.js';
 import { listDynamicTerminalConfigs } from './terminal.js';
@@ -107,6 +107,15 @@ projectRoutes.delete('/:secret', (c) => {
     return c.json({ error: 'Cannot unregister the only project' }, 400);
   }
 
+  // HS-8604 — kill the project's live PTYs before dropping it from the
+  // registry. Without this, `unregisterProject` only clears the project +
+  // dataDir maps, leaving every terminal's PTY (a running `claude`, dev
+  // server, etc.) orphaned: still running, unreachable from any UI, until
+  // the whole app exits via `destroyAllTerminals` on SIGTERM. The client
+  // gates this DELETE behind a §37-style confirmation (see
+  // `confirmCloseProjects` in `src/client/quitConfirm.tsx`) when the
+  // project has running / non-exempt terminals.
+  destroyProjectTerminals(secret);
   removeFromProjectList(project.dataDir);
   unregisterProject(secret);
   notifyChange();
