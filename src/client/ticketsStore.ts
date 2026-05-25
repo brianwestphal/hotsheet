@@ -233,7 +233,7 @@ export const filteredTickets: ReadonlySignal<readonly Ticket[]> = computed(() =>
   const { tickets, filter } = ticketsStore.state.value;
   const viewFiltered = applyViewFilter(
     tickets,
-    filter.view,
+    effectiveView(filter.view, filter.search),
     filter.includeBacklogInSearch,
     filter.includeArchiveInSearch,
   );
@@ -241,6 +241,33 @@ export const filteredTickets: ReadonlySignal<readonly Ticket[]> = computed(() =>
   const lc = filter.search.toLowerCase();
   return viewFiltered.filter(t => ticketMatchesSearch(t, lc));
 });
+
+/**
+ * HS-8618 — search is view-independent: a non-empty search query should
+ * return the same results no matter which sidebar view is active, behaving
+ * as if "All Tickets" (the `all` view) were selected. Returns the view that
+ * narrowing should ACTUALLY use:
+ *   - empty search → the real view (no override).
+ *   - `trash` → exempt. Trash is a recovery surface; it has no §40
+ *     include-row to surface its matches elsewhere, and silently switching
+ *     away from it on a keystroke would remove the ability to search trash.
+ *   - `custom:*` → exempt. A saved view is a deliberate user-constructed
+ *     filter; overriding it on search would defeat its purpose, and the
+ *     custom path fetches its matched set server-side via `/tickets/query`.
+ *   - every other standard view (`up-next` / `open` / `completed` /
+ *     `non-verified` / `verified` / `backlog` / `archive` / `category:*` /
+ *     `priority:*`) → `all`, so the search spans the full active scope
+ *     (plus whatever the §40 include-row flags mix back in).
+ * Used by both the client-side `applyViewFilter` (above) and the
+ * coarse server-scope branch in `ticketList.tsx::loadTickets` so the two
+ * layers agree.
+ */
+export function effectiveView(view: string, search: string): string {
+  if (search === '') return view;
+  if (view === 'trash') return view;
+  if (view.startsWith('custom:')) return view;
+  return 'all';
+}
 
 /**
  * HS-8331 — derived signal that simply mirrors `state.value.tickets`

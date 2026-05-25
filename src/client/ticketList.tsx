@@ -15,7 +15,7 @@ import {
 registerCallbacks,
 setDraftTitle, setSuppressFocusSelect} from './ticketListState.js';
 import { cancelPendingSave as _cancelPendingSave, createPreviewRow, createTicketRow, createTrashRow, setupTicketRowEffects } from './ticketRow.js';
-import { filteredTickets, ticketsStore } from './ticketsStore.js';
+import { effectiveView, filteredTickets, ticketsStore } from './ticketsStore.js';
 
 // --- Re-exports (preserves the public API of this module) ---
 
@@ -740,12 +740,19 @@ export async function loadTickets() {
   //   - active scope (default for everything in the active-set views)
   //   - trash, backlog, archive (separate scopes, not in active set)
   // Custom views took the early-return branch above and aren't here.
+  // HS-8618 — search is view-independent. `effectiveView` collapses every
+  // standard view to 'all' (→ active scope) when a search is active, so a
+  // search run from the Backlog or Archive view fetches the active scope and
+  // surfaces the backlog/archive matches as §40 include-rows instead of being
+  // confined to that bucket. Trash + custom views are exempt (custom already
+  // took the early-return branch above).
   const params = new URLSearchParams();
-  if (state.view === 'trash') {
+  const scopeView = effectiveView(state.view, state.search);
+  if (scopeView === 'trash') {
     params.set('status', 'deleted');
-  } else if (state.view === 'backlog') {
+  } else if (scopeView === 'backlog') {
     params.set('status', 'backlog');
-  } else if (state.view === 'archive') {
+  } else if (scopeView === 'archive') {
     params.set('status', 'archive');
   } else {
     // 'all' / 'up-next' / 'open' / 'completed' / 'non-verified' /

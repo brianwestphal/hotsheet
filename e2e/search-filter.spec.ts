@@ -93,4 +93,28 @@ test.describe('Search and filter workflows (HS-5628)', () => {
     await page.keyboard.press('Meta+f');
     await expect(page.locator('#search-input')).toBeFocused({ timeout: 3000 });
   });
+
+  // HS-8618 — search is view-independent: typing a query behaves as if "All
+  // Tickets" were selected, regardless of the current sidebar view. Clearing
+  // the search reverts to the view's own narrowing.
+  test('search from a category view surfaces cross-category matches (HS-8618)', async ({ page }) => {
+    // Narrow to the Bug category — only the bug ticket shows.
+    await page.locator('.sidebar-item[data-view="category:bug"]').click();
+    await expect(page.locator(`.ticket-title-input[value="${titleBug}"]`)).toBeVisible({ timeout: 3000 });
+    await expect(page.locator(`.ticket-title-input[value="${titleFeature}"]`)).toBeHidden();
+    await expect(page.locator(`.ticket-title-input[value="${titleInvestigation}"]`)).toBeHidden();
+
+    // Search by the shared suffix. Per HS-8618 the search ignores the active
+    // category view and behaves as All Tickets, so the feature + investigation
+    // tickets (other categories) come back too.
+    await page.locator('#search-input').fill(String(suffix));
+    await expect(page.locator(`.ticket-title-input[value="${titleBug}"]`)).toBeVisible({ timeout: 5000 });
+    await expect(page.locator(`.ticket-title-input[value="${titleFeature}"]`)).toBeVisible();
+    await expect(page.locator(`.ticket-title-input[value="${titleInvestigation}"]`)).toBeVisible();
+
+    // Clearing the search reverts to the category view (only the bug ticket).
+    await page.locator('#search-input').fill('');
+    await expect(page.locator(`.ticket-title-input[value="${titleBug}"]`)).toBeVisible({ timeout: 3000 });
+    await expect(page.locator(`.ticket-title-input[value="${titleFeature}"]`)).toBeHidden({ timeout: 3000 });
+  });
 });

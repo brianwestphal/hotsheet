@@ -6,6 +6,8 @@ The default ticket views (All, Up Next, category filters, custom views without `
 
 HS-7756 fixes this by counting search matches in the hidden buckets and surfacing them as **opt-in** "Include {N} backlog items" / "Include {N} archive items" rows under the multi-select toolbar. Click → those rows mix into the result set (sorted alongside the active matches). The counts and the rows only appear while a search is active; clearing the search clears the rows.
 
+**HS-8618 interaction.** Since search is now view-independent (a non-empty query behaves as the All Tickets view for every standard view — see [4-user-interface.md](4-user-interface.md) §4.8), the active result set is always the active scope while searching, so these include rows surface backlog/archive matches uniformly no matter which view the user started from. In particular, searching from the Backlog or Archive view no longer confines results to that bucket — it returns the active scope and offers that bucket back via its include row.
+
 ## 40.2 Server side
 
 A new lightweight endpoint:

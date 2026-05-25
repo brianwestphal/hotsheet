@@ -19,6 +19,7 @@ import {
   _clearPerTicketSignalsForTesting,
   _ticketsStoreForTesting,
   DEFAULT_FILTER,
+  effectiveView,
   filteredTickets,
   type FilterState,
   getTicketSignals,
@@ -405,14 +406,19 @@ describe('ticketsStore — filteredTickets per-view narrowing (HS-8334)', () => 
     expect(filteredTickets.value.map(t => t.id)).toEqual([5]);
   });
 
-  it('combined view + search applies both filters', () => {
+  // HS-8618 — a non-empty search is view-INDEPENDENT for standard views:
+  // it behaves as 'all'. Pre-HS-8618 this asserted `[1]` (search confined to
+  // the 'completed' view); now ticket 3 (not_started, also matches 'foo')
+  // comes through because the 'completed' narrowing is dropped while
+  // searching.
+  it('search from a standard view ignores the view narrowing (HS-8618)', () => {
     ticketsStore.actions.setTickets([
       makeTicket(1, { status: 'completed', title: 'foo bar' }),
       makeTicket(2, { status: 'completed', title: 'baz' }),
       makeTicket(3, { status: 'not_started', title: 'foo qux' }),
     ]);
     ticketsStore.actions.patchFilter({ view: 'completed', search: 'foo' });
-    expect(filteredTickets.value.map(t => t.id)).toEqual([1]);
+    expect(filteredTickets.value.map(t => t.id).sort()).toEqual([1, 3]);
   });
 
   it('recomputes on view change without needing setTickets', () => {
@@ -423,6 +429,77 @@ describe('ticketsStore — filteredTickets per-view narrowing (HS-8334)', () => 
     const completedCount = filteredTickets.value.length;
     expect(allCount).toBe(5);
     expect(completedCount).toBe(1);
+  });
+});
+
+/**
+ * HS-8618 — search is view-independent. A non-empty search behaves as the
+ * 'all' view for every standard view (so results don't depend on which
+ * sidebar bucket is active), with Trash and custom/saved views exempt.
+ * These pin the `effectiveView` helper directly and the cross-view search
+ * behavior through `filteredTickets`.
+ */
+describe('ticketsStore — view-independent search (HS-8618)', () => {
+  it('effectiveView returns the real view when search is empty', () => {
+    expect(effectiveView('open', '')).toBe('open');
+    expect(effectiveView('completed', '')).toBe('completed');
+    expect(effectiveView('category:bug', '')).toBe('category:bug');
+    expect(effectiveView('backlog', '')).toBe('backlog');
+    expect(effectiveView('trash', '')).toBe('trash');
+    expect(effectiveView('custom:x', '')).toBe('custom:x');
+  });
+
+  it('effectiveView collapses every standard view to "all" when searching', () => {
+    for (const v of ['all', 'up-next', 'open', 'completed', 'non-verified', 'verified', 'backlog', 'archive', 'category:bug', 'priority:high']) {
+      expect(effectiveView(v, 'foo')).toBe('all');
+    }
+  });
+
+  it('effectiveView leaves trash + custom views unchanged when searching', () => {
+    expect(effectiveView('trash', 'foo')).toBe('trash');
+    expect(effectiveView('custom:my-view', 'foo')).toBe('custom:my-view');
+  });
+
+  function crossStatusFixture() {
+    return [
+      makeTicket(1, { status: 'not_started', title: 'alpha task' }),
+      makeTicket(2, { status: 'completed', title: 'alpha done' }),
+      makeTicket(3, { status: 'verified', title: 'alpha verified' }),
+      makeTicket(4, { status: 'started', title: 'beta', category: 'bug' }),
+      makeTicket(5, { status: 'deleted', title: 'alpha deleted' }),
+    ];
+  }
+
+  it('searching from the "open" view surfaces matches outside the open bucket', () => {
+    ticketsStore.actions.setTickets(crossStatusFixture());
+    ticketsStore.actions.patchFilter({ view: 'open', search: 'alpha' });
+    // not_started (1), completed (2), verified (3) all match 'alpha' in the
+    // active scope; deleted (5) stays excluded (active scope never includes
+    // deleted, and trash isn't mixed in without its own view).
+    expect(filteredTickets.value.map(t => t.id).sort()).toEqual([1, 2, 3]);
+  });
+
+  it('searching from a category view ignores the category narrowing', () => {
+    ticketsStore.actions.setTickets(crossStatusFixture());
+    ticketsStore.actions.patchFilter({ view: 'category:bug', search: 'alpha' });
+    // Without HS-8618 this would be empty (no bug-category ticket matches
+    // 'alpha'); now it spans all categories in the active scope.
+    expect(filteredTickets.value.map(t => t.id).sort()).toEqual([1, 2, 3]);
+  });
+
+  it('searching from the trash view STAYS within trash (exempt)', () => {
+    ticketsStore.actions.setTickets(crossStatusFixture());
+    ticketsStore.actions.patchFilter({ view: 'trash', search: 'alpha' });
+    // Only the deleted ticket (5) — trash is not collapsed to 'all'.
+    expect(filteredTickets.value.map(t => t.id)).toEqual([5]);
+  });
+
+  it('searching from a custom view STAYS a passthrough (exempt)', () => {
+    ticketsStore.actions.setTickets(crossStatusFixture());
+    ticketsStore.actions.patchFilter({ view: 'custom:any', search: 'alpha' });
+    // Custom view = server-pre-filtered passthrough, then the client search
+    // filter applies across the whole snapshot (incl. deleted 5).
+    expect(filteredTickets.value.map(t => t.id).sort()).toEqual([1, 2, 3, 5]);
   });
 });
 
