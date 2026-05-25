@@ -54,6 +54,9 @@ describe('buildOtelEnv (HS-8145 / §67.3)', () => {
     expect(env.OTEL_RESOURCE_ATTRIBUTES).toContain(`working_dir=${d}`);
     // Default sub-toggles: metrics + logs ON, traces OFF.
     expect(env.OTEL_METRICS_EXPORTER).toBe('otlp');
+    // HS-8599 — delta temporality rides alongside the metrics exporter so
+    // Claude Code's cumulative cost/token counters aren't summed + inflated.
+    expect(env.OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE).toBe('delta');
     expect(env.OTEL_LOGS_EXPORTER).toBe('otlp');
     expect(env.OTEL_TRACES_EXPORTER).toBeUndefined();
     expect(env.CLAUDE_CODE_ENHANCED_TELEMETRY_BETA).toBeUndefined();
@@ -77,10 +80,11 @@ describe('buildOtelEnv (HS-8145 / §67.3)', () => {
     expect(buildOtelEnv(d).OTEL_LOG_USER_PROMPTS).toBeUndefined();
   });
 
-  it('omits OTEL_METRICS_EXPORTER when telemetry_metrics_enabled is false', () => {
+  it('omits OTEL_METRICS_EXPORTER + temporality preference when telemetry_metrics_enabled is false', () => {
     const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: true, telemetry_metrics_enabled: false });
     const env = buildOtelEnv(d);
     expect(env.OTEL_METRICS_EXPORTER).toBeUndefined();
+    expect(env.OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE).toBeUndefined();
     expect(env.OTEL_LOGS_EXPORTER).toBe('otlp');
   });
 

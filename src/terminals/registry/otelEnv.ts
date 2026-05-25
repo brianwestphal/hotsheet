@@ -14,7 +14,8 @@ import { readFileSettings } from '../../file-settings.js';
  * matching the contract documented in `docs/67-telemetry.md` §67.3:
  *
  *   CLAUDE_CODE_ENABLE_TELEMETRY=1
- *   OTEL_METRICS_EXPORTER=otlp                (if telemetry_metrics_enabled !== false)
+ *   OTEL_METRICS_EXPORTER=otlp                                 (if telemetry_metrics_enabled !== false)
+ *   OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta    (with OTEL_METRICS_EXPORTER — HS-8599)
  *   OTEL_LOGS_EXPORTER=otlp                   (if telemetry_logs_enabled !== false)
  *   OTEL_TRACES_EXPORTER=otlp                 (if telemetry_traces_enabled === true)
  *   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1     (if telemetry_traces_enabled === true)
@@ -57,6 +58,19 @@ import { readFileSettings } from '../../file-settings.js';
  *     unusual — `ensureSecret` populates both at server startup) the
  *     helper still returns `{}` defensively. No bad env vars get
  *     written.
+ *   - HS-8599 — `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta`
+ *     is set alongside the metrics exporter. Claude Code's
+ *     `claude_code.cost.usage` / `claude_code.token.usage` are OTel
+ *     Counters; the OTLP default temporality is CUMULATIVE, meaning each
+ *     ~60 s export re-reports the running *session total*. Our ingest
+ *     (`otelWriters.ts`) stores one row per export and the dashboards
+ *     `SUM()` over rows — correct only for DELTA temporality. Without
+ *     this preference, summing cumulative snapshots multiplied cost +
+ *     tokens by roughly the number of export intervals per session
+ *     (observed 18–60× inflation). `delta` makes each export carry only
+ *     the increment, so the existing SUM queries are exact. Note: rows
+ *     written before this fix are cumulative and stay inflated until
+ *     they age out via the §67.6 retention sweep (or are cleared).
  */
 export function buildOtelEnv(dataDir: string): Record<string, string> {
   const settings = readFileSettings(dataDir);
@@ -78,7 +92,15 @@ export function buildOtelEnv(dataDir: string): Record<string, string> {
     OTEL_LOG_USER_PROMPTS: '1',
   };
 
-  if (metricsEnabled) env.OTEL_METRICS_EXPORTER = 'otlp';
+  if (metricsEnabled) {
+    env.OTEL_METRICS_EXPORTER = 'otlp';
+    // HS-8599 — force DELTA temporality. Claude Code's cost/token Counters
+    // export CUMULATIVE by default (running session total re-sent every
+    // interval); our ingest+SUM pipeline assumes per-export increments, so
+    // cumulative snapshots get summed and inflate totals ~18–60×. `delta`
+    // makes each export carry only the change since the last one.
+    env.OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE = 'delta';
+  }
   if (logsEnabled) env.OTEL_LOGS_EXPORTER = 'otlp';
   if (tracesEnabled) {
     env.OTEL_TRACES_EXPORTER = 'otlp';

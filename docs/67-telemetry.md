@@ -55,12 +55,15 @@ When Hot Sheet spawns a terminal (`src/terminals/registry/lifecycle.ts::buildEnv
 ```
 CLAUDE_CODE_ENABLE_TELEMETRY=1
 OTEL_METRICS_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta
 OTEL_LOGS_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:<port>
 OTEL_RESOURCE_ATTRIBUTES=hotsheet_project=<secret>,working_dir=<dataDir>
 OTEL_LOG_USER_PROMPTS=1
 ```
+
+`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` (HS-8599) is set alongside `OTEL_METRICS_EXPORTER` and is **required for correct cost/token totals**. Claude Code's `claude_code.cost.usage` / `claude_code.token.usage` are OTel **Counters**; the OTLP default temporality is **cumulative**, so each ~60 s export re-reports the running *session total*, not the increment. The receiver (`otelWriters.ts`) persists one row per exported data point and the dashboard queries `SUM()` over those rows — which is correct only for **delta** temporality. Left on the cumulative default, summing the per-interval snapshots multiplied cost and tokens by roughly the number of export intervals in a session (observed **18–60× inflation** on a live instance — e.g. ~62M tokens/prompt, which is physically impossible against the 1M-token context ceiling). `delta` makes each export carry only the change since the last one, so the existing SUM aggregation is exact. **Rows written before this fix are cumulative and remain inflated** until they age out via the §67.6 retention sweep (or are cleared) — a mixed cumulative/delta history is not retroactively correctable, so a one-time wipe of `otel_metrics` is the clean way to get accurate totals immediately.
 
 `OTEL_LOG_USER_PROMPTS=1` (HS-8537) is required so Claude Code emits the prompt body inside the `claude_code.user_prompt` event. Without it, the body is omitted (only `prompt_length` and other metadata are emitted) and the `<!-- hotsheet:ticket=HS-NNNN -->` marker that the per-ticket cost rollup depends on (§67.10.7 / HS-8152) has nowhere to land. The data stays local in PGLite, so logging the prompt content carries the same privacy posture as everything else the receiver persists — the user already opted in by enabling telemetry.
 
@@ -121,7 +124,7 @@ The receiver is hot-path code (called every 5 s per active Claude Code session).
 
 - Parse + persist on the request thread is fine at single-user scale. If a future stress test shows pause-on-write, queue payloads to a background worker.
 - Use prepared INSERT statements (existing PGLite convention).
-- No deduplication — Claude Code's exporter guarantees at-most-once delivery within a session; a re-delivery from a restarted exporter just produces duplicate rows, which the rollup queries deduplicate at read time via `(session_id, ts, metric_name)` uniqueness if needed.
+- No deduplication — the receiver INSERTs one row per exported data point; the rollup queries `SUM()` over rows with no read-time de-dup. This is only correct when each exported value is an **increment**, which is why §67.3 forces `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` (HS-8599). With the cumulative OTLP default, every export re-sends the running session total and summing them overcounts by ~the number of export intervals (the 18–60× cost/token inflation that fix addressed). The metric-level `aggregationTemporality` / `isMonotonic` fields are currently discarded at ingest (`collectDataPoints` in `otelWriters.ts`); a future hardening could persist temporality and guard the SUM queries so a cumulative source can never silently re-introduce the overcount.
 
 ### 67.5.3 Filtering non-Claude-Code OTLP traffic
 
