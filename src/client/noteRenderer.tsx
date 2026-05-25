@@ -6,7 +6,7 @@ import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { isChannelEnabled } from './experimentalSettings.js';
-import { parseFeedbackPrefix, showFeedbackDialog } from './feedbackDialog.js';
+import { openFeedbackDialogForNote, parseFeedbackPrefix, showFeedbackDialog, toDraftSeed } from './feedbackDialog.js';
 import { ICON_TRASH } from './icons.js';
 import { appendImageDownloadLinks, proxyGitHubImages } from './imageProxy.js';
 import { buildCombinedReaderEntries, buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
@@ -364,7 +364,10 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
         );
         link.addEventListener('click', (e) => {
           e.stopPropagation();
-          showFeedbackDialog(ticketId, ticketNumber, feedback.prompt, undefined, note.id);
+          // HS-8603 — resume the saved draft for this note when one exists,
+          // rather than opening a blank form (which would create a second
+          // competing draft). Shared path with the context-menu item.
+          void openFeedbackDialogForNote(ticketId, ticketNumber, feedback.prompt, note.id);
         });
         entry.appendChild(link);
       }
@@ -456,15 +459,9 @@ function buildDraftEntry(ticketId: number, draft: FeedbackDraft, notes: NoteEntr
     </div>
   );
   entry.addEventListener('click', () => {
-    showFeedbackDialog(ticketId, ticketNumber, draft.promptText, {
-      id: draft.id,
-      parentNoteId: draft.parentNoteId,
-      promptText: draft.promptText,
-      partitions: draft.partitions,
-      // HS-8428 — forward the server-hydrated draft attachments so the
-      // reopened dialog shows the user's previously-uploaded files.
-      attachments: draft.attachments ?? [],
-    });
+    // HS-8603 — canonical seed mapping (shared with the detail-panel
+    // auto-show + the context-menu / inline-link click paths).
+    showFeedbackDialog(ticketId, ticketNumber, draft.promptText, toDraftSeed(draft));
   });
   // Right-click → Delete this draft. Mirrors the right-click delete on
   // regular notes (§4.6) so the affordance is consistent across the list.

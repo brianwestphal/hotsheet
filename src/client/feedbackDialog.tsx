@@ -9,7 +9,7 @@ import {
   type FeedbackBlock,
   parseFeedbackBlocks,
 } from './feedbackParser.js';
-import type { NoteEntry } from './noteRenderer.js';
+import type { FeedbackDraft, NoteEntry } from './noteRenderer.js';
 import { morph } from './reactive.js';
 import { loadTickets } from './ticketList.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
@@ -143,6 +143,56 @@ export function pickDraftForFeedbackNote<T extends { parentNoteId: string | null
     .sort(byUpdatedDesc);
   if (floating.length > 0) return floating[0];
   return null;
+}
+
+/**
+ * Map a saved `FeedbackDraft` (wire / cache shape) to the `FeedbackDraftSeed`
+ * the dialog opens from. Canonical mapping — the inline draft-card click
+ * (`noteRenderer.tsx`) and the detail-panel auto-show (`detail.tsx`) both use
+ * it so there's one place the seed is built. HS-8428 — `attachments` defaults
+ * to `[]` for older-server payloads.
+ */
+export function toDraftSeed(draft: FeedbackDraft): FeedbackDraftSeed {
+  return {
+    id: draft.id,
+    parentNoteId: draft.parentNoteId,
+    promptText: draft.promptText,
+    partitions: draft.partitions,
+    attachments: draft.attachments ?? [],
+  };
+}
+
+/**
+ * HS-8603 — open the feedback dialog for a specific FEEDBACK NEEDED note,
+ * auto-loading the user's saved draft for that note when one exists. Every
+ * "Provide Feedback" CLICK affordance (the ticket context-menu item, the
+ * note's inline link) routes through here so clicking it ALWAYS resumes an
+ * existing draft instead of opening a blank form — which would otherwise
+ * spawn a second, competing draft for the same note.
+ *
+ * Fetches the ticket's drafts fresh (a context-menu click can fire from the
+ * ticket list before the detail panel has loaded them), picks the matching
+ * draft via `pickDraftForFeedbackNote`, and falls back to the bare prompt
+ * when there's no draft, no note id, or the fetch fails. The fetch mirrors
+ * the unvalidated `api<FeedbackDraft[]>` shape used by `detail.tsx`'s
+ * draft-load path against the same endpoint.
+ */
+export async function openFeedbackDialogForNote(
+  ticketId: number,
+  ticketNumber: string,
+  prompt: string,
+  noteId: string | undefined,
+): Promise<void> {
+  let seed: FeedbackDraftSeed | undefined;
+  if (noteId !== undefined && noteId !== '') {
+    try {
+      const drafts = await api<FeedbackDraft[]>(`/tickets/${ticketId}/feedback-drafts`);
+      const list = Array.isArray(drafts) ? drafts : [];
+      const picked = pickDraftForFeedbackNote(list, noteId);
+      if (picked !== null) seed = toDraftSeed(picked);
+    } catch { /* fall back to the bare prompt below */ }
+  }
+  showFeedbackDialog(ticketId, ticketNumber, prompt, seed, noteId);
 }
 
 /**

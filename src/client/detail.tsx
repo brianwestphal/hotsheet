@@ -6,7 +6,7 @@ import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
-import { getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog } from './feedbackDialog.js';
+import { getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog, toDraftSeed } from './feedbackDialog.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { type FeedbackDraft, parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
@@ -457,16 +457,8 @@ async function loadDetail(id: number) {
         const seed = pickDraftForFeedbackNote(list, feedbackState.noteId);
         requestAnimationFrame(() => {
           if (seed !== null) {
-            showFeedbackDialog(ticket.id, ticket.ticket_number, seed.promptText, {
-              id: seed.id,
-              parentNoteId: seed.parentNoteId,
-              promptText: seed.promptText,
-              partitions: seed.partitions,
-              // HS-8428 — pass the server-hydrated draft attachments so a
-              // reopen surfaces the user's previously-uploaded files
-              // without needing a follow-up round-trip.
-              attachments: seed.attachments ?? [],
-            });
+            // HS-8603 — canonical seed mapping (shared with the click paths).
+            showFeedbackDialog(ticket.id, ticket.ticket_number, seed.promptText, toDraftSeed(seed));
           } else {
             showFeedbackDialog(ticket.id, ticket.ticket_number, feedbackState.prompt);
           }

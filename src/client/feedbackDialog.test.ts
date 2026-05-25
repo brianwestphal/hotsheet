@@ -1,14 +1,22 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { api } from './api.js';
 import {
   buildOverlay,
+  openFeedbackDialogForNote,
   pickDraftForFeedbackNote,
   resetAutoShownFeedback,
   shouldAutoShowFeedback,
   suppressNextAutoShowFeedback,
+  toDraftSeed,
 } from './feedbackDialog.js';
+import type { FeedbackDraft } from './noteRenderer.js';
 import { _resetPrefixesForTesting } from './ticketRefs.js';
+
+// HS-8603 — `openFeedbackDialogForNote` fetches the ticket's drafts via `api`.
+// Mock the network layer so the test controls what the drafts endpoint returns.
+vi.mock('./api.js', () => ({ api: vi.fn(), apiUpload: vi.fn(), apiWithSecret: vi.fn() }));
 
 /**
  * HS-7822 — pickDraftForFeedbackNote pure-helper tests. The helper drives
@@ -201,5 +209,86 @@ describe('buildOverlay ticket-ref linkification (HS-8338)', () => {
     const overlay = buildOverlay('HS-9001', []);
     expect(overlay.querySelector('.feedback-prompt-empty')).not.toBeNull();
     expect(overlay.querySelectorAll('.feedback-prompt-block .ticket-ref').length).toBe(0);
+  });
+});
+
+describe('toDraftSeed (HS-8603)', () => {
+  function draft(over: Partial<FeedbackDraft> = {}): FeedbackDraft {
+    return {
+      id: 'd1', ticketId: 5, parentNoteId: 'note-1', promptText: 'Q?',
+      partitions: { blocks: [{ markdown: 'a', html: '<p>a</p>' }], inlineResponses: [{ blockIndex: 0, text: 'r' }], catchAll: 'c' },
+      createdAt: '2026-01-01', updatedAt: '2026-01-02', ...over,
+    };
+  }
+
+  it('maps the draft fields straight through to the seed', () => {
+    const seed = toDraftSeed(draft());
+    expect(seed.id).toBe('d1');
+    expect(seed.parentNoteId).toBe('note-1');
+    expect(seed.promptText).toBe('Q?');
+    expect(seed.partitions.catchAll).toBe('c');
+    expect(seed.partitions.inlineResponses).toEqual([{ blockIndex: 0, text: 'r' }]);
+  });
+
+  it('defaults attachments to [] when the draft has none (older-server payload)', () => {
+    expect(toDraftSeed(draft({ attachments: undefined })).attachments).toEqual([]);
+  });
+
+  it('passes through attachments when present', () => {
+    const seed = toDraftSeed(draft({ attachments: [{ id: 7, ticket_id: 5, draft_id: 'd1', original_filename: 'a.png', stored_path: '/x', created_at: '' }] }));
+    expect(seed.attachments).toEqual([{ id: 7, ticket_id: 5, draft_id: 'd1', original_filename: 'a.png', stored_path: '/x', created_at: '' }]);
+  });
+});
+
+describe('openFeedbackDialogForNote (HS-8603)', () => {
+  beforeEach(() => {
+    _resetPrefixesForTesting(['HS']);
+    vi.mocked(api).mockReset();
+    document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
+  });
+  afterEach(() => {
+    document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
+  });
+
+  function draftRow(over: Partial<FeedbackDraft> = {}): FeedbackDraft {
+    return {
+      id: 'd1', ticketId: 5, parentNoteId: 'note-1', promptText: 'Q?',
+      partitions: { blocks: [], inlineResponses: [], catchAll: 'my saved answer' },
+      createdAt: '2026-01-01', updatedAt: '2026-01-02', ...over,
+    };
+  }
+
+  function catchAllValue(): string | null {
+    const ta = document.querySelector<HTMLTextAreaElement>('#feedback-catchall-text');
+    return ta === null ? null : ta.value;
+  }
+
+  it('auto-loads the matching draft into the dialog when one exists', async () => {
+    vi.mocked(api).mockResolvedValue([draftRow()] as never);
+    await openFeedbackDialogForNote(5, 'HS-5', 'Q?', 'note-1');
+    expect(api).toHaveBeenCalledWith('/tickets/5/feedback-drafts');
+    expect(document.querySelector('.feedback-dialog-overlay')).not.toBeNull();
+    expect(catchAllValue()).toBe('my saved answer');
+  });
+
+  it('opens the bare prompt when the ticket has no matching draft', async () => {
+    vi.mocked(api).mockResolvedValue([] as never);
+    await openFeedbackDialogForNote(5, 'HS-5', 'Q?', 'note-1');
+    expect(document.querySelector('.feedback-dialog-overlay')).not.toBeNull();
+    expect(catchAllValue()).toBe('');
+  });
+
+  it('does not fetch drafts (and opens bare) when there is no note id', async () => {
+    await openFeedbackDialogForNote(5, 'HS-5', 'Q?', undefined);
+    expect(api).not.toHaveBeenCalled();
+    expect(document.querySelector('.feedback-dialog-overlay')).not.toBeNull();
+    expect(catchAllValue()).toBe('');
+  });
+
+  it('falls back to the bare prompt (no throw) when the drafts fetch fails', async () => {
+    vi.mocked(api).mockRejectedValue(new Error('network down'));
+    await openFeedbackDialogForNote(5, 'HS-5', 'Q?', 'note-1');
+    expect(document.querySelector('.feedback-dialog-overlay')).not.toBeNull();
+    expect(catchAllValue()).toBe('');
   });
 });
