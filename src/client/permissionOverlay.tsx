@@ -188,10 +188,14 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   // is bypassed entirely — the tool-specific layouts own their own
   // bodies. For every other tool, the existing HS-8217 heuristic still
   // picks live-checkout for non-trivial previews.
-  const useLiveCheckout = !isBashCustomLayout
-    && !isWriteCustomLayout
+  // HS-8582 — `shouldUseLiveCheckout` now owns the Bash exclusion (Bash never
+  // uses the live terminal), so the `!isBashCustomLayout` guard is folded in
+  // there. A truncated long-bash command (extractPrimaryValue → null, so
+  // `isBashCustomLayout` false) now falls to the flat `<pre>` of the recovered
+  // command instead of an empty live-terminal box.
+  const useLiveCheckout = !isWriteCustomLayout
     && perm.input_preview !== undefined
-    && shouldUseLiveCheckout(editDiff, previewText);
+    && shouldUseLiveCheckout(perm.tool_name, editDiff, previewText);
 
   // HS-8069 — body slot: live-terminal checkout container (HS-8171 v2)
   // when truncation fired, else the diff DOM (HS-7951), else the

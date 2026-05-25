@@ -56,9 +56,22 @@ export const LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD = 80;
  * Pure helper, no DOM / module state. Exported for unit-test isolation.
  */
 export function shouldUseLiveCheckout(
+  toolName: string,
   editDiff: EditDiffShape | null,
   previewText: string,
 ): boolean {
+  // HS-8582 — Bash NEVER uses the live-terminal body. A Bash permission's
+  // relevant content is the command itself, which the caller renders as a
+  // `<pre>` via `formatInputPreview` (tolerant of Claude's ~2000-char
+  // `input_preview` truncation). The live project terminal doesn't show the
+  // command at all. Pre-fix, a LONG bash command whose `input_preview` was
+  // truncated mid-JSON made `extractPrimaryValue` (strict `JSON.parse`, no
+  // fallback) return null → the custom Bash layout was skipped → the
+  // truncated `formatInputPreview` text (ending in `…`) tripped the
+  // `endsWith('…')` rule below → Bash dropped into live-checkout and
+  // rendered an empty black terminal box (the HS-8582 symptom). Excluding
+  // Bash here closes that path regardless of extraction success.
+  if (toolName === 'Bash') return false;
   if (editDiff !== null) return true;
   if (previewText === '') return false;
   if (previewText.endsWith('…')) return true;

@@ -342,23 +342,23 @@ describe('processPermissionPollResponse — bookkeeping GC', () => {
 });
 
 describe('showPermissionPopup — live-terminal ResizeObserver (HS-8206)', () => {
-  // Long, deliberately-truncated bash command — closing `"` and `}` are
-  // missing AND every embedded `"` is escaped so the extractor scans
-  // through them, eventually hitting the unterminated value and
-  // appending `…`. Tripping `flatTruncated` in
-  // `permissionOverlay.tsx::showPermissionPopupBody`. Same payload shape
-  // as `permission-bash-long` in `scripts/simulate-claude-prompts.mjs`.
-  const truncatedBashInput = '{"command":"' + (
-    "find / -name '*.log' -mtime -1 -size +1M "
-    + "| xargs -I {} sh -c 'echo === {} ==='; "
+  // Long, deliberately-truncated input that trips `flatTruncated` (closing
+  // `"` and `}` are missing, so the extractor scans the value, hits the
+  // unterminated string, and appends `…`) → `shouldUseLiveCheckout` fires.
+  // HS-8582 — uses a non-Bash tool (WebFetch `url`) because Bash now NEVER
+  // uses the live terminal; the machinery under test (ResizeObserver,
+  // reparent, noSpawn, dim pass-through) is tool-agnostic and just needs a
+  // permission that triggers the live-checkout body.
+  const truncatedLiveCheckoutInput = '{"url":"' + (
+    "https://example.com/a/very/long/path/segment/that/keeps/going/and/going/"
   ).repeat(20);
 
   function makeTruncatedPerm(id = 'req-1'): PermissionData {
     return {
       request_id: id,
-      tool_name: 'Bash',
+      tool_name: 'WebFetch',
       description: 'Run a long pipeline',
-      input_preview: truncatedBashInput,
+      input_preview: truncatedLiveCheckoutInput,
     };
   }
 
@@ -413,7 +413,7 @@ describe('showPermissionPopup — live-terminal stability (HS-8207)', () => {
   // Anything outside these contracts (PTY redraws on resize, scrollback
   // replay) is intrinsic to a live-terminal popup and is not a bug.
 
-  const truncatedBashInput = '{"command":"' + (
+  const truncatedLiveCheckoutInput = '{"url":"' + (
     "find / -name '*.log' -mtime -1 -size +1M "
     + "| xargs -I {} sh -c 'echo === {} ==='; "
   ).repeat(20);
@@ -421,9 +421,9 @@ describe('showPermissionPopup — live-terminal stability (HS-8207)', () => {
   function makeTruncatedPerm(id = 'req-live'): PermissionData {
     return {
       request_id: id,
-      tool_name: 'Bash',
+      tool_name: 'WebFetch',
       description: 'Run a long pipeline',
-      input_preview: truncatedBashInput,
+      input_preview: truncatedLiveCheckoutInput,
     };
   }
 
@@ -833,7 +833,7 @@ describe('showPermissionPopup — checkout dim pass-through (HS-8207)', () => {
   // back-to-back. The user perceived this as the "shows some content
   // → shows completely different content" multi-phase symptom.
 
-  const truncatedBashInput = '{"command":"' + (
+  const truncatedLiveCheckoutInput = '{"url":"' + (
     "find / -name '*.log' -mtime -1 -size +1M "
     + "| xargs -I {} sh -c 'echo === {} ==='; "
   ).repeat(20);
@@ -841,9 +841,9 @@ describe('showPermissionPopup — checkout dim pass-through (HS-8207)', () => {
   function makeTruncatedPerm(id = 'req-live'): PermissionData {
     return {
       request_id: id,
-      tool_name: 'Bash',
+      tool_name: 'WebFetch',
       description: 'Run a long pipeline',
-      input_preview: truncatedBashInput,
+      input_preview: truncatedLiveCheckoutInput,
     };
   }
 
@@ -919,7 +919,7 @@ describe('showPermissionPopup — noSpawn fallback (HS-8218)', () => {
   // swaps the body to the flat / diff preview that the non-live code
   // path would have rendered.
 
-  const truncatedBashInput = '{"command":"' + (
+  const truncatedLiveCheckoutInput = '{"url":"' + (
     "find / -name '*.log' -mtime -1 -size +1M "
     + "| xargs -I {} sh -c 'echo === {} ==='; "
   ).repeat(20);
@@ -927,9 +927,9 @@ describe('showPermissionPopup — noSpawn fallback (HS-8218)', () => {
   function makeTruncatedPerm(id = 'req-live'): PermissionData {
     return {
       request_id: id,
-      tool_name: 'Bash',
+      tool_name: 'WebFetch',
       description: 'Run a long pipeline',
-      input_preview: truncatedBashInput,
+      input_preview: truncatedLiveCheckoutInput,
     };
   }
 
@@ -1316,53 +1316,73 @@ describe('shouldUseLiveCheckout — pure heuristic (HS-8217)', () => {
     // change. Pre-fix this would render as the static color-coded
     // HTML diff (`+`/`−` rows); the user finds the real claude TUI's
     // rendering significantly easier to scan.
-    expect(shouldUseLiveCheckout(diff({
+    expect(shouldUseLiveCheckout('Edit', diff({
       oldStr: 'def lookup_glyph(ch: str) -> Glyph:',
       newStr: 'def lookup_glyph(ch: str, *, force_block: bool = False) -> Glyph:',
     }), '')).toBe(true);
   });
 
   it('triggers for a multi-line Edit diff', () => {
-    expect(shouldUseLiveCheckout(diff({
+    expect(shouldUseLiveCheckout('Edit', diff({
       oldStr: 'a\nb\nc',
       newStr: 'a\nB\nc',
     }), '')).toBe(true);
   });
 
   it('triggers for a truncated Edit diff (back-compat with HS-8139 gate)', () => {
-    expect(shouldUseLiveCheckout(diff({ truncated: true }), '')).toBe(true);
+    expect(shouldUseLiveCheckout('Edit', diff({ truncated: true }), '')).toBe(true);
   });
 
   it('triggers for a flat preview ending in the truncation ellipsis (back-compat with HS-7999)', () => {
-    expect(shouldUseLiveCheckout(null, 'find / -name foo …')).toBe(true);
+    expect(shouldUseLiveCheckout('WebFetch', null, 'find / -name foo …')).toBe(true);
   });
 
   it('triggers for a multi-line flat preview', () => {
-    expect(shouldUseLiveCheckout(null, 'url: https://example.com\nbody: hello')).toBe(true);
+    expect(shouldUseLiveCheckout('WebFetch', null, 'url: https://example.com\nbody: hello')).toBe(true);
   });
 
   it('triggers for a long single-line flat preview (>80 chars)', () => {
     const longCmd = 'find / -name "*.log" -mtime -1 -size +1M | xargs -I {} sh -c \'echo === found {} ===\'';
     expect(longCmd.length).toBeGreaterThan(LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD);
-    expect(shouldUseLiveCheckout(null, longCmd)).toBe(true);
+    expect(shouldUseLiveCheckout('WebFetch', null, longCmd)).toBe(true);
   });
 
   it('stays static for a short single-line bash one-liner', () => {
-    expect(shouldUseLiveCheckout(null, 'ls -la')).toBe(false);
-    expect(shouldUseLiveCheckout(null, 'git status')).toBe(false);
-    expect(shouldUseLiveCheckout(null, '/Users/me/file.ts')).toBe(false);
+    expect(shouldUseLiveCheckout('WebFetch', null, 'ls -la')).toBe(false);
+    expect(shouldUseLiveCheckout('WebFetch', null, 'git status')).toBe(false);
+    expect(shouldUseLiveCheckout('WebFetch', null, '/Users/me/file.ts')).toBe(false);
   });
 
   it('stays static for an empty preview when there is no edit diff', () => {
-    expect(shouldUseLiveCheckout(null, '')).toBe(false);
+    expect(shouldUseLiveCheckout('WebFetch', null, '')).toBe(false);
   });
 
   it('treats a single-line at exactly the threshold as static (boundary)', () => {
     const exactly = 'a'.repeat(LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD);
     expect(exactly.length).toBe(LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD);
-    expect(shouldUseLiveCheckout(null, exactly)).toBe(false);
+    expect(shouldUseLiveCheckout('WebFetch', null, exactly)).toBe(false);
     // One char over flips the gate.
-    expect(shouldUseLiveCheckout(null, exactly + 'b')).toBe(true);
+    expect(shouldUseLiveCheckout('WebFetch', null, exactly + 'b')).toBe(true);
+  });
+
+  // HS-8582 — Bash NEVER uses the live-terminal body, regardless of preview
+  // shape. The empty-black-box bug was a LONG bash command whose truncated
+  // `input_preview` made `formatInputPreview` return a `…`-terminated string
+  // (which trips the `endsWith('…')` rule) while `extractPrimaryValue`
+  // returned null (skipping the custom Bash layout) — so Bash fell into
+  // live-checkout. These cases lock in that every preview shape that would
+  // otherwise trigger live-checkout returns false for Bash.
+  it('NEVER triggers live-checkout for Bash, even for the previews that fire for other tools (HS-8582)', () => {
+    // Truncated long command (the exact black-box repro shape).
+    expect(shouldUseLiveCheckout('Bash', null, 'find / -name "*.log" -mtime -1 …')).toBe(false);
+    // Long single-line bash pipeline (>80 chars).
+    const longCmd = 'find / -name "*.log" -mtime -1 -size +1M | xargs -I {} sh -c \'echo === found {} ===\'';
+    expect(longCmd.length).toBeGreaterThan(LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD);
+    expect(shouldUseLiveCheckout('Bash', null, longCmd)).toBe(false);
+    // Multi-line command.
+    expect(shouldUseLiveCheckout('Bash', null, 'echo a\necho b\necho c')).toBe(false);
+    // Short command (already false via the length rule; still false for Bash).
+    expect(shouldUseLiveCheckout('Bash', null, 'ls -la')).toBe(false);
   });
 });
 
