@@ -604,6 +604,7 @@ Env flags: `PLUGINS_ENABLED` (build/runtime toggle), `NO_WEB_SERVER` (E2E), `NOD
 - **E2E tests** (`e2e/*.spec.ts`): Playwright Chromium. Each spec spawns a real Hot Sheet server with a temp data dir. Coverage collected via `NODE_V8_COVERAGE` (server) + `page.coverage.startJSCoverage()` (browser), source-mapped back to `.tsx` sources. See `e2e/coverage-fixture.ts`.
 - **Plugin tests** (`plugins/*/src/*.test.ts`): excluded from default `npm test`; run via `test:all-including-plugins` or directly.
 - **CI scripts:** `test:fast` / `test:e2e:fast` exclude live GitHub integration tests. Full `test:e2e` requires local GitHub creds.
+- **Workflows** (`.github/workflows/`): `release-candidate.yml` (tag-triggered: validation → tauri-build → publish → smoke → promote), `release-desktop.yml`, and `security-audit.yml` (HS-8601 — npm + cargo audit on PR/push/weekly, non-blocking until the HS-8602 baseline cleanup; see `docs/dependency-security.md`). Dependency-update PRs via `.github/dependabot.yml` (npm / cargo / github-actions, weekly grouped).
 - **Manual test plan:** `docs/manual-test-plan.md` — anything not reliably automatable (drag-and-drop, platform specifics, Tauri, visual styling, Claude Channel UI).
 
 ---

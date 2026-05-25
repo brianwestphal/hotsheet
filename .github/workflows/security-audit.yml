@@ -1,0 +1,64 @@
+name: Security audit
+
+# HS-8601 — automated dependency security auditing (npm + cargo).
+#
+# This is a DEDICATED workflow rather than a job inside release-candidate.yml on
+# purpose: release-candidate.yml only triggers on `v*-rc.*` / `v*-beta.*` tags,
+# so it could only catch an advisory at release time. Security advisories are
+# disclosed independently of our release cadence, so auditing belongs on every
+# PR + push to main + a weekly schedule (and on-demand via workflow_dispatch) so
+# a newly-disclosed advisory in a shipped dependency surfaces promptly instead
+# of waiting for the next release.
+#
+# Both jobs are NON-BLOCKING for now (`continue-on-error: true`): the production
+# npm tree currently carries advisories that are unreachable in Hot Sheet (the
+# MCP SDK bundles an Express 5 stack — path-to-regexp / qs / router / body-parser
+# — but `src/` never imports express; the channel uses Node's raw `createServer`
+# + the MCP SDK `Server` class). Flip `continue-on-error` off to make these
+# blocking once HS-8602 establishes a clean / triaged baseline. See
+# docs/dependency-security.md.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * 1'   # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true   # HS-8602 flips this to blocking once the baseline is clean
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm }
+      - run: npm ci
+      # Production tree only, high severity. ~40 of the ~55 current advisories
+      # are dev-toolchain (eslint / vitest / nyc / sass / tsup / esbuild …) that
+      # never ship in dist/ or the Tauri sidecar, so `--omit=dev` keeps the
+      # signal focused on what actually ships.
+      - run: npm audit --omit=dev --audit-level=high
+
+  cargo-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true   # HS-8602 flips this to blocking once the baseline is clean
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # `cargo install` compiles cargo-audit from source (~1-2 min). If CI time
+      # becomes a concern, swap for a prebuilt-binary installer
+      # (e.g. taiki-e/install-action@cargo-audit) — kept as a plain install here
+      # to avoid taking on another third-party action dependency.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      # Audits src-tauri/Cargo.lock against the RustSec advisory DB. Nothing
+      # checked the shipped desktop binary's crates before HS-8601.
+      - run: cargo audit

@@ -1,0 +1,38 @@
+# HS-8601 — automated dependency-update PRs across all three ecosystems Hot
+# Sheet ships from: the root npm package (dist/ + the Tauri-bundled Node
+# sidecar), the Rust/Tauri desktop crate (src-tauri/), and the GitHub Actions
+# workflows themselves. Weekly cadence; minor + patch grouped per ecosystem so
+# routine bumps arrive as one reviewable PR rather than dozens. Majors still
+# open individually so a breaking bump gets its own review.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-all:
+        patterns:
+          - "*"
