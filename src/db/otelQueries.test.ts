@@ -52,11 +52,13 @@ async function insertTokenMetric(opts: {
   ts: Date;
   projectSecret: string;
   model?: string;
+  type?: string;
   tokens: number;
 }): Promise<void> {
   const db = await getDb();
   const attrs: Record<string, unknown> = {};
   if (opts.model !== undefined) attrs.model = opts.model;
+  if (opts.type !== undefined) attrs.type = opts.type;
   await db.query(
     `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
      VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
@@ -777,6 +779,66 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       const cells = await getHourlyActivityHeatmap(null, 'UTC', [SECRET_A]);
       // Monday DOW 1, hour 10 → index 34. Only SECRET_A's $0.50 counted.
       expect(cells[34].cost).toBeCloseTo(0.5);
+    });
+  });
+
+  // HS-8627 — headline token totals count only input + output, excluding the
+  // cache types. `claude_code.token.usage` is tagged with a `type` dimension;
+  // `cacheRead` re-counts the whole cached prompt every turn, dwarfing the real
+  // work and inflating the count. Cost is unaffected (already-priced USD).
+  describe('token totals exclude cache types (HS-8627)', () => {
+    it('getWindowTotals counts input + output only, not cacheRead / cacheCreation', async () => {
+      const now = new Date();
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'input', tokens: 100 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'output', tokens: 50 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'cacheRead', tokens: 999_999 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'cacheCreation', tokens: 8_000 });
+
+      const totals = await getWindowTotals(SECRET_A, null);
+      expect(totals.tokens).toBe(150); // 100 + 50 — cache excluded
+    });
+
+    it('excludes the snake_case cache spelling too (cache_read / cache_creation)', async () => {
+      const now = new Date();
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'input', tokens: 10 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'cache_read', tokens: 500_000 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'cache_creation', tokens: 2_000 });
+
+      const totals = await getWindowTotals(SECRET_A, null);
+      expect(totals.tokens).toBe(10);
+    });
+
+    it('counts UNTYPED token rows (fails open — old data / unknown type still counts)', async () => {
+      const now = new Date();
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, tokens: 77 }); // no `type` attr
+      const totals = await getWindowTotals(SECRET_A, null);
+      expect(totals.tokens).toBe(77);
+    });
+
+    it('getCostByProject token total excludes cache; cost is NOT filtered', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 1.25 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'input', tokens: 200 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'output', tokens: 100 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'cacheRead', tokens: 1_000_000 });
+
+      const rows = await getCostByProject(null);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].tokens).toBe(300); // input + output only
+      expect(rows[0].cost).toBeCloseTo(1.25); // cost unaffected by the token-type filter
+    });
+
+    it('getCostByModel token total per model excludes cache', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', type: 'input', tokens: 40 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', type: 'output', tokens: 20 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', type: 'cacheRead', tokens: 700_000 });
+
+      const rows = await getCostByModel(SECRET_A, null);
+      const sonnet = rows.find(r => r.model === 'sonnet');
+      expect(sonnet?.tokens).toBe(60); // 40 + 20
+      expect(sonnet?.cost).toBeCloseTo(0.5);
     });
   });
 

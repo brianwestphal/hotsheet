@@ -119,6 +119,27 @@ function buildProjectAndWindowClauses(
 }
 
 /**
+ * HS-8627 — headline token totals count only the "real work" tokens
+ * (input + output), EXCLUDING the cache types. `claude_code.token.usage` is
+ * tagged with a `type` dimension (input / output / cacheRead / cacheCreation);
+ * `cacheRead` re-counts the ENTIRE cached prompt on every turn, so summing all
+ * types inflated the token count far beyond the actual work — the over-count
+ * the user kept seeing even after the HS-8599 delta fix (which only addressed
+ * the cumulative-counter axis). Cost is deliberately NOT filtered: the
+ * `claude_code.cost.usage` metric is already-priced USD that accounts for the
+ * cache-read discount, so cache does not inflate it.
+ *
+ * Exclusion (not `type IN ('input','output')` inclusion) is chosen so an absent
+ * or unknown `type` still counts — it fails OPEN to the old "include it"
+ * behavior rather than silently zeroing the token count if the attribute shape
+ * differs. Both Claude Code's camelCase values (`cacheRead` / `cacheCreation`)
+ * and the snake_case spelling documented in §67 (`cache_read` / `cache_creation`)
+ * are excluded. This is a pure literal predicate (no bind params), safe to
+ * append to any token.usage WHERE / CASE without disturbing `$N` indices.
+ */
+const REAL_WORK_TOKEN_TYPE_SQL = "(attributes_json->>'type' IS NULL OR attributes_json->>'type' NOT IN ('cacheRead', 'cacheCreation', 'cache_read', 'cache_creation'))";
+
+/**
  * Window totals: total cost + total tokens + count of distinct prompts
  * over the given window. Cost comes from `claude_code.cost.usage`
  * metric data points; tokens from `claude_code.token.usage`; prompt
@@ -139,9 +160,10 @@ export async function getWindowTotals(
     ['claude_code.cost.usage', ...metricsClause.params],
   );
   const tokensResult = await db.query<{ total: string | null }>(
+    // HS-8627 — input + output only (exclude cacheRead / cacheCreation).
     `SELECT SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
      FROM otel_metrics
-     WHERE metric_name = $1${metricsClause.clauses}`,
+     WHERE metric_name = $1${metricsClause.clauses} AND ${REAL_WORK_TOKEN_TYPE_SQL}`,
     ['claude_code.token.usage', ...metricsClause.params],
   );
 
@@ -203,7 +225,7 @@ export async function getCostByModel(
     `SELECT
         COALESCE(attributes_json->>'model', '(unknown)') AS model,
         SUM(CASE WHEN metric_name = 'claude_code.cost.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS cost,
-        SUM(CASE WHEN metric_name = 'claude_code.token.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS tokens,
+        SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${REAL_WORK_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS tokens,
         COUNT(DISTINCT COALESCE(session_id, attributes_json->>'session.id')) AS prompt_count
      FROM otel_metrics
      WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage')${clauses.clauses}
@@ -268,7 +290,7 @@ export async function getQuerySourceRollup(
     `SELECT
         COALESCE(attributes_json->>'query.source', '(unknown)') AS source,
         SUM(CASE WHEN metric_name = 'claude_code.cost.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS cost,
-        SUM(CASE WHEN metric_name = 'claude_code.token.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS tokens,
+        SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${REAL_WORK_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS tokens,
         COUNT(DISTINCT COALESCE(session_id, attributes_json->>'session.id')) AS prompt_count
      FROM otel_metrics
      WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage')${clauses.clauses}
@@ -916,9 +938,10 @@ export async function getCostByProject(
       ['claude_code.cost.usage', ...tsParams, ...secrets.params],
     ),
     db.query<{ project_secret: string; total: string | null }>(
+      // HS-8627 — input + output only (exclude cacheRead / cacheCreation).
       `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
        FROM otel_metrics
-       WHERE metric_name = $1${tsClause}${secretsClause}
+       WHERE metric_name = $1${tsClause}${secretsClause} AND ${REAL_WORK_TOKEN_TYPE_SQL}
        GROUP BY project_secret`,
       ['claude_code.token.usage', ...tsParams, ...secrets.params],
     ),
