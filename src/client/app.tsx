@@ -38,6 +38,7 @@ import { bindExternalLinkHandler, checkForUpdate, requestNativeNotificationPermi
 import { loadTelemetryCostMode } from './telemetryCostMode.js';
 import { initTerminal } from './terminal.js';
 import { initTerminalDashboard } from './terminalDashboard.js';
+import { loadTerminalWebglOptOut } from './terminalWebgl.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
 import { loadTicketPrefixes, reloadTicketPrefixes } from './ticketRefs.js';
@@ -133,6 +134,11 @@ async function loadInitialState(): Promise<void> {
   // the intended default-off behavior. Failures leave the cached value
   // at `false`, which is the safe default.
   void loadGlobalDiagnostics();
+  // HS-8488 — hydrate the "use software rendering" opt-out into the cache so
+  // `createEntry` makes the right WebGL/DOM renderer decision on the first
+  // terminal mount. Fire-and-forget; default cached value `false` (WebGL on)
+  // is the happy path until the load resolves.
+  void loadTerminalWebglOptOut();
   // HS-8497 — load the telemetry billing mode synchronously into the
   // cache so the per-tab cost chip + the drawer + the dashboard make
   // the right hide/annotate decision on first paint. Fire-and-forget;

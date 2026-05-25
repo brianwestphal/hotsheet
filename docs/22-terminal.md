@@ -469,6 +469,19 @@ This is a belt-and-braces UX for the residual stall risk that survives HS-8160 (
 
 **Tests.** 6 pure-helper tests in `src/client/terminal/stallIndicator.test.ts` (every corner case + custom threshold + boundary at exactly threshold). `src/client/serverBusyChip.test.ts` covers `isLongPollUrl`, the `shouldShowServerBusyChip` boundary check, `trackServerRequest` lifecycle (single + concurrent), the long-poll skip path, and (HS-8286) `trackPersistentSlowEvent` lifecycle (immediate show, multi-stack, idempotent release). `src/client/terminalCheckout.test.ts::describe('per-entry global stall watcher (HS-8286)')` exercises the in-module wiring: 6 tests covering single-entry stall+echo, dispose-while-stalled, two-entry independent stacking, the HS-8309 dropped-keystroke gate, the HS-8309 dispose-after-stall belt, and the HS-8379 WS-close clears timestamps regression.
 
+## 22.21 Renderer selection: WebGL → DOM (HS-8488)
+
+Terminals default to the **WebGL renderer** (`@xterm/addon-webgl`) for smoother output under heavy activity (long `claude` sessions, full-screen TUIs, fast log spam), with the **DOM renderer** as the universal fallback. **Canvas (`@xterm/addon-canvas`) is deliberately not used** — the DOM renderer keeps the live `<span>`-per-cell tree intact for the planned domotion-svg demo capture, which a single `<canvas>` can't provide.
+
+**Decision (`src/client/terminalWebgl.ts::shouldUseWebglRenderer`)** — `createEntry` (`terminalCheckout.tsx`) consults this synchronously right after `term.open(...)`. It loads the WebGL addon UNLESS:
+- **the user opted out** — the global `terminalWebglOptOut` setting (`~/.hotsheet/config.json`), surfaced as the Settings → General **"Use software rendering for terminals"** checkbox. Global / machine-level (GPU + battery are machine properties, not per-project), mirroring the CLI-tool + diagnostics settings. Cached in-memory + hydrated at boot (`loadTerminalWebglOptOut`, alongside `loadGlobalDiagnostics`); the toggle row is hidden unless `isWebgl2Available()` (no inert toggle on a no-WebGL2 browser). Takes effect on terminals created afterward — existing terminals keep their renderer until re-created.
+- **WebGL2 isn't available** — `isWebgl2Available()` probes `document.createElement('canvas').getContext('webgl2')` (cached).
+- **WebGL is force-disabled** — the e2e seam: `window.__HOTSHEET_DISABLE_WEBGL__ === true`, set by the Playwright coverage fixture's `addInitScript`. Headless Chromium ships SwiftShader WebGL2, so without this the addon would load and leave `.xterm-rows` unpopulated, breaking every spec that scrapes that DOM (terminal text + OSC 8 link hrefs + decoration glyphs, the latter two having no buffer-read equivalent). The e2e suite therefore runs the DOM renderer; the WebGL decision is covered by `terminalWebgl.test.ts` unit tests + manual validation.
+
+Even when `shouldUseWebglRenderer()` is true the `new WebglAddon()` constructor can throw (blacklisted GPU); `createEntry` catches that and falls back to the DOM renderer (xterm uses DOM whenever no renderer addon is loaded). A later GPU **context-loss** disposes the addon (`webgl.onContextLoss`) so the same DOM fallback kicks in without a reload (logged via `console.warn` — there's no client-side command-log append API).
+
+**Not yet wired: demo-mode → DOM.** The HS-8488 spec also called for forcing DOM when running under `--demo:N` (so domotion-svg can capture the `<span>` tree). There's no client-visible demo-mode signal today (demo is purely a server-launch concept), and the domotion-svg DOM-capture consumer isn't built yet, so this is deferred to a follow-up ticket; demos currently render under whatever the opt-out / WebGL2 state dictates.
+
 ## 22.20 Cross-references
 
 - [4-user-interface.md](4-user-interface.md) — drawer now has tabs; push-up layout affects ticket list region.

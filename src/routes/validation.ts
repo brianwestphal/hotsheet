@@ -206,6 +206,9 @@ export const GlobalConfigSchema = z.object({
   shareAccepted: z.boolean().optional(),
   dashboard: DashboardConfigSchema.optional(),
   diagnosticsEnabled: z.boolean().optional(),
+  // HS-8488 — "use software rendering for terminals" opt-out. See
+  // `global-config.ts` for the contract.
+  terminalWebglOptOut: z.boolean().optional(),
   // HS-8497 — billing model for telemetry cost display. See
   // `global-config.ts` for the contract.
   telemetryCostMode: z.enum(['api', 'subscription']).optional(),

@@ -571,6 +571,17 @@ pageRoutes.get('/', (c) => {
                   <span className="settings-hint" id="cli-install-hint">Installs the <code>hotsheet</code> command to /usr/local/bin.</span>
                 </div>
               </div>
+              {/* HS-8488 — terminal renderer opt-out. Hidden by default;
+                  `bindGeneralTab` reveals it only when WebGL2 is available in
+                  this browser (no point showing an inert toggle where the
+                  renderer can't be used). */}
+              <div id="terminal-webgl-section" style="display:none">
+                <div className="settings-divider"></div>
+                <div className="settings-field settings-field-checkbox">
+                  <label><input type="checkbox" id="settings-terminal-webgl-opt-out" /> Use software rendering for terminals <span className="global-setting-badge">Global Setting</span></label>
+                  <span className="settings-hint">Hot Sheet uses your GPU to render terminals for smoother output during heavy activity (long <code>claude</code> sessions, full-screen TUIs like <code>top</code>, fast log spam). Tick this if you see graphical glitches, dropped characters, or excessive battery use — Hot Sheet will fall back to slower CPU rendering. Takes effect on terminals you open afterward.</span>
+                </div>
+              </div>
             </div>
             <div className="settings-tab-panel" data-panel="categories">
               <div className="settings-section-header">

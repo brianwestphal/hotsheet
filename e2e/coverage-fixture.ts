@@ -25,6 +25,17 @@ const SUPPRESS_UPGRADE_NUDGE_SCRIPT = `
   } catch { /* private mode etc. */ }
 `;
 
+// HS-8488 — force the DOM renderer for terminals in e2e. Headless Chromium
+// ships SwiftShader WebGL2, so without this the WebGL renderer addon would
+// load (HS-8488 makes it the default) and leave `.xterm-rows` unpopulated —
+// breaking every terminal spec that scrapes that DOM (terminal text, OSC 8
+// link hrefs, decoration glyphs — the last two have no buffer-read
+// equivalent). `terminalWebgl.ts::shouldUseWebglRenderer` checks this flag
+// first. Set via addInitScript so it lands before the app bundle runs.
+const FORCE_DOM_TERMINAL_SCRIPT = `
+  try { window.__HOTSHEET_DISABLE_WEBGL__ = true; } catch { /* noop */ }
+`;
+
 // HS-8367 follow-up — server-persisted settings leak across specs because
 // the Playwright `webServer` runs ONE Hot Sheet instance for the whole
 // 375-test suite. If `columns.spec.ts` or `column-arrow-nav.spec.ts`
@@ -210,6 +221,9 @@ export const test = base.extend<{
   }, { auto: true }],
   suppressUpgradeNudge: [async ({ page }, use) => {
     await page.addInitScript(SUPPRESS_UPGRADE_NUDGE_SCRIPT);
+    // HS-8488 — keep terminals on the DOM renderer so `.xterm-rows`-scraping
+    // specs keep working under headless Chromium's SwiftShader WebGL2.
+    await page.addInitScript(FORCE_DOM_TERMINAL_SCRIPT);
     await use();
   }, { auto: true }],
   errorCapture: [async ({ page }, use, testInfo) => {

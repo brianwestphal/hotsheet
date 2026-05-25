@@ -46,6 +46,12 @@ const GlobalConfigSchema = z.object({
   // event-loop heartbeat continue to fire regardless — the gate only
   // suppresses the in-window UI surfaces.
   diagnosticsEnabled: z.boolean().optional(),
+  // HS-8488 — "use software rendering for terminals" opt-out. When true,
+  // terminals skip the WebGL renderer addon and use xterm's DOM renderer.
+  // Default false (WebGL on). Global / machine-level because terminal
+  // rendering is a machine preference (GPU, battery), not per-project — same
+  // rationale as the CLI-tool + diagnostics settings. See docs/22-terminal.md.
+  terminalWebglOptOut: z.boolean().optional(),
   // HS-8497 — billing model for telemetry cost display. `'api'` (default)
   // = the OpenTelemetry `claude_code.cost.usage` metric reflects the real
   // pay-per-token API cost the user is charged. `'subscription'` = the

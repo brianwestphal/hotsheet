@@ -43,6 +43,7 @@
  * data) reproduces the previous visual state.
  */
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { z } from 'zod';
 
@@ -50,6 +51,7 @@ import type { SafeHtml } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { trackPersistentSlowEvent } from './serverBusyChip.js';
 import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
+import { shouldUseWebglRenderer } from './terminalWebgl.js';
 
 // HS-8567 — schema for the JSON control message the server-side
 // terminal WebSocket sends ('history' frame, 'exit' frame, future kinds).
@@ -344,6 +346,32 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
   // call lands somewhere safe; the actual visual mount happens via
   // `mountInto.appendChild(term.element)` in the caller.
   term.open(getOrCreateParkingSink());
+
+  // HS-8488 — load the WebGL renderer (default) for smoother output under
+  // heavy activity. `shouldUseWebglRenderer()` is false when the user opted
+  // out, WebGL2 is unavailable, or WebGL is force-disabled for e2e. Must run
+  // AFTER `term.open()` — the addon attaches to the opened renderer. The
+  // constructor can still throw on a blacklisted GPU even when the probe said
+  // WebGL2 exists; catch it so xterm falls back to its DOM renderer (which is
+  // what happens whenever no renderer addon is loaded). On a later GPU
+  // context-loss, dispose the addon so the same DOM fallback kicks in without
+  // a reload. (No `@xterm/addon-canvas` — DOM is the universal fallback so the
+  // planned domotion-svg demo capture always has the live `<span>` tree.)
+  if (shouldUseWebglRenderer()) {
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        try { webgl.dispose(); } catch { /* already disposed */ }
+        // No client-side command-log append API exists; a console warning is
+        // the diagnostic channel for this rare GPU event.
+        console.warn(`[terminal] WebGL context lost for ${secret.slice(0, 8)}::${terminalId} — falling back to the DOM renderer for this terminal.`);
+      });
+      term.loadAddon(webgl);
+    } catch {
+      // No WebGL2 / blacklisted GPU — xterm renders via the DOM renderer when
+      // no renderer addon is loaded. Nothing else to do.
+    }
+  }
 
   const entry: StackEntry = {
     secret,
