@@ -713,6 +713,15 @@ pageRoutes.get('/', (c) => {
                 <input type="number" id="settings-telemetry-retention-days" min="0" value="30" style="width: 120px" />
                 <span className="settings-hint">Older rows are deleted automatically on every Hot Sheet startup. Use <code>0</code> to keep forever.</span>
               </div>
+              {/* HS-8606 / §74 — manually clear all of this project's telemetry. */}
+              <div className="settings-field">
+                <label>Clear telemetry data</label>
+                <div className="settings-inline-row">
+                  <button type="button" className="btn btn-sm btn-danger" id="settings-telemetry-clear-btn">Clear telemetry data…</button>
+                  <span className="settings-status" id="settings-telemetry-clear-status" role="status" aria-live="polite"></span>
+                </div>
+                <span className="settings-hint">Permanently deletes every metric, event, and trace recorded for <strong>this project</strong> (all time). Other projects are unaffected. This cannot be undone.</span>
+              </div>
             </div>
             <div className="settings-tab-panel" data-panel="experimental" id="settings-experimental-panel">
               <div className="settings-field">

@@ -867,6 +867,20 @@ HS-8583 — the **greenlit, low-RAM "Option D"** from §72.6, now its own design
 
 ---
 
+## 74. Clear Telemetry Data (`74-clear-telemetry-data.md`)
+
+HS-8606 (shipped 2026-05-25). A manual "Clear telemetry data…" button in Settings → Telemetry → Retention (danger-styled, with an inline status line) that permanently deletes every `otel_metrics` / `otel_events` / `otel_spans` row for the **active project** (all time), complementing the automatic age-based retention sweep (§67.6). Useful for wiping inflated pre-HS-8599 cumulative rows, reclaiming space, or clearing before sharing a machine. Always available regardless of the `telemetry_enabled` master toggle.
+
+**Flow.** Click → `confirmDialog({ danger: true })` (Tauri-safe overlay, cancel = no-op) → `DELETE /api/telemetry/project-data` (active secret in the `X-Hotsheet-Secret` header) → server `clearProjectTelemetry(projectSecret)` deletes `WHERE project_secret = ?` across all three otel tables with **no time filter**, via `getTelemetryDb()` (the shared telemetry DB, §67.6 / HS-8581) → `{ deleted }` drives the status line ("Cleared N telemetry rows." / singular / "No telemetry data to clear."). Sidebar cost widget refreshed immediately (`refreshSidebarWidgetCost`, HS-8527); §70/§71 surfaces pick it up on their next 30 s poll.
+
+**Safety.** Per-project only — the delete is always secret-scoped; the route returns `400` (and `clearProjectTelemetry` is never reached) when no secret resolves, so a misconfigured request can't wipe the shared store across every project. Permanent (no undo); touches only the three `otel_*` tables.
+
+**Implementation.** `clearProjectTelemetry` in `src/db/otelQueries.ts`; `DELETE /api/telemetry/project-data` in `src/routes/telemetry.ts`; `src/client/telemetryClearUI.tsx` (`bindClearTelemetryButton` + pure `formatClearResult`) wired from `bindTelemetryTab` (`settingsDialog.tsx`); markup in `pages.tsx`; `.settings-inline-row` / `.settings-status` styles in `styles.scss`. Tests: per-secret scoped delete + no-op (`otelQueries.test.ts`), route count/scope/400 (`telemetry.test.ts`), formatter + confirm/success/error flow (`telemetryClearUI.test.tsx`). E2E coverage tracked as a follow-up (HS-8608).
+
+**Status:** Shipped 2026-05-25. Cross-refs: §67.6 (automatic retention sweep — the complement), §67 "Single shared store" / HS-8581 (shared-DB routing), §70/§71 (telemetry surfaces that reflect the cleared state on next poll).
+
+---
+
 ## 65. Read Latest Note context-menu item (`65-read-latest-note-menu.md`)
 
 HS-8401 (shipped 2026-05-15). A right-click affordance on ticket rows + column-view cards that surfaces a **Read Latest Note** item with the Lucide `book-open-text` icon, opening the most recent non-empty note in the §49 reader overlay. Single entry-point that collapses today's "select ticket → scroll to note → hover row → click book icon" flow into one right-click. Lives in `showTicketContextMenu` (`src/client/contextMenu.tsx`) and therefore appears on both list-view rows and column-view cards without per-surface wiring.
@@ -1105,6 +1119,7 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 71 — Analytics-dashboard telemetry | Shipped | HS-8508 (Phase 4, 2026-05-21) + HS-8536 4-chip widening + HS-8527 widget relocation + HS-8497/HS-8542/HS-8543 subscription-mode disclaimers |
 | 72 — memory-primary snapshot persistence | Design only | HS-8575 investigation: run PGLite in-memory + persist via `dumpDataDir('gzip')` → atomic `tmp`+`fsync`+`rename` (reuses backup machinery), making the multi-file-cluster corruption class structurally impossible. Recommend phased prototype behind `db_persistence_mode` setting; measure RAM + snapshot latency (esp. §67 telemetry) before default flip. §72.6 RAM follow-up: PGLite's journaled VFS is browser-only; introduces low-RAM Option D (→§73) + telemetry-split end-state. Follow-ups filed, not Up Next |
 | 73 — snapshot protection (Option D) | Shipped | HS-8583: keep low-RAM `nodefs` live cluster but maintain an atomic `<dataDir>/.hotsheet/snapshot.tar.gz` (debounced ~2 s + shutdown + 120 s safety) and AUTO-RESTORE from it (preserve corrupt aside → loadDataDir newest good → toast) on startup integrity-probe failure. On by default, zero extra RAM. Non-fatal + self-healing (NOT corruption-proof — that's §72's memoryfs). Fully implemented: HS-8586 (writer) / HS-8587 (probe+restore) / HS-8594 (Settings toggle + status line + `GET /api/db/snapshot-status`) / HS-8588 (SIGKILL crash-recovery e2e on the shared `src/spawnTestServer.ts` harness) |
+| 74 — clear telemetry data | Shipped | HS-8606: Settings → Telemetry → Retention "Clear telemetry data…" button + danger confirm → `DELETE /api/telemetry/project-data` → `clearProjectTelemetry(secret)` wipes all `otel_*` rows for the active project (secret-scoped, no time filter, shared DB via `getTelemetryDb`). Complements the §67.6 auto-retention sweep. Per-project only; 400 (no delete) when no secret resolves. Unit + route + client tests; E2E follow-up HS-8608 |
 | tauri-architecture | Shipped | — |
 | tauri-setup | Shipped | — |
 | plugin-development-guide | Shipped (living doc) | — |

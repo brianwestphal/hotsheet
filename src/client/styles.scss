@@ -4774,6 +4774,32 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   }
 }
 
+// HS-8606 / §74 — Settings → Telemetry "Clear telemetry data" row: a button
+// with an inline status message beside it (idle / clearing / cleared).
+.settings-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settings-status {
+  font-size: 13px;
+  color: var(--text-muted);
+
+  &:empty {
+    display: none;
+  }
+
+  &.is-success {
+    color: #166534;
+  }
+
+  &.is-error {
+    color: #b91c1c;
+  }
+}
+
 // --- Backup List in Settings ---
 
 .settings-section {

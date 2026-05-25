@@ -310,6 +310,34 @@ export async function getTodayCost(projectSecret: string): Promise<number> {
 }
 
 /**
+ * HS-8606 — clear ALL telemetry for one project. Deletes every row across
+ * `otel_metrics` / `otel_events` / `otel_spans` whose `project_secret`
+ * matches, with no time filter (unlike the §67.6 retention sweep). The one
+ * mutation in this otherwise read-only module — it lives here because the
+ * telemetry tables are a single shared store (the primary project's DB,
+ * keyed by `project_secret`; see `getTelemetryDb` / §67.6), so the delete
+ * MUST go through `getTelemetryDb()` and MUST be secret-scoped exactly like
+ * every rollup. Returns the total rows removed across the three tables.
+ *
+ * Backs the Settings → Telemetry → Retention "Clear telemetry data" button
+ * (§74). An empty / missing `projectSecret` is rejected by the caller before
+ * we get here — an unscoped delete across the shared store would wipe every
+ * project's data, so this function never runs without a concrete secret.
+ */
+export async function clearProjectTelemetry(projectSecret: string): Promise<{ deleted: number }> {
+  const db = await getTelemetryDb();
+  let deleted = 0;
+  for (const table of ['otel_metrics', 'otel_events', 'otel_spans'] as const) {
+    const result = await db.query(
+      `DELETE FROM ${table} WHERE project_secret = $1`,
+      [projectSecret],
+    );
+    deleted += result.affectedRows ?? 0;
+  }
+  return { deleted };
+}
+
+/**
  * HS-8150 — per-tool latency histogram (§67.10.5). For each tool the
  * user has invoked in the selected window, returns count + total ms
  * + p50/p90/p99 percentiles + bucket counts for the inline-SVG bars.

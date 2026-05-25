@@ -26,6 +26,7 @@ const mockPromptTimeline = vi.fn<(id: string) => Promise<unknown>>();
 const mockPerTicketRollup = vi.fn<(num: string) => Promise<unknown>>();
 const mockDashboardPayload = vi.fn<(window: string, tz: string) => Promise<unknown>>();
 const mockProjectRollup = vi.fn<(secret: string, window: string, tz: string) => Promise<unknown>>();
+const mockClearProjectTelemetry = vi.fn<(secret: string) => Promise<{ deleted: number }>>();
 const mockReadProjectList = vi.fn<() => string[]>();
 const mockReadFileSettings = vi.fn<(dir: string) => Record<string, unknown>>();
 const mockGetProjectBySecret = vi.fn<(s: string) => { dataDir: string; name: string; secret: string } | undefined>();
@@ -37,6 +38,7 @@ vi.mock('../db/otelQueries.js', () => ({
   getPerTicketRollup: (num: string): Promise<unknown> => mockPerTicketRollup(num),
   getDashboardPayload: (window: string, tz: string): Promise<unknown> => mockDashboardPayload(window, tz),
   getProjectRollupPayload: (secret: string, window: string, tz: string): Promise<unknown> => mockProjectRollup(secret, window, tz),
+  clearProjectTelemetry: (secret: string): Promise<{ deleted: number }> => mockClearProjectTelemetry(secret),
 }));
 
 vi.mock('../project-list.js', () => ({
@@ -71,6 +73,7 @@ beforeEach(() => {
   mockPerTicketRollup.mockReset();
   mockDashboardPayload.mockReset();
   mockProjectRollup.mockReset();
+  mockClearProjectTelemetry.mockReset();
   mockReadProjectList.mockReset().mockReturnValue([]);
   mockReadFileSettings.mockReset().mockReturnValue({});
   mockGetProjectBySecret.mockReset().mockReturnValue(undefined);
@@ -258,5 +261,28 @@ describe('GET /telemetry/project-rollup', () => {
     mockProjectRollup.mockResolvedValue(payload);
     const res = await buildApp().request('/api/telemetry/project-rollup');
     expect(await res.json()).toEqual(payload);
+  });
+});
+
+describe('DELETE /telemetry/project-data (HS-8606 / §74)', () => {
+  it('clears the active project\'s telemetry and returns the deleted count', async () => {
+    mockClearProjectTelemetry.mockResolvedValue({ deleted: 42 });
+    const res = await buildApp().request('/api/telemetry/project-data', { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deleted: 42 });
+    // Scoped to the active project's secret — never an unscoped wipe.
+    expect(mockClearProjectTelemetry).toHaveBeenCalledWith('active-secret-123');
+  });
+
+  it('scopes the clear to whichever project secret is active', async () => {
+    mockClearProjectTelemetry.mockResolvedValue({ deleted: 0 });
+    await buildApp({ projectSecret: 'other-secret' }).request('/api/telemetry/project-data', { method: 'DELETE' });
+    expect(mockClearProjectTelemetry).toHaveBeenCalledWith('other-secret');
+  });
+
+  it('refuses to clear when no project secret is resolved (no unscoped wipe)', async () => {
+    const res = await buildApp({ projectSecret: '' }).request('/api/telemetry/project-data', { method: 'DELETE' });
+    expect(res.status).toBe(400);
+    expect(mockClearProjectTelemetry).not.toHaveBeenCalled();
   });
 });

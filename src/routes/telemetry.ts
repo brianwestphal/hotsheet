@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 
-import { type DashboardWindow, getDashboardPayload, getPerTicketRollup, getProjectRollupPayload, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
+import { clearProjectTelemetry, type DashboardWindow, getDashboardPayload, getPerTicketRollup, getProjectRollupPayload, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
 import { readFileSettings } from '../file-settings.js';
 import { readProjectList } from '../project-list.js';
 import { getProjectBySecret } from '../projects.js';
@@ -188,4 +188,20 @@ telemetryRoutes.get('/telemetry/project-rollup', async (c) => {
   const projectSecret = c.get('projectSecret');
   const payload = await getProjectRollupPayload(projectSecret, window, timezone);
   return c.json(payload);
+});
+
+/**
+ * HS-8606 / §74 — clear all telemetry for the active project. Backs the
+ * Settings → Telemetry → Retention "Clear telemetry data" button. Mutation,
+ * so the `/api/*` middleware already enforces the secret (header or
+ * same-origin). Scoped to `c.get('projectSecret')` — the same project
+ * resolution every other telemetry route uses — and refuses to run with an
+ * empty secret so a misconfigured request can't wipe the shared store across
+ * every project. Returns `{ deleted }` for the toast / status line.
+ */
+telemetryRoutes.delete('/telemetry/project-data', async (c) => {
+  const projectSecret = c.get('projectSecret');
+  if (projectSecret === '') return c.json({ error: 'No project secret' }, 400);
+  const result = await clearProjectTelemetry(projectSecret);
+  return c.json(result);
 });

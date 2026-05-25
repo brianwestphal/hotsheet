@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
 import { closeDbForDir, getDb, getDbForDir, runWithDataDir } from './connection.js';
 import {
+  clearProjectTelemetry,
   getCostByModel,
   getCostByProject,
   getCostOverTime,
@@ -919,6 +920,42 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
         getWindowTotals(SECRET_A, null),
       );
       expect(totals.cost).toBeCloseTo(1.25);
+    });
+  });
+
+  // HS-8606 / §74 — "Clear telemetry data" deletes every row for ONE
+  // project's secret across all three otel tables, leaving other projects'
+  // rows intact. Scoped delete on the single shared store.
+  describe('clearProjectTelemetry (HS-8606)', () => {
+    it('deletes only the given project\'s rows across metrics + events + spans', async () => {
+      const now = new Date();
+      // SECRET_A: one of each row type.
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'pA' });
+      await insertToolResultEvent({ ts: now, projectSecret: SECRET_A, toolName: 'Edit', durationMs: 10 });
+      // SECRET_B: a metric + a prompt that must survive.
+      await insertCostMetric({ ts: now, projectSecret: SECRET_B, model: 'opus', cost: 1.0 });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_B, promptId: 'pB' });
+
+      const result = await clearProjectTelemetry(SECRET_A);
+      // 1 metric + 2 events (prompt + tool_result) for A.
+      expect(result.deleted).toBe(3);
+
+      // A is gone; B is untouched.
+      const aTotals = await getWindowTotals(SECRET_A, null);
+      expect(aTotals.cost).toBe(0);
+      expect(aTotals.promptCount).toBe(0);
+      const bTotals = await getWindowTotals(SECRET_B, null);
+      expect(bTotals.cost).toBeCloseTo(1.0);
+      expect(bTotals.promptCount).toBe(1);
+    });
+
+    it('returns deleted=0 when the project has no telemetry (valid no-op)', async () => {
+      await insertCostMetric({ ts: new Date(), projectSecret: SECRET_B, cost: 1.0 });
+      const result = await clearProjectTelemetry('secret-with-no-rows');
+      expect(result.deleted).toBe(0);
+      // SECRET_B's row is untouched.
+      expect((await getWindowTotals(SECRET_B, null)).cost).toBeCloseTo(1.0);
     });
   });
 });
