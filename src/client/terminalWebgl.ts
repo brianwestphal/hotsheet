@@ -93,6 +93,21 @@ export function shouldUseWebglRenderer(): boolean {
   return isWebgl2Available();
 }
 
+/**
+ * HS-8619 — per-consumer renderer decision for the §54 terminal checkout.
+ * `webglDesired` is the entry-level static gate (`shouldUseWebglRenderer()`
+ * captured at creation); `scaled` is the current top-of-stack consumer's flag
+ * (true for the §25 dashboard / §36 drawer-grid tiles + magnified overlay,
+ * which CSS-`transform: scale(...)` the xterm). WebGL renders to a
+ * fixed-resolution `<canvas>` that raster-scales badly under a CSS transform,
+ * so a scaled consumer must use the DOM renderer. Returns true only when WebGL
+ * is desired AND the consumer is not scaled. Pure — the single guard that
+ * keeps WebGL out of CSS-scaled tile contexts.
+ */
+export function webglWantedForConsumer(webglDesired: boolean, scaled: boolean): boolean {
+  return webglDesired && !scaled;
+}
+
 /** **TEST ONLY** — set the cached opt-out without round-tripping the API. */
 export function _setTerminalWebglOptOutForTesting(value: boolean): void {
   terminalWebglOptOut = value;

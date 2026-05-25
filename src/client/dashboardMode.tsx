@@ -1,5 +1,6 @@
 import { unmountColumnView } from './columnView.js';
 import { renderDashboard, renderSidebarWidget } from './dashboard.js';
+import { hideDashboardToolbarControls, restoreDashboardToolbarControls } from './dashboardToolbarVisibility.js';
 import { byId, byIdOrNull } from './dom.js';
 import {
   isAnalyticsDashboardActive,
@@ -14,8 +15,6 @@ import { unmountBindList } from './ticketList.js';
 
 export { isAnalyticsDashboardActive, markAnalyticsDashboardSupplanted } from './mainSurfaceState.js';
 
-const DASHBOARD_HIDDEN_IDS = ['search-input', 'layout-toggle', 'sort-select', 'detail-position-toggle', 'glassbox-btn'];
-
 /** HS-8526 — the `state.view` that was active when the user first
  *  opened the analytics dashboard. Restored on the second-click
  *  toggle-off via `toggleDashboardMode`. Lives in this module rather
@@ -25,6 +24,14 @@ let viewBeforeDashboard: string | null = null;
 
 /** Restore the ticket list view from dashboard mode. */
 export function restoreTicketList() {
+  // HS-8626 — belt-and-suspenders: always restore the header toolbar
+  // controls when returning to the ticket view. The `exitDashboardMode()`
+  // call below (which restores them) only runs when `#dashboard-container`
+  // still exists, but a surface that supplanted the analytics dashboard may
+  // have renamed it away while leaving the controls hidden. Idempotent on
+  // already-visible controls, so safe on every restore path (sidebar click,
+  // project-tab click, category buttons).
+  restoreDashboardToolbarControls();
   const dashContainer = byIdOrNull('dashboard-container');
   if (dashContainer) {
     // HS-8504 (follow-up) — the list-view bindList and column-view
@@ -84,14 +91,8 @@ export function enterDashboardMode() {
   markAnalyticsDashboardActive(true);
   state.view = 'dashboard';
   document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
-  // Hide toolbar elements
-  for (const id of DASHBOARD_HIDDEN_IDS) {
-    const el = byIdOrNull(id);
-    if (el) {
-      const container = el.closest('.search-box, .layout-toggle, .sort-controls') || el;
-      (container as HTMLElement).style.display = 'none';
-    }
-  }
+  // Hide toolbar elements (shared list — see dashboardToolbarVisibility.ts).
+  hideDashboardToolbarControls();
   // Hide batch toolbar and detail panel
   const batchToolbar = byIdOrNull('batch-toolbar');
   if (batchToolbar) batchToolbar.style.display = 'none';
@@ -116,14 +117,8 @@ export function enterDashboardMode() {
 
 function exitDashboardMode() {
   markAnalyticsDashboardActive(false);
-  // Restore toolbar elements
-  for (const id of DASHBOARD_HIDDEN_IDS) {
-    const el = byIdOrNull(id);
-    if (el) {
-      const container = el.closest('.search-box, .layout-toggle, .sort-controls') || el;
-      (container as HTMLElement).style.display = '';
-    }
-  }
+  // Restore toolbar elements (shared list — see dashboardToolbarVisibility.ts).
+  restoreDashboardToolbarControls();
   // HS-8504 (follow-up) — restore batch-toolbar visibility. Pre-fix
   // `enterDashboardMode` set it to display:none but only the list-view
   // `renderTicketList` branch restored it; column-view returned with

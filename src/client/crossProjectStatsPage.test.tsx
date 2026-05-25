@@ -17,7 +17,10 @@ import {
   type DashboardPayload,
   renderShell,
   resolveProjectName,
+  showCrossProjectStatsPage,
+  teardownCrossProjectStatsPage,
 } from './crossProjectStatsPage.js';
+import { _resetMainSurfaceStateForTesting, markAnalyticsDashboardActive } from './mainSurfaceState.js';
 import { _setProjectsForTesting } from './projectTabs.js';
 import type { ProjectInfo } from './state.js';
 
@@ -335,6 +338,55 @@ describe('resolveProjectName (HS-8622)', () => {
     expect(name).toBe('Unknown project (116305a6)');
     // The bare hex prefix must NOT be the whole label (the reported bug).
     expect(name).not.toBe('116305a6');
+  });
+});
+
+// HS-8626 — "toolbar controls have gone missing." When the cross-project stats
+// page supplants an ACTIVE analytics dashboard, it must restore the header
+// controls the dashboard hid — `restoreTicketList`'s own restore is gated on
+// `#dashboard-container` still existing, which this path renames away, so the
+// restore has to happen in the supplant path itself. Pre-fix
+// `exitDashboardModeIfActive` only claimed (in a comment) to restore them.
+describe('showCrossProjectStatsPage restores dashboard-hidden controls when supplanting (HS-8626)', () => {
+  afterEach(() => {
+    teardownCrossProjectStatsPage(); // stops the live-refresh poll
+    _resetMainSurfaceStateForTesting();
+    _testingHS8572.reset();
+    document.body.innerHTML = '';
+  });
+
+  it('un-hides search / layout / sort / detail-position after taking over the analytics dashboard', () => {
+    vi.mocked(api).mockResolvedValue(makePayload());
+
+    // Simulate the state the analytics dashboard leaves behind: the header
+    // controls hidden, `#ticket-list` renamed to `#dashboard-container`, and
+    // the analytics-active flag set. Plus the cross-project root to render into.
+    document.body.innerHTML = `
+      <div class="header-controls">
+        <div class="search-box" style="display:none"><input id="search-input" /></div>
+        <div class="layout-toggle" id="layout-toggle" style="display:none"></div>
+        <select id="sort-select" style="display:none"></select>
+        <div class="layout-toggle" id="detail-position-toggle" style="display:none"></div>
+        <button id="glassbox-btn" style="display:none"></button>
+      </div>
+      <div id="dashboard-container"></div>
+      <div id="cross-project-stats-root" style="display:none"></div>
+    `;
+    markAnalyticsDashboardActive(true);
+
+    showCrossProjectStatsPage();
+
+    // The supplant path must have restored every hidden control (asserted on
+    // the wrapper element that actually toggles, per pages.tsx structure).
+    const searchBox = document.querySelector<HTMLElement>('.search-box')!;
+    expect(searchBox.style.display).toBe('');
+    expect(document.getElementById('layout-toggle')!.style.display).toBe('');
+    expect(document.getElementById('sort-select')!.style.display).toBe('');
+    expect(document.getElementById('detail-position-toggle')!.style.display).toBe('');
+    expect(document.getElementById('glassbox-btn')!.style.display).toBe('');
+    // And the dashboard container was renamed back to the ticket list.
+    expect(document.getElementById('dashboard-container')).toBeNull();
+    expect(document.getElementById('ticket-list')).not.toBeNull();
   });
 });
 

@@ -13,6 +13,7 @@ import {
   _setWebgl2AvailableForTesting,
   isWebgl2Available,
   shouldUseWebglRenderer,
+  webglWantedForConsumer,
 } from './terminalWebgl.js';
 
 const win = window as unknown as { __HOTSHEET_DISABLE_WEBGL__?: boolean };
@@ -56,5 +57,25 @@ describe('isWebgl2Available (HS-8488)', () => {
     expect(isWebgl2Available()).toBe(true);
     _setWebgl2AvailableForTesting(false);
     expect(isWebgl2Available()).toBe(false);
+  });
+});
+
+// HS-8619 — the guard that keeps WebGL out of CSS-scaled tile contexts. The
+// §54 checkout reconciles the renderer from this: a `scaled` consumer (§25
+// dashboard / §36 drawer-grid tiles + magnified overlay) gets the DOM renderer
+// because the WebGL canvas raster-scales badly under a CSS transform; full-size
+// consumers (drawer / dedicated view) keep WebGL.
+describe('webglWantedForConsumer (HS-8619)', () => {
+  it('returns true only when WebGL is desired AND the consumer is not scaled', () => {
+    expect(webglWantedForConsumer(true, false)).toBe(true);
+  });
+
+  it('returns false for a scaled consumer even when WebGL is desired', () => {
+    expect(webglWantedForConsumer(true, true)).toBe(false);
+  });
+
+  it('returns false when WebGL was never desired, regardless of scale', () => {
+    expect(webglWantedForConsumer(false, false)).toBe(false);
+    expect(webglWantedForConsumer(false, true)).toBe(false);
   });
 });

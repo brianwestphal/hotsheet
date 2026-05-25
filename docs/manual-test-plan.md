@@ -30,6 +30,7 @@ This document lists features that require manual verification before each releas
 - [ ] Drag a tab to reorder — drop indicator shows insertion point
 - [ ] Release — tab order persists across reload
 - [ ] HS-8542: Click the sidebar dashboard widget to open the per-project analytics dashboard; then click the active project's own tab → dashboard dismisses, regular ticket view returns (the previously-active view's items are visible, sidebar item gets the `.active` class)
+- [ ] HS-8626: Open the analytics dashboard (sidebar widget) → header controls (search box, list/column toggle, sort dropdown, detail-position toggle) are hidden. Then click the cross-project-stats header button (requires telemetry data on some project so the button shows) → cross-project page takes over. Close it (second click on the button / project-tab click) → back in the normal ticket view, **all four header controls are visible again** (pre-fix the analytics dashboard's inline `display:none` survived the cross-project takeover and left them missing).
 
 ### Command Groups (Settings)
 - [ ] Drag a command to reorder within a group
@@ -220,6 +221,15 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] With `claude` on PATH + Channel disabled: Terminal launches plain `claude`
 - [ ] Without `claude` on PATH: Terminal launches `$SHELL` (Unix) / `%COMSPEC%` (Windows)
 - [ ] Custom `terminal_command` with no `{{claudeCommand}}` token is passed verbatim
+
+### Terminal rendering: WebGL / DOM (HS-8488 / HS-8619, §22.21)
+GPU-dependent visual checks — not reproducible in the automated test env (happy-dom has no WebGL; the e2e suite force-disables it). Needs a real GPU + the Tauri/desktop build (or a Chromium with hardware WebGL2).
+- [ ] **WebGL default in the drawer** — open a drawer terminal, run something with heavy output (`yes`, a long `claude` session, `top`). Output is smooth; text is crisp. (Settings → General has no "Use software rendering" tick.)
+- [ ] **Software-rendering opt-out** — Settings → General → tick "Use software rendering for terminals". Open a NEW terminal. It renders via the DOM (still correct, just CPU). The row is hidden entirely on a browser without WebGL2.
+- [ ] **HS-8619 dashboard tiles are crisp + resize cleanly** — open the Terminal Dashboard with several live terminals. Tiles are crisp (not blurry) and don't visibly jump / mis-size as the grid lays out or the size slider moves. (Tiles use the DOM renderer because they're CSS-scaled.)
+- [ ] **HS-8619 magnified tile** — single-click a tile to center/magnify it. It scales up crisply with no resize glitch. Shift+Cmd/Ctrl+Arrow to move the magnified target between tiles — each stays clean.
+- [ ] **HS-8619 dedicated view keeps WebGL** — double-click a tile for the full-pane dedicated view. It real-`fit()`s to the pane (not CSS-scaled) and renders via WebGL — smooth + crisp. Press Back; the grid tile is crisp again.
+- [ ] **HS-8619 drawer ↔ dashboard round-trip** — with a terminal active in the drawer, open the dashboard (that terminal's tile flips to DOM), then close it (drawer pane flips back to WebGL). No stuck-blurry / blank-canvas state in either direction.
 
 ### Quit confirmation when terminals are running (HS-7591 / HS-7596, §37)
 - [ ] **Idle shell only** — open the drawer with a configured `zsh` terminal that's been at a prompt for a while. ⌘Q. App quits silently with no prompt (the shell IS the login shell, so there's nothing the user might be losing).

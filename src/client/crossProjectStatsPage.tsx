@@ -45,6 +45,7 @@
 import { api } from './api.js';
 import { unmountColumnView } from './columnView.js';
 import { enterDashboardMode } from './dashboardMode.js';
+import { restoreDashboardToolbarControls } from './dashboardToolbarVisibility.js';
 import { byIdOrNull, toElement } from './dom.js';
 import {
   isAnalyticsDashboardActive,
@@ -844,6 +845,14 @@ function exitDashboardModeIfActive(): void {
     existingDashContainer.replaceChildren();
     existingDashContainer.classList.remove('ticket-list-columns');
   }
+  // HS-8626 — actually restore the header toolbar controls that
+  // `enterDashboardMode` hid. Pre-fix this was only claimed in the comment
+  // above (line ~789) but never done, so analytics-dashboard → cross-project
+  // stats → return-to-tickets left search / layout / sort / detail-position
+  // stuck `display: none`. `restoreTicketList`'s own restore is gated on
+  // `#dashboard-container` still existing, which we just renamed away, so it
+  // can't recover them either — the restore has to happen here.
+  restoreDashboardToolbarControls();
   markAnalyticsDashboardSupplanted();
 }
 

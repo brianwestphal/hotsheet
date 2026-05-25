@@ -51,7 +51,7 @@ import type { SafeHtml } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { trackPersistentSlowEvent } from './serverBusyChip.js';
 import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
-import { shouldUseWebglRenderer } from './terminalWebgl.js';
+import { shouldUseWebglRenderer, webglWantedForConsumer } from './terminalWebgl.js';
 
 // HS-8567 — schema for the JSON control message the server-side
 // terminal WebSocket sends ('history' frame, 'exit' frame, future kinds).
@@ -198,6 +198,19 @@ export interface CheckoutOptions {
    *  re-applied (so a non-readOnly consumer underneath gets typing
    *  back). Defaults to false. */
   readOnly?: boolean;
+  /** HS-8619 — when true, this consumer renders the live xterm inside a
+   *  CSS `transform: scale(...)` box (the §25 dashboard / §36 drawer-grid
+   *  tiles + the centered/magnified overlay). The WebGL renderer draws to a
+   *  fixed-resolution `<canvas>` that raster-scales badly under a CSS
+   *  transform (blurry / mis-sized on magnify), whereas the DOM renderer's
+   *  `<span>` cells scale crisply. So while a `scaled` consumer is on top,
+   *  the WebGL addon (if loaded) is disposed and the terminal falls back to
+   *  the DOM renderer; when a non-scaled consumer (drawer pane / dedicated
+   *  view — both real-`fit()`, not CSS-scaled) returns to the top, WebGL is
+   *  reloaded. Follows the top-of-stack exactly like `readOnly`. Defaults to
+   *  false. No effect when WebGL was never desired for this entry (user
+   *  opt-out / no WebGL2 / e2e force-disable). */
+  scaled?: boolean;
 }
 
 export interface CheckoutHandle {
@@ -265,6 +278,16 @@ interface StackEntry {
    *  inside the history-frame handler — non-noSpawn entries never see
    *  `noSession: true` and shouldn't pay attention to the field. */
   noSpawn: boolean;
+  /** HS-8619 — whether the WebGL renderer is allowed for this entry, captured
+   *  once at creation from `shouldUseWebglRenderer()` (false = user opt-out /
+   *  no WebGL2 / e2e force-disable → always DOM, the renderer reconcile is a
+   *  no-op). */
+  webglDesired: boolean;
+  /** HS-8619 — the currently-loaded WebGL addon, or null when the DOM renderer
+   *  is active. `reconcileRenderer` toggles this as the top-of-stack consumer's
+   *  `scaled` flag changes: disposed (→ null) under a CSS-scaled tile consumer,
+   *  reloaded under a full-size (drawer / dedicated) consumer. */
+  webglAddon: WebglAddon | null;
   /** HS-8610 — true while `applyHistoryReplay` is writing the server's
    *  scrollback into xterm. The replayed bytes can contain device-status
    *  QUERIES the foreground program emitted before the disconnect
@@ -347,32 +370,6 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
   // `mountInto.appendChild(term.element)` in the caller.
   term.open(getOrCreateParkingSink());
 
-  // HS-8488 — load the WebGL renderer (default) for smoother output under
-  // heavy activity. `shouldUseWebglRenderer()` is false when the user opted
-  // out, WebGL2 is unavailable, or WebGL is force-disabled for e2e. Must run
-  // AFTER `term.open()` — the addon attaches to the opened renderer. The
-  // constructor can still throw on a blacklisted GPU even when the probe said
-  // WebGL2 exists; catch it so xterm falls back to its DOM renderer (which is
-  // what happens whenever no renderer addon is loaded). On a later GPU
-  // context-loss, dispose the addon so the same DOM fallback kicks in without
-  // a reload. (No `@xterm/addon-canvas` — DOM is the universal fallback so the
-  // planned domotion-svg demo capture always has the live `<span>` tree.)
-  if (shouldUseWebglRenderer()) {
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        try { webgl.dispose(); } catch { /* already disposed */ }
-        // No client-side command-log append API exists; a console warning is
-        // the diagnostic channel for this rare GPU event.
-        console.warn(`[terminal] WebGL context lost for ${secret.slice(0, 8)}::${terminalId} — falling back to the DOM renderer for this terminal.`);
-      });
-      term.loadAddon(webgl);
-    } catch {
-      // No WebGL2 / blacklisted GPU — xterm renders via the DOM renderer when
-      // no renderer addon is loaded. Nothing else to do.
-    }
-  }
-
   const entry: StackEntry = {
     secret,
     terminalId,
@@ -385,6 +382,16 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
     intentionallyClosing: false,
     replaying: false,
     noSpawn,
+    // HS-8488 / HS-8619 — `shouldUseWebglRenderer()` is false when the user
+    // opted out, WebGL2 is unavailable, or WebGL is force-disabled for e2e.
+    // The addon itself is loaded lazily by `reconcileRenderer` (called from
+    // `checkout` right after the xterm is mounted) so the renderer can follow
+    // the top-of-stack consumer's `scaled` flag — WebGL for full-size
+    // (drawer / dedicated), DOM for CSS-scaled tiles. (No `@xterm/addon-canvas`
+    // — DOM is the universal fallback so the planned domotion-svg demo capture
+    // always has the live `<span>` tree.)
+    webglDesired: shouldUseWebglRenderer(),
+    webglAddon: null,
     lastTypeTs: 0,
     lastEchoTs: 0,
     stallSubscribers: new Set(),
@@ -876,6 +883,9 @@ export function checkout(opts: CheckoutOptions): CheckoutHandle {
   // mounted into their `mountInto`. The flag follows the top-of-stack:
   // bumping down / releasing re-runs this against the new top's options.
   applyTopReadOnly(entry, opts.readOnly === true);
+  // HS-8619 — sync the renderer to this consumer's `scaled` flag (DOM for
+  // CSS-scaled tiles, WebGL for full-size). Follows the top-of-stack too.
+  reconcileRenderer(entry, opts.scaled === true);
 
   const stableEntry = entry;
   const handle: InternalCheckoutHandle = {
@@ -941,6 +951,10 @@ function releaseInternal(handle: InternalCheckoutHandle): void {
   // releasing must hand typing back to a non-readOnly underlying
   // consumer (drawer pane / dashboard tile).
   applyTopReadOnly(entry, newTop._options.readOnly === true);
+  // HS-8619 — re-sync the renderer to the new top. E.g. closing the dashboard
+  // restores the drawer pane (non-scaled) → WebGL reloads; bumping a drawer
+  // down under a grid tile (scaled) → WebGL disposes for DOM.
+  reconcileRenderer(entry, newTop._options.scaled === true);
   try { newTop._options.onRestoredToTop?.(); } catch { /* consumer error doesn't break the restore */ }
 }
 
@@ -950,6 +964,47 @@ function releaseInternal(handle: InternalCheckoutHandle): void {
  *  not affected). Idempotent — assigning the same value is a no-op. */
 function applyTopReadOnly(entry: StackEntry, readOnly: boolean): void {
   entry.term.options.disableStdin = readOnly;
+}
+
+/**
+ * HS-8619 — keep the active renderer in sync with the top-of-stack consumer's
+ * `scaled` flag. A CSS-`transform: scale(...)` tile consumer (§25 dashboard /
+ * §36 drawer-grid grid + magnified overlay) wants the DOM renderer — the WebGL
+ * canvas raster-scales badly under a CSS transform. A full-size consumer
+ * (drawer pane / dedicated view, both real-`fit()`) wants WebGL. Mirrors
+ * `applyTopReadOnly`: called on every stack-shape change (checkout push +
+ * release-restore) with the new top's flag, and toggles only on an actual
+ * change so drawer↔dashboard transitions don't churn the addon needlessly.
+ * No-op when WebGL was never desired for this entry.
+ */
+function reconcileRenderer(entry: StackEntry, scaled: boolean): void {
+  const wantWebgl = webglWantedForConsumer(entry.webglDesired, scaled);
+  const haveWebgl = entry.webglAddon !== null;
+  if (wantWebgl === haveWebgl) return;
+
+  if (wantWebgl) {
+    // Load AFTER `term.open()` (done in createEntry) — the addon attaches to
+    // the opened renderer. The constructor can still throw on a blacklisted
+    // GPU even when the WebGL2 probe passed; on throw, leave the DOM renderer
+    // (xterm uses DOM whenever no renderer addon is loaded).
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        try { webgl.dispose(); } catch { /* already disposed */ }
+        entry.webglAddon = null;
+        // No client-side command-log append API exists; a console warning is
+        // the diagnostic channel for this rare GPU event.
+        console.warn(`[terminal] WebGL context lost for ${entry.secret.slice(0, 8)}::${entry.terminalId} — falling back to the DOM renderer for this terminal.`);
+      });
+      entry.term.loadAddon(webgl);
+      entry.webglAddon = webgl;
+    } catch {
+      entry.webglAddon = null;
+    }
+  } else {
+    try { entry.webglAddon?.dispose(); } catch { /* already disposed */ }
+    entry.webglAddon = null;
+  }
 }
 
 /** Number of currently-mounted entries. Useful for tests + sanity checks. */

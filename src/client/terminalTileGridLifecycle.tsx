@@ -229,6 +229,13 @@ export function mountTileViaCheckout(ctx: TileGridContext, tile: InternalTile): 
     cols: TILE_INITIAL_COLS,
     rows: TILE_INITIAL_ROWS,
     mountInto: xtermRoot,
+    // HS-8619 — tiles render the xterm inside a CSS `transform: scale(...)`
+    // box (both the grid layout and the centered/magnified overlay, which
+    // reuses this same checkout), so request the DOM renderer: the WebGL
+    // canvas raster-scales badly under a CSS transform. The dedicated view
+    // (a separate full-size `fit()`-driven checkout) does NOT set this, so it
+    // keeps WebGL.
+    scaled: true,
     // HS-8295 — paint the §54 bumped-down placeholder with this tile's
     // theme bg so a dedicated view / preview borrowing the live xterm
     // doesn't flash the tile to `--bg-secondary`.
