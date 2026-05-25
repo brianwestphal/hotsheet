@@ -321,7 +321,31 @@ durable set only (tickets / attachments / settings / sync state), telemetry stay
 
 Re-run anytime: `node --import tsx --expose-gc scripts/bench-memory-primary.ts [eventCounts...]`.
 
-## 72.8 Cross-references
+## 72.8 Phase 3 — telemetry-split decision + implementation sketch (HS-8579, 2026-05-25)
+
+**Decision: GO** (conditional on the memory-primary track being pursued at all — see urgency note below). If the durable set is ever moved memory-primary, the §67 telemetry tables MUST be split into a separate file-backed DB; §72.7's numbers make whole-cluster memory-primary non-viable, and the split is the shape that resolves it. An architecture audit of the current telemetry access path confirms the split is low-risk.
+
+**Why GO (the evidence):**
+
+- **§72.7 numbers:** telemetry is the entire cost. At 200k events memory-primary adds +915 MB RSS / +2.1 GB WASM and the whole-cluster dump hits ~6.2 s / 76 MB. The durable set alone is ~4 MB / ~336 ms. Keeping telemetry `nodefs` (paged to disk) while the small durable set goes memory-primary removes both the RAM blow-up and the dump/write-amplification.
+- **Zero cross-DB coupling to break.** A full search found **no JOINs** between the `otel_*` tables and the durable tables (tickets / attachments / settings / sync). Telemetry queries only self-join `otel_*`; the `project_secret` column is used for filtering, never for cross-DB joins. So separate PGlite instances cannot break any query.
+- **Tiny blast radius.** All telemetry access already resolves its handle through the context-based `getDb()` (AsyncLocalStorage per `runWithDataDir`). Only three modules touch the tables: `src/db/otelWriters.ts` (ingest), `src/db/otelQueries.ts` (~19 dashboard read fns), and `src/cleanup.ts::cleanupTelemetryRows` (retention). Routing them to a second handle is a localized change — no query rewrites.
+- **The durable/disposable boundary is already drawn.** `src/dbJsonExport.ts`'s `TABLES` list already excludes the `otel_*` tables (telemetry is explicitly not part of the durable JSON co-save). The split just makes physical what the codebase already treats as logical.
+
+**Implementation sketch (the shape Phases 2 + 4 should build):**
+
+1. **Second instance per project, lazily opened.** Add `getOtelDb()` mirroring `getDb()`/`getDbForDir` in `src/db/connection.ts` — a `databases`-style map keyed on a separate path `<dataDir>/db-otel/`, constructed via `createPglite` (template1 pin, HS-8585), AsyncLocalStorage-resolved like `getDb()`. The telemetry DB stays **`nodefs`** (file-backed, low RAM, disposable) even after the durable DB goes memory-primary. **Open it lazily — only when `telemetry_enabled` is set for the project** — so projects without telemetry never pay the second instance's baseline. (§72.7 measured each additional PGlite instance at ~+243 MB RSS; lazy-open keeps that off the books for the common telemetry-off project.)
+2. **Schema split.** Move the `otel_*` DDL (the `CREATE TABLE` + index block currently in `connection.ts::initSchema`) into a new `initOtelSchema(db)` run when `getOtelDb()` first opens the telemetry cluster. The durable `initSchema` keeps everything else.
+3. **Route the three modules.** `otelWriters.ts`, `otelQueries.ts`, and `cleanupTelemetryRows` call `getOtelDb()` instead of `getDb()`. No SQL changes (no JOINs to fix).
+4. **Snapshot/backup.** The durable DB gets the memory-primary atomic snapshot (the §72 mechanism). The telemetry DB is **disposable — not snapshotted** (corruption of analytics is acceptable; that's the whole premise). Backups (§7) dump only the durable cluster; the JSON co-save already excludes telemetry. This is what makes the durable snapshot small + fast again (~4 MB / ~336 ms per §72.7).
+5. **Migration (Phase 4) is "start fresh," not "copy."** Because telemetry is disposable, the cutover does NOT need a cross-DB row copy (which separate PGlite instances can't do via SQL anyway). On first boot in split mode, the new `db-otel` cluster starts empty and the `otel_*` tables in the old durable cluster are simply dropped (or left behind and ignored when the durable set is dumped→reloaded memory-primary). Losing pre-split telemetry history on cutover is acceptable; if we ever want to preserve it, a one-time read-rows-from-durable → write-to-otel loop is the fallback, but it's not required.
+6. **Lifecycle.** `closeAllDatabases` / recovery / fsync iterate the otel instance alongside the durable one (it's just another entry in the instances map). The §45 graceful-shutdown + §73 recovery paths apply to the durable DB; the telemetry DB needs no recovery (disposable → on corrupt open, drop + recreate empty).
+
+**Honest cost.** The split is not free: it adds one extra PGlite instance per telemetry-enabled project (~+243 MB RSS baseline, §72.7), and the telemetry data itself stays paged to disk via `nodefs` rather than resident. That is a clear win over naive whole-cluster memory-primary (which paid +2.1 GB to hold telemetry in WASM memory) — but it is strictly *more* overhead than today's single-DB file-backed mode. The split only earns its keep as the enabler for durable-set memory-primary; it has no standalone value.
+
+**Urgency: low — do not build yet without re-confirmation.** §73 (Option D) already shipped and makes corruption non-fatal + self-healing at zero extra RAM. The telemetry split + durable-set memory-primary (Phases 2 + 4) would upgrade the durable set from corruption-*resilient* to corruption-*proof* — a real but incremental gain on top of §73, at the cost of the second-instance overhead above. Recommend treating Phases 2/4 as a deliberate future decision rather than auto-proceeding; if greenlit, this split design should be promoted to its own requirements doc (as Option D was → §73).
+
+## 72.9 Cross-references
 
 - §7 — backup / restore (the dump/load path this proposal promotes to primary).
 - §41 — JSON co-save escape hatch (kept as-is).
