@@ -180,6 +180,15 @@ export async function persistMetricsPayload(
         const metricName = typeof mR.name === 'string' ? mR.name : null;
         if (metricName === null) { dropped += collectDataPoints(m).length; continue; }
         const points = collectDataPoints(m);
+        // HS-8600 — capture the metric-level aggregation temporality +
+        // isMonotonic so each row records whether it's a DELTA increment
+        // (safe to SUM) or a CUMULATIVE running total (summing re-inflates —
+        // the HS-8599 overcount). `warnIfCumulativeCounter` surfaces the
+        // first cumulative monotonic cost/token counter as a stderr warning
+        // so a future config that re-enables cumulative export is visible
+        // instead of silently wrong.
+        const agg = extractMetricAggregation(m);
+        warnIfCumulativeCounter(metricName, agg);
         for (const point of points) {
           const ts = unixNanoToDate(point.timeUnixNano);
           if (ts === null) { dropped++; continue; }
@@ -193,9 +202,9 @@ export async function persistMetricsPayload(
             (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
           try {
             await db.query(
-              `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
-               VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
-              [ts, resCtx.projectSecret, sessionId, metricName, JSON.stringify(attrs), JSON.stringify(point)],
+              `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+               VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
+              [ts, resCtx.projectSecret, sessionId, metricName, JSON.stringify(attrs), JSON.stringify(point), agg.temporality, agg.isMonotonic],
             );
             inserted++;
           } catch (err) {
@@ -239,6 +248,74 @@ function collectDataPoints(metric: unknown): DataPoint[] {
     }
   }
   return out;
+}
+
+export interface MetricAggregation {
+  /** `'delta'` (each export carries the increment — safe to SUM), `'cumulative'`
+   *  (each export carries the running total — SUMming re-inflates), or `null`
+   *  when the metric type has no temporality (gauge / summary) or it's
+   *  unknown / unspecified. */
+  temporality: 'delta' | 'cumulative' | null;
+  /** Whether the counter is monotonic (only sums carry this). `null` for
+   *  gauges / summaries. Combined with `cumulative`, a monotonic cumulative
+   *  counter is the shape that produced the HS-8599 18–60× overcount. */
+  isMonotonic: boolean | null;
+}
+
+/**
+ * HS-8600 — read the OTLP metric-level `aggregationTemporality` + `isMonotonic`
+ * off whichever wrapper carries them (`sum` / `histogram` / `exponentialHistogram`;
+ * `gauge` + `summary` have neither). Normalizes the temporality enum from
+ * either the numeric form (1 = DELTA, 2 = CUMULATIVE per the OTLP spec) or the
+ * protobuf-JSON string form (`AGGREGATION_TEMPORALITY_DELTA` / `…_CUMULATIVE`)
+ * into `'delta'` / `'cumulative'`. Anything else (0 / UNSPECIFIED / missing /
+ * a gauge) → `null`. Pure; exported for unit-testing.
+ */
+export function extractMetricAggregation(metric: unknown): MetricAggregation {
+  if (typeof metric !== 'object' || metric === null) return { temporality: null, isMonotonic: null };
+  const mR = metric as Record<string, unknown>;
+  for (const wrapper of ['sum', 'histogram', 'exponentialHistogram'] as const) {
+    const w = mR[wrapper];
+    if (typeof w !== 'object' || w === null) continue;
+    const wR = w as Record<string, unknown>;
+    const raw = wR.aggregationTemporality;
+    let temporality: 'delta' | 'cumulative' | null = null;
+    if (raw === 1 || raw === '1' || raw === 'AGGREGATION_TEMPORALITY_DELTA') temporality = 'delta';
+    else if (raw === 2 || raw === '2' || raw === 'AGGREGATION_TEMPORALITY_CUMULATIVE') temporality = 'cumulative';
+    const isMonotonic = typeof wR.isMonotonic === 'boolean' ? wR.isMonotonic : null;
+    return { temporality, isMonotonic };
+  }
+  return { temporality: null, isMonotonic: null };
+}
+
+/** HS-8600 — the metrics the dashboards SUM (so a cumulative monotonic source
+ *  re-inflates their totals — see HS-8599). */
+const SUMMED_COUNTER_METRICS = new Set(['claude_code.cost.usage', 'claude_code.token.usage']);
+
+/** HS-8600 — module-once guard so the warning isn't emitted per data point. */
+let warnedCumulativeCounter = false;
+
+/**
+ * HS-8600 — surface the first cumulative monotonic cost/token counter as a
+ * stderr warning. HS-8599 forces `delta` temporality in the spawn env so Hot
+ * Sheet's own `claude` runs never hit this; the guard exists so a future
+ * telemetry source (different Claude Code version, a non-default config,
+ * another tool) that emits cumulative counters becomes VISIBLE instead of
+ * silently re-introducing the 18–60× SUM overcount. Resettable for tests.
+ */
+export function warnIfCumulativeCounter(metricName: string, agg: MetricAggregation): void {
+  if (warnedCumulativeCounter) return;
+  if (agg.temporality !== 'cumulative') return;
+  if (agg.isMonotonic !== true) return;
+  if (!SUMMED_COUNTER_METRICS.has(metricName)) return;
+  warnedCumulativeCounter = true;
+  console.warn(
+    `[otel] WARNING: received a CUMULATIVE monotonic counter for "${metricName}". `
+    + `The dashboards SUM these rows, which is only correct for DELTA temporality — `
+    + `cumulative rows re-inflate cost/token totals (HS-8599 / HS-8600). Hot Sheet's own `
+    + `spawn env forces delta, so this implies a different telemetry source. The `
+    + `aggregation_temporality column now records this; rows can be filtered/repaired.`,
+  );
 }
 
 /**
@@ -409,4 +486,9 @@ export const _testing = {
   flattenAttributes,
   resolveResource,
   collectDataPoints,
+  extractMetricAggregation,
+  warnIfCumulativeCounter,
+  /** HS-8600 — reset the module-once cumulative-counter warn guard so each
+   *  test starts fresh. */
+  resetCumulativeWarnForTesting(): void { warnedCumulativeCounter = false; },
 };

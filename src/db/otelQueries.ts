@@ -784,6 +784,17 @@ export async function getPerTicketRollup(ticketNumber: string): Promise<TicketRo
   // include `cost` (USD) and `tokens` (total). Different versions of
   // Claude Code may name them differently; this query is permissive +
   // tries common variants via COALESCE.
+  //
+  // HS-8600 reconciliation: this per-ticket rollup sums `claude_code.api_request`
+  // EVENTS — a deliberately DIFFERENT source than the `claude_code.cost.usage`
+  // METRIC the window/model/dashboard rollups SUM. That's safe on both axes:
+  // (1) **no cumulative-overcount risk** — `api_request` events are emitted
+  // once per LLM call carrying THAT call's cost/tokens (inherently per-call
+  // deltas; log events aren't counters, so the OTLP aggregation-temporality
+  // concern that motivated HS-8599/HS-8600 doesn't apply here); (2) **no
+  // double-count** — the events path feeds only the per-ticket detail-panel
+  // figure, the metric path feeds only the dashboards; the two are never
+  // added together in a single displayed number.
   const sumsResult = await db.query<{ total_cost: string | null; total_tokens: string | null }>(
     `SELECT
         SUM(COALESCE(

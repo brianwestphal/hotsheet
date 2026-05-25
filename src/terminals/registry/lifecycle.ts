@@ -96,15 +96,6 @@ export function spawnIntoSession(session: SessionState, dataDir: string): void {
   session.startedAt = Date.now();
   session.command = finalCommand;
   session.exitCode = null;
-  // HS-8287 DIAGNOSTIC #2 — log every PTY spawn so the user's repro can
-  // correlate banner counts with spawn events. If 5 spawns happen against
-  // the same `(dataDir, terminalId)` pair, that's the smoking gun: claude
-  // is being relaunched (channel auto-fire / shell loop / restart-on-exit
-  // wiring) and each launch emits its own banner.
-  if (process.env.HOTSHEET_HS8287_QUIET !== '1') {
-    const projectTag = dataDir.replace(/\/+$/, '').split('/').slice(-2).join('/');
-    console.log(`[HS-8287:spawn] ${projectTag}::${session.terminalId} pid=${pty.pid} cmd=${finalCommand.slice(0, 80)}${finalCommand.length > 80 ? '…' : ''} cwd=${resolved.cwd}`);
-  }
   // Fresh PTY — drop any OSC-scan state left from a previous process.
   session.bellScanInString = false;
   session.bellScanAfterEsc = false;
@@ -113,35 +104,8 @@ export function spawnIntoSession(session: SessionState, dataDir: string): void {
   // OSC 7 on the first prompt.
   session.currentCwd = null;
 
-  // HS-8287 DIAGNOSTIC #2 — log every PTY chunk + scrollback size so a
-  // post-reproduction server log can answer: "is 5 different Claude
-  // banners hitting THIS session's ring buffer over time, or are 5
-  // separate sessions each emitting 1 banner that end up cross-routed?".
-  // Intentionally loud — counts the literal bytes so a 1-banner ring
-  // buffer (~600 bytes) is distinguishable from a 5-banner one (~3 KB)
-  // at a glance. Includes a banner-substring marker so a single grep can
-  // pull out the Claude-startup events. Disabled when the env var
-  // HOTSHEET_HS8287_QUIET is set so the spam is opt-out for users who
-  // don't want it. Identifier uses the dataDir basename + terminalId
-  // (the registry-internal `secret` isn't in scope here, but the
-  // dataDir basename is human-readable and uniquely identifies the
-  // project's `.hotsheet/` directory which is enough to grep for).
-  const hs8287Quiet = process.env.HOTSHEET_HS8287_QUIET === '1';
-  const projectTag = dataDir.replace(/\/+$/, '').split('/').slice(-2).join('/');
-  const dataKey = `${projectTag}::${session.terminalId}`;
-  let chunkCounter = 0;
   const dData = pty.onData((str) => {
     const chunk = Buffer.from(str, 'utf8');
-    if (!hs8287Quiet) {
-      chunkCounter++;
-      const isBanner = str.includes('Claude Code v');
-      // Sample first 5 chunks + every chunk that mentions the banner,
-      // with running scrollback bytes after the push so reproducer can
-      // see exactly how the ring buffer fills.
-      if (chunkCounter <= 5 || isBanner) {
-        console.log(`[HS-8287:rcv] ${dataKey} chunk#${chunkCounter} bytes=${chunk.length} bannerStart=${isBanner ? 'YES' : 'no'} scrollbackAfter=${session.scrollback.size() + chunk.length}`);
-      }
-    }
     session.scrollback.push(chunk);
     // HS-6702 — PTY-activity timestamp + Claude spinner detection.
     const nowMs = Date.now();

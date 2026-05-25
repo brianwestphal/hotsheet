@@ -3,7 +3,7 @@
  * for all three signal types + the §67.5.3 drop-on-unknown-project
  * anti-pollution gate + per-row malformed-entry handling.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { getDb } from './connection.js';
@@ -209,6 +209,41 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(result.inserted).toBe(2);
       expect(result.dropped).toBe(1);
     });
+
+    // HS-8600 — every row records the metric's aggregation temporality +
+    // isMonotonic so a cumulative source can be detected instead of silently
+    // re-inflating the SUM-based dashboards.
+    it('persists aggregation_temporality + is_monotonic onto each metric row', async () => {
+      const payload = {
+        resourceMetrics: [
+          {
+            resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: KNOWN_SECRET } }] },
+            scopeMetrics: [
+              {
+                metrics: [
+                  // Delta monotonic counter (the post-HS-8599 default).
+                  { name: 'claude_code.cost.usage', sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [{ timeUnixNano: '1700000000000000000', asDouble: 0.5 }] } },
+                  // Cumulative monotonic counter (the dangerous shape).
+                  { name: 'claude_code.token.usage', sum: { aggregationTemporality: 2, isMonotonic: true, dataPoints: [{ timeUnixNano: '1700000060000000000', asInt: 100 }] } },
+                  // A gauge — no temporality.
+                  { name: 'claude_code.some.gauge', gauge: { dataPoints: [{ timeUnixNano: '1700000120000000000', asDouble: 3 }] } },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await persistMetricsPayload(payload, isKnownProject);
+      expect(result.inserted).toBe(3);
+
+      const db = await getDb();
+      const rows = await db.query<{ metric_name: string; aggregation_temporality: string | null; is_monotonic: boolean | null }>(
+        `SELECT metric_name, aggregation_temporality, is_monotonic FROM otel_metrics ORDER BY ts`,
+      );
+      expect(rows.rows[0]).toMatchObject({ metric_name: 'claude_code.cost.usage', aggregation_temporality: 'delta', is_monotonic: true });
+      expect(rows.rows[1]).toMatchObject({ metric_name: 'claude_code.token.usage', aggregation_temporality: 'cumulative', is_monotonic: true });
+      expect(rows.rows[2]).toMatchObject({ metric_name: 'claude_code.some.gauge', aggregation_temporality: null, is_monotonic: null });
+    });
   });
 
   describe('persistLogsPayload', () => {
@@ -325,6 +360,54 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(r).not.toBeNull();
       expect(r!.projectSecret).toBe('known');
       expect(r!.sessionId).toBe('sess-1');
+    });
+
+    // HS-8600 — aggregation-temporality extraction + cumulative-counter warning.
+    describe('extractMetricAggregation (HS-8600)', () => {
+      it('reads delta temporality from the numeric form + isMonotonic off a sum', () => {
+        expect(_testing.extractMetricAggregation({ sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [] } }))
+          .toEqual({ temporality: 'delta', isMonotonic: true });
+      });
+      it('reads cumulative temporality from the protobuf-JSON string form', () => {
+        expect(_testing.extractMetricAggregation({ sum: { aggregationTemporality: 'AGGREGATION_TEMPORALITY_CUMULATIVE', isMonotonic: false, dataPoints: [] } }))
+          .toEqual({ temporality: 'cumulative', isMonotonic: false });
+      });
+      it('reads temporality off a histogram wrapper too', () => {
+        expect(_testing.extractMetricAggregation({ histogram: { aggregationTemporality: 2, dataPoints: [] } }))
+          .toEqual({ temporality: 'cumulative', isMonotonic: null });
+      });
+      it('returns nulls for a gauge (no temporality / monotonicity)', () => {
+        expect(_testing.extractMetricAggregation({ gauge: { dataPoints: [] } }))
+          .toEqual({ temporality: null, isMonotonic: null });
+      });
+      it('returns nulls for unspecified / missing / non-object', () => {
+        expect(_testing.extractMetricAggregation({ sum: { aggregationTemporality: 0, dataPoints: [] } })).toEqual({ temporality: null, isMonotonic: null });
+        expect(_testing.extractMetricAggregation({ sum: { dataPoints: [] } })).toEqual({ temporality: null, isMonotonic: null });
+        expect(_testing.extractMetricAggregation(null)).toEqual({ temporality: null, isMonotonic: null });
+      });
+    });
+
+    describe('warnIfCumulativeCounter (HS-8600)', () => {
+      beforeEach(() => { _testing.resetCumulativeWarnForTesting(); });
+
+      it('warns ONCE for a cumulative monotonic cost/token counter', () => {
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+          _testing.warnIfCumulativeCounter('claude_code.cost.usage', { temporality: 'cumulative', isMonotonic: true });
+          _testing.warnIfCumulativeCounter('claude_code.token.usage', { temporality: 'cumulative', isMonotonic: true });
+          expect(spy).toHaveBeenCalledTimes(1); // module-once guard
+        } finally { spy.mockRestore(); }
+      });
+
+      it('does NOT warn for delta, non-monotonic, or non-summed metrics', () => {
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+          _testing.warnIfCumulativeCounter('claude_code.cost.usage', { temporality: 'delta', isMonotonic: true });
+          _testing.warnIfCumulativeCounter('claude_code.cost.usage', { temporality: 'cumulative', isMonotonic: false });
+          _testing.warnIfCumulativeCounter('some.other.metric', { temporality: 'cumulative', isMonotonic: true });
+          expect(spy).not.toHaveBeenCalled();
+        } finally { spy.mockRestore(); }
+      });
     });
   });
 });

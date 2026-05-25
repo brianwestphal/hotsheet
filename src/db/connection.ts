@@ -14,7 +14,7 @@ import { createPglite } from './pglite.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -662,11 +662,22 @@ async function initSchema(db: PGlite): Promise<void> {
       session_id TEXT,
       metric_name TEXT NOT NULL,
       attributes_json JSONB,
-      value_json JSONB NOT NULL
+      value_json JSONB NOT NULL,
+      -- HS-8600 — OTLP metric-level aggregation temporality ('delta' /
+      -- 'cumulative' / NULL when unknown or N/A e.g. gauges) + isMonotonic.
+      -- The dashboards SUM rows, which is only correct for DELTA; persisting
+      -- these makes a future cumulative source detectable instead of silently
+      -- re-inflating cost/token totals (the HS-8599 overcount class).
+      aggregation_temporality TEXT,
+      is_monotonic BOOLEAN
     );
     CREATE INDEX IF NOT EXISTS idx_otel_metrics_project_ts ON otel_metrics(project_secret, ts DESC);
     CREATE INDEX IF NOT EXISTS idx_otel_metrics_session_ts ON otel_metrics(session_id, ts);
     CREATE INDEX IF NOT EXISTS idx_otel_metrics_name ON otel_metrics(metric_name);
+    -- HS-8600 — additive migration for existing clusters (CREATE IF NOT EXISTS
+    -- above no-ops when the table already exists).
+    ALTER TABLE otel_metrics ADD COLUMN IF NOT EXISTS aggregation_temporality TEXT;
+    ALTER TABLE otel_metrics ADD COLUMN IF NOT EXISTS is_monotonic BOOLEAN;
 
     CREATE TABLE IF NOT EXISTS otel_events (
       id SERIAL PRIMARY KEY,

@@ -146,7 +146,9 @@ CREATE TABLE IF NOT EXISTS otel_metrics (
   session_id TEXT,
   metric_name TEXT NOT NULL,
   attributes_json JSONB,
-  value_json JSONB NOT NULL
+  value_json JSONB NOT NULL,
+  aggregation_temporality TEXT,  -- HS-8600: 'delta' | 'cumulative' | NULL
+  is_monotonic BOOLEAN           -- HS-8600: monotonic-counter flag (sums only)
 );
 CREATE INDEX IF NOT EXISTS idx_otel_metrics_project_ts ON otel_metrics (project_secret, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_otel_metrics_session_ts ON otel_metrics (session_id, ts);
@@ -186,7 +188,15 @@ CREATE INDEX IF NOT EXISTS idx_otel_spans_prompt ON otel_spans (prompt_id);
 CREATE INDEX IF NOT EXISTS idx_otel_spans_trace ON otel_spans (trace_id);
 ```
 
-Bump `SCHEMA_VERSION` in `src/db/connection.ts` (2 → 3) per the §41 / §45 convention so the JSON co-save format is invalidated correctly across the upgrade.
+Bump `SCHEMA_VERSION` in `src/db/connection.ts` per the §41 / §45 convention so the JSON co-save format is invalidated correctly across the upgrade (HS-8587 took it 2 → 3; HS-8600 took it 3 → 4 for the `aggregation_temporality` / `is_monotonic` columns).
+
+### Aggregation temporality + cumulative-counter guard (HS-8600)
+
+Defense-in-depth follow-up to §67.3 / HS-8599. HS-8599 forces `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` in the spawn env so Claude Code's cost/token Counters export per-interval **increments** (the SUM-based dashboards are then exact). But the ingest path didn't *record* temporality, so a future telemetry source emitting **cumulative** counters (a different Claude Code version, a non-default config, another tool) would silently re-inflate totals 18–60× with no trace.
+
+`src/db/otelWriters.ts::extractMetricAggregation(metric)` now reads the OTLP metric-level `aggregationTemporality` (numeric `1`=delta / `2`=cumulative, or the protobuf-JSON `AGGREGATION_TEMPORALITY_*` string form) + `isMonotonic` off whichever wrapper carries them (`sum` / `histogram` / `exponentialHistogram`; gauges → `null`), and `persistMetricsPayload` stores them on every row (`aggregation_temporality` / `is_monotonic`). `warnIfCumulativeCounter` emits a one-time stderr WARNING the first time a **cumulative monotonic** `claude_code.cost.usage` / `claude_code.token.usage` row is ingested, so the silent-overcount class becomes visible and the rows are filterable/repairable. The SUM queries themselves were **not** made temporality-aware (the ticket's explicit either/or — flag *or* temporality-aware SUM); with the delta default + the persisted column + the warning, building the more complex per-`(session, metric)`-MAX cumulative path is a deferred follow-up that's only worth it if the warning ever fires.
+
+**Per-ticket cost source reconciliation:** `getPerTicketRollup` (`otelQueries.ts`) sums per-call `cost`/`tokens` off `claude_code.api_request` **events** — deliberately a different source than the `claude_code.cost.usage` **metric** the dashboards sum. This is safe on both axes: `api_request` events are per-LLM-call values (inherently deltas; log events aren't counters, so the temporality concern doesn't apply), and the two sources feed different surfaces (per-ticket detail figure vs. dashboards) that are never added together — so no double-count. Documented inline at the query.
 
 ### Single shared store — NOT per-project tables (HS-8581)
 

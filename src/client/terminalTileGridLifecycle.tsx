@@ -282,9 +282,8 @@ export function mountTileViaCheckout(ctx: TileGridContext, tile: InternalTile): 
 
   // HS-8288 — defense in depth against the cascading-refresh /
   // race-during-mount class of bug. If `checkout()` returned but
-  // `reparentXtermInto` hit its `term.element === undefined` early-return
-  // (recorded as the `reparent.no-element` event in the HS-8287/8288
-  // diagnostic instrumentation), the xtermRoot is empty: no live xterm,
+  // `reparentXtermInto` hit its `term.element === undefined` early-return,
+  // the xtermRoot is empty: no live xterm,
   // no placeholder, no path to recovery. The user sees a blank tile and
   // there's no entry-side state we'd ever clean up. Detect the broken
   // mount immediately and recover: release the checkout (which collapses
