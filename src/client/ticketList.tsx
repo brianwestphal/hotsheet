@@ -548,8 +548,8 @@ export function renderTicketList() {
     updateSelectionClasses();
     syncDetailPanel();
   } else {
-    const toolbar = byIdOrNull('batch-toolbar');
-    if (toolbar) toolbar.style.display = '';
+    // Toolbar visibility is restored by `updateBatchToolbar()` below (the
+    // HS-8623 chokepoint), so no explicit `display:''` is needed here.
     restoreEditFocus(editFocus);
     // Symmetric with the preview branch above. Pre-HS-8331 the
     // non-preview path re-created rows on every render so `.selected`
@@ -585,6 +585,20 @@ function updateSelectionClasses() {
 }
 
 function updateBatchToolbar() {
+  // HS-8623 — restore the selection toolbar's visibility here, as the single
+  // chokepoint every LIVE view funnels through on a selection change (list
+  // non-preview branch + both `renderColumnView` paths + every row/column
+  // click handler). Preview mode (`renderPreviewColumnView` / the preview
+  // branch of `renderTicketList`) and dashboard mode set the toolbar to
+  // `display:none` and never call this function, so they stay hidden.
+  // Pre-fix, `renderColumnView` (unlike `renderTicketList`) never restored
+  // `display:''`, so exiting backup preview or the dashboard while in column
+  // view — or any path that left the toolbar hidden — kept the selection
+  // toolbar missing in column view. Centralizing it here fixes every such
+  // path at once.
+  const toolbar = byIdOrNull('batch-toolbar');
+  if (toolbar) toolbar.style.display = '';
+
   const count = state.selectedIds.size;
   const total = state.tickets.length;
   const hasSelection = count > 0;
