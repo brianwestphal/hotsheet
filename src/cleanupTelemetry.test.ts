@@ -7,11 +7,21 @@
  */
 import { writeFileSync } from 'fs';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { cleanupTelemetryRows } from './cleanup.js';
+import { cleanupAllProjectsTelemetry, cleanupTelemetryRows } from './cleanup.js';
 import { getDb } from './db/connection.js';
-import { cleanupTestDb, setupTestDb } from './test-helpers.js';
+import type * as ProjectListModule from './project-list.js';
+import { cleanupTestDb, createTempDir, setupTestDb } from './test-helpers.js';
+
+// HS-8607 — `cleanupAllProjectsTelemetry` reads the persisted project list
+// from `~/.hotsheet/projects.json`. Mock it so the test never touches the
+// real user file and can control which dataDirs get swept.
+const { mockReadProjectList } = vi.hoisted(() => ({ mockReadProjectList: vi.fn<() => string[]>(() => []) }));
+vi.mock('./project-list.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof ProjectListModule>();
+  return { ...actual, readProjectList: mockReadProjectList };
+});
 
 const KNOWN_SECRET = 'secret-A';
 
@@ -118,5 +128,91 @@ describe('cleanupTelemetryRows (HS-8154 / §67.6)', () => {
     const spans = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_spans`);
     expect(Number(events.rows[0].c)).toBe(0);
     expect(Number(spans.rows[0].c)).toBe(0);
+  });
+
+  // HS-8607 — the otel tables are a single shared store keyed by
+  // `project_secret`. The sweep must prune ONLY the calling project's rows,
+  // not every project's. Pre-fix the DELETE had no `project_secret` filter,
+  // so one project's sweep wiped every project's old rows.
+  it('scopes deletion to the project\'s own secret, leaving other projects\' rows untouched (HS-8607)', async () => {
+    const OTHER_SECRET = 'secret-B';
+    writeRetentionSetting(tempDir, 7); // settings.secret === KNOWN_SECRET
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    // Old rows for BOTH projects in the shared DB.
+    await insertMetric(old, KNOWN_SECRET);
+    await insertMetric(old, OTHER_SECRET);
+    expect(await countMetrics()).toBe(2);
+
+    const result = await cleanupTelemetryRows(tempDir);
+    // Only KNOWN_SECRET's row is pruned.
+    expect(result.deleted).toBe(1);
+    const db = await getDb();
+    const remaining = await db.query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
+    expect(remaining.rows.map(r => r.project_secret)).toEqual([OTHER_SECRET]);
+  });
+});
+
+describe('cleanupAllProjectsTelemetry (HS-8607)', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await setupTestDb();
+    mockReadProjectList.mockReset();
+    mockReadProjectList.mockReturnValue([]);
+  });
+
+  afterEach(async () => {
+    await cleanupTestDb(tempDir);
+  });
+
+  function writeSettings(dataDir: string, secret: string, days: number): void {
+    writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ secret, port: 4174, telemetry_retention_days: days }));
+  }
+
+  it('sweeps every registered project by its OWN secret + retention window', async () => {
+    // Launched project (the default/shared DB lives here): 7-day retention.
+    const SECRET_A = 'secret-A';
+    writeSettings(tempDir, SECRET_A, 7);
+
+    // A second registered project with a LONGER 60-day retention. Its
+    // settings live in a separate dir; its rows live in the shared DB.
+    const SECRET_B = 'secret-B';
+    const dirB = createTempDir();
+    writeSettings(dirB, SECRET_B, 60);
+    mockReadProjectList.mockReturnValue([dirB]);
+
+    const days20 = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+    // Project A, 20 days old → past A's 7-day window → deleted.
+    await insertMetric(days20, SECRET_A);
+    // Project B, 20 days old → within B's 60-day window → kept.
+    await insertMetric(days20, SECRET_B);
+
+    const result = await cleanupAllProjectsTelemetry(tempDir);
+    expect(result.deleted).toBe(1);
+
+    const db = await getDb();
+    const remaining = await db.query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
+    expect(remaining.rows.map(r => r.project_secret)).toEqual([SECRET_B]);
+  });
+
+  it('still sweeps the launched project even when it is not in the persisted list', async () => {
+    writeSettings(tempDir, KNOWN_SECRET, 7);
+    mockReadProjectList.mockReturnValue([]); // launched dir absent from the list
+    await insertMetric(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), KNOWN_SECRET);
+
+    const result = await cleanupAllProjectsTelemetry(tempDir);
+    expect(result.deleted).toBe(1);
+    expect(await countMetrics()).toBe(0);
+  });
+
+  it('does not double-count when the launched dir is also in the persisted list', async () => {
+    writeSettings(tempDir, KNOWN_SECRET, 7);
+    mockReadProjectList.mockReturnValue([tempDir]); // duplicate of launchedDataDir
+    await insertMetric(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), KNOWN_SECRET);
+
+    const result = await cleanupAllProjectsTelemetry(tempDir);
+    // Deduped via the Set — the single old row is counted once, not twice.
+    expect(result.deleted).toBe(1);
+    expect(await countMetrics()).toBe(0);
   });
 });

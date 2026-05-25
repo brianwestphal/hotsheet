@@ -615,6 +615,19 @@ const cachedPayloads = new Map<DashboardWindow, DashboardPayload>();
 // changed.
 const lastPaintedFor = new WeakMap<HTMLElement, string>();
 
+// HS-8576 — `#cross-project-stats-root` is a single static element reused
+// across every open/close cycle, and the lifecycle teardown empties it with
+// `root.replaceChildren()` WITHOUT touching `lastPaintedFor` (keyed by that
+// same element). So on re-open with unchanged data, the stale "already painted
+// X" record made BOTH `fetchAndRender` short-circuits fire — the cache-hit
+// branch skipped the paint and the fresh-fetch branch returned early — leaving
+// the just-emptied root blank (the HS-8576 symptom). The paint-skip is only
+// valid when the container actually still holds the content we painted, so
+// gate it on a non-empty container rather than chasing every external clear.
+function isPaintCurrent(container: HTMLElement, serialized: string): boolean {
+  return container.childElementCount > 0 && lastPaintedFor.get(container) === serialized;
+}
+
 // HS-8572 — live-refresh interval id while the page is on-screen.
 // 30 s cadence (per the §70.x design + the HS-8572 ticket's "30-60 s
 // poll is plenty" guidance — the writers also hit PGLite and we don't
@@ -634,7 +647,7 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
   const cached = cachedPayloads.get(window);
   if (cached !== undefined) {
     const cachedSerialized = JSON.stringify(cached);
-    if (lastPaintedFor.get(container) !== cachedSerialized) {
+    if (!isPaintCurrent(container, cachedSerialized)) {
       renderShell(cached, container);
       lastPaintedFor.set(container, cachedSerialized);
     }
@@ -666,7 +679,7 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
     // into the container without going through this function).
     const fresh = JSON.stringify(payload);
     cachedPayloads.set(window, payload);
-    if (lastPaintedFor.get(container) === fresh) return;
+    if (isPaintCurrent(container, fresh)) return;
     renderShell(payload, container);
     lastPaintedFor.set(container, fresh);
   } catch (err) {

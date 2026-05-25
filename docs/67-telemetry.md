@@ -197,6 +197,8 @@ Hot Sheet opens one PGLite cluster per project `dataDir`, but the telemetry tabl
 
 The original HS-8581 bug: the rollup queries went through the per-request `getDb()`, so opening a **secondary** project tab's analytics dashboard (§71) read that project's own DB — which has zero telemetry rows — and rendered the "No telemetry recorded for this project yet" placeholder even though the data was sitting in the primary DB. The cross-project page (§70) appeared to work only because the user was usually on the primary project when viewing it. Regression coverage: `src/db/otelQueries.test.ts` "HS-8581 — rollups read the shared telemetry DB" asserts a rollup returns the project's data while a *different* project's `dataDir` is bound as the active request context.
 
+The same shared-store blind spot was fixed in the retention sweep under **HS-8607** — see "Retention + GC" below.
+
 ### Why JSONB columns for `attributes_json` / `value_json` / `body_json`
 
 OTel attributes are arbitrary key-value bags whose shape varies per metric / event / span. Pinning them into rigid columns would force a hand-maintained mapping that drifts every time Claude Code adds a new metric. JSONB keeps the receiver flexible (write any payload as-is) and lets rollup queries use PG's JSON operators when they need a specific value (`(value_json->>'count')::bigint`).
@@ -207,14 +209,16 @@ The volume is small enough that live `SUM`/`COUNT`/`AVG` queries against the raw
 
 ### Retention + GC
 
-Per-project `telemetry_retention_days` setting (default 30, `0` = keep forever). HS-8154 wires a periodic sweep into `src/cleanup.ts`:
+Per-project `telemetry_retention_days` setting (default 30, `0` = keep forever). HS-8154 wires a startup sweep into `src/cleanup.ts`:
 
 ```sql
 DELETE FROM otel_metrics WHERE project_secret = ? AND ts < now() - INTERVAL '<n> days';
 -- same for otel_events + otel_spans
 ```
 
-The existing cleanup timer (which already handles trash + completed tickets per §2 of the data-storage doc) gets one more body. No new timer.
+The existing cleanup call point (which already handles trash + completed tickets per §2 of the data-storage doc) gets one more body. No new timer.
+
+**HS-8607 — per-secret scoping across all projects.** Because the otel tables are a single shared store keyed by `project_secret` (see "Single shared store" above), the sweep must (1) read from the shared DB via `getTelemetryDb()` and (2) delete only the calling project's rows (`AND project_secret = ?`), each by its own `telemetry_retention_days`. Pre-HS-8607 the DELETE had no secret filter and ran under the launched project's DB context, so one project's sweep pruned *every* project's rows using only that project's window, while secondary projects' sweeps hit their own empty DBs and deleted nothing. The startup entry point (`cleanupAllProjectsTelemetry` in `src/cleanup.ts`, called from `cli.ts::initProject`) now iterates the persisted project list (`~/.hotsheet/projects.json`) plus the launched dataDir (deduped) and runs `cleanupTelemetryRows` for each, so every project's rows are pruned by their own secret + window.
 
 ## 67.7 Cadence
 

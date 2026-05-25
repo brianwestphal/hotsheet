@@ -6,7 +6,7 @@ import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 
 import { initBackupScheduler } from './backup.js';
-import { cleanupAttachments, cleanupTelemetryRows } from './cleanup.js';
+import { cleanupAllProjectsTelemetry, cleanupAttachments } from './cleanup.js';
 import { parseArgs, type ParsedArgs, printUsage } from './cli/args.js';
 import { handleClose, handleList, joinRunningInstance, shutdownRunningInstance } from './cli/close.js';
 import { getDb, setDataDir } from './db/connection.js';
@@ -116,8 +116,13 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
     console.error(`[init-project ${elapsed()}] cleaning up attachments...`);
     await runWithDataDir(dataDir, () => cleanupAttachments());
     // HS-8154 — telemetry retention sweep. No-op when telemetry hasn't
-    // been used in this project (the tables exist but stay empty).
-    await runWithDataDir(dataDir, () => cleanupTelemetryRows(dataDir));
+    // been used (the tables exist but stay empty). HS-8607 — sweep every
+    // registered project, not just the launched one: all telemetry shares
+    // the primary DB keyed by `project_secret`, so each project's rows are
+    // pruned by its own secret + retention window. No `runWithDataDir`
+    // wrapper — `cleanupAllProjectsTelemetry` resolves the shared DB via
+    // `getTelemetryDb()` itself.
+    await cleanupAllProjectsTelemetry(dataDir);
     console.error(`[init-project ${elapsed()}] done`);
   }
 

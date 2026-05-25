@@ -1,6 +1,6 @@
 // HS-8555 — `rmSync`-and-swallow extracted into `deleteAttachmentFile`.
 import { deleteAttachmentFile } from './db/attachments.js';
-import { getDb } from './db/connection.js';
+import { getTelemetryDb } from './db/connection.js';
 import {
   deleteAttachment,
   getAttachments,
@@ -12,6 +12,7 @@ import {
 } from './db/queries.js';
 import { readFileSettings } from './file-settings.js';
 import { ORPHAN_DRAFT_ATTACHMENT_HORIZON_MS } from './limits.js';
+import { readProjectList } from './project-list.js';
 
 // HS-8558 — the orphan-attachment horizon moved to `src/limits.ts` for
 // cross-file consolidation. See the rationale comment block on the
@@ -86,10 +87,17 @@ export async function cleanupAttachments(): Promise<void> {
  * summary to stdout when rows were actually deleted, mirroring the
  * `cleanupAttachments` log shape.
  *
- * Pure-ish: takes the project `dataDir` so the per-project setting
- * can be read. Caller is expected to invoke this inside a
- * `runWithDataDir(dataDir, ...)` block so `getDb()` resolves the
- * project's PGLite handle correctly.
+ * **HS-8607 — scopes deletion to THIS project's `project_secret`** and
+ * reads from the shared telemetry DB via `getTelemetryDb()` (NOT the
+ * per-request `getDb()`). The otel tables are a single shared store in
+ * the primary project's DB keyed by `project_secret` (§67.6 /
+ * `getTelemetryDb`), so an unscoped DELETE run under one project would
+ * prune EVERY project's rows using that project's retention window, and
+ * a sweep run under a secondary project's request context would hit its
+ * own (empty) DB and delete nothing. Scoping by secret + targeting the
+ * shared DB makes each project prune exactly its own rows by its own
+ * window. No `runWithDataDir` wrapper is needed any more — the DB is
+ * resolved explicitly.
  */
 export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: number }> {
   try {
@@ -100,20 +108,25 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
     // `0` (or anything <= 0) means "keep forever" per §67.6.
     if (days <= 0) return { deleted: 0 };
 
-    const db = await getDb();
+    // HS-8607 — can't scope a deletion without the project's secret; bail
+    // rather than risk an unscoped DELETE across the shared store.
+    const secret = typeof settings.secret === 'string' && settings.secret !== '' ? settings.secret : null;
+    if (secret === null) return { deleted: 0 };
+
+    const db = await getTelemetryDb();
     let deleted = 0;
     for (const table of ['otel_metrics', 'otel_events'] as const) {
       // `start_ts` for spans, `ts` for metrics + events.
       const result = await db.query(
-        `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval`,
-        [String(days)],
+        `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
+        [String(days), secret],
       );
       deleted += result.affectedRows ?? 0;
     }
     // Spans use `start_ts` not `ts` — separate query.
     const spansResult = await db.query(
-      `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval`,
-      [String(days)],
+      `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
+      [String(days), secret],
     );
     deleted += spansResult.affectedRows ?? 0;
 
@@ -125,4 +138,27 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
     console.error('Telemetry retention sweep failed:', err);
     return { deleted: 0 };
   }
+}
+
+/**
+ * HS-8607 — sweep telemetry retention for EVERY registered project, not
+ * just the launched one. Because all telemetry shares the primary DB
+ * (keyed by `project_secret`), a per-launched-project sweep left every
+ * OTHER project's rows un-pruned forever — `initProject` only runs the
+ * sweep for the `dataDir` it was launched with. This iterates the
+ * persisted project list (`~/.hotsheet/projects.json`) plus the launched
+ * `dataDir` (deduped, in case it isn't listed yet) and delegates each to
+ * `cleanupTelemetryRows`, so every project's rows get pruned by their own
+ * secret + retention window. Per-project failures are already swallowed
+ * inside `cleanupTelemetryRows`, so one bad settings file can't abort the
+ * rest of the sweep.
+ */
+export async function cleanupAllProjectsTelemetry(launchedDataDir: string): Promise<{ deleted: number }> {
+  const dataDirs = new Set<string>([launchedDataDir, ...readProjectList()]);
+  let deleted = 0;
+  for (const dir of dataDirs) {
+    const result = await cleanupTelemetryRows(dir);
+    deleted += result.deleted;
+  }
+  return { deleted };
 }

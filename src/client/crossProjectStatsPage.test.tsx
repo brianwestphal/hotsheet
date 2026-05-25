@@ -9,12 +9,20 @@
 //     heading instead of "Telemetry dashboard"
 //   - title alias `showTelemetryDashboard` resolves to
 //     `showCrossProjectStatsPage` (back-compat during migration)
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { api } from './api.js';
 import {
+  _testingHS8572,
   type DashboardPayload,
   renderShell,
 } from './crossProjectStatsPage.js';
+
+// HS-8576 — the re-open-blank regression test drives `fetchAndRender`, which
+// hits the network helper. Stub it so the test stays a pure DOM unit test.
+// (`vi.mock` is hoisted above the imports by vitest's transform regardless of
+// its position here, so keeping it below the imports satisfies `import/first`.)
+vi.mock('./api.js', () => ({ api: vi.fn() }));
 
 interface WindowTotals {
   cost: number;
@@ -237,6 +245,65 @@ describe('renderShell (HS-8507 cross-project stats page)', () => {
     // data is left-aligned).
     expect(headersByKey['project']?.classList.contains('align-right')).toBe(false);
     expect(headersByKey['lastActivityTs']?.classList.contains('align-right')).toBe(false);
+  });
+});
+
+// HS-8576 — the cross-project stats page rendered fully blank when re-opened
+// after a prior visit. Root cause: `#cross-project-stats-root` is a single
+// reused element, the lifecycle teardown empties it via `replaceChildren()`
+// without clearing the `lastPaintedFor` paint-skip record (HS-8572), so on
+// re-open with unchanged data BOTH `fetchAndRender` short-circuits fired and
+// nothing was painted into the just-emptied root. The fix gates the paint-skip
+// on the container actually still holding content (`isPaintCurrent`).
+describe('fetchAndRender — re-paints after the container is externally emptied (HS-8576)', () => {
+  beforeEach(() => {
+    _testingHS8572.reset();
+    vi.mocked(api).mockReset();
+  });
+
+  afterEach(() => {
+    _testingHS8572.reset();
+  });
+
+  it('repaints an unchanged cached payload into an emptied container instead of leaving it blank', async () => {
+    const payload = makePayload();
+    vi.mocked(api).mockResolvedValue(payload);
+
+    const container = document.createElement('div');
+
+    // First open: fetch + paint.
+    await _testingHS8572.fetchAndRender(container, 'month');
+    expect(container.querySelector('.cross-project-stats-page')).not.toBeNull();
+    expect(container.childElementCount).toBeGreaterThan(0);
+
+    // Simulate the lifecycle teardown emptying the reused root element
+    // (showCrossProjectStatsPage / hide / teardown all call replaceChildren()).
+    // `lastPaintedFor` still records the previous paint — the stale state that
+    // caused the blank page.
+    container.replaceChildren();
+    expect(container.childElementCount).toBe(0);
+
+    // Re-open with the SAME (cached + unchanged) payload. Pre-fix this left the
+    // container blank; the fix must repaint it.
+    await _testingHS8572.fetchAndRender(container, 'month');
+    expect(container.querySelector('.cross-project-stats-page')).not.toBeNull();
+    expect(container.childElementCount).toBeGreaterThan(0);
+  });
+
+  it('still skips a redundant repaint while the content is on-screen (optimization intact)', async () => {
+    const payload = makePayload();
+    vi.mocked(api).mockResolvedValue(payload);
+
+    const container = document.createElement('div');
+    await _testingHS8572.fetchAndRender(container, 'month');
+    const firstRoot = container.querySelector('.cross-project-stats-page');
+    expect(firstRoot).not.toBeNull();
+
+    // A poll-tick re-fetch with identical data must NOT rebuild the DOM (so
+    // sort / scroll / hover state survives) — the same root node should remain.
+    await _testingHS8572.fetchAndRender(container, 'month');
+    const secondRoot = container.querySelector('.cross-project-stats-page');
+    expect(secondRoot).toBe(firstRoot);
   });
 });
 
