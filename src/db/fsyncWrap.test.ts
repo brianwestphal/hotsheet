@@ -163,8 +163,8 @@ describe('fsyncDbDir (HS-7935 convenience wrapper)', () => {
 
 describe('fsyncDir against a real PGLite cluster (HS-7935 integration)', () => {
   it('walks every regular file in <dataDir>/db/ after CHECKPOINT and feeds each to the injected fsyncFn', async () => {
-    const { PGlite } = await import('@electric-sql/pglite');
-    const db = new PGlite(join(tempRoot, 'db'));
+    const { createPglite } = await import('./pglite.js');
+    const db = createPglite(join(tempRoot, 'db'));
     await db.waitReady;
     await db.exec('CREATE TABLE t (id int)');
     await db.exec('INSERT INTO t VALUES (1)');

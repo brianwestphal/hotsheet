@@ -1,4 +1,4 @@
-import { PGlite } from '@electric-sql/pglite';
+import { type PGlite } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, promises as fsp, readdirSync, readFileSync, rmSync, statSync } from 'fs';
 import { join } from 'path';
 
@@ -12,6 +12,7 @@ import {
 } from './attachmentBackup.js';
 import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
 import { fsyncDbDirAsync } from './db/fsyncWrap.js';
+import { createPglite } from './db/pglite.js';
 import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from './dbJsonExport.js';
 import { instrumentAsync } from './diagnostics/freezeLogger.js';
 import { getBackupDir } from './file-settings.js';
@@ -336,7 +337,7 @@ export async function loadBackupForPreview(dataDir: string, tier: string, filena
   // Clean up any existing preview for this project
   await cleanupPreview(dataDir);
 
-  const db = new PGlite(previewDir, { loadDataDir: blob });
+  const db = createPglite(previewDir, { loadDataDir: blob });
   await db.waitReady;
   activePreviews.set(dataDir, db);
 
@@ -402,9 +403,9 @@ export async function restoreBackup(dataDir: string, tier: string, filename: str
   // Re-initialize with backup data
   setDataDir(dataDir);
   await import('./db/connection.js');
-  // Create new PGlite with the backup data loaded
-  const PGliteClass = (await import('@electric-sql/pglite')).PGlite;
-  const newDb = new PGliteClass(dbDir, { loadDataDir: blob });
+  // Create new PGlite with the backup data loaded (HS-8585 — pinned to
+  // template1 via createPglite so the restored cluster's tables are visible).
+  const newDb = createPglite(dbDir, { loadDataDir: blob });
   await newDb.waitReady;
 
   // The connection module needs to adopt this instance

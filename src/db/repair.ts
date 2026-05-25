@@ -1,4 +1,3 @@
-import { PGlite } from '@electric-sql/pglite';
 import { execFile } from 'child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -6,6 +5,7 @@ import { join } from 'path';
 import { promisify } from 'util';
 
 import { listBackups } from '../backup.js';
+import { createPglite } from './pglite.js';
 
 /** HS-7897: server-side repair helpers used by the Settings → Backups
  *  → Database Repair panel. Two flows:
@@ -46,7 +46,7 @@ export async function findWorkingBackup(dataDir: string): Promise<WorkingBackup 
     try {
       const buffer = readFileSync(filePath);
       const blob = new Blob([buffer]);
-      const db = new PGlite(tempDir, { loadDataDir: blob });
+      const db = createPglite(tempDir, { loadDataDir: blob });
       await db.waitReady;
       const result = await db.query<{ count: string }>(
         `SELECT COUNT(*) as count FROM tickets WHERE status != 'deleted'`
@@ -191,7 +191,7 @@ export async function runResetwalAndDump(
   try {
     await execFileP(availability.path, ['-f', workDir], { timeout: 60_000 });
 
-    const db = new PGlite(workDir);
+    const db = createPglite(workDir);
     await db.waitReady;
     await db.exec('CHECKPOINT');
     const blob = await db.dumpDataDir('gzip');

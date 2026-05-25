@@ -4,9 +4,10 @@
 
 ### 2.1 Embedded Database
 
-- The application uses an embedded PostgreSQL database (PGLite) requiring no external database server.
+- The application uses an embedded PostgreSQL database (PGLite, PostgreSQL 17.5) requiring no external database server.
 - All data is stored locally in a `.hotsheet/` directory within the project root (or a custom path via `--data-dir`).
 - Database schema is managed through inline SQL migrations that run automatically on startup.
+- **Database name is `template1` (HS-8585).** PGLite 0.3.x used `template1` as its default database, so all clusters + backup/snapshot tarballs hold our tables there. PGLite 0.4.0 changed the default to `postgres`; to keep existing data readable after the 0.4.x upgrade, every connection is pinned to `template1` via the single `createPglite()` helper (`src/db/pglite.ts`) — never construct `PGlite` directly. Without the pin, 0.4.x would open an existing cluster but connect to an empty `postgres` DB (data still on disk in `template1` but invisible).
 
 ### 2.2 Database Tables
 

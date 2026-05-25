@@ -1,4 +1,3 @@
-import { PGlite } from '@electric-sql/pglite';
 import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -14,6 +13,7 @@ import {
 import { _resetGlobalBackupLockForTesting, type BackupInfo, createBackup, findOverdueTiers, jitteredFirstTickMs, listBackups, triggerMissedBackups, withGlobalBackupLock } from './backup.js';
 import { addAttachment } from './db/attachments.js';
 import { getDb, SCHEMA_VERSION } from './db/connection.js';
+import { createPglite } from './db/pglite.js';
 import { createTicket } from './db/queries.js';
 import { type JsonDbExport, jsonSiblingFilename } from './dbJsonExport.js';
 import { cleanupTestDb, setupTestDb } from './test-helpers.js';
@@ -59,7 +59,7 @@ describe('createBackup round-trip (HS-7891)', () => {
     // constructor throws with `PANIC: could not locate a valid checkpoint
     // record` on freshly-modified databases.
     const restoreDir = join(tempDir, 'roundtrip-restore');
-    const restored = new PGlite(restoreDir, { loadDataDir: blob });
+    const restored = createPglite(restoreDir, { loadDataDir: blob });
     try {
       await restored.waitReady;
 

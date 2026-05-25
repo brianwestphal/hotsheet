@@ -4,13 +4,13 @@
  * temp instance (no mocks for the happy path — the whole point is proving
  * the produced tarball round-trips).
  */
-import { PGlite } from '@electric-sql/pglite';
 import { existsSync, readFileSync } from 'fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { writeFileSettings } from '../file-settings.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { getDbForDir } from './connection.js';
+import { createPglite } from './pglite.js';
 import {
   _resetSnapshotStateForTests,
   getSnapshotStatus,
@@ -36,7 +36,7 @@ async function seedTickets(n: number): Promise<void> {
  *  its ticket count — proves the tarball is a valid, loadable cluster. */
 async function ticketCountInSnapshot(): Promise<number> {
   const buf = readFileSync(snapshotPath(dataDir));
-  const db = new PGlite({ loadDataDir: new Blob([buf]) });
+  const db = createPglite(undefined, { loadDataDir: new Blob([buf]) });
   await db.waitReady;
   const res = await db.query<{ c: number }>("SELECT count(*)::int AS c FROM tickets");
   await db.close();

@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { PGlite } from '@electric-sql/pglite';
+import { type PGlite } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { z } from 'zod';
+
+import { createPglite } from './pglite.js';
 
 /** HS-7893: schema version stamp written into JSON-format backup files.
  *  Bump this manually whenever `initSchema` adds/removes/renames a column,
@@ -60,6 +62,15 @@ export function isRecoverableOpenError(err: unknown): boolean {
   // HS-8426 — PG-level catalog corruption (e.g. `pg_attribute catalog
   // is missing 1 attribute(s) for relation OID ...`).
   if (message.includes('catalog is missing')) return true;
+  // HS-8585 — PGLite 0.4.x wraps a failed cluster open in a generic
+  // `Error("PGlite failed to initialize properly")` (no `cause`), where
+  // 0.3.x surfaced the raw WASM `Aborted` / `RuntimeError`. Without matching
+  // it, the corrupt-open recovery + §73 auto-restore silently stop firing on
+  // 0.4.x. The phrase only appears on init failure; benign fs errors
+  // (ENOSPC / EACCES / ENOENT) still surface their own codes and preserve-
+  // aside is non-destructive, so treating an init failure as recoverable is
+  // safe even in the rare non-corruption init failure.
+  if (message.includes('failed to initialize properly')) return true;
   return false;
 }
 
@@ -293,7 +304,7 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
 }
 
 async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlite> {
-  const db = loadDataDir !== undefined ? new PGlite(dbPath, { loadDataDir }) : new PGlite(dbPath);
+  const db = createPglite(dbPath, loadDataDir !== undefined ? { loadDataDir } : {});
   await db.waitReady;
   await initSchema(db);
   databases.set(dbPath, db);

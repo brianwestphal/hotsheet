@@ -183,6 +183,13 @@ describe('isRecoverableOpenError (HS-8426)', () => {
     expect(isRecoverableOpenError(e)).toBe(true);
   });
 
+  it('matches the PGLite 0.4.x generic init-failure wrapper (HS-8585)', () => {
+    // 0.4.x throws Error("PGlite failed to initialize properly") on a corrupt
+    // cluster open where 0.3.x surfaced the raw WASM Aborted/RuntimeError.
+    // Without this, the corrupt-open recovery + §73 auto-restore stop firing.
+    expect(isRecoverableOpenError(new Error('PGlite failed to initialize properly'))).toBe(true);
+  });
+
   it('matches the PG catalog-corruption error from the HS-8426 repro', () => {
     // The exact string the user reported when trying to add the
     // ~/Documents/glassbox project folder. OID is variable.
