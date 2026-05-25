@@ -15,7 +15,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { _testingSidebarCost, refreshSidebarWidgetCost, updateSidebarWidgetCost } from './dashboardMode.js';
+import { _testingSidebarCost, clearSidebarWidgetCostForActiveProject, refreshSidebarWidgetCost, updateSidebarWidgetCost } from './dashboardMode.js';
 import { _setProjectsForTesting } from './projectTabs.js';
 import type { ProjectInfo } from './state.js';
 import { _setTelemetryCostModeForTesting } from './telemetryCostMode.js';
@@ -201,5 +201,38 @@ describe('updateSidebarWidgetCost', () => {
     _setTelemetryCostModeForTesting('subscription');
     updateSidebarWidgetCost({ 'sec-a': 4.2 });
     expect(span.querySelector('.sidebar-widget-cost-asterisk')).toBeNull();
+  });
+
+  // HS-8620 — after clearing a project's telemetry its cost is 0, but the
+  // sticky cache (HS-8531) keeps showing the last value for any project the
+  // next fetch omits — and a just-cleared project IS omitted by
+  // `today-cost-by-project`. So `refreshSidebarWidgetCost()` re-renders the
+  // stale value; only `clearSidebarWidgetCostForActiveProject()` zeros it.
+  describe('clearSidebarWidgetCostForActiveProject (HS-8620)', () => {
+    it('zeros + hides the active project cost immediately, where refresh would keep the stale value', () => {
+      const span = mountWidget();
+      _setProjectsForTesting([A, B], A.secret);
+      updateSidebarWidgetCost({ 'sec-a': 5.0, 'sec-b': 2.0 });
+      expect(costAmount(span)).toBe('$5.00');
+
+      // Baseline: a plain refresh re-renders the sticky-cached stale value
+      // (this is the bug — the cleared project would keep showing $5.00).
+      refreshSidebarWidgetCost();
+      expect(costAmount(span)).toBe('$5.00');
+
+      // The fix: clearing zeros the active project's cache → widget hides.
+      clearSidebarWidgetCostForActiveProject();
+      expect(span.textContent).toBe('');
+      expect(span.style.display).toBe('none');
+      expect(_testingSidebarCost.getCached('sec-a')).toBe(0);
+      // Other projects' cached values are untouched.
+      expect(_testingSidebarCost.getCached('sec-b')).toBe(2.0);
+    });
+
+    it('is a no-op (no throw) when no project is active', () => {
+      mountWidget();
+      _setProjectsForTesting([], '');
+      expect(() => clearSidebarWidgetCostForActiveProject()).not.toThrow();
+    });
   });
 });

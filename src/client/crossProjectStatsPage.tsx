@@ -187,12 +187,19 @@ function formatRelativeTs(ts: string | null, now: Date = new Date()): string {
   }
 }
 
-function resolveProjectName(secret: string): string {
+// Exported for unit testing (HS-8622). Pure aside from reading the
+// `projectsByIdSignal` lookup, which tests seed via `_setProjectsForTesting`.
+export function resolveProjectName(secret: string): string {
   // Lookup is typed as `Record<string, ProjectInfo>` so TS infers a
   // never-undefined return; in practice a deleted project's data can
   // still appear in otel_metrics, so coerce + guard defensively.
   const project = projectsByIdSignal.value[secret] as ProjectInfo | undefined;
-  if (project === undefined) return secret.slice(0, 8); // unknown — short-prefix fallback
+  // HS-8622 — a project that's no longer open/registered (its telemetry rows
+  // outlive the project in the shared otel store) can't resolve to a name.
+  // Pre-fix we showed the bare 8-char secret prefix (e.g. "116305a6"), which
+  // reads as a "weird project name". Label it clearly as unknown while keeping
+  // the prefix for disambiguation between multiple unregistered projects.
+  if (project === undefined) return `Unknown project (${secret.slice(0, 8)})`;
   if (project.name !== '') return project.name;
   const basename = project.dataDir.split('/').pop();
   return basename !== undefined && basename !== '' ? basename : project.dataDir;

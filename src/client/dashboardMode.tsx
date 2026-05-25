@@ -269,6 +269,22 @@ export function refreshSidebarWidgetCost(): void {
   updateSidebarWidgetCost({});
 }
 
+/** HS-8620 — after a telemetry clear, the active project's cost is 0 (every
+ *  row was deleted). `refreshSidebarWidgetCost()` can't express that: it
+ *  passes an empty record, and the sticky cache (HS-8531) deliberately KEEPS
+ *  the last value for projects the next fetch omits — but a just-cleared
+ *  project IS omitted by `today-cost-by-project` (zero cost today), so the
+ *  stale value would otherwise persist until the next NEW prompt arrives
+ *  (the reported symptom: "didn't clear cost until next telemetry received").
+ *  Force the active project's cached cost to 0 and re-render so the widget
+ *  drops to $0 / hides immediately. */
+export function clearSidebarWidgetCostForActiveProject(): void {
+  const secret = getActiveProject()?.secret;
+  if (secret === undefined || secret === '') return;
+  stickyCostCache.set(secret, 0);
+  updateSidebarWidgetCost({});
+}
+
 /** Test-only escape hatch — exposed so unit tests can reset the
  *  module-private sticky cache between cases. HS-8531. */
 export const _testingSidebarCost = {

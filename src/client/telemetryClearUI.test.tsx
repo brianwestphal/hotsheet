@@ -10,11 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
-import { bindClearTelemetryButton, formatClearResult } from './telemetryClearUI.js';
+import { bindClearTelemetryButton, formatClearResult, resetClearTelemetryStatus } from './telemetryClearUI.js';
 
 vi.mock('./api.js', () => ({ api: vi.fn() }));
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn(() => Promise.resolve(true)) }));
-vi.mock('./dashboardMode.js', () => ({ refreshSidebarWidgetCost: vi.fn() }));
+vi.mock('./dashboardMode.js', () => ({ refreshSidebarWidgetCost: vi.fn(), clearSidebarWidgetCostForActiveProject: vi.fn() }));
 
 describe('formatClearResult (HS-8606)', () => {
   it('reports a friendly no-op when nothing was cleared', () => {
@@ -83,5 +83,33 @@ describe('bindClearTelemetryButton (HS-8606)', () => {
     await vi.waitFor(() => expect(status.classList.contains('is-error')).toBe(true));
     expect(status.textContent).toContain('boom');
     expect(btn.disabled).toBe(false);
+  });
+});
+
+// HS-8621 — the "Cleared N telemetry rows." line is one-shot + project-scoped,
+// but `#settings-telemetry-clear-status` is a static element reused across
+// project switches. Without a reset on dialog-open, a prior project's count
+// lingered. `resetClearTelemetryStatus()` (called from the settings-open
+// handler) wipes it.
+describe('resetClearTelemetryStatus (HS-8621)', () => {
+  afterEach(() => { document.body.innerHTML = ''; });
+
+  it('clears a lingering success message + its state class', () => {
+    const el = document.createElement('span');
+    el.id = 'settings-telemetry-clear-status';
+    el.classList.add('is-success');
+    el.textContent = 'Cleared 15,093 telemetry rows.';
+    document.body.appendChild(el);
+
+    resetClearTelemetryStatus();
+
+    expect(el.textContent).toBe('');
+    expect(el.classList.contains('is-success')).toBe(false);
+    expect(el.classList.contains('is-error')).toBe(false);
+  });
+
+  it('is a no-op (no throw) when the status element is absent', () => {
+    document.body.innerHTML = '';
+    expect(() => resetClearTelemetryStatus()).not.toThrow();
   });
 });

@@ -13,7 +13,7 @@ import { bindCategorySettings } from './settingsCategories.js';
 import type { NotifyLevel } from './state.js';
 import { state } from './state.js';
 import { getTauriInvoke, showUpdateBanner } from './tauriIntegration.js';
-import { bindClearTelemetryButton } from './telemetryClearUI.js';
+import { bindClearTelemetryButton, resetClearTelemetryStatus } from './telemetryClearUI.js';
 import { getTelemetryCostMode, setTelemetryCostMode } from './telemetryCostMode.js';
 import { isTerminalWebglOptOut, isWebgl2Available, setTerminalWebglOptOut } from './terminalWebgl.js';
 
@@ -84,6 +84,11 @@ function bindDialogOpenClose() {
     panels.forEach(p => p.classList.remove('active'));
     tabs[0].classList.add('active');
     panels[0].classList.add('active');
+
+    // HS-8621 — wipe the one-shot "Cleared N telemetry rows." status so a
+    // prior project's count doesn't linger when the dialog reopens (the
+    // status element is static + reused across project switches).
+    resetClearTelemetryStatus();
 
     // Update dialog title with project name (from active tab, or app title if single project)
     const activeTabName = document.querySelector('.project-tab.active .project-tab-name')?.textContent;

@@ -41,6 +41,18 @@ function setStatus(el: HTMLElement | null, text: string, cls: '' | 'is-success' 
 }
 
 /**
+ * HS-8621 — clear the post-clear status line. The "Cleared N telemetry rows."
+ * confirmation is project-scoped and one-shot; without a reset it lingers in
+ * the (static, reused) `#settings-telemetry-clear-status` element, so after
+ * clearing one project and switching tabs the previous project's count is
+ * still shown when the Settings dialog reopens. Called from the settings-open
+ * handler so every open starts with a blank status line.
+ */
+export function resetClearTelemetryStatus(): void {
+  setStatus(byIdOrNull('settings-telemetry-clear-status'), '', '');
+}
+
+/**
  * Wire the "Clear telemetry data" button. Idempotent-safe to call once per
  * settings-dialog binding (the button element is static in `pages.tsx`).
  * No-op when the button isn't present (e.g. plugins-disabled builds that
@@ -67,10 +79,14 @@ export function bindClearTelemetryButton(): void {
       try {
         const result = await api('/telemetry/project-data', { method: 'DELETE', schema: ClearResultSchema });
         setStatus(status, formatClearResult(result.deleted), 'is-success');
-        // Refresh the sidebar cost widget so a just-cleared project drops to
-        // $0 immediately instead of showing the sticky cached value (HS-8527).
+        // HS-8620 — drop the sidebar cost widget to $0 immediately. We must
+        // ZERO the active project's sticky cache, not just refresh it: a plain
+        // `refreshSidebarWidgetCost()` re-renders the stale cached value
+        // because the cleared project is now omitted by `today-cost-by-project`
+        // and the sticky cache (HS-8531) keeps showing omitted projects' last
+        // value until a new prompt arrives.
         void import('./dashboardMode.js')
-          .then(({ refreshSidebarWidgetCost }) => { refreshSidebarWidgetCost(); })
+          .then(({ clearSidebarWidgetCostForActiveProject }) => { clearSidebarWidgetCostForActiveProject(); })
           .catch(() => { /* widget not mounted — fine */ });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

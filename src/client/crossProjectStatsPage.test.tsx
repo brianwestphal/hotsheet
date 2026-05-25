@@ -16,7 +16,10 @@ import {
   _testingHS8572,
   type DashboardPayload,
   renderShell,
+  resolveProjectName,
 } from './crossProjectStatsPage.js';
+import { _setProjectsForTesting } from './projectTabs.js';
+import type { ProjectInfo } from './state.js';
 
 // HS-8576 — the re-open-blank regression test drives `fetchAndRender`, which
 // hits the network helper. Stub it so the test stays a pure DOM unit test.
@@ -304,6 +307,34 @@ describe('fetchAndRender — re-paints after the container is externally emptied
     await _testingHS8572.fetchAndRender(container, 'month');
     const secondRoot = container.querySelector('.cross-project-stats-page');
     expect(secondRoot).toBe(firstRoot);
+  });
+});
+
+// HS-8622 — the "Cost by project" table labels each row via resolveProjectName.
+// Telemetry rows outlive the project that produced them, so a closed /
+// unregistered project's secret can't resolve to a name. Pre-fix we showed the
+// bare 8-char hex prefix (e.g. "116305a6"), which reads as a "weird project
+// name"; the fix labels it as an unknown project while keeping the prefix.
+describe('resolveProjectName (HS-8622)', () => {
+  const NAMED: ProjectInfo = { name: 'Glassbox', dataDir: '/Users/x/Documents/glassbox', secret: 'sec-named' };
+  const NAMELESS: ProjectInfo = { name: '', dataDir: '/Users/x/Documents/cue-car', secret: 'sec-nameless' };
+
+  beforeEach(() => { _setProjectsForTesting([NAMED, NAMELESS], NAMED.secret); });
+  afterEach(() => { _setProjectsForTesting([], null); });
+
+  it('returns the registered project name', () => {
+    expect(resolveProjectName('sec-named')).toBe('Glassbox');
+  });
+
+  it('falls back to the dataDir basename when the name is empty', () => {
+    expect(resolveProjectName('sec-nameless')).toBe('cue-car');
+  });
+
+  it('labels an unknown/closed project clearly, keeping the short prefix for disambiguation', () => {
+    const name = resolveProjectName('116305a6deadbeefcafef00d');
+    expect(name).toBe('Unknown project (116305a6)');
+    // The bare hex prefix must NOT be the whole label (the reported bug).
+    expect(name).not.toBe('116305a6');
   });
 });
 
