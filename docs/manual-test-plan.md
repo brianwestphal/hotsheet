@@ -298,6 +298,11 @@ See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hot
 - [ ] Click Back, then click the toggle again to exit the dashboard and return to the drawer. The drawer terminal should immediately show output formatted for the **drawer's** dims again — long lines wrap at the drawer's width, not the dashboard's. Hit Enter at the prompt; new shell output should not run off the right edge of the drawer.
 - [ ] Regression check: before HS-7592 the PTY stayed at dashboard-pane cols/rows after exit until the user happened to drag the drawer enough to trigger a fit() resize. The fix exports `resyncActiveTerminalPtySize()` from terminal.tsx and calls it from `exitDashboard()` so the PTY snaps back unconditionally.
 
+### Drawer terminal fit-convergence on project switch (HS-8590, §22)
+- [ ] Open two+ project tabs, each with a drawer terminal that's been running long enough to have output (e.g. `claude`). Switch between the project tabs repeatedly.
+- [ ] After each switch, the new project's drawer terminal should render at the **correct size immediately** — content fills the drawer width, no cramped ~80-col rendering, no need to manually drag-resize the drawer or wait for more output to "fix" it.
+- [ ] Regression check: pre-HS-8590 the fresh per-switch checkout started at 80×24 and the mount-time fits could run before the pane laid out; because the drawer panel's box is unchanged across a switch, the panel ResizeObserver never fired to correct it, leaving the terminal cramped until a manual resize. The fix adds a `term.onRender` convergence to the drawer mount (mirrors the §25 dashboard-tile fix).
+
 ### Persistence and reattach (§22.4, §22.7)
 - [ ] Open Terminal tab, type a long-running command (`watch date` or similar), close drawer → reopen → still running, scrollback replayed
 - [ ] Switch to Commands Log tab and back → Terminal state preserved (process still alive, cursor position intact)

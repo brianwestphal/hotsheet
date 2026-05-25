@@ -124,11 +124,47 @@ function attachDrawerKeyHandler(inst: TerminalInstance, term: XTerm): void {
   });
 }
 
+/**
+ * HS-8590 — true when xterm's freshly-painted pane geometry implies different
+ * cols/rows than the term currently has, so a re-fit is worth running. The
+ * exact-match guard (matching the §37 quit-confirm + §25 tile precedent)
+ * breaks the `onRender → fit → resize → render` feedback loop once the pane
+ * geometry has converged. Pure — exported for unit testing.
+ */
+export function shouldRefitOnRender(
+  proposed: { cols: number; rows: number } | undefined,
+  cols: number,
+  rows: number,
+): boolean {
+  if (proposed === undefined) return false;
+  return proposed.cols !== cols || proposed.rows !== rows;
+}
+
 function attachDrawerTermHandlers(inst: TerminalInstance, term: XTerm, handle: ReturnType<typeof checkout>): void {
   // HS-8044 — echo fit-driven dim changes through `handle.resize` so the WS
   // resize frame is sent and `lastApplied` bookkeeping stays current.
   inst.termHandlerDisposers.push(term.onResize(({ cols, rows }) => {
     handle.resize(cols, rows);
+  }));
+
+  // HS-8590 — converge the fit once xterm actually paints into the laid-out
+  // pane. The mount-time + double-rAF `doFit` calls in `activateTerminal` can
+  // all run before the pane reaches its final geometry on a project switch:
+  // the fresh checkout starts at 80×24, and because the drawer PANEL's box is
+  // unchanged across the switch, the panel-level ResizeObserver never fires to
+  // correct it — so the terminal renders cramped at 80×24 until the user
+  // manually resizes ("not getting the resize signal"). `onRender` fires AFTER
+  // the element is in the DOM + laid out, so `proposeDimensions()` is reliable
+  // here. The `shouldRefitOnRender` exact-match guard makes this a no-op once
+  // converged (so it doesn't feed the HS-8055 fit→resize→render loop). This is
+  // the same convergence the §25 dashboard tiles got in HS-8051.
+  inst.termHandlerDisposers.push(term.onRender(() => {
+    if (!requireHooks().isTerminalTabActive(inst)) return;
+    try {
+      if (shouldRefitOnRender(handle.fit.proposeDimensions(), term.cols, term.rows)) {
+        doFit(inst);
+      }
+    } catch { /* fit/proposeDimensions can throw if the pane detached mid-frame */ }
   }));
 
   // OSC 0 / OSC 2 title-change escapes (HS-6473).
