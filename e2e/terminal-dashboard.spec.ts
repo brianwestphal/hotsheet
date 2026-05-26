@@ -13,7 +13,9 @@ import { expect, test } from './coverage-fixture.js';
 
 test.describe('Terminal dashboard foundation (HS-6832)', () => {
   test.beforeEach(async ({ page }) => {
-    // Tauri stub — the dashboard is Tauri-only (§25.11).
+    // Tauri stub — kept so these tests mirror the desktop session. HS-8624 made
+    // terminals + the dashboard work in a plain browser too; the dedicated
+    // "also works without Tauri" case below uses a stub-free context.
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
         core: { invoke: async () => undefined },
@@ -21,21 +23,22 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     });
   });
 
-  test('toggle button is visible inside Tauri and hidden on web', async ({ page }) => {
+  test('toggle button is visible inside Tauri', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await expect(page.locator('#terminal-dashboard-toggle')).toBeVisible();
   });
 
-  test('toggle button is hidden when window.__TAURI__ is absent', async ({ browser }) => {
+  test('toggle button is ALSO visible without Tauri (web terminals — HS-8624)', async ({ browser }) => {
     // Fresh context with no Tauri stub — mirrors a plain-browser session.
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    // Button renders as display:none from the server, and initTerminalDashboard
-    // only flips it visible when getTauriInvoke() returns a function.
-    await expect(page.locator('#terminal-dashboard-toggle')).toBeHidden();
+    // HS-8624 — initTerminalDashboard no longer early-returns on web, so it
+    // flips the (server-rendered display:none) toggle visible regardless of
+    // platform. Pre-HS-8624 this button stayed hidden in a plain browser.
+    await expect(page.locator('#terminal-dashboard-toggle')).toBeVisible();
     await ctx.close();
   });
 

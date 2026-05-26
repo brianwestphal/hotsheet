@@ -32,10 +32,8 @@ import {
 import { SHELL_PARTIAL_OUTPUT_EVENT, type ShellPartialOutputEvent } from './commandSidebar.js';
 import { TIMERS } from './constants/timers.js';
 import { byId, byIdOrNull } from './dom.js';
-import { resolveDrawerTabForTauri } from './drawerTabGating.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { bindList } from './reactive-bind.js';
-import { getTauriInvoke } from './tauriIntegration.js';
 
 // Re-export the streaming helpers so existing importers (and the
 // `commandLog.test.ts` harness) keep their `from './commandLog.js'`
@@ -205,7 +203,9 @@ function updateToggleIcon(isOpen: boolean) {
 /** Switch which drawer tab is visible. Both tab contents remain mounted.
  *  tab id is `commands-log` or `terminal:<terminalId>`. */
 export function switchDrawerTab(tab: string) {
-  tab = resolveDrawerTabForTauri(tab, getTauriInvoke() !== null);
+  // HS-8624 — terminals work on web now, so a saved `terminal:<id>` active-tab
+  // restores as-is (the old `resolveDrawerTabForTauri` browser→commands-log
+  // rewrite is gone).
   // HS-8054 — context for the longtask observer.
   recordInteraction(`drawer-tab:${tab}`);
   const changed = tab !== activeTab;
@@ -609,25 +609,21 @@ export function initCommandLog() {
 }
 
 /**
- * Show or hide the terminal tab strip. Gating is Tauri-only (HS-6437,
- * HS-6337) — there is no per-user toggle anymore, the feature is simply on
- * when the desktop app is running and off when a plain browser connects.
+ * Show the terminal tab strip + load the configured terminals. HS-8624 — the
+ * feature is no longer Tauri-only; terminals work in the browser too (the
+ * server already serves any secret-authenticated client), so the tab strip +
+ * divider are always shown and `loadAndRenderTerminalTabs()` always runs.
  * Exported so settings can refresh the terminal strip after the user edits
  * the configured list.
  */
 export async function applyTerminalTabVisibility() {
   try {
-    const enabled = getTauriInvoke() !== null;
     const tabsContainer = byIdOrNull('drawer-terminal-tabs-wrap');
-    if (tabsContainer) tabsContainer.style.display = enabled ? '' : 'none';
-    // HS-6475: hide the divider alongside the terminal tab strip so it doesn't
-    // dangle next to a lone Commands Log icon when terminals are unavailable.
+    if (tabsContainer) tabsContainer.style.display = '';
+    // HS-6475: the divider sits alongside the terminal tab strip.
     const divider = document.querySelector<HTMLElement>('.drawer-tabs-divider');
-    if (divider) divider.style.display = enabled ? '' : 'none';
-    if (!enabled && activeTab.startsWith('terminal:')) switchDrawerTab('commands-log');
-    if (enabled) {
-      const mod = await import('./terminal.js');
-      await mod.loadAndRenderTerminalTabs();
-    }
+    if (divider) divider.style.display = '';
+    const mod = await import('./terminal.js');
+    await mod.loadAndRenderTerminalTabs();
   } catch { /* ignore */ }
 }

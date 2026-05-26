@@ -21,11 +21,11 @@ test.describe('Embedded terminal drawer', () => {
   });
 
   test.beforeEach(async ({ page, request }) => {
-    // The terminal feature is Tauri-only (HS-6437). Playwright runs in a plain
-    // browser, so we stub __TAURI__ onto the window *before* the app bundle
-    // executes — otherwise getTauriInvoke() returns null and the drawer / the
-    // settings section hide themselves. The stub only needs to be truthy
-    // enough for `tauri?.core?.invoke` to return a function.
+    // HS-8624 — terminals now work on web too, so the __TAURI__ stub is no
+    // longer strictly required for the terminal UI to appear. We keep it so
+    // these tests mirror the desktop session (and so Tauri-routed niceties like
+    // external-URL open resolve to a no-op invoke instead of falling back). The
+    // dedicated "web sessions" tests below drop the stub to prove cross-platform.
     await page.addInitScript(() => {
       // A no-op invoke is enough for UI visibility checks.
       (window as unknown as Record<string, unknown>).__TAURI__ = {
@@ -569,12 +569,12 @@ test.describe('Embedded terminal drawer', () => {
     await expect(page.locator('#settings-terminal-scrollback')).toBeVisible();
   });
 
-  // HS-6437: when not running inside Tauri, the drawer's terminal tab strip
-  // and the Settings → Embedded Terminal section must be hidden. We drop the
-  // __TAURI__ stub for this one test by re-registering addInitScript (the
-  // later script overrides the earlier one at navigation time).
-  test('terminal UI is hidden in non-Tauri (web) sessions (HS-6437)', async ({ page, request }) => {
-    // Even though the setting is "true", web clients should not see the UI.
+  // HS-8624 (was HS-6437): terminals are no longer Tauri-only — the drawer's
+  // terminal tab strip AND the Settings → Terminal tab now show in a plain
+  // browser too. We drop the __TAURI__ stub for this one test by re-registering
+  // addInitScript (the later script overrides the earlier one at navigation
+  // time), proving the UI is present without Tauri.
+  test('terminal UI is visible in non-Tauri (web) sessions (HS-8624)', async ({ page, request }) => {
     await request.patch('/api/file-settings', {
       headers,
       data: {
@@ -591,17 +591,15 @@ test.describe('Embedded terminal drawer', () => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
-    // Open the drawer — Commands Log should show, but no terminal tabs.
+    // Open the drawer — Commands Log AND the terminal tab strip both show.
     await page.locator('#command-log-btn').click();
     await expect(page.locator('#command-log-panel')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('#drawer-terminal-tabs-wrap')).toBeHidden();
+    await expect(page.locator('#drawer-terminal-tabs-wrap')).toBeVisible();
 
-    // Settings must hide the Terminal tab button entirely (HS-6337 moved the
-    // embedded-terminal options into their own tab, and HS-6437 makes that
-    // tab Tauri-only).
+    // The Settings → Terminal tab button is present on web now too.
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('#settings-tab-terminal')).toBeHidden();
+    await expect(page.locator('#settings-tab-terminal')).toBeVisible();
   });
 
   // HS-6474 / HS-6475: Commands Log tab renders as an icon-only button (no
@@ -718,7 +716,7 @@ test.describe('Embedded terminal drawer', () => {
     await expect(firstTab).toHaveClass(/active/, { timeout: 3000 });
   });
 
-  test('Commands Log divider hides on non-desktop sessions (HS-6475)', async ({ page }) => {
+  test('Commands Log divider shows on web sessions now that terminals are cross-platform (HS-8624)', async ({ page }) => {
     await page.addInitScript(() => {
       delete (window as unknown as Record<string, unknown>).__TAURI__;
     });
@@ -727,9 +725,10 @@ test.describe('Embedded terminal drawer', () => {
 
     await page.locator('#command-log-btn').click();
     await expect(page.locator('#command-log-panel')).toBeVisible({ timeout: 3000 });
-    // Divider is hidden when the terminal tabs wrap is hidden.
-    await expect(page.locator('.drawer-tabs-divider')).toBeHidden();
-    // Commands Log tab stays visible.
+    // HS-8624 — terminals (and so the tab strip + its leading divider) show on
+    // web too. Pre-HS-8624 both were hidden in a plain browser.
+    await expect(page.locator('#drawer-terminal-tabs-wrap')).toBeVisible();
+    await expect(page.locator('.drawer-tabs-divider')).toBeVisible();
     await expect(page.locator('#drawer-tab-commands-log')).toBeVisible();
   });
 

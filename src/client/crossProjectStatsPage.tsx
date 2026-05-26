@@ -67,6 +67,9 @@ export { isCrossProjectStatsPageActive, markCrossProjectStatsSupplanted } from '
 interface WindowTotals {
   cost: number;
   tokens: number;
+  // HS-8628 — input / output split (input + output ≈ tokens; cache excluded).
+  inputTokens: number;
+  outputTokens: number;
   promptCount: number;
 }
 
@@ -82,6 +85,9 @@ interface ModelRollup {
   model: string;
   cost: number;
   tokens: number;
+  // HS-8628 — per-model input / output split feeds the donut legend meta line.
+  inputTokens: number;
+  outputTokens: number;
   promptCount: number;
 }
 
@@ -132,11 +138,17 @@ function formatTokens(n: number): string {
 }
 
 function renderWindowChip(label: string, totals: WindowTotals): HTMLElement {
+  // HS-8628 — input / output split on a second meta line (different pricing);
+  // headline keeps the combined real-work total + prompt count.
+  const hasSplit = totals.inputTokens > 0 || totals.outputTokens > 0;
   return toElement(
     <div className="telemetry-dashboard-chip">
       <div className="telemetry-dashboard-chip-label">{label}</div>
       <div className="telemetry-dashboard-chip-cost">{formatCost(totals.cost)}</div>
       <div className="telemetry-dashboard-chip-meta">{`${formatTokens(totals.tokens)} tokens · ${String(totals.promptCount)} prompts`}</div>
+      {hasSplit
+        ? <div className="telemetry-dashboard-chip-submeta">{`${formatTokens(totals.inputTokens)} in / ${formatTokens(totals.outputTokens)} out`}</div>
+        : null}
     </div>
   );
 }

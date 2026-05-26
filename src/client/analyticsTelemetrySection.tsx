@@ -57,6 +57,9 @@ type TelemetryWindow = 'today' | 'week' | 'month' | '90d' | 'all';
 interface WindowTotals {
   cost: number;
   tokens: number;
+  // HS-8628 — input / output split (input + output ≈ tokens; cache excluded).
+  inputTokens: number;
+  outputTokens: number;
   promptCount: number;
 }
 
@@ -64,6 +67,9 @@ interface ModelRollupRow {
   model: string;
   cost: number;
   tokens: number;
+  // HS-8628 — per-model input / output split feeds the donut legend meta line.
+  inputTokens: number;
+  outputTokens: number;
   promptCount: number;
 }
 
@@ -121,6 +127,10 @@ function resolveTimezone(): string {
 }
 
 function renderWindowChip(label: string, totals: WindowTotals): HTMLElement {
+  // HS-8628 — show the input / output split on a second meta line when token
+  // data is present (input + output are priced very differently). The headline
+  // line keeps the combined real-work total + prompt count.
+  const hasSplit = totals.inputTokens > 0 || totals.outputTokens > 0;
   return toElement(
     <div className="telemetry-chip">
       <div className="telemetry-chip-label">{label}</div>
@@ -128,6 +138,9 @@ function renderWindowChip(label: string, totals: WindowTotals): HTMLElement {
       <div className="telemetry-chip-meta">
         {formatTokens(totals.tokens)} tokens · {String(totals.promptCount)} prompts
       </div>
+      {hasSplit
+        ? <div className="telemetry-chip-submeta">{`${formatTokens(totals.inputTokens)} in / ${formatTokens(totals.outputTokens)} out`}</div>
+        : null}
     </div>
   );
 }

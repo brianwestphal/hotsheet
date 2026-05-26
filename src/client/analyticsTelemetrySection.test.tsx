@@ -12,19 +12,21 @@ import { _testing, renderAnalyticsTelemetrySection } from './analyticsTelemetryS
 interface WindowTotals {
   cost: number;
   tokens: number;
+  inputTokens: number;
+  outputTokens: number;
   promptCount: number;
 }
 
 function emptyTotals(): WindowTotals {
-  return { cost: 0, tokens: 0, promptCount: 0 };
+  return { cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, promptCount: 0 };
 }
 
 function nonEmptyTotals(cost = 1): WindowTotals {
-  return { cost, tokens: 1000, promptCount: 5 };
+  return { cost, tokens: 1000, inputTokens: 700, outputTokens: 300, promptCount: 5 };
 }
 
 interface FixtureOverrides {
-  costByModel?: { model: string; cost: number; tokens: number; promptCount: number }[];
+  costByModel?: { model: string; cost: number; tokens: number; inputTokens: number; outputTokens: number; promptCount: number }[];
   toolLatencyHistogram?: { tool: string; count: number; totalMs: number; p50: number | null; p90: number | null; p99: number | null; buckets: number[] }[];
   recentPrompts?: { promptId: string; ts: string; projectSecret: string; model: string | null }[];
   costOverTime?: { date: string; projectSecret: string; model: string; cost: number }[];
@@ -130,8 +132,8 @@ describe('renderBody (HS-8508 analytics-dashboard telemetry section)', () => {
     const body = _testing.renderBody(
       makePayload({
         costByModel: [
-          { model: 'sonnet', cost: 5, tokens: 1000, promptCount: 3 },
-          { model: 'haiku', cost: 2, tokens: 500, promptCount: 2 },
+          { model: 'sonnet', cost: 5, tokens: 1000, inputTokens: 700, outputTokens: 300, promptCount: 3 },
+          { model: 'haiku', cost: 2, tokens: 500, inputTokens: 400, outputTokens: 100, promptCount: 2 },
         ],
       }),
       'secretA',
@@ -140,6 +142,12 @@ describe('renderBody (HS-8508 analytics-dashboard telemetry section)', () => {
     expect(section).not.toBeNull();
     expect(section?.querySelector('.telemetry-dashboard-model-donut')).not.toBeNull();
     expect(section?.querySelectorAll('.telemetry-dashboard-model-legend-row').length).toBe(2);
+    // HS-8628 — each legend row carries an input/output split + the derived
+    // $/Mtok estimate. sonnet: $5 / 1000 tok = $5,000.00/Mtok.
+    const metas = section?.querySelectorAll('.telemetry-dashboard-model-legend-meta');
+    expect(metas?.length).toBe(2);
+    expect(metas?.[0].textContent).toContain('700 in / 300 out');
+    expect(metas?.[0].textContent).toContain('$5,000.00/Mtok');
   });
 
   it('renders per-tool latency histograms when payload.toolLatencyHistogram has data', () => {

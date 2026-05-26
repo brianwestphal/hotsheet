@@ -28,8 +28,9 @@ import {
 } from './drawerTerminalGrid.js';
 import { getProjectGridColumnCount, setActiveProject, setProjectGridActive as realSetProjectGridActive } from './state.js';
 
-// Hoisted mocks for the heavy modules. `getTauriInvoke` must return a non-null
-// value so `initDrawerTerminalGrid` doesn't bail at the Tauri-only gate.
+// Hoisted mocks for the heavy modules. (HS-8624 removed the Tauri-only gate in
+// `initDrawerTerminalGrid`, so the `getTauriInvoke` mock no longer affects
+// whether init runs; it's kept for the modules that still read it.)
 // `mountTileGrid` returns a fake handle exposing the methods the file calls.
 const {
   getTauriInvokeMock,
@@ -163,16 +164,18 @@ afterEach(() => {
 });
 
 describe('initDrawerTerminalGrid (HS-8231)', () => {
-  it('is a no-op when getTauriInvoke returns null (web build)', () => {
+  it('still initializes + reveals the toggle when getTauriInvoke returns null (web build — HS-8624)', () => {
     _resetStateForTesting();
     document.body.innerHTML = '';
     setupDom();
+    // Start hidden so revealing it is observable (the toggle is server-rendered
+    // display:none; init flips it visible).
+    const btn = document.getElementById('drawer-grid-toggle') as HTMLButtonElement;
+    btn.style.display = 'none';
     getTauriInvokeMock.mockReturnValueOnce(null);
     initDrawerTerminalGrid({ onExitGrid: () => { /* noop */ } });
-    // Toggle button is left hidden (its `style.display = ''` is set inside
-    // the post-Tauri-gate block).
-    const btn = document.getElementById('drawer-grid-toggle') as HTMLButtonElement;
-    expect(btn.style.display).toBe(''); // unchanged from default; never touched
+    // HS-8624 — no Tauri gate: init proceeds on web too and reveals the toggle.
+    expect(btn.style.display).toBe('');
   });
 
   it('reveals the toggle button on init', () => {

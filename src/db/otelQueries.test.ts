@@ -154,6 +154,19 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       const recent = await getWindowTotals(SECRET_A, oneHourAgo);
       expect(recent.cost).toBe(0.5);
     });
+
+    it('splits real-work tokens into input + output, excluding cache (HS-8628)', async () => {
+      const now = new Date();
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'input', tokens: 700 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'output', tokens: 300 });
+      // cacheRead must NOT inflate the total nor count toward input/output.
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'cacheRead', tokens: 50_000 });
+
+      const result = await getWindowTotals(SECRET_A, null);
+      expect(result.tokens).toBe(1000); // input + output only (HS-8627)
+      expect(result.inputTokens).toBe(700);
+      expect(result.outputTokens).toBe(300);
+    });
   });
 
   describe('getCostByModel', () => {
@@ -169,6 +182,20 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(rollup).toHaveLength(2);
       expect(rollup[0]).toMatchObject({ model: 'opus-4', cost: 4.0 });
       expect(rollup[1]).toMatchObject({ model: 'sonnet-4', cost: 1.5, tokens: 2000 });
+    });
+
+    it('splits per-model tokens into input + output, excluding cache (HS-8628)', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet-4', cost: 3.0 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet-4', type: 'input', tokens: 800 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet-4', type: 'output', tokens: 200 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet-4', type: 'cacheRead', tokens: 90_000 });
+
+      const rollup = await getCostByModel(SECRET_A, null);
+      expect(rollup).toHaveLength(1);
+      expect(rollup[0]).toMatchObject({
+        model: 'sonnet-4', cost: 3.0, tokens: 1000, inputTokens: 800, outputTokens: 200,
+      });
     });
   });
 

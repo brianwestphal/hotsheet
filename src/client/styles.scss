@@ -10693,6 +10693,13 @@ label.detail-details-label {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+// HS-8628 — input/output token split, a dimmer second meta line.
+.telemetry-dashboard-chip-submeta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 // Section containers.
 .telemetry-dashboard-sections {
   display: grid;
@@ -10893,6 +10900,16 @@ label.detail-details-label {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+// HS-8628 — per-model input/output split + derived $/Mtok estimate, on its own
+// line spanning the full row width under the headline cost.
+.telemetry-dashboard-model-legend-meta {
+  grid-column: 1 / -1;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .telemetry-dashboard-model-single-caption {
   flex-basis: 100%;
   font-size: 11px;
@@ -11060,6 +11077,13 @@ label.detail-details-label {
 .telemetry-chip-meta {
   font-size: 11px;
   color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+// HS-8628 — input/output token split, a dimmer second meta line.
+.telemetry-chip-submeta {
+  font-size: 11px;
+  color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 

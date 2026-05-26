@@ -29,7 +29,13 @@ import { getTelemetryDb } from './connection.js';
 
 export interface WindowTotals {
   cost: number;
+  /** HS-8627 — real-work tokens (input + output, excludes cache). Kept as the
+   *  combined headline number; `inputTokens` + `outputTokens` break it down. */
   tokens: number;
+  /** HS-8628 — `type='input'` tokens only. */
+  inputTokens: number;
+  /** HS-8628 — `type='output'` tokens only. */
+  outputTokens: number;
   promptCount: number;
 }
 
@@ -37,6 +43,10 @@ export interface ModelRollup {
   model: string;
   cost: number;
   tokens: number;
+  /** HS-8628 — `type='input'` tokens for this model. */
+  inputTokens: number;
+  /** HS-8628 — `type='output'` tokens for this model. */
+  outputTokens: number;
   promptCount: number;
 }
 
@@ -139,6 +149,15 @@ function buildProjectAndWindowClauses(
  */
 const REAL_WORK_TOKEN_TYPE_SQL = "(attributes_json->>'type' IS NULL OR attributes_json->>'type' NOT IN ('cacheRead', 'cacheCreation', 'cache_read', 'cache_creation'))";
 
+// HS-8628 — input vs output are priced very differently, so the stats surfaces
+// break the real-work total down by `type`. Pure literal predicates (no bind
+// params), safe to drop into a FILTER / CASE WHEN. `type` is always exactly
+// 'input' / 'output' from Claude Code's `claude_code.token.usage` exporter — a
+// NULL or unknown type counts toward the real-work total (HS-8627 fail-open) but
+// not toward either input or output, so `inputTokens + outputTokens <= tokens`.
+const INPUT_TOKEN_TYPE_SQL = "attributes_json->>'type' = 'input'";
+const OUTPUT_TOKEN_TYPE_SQL = "attributes_json->>'type' = 'output'";
+
 /**
  * Window totals: total cost + total tokens + count of distinct prompts
  * over the given window. Cost comes from `claude_code.cost.usage`
@@ -159,11 +178,16 @@ export async function getWindowTotals(
      WHERE metric_name = $1${metricsClause.clauses}`,
     ['claude_code.cost.usage', ...metricsClause.params],
   );
-  const tokensResult = await db.query<{ total: string | null }>(
-    // HS-8627 — input + output only (exclude cacheRead / cacheCreation).
-    `SELECT SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
+  // HS-8627 — `total` is input + output (excludes cacheRead / cacheCreation).
+  // HS-8628 — `input` / `output` break the same total down by `type` in one
+  // pass via FILTER (WHERE …) aggregates.
+  const tokensResult = await db.query<{ total: string | null; input: string | null; output: string | null }>(
+    `SELECT
+        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${REAL_WORK_TOKEN_TYPE_SQL}) AS total,
+        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${INPUT_TOKEN_TYPE_SQL}) AS input,
+        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${OUTPUT_TOKEN_TYPE_SQL}) AS output
      FROM otel_metrics
-     WHERE metric_name = $1${metricsClause.clauses} AND ${REAL_WORK_TOKEN_TYPE_SQL}`,
+     WHERE metric_name = $1${metricsClause.clauses}`,
     ['claude_code.token.usage', ...metricsClause.params],
   );
 
@@ -199,6 +223,8 @@ export async function getWindowTotals(
   return {
     cost: Number(costResult.rows[0]?.total ?? 0),
     tokens: Number(tokensResult.rows[0]?.total ?? 0),
+    inputTokens: Number(tokensResult.rows[0]?.input ?? 0),
+    outputTokens: Number(tokensResult.rows[0]?.output ?? 0),
     promptCount,
   };
 }
@@ -221,11 +247,13 @@ export async function getCostByModel(
   // per-data-point attributes instead. `COALESCE(session_id,
   // attributes_json->>'session.id')` picks whichever path is
   // populated.
-  const result = await db.query<{ model: string | null; cost: string; tokens: string; prompt_count: string }>(
+  const result = await db.query<{ model: string | null; cost: string; tokens: string; input_tokens: string; output_tokens: string; prompt_count: string }>(
     `SELECT
         COALESCE(attributes_json->>'model', '(unknown)') AS model,
         SUM(CASE WHEN metric_name = 'claude_code.cost.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS cost,
         SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${REAL_WORK_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS tokens,
+        SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${INPUT_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS input_tokens,
+        SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${OUTPUT_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS output_tokens,
         COUNT(DISTINCT COALESCE(session_id, attributes_json->>'session.id')) AS prompt_count
      FROM otel_metrics
      WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage')${clauses.clauses}
@@ -237,6 +265,8 @@ export async function getCostByModel(
     model: r.model ?? '(unknown)',
     cost: Number(r.cost),
     tokens: Number(r.tokens),
+    inputTokens: Number(r.input_tokens),
+    outputTokens: Number(r.output_tokens),
     promptCount: Number(r.prompt_count),
   }));
 }

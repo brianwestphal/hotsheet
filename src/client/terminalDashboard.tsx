@@ -14,7 +14,6 @@ import { byIdOrNull, toElement } from './dom.js';
 import { showHideTerminalDialog } from './hideTerminalDialog.js';
 import { shouldEscapeBypassHotsheet } from './shortcuts.js';
 import type { ProjectInfo } from './state.js';
-import { getTauriInvoke } from './tauriIntegration.js';
 import { loadProjectDefaultAppearance, subscribeToDefaultAppearanceChanges } from './terminalAppearance.js';
 import {
   _resetLayoutStateForTesting,
@@ -157,7 +156,8 @@ function handleDashboardEscape(e: KeyboardEvent): void {
 }
 
 export function initTerminalDashboard(): void {
-  if (getTauriInvoke() === null) return;
+  // HS-8624 — terminals (and the dashboard toggle) work in the browser too now;
+  // no Tauri gate. The toggle button is revealed below regardless of platform.
 
   // HS-8395 Phase 3c — wire the paint module's cross-module callbacks
   // before any paint function can fire. The hooks pattern keeps the

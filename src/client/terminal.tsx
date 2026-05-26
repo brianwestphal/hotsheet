@@ -10,7 +10,6 @@ import {
 } from './drawerTerminalGrid.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { getActiveProject } from './state.js';
-import { getTauriInvoke } from './tauriIntegration.js';
 import {
   loadProjectDefaultAppearance,
   subscribeToDefaultAppearanceChanges,
@@ -258,9 +257,11 @@ function toGridEntries(wanted: Map<string, ListEntry>): DrawerGridTileEntry[] {
 }
 
 export async function loadAndRenderTerminalTabs(): Promise<void> {
-  // HS-7977: terminals are a Tauri-only feature. Web/browser deployments must
-  // never spawn xterm/PTY instances or render terminal panes.
-  if (getTauriInvoke() === null) return;
+  // HS-8624 — terminals now work in the browser too (the server already serves
+  // any secret-authenticated client; only the UI was Tauri-gated). No platform
+  // early-return: web + Tauri both mount the xterm/PTY panes. Tauri-specific
+  // niceties (external-URL open, file dialogs) keep their own `getTauriInvoke()`
+  // fallbacks at their callsites.
 
   reconcileProjectChange(getActiveProject()?.secret ?? null);
 

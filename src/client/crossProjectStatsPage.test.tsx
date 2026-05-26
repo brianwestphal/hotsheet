@@ -33,15 +33,17 @@ vi.mock('./api.js', () => ({ api: vi.fn() }));
 interface WindowTotals {
   cost: number;
   tokens: number;
+  inputTokens: number;
+  outputTokens: number;
   promptCount: number;
 }
 
 function emptyTotals(): WindowTotals {
-  return { cost: 0, tokens: 0, promptCount: 0 };
+  return { cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, promptCount: 0 };
 }
 
 function nonEmptyTotals(cost = 1): WindowTotals {
-  return { cost, tokens: 1000, promptCount: 5 };
+  return { cost, tokens: 1000, inputTokens: 700, outputTokens: 300, promptCount: 5 };
 }
 
 function makePayload(overrides: Partial<DashboardPayload> & Record<string, unknown> = {}): DashboardPayload {

@@ -16,7 +16,6 @@ import {
   setProjectGridActive,
   setProjectGridColumnCount,
 } from './state.js';
-import { getTauriInvoke } from './tauriIntegration.js';
 import {
   computeColumnSnapPoints,
   DEFAULT_TILES_PER_ROW,
@@ -134,8 +133,7 @@ export interface GridInitOptions {
 
 export function initDrawerTerminalGrid(opts: GridInitOptions): void {
   drawerGridState.onExitGrid = opts.onExitGrid;
-  // Tauri-only — per §22.11 / §36.8.
-  if (getTauriInvoke() === null) return;
+  // HS-8624 — terminals work in the browser too now; no Tauri gate.
 
   drawerGridState.gridEl = byIdOrNull('drawer-terminal-grid');
   drawerGridState.toggleBtn = byIdOrNull<HTMLButtonElement>('drawer-grid-toggle');

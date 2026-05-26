@@ -204,6 +204,14 @@ Defense-in-depth follow-up to §67.3 / HS-8599. HS-8599 forces `OTEL_EXPORTER_OT
 
 **Cost is NOT filtered (and is not over-counted).** `claude_code.cost.usage` is already-priced USD that bakes in Anthropic's cache-read discount, so cache does not inflate cost the way it inflates the token *count* — the full cost IS correct. Cost over-count was checked on every axis: the cumulative-counter axis is handled by HS-8599 (delta) + HS-8600 (warn); cost is summed once per data point (`getCostByModel` groups by `model`, no total+breakdown double-emit); and the token-type filter is deliberately applied only to the token SUMs, leaving cost whole (a `getCostByProject` test asserts cost stays full with cacheRead token rows present).
 
+### Input vs output token split + derived $/Mtok estimate (HS-8628)
+
+Input and output tokens are priced very differently, so `getWindowTotals` and `getCostByModel` break the real-work total down by `type`: alongside the combined `tokens` they now return `inputTokens` (`type='input'`) and `outputTokens` (`type='output'`). `getWindowTotals` computes all three in one pass via `FILTER (WHERE …)` aggregates; `getCostByModel` adds two `SUM(CASE …)` columns. The split predicates (`INPUT_TOKEN_TYPE_SQL` / `OUTPUT_TOKEN_TYPE_SQL`) are exact `type = 'input'` / `'output'` matches, so a NULL/unknown type still counts toward the real-work `tokens` total (HS-8627 fail-open) but toward neither input nor output — i.e. `inputTokens + outputTokens <= tokens`.
+
+The UI surfaces the split as a second meta line on the window chips (cross-project §70 + analytics §71) — `"{in} in / {out} out"`, rendered only when token data is present — and per-model in the cost-by-model donut legend.
+
+**Price-per-token estimate is *derived*, not a hardcoded price table.** Per the HS-8628 decision, the per-model "$/Mtok" shown in the donut legend is computed as `cost / tokens × 1e6` (`formatRatePerMtok` in `telemetryFormat.ts`). This is self-updating (no Anthropic price map to maintain, and it stays correct for Pro/Max subscription users whose cost is already an estimate) but it's a single blended rate per model, not separate input/output rates — decomposing the one already-priced `cost` number into per-type rates would require a hardcoded price table, which was explicitly declined. `formatRatePerMtok` returns `—` when there are no tokens to divide by.
+
 ### Single shared store — NOT per-project tables (HS-8581)
 
 Hot Sheet opens one PGLite cluster per project `dataDir`, but the telemetry tables are **not** per-project — they are a single shared store keyed by the `project_secret` column, living in the **default (primary) project's** DB (the `dataDir` the server was started with). This follows directly from the routing model:

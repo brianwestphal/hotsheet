@@ -18,13 +18,25 @@
 import { toElement } from './dom.js';
 import { MODEL_DONUT_COLORS } from './telemetryColors.js';
 // HS-8566 — shared formatter (hides cents for >= $1000, half-up rounding).
-import { formatCost as defaultFormatCost } from './telemetryFormat.js';
+// HS-8628 — `formatRatePerMtok` for the derived per-model price estimate.
+import { formatCost as defaultFormatCost, formatRatePerMtok } from './telemetryFormat.js';
 
 export interface ModelRollupRow {
   readonly model: string;
   readonly cost: number;
   readonly tokens?: number;
+  /** HS-8628 — `type='input'` tokens for this model (drives the in/out split). */
+  readonly inputTokens?: number;
+  /** HS-8628 — `type='output'` tokens for this model. */
+  readonly outputTokens?: number;
   readonly promptCount?: number;
+}
+
+/** HS-8628 — compact token formatter for the legend (K / M suffixes). */
+function formatTokensShort(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
 }
 
 export interface RenderCostByModelDonutOpts {
@@ -70,12 +82,27 @@ export function renderCostByModelDonut(
           const fraction = totalCost === 0 ? 0 : row.cost / totalCost;
           const pct = (fraction * 100).toFixed(1);
           const color = MODEL_DONUT_COLORS[i % MODEL_DONUT_COLORS.length];
+          // HS-8628 — per-model input/output token split + derived price
+          // estimate ($/Mtok = cost / tokens). Rendered as a secondary meta
+          // line under the headline cost row. Omitted when no token data is
+          // present (e.g. a cost-only fixture).
+          const inTok = row.inputTokens;
+          const outTok = row.outputTokens;
+          const hasSplit = inTok !== undefined && outTok !== undefined && (inTok > 0 || outTok > 0);
+          const rate = row.tokens !== undefined && row.tokens > 0 ? formatRatePerMtok(row.cost, row.tokens) : null;
           return (
             <li className="telemetry-dashboard-model-legend-row">
               <span className="telemetry-dashboard-model-legend-swatch" style={`background:${color}`}></span>
               <span className="telemetry-dashboard-model-legend-name">{row.model}</span>
               <span className="telemetry-dashboard-model-legend-pct">{pct}%</span>
               <span className="telemetry-dashboard-model-legend-cost">{formatCost(row.cost)}</span>
+              {hasSplit || rate !== null
+                ? <span className="telemetry-dashboard-model-legend-meta">
+                    {hasSplit ? `${formatTokensShort(inTok)} in / ${formatTokensShort(outTok)} out` : ''}
+                    {hasSplit && rate !== null ? ' · ' : ''}
+                    {rate !== null ? `~${rate}` : ''}
+                  </span>
+                : null}
             </li>
           );
         })}

@@ -12,7 +12,7 @@
  * - `getLastKnownTerminalConfigs` reads from the bundled state.
  * - `onProjectSwitch` resets `currentProjectSecret` + `lastKnownConfigs`
  *   + clears `instances`.
- * - `loadAndRenderTerminalTabs` Tauri-only gate (web returns early).
+ * - `loadAndRenderTerminalTabs` loads on web + Tauri (HS-8624 — web terminals).
  * - `initTerminal` bell-subscription idempotency (HS-8224
  *   `terminalState.bellSubscribed` flag).
  *
@@ -132,11 +132,13 @@ describe('onProjectSwitch (HS-6309 / HS-8232)', () => {
   });
 });
 
-describe('loadAndRenderTerminalTabs Tauri-only gate (HS-7977)', () => {
-  it('returns early without calling the api when getTauriInvoke is null (web build)', async () => {
+describe('loadAndRenderTerminalTabs — web + Tauri (HS-8624)', () => {
+  it('loads /terminal/list even when getTauriInvoke is null (web build) — HS-8624 enabled web terminals', async () => {
     getTauriInvokeMock.mockReturnValue(null);
+    apiMock.mockResolvedValue({ configured: [], dynamic: [], home: '/Users/test' });
     await loadAndRenderTerminalTabs();
-    expect(apiMock).not.toHaveBeenCalled();
+    // Pre-HS-8624 this returned early on web; terminals now work in the browser.
+    expect(apiMock).toHaveBeenCalledWith('/terminal/list');
   });
 
   it('calls /terminal/list when getTauriInvoke returns a stub function (Tauri build)', async () => {

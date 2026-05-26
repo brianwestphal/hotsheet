@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { formatCost } from './telemetryFormat.js';
+import { formatCost, formatRatePerMtok } from './telemetryFormat.js';
 
 describe('formatCost (HS-8566)', () => {
   it('shows $0.00 for an exact zero — preserves cent-column parity', () => {
@@ -53,5 +53,28 @@ describe('formatCost (HS-8566)', () => {
     // the >= 1000 branch's "no cents" rule to use the INPUT value, so the
     // user sees $1,000.00 here. Lock in that distinction.
     expect(formatCost(999.995)).toBe('$1,000.00');
+  });
+});
+
+describe('formatRatePerMtok (HS-8628)', () => {
+  it('derives $/Mtok from cost / tokens', () => {
+    // $3 over 1,000,000 tokens = $3.00/Mtok exactly.
+    expect(formatRatePerMtok(3, 1_000_000)).toBe('$3.00/Mtok');
+    // $1.50 over 500,000 tokens = $3.00/Mtok.
+    expect(formatRatePerMtok(1.5, 500_000)).toBe('$3.00/Mtok');
+    // $4.50 over 1,000,000 = $4.50/Mtok.
+    expect(formatRatePerMtok(4.5, 1_000_000)).toBe('$4.50/Mtok');
+  });
+
+  it('returns — when there are no tokens to divide by (avoids $Infinity)', () => {
+    expect(formatRatePerMtok(5, 0)).toBe('—');
+    expect(formatRatePerMtok(0, 0)).toBe('—');
+    expect(formatRatePerMtok(5, -10)).toBe('—');
+    expect(formatRatePerMtok(Number.NaN, 1000)).toBe('—');
+  });
+
+  it('rounds to two decimals', () => {
+    // $1 over 3,000,000 tokens = $0.333…/Mtok → $0.33/Mtok.
+    expect(formatRatePerMtok(1, 3_000_000)).toBe('$0.33/Mtok');
   });
 });

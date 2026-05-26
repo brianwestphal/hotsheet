@@ -26,6 +26,24 @@
  * negative, so the negative-number quirk of `Math.round` (rounds toward
  * +Infinity, not away-from-zero) doesn't apply.
  */
+/**
+ * HS-8628 — effective price-per-token estimate for a model, expressed per
+ * million tokens (the unit Anthropic prices in). Derived from observed usage:
+ * `cost / tokens * 1e6`. Self-updating (no hardcoded price table) but blends
+ * the input + output rates into one figure since `cost` is a single
+ * already-priced number. Returns `—` when there are no tokens to divide by (a
+ * cost-only window, or zero usage) so the UI doesn't render `$Infinity`.
+ *
+ * Always shows 2 decimals (rates are small per-Mtok dollars; `$3.00/Mtok` reads
+ * better than the `formatCost` integer collapse at the $1000-plus tier, so this
+ * is a separate formatter rather than reusing `formatCost`).
+ */
+export function formatRatePerMtok(cost: number, tokens: number): string {
+  if (!Number.isFinite(cost) || !Number.isFinite(tokens) || tokens <= 0) return '—';
+  const perMtok = (cost / tokens) * 1_000_000;
+  return `$${perMtok.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/Mtok`;
+}
+
 export function formatCost(n: number): string {
   if (n === 0) return '$0.00';
   if (n < 1000) {

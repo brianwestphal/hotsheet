@@ -414,9 +414,10 @@ function bindBackupsTab() {
 function bindTerminalTab() {
   const settingsBtn = byId('settings-btn');
 
-  // Hide the Terminal tab button entirely outside Tauri.
+  // HS-8624 — the Terminal settings tab shows on web too now (terminals are no
+  // longer Tauri-only). Always visible; was previously hidden outside Tauri.
   const termTabBtn = byIdOrNull('settings-tab-terminal');
-  if (termTabBtn !== null) termTabBtn.style.display = getTauriInvoke() !== null ? '' : 'none';
+  if (termTabBtn !== null) termTabBtn.style.display = '';
 
   // Add Terminal button (the per-row editing lives in src/client/terminalsSettings.tsx).
   byIdOrNull('settings-terminals-add-btn')?.addEventListener('click', () => {
