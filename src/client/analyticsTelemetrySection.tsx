@@ -60,6 +60,11 @@ interface WindowTotals {
   // HS-8628 — input / output split (input + output ≈ tokens; cache excluded).
   inputTokens: number;
   outputTokens: number;
+  // HS-8639 — cache tokens, excluded from `tokens` but shown so the cost
+  // reconciles (cache write ≈ 1.25× input; large cache also triggers the
+  // 1M-context rate premium). Optional for back-compat with cached responses.
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
   promptCount: number;
 }
 
@@ -131,15 +136,25 @@ function renderWindowChip(label: string, totals: WindowTotals): HTMLElement {
   // data is present (input + output are priced very differently). The headline
   // line keeps the combined real-work total + prompt count.
   const hasSplit = totals.inputTokens > 0 || totals.outputTokens > 0;
+  // HS-8639 — surface the cache pieces too. They're excluded from the headline
+  // token total (HS-8627) but DO drive the authoritative cost: cache write is
+  // ~1.25× input and a large cached context triggers the 1M-context (`[1m]`)
+  // rate premium — which is why `cost` can dwarf a naive input+output estimate.
+  const cacheRead = totals.cacheReadTokens ?? 0;
+  const cacheCreation = totals.cacheCreationTokens ?? 0;
+  const hasCache = cacheRead > 0 || cacheCreation > 0;
   return toElement(
     <div className="telemetry-chip">
       <div className="telemetry-chip-label">{label}</div>
-      <div className="telemetry-chip-cost">{formatCost(totals.cost)}</div>
+      <div className="telemetry-chip-cost" title="Cost is the amount Claude Code reports for this work. It includes cache tokens and any 1M-context rate premium, so it can exceed a naive estimate from the input/output tokens above.">{formatCost(totals.cost)}</div>
       <div className="telemetry-chip-meta">
         {formatTokens(totals.tokens)} tokens · {String(totals.promptCount)} prompts
       </div>
       {hasSplit
         ? <div className="telemetry-chip-submeta">{`${formatTokens(totals.inputTokens)} in / ${formatTokens(totals.outputTokens)} out`}</div>
+        : null}
+      {hasCache
+        ? <div className="telemetry-chip-submeta telemetry-chip-submeta-cache">{`${formatTokens(cacheRead)} cache read · ${formatTokens(cacheCreation)} cache write`}</div>
         : null}
     </div>
   );

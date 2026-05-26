@@ -20,6 +20,7 @@ import {
   getPromptTimeline,
   getQuerySourceRollup,
   getRecentPrompts,
+  getTelemetryDebugInfo,
   getTodayCost,
   getToolLatencyHistogram,
   getToolRollup,
@@ -166,6 +167,75 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(result.tokens).toBe(1000); // input + output only (HS-8627)
       expect(result.inputTokens).toBe(700);
       expect(result.outputTokens).toBe(300);
+    });
+
+    // HS-8639 — the cache pieces are surfaced (excluded from `tokens`, but
+    // shown so the authoritative cost reconciles). Both camelCase + snake_case.
+    it('surfaces cacheRead + cacheCreation tokens without inflating the total (HS-8639)', async () => {
+      const now = new Date();
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'input', tokens: 700 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'output', tokens: 300 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'cacheRead', tokens: 50_000 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'cache_creation', tokens: 12_000 });
+
+      const result = await getWindowTotals(SECRET_A, null);
+      expect(result.tokens).toBe(1000); // unchanged — cache still excluded
+      expect(result.cacheReadTokens).toBe(50_000);
+      expect(result.cacheCreationTokens).toBe(12_000);
+    });
+
+    // HS-8639 — prompt count counts distinct prompt_id across ALL event types,
+    // not only `claude_code.user_prompt`, so it stays correct when that
+    // specific event doesn't flush but api_request / tool_result events do.
+    it('counts distinct prompt_id across all event types (HS-8639)', async () => {
+      const now = new Date();
+      // No user_prompt events at all — only a tool_result carrying a prompt_id.
+      await insertToolResultEvent({ ts: now, projectSecret: SECRET_A, toolName: 'Bash' }); // prompt-1
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 1 });
+
+      const result = await getWindowTotals(SECRET_A, null);
+      expect(result.promptCount).toBe(1); // from tool_result's prompt_id, not the session fallback
+    });
+
+    // HS-8639 — when NO event carries a prompt_id (log events not flowing),
+    // fall back to the session-count proxy from the metrics table. Claude Code
+    // stamps `session.id` on each cost.usage data-point's attributes.
+    it('falls back to distinct session count when no event has a prompt_id (HS-8639)', async () => {
+      const now = new Date();
+      const db = await getDb();
+      for (const sid of ['sess-1', 'sess-1', 'sess-2']) {
+        await db.query(
+          `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
+          [now, SECRET_A, null, 'claude_code.cost.usage', JSON.stringify({ 'session.id': sid }), JSON.stringify({ asDouble: 1 })],
+        );
+      }
+      const result = await getWindowTotals(SECRET_A, null);
+      expect(result.promptCount).toBe(2); // 2 distinct session.id, no prompt_id events
+    });
+  });
+
+  // HS-8639 — the read-only diagnostic that pins whether log events arrive.
+  describe('getTelemetryDebugInfo', () => {
+    it('reports the event_name + token-type distributions for the project', async () => {
+      const now = new Date();
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1' });
+      await insertToolResultEvent({ ts: now, projectSecret: SECRET_A, toolName: 'Bash' });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'input', tokens: 700 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'cacheRead', tokens: 50_000 });
+      // Different project — must not leak in.
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_B, promptId: 'other' });
+
+      const info = await getTelemetryDebugInfo(SECRET_A);
+      const names = Object.fromEntries(info.eventNames.map(e => [e.eventName, e]));
+      expect(names['claude_code.user_prompt'].count).toBe(1);
+      expect(names['claude_code.user_prompt'].withPromptId).toBe(1);
+      expect(names['claude_code.tool_result'].count).toBe(1);
+      expect(info.totalEvents).toBe(2);
+      expect(info.distinctPromptIds).toBe(2); // p1 + prompt-1 (tool_result)
+      const types = Object.fromEntries(info.tokenTypes.map(t => [t.type, t.tokens]));
+      expect(types['input']).toBe(700);
+      expect(types['cacheRead']).toBe(50_000);
     });
   });
 

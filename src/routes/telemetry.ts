@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 
-import { clearProjectTelemetry, type DashboardWindow, getDashboardPayload, getPerTicketRollup, getProjectRollupPayload, getPromptTimeline, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
+import { clearProjectTelemetry, type DashboardWindow, getDashboardPayload, getPerTicketRollup, getProjectRollupPayload, getPromptTimeline, getTelemetryDebugInfo, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
 import { readFileSettings } from '../file-settings.js';
 import { readProjectList } from '../project-list.js';
 import { getAllProjects, getProjectBySecret } from '../projects.js';
@@ -210,4 +210,20 @@ telemetryRoutes.delete('/telemetry/project-data', async (c) => {
   if (projectSecret === '') return c.json({ error: 'No project secret' }, 400);
   const result = await clearProjectTelemetry(projectSecret);
   return c.json(result);
+});
+
+/**
+ * HS-8639 — read-only diagnostic for the "prompt count = 1 / empty
+ * recent-prompts + tool histogram" report. Returns the `event_name` +
+ * `token.usage` `type` distributions actually stored for the active project,
+ * so we can tell whether Claude Code's LOG events are arriving at all,
+ * arriving under an unexpected `event_name`, or arriving without a `prompt_id`
+ * — distinguishing "logs never sent" vs "dropped" vs "ingested-but-miscounted"
+ * without having to read the single-writer telemetry DB out of band. Scoped to
+ * `c.get('projectSecret')` like every other telemetry route.
+ */
+telemetryRoutes.get('/telemetry/_debug', async (c) => {
+  const projectSecret = c.get('projectSecret');
+  const info = await getTelemetryDebugInfo(projectSecret === '' ? null : projectSecret);
+  return c.json(info);
 });

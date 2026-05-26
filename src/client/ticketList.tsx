@@ -509,6 +509,16 @@ function resolveScrollTopForRender(container: HTMLElement): number {
 }
 
 export function renderTicketList() {
+  // HS-8641 — no-op when the list container isn't mounted. While the terminal
+  // dashboard / cross-project view is active (or mid-project-switch, before
+  // `restoreTicketList` rebuilds it), `#ticket-list` doesn't exist, yet
+  // `closeDetail()` synchronously dispatches `hotsheet:render` (e.g. during
+  // `switchProject`), whose listener calls this. Both the column path
+  // (`renderColumnView`) and the list path below call `byId('ticket-list')`,
+  // which throws on a missing element ("byId: no element with id ticket-list").
+  // Rendering a list with no container is meaningless — dashboard exit
+  // (`restoreTicketList`) recreates the element and re-renders.
+  if (byIdOrNull('ticket-list') === null) return;
   const snapshot = captureSnapshot();
   const isPreview = state.backupPreview?.active === true;
   const editFocus = captureEditFocusSnapshot(isPreview);

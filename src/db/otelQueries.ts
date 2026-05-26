@@ -36,6 +36,11 @@ export interface WindowTotals {
   inputTokens: number;
   /** HS-8628 — `type='output'` tokens only. */
   outputTokens: number;
+  /** HS-8639 — `type='cacheRead'` tokens (billed ~0.1× input). Excluded from
+   *  `tokens` but surfaced so the cost breakdown shows every contributing piece. */
+  cacheReadTokens: number;
+  /** HS-8639 — `type='cacheCreation'` tokens (cache write, billed ~1.25× input). */
+  cacheCreationTokens: number;
   promptCount: number;
 }
 
@@ -157,6 +162,16 @@ const REAL_WORK_TOKEN_TYPE_SQL = "(attributes_json->>'type' IS NULL OR attribute
 // not toward either input or output, so `inputTokens + outputTokens <= tokens`.
 const INPUT_TOKEN_TYPE_SQL = "attributes_json->>'type' = 'input'";
 const OUTPUT_TOKEN_TYPE_SQL = "attributes_json->>'type' = 'output'";
+// HS-8639 — cache token types, surfaced so the cost breakdown can show "all the
+// pieces that come together to create the cost". These are EXCLUDED from the
+// headline token total (HS-8627) but DO drive cost: `cacheCreation` (cache
+// write) is billed at ~1.25× input, `cacheRead` at ~0.1× input, and a large
+// cached context is also what pushes a turn over the 200K threshold that
+// doubles rates on the 1M-context (`[1m]`) models — which is why the
+// authoritative `cost.usage` can dwarf a naive input+output estimate. Both
+// Claude Code's camelCase + the §67 snake_case spellings are matched.
+const CACHE_READ_TOKEN_TYPE_SQL = "attributes_json->>'type' IN ('cacheRead', 'cache_read')";
+const CACHE_CREATION_TOKEN_TYPE_SQL = "attributes_json->>'type' IN ('cacheCreation', 'cache_creation')";
 
 /**
  * Window totals: total cost + total tokens + count of distinct prompts
@@ -181,33 +196,42 @@ export async function getWindowTotals(
   // HS-8627 — `total` is input + output (excludes cacheRead / cacheCreation).
   // HS-8628 — `input` / `output` break the same total down by `type` in one
   // pass via FILTER (WHERE …) aggregates.
-  const tokensResult = await db.query<{ total: string | null; input: string | null; output: string | null }>(
+  const tokensResult = await db.query<{ total: string | null; input: string | null; output: string | null; cache_read: string | null; cache_creation: string | null }>(
     `SELECT
         SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${REAL_WORK_TOKEN_TYPE_SQL}) AS total,
         SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${INPUT_TOKEN_TYPE_SQL}) AS input,
-        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${OUTPUT_TOKEN_TYPE_SQL}) AS output
+        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${OUTPUT_TOKEN_TYPE_SQL}) AS output,
+        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${CACHE_READ_TOKEN_TYPE_SQL}) AS cache_read,
+        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${CACHE_CREATION_TOKEN_TYPE_SQL}) AS cache_creation
      FROM otel_metrics
      WHERE metric_name = $1${metricsClause.clauses}`,
     ['claude_code.token.usage', ...metricsClause.params],
   );
 
-  const eventsClause = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 1, allowedSecrets);
+  // HS-8639 — count distinct `prompt_id` across ALL log events, not only
+  // `claude_code.user_prompt`. `prompt.id` is the per-prompt correlation key
+  // Claude Code stamps on user_prompt / api_request / tool_result events + spans
+  // (docs/67 §"prompt.id"), so counting it broadly still counts each prompt once
+  // (one prompt_id spans many api_request/tool_result rows) while staying robust
+  // when the `user_prompt` event specifically doesn't flush — the HS-8514
+  // observation where the headline showed a misleading "1 prompts". Offset 0:
+  // no leading bind param now that the `event_name = $1` filter is gone.
+  const eventsClause = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0, allowedSecrets);
   const promptsResult = await db.query<{ c: bigint | number }>(
     `SELECT COUNT(DISTINCT prompt_id) AS c
      FROM otel_events
-     WHERE event_name = $1 AND prompt_id IS NOT NULL${eventsClause.clauses}`,
-    ['claude_code.user_prompt', ...eventsClause.params],
+     WHERE prompt_id IS NOT NULL${eventsClause.clauses}`,
+    eventsClause.params,
   );
 
-  // HS-8514 — Claude Code's bundled exporter doesn't currently flush
-  // `claude_code.user_prompt` log events to a self-hosted OTLP
-  // receiver in every config (observed: long-running session shows
-  // healthy `cost.usage` metrics but zero `user_prompt` events).
-  // Fall back to a session-count proxy derived from the metrics
-  // table when the events query returns 0 — gives the user a
-  // meaningful non-zero activity count even when log events aren't
-  // flowing. `attributes_json->>'session.id'` is the per-data-point
-  // session id Claude Code stamps on every cost.usage point.
+  // HS-8514 / HS-8639 — when NO log event carries a prompt_id (e.g. Claude
+  // Code's bundled exporter isn't flushing log events to a self-hosted OTLP
+  // receiver in this config — observed: healthy `cost.usage` metrics but zero
+  // events), fall back to a session-count proxy from the metrics table so the
+  // user still sees a meaningful non-zero activity count. `session.id` is
+  // stamped on every cost.usage data point. This is a SESSION count, not a true
+  // prompt count — see the `/api/telemetry/_debug` endpoint (HS-8639) to
+  // diagnose whether log events are arriving.
   let promptCount = Number(promptsResult.rows[0]?.c ?? 0);
   if (promptCount === 0) {
     const sessionsResult = await db.query<{ c: bigint | number }>(
@@ -225,7 +249,60 @@ export async function getWindowTotals(
     tokens: Number(tokensResult.rows[0]?.total ?? 0),
     inputTokens: Number(tokensResult.rows[0]?.input ?? 0),
     outputTokens: Number(tokensResult.rows[0]?.output ?? 0),
+    cacheReadTokens: Number(tokensResult.rows[0]?.cache_read ?? 0),
+    cacheCreationTokens: Number(tokensResult.rows[0]?.cache_creation ?? 0),
     promptCount,
+  };
+}
+
+/**
+ * HS-8639 — read-only diagnostic for the "prompt count = 1 / empty
+ * recent-prompts + tool histogram" report. Surfaces (a) the distinct
+ * `event_name` values actually stored in `otel_events` + how many carry a
+ * `prompt_id`, and (b) the `token.usage` `type` breakdown — so we can tell
+ * whether Claude Code's LOG events (user_prompt / api_request / tool_result)
+ * are arriving at all, arriving under an unexpected `event_name`, or arriving
+ * without a `prompt_id`. Project-scoped; powers `GET /api/telemetry/_debug`.
+ */
+export interface TelemetryDebugInfo {
+  eventNames: { eventName: string; count: number; withPromptId: number }[];
+  tokenTypes: { type: string; points: number; tokens: number }[];
+  totalEvents: number;
+  distinctPromptIds: number;
+  distinctSessions: number;
+}
+
+export async function getTelemetryDebugInfo(projectSecret: string | null): Promise<TelemetryDebugInfo> {
+  const db = await getTelemetryDb();
+  const ev = buildProjectAndWindowClauses(projectSecret, null, 'ts', 0);
+  const events = await db.query<{ event_name: string; c: bigint | number; with_pid: bigint | number }>(
+    `SELECT event_name, COUNT(*) AS c, COUNT(prompt_id) AS with_pid
+     FROM otel_events
+     WHERE 1=1${ev.clauses}
+     GROUP BY event_name ORDER BY c DESC`,
+    ev.params,
+  );
+  const totals = await db.query<{ total: bigint | number; pids: bigint | number; sessions: bigint | number }>(
+    `SELECT COUNT(*) AS total, COUNT(DISTINCT prompt_id) AS pids, COUNT(DISTINCT session_id) AS sessions
+     FROM otel_events
+     WHERE 1=1${ev.clauses}`,
+    ev.params,
+  );
+  const mt = buildProjectAndWindowClauses(projectSecret, null, 'ts', 1);
+  const tokenTypes = await db.query<{ typ: string | null; points: bigint | number; toks: string | null }>(
+    `SELECT COALESCE(attributes_json->>'type', '(none)') AS typ, COUNT(*) AS points,
+            SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS toks
+     FROM otel_metrics
+     WHERE metric_name = $1${mt.clauses}
+     GROUP BY attributes_json->>'type' ORDER BY points DESC`,
+    ['claude_code.token.usage', ...mt.params],
+  );
+  return {
+    eventNames: events.rows.map(r => ({ eventName: r.event_name, count: Number(r.c), withPromptId: Number(r.with_pid) })),
+    tokenTypes: tokenTypes.rows.map(r => ({ type: r.typ ?? '(none)', points: Number(r.points), tokens: Number(r.toks ?? 0) })),
+    totalEvents: Number(totals.rows[0]?.total ?? 0),
+    distinctPromptIds: Number(totals.rows[0]?.pids ?? 0),
+    distinctSessions: Number(totals.rows[0]?.sessions ?? 0),
   };
 }
 

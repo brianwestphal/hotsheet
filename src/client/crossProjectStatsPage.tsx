@@ -70,6 +70,9 @@ interface WindowTotals {
   // HS-8628 — input / output split (input + output ≈ tokens; cache excluded).
   inputTokens: number;
   outputTokens: number;
+  // HS-8639 — cache tokens (excluded from `tokens`, shown so cost reconciles).
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
   promptCount: number;
 }
 
@@ -141,13 +144,22 @@ function renderWindowChip(label: string, totals: WindowTotals): HTMLElement {
   // HS-8628 — input / output split on a second meta line (different pricing);
   // headline keeps the combined real-work total + prompt count.
   const hasSplit = totals.inputTokens > 0 || totals.outputTokens > 0;
+  // HS-8639 — cache pieces drive the authoritative cost (cache write ≈ 1.25×
+  // input; large cache triggers the 1M-context premium) even though they're
+  // excluded from the headline token total.
+  const cacheRead = totals.cacheReadTokens ?? 0;
+  const cacheCreation = totals.cacheCreationTokens ?? 0;
+  const hasCache = cacheRead > 0 || cacheCreation > 0;
   return toElement(
     <div className="telemetry-dashboard-chip">
       <div className="telemetry-dashboard-chip-label">{label}</div>
-      <div className="telemetry-dashboard-chip-cost">{formatCost(totals.cost)}</div>
+      <div className="telemetry-dashboard-chip-cost" title="Cost is the amount Claude Code reports for this work. It includes cache tokens and any 1M-context rate premium, so it can exceed a naive estimate from the input/output tokens above.">{formatCost(totals.cost)}</div>
       <div className="telemetry-dashboard-chip-meta">{`${formatTokens(totals.tokens)} tokens · ${String(totals.promptCount)} prompts`}</div>
       {hasSplit
         ? <div className="telemetry-dashboard-chip-submeta">{`${formatTokens(totals.inputTokens)} in / ${formatTokens(totals.outputTokens)} out`}</div>
+        : null}
+      {hasCache
+        ? <div className="telemetry-dashboard-chip-submeta telemetry-dashboard-chip-submeta-cache">{`${formatTokens(cacheRead)} cache read · ${formatTokens(cacheCreation)} cache write`}</div>
         : null}
     </div>
   );
