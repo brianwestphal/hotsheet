@@ -164,6 +164,44 @@ describe('shouldAutoShowFeedback — suppression guard (HS-8416)', () => {
   });
 });
 
+// HS-8644 — auto-show must never fire over an already-open feedback dialog:
+// `showFeedbackDialog` removes + recreates the overlay, so a poll-driven
+// re-fire mid-typing destroys the user's in-progress input (the reported
+// data-loss bug). This is the robust guard that doesn't depend on the
+// (fragile, regenerated-per-parse) note-id key.
+describe('shouldAutoShowFeedback — never clobbers an open dialog (HS-8644)', () => {
+  beforeEach(() => {
+    resetAutoShownFeedback();
+    document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
+  });
+  afterEach(() => {
+    document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
+  });
+
+  it('returns false when a dialog overlay is already open — even for a fresh pair that would normally auto-show', () => {
+    document.body.appendChild(Object.assign(document.createElement('div'), { className: 'feedback-dialog-overlay' }));
+    expect(shouldAutoShowFeedback(99, 'n_new')).toBe(false);
+  });
+
+  it('a drifting (unstable) noteId cannot re-show while the dialog is open — the exact data-loss path', () => {
+    document.body.appendChild(Object.assign(document.createElement('div'), { className: 'feedback-dialog-overlay' }));
+    // Each poll re-parses an id-less FEEDBACK NEEDED note → a fresh client id,
+    // so the key drifts. Without the open-dialog guard every distinct key would
+    // return true and nuke the open dialog.
+    expect(shouldAutoShowFeedback(1, 'cn_a')).toBe(false);
+    expect(shouldAutoShowFeedback(1, 'cn_b')).toBe(false);
+    expect(shouldAutoShowFeedback(1, 'cn_c')).toBe(false);
+  });
+
+  it('does NOT record the skipped pair — once the dialog closes, the pair still auto-shows', () => {
+    const overlay = Object.assign(document.createElement('div'), { className: 'feedback-dialog-overlay' });
+    document.body.appendChild(overlay);
+    expect(shouldAutoShowFeedback(7, 'n_k')).toBe(false); // skipped while open
+    overlay.remove();                                     // user closed the dialog
+    expect(shouldAutoShowFeedback(7, 'n_k')).toBe(true);  // now it auto-shows (wasn't recorded while open)
+  });
+});
+
 describe('buildOverlay ticket-ref linkification (HS-8338)', () => {
   beforeEach(() => {
     // Pre-seed the prefix cache so `linkifyWithCachedPrefixes` sees the

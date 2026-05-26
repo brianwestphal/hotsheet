@@ -79,6 +79,19 @@ export function suppressNextAutoShowFeedback(): void {
 }
 
 export function shouldAutoShowFeedback(ticketId: number, noteId: string): boolean {
+  // HS-8644 — NEVER auto-show over an already-open feedback dialog. The
+  // auto-show is driven by `loadDetail` / the selection re-render, both of
+  // which re-fire on every `/poll` tick; `showFeedbackDialog` removes +
+  // recreates the `.feedback-dialog-overlay`, so re-firing while the user is
+  // mid-typing destroys their input (the reported data-loss bug). The
+  // `lastAutoShownKey` guard below is not enough on its own: an unsaved note's
+  // client id is regenerated on each `parseNotesJson` pass (`n.id ?? clientNoteId()`),
+  // so the key drifts poll-to-poll for an id-less FEEDBACK NEEDED note. Bailing
+  // whenever an overlay exists is the robust guard — manual re-open (a user
+  // click) is a separate, intentional path that doesn't run through here.
+  if (typeof document !== 'undefined' && document.querySelector('.feedback-dialog-overlay') !== null) {
+    return false;
+  }
   if (suppressAutoShowOnce) {
     suppressAutoShowOnce = false;
     return false;
