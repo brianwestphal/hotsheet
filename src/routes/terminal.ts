@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { homedir } from 'os';
 
+import { CreateTerminalReqSchema } from '../api/terminal.js';
 import { readFileSettings } from '../file-settings.js';
 import { openInFileManager } from '../open-in-file-manager.js';
 import { DEFAULT_TERMINAL_ID, listTerminalConfigs, type TerminalConfig } from '../terminals/config.js';
@@ -28,6 +29,7 @@ import {
 } from '../terminals/registry.js';
 import type { AppEnv } from '../types.js';
 import { notifyBellWaiters } from './notify.js';
+import { parseBody } from './validation.js';
 
 export const terminalRoutes = new Hono<AppEnv>();
 
@@ -278,20 +280,26 @@ terminalRoutes.post('/kill', async (c) => {
 terminalRoutes.post('/create', async (c) => {
   const dataDir = c.get('dataDir');
   const secret = c.get('projectSecret');
-  const body = await c.req.json<{ name?: string; command?: string; cwd?: string; spawn?: boolean } | undefined>().catch(() => undefined);
+  // HS-8630 — validate against the shared `CreateTerminalReqSchema` (all fields
+  // optional + `.loose()`, so an empty body still launches the default shell;
+  // only a wrong-typed field is rejected). An unparseable body falls back to {}.
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(CreateTerminalReqSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const body = parsed.data;
   const id = `dyn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const command = typeof body?.command === 'string' && body.command !== ''
+  const command = typeof body.command === 'string' && body.command !== ''
     ? body.command
     : defaultShellCommand();
   // Always carry a friendly name so the drawer tab has a visible label even
   // when the client renders the response before any websocket attach.
-  const name = typeof body?.name === 'string' && body.name !== ''
+  const name = typeof body.name === 'string' && body.name !== ''
     ? body.name
     : friendlyShellName(command);
   const config: TerminalConfig = { id, command, name };
-  if (typeof body?.cwd === 'string' && body.cwd !== '') config.cwd = body.cwd;
+  if (typeof body.cwd === 'string' && body.cwd !== '') config.cwd = body.cwd;
   dynamicConfigs.set(`${secret}::${id}`, config);
-  if (body?.spawn === true) {
+  if (body.spawn === true) {
     try {
       ensureSpawned(secret, dataDir, id, config);
     } catch (err) {

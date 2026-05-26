@@ -1,5 +1,3 @@
-import { readFileSettings } from '../file-settings.js';
-
 /**
  * Configuration for a single terminal within a project. Defaults are stored in
  * `.hotsheet/settings.json` under the `terminals` key (array, ordered).
@@ -9,25 +7,16 @@ import { readFileSettings } from '../file-settings.js';
  * re-used even if the user deletes and re-adds a terminal with the same name.
  * Dynamic (ad-hoc) terminals created via POST /api/terminal/create use a
  * runtime-generated id prefixed with `dyn-`.
+ *
+ * HS-8630 — `TerminalConfig` is now defined once as the wire SSOT in
+ * `src/api/terminal.ts` (inferred from `TerminalConfigSchema`); imported for
+ * local use + re-exported so the many existing `from '../config.js'` importers
+ * keep working.
  */
-export interface TerminalConfig {
-  id: string;
-  /** Tab label. When omitted, `default-<index>` or the command's first word is used. */
-  name?: string;
-  /** Command template. May contain `{{claudeCommand}}` (see §22.5). */
-  command: string;
-  /** Working directory override. Blank/unset = project root. */
-  cwd?: string;
-  /** When true, PTY is spawned on first WebSocket attach (today's behavior).
-   *  When false, the server spawns eagerly on first project load. Default: true. */
-  lazy?: boolean;
-  /** HS-6307 — per-terminal appearance override. Each field falls back to the
-   *  project default (`terminal_default` in settings.json) when unset, then to
-   *  a hard-coded default. See docs/35-terminal-themes.md §35.4. */
-  theme?: string;
-  fontFamily?: string;
-  fontSize?: number;
-}
+import type { TerminalConfig } from '../api/terminal.js';
+import { readFileSettings } from '../file-settings.js';
+
+export type { TerminalConfig };
 
 export const DEFAULT_TERMINAL_ID = 'default';
 const CLAUDE_TEMPLATE = '{{claudeCommand}}';

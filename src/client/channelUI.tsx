@@ -1,6 +1,7 @@
+import { listTerminals } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
-import { api, apiWithSecret } from './api.js';
+import { api } from './api.js';
 import { channelStore } from './channelStore.js';
 import { TIMERS } from './constants/timers.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
@@ -42,10 +43,7 @@ async function refreshSpinnerActivity(): Promise<void> {
     // path) which 404'd on every spinner-poll tick — visible in the
     // browser console as repeated `Failed to load resource: …
     // /api<hex-secret>` errors.
-    const data = await apiWithSecret<{
-      configured: { lastSpinnerAtMs?: number | null }[];
-      dynamic: { lastSpinnerAtMs?: number | null }[];
-    }>('/terminal/list', project.secret);
+    const data = await listTerminals(project.secret);
     let newest: number | null = null;
     for (const e of [...data.configured, ...data.dynamic]) {
       const t = e.lastSpinnerAtMs ?? null;

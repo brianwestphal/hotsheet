@@ -9,7 +9,7 @@
  * pattern the rest of the HS-8395 sub-module split should follow.
  */
 
-import { apiWithSecret } from './api.js';
+import { destroyTerminal } from '../api/index.js';
 import { DASHBOARD_SCOPE, setTerminalHidden } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
 import { ICON_EYE_OFF, ICON_PENCIL, ICON_X } from './icons.js';
@@ -193,10 +193,7 @@ async function closeDashboardTile(
     if (!confirmed) return;
   }
   try {
-    await apiWithSecret('/terminal/destroy', secret, {
-      method: 'POST',
-      body: { terminalId: entry.id },
-    });
+    await destroyTerminal(entry.id, secret);
   } catch (err) {
     console.error('terminalDashboard: close terminal failed', err);
     return;

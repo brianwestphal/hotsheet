@@ -1,3 +1,4 @@
+import type { TerminalState, TerminalStatus } from '../../api/terminal.js';
 import type { TerminalConfig } from '../config.js';
 import type { RingBuffer } from '../ringBuffer.js';
 
@@ -10,19 +11,13 @@ import type { RingBuffer } from '../ringBuffer.js';
  * type/interface declarations so the four behavioral modules
  * (`./attach.ts` / `./lifecycle.ts` / `./state.ts`) can share them without
  * circular imports.
+ *
+ * HS-8630 — `TerminalState` + `TerminalStatus` are now defined once as the wire
+ * SSOT in `src/api/terminal.ts` (inferred from the zod schemas); imported for
+ * local use (`AttachResult` / `TerminalStatus` consumers below) + re-exported
+ * so existing importers keep working.
  */
-
-export type TerminalState = 'alive' | 'exited' | 'not_spawned';
-
-export interface TerminalStatus {
-  state: TerminalState;
-  startedAt: number | null;
-  command: string | null;
-  exitCode: number | null;
-  cols: number;
-  rows: number;
-  scrollbackBytes: number;
-}
+export type { TerminalState, TerminalStatus };
 
 export interface TerminalSubscriber {
   onData(chunk: Buffer): void;

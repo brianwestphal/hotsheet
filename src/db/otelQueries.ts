@@ -311,6 +311,19 @@ export interface TelemetryDebugInfo {
   totalEvents: number;
   distinctPromptIds: number;
   distinctSessions: number;
+  // HS-8537 — per-ticket-rollup diagnosis. `getPerTicketRollup` is empty unless
+  // (a) some `user_prompt` event body carries the `<!-- hotsheet:ticket=HS-NNNN -->`
+  // marker, and (b) `api_request` events carry a `cost` / token attribute.
+  /** Count of events (grouped by event_name) whose body contains ANY
+   *  `hotsheet:ticket=` marker — tells us whether the channel-trigger marker is
+   *  landing in `user_prompt` bodies at all (the rollup keys on user_prompt). */
+  markerEventsByName: { eventName: string; count: number }[];
+  /** Distinct `HS-NNNN` ticket numbers found in any event body (≤ 50). */
+  distinctTicketMarkers: string[];
+  /** Distinct attribute keys present on `api_request` events — so we can see
+   *  whether `cost` / `cost_usd` / `tokens` / `input_tokens` exist (the rollup's
+   *  cost/token source). Empty list ⇒ per-ticket cost can only ever be $0. */
+  apiRequestAttrKeys: string[];
 }
 
 export async function getTelemetryDebugInfo(projectSecret: string | null): Promise<TelemetryDebugInfo> {
@@ -338,12 +351,42 @@ export async function getTelemetryDebugInfo(projectSecret: string | null): Promi
      GROUP BY attributes_json->>'type' ORDER BY points DESC`,
     ['claude_code.token.usage', ...mt.params],
   );
+  // HS-8537 — marker presence by event_name. The per-ticket rollup keys on
+  // `user_prompt` bodies containing `hotsheet:ticket=…`; if this comes back
+  // empty (or only on a non-user_prompt event), the marker isn't landing where
+  // the rollup looks.
+  const markerByName = await db.query<{ event_name: string; c: bigint | number }>(
+    `SELECT event_name, COUNT(*) AS c
+     FROM otel_events
+     WHERE body_json::text LIKE '%hotsheet:ticket=%'${ev.clauses}
+     GROUP BY event_name ORDER BY c DESC`,
+    ev.params,
+  );
+  // Distinct ticket numbers found in any event body (capped).
+  const markers = await db.query<{ ticket: string | null }>(
+    `SELECT DISTINCT substring(body_json::text from 'hotsheet:ticket=([A-Za-z]+-[0-9]+)') AS ticket
+     FROM otel_events
+     WHERE body_json::text LIKE '%hotsheet:ticket=%'${ev.clauses}
+     LIMIT 50`,
+    ev.params,
+  );
+  // HS-8537 — attribute-key universe on api_request events: reveals whether
+  // `cost` / `cost_usd` / `tokens` are present (the rollup's cost/token source).
+  const apiKeys = await db.query<{ k: string }>(
+    `SELECT DISTINCT k FROM otel_events, jsonb_object_keys(attributes_json) AS k
+     WHERE ${eventNameMatchSql('event_name', 'api_request')}${ev.clauses}
+     ORDER BY k`,
+    ev.params,
+  );
   return {
     eventNames: events.rows.map(r => ({ eventName: r.event_name, count: Number(r.c), withPromptId: Number(r.with_pid) })),
     tokenTypes: tokenTypes.rows.map(r => ({ type: r.typ ?? '(none)', points: Number(r.points), tokens: Number(r.toks ?? 0) })),
     totalEvents: Number(totals.rows[0]?.total ?? 0),
     distinctPromptIds: Number(totals.rows[0]?.pids ?? 0),
     distinctSessions: Number(totals.rows[0]?.sessions ?? 0),
+    markerEventsByName: markerByName.rows.map(r => ({ eventName: r.event_name, count: Number(r.c) })),
+    distinctTicketMarkers: markers.rows.map(r => r.ticket).filter((t): t is string => t !== null),
+    apiRequestAttrKeys: apiKeys.rows.map(r => r.k),
   };
 }
 

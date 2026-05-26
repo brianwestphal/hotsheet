@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { clearTerminalBell, createTerminal, listTerminals } from '../api/index.js';
 import { fireToastsForActiveProject, subscribeToBellState } from './bellPoll.js';
 import { pruneHiddenForProject } from './dashboardHiddenTerminals.js';
 import { byIdOrNull } from './dom.js';
@@ -267,7 +267,7 @@ export async function loadAndRenderTerminalTabs(): Promise<void> {
 
   let data: ListResponse;
   try {
-    data = await api<ListResponse>('/terminal/list');
+    data = await listTerminals();
   } catch {
     return;
   }
@@ -380,7 +380,7 @@ export function activateTerminal(id: string): void {
     // HS-6603 §24.4.3: also drop the server-side `bellPending` flag so the
     // cross-project poll stops reporting this terminal as pending. The local
     // indicator already cleared above; this call is fire-and-forget.
-    void api('/terminal/clear-bell', { method: 'POST', body: { terminalId: id } }).catch(() => {});
+    void clearTerminalBell(id).catch(() => {});
   }
 
   const active = getActiveProject();
@@ -469,7 +469,7 @@ export function onProjectSwitch(): void {
 
 async function createDynamicTerminal(): Promise<void> {
   try {
-    const { config } = await api<{ config: TerminalTabConfig }>('/terminal/create', { method: 'POST' });
+    const { config } = await createTerminal();
     // HS-7949 follow-up — apply the same "new terminals are hidden in non-
     // Default visibility groupings" rule to dynamic terminals (drawer "+"
     // button) that the server-side `addNewTerminalsToNonDefaultGroupings`

@@ -237,6 +237,31 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(types['input']).toBe(700);
       expect(types['cacheRead']).toBe(50_000);
     });
+
+    // HS-8537 — the per-ticket-rollup diagnosis fields: marker presence by
+    // event_name, distinct ticket markers, and api_request attribute keys.
+    it('surfaces marker presence + api_request attribute keys (HS-8537)', async () => {
+      const now = new Date();
+      const db = await getDb();
+      // A user_prompt event whose body carries the ticket marker (the shape the
+      // rollup keys on) + an api_request event carrying cost / token attrs.
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [now, SECRET_A, 'session-1', 'pm', 'user_prompt', '{}', JSON.stringify({ body: '<!-- hotsheet:ticket=HS-42 --> do it' })],
+      );
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [now, SECRET_A, 'session-1', 'pm', 'api_request', JSON.stringify({ cost: 0.5, tokens: 100, model: 'opus' }), '{}'],
+      );
+
+      const info = await getTelemetryDebugInfo(SECRET_A);
+      const markerByName = Object.fromEntries(info.markerEventsByName.map(m => [m.eventName, m.count]));
+      expect(markerByName['user_prompt']).toBe(1);
+      expect(info.distinctTicketMarkers).toContain('HS-42');
+      expect(info.apiRequestAttrKeys).toEqual(expect.arrayContaining(['cost', 'tokens', 'model']));
+    });
   });
 
   describe('getCostByModel', () => {

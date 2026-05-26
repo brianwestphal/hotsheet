@@ -1,4 +1,4 @@
-import { apiWithSecret } from './api.js';
+import { clearTerminalBell } from '../api/index.js';
 import { tileKeyFor } from './terminalTileGridKeys.js';
 import type { InternalTile, TileGridContext } from './terminalTileGridTypes.js';
 
@@ -26,10 +26,7 @@ export function isGridSurfaceUnoccluded(ctx: TileGridContext): boolean {
  *  tile the user is already looking at, we want to drop the server's
  *  `bellPending` flag without ever rendering the indicator locally. */
 export function postClearBell(_ctx: TileGridContext, tile: InternalTile): void {
-  void apiWithSecret('/terminal/clear-bell', tile.entry.secret, {
-    method: 'POST',
-    body: { terminalId: tile.entry.id },
-  }).catch(() => { /* server restart / network blip — long-poll resyncs */ });
+  void clearTerminalBell(tile.entry.id, tile.entry.secret).catch(() => { /* server restart / network blip — long-poll resyncs */ });
 }
 
 export function clearTileBell(ctx: TileGridContext, tile: InternalTile): void {

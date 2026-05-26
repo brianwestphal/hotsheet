@@ -27,8 +27,8 @@
  * back through `terminal.tsx`'s re-exports).
  */
 
+import { destroyTerminal, killTerminal, openTerminalCwd, restartTerminal } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
@@ -247,7 +247,7 @@ function bindPaneHeaderHandlers(inst: TerminalInstance, pane: HTMLElement): void
   // HS-7262 — CWD chip click reveals the folder via /api/terminal/open-cwd.
   pane.querySelector<HTMLButtonElement>('.terminal-cwd-chip')?.addEventListener('click', () => {
     if (inst.runtimeCwd === null || inst.runtimeCwd === '') return;
-    void api('/terminal/open-cwd', { method: 'POST', body: { path: inst.runtimeCwd } }).catch(() => { /* ignore */ });
+    void openTerminalCwd(inst.runtimeCwd).catch(() => { /* ignore */ });
   });
 }
 
@@ -326,7 +326,7 @@ async function onPowerClick(inst: TerminalInstance): Promise<void> {
     // Interactive shells (zsh, bash, fish) respect SIGHUP and exit cleanly;
     // they typically ignore SIGTERM, which made the Stop button appear to do
     // nothing for dynamic shell terminals (HS-6471).
-    try { await api('/terminal/kill', { method: 'POST', body: { terminalId: inst.id, signal: 'SIGHUP' } }); } catch { /* ignore */ }
+    try { await killTerminal(inst.id, 'SIGHUP'); } catch { /* ignore */ }
     return;
   }
 
@@ -338,12 +338,12 @@ async function onPowerClick(inst: TerminalInstance): Promise<void> {
       danger: true,
     });
     if (!confirmed) return;
-    try { await api('/terminal/kill', { method: 'POST', body: { terminalId: inst.id, signal: 'SIGKILL' } }); } catch { /* ignore */ }
+    try { await killTerminal(inst.id, 'SIGKILL'); } catch { /* ignore */ }
     return;
   }
 
   try {
-    await api('/terminal/restart', { method: 'POST', body: { terminalId: inst.id } });
+    await restartTerminal(inst.id);
     inst.term?.clear();
     inst.exitCode = null;
     setStatus(inst, 'alive');
@@ -469,7 +469,7 @@ export async function closeDynamicTerminal(
   const orderBeforeClose = orderedTabIds();
 
   try {
-    await api('/terminal/destroy', { method: 'POST', body: { terminalId: id } });
+    await destroyTerminal(id);
   } catch { /* ignore */ }
   removeTerminalInstance(id);
   if (skipActiveFallback) return;

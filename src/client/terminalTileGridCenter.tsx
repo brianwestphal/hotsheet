@@ -1,7 +1,7 @@
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
+import { restartTerminal } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
-import { apiWithSecret } from './api.js';
 import { toElement } from './dom.js';
 import { openExternalUrl } from './tauriIntegration.js';
 import {
@@ -101,10 +101,7 @@ async function spawnAndEnlarge(ctx: TileGridContext, tile: InternalTile, target:
   ));
   try {
     if (wasExited) {
-      await apiWithSecret('/terminal/restart', tile.entry.secret, {
-        method: 'POST',
-        body: { terminalId: tile.entry.id },
-      });
+      await restartTerminal(tile.entry.id, tile.entry.secret);
     }
     tile.state = 'alive';
     tile.exitCode = null;

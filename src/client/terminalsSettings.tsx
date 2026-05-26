@@ -1,3 +1,4 @@
+import { destroyTerminal, getCommandSuggestions } from '../api/index.js';
 import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -68,8 +69,7 @@ async function loadCommandSuggestions(): Promise<string[]> {
   if (commandSuggestionsPromise === null) {
     commandSuggestionsPromise = (async () => {
       try {
-        const res = await api<{ suggestions?: string[] }>('/terminal/command-suggestions');
-        const list = Array.isArray(res.suggestions) ? res.suggestions : ['{{claudeCommand}}'];
+        const list = await getCommandSuggestions();
         commandSuggestionsCache = list;
         return list;
       } catch {
@@ -154,7 +154,7 @@ async function handleDelete(index: number): Promise<void> {
 
   // Stop the PTY cleanly so it doesn't linger as an orphan.
   try {
-    await api('/terminal/destroy', { method: 'POST', body: { terminalId: entry.id } });
+    await destroyTerminal(entry.id);
   } catch { /* if the PTY was never spawned, destroy is a no-op server-side */ }
 
   terminals.splice(index, 1);

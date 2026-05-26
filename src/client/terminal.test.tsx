@@ -23,6 +23,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { type ApiTransport, setApiTransport } from '../api/_runner.js';
 import { toElement } from './dom.js';
 import { setActiveProject } from './state.js';
 import type * as tauriIntegrationModule from './tauriIntegration.js';
@@ -87,6 +88,10 @@ function setupDom(): void {
 
 beforeEach(() => {
   setupDom();
+  // HS-8630 — terminal.tsx now calls the typed `listTerminals` / `createTerminal`
+  // / `clearTerminalBell`, which route through the `_runner` transport. Wire it
+  // to `apiMock` so the existing fixtures + call assertions still drive them.
+  setApiTransport((path, opts) => apiMock(path, opts));
   setActiveProject({ name: 'Active', dataDir: '/tmp/active', secret: ACTIVE_SECRET });
   _resetStateForTesting();
 });
@@ -94,6 +99,7 @@ beforeEach(() => {
 afterEach(() => {
   _resetStateForTesting();
   vi.clearAllMocks();
+  setApiTransport(null as unknown as ApiTransport);
   document.body.innerHTML = '';
 });
 
@@ -138,14 +144,14 @@ describe('loadAndRenderTerminalTabs — web + Tauri (HS-8624)', () => {
     apiMock.mockResolvedValue({ configured: [], dynamic: [], home: '/Users/test' });
     await loadAndRenderTerminalTabs();
     // Pre-HS-8624 this returned early on web; terminals now work in the browser.
-    expect(apiMock).toHaveBeenCalledWith('/terminal/list');
+    expect(apiMock.mock.calls.some(c => c[0] === '/terminal/list')).toBe(true);
   });
 
   it('calls /terminal/list when getTauriInvoke returns a stub function (Tauri build)', async () => {
     getTauriInvokeMock.mockReturnValue(() => Promise.resolve());
     apiMock.mockResolvedValue({ configured: [], dynamic: [], home: '/Users/test' });
     await loadAndRenderTerminalTabs();
-    expect(apiMock).toHaveBeenCalledWith('/terminal/list');
+    expect(apiMock.mock.calls.some(c => c[0] === '/terminal/list')).toBe(true);
   });
 
   it('persists the response to lastKnownConfigs', async () => {

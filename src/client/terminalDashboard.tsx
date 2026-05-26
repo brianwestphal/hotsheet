@@ -1,4 +1,5 @@
-import { api, apiWithSecret } from './api.js';
+import { createTerminal, listTerminals } from '../api/index.js';
+import { api } from './api.js';
 import { setAppTitle, setAppTitleFromActiveProject } from './appTitle.js';
 import { subscribeToBellState } from './bellPoll.js';
 import {
@@ -489,9 +490,7 @@ async function fetchProjectSections(): Promise<ProjectSectionData[]> {
   for (const project of projects) {
     let terminals: TerminalListEntry[] = [];
     try {
-      const listed = await apiWithSecret<{ configured: TerminalListEntry[]; dynamic: TerminalListEntry[] }>(
-        '/terminal/list', project.secret,
-      );
+      const listed = await listTerminals(project.secret);
       terminals = [
         ...listed.configured.map(t => ({ ...t, dynamic: false })),
         ...listed.dynamic.map(t => ({ ...t, dynamic: true })),
@@ -527,10 +526,7 @@ async function createDashboardTerminal(secret: string, terminals: TerminalListEn
   const body: { spawn: boolean; cwd?: string } = { spawn: true };
   if (inheritedCwd !== null) body.cwd = inheritedCwd;
   try {
-    await apiWithSecret<{ config: { id: string } }>('/terminal/create', secret, {
-      method: 'POST',
-      body,
-    });
+    await createTerminal(body, secret);
   } catch (err) {
     console.error('terminalDashboard: create terminal failed', err);
     return;
