@@ -368,11 +368,18 @@ export async function persistLogsPayload(
         const promptId = typeof attrs['prompt.id'] === 'string'
           ? attrs['prompt.id']
           : null;
+        // HS-8514 / HS-8639 — same as the metrics writer: Claude Code stamps
+        // `session.id` on the per-record attributes, not the resource (the
+        // `/api/telemetry/_debug` paste showed `distinctSessions: 0` because
+        // this column was always taking the null resource value). Prefer the
+        // record attribute when the resource didn't carry one.
+        const sessionId = resCtx.sessionId ??
+          (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
         try {
           await db.query(
             `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-            [ts, resCtx.projectSecret, resCtx.sessionId, promptId, eventName, JSON.stringify(attrs), JSON.stringify(rec)],
+            [ts, resCtx.projectSecret, sessionId, promptId, eventName, JSON.stringify(attrs), JSON.stringify(rec)],
           );
           inserted++;
         } catch (err) {
@@ -446,6 +453,10 @@ export async function persistTracesPayload(
         const spanName = typeof sR.name === 'string' ? sR.name : 'span';
         const attrs = flattenAttributes(sR.attributes);
         const promptId = typeof attrs['prompt.id'] === 'string' ? attrs['prompt.id'] : null;
+        // HS-8514 / HS-8639 — prefer the span's own `session.id` attribute when
+        // the resource didn't carry one (mirrors the metrics + events writers).
+        const sessionId = resCtx.sessionId ??
+          (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
         const status = sR.status as Record<string, unknown> | undefined;
         const statusCode = status !== undefined && typeof status.code === 'string'
           ? status.code
@@ -456,7 +467,7 @@ export async function persistTracesPayload(
             `INSERT INTO otel_spans
                (trace_id, span_id, parent_span_id, project_secret, session_id, prompt_id, span_name, start_ts, end_ts, attributes_json, status_code)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
-            [traceId, spanId, parentSpanId, resCtx.projectSecret, resCtx.sessionId, promptId, spanName, startTs, endTs, JSON.stringify(attrs), statusCode],
+            [traceId, spanId, parentSpanId, resCtx.projectSecret, sessionId, promptId, spanName, startTs, endTs, JSON.stringify(attrs), statusCode],
           );
           inserted++;
         } catch (err) {

@@ -1178,4 +1178,119 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect((await getWindowTotals(SECRET_B, null)).cost).toBeCloseTo(1.0);
     });
   });
+
+  // HS-8639 — bare (un-prefixed) Claude Code event names.
+  //
+  // Current Claude Code versions stamp log records with bare event names
+  // (`user_prompt` / `tool_result` / `api_request`) via the native OTLP
+  // `eventName` field, NOT the dotted `claude_code.user_prompt` form older
+  // builds used in the `event.name` attribute. The live `/api/telemetry/_debug`
+  // paste on this ticket proved the bare form is what actually lands. Every
+  // event-name filter must match BOTH spellings or it silently returns zero
+  // rows — the regression that left the recent-prompts list + tool histogram
+  // empty. These cases seed events with the BARE name on purpose: the prior
+  // tests only ever exercised the dotted form, so they passed while the real
+  // app was broken. If a future change reverts to a single-spelling filter,
+  // these fail.
+  describe('bare (un-prefixed) event names (HS-8639)', () => {
+    // Insert a log event with an arbitrary event_name verbatim — no helper
+    // default papers over the spelling.
+    async function insertRawEvent(opts: {
+      ts: Date;
+      projectSecret: string;
+      promptId: string | null;
+      eventName: string;
+      attrs?: Record<string, unknown>;
+      body?: Record<string, unknown>;
+    }): Promise<void> {
+      const db = await getDb();
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [opts.ts, opts.projectSecret, 'session-1', opts.promptId, opts.eventName,
+          JSON.stringify(opts.attrs ?? {}), JSON.stringify(opts.body ?? {})],
+      );
+    }
+
+    it('getRecentPrompts returns bare-named user_prompt events', async () => {
+      const now = new Date();
+      await insertRawEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p-bare', eventName: 'user_prompt', attrs: { model: 'opus-4-7' } });
+      const recent = await getRecentPrompts(SECRET_A, 10);
+      expect(recent).toHaveLength(1);
+      expect(recent[0].promptId).toBe('p-bare');
+      expect(recent[0].model).toBe('opus-4-7');
+    });
+
+    it('getToolRollup + getToolLatencyHistogram count bare-named tool_result events', async () => {
+      const now = new Date();
+      await insertRawEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', eventName: 'tool_result', attrs: { tool_name: 'Edit', duration_ms: 42 } });
+      await insertRawEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', eventName: 'tool_result', attrs: { tool_name: 'Edit', duration_ms: 58 } });
+
+      const rollup = await getToolRollup(SECRET_A, null);
+      expect(rollup).toHaveLength(1);
+      expect(rollup[0].tool).toBe('Edit');
+      expect(rollup[0].count).toBe(2);
+
+      const hist = await getToolLatencyHistogram(SECRET_A, null);
+      expect(hist).toHaveLength(1);
+      expect(hist[0].tool).toBe('Edit');
+      expect(hist[0].count).toBe(2);
+    });
+
+    it('getPromptTimeline pulls model from a bare-named user_prompt event', async () => {
+      const now = new Date();
+      await insertRawEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p-tl', eventName: 'user_prompt', attrs: { model: 'sonnet-4-6' } });
+      await insertRawEvent({ ts: new Date(now.getTime() + 1000), projectSecret: SECRET_A, promptId: 'p-tl', eventName: 'api_request' });
+      const timeline = await getPromptTimeline('p-tl');
+      expect(timeline.model).toBe('sonnet-4-6');
+      expect(timeline.entries).toHaveLength(2);
+    });
+
+    it('getPerTicketRollup attributes bare-named user_prompt + api_request events', async () => {
+      const now = new Date();
+      await insertRawEvent({
+        ts: now,
+        projectSecret: SECRET_A,
+        promptId: 'p-ticket',
+        eventName: 'user_prompt',
+        body: { body: '<!-- hotsheet:ticket=HS-9001 --> do the thing' },
+      });
+      await insertRawEvent({
+        ts: new Date(now.getTime() + 1000),
+        projectSecret: SECRET_A,
+        promptId: 'p-ticket',
+        eventName: 'api_request',
+        attrs: { cost: 0.4, tokens: 1500 },
+      });
+      const rollup = await getPerTicketRollup('HS-9001');
+      expect(rollup.promptCount).toBe(1);
+      expect(rollup.totalCost).toBeCloseTo(0.4);
+      expect(rollup.totalTokens).toBe(1500);
+    });
+
+    it('prompt counts (window / cost-by-project / heatmap) work on bare-named events', async () => {
+      const now = new Date();
+      // Cost metric so the project appears in the cross-project rollup.
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 1.0 });
+      await insertRawEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p-a', eventName: 'user_prompt' });
+      await insertRawEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p-b', eventName: 'user_prompt' });
+
+      expect((await getWindowTotals(SECRET_A, null)).promptCount).toBe(2);
+
+      const byProject = await getCostByProject(null);
+      expect(byProject.find(r => r.projectSecret === SECRET_A)?.promptCount).toBe(2);
+
+      const heatmap = await getHourlyActivityHeatmap(null, 'UTC');
+      expect(heatmap.reduce((sum, c) => sum + c.promptCount, 0)).toBe(2);
+    });
+
+    it('counts a MIX of dotted + bare spellings together (live DBs hold both)', async () => {
+      const now = new Date();
+      await insertRawEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p-dotted', eventName: 'claude_code.user_prompt' });
+      await insertRawEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p-bare', eventName: 'user_prompt' });
+      // Distinct prompt ids across both spellings → 2 recent prompts, count 2.
+      expect(await getRecentPrompts(SECRET_A, 10)).toHaveLength(2);
+      expect((await getWindowTotals(SECRET_A, null)).promptCount).toBe(2);
+    });
+  });
 });

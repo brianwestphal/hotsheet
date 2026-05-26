@@ -275,6 +275,44 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(result.inserted).toBe(0);
       expect(result.dropped).toBe(1);
     });
+
+    // HS-8639 — Claude Code stamps `session.id` on the per-record attributes,
+    // not the resource (the `/api/telemetry/_debug` paste showed the events
+    // `session_id` column was always null → `distinctSessions: 0`). The writer
+    // must fall back to the record attribute, mirroring the metrics writer.
+    it('populates session_id from the log RECORD attributes when the resource omits it', async () => {
+      const recordOnlySession = {
+        resourceLogs: [
+          {
+            resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: KNOWN_SECRET } }] },
+            scopeLogs: [
+              {
+                logRecords: [
+                  {
+                    timeUnixNano: '1700000000000000000',
+                    eventName: 'user_prompt',
+                    attributes: [
+                      { key: 'prompt.id', value: { stringValue: 'prompt-rec' } },
+                      { key: 'session.id', value: { stringValue: 'sess-from-record' } },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await persistLogsPayload(recordOnlySession, isKnownProject);
+      expect(result.inserted).toBe(1);
+
+      const db = await getDb();
+      const rows = await db.query<{ session_id: string | null; event_name: string }>(
+        `SELECT session_id, event_name FROM otel_events`,
+      );
+      expect(rows.rows[0].session_id).toBe('sess-from-record');
+      // Stored bare, exactly as Claude Code sends it.
+      expect(rows.rows[0].event_name).toBe('user_prompt');
+    });
   });
 
   describe('persistTracesPayload', () => {

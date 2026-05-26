@@ -174,6 +174,47 @@ const CACHE_READ_TOKEN_TYPE_SQL = "attributes_json->>'type' IN ('cacheRead', 'ca
 const CACHE_CREATION_TOKEN_TYPE_SQL = "attributes_json->>'type' IN ('cacheCreation', 'cache_creation')";
 
 /**
+ * HS-8639 — Claude Code's OTLP log records carry event names WITHOUT a
+ * `claude_code.` prefix on current Claude Code versions (the native OTLP
+ * `eventName` field — e.g. `user_prompt`, `tool_result`, `api_request`),
+ * whereas older builds (and the `event.name` attribute fallback the writer
+ * reads — see `persistLogsPayload`) used the dotted `claude_code.user_prompt`
+ * form. A live `otel_events` table therefore holds a MIX of both spellings, so
+ * EVERY event-name filter MUST match BOTH or it silently matches zero rows.
+ *
+ * That mismatch is exactly the reported bug: the user's `/api/telemetry/_debug`
+ * paste showed `user_prompt` / `tool_result` / `api_request` stored BARE, yet
+ * these queries filtered the dotted form — so the recent-prompts list, the
+ * tool-latency histogram, the per-prompt model, the per-ticket rollup, and the
+ * cross-project / heatmap prompt counts all matched zero rows while the
+ * metric-derived cost/token figures (which never key on `event_name`) stayed
+ * healthy. The broadened headline count in `getWindowTotals` sidesteps the
+ * problem only because it dropped the `event_name` filter entirely.
+ */
+const CLAUDE_CODE_EVENT_PREFIX = 'claude_code.';
+
+/** Both spellings Claude Code may stamp for a given bare event name. */
+function eventNameVariants(bareName: string): readonly string[] {
+  return [bareName, `${CLAUDE_CODE_EVENT_PREFIX}${bareName}`];
+}
+
+/**
+ * Prefix-tolerant SQL predicate. Calling it with the `event_name` column and
+ * `user_prompt` yields `event_name IN ('user_prompt', 'claude_code.user_prompt')`.
+ * `bareName` is ALWAYS a hardcoded literal at the callsite (never user input),
+ * so embedding the variants directly is injection-safe and leaves `$N` bind
+ * indices undisturbed — same rationale as REAL_WORK_TOKEN_TYPE_SQL above.
+ */
+function eventNameMatchSql(column: string, bareName: string): string {
+  return `${column} IN (${eventNameVariants(bareName).map(v => `'${v}'`).join(', ')})`;
+}
+
+/** JS-side counterpart of `eventNameMatchSql` for in-memory event rows. */
+function isClaudeCodeEvent(storedName: string, bareName: string): boolean {
+  return eventNameVariants(bareName).includes(storedName);
+}
+
+/**
  * Window totals: total cost + total tokens + count of distinct prompts
  * over the given window. Cost comes from `claude_code.cost.usage`
  * metric data points; tokens from `claude_code.token.usage`; prompt
@@ -367,7 +408,7 @@ export async function getToolRollup(
         COUNT(*) AS c,
         AVG((attributes_json->>'duration_ms')::numeric) FILTER (WHERE attributes_json->>'duration_ms' IS NOT NULL) AS avg_ms
      FROM otel_events
-     WHERE event_name = 'claude_code.tool_result'${clauses.clauses}
+     WHERE ${eventNameMatchSql('event_name', 'tool_result')}${clauses.clauses}
      GROUP BY tool
      ORDER BY c DESC`,
     clauses.params,
@@ -424,7 +465,7 @@ export async function getRecentPrompts(
   limit: number,
 ): Promise<RecentPrompt[]> {
   const db = await getTelemetryDb();
-  const clauses = buildProjectAndWindowClauses(projectSecret, null, 'ts', 1);
+  const clauses = buildProjectAndWindowClauses(projectSecret, null, 'ts', 0);
   // Clamp limit to a sane bound — caller validates but defense-in-depth.
   const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
 
@@ -435,10 +476,10 @@ export async function getRecentPrompts(
         project_secret,
         attributes_json->>'model' AS model
      FROM otel_events
-     WHERE event_name = $1 AND prompt_id IS NOT NULL${clauses.clauses}
+     WHERE ${eventNameMatchSql('event_name', 'user_prompt')} AND prompt_id IS NOT NULL${clauses.clauses}
      ORDER BY ts DESC
      LIMIT ${String(safeLimit)}`,
-    ['claude_code.user_prompt', ...clauses.params],
+    clauses.params,
   );
   return result.rows.map(r => ({
     promptId: r.prompt_id,
@@ -580,7 +621,7 @@ async function getToolLatencyHistogramFromEvents(
         percentile_cont(0.9) WITHIN GROUP (ORDER BY (attributes_json->>'duration_ms')::numeric) AS p90,
         percentile_cont(0.99) WITHIN GROUP (ORDER BY (attributes_json->>'duration_ms')::numeric) AS p99
      FROM otel_events
-     WHERE event_name = 'claude_code.tool_result'
+     WHERE ${eventNameMatchSql('event_name', 'tool_result')}
        AND attributes_json->>'duration_ms' IS NOT NULL${clauses.clauses}
      GROUP BY tool
      ORDER BY c DESC`,
@@ -607,7 +648,7 @@ async function getToolLatencyHistogramFromEvents(
         END AS bucket,
         COUNT(*) AS c
      FROM otel_events
-     WHERE event_name = 'claude_code.tool_result'
+     WHERE ${eventNameMatchSql('event_name', 'tool_result')}
        AND attributes_json->>'duration_ms' IS NOT NULL${clauses.clauses}
      GROUP BY tool, bucket
      ORDER BY tool, bucket`,
@@ -864,7 +905,7 @@ export async function getPromptTimeline(promptId: string): Promise<PromptTimelin
   }));
 
   // Pull model from the first user_prompt event's attributes when present.
-  const userPromptEntry = entries.find(e => e.eventName === 'claude_code.user_prompt');
+  const userPromptEntry = entries.find(e => isClaudeCodeEvent(e.eventName, 'user_prompt'));
   const model = userPromptEntry !== undefined && typeof userPromptEntry.attributesJson['model'] === 'string'
     ? userPromptEntry.attributesJson['model']
     : null;
@@ -926,10 +967,10 @@ export async function getPerTicketRollup(ticketNumber: string): Promise<TicketRo
   // string field).
   const tagged = await db.query<{ prompt_id: string }>(
     `SELECT DISTINCT prompt_id FROM otel_events
-     WHERE event_name = $1
+     WHERE ${eventNameMatchSql('event_name', 'user_prompt')}
        AND prompt_id IS NOT NULL
-       AND body_json::text LIKE $2`,
-    ['claude_code.user_prompt', `%${marker}%`],
+       AND body_json::text LIKE $1`,
+    [`%${marker}%`],
   );
 
   if (tagged.rows.length === 0) {
@@ -968,7 +1009,7 @@ export async function getPerTicketRollup(ticketNumber: string): Promise<TicketRo
           0
         )) AS total_tokens
      FROM otel_events
-     WHERE event_name = 'claude_code.api_request'
+     WHERE ${eventNameMatchSql('event_name', 'api_request')}
        AND prompt_id = ANY($1::text[])`,
     [promptIds],
   );
@@ -1060,11 +1101,14 @@ export async function getCostByProject(
     // session.id) — merged per project below so any project with zero
     // events still surfaces a meaningful activity count.
     db.query<{ project_secret: string; c: bigint | number }>(
+      // HS-8639 — `$1` stays a single bound param (now the prefix-tolerant
+      // variants array) so the shared `tsClause` / `secretsClause` `$N`
+      // numbering matches the sibling metric queries.
       `SELECT project_secret, COUNT(DISTINCT prompt_id) AS c
        FROM otel_events
-       WHERE event_name = $1 AND prompt_id IS NOT NULL${tsClause}${secretsClause}
+       WHERE event_name = ANY($1::text[]) AND prompt_id IS NOT NULL${tsClause}${secretsClause}
        GROUP BY project_secret`,
-      ['claude_code.user_prompt', ...tsParams, ...secrets.params],
+      [eventNameVariants('user_prompt'), ...tsParams, ...secrets.params],
     ),
     db.query<{ project_secret: string; c: bigint | number }>(
       `SELECT project_secret, COUNT(DISTINCT attributes_json->>'session.id') AS c
@@ -1178,9 +1222,9 @@ export async function getHourlyActivityHeatmap(
         EXTRACT(HOUR FROM ts AT TIME ZONE $2)::int AS hour,
         COUNT(DISTINCT prompt_id) AS c
      FROM otel_events
-     WHERE event_name = $1 AND prompt_id IS NOT NULL${promptsClause}${secretsClause}
+     WHERE event_name = ANY($1::text[]) AND prompt_id IS NOT NULL${promptsClause}${secretsClause}
      GROUP BY dow, hour`,
-    ['claude_code.user_prompt', timezone, ...tsParams, ...secrets.params],
+    [eventNameVariants('user_prompt'), timezone, ...tsParams, ...secrets.params],
   );
 
   // Densify to 168 entries — every (dow, hour) combination.
