@@ -83,12 +83,12 @@ export function shouldAutoShowFeedback(ticketId: number, noteId: string): boolea
   // auto-show is driven by `loadDetail` / the selection re-render, both of
   // which re-fire on every `/poll` tick; `showFeedbackDialog` removes +
   // recreates the `.feedback-dialog-overlay`, so re-firing while the user is
-  // mid-typing destroys their input (the reported data-loss bug). The
-  // `lastAutoShownKey` guard below is not enough on its own: an unsaved note's
-  // client id is regenerated on each `parseNotesJson` pass (`n.id ?? clientNoteId()`),
-  // so the key drifts poll-to-poll for an id-less FEEDBACK NEEDED note. Bailing
-  // whenever an overlay exists is the robust guard — manual re-open (a user
-  // click) is a separate, intentional path that doesn't run through here.
+  // mid-typing destroys their input (the reported data-loss bug). HS-8645
+  // since made the `parseNotesJson` fallback id deterministic, so the
+  // `lastAutoShownKey` key no longer drifts for an id-less note — but this
+  // overlay guard stays as the robust catch-all against ANY re-render path
+  // that might re-enter the auto-show. Manual re-open (a user click) is a
+  // separate, intentional path that doesn't run through here.
   if (typeof document !== 'undefined' && document.querySelector('.feedback-dialog-overlay') !== null) {
     return false;
   }
