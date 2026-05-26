@@ -16,7 +16,7 @@
  *     this to keep the in-drawer per-terminal indicator in sync when bells
  *     arrive while the user is inside the same project.
  */
-import { api } from './api.js';
+import { pollBellState } from '../api/index.js';
 import { TIMERS } from './constants/timers.js';
 import { updateProjectBellIndicators } from './projectTabs.js';
 import { getActiveProject } from './state.js';
@@ -69,15 +69,10 @@ export function subscribeToBellState(cb: Subscriber): () => void {
   return () => { subscribers.delete(cb); };
 }
 
-interface BellStateResponse {
-  bells: Record<string, BellStateEntry>;
-  v: number;
-}
-
 async function loop(): Promise<void> {
   while (active) {
     try {
-      const data = await api<BellStateResponse>(`/projects/bell-state?v=${version}`);
+      const data = await pollBellState(version);
       version = data.v;
       currentState = toMap(data.bells);
       dispatchOsc9Toasts(currentState);

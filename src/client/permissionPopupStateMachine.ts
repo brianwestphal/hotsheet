@@ -31,7 +31,7 @@
  * - `PermissionPollResponse` type.
  */
 
-import { api } from './api.js';
+import { pollProjectPermissions } from '../api/index.js';
 import { channelStore } from './channelStore.js';
 import { clearProjectAttention, getProjectAttentionSecrets, markProjectAttention } from './channelUI.js';
 import { TIMERS } from './constants/timers.js';
@@ -224,7 +224,7 @@ export function startPermissionPolling(channelBusyTimeout: ReturnType<typeof set
   async function poll() {
     if (!permissionState.permissionPollActive) return;
     try {
-      const data = await api<PermissionPollResponse>(`/projects/permissions?v=${permissionState.permissionVersion}`);
+      const data = await pollProjectPermissions(permissionState.permissionVersion);
       processPermissionPollResponse(data);
     } catch {
       await new Promise(r => setTimeout(r, TIMERS.POLL_RETRY_MS));

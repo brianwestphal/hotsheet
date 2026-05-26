@@ -1,8 +1,8 @@
+import { registerProject } from '../api/index.js';
 import { api, showErrorPopup } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { ICON_FOLDER, ICON_FOLDER_OPEN } from './icons.js';
 import { refreshProjectTabs, switchProject } from './projectTabs.js';
-import type { ProjectInfo } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 
 interface BrowseResult {
@@ -83,10 +83,7 @@ async function openSelectedFolder(path: string) {
     // `error` field surfaced through the network-error popup, so the
     // pre-fix manual `if (!res.ok) showErrorPopup(...)` branch
     // collapses into the catch. Behaviour preserved.
-    const project = await api<ProjectInfo>('/projects/register', {
-      method: 'POST',
-      body: { dataDir: hotsheetPath },
-    });
+    const project = await registerProject(hotsheetPath);
     byId('open-folder-overlay').style.display = 'none';
     await refreshProjectTabs();
     await switchProject(project);

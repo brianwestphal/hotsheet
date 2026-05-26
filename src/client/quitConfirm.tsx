@@ -1,5 +1,6 @@
+import { getQuitSummary } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
-import { api, apiWithSecret } from './api.js';
+import { apiWithSecret } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
@@ -155,7 +156,7 @@ export function initQuitConfirm(): void {
 export async function runQuitConfirmFlow(): Promise<'proceed' | 'cancel'> {
   let summary: QuitSummary;
   try {
-    summary = await api<QuitSummary>('/projects/quit-summary');
+    summary = await getQuitSummary();
   } catch {
     return 'cancel';
   }
@@ -218,7 +219,7 @@ export function buildCloseConfirmMessage(contributing: QuitSummaryProject[]): st
 export async function confirmCloseProjects(secrets: string[]): Promise<boolean> {
   let summary: QuitSummary;
   try {
-    summary = await api<QuitSummary>('/projects/quit-summary');
+    summary = await getQuitSummary();
   } catch {
     return true;
   }

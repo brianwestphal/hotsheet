@@ -1,3 +1,4 @@
+import { deleteProject, getProjectsChannelStatus, getProjectsFeedbackState, listProjects, reorderProjects, revealProject } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
@@ -43,9 +44,9 @@ export function setProjectFeedback(secret: string, hasFeedback: boolean) {
  *  on the Project B tab even while the user is viewing Project A. */
 export async function refreshProjectFeedbackState(): Promise<void> {
   try {
-    const data = await api<{ projects: Record<string, boolean> }>('/projects/feedback-state');
+    const projects = await getProjectsFeedbackState();
     feedbackSecrets.clear();
-    for (const [secret, hasFeedback] of Object.entries(data.projects)) {
+    for (const [secret, hasFeedback] of Object.entries(projects)) {
       if (hasFeedback) feedbackSecrets.add(secret);
     }
     // HS-8559 — successful poll resets the throttle so the next failure
@@ -111,7 +112,7 @@ export async function initProjectTabs(): Promise<void> {
     // HS-8085 — first call before `setActiveProject`, so the api helper
     // emits a plain GET with no `?project=` query (no active project to
     // auth against yet). That matches the pre-fix raw-fetch behavior.
-    projectsStore.actions.setProjects(await api<ProjectInfo[]>('/projects'));
+    projectsStore.actions.setProjects(await listProjects());
   } catch {
     projectsStore.actions.setProjects([]);
   }
@@ -172,7 +173,7 @@ let pendingReorderSecrets: readonly string[] | null = null;
 /** Re-fetch and re-render tabs (e.g., after adding/removing a project). */
 export async function refreshProjectTabs(): Promise<void> {
   try {
-    let list = await api<ProjectInfo[]>('/projects');
+    let list: ProjectInfo[] = await listProjects();
     // HS-8431 — re-sort the server response by the user's pending
     // reorder so a GET that races the unawaited reorder POST can't
     // visually revert the drop. The flag stays set until a GET
@@ -254,7 +255,7 @@ async function removeProject(project: ProjectInfo): Promise<void> {
     // `X-Hotsheet-Secret` header (see `src/routes/projects.ts:90`); the
     // api helper still adds the active project's secret as the auth
     // header, which the route ignores. Acceptable.
-    await api(`/projects/${encodeURIComponent(project.secret)}`, { method: 'DELETE' });
+    await deleteProject(project.secret);
     clearPerProjectSessionState(project.secret);
     if (getActiveProject()?.secret === project.secret) {
       const remaining = projectsStore.state.value.projects.filter(p => p.secret !== project.secret);
@@ -273,7 +274,7 @@ async function removeOtherProjects(keepProject: ProjectInfo): Promise<void> {
   // running / non-exempt terminals.
   if (!(await confirmCloseProjects(toRemove.map(p => p.secret)))) return;
   for (const p of toRemove) {
-    await api(`/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
+    await deleteProject(p.secret);
     clearPerProjectSessionState(p.secret);
   }
   if (getActiveProject()?.secret !== keepProject.secret) {
@@ -292,7 +293,7 @@ async function removeProjectsInDirection(project: ProjectInfo, direction: 'left'
   // running / non-exempt terminals.
   if (!(await confirmCloseProjects(toRemove.map(p => p.secret)))) return;
   for (const p of toRemove) {
-    await api(`/projects/${encodeURIComponent(p.secret)}`, { method: 'DELETE' });
+    await deleteProject(p.secret);
     clearPerProjectSessionState(p.secret);
   }
   if (toRemove.some(p => p.secret === getActiveProject()?.secret)) {
@@ -355,7 +356,7 @@ function showTabContextMenu(e: MouseEvent, project: ProjectInfo) {
   // Bind "Show in Finder" handler
   menu.querySelector('[data-action="reveal"]')!.addEventListener('click', () => {
     menu.remove();
-    void api(`/projects/${encodeURIComponent(project.secret)}/reveal`, { method: 'POST' });
+    void revealProject(project.secret);
   });
 
   // Position near click
@@ -513,10 +514,7 @@ function handleDrop(e: DragEvent, _targetProject: ProjectInfo) {
   pendingReorderSecrets = orderedSecrets;
   void (async () => {
     try {
-      await api('/projects/reorder', {
-        method: 'POST',
-        body: { secrets: orderedSecrets },
-      });
+      await reorderProjects(orderedSecrets);
     } catch (err) {
       console.error('reorder POST failed:', err);
       // Only clear if this drop is still the latest pending one —
@@ -543,7 +541,7 @@ const aliveProjects = new Set<string>();
 /** Called from the long-poll handler to refresh per-project channel status. */
 export async function refreshProjectChannelStatus() {
   try {
-    const data = await api<{ enabled: boolean; projects: Record<string, boolean> }>('/projects/channel-status');
+    const data = await getProjectsChannelStatus();
     aliveProjects.clear();
     if (data.enabled) {
       for (const [secret, alive] of Object.entries(data.projects)) {

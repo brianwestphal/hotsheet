@@ -1,5 +1,4 @@
-import { createTerminal, listTerminals } from '../api/index.js';
-import { api } from './api.js';
+import { createTerminal, listProjects, listTerminals } from '../api/index.js';
 import { setAppTitle, setAppTitleFromActiveProject } from './appTitle.js';
 import { subscribeToBellState } from './bellPoll.js';
 import {
@@ -483,7 +482,7 @@ async function renderDashboardGrid(root: HTMLElement): Promise<void> {
 async function fetchProjectSections(): Promise<ProjectSectionData[]> {
   let projects: ProjectInfo[] = [];
   try {
-    projects = await api<ProjectInfo[]>('/projects');
+    projects = await listProjects();
   } catch { /* leave empty */ }
 
   const sections: ProjectSectionData[] = [];
