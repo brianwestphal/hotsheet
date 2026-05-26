@@ -896,6 +896,17 @@ export function checkout(opts: CheckoutOptions): CheckoutHandle {
       return top === handle;
     },
     resize(cols: number, rows: number): void {
+      // HS-8619 — only the top-of-stack consumer may drive the shared term's
+      // size. A bumped-down consumer (e.g. the drawer pane while a Terminal
+      // Dashboard tile borrows the same terminal) whose own fit / onResize
+      // wiring keeps firing must NOT resize the shared term out from under the
+      // active consumer — that's the dashboard "resize weirdly" oscillation
+      // (the drawer's FitAddon reads the tile's geometry and fights the tile's
+      // 4:3-native convergence). Note this guards only the `handle.resize`
+      // path; `fit.fit()` mutates `term.resize` directly, so each consumer
+      // that runs a FitAddon must ALSO gate its own `fit()` calls on
+      // `isTopOfStack()` (the drawer + dashboard tile both do).
+      if (!handle.isTopOfStack()) return;
       // HS-8042 — same skip-on-same-size rule as swap-time resize so
       // TUI programs don't see SIGWINCH on idempotent fit() calls.
       applyResizeIfChanged(stableEntry, cols, rows);

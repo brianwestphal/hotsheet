@@ -92,7 +92,12 @@ export function initTerminal(): void {
   ensureBellSubscription();
   window.addEventListener('resize', () => {
     const active = terminalState.activeTerminalId === null ? null : instances.get(terminalState.activeTerminalId);
-    if (active !== null && active !== undefined && isTerminalTabActive(active)) doFit(active);
+    // HS-8619 — only refit when the drawer pane currently owns the shared
+    // term (top of the §54 checkout stack). While a Terminal Dashboard tile /
+    // dedicated view borrows it, the drawer must not drive a fit that fights
+    // the borrowing consumer's sizing.
+    if (active !== null && active !== undefined && isTerminalTabActive(active)
+        && active.checkout?.isTopOfStack() === true) doFit(active);
   });
 
   // HS-7269 — re-apply shell-integration UI visibility on every open terminal
@@ -160,7 +165,11 @@ export function initTerminal(): void {
   if (drawerPanel !== null && typeof ResizeObserver !== 'undefined') {
     const ro = new ResizeObserver(() => {
       const active = terminalState.activeTerminalId === null ? null : instances.get(terminalState.activeTerminalId);
-      if (active !== null && active !== undefined && isTerminalTabActive(active)) doFit(active);
+      // HS-8619 — same top-of-stack gate as the window-resize handler above:
+      // a drawer-panel resize must not refit a terminal whose live xterm is
+      // currently borrowed by a dashboard tile / dedicated view.
+      if (active !== null && active !== undefined && isTerminalTabActive(active)
+          && active.checkout?.isTopOfStack() === true) doFit(active);
     });
     ro.observe(drawerPanel);
   }

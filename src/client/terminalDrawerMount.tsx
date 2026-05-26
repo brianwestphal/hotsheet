@@ -160,6 +160,18 @@ function attachDrawerTermHandlers(inst: TerminalInstance, term: XTerm, handle: R
   // the same convergence the §25 dashboard tiles got in HS-8051.
   inst.termHandlerDisposers.push(term.onRender(() => {
     if (!requireHooks().isTerminalTabActive(inst)) return;
+    // HS-8619 — when another consumer (a Terminal Dashboard tile / dedicated
+    // view / §47 popup) has borrowed this shared terminal, the drawer pane is
+    // bumped down: the live xterm lives in THEIR container, so `doFit`'s
+    // FitAddon would read their geometry and `term.resize` the shared term to
+    // fit the borrowing consumer — fighting that consumer's own sizing. The
+    // tile's onRender convergence + the drawer's doFit then oscillate (the
+    // dashboard "resize weirdly", scoped to the active project because only its
+    // terminals have a drawer-pane consumer). Skip the fit unless the drawer
+    // pane currently owns the top of the §54 checkout stack. `fit.fit()`
+    // bypasses `handle.resize`, so this consumer-side gate is required in
+    // addition to the central `handle.resize` guard.
+    if (!handle.isTopOfStack()) return;
     try {
       if (shouldRefitOnRender(handle.fit.proposeDimensions(), term.cols, term.rows)) {
         doFit(inst);

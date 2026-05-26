@@ -474,6 +474,97 @@ describe('checkout — resize policy (HS-8031 §54.3.1)', () => {
   });
 });
 
+describe('handle.resize — top-of-stack gate (HS-8619)', () => {
+  it('a bumped-down consumer cannot resize the shared term', () => {
+    // Reproduces the dashboard "resize weirdly" oscillation: the drawer pane
+    // (handleA) is bumped down when a dashboard tile (handleB) borrows the
+    // same terminal. The drawer's fit/onResize wiring keeps calling
+    // handle.resize — which must be a no-op while it isn't the top of stack,
+    // otherwise it drags the shared term to the drawer's dims and fights the
+    // tile's own sizing.
+    const mA = makeMount('mA');
+    const mB = makeMount('mB');
+    const drawer = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 178,
+      rows: 42,
+      mountInto: mA,
+    });
+    const tile = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 61,
+      rows: 48,
+      mountInto: mB,
+    });
+    // Tile is on top → term is at the tile's dims.
+    expect(tile.isTopOfStack()).toBe(true);
+    expect(drawer.isTopOfStack()).toBe(false);
+    expect(_inspectStackForTesting()[0]?.lastAppliedCols).toBe(61);
+
+    const resizeSpy = vi.spyOn(tile.term, 'resize');
+    // The bumped-down drawer pane tries to re-impose its fit dims.
+    drawer.resize(178, 42);
+    // Gate holds: no term.resize, dims unchanged.
+    expect(resizeSpy).not.toHaveBeenCalled();
+    expect(_inspectStackForTesting()[0]?.lastAppliedCols).toBe(61);
+    expect(_inspectStackForTesting()[0]?.lastAppliedRows).toBe(48);
+
+    tile.release();
+    drawer.release();
+  });
+
+  it('the top-of-stack consumer can still resize the shared term', () => {
+    const mA = makeMount('mA');
+    const handle = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 80,
+      rows: 24,
+      mountInto: mA,
+    });
+    expect(handle.isTopOfStack()).toBe(true);
+    const resizeSpy = vi.spyOn(handle.term, 'resize');
+    handle.resize(100, 30);
+    expect(resizeSpy).toHaveBeenCalledWith(100, 30);
+    expect(_inspectStackForTesting()[0]?.lastAppliedCols).toBe(100);
+    expect(_inspectStackForTesting()[0]?.lastAppliedRows).toBe(30);
+    handle.release();
+  });
+
+  it('a bumped-down consumer can resize again once restored to the top', () => {
+    const mA = makeMount('mA');
+    const mB = makeMount('mB');
+    const drawer = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 178,
+      rows: 42,
+      mountInto: mA,
+    });
+    const tile = checkout({
+      projectSecret: 'secret-A',
+      terminalId: 'default',
+      cols: 61,
+      rows: 48,
+      mountInto: mB,
+    });
+    // While bumped down the drawer's resize is ignored.
+    drawer.resize(100, 30);
+    expect(_inspectStackForTesting()[0]?.lastAppliedCols).toBe(61);
+    // Tile releases → drawer is restored to top (its checkout-time dims are
+    // re-applied by releaseInternal).
+    tile.release();
+    expect(drawer.isTopOfStack()).toBe(true);
+    // Now the drawer can drive a fresh size again.
+    drawer.resize(100, 30);
+    expect(_inspectStackForTesting()[0]?.lastAppliedCols).toBe(100);
+    expect(_inspectStackForTesting()[0]?.lastAppliedRows).toBe(30);
+    drawer.release();
+  });
+});
+
 describe('checkout — cross-project independence (HS-8031 §54.3)', () => {
   it('two different secrets for the same terminalId get independent entries', () => {
     const mA = makeMount('mA');
