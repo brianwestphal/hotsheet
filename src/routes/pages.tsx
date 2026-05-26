@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 
 import { Layout } from '../components/layout.js';
+import { isDemoMode } from '../demo-mode.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import type { AppEnv } from '../types.js';
 
@@ -8,7 +9,7 @@ export const pageRoutes = new Hono<AppEnv>();
 
 pageRoutes.get('/', (c) => {
   const html = (
-    <Layout title="Hot Sheet">
+    <Layout title="Hot Sheet" demoMode={isDemoMode()}>
       <div className="app">
         <header className="app-header">
           <button className="terminal-dashboard-toggle" id="terminal-dashboard-toggle" title="Terminal dashboard" style="display:none">
@@ -579,7 +580,7 @@ pageRoutes.get('/', (c) => {
                 <div className="settings-divider"></div>
                 <div className="settings-field settings-field-checkbox">
                   <label><input type="checkbox" id="settings-terminal-webgl-opt-out" /> Use software rendering for terminals <span className="global-setting-badge">Global Setting</span></label>
-                  <span className="settings-hint">Hot Sheet uses your GPU to render terminals for smoother output during heavy activity (long <code>claude</code> sessions, full-screen TUIs like <code>top</code>, fast log spam). Tick this if you see graphical glitches, dropped characters, or excessive battery use — Hot Sheet will fall back to slower CPU rendering. Takes effect on terminals you open afterward.</span>
+                  <span className="settings-hint">Hot Sheet uses your GPU to render terminals for smoother output during heavy activity (long <code>claude</code> sessions, full-screen TUIs like <code>top</code>, fast log spam). Tick this if you see graphical glitches, dropped characters, or excessive battery use — Hot Sheet will fall back to slower CPU rendering. Takes effect on terminals you open afterward. Demo mode always uses CPU rendering regardless of this setting.</span>
                 </div>
               </div>
             </div>

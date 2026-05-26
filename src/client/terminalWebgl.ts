@@ -80,15 +80,30 @@ function isWebglForceDisabled(): boolean {
 }
 
 /**
+ * HS-8612 — demo-mode force-DOM seam. The server stamps `window.__HOTSHEET_DEMO__`
+ * in the page `<head>` when launched with `--demo:N` (see
+ * `src/components/layout.tsx`), so this is a synchronous read available before
+ * the first terminal mounts — same shape as `isWebglForceDisabled` above. Demo
+ * mode must force the DOM renderer so domotion-svg can DOM-capture the live
+ * `<span>`-per-cell tree, which a single WebGL `<canvas>` can't provide.
+ */
+function isDemoMode(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (window as unknown as { __HOTSHEET_DEMO__?: boolean }).__HOTSHEET_DEMO__ === true;
+}
+
+/**
  * HS-8488 — should a freshly-created terminal load the WebGL renderer addon?
  * WebGL is the default; this returns false (→ DOM renderer) when force-disabled
- * (e2e), the user opted out, or WebGL2 isn't available. The addon constructor
- * can still throw on a blacklisted GPU even when this returns true — the caller
- * catches that and falls back to DOM. Pure-ish (reads the cached opt-out + the
- * cached capability probe); no addon side effects.
+ * (e2e), running in demo mode (HS-8612), the user opted out, or WebGL2 isn't
+ * available. The addon constructor can still throw on a blacklisted GPU even
+ * when this returns true — the caller catches that and falls back to DOM.
+ * Pure-ish (reads the cached opt-out + the cached capability probe); no addon
+ * side effects.
  */
 export function shouldUseWebglRenderer(): boolean {
   if (isWebglForceDisabled()) return false;
+  if (isDemoMode()) return false;
   if (isTerminalWebglOptOut()) return false;
   return isWebgl2Available();
 }

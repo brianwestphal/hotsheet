@@ -99,6 +99,7 @@ Demo mode launches the application with pre-populated sample data, intended for 
 - Skips gitignore checks (temp directory is outside any repo).
 - Seeds the database with scenario-specific ticket data on startup.
 - The demo instance is fully functional — tickets can be created, edited, and deleted — but data is ephemeral.
+- **Forces the DOM terminal renderer** (HS-8612): `src/cli.ts` calls `setDemoMode(true)` (`src/demo-mode.ts`) before the server starts, and the page `<head>` stamps `window.__HOTSHEET_DEMO__`, which `shouldUseWebglRenderer()` reads to skip WebGL. This keeps the live `<span>`-per-cell terminal tree intact for domotion-svg capture (see [22-terminal.md](22-terminal.md) §22.21). Applies regardless of the user's "Use software rendering" setting.
 
 #### Scenarios
 

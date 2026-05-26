@@ -16,18 +16,20 @@ import {
   webglWantedForConsumer,
 } from './terminalWebgl.js';
 
-const win = window as unknown as { __HOTSHEET_DISABLE_WEBGL__?: boolean };
+const win = window as unknown as { __HOTSHEET_DISABLE_WEBGL__?: boolean; __HOTSHEET_DEMO__?: boolean };
 
 beforeEach(() => {
   _setTerminalWebglOptOutForTesting(false);
   _setWebgl2AvailableForTesting(true); // pretend WebGL2 exists unless a test says otherwise
   delete win.__HOTSHEET_DISABLE_WEBGL__;
+  delete win.__HOTSHEET_DEMO__;
 });
 
 afterEach(() => {
   _setTerminalWebglOptOutForTesting(false);
   _setWebgl2AvailableForTesting(null);
   delete win.__HOTSHEET_DISABLE_WEBGL__;
+  delete win.__HOTSHEET_DEMO__;
 });
 
 describe('shouldUseWebglRenderer (HS-8488)', () => {
@@ -48,6 +50,21 @@ describe('shouldUseWebglRenderer (HS-8488)', () => {
   it('returns false when force-disabled via the e2e window flag, even with everything else green', () => {
     win.__HOTSHEET_DISABLE_WEBGL__ = true;
     expect(shouldUseWebglRenderer()).toBe(false);
+  });
+
+  // HS-8612 — demo mode forces the DOM renderer (regardless of opt-out /
+  // WebGL2 availability) so domotion-svg can DOM-capture the `<span>` tree.
+  // The server stamps `window.__HOTSHEET_DEMO__` in the page head.
+  it('returns false in demo mode, even with WebGL2 available and opt-out off', () => {
+    win.__HOTSHEET_DEMO__ = true;
+    expect(shouldUseWebglRenderer()).toBe(false);
+  });
+
+  it('returns true when the demo flag is absent / falsy (normal launch)', () => {
+    win.__HOTSHEET_DEMO__ = false;
+    expect(shouldUseWebglRenderer()).toBe(true);
+    delete win.__HOTSHEET_DEMO__;
+    expect(shouldUseWebglRenderer()).toBe(true);
   });
 });
 

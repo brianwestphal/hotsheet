@@ -13,6 +13,7 @@ import { getDb, setDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
 import { initSnapshotScheduler } from './db/snapshot.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
+import { setDemoMode } from './demo-mode.js';
 import { enrichProcessPath } from './enrich-path.js';
 import { PLUGINS_ENABLED } from './feature-flags.js';
 import { ensureSecret, writeFileSettings } from './file-settings.js';
@@ -517,6 +518,10 @@ async function main() {
   console.error(`[startup ${elapsed()}] update check done`);
 
   if (demo !== null) {
+    // HS-8612 — flag the process as demo so the page shell can stamp
+    // `window.__HOTSHEET_DEMO__` and force the DOM terminal renderer. Set
+    // before the server starts serving any page.
+    setDemoMode(true);
     dataDir = resolveDemoDataDir(demo);
   } else {
     await handleExistingInstance(dataDir, noOpen, replace, elapsed);
